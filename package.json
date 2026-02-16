@@ -1,0 +1,28 @@
+{
+  "name": "gardenmanager",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "build:web": "vite build",
+    "dev": "vite",
+    "preview": "vite build && vite preview",
+    "start": "ts-node src/index.ts",
+    "demo": "ts-node src/demo.ts",
+    "test": "ts-node src/test.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "date-fns": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}
