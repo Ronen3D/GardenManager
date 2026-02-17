@@ -21,23 +21,11 @@ import {
   TaskType,
   Level,
   SlotRequirement,
-  L1CycleState,
-  L1CyclePhase,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 import { validateHardConstraints } from '../constraints/hard-constraints';
 import { computeScheduleScore } from '../constraints/soft-constraints';
-import {
-  initializeL1Cycles,
-  getFullCycleTimeline,
-  isTaskAlignedWithCycle,
-  hasAdanitPreGap,
-  getNextWorkPhaseStart,
-  ADANIT_PRE_GAP_HOURS,
-} from '../web/utils/l1-cycle';
-
-/** Shorthand for a cycle timeline entry used throughout the optimizer */
-type CycleTimeline = Array<{ phase: L1CyclePhase; start: Date; end: Date }>;
+import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 
 /** Task types strictly forbidden for L4 participants (R4: hoisted to module scope) */
 const FORBIDDEN_FOR_L4: TaskType[] = [TaskType.Shemesh, TaskType.Aruga, TaskType.Hamama];
@@ -70,8 +58,7 @@ export function resetAssignmentCounter(): void {
 
 /**
  * Check if a participant is eligible for a specific slot in a task,
- * considering current assignments (no double-booking of non-light tasks)
- * and L1 cycle constraints.
+ * considering current assignments (no double-booking of non-light tasks).
  */
 /** Enable/disable verbose diagnostic logging */
 let _diagnosticLogging = false;
@@ -93,7 +80,6 @@ function isEligibleForSlot(
   slot: SlotRequirement,
   participantAssignments: Assignment[],
   taskMap: Map<string, Task>,
-  l1CycleTimelines?: Map<string, CycleTimeline>,
 ): boolean {
   const _tag = `${participant.name} → ${task.name} [${slot.label || slot.slotId}]`;
 
@@ -103,6 +89,12 @@ function isEligibleForSlot(
       if (_diagnosticLogging) console.log(`[Elig] REJECT L4-forbidden: ${_tag} — L4 cannot serve ${task.type}`);
       return false;
     }
+  }
+
+  // HC-11: Choresh participants are strictly forbidden from Mamtera
+  if (participant.chopidr && task.type === TaskType.Mamtera) {
+    if (_diagnosticLogging) console.log(`[Elig] REJECT choresh-mamtera: ${_tag} — Choresh cannot serve Mamtera`);
+    return false;
   }
 
   // Level check: accept explicit match OR "level higher than max listed" (e.g., L2 can fill an L0 slot)
@@ -145,50 +137,6 @@ function isEligibleForSlot(
     return false;
   }
 
-  // L1 Absolute Rest: if L1 and Adanit, must align with work phase;
-  // ALL other tasks (including light/Karovit) are forbidden during rest phases.
-  // L1 participants have 100% absolute rest when off-duty.
-  if (participant.level === Level.L1 && l1CycleTimelines) {
-    const timeline = l1CycleTimelines.get(participant.id);
-    if (timeline) {
-      if (task.type === TaskType.Adanit) {
-        // Adanit must align with a work phase
-        if (!isTaskAlignedWithCycle(task.timeBlock, timeline)) {
-          if (_diagnosticLogging) console.log(`[Elig] REJECT L1-cycle-misalign: ${_tag}`);
-          return false;
-        }
-        // HC-11: 8h Pre-Gap Rule — must have 8h of zero assignments before Adanit start
-        if (!hasAdanitPreGap(task.timeBlock.start, participantAssignments, taskMap)) {
-          if (_diagnosticLogging) console.log(`[Elig] REJECT L1-pre-gap: ${_tag} — no 8h free window before Adanit`);
-          return false;
-        }
-      } else {
-        // Absolute rest: no task (including light/Karovit) during any rest phase
-        for (const phase of timeline) {
-          if (phase.phase === 'Rest8' || phase.phase === 'Rest16') {
-            if (blocksOverlap(task.timeBlock, { start: phase.start, end: phase.end })) {
-              if (_diagnosticLogging) console.log(`[Elig] REJECT L1-absolute-rest: ${_tag} — ${phase.phase}`);
-              return false;
-            }
-          }
-        }
-
-        // Adanit Pre-Gap Protection: reject if this task would end within the
-        // 8h pre-gap window of the next upcoming Adanit work phase.
-        // This prevents general L0 tasks from stealing the pre-gap clearance.
-        const nextWork = getNextWorkPhaseStart(timeline, task.timeBlock.start);
-        if (nextWork) {
-          const preGapStart = new Date(nextWork.getTime() - ADANIT_PRE_GAP_HOURS * 3600000);
-          if (task.timeBlock.end.getTime() > preGapStart.getTime() &&
-              task.timeBlock.start.getTime() < nextWork.getTime()) {
-            if (_diagnosticLogging) console.log(`[Elig] REJECT L1-adanit-pregap-protect: ${_tag} — would intrude on pre-gap before ${nextWork.toISOString()}`);
-            return false;
-          }
-        }
-      }
-    }
-  }
-
   return true;
 }
 
@@ -202,16 +150,15 @@ function getEligibleCandidates(
   assignmentsByParticipant: Map<string, Assignment[]>,
   taskMap: Map<string, Task>,
   participantWorkload: Map<string, number>,
-  l1CycleTimelines?: Map<string, CycleTimeline>,
 ): Participant[] {
   const eligible = participants.filter((p) =>
-    isEligibleForSlot(p, task, slot, assignmentsByParticipant.get(p.id) || [], taskMap, l1CycleTimelines),
+    isEligibleForSlot(p, task, slot, assignmentsByParticipant.get(p.id) || [], taskMap),
   );
 
   // ── C1 FIX: Single composite comparator ──
   // Merges what were three sequential (destructive) sorts into one stable sort.
   // Adanit:     exact-level → workload → level → random
-  // Non-Adanit: deprioritize L1 → (Hamama: level pref) → workload → exact-level → level → random
+  // Non-Adanit: (Hamama: level pref) → workload → exact-level → level → random
   eligible.sort((a, b) => {
     if (task.type === TaskType.Adanit) {
       // T1: exact level match vs overqualified
@@ -229,14 +176,9 @@ function getEligibleCandidates(
     }
 
     // ── All non-Adanit tasks ──
-    // Guard: save L1 participants for their Adanit cycle obligations
-    const aL1 = a.level === Level.L1 ? 1 : 0;
-    const bL1 = b.level === Level.L1 ? 1 : 0;
-    if (aL1 !== bL1) return aL1 - bL1;
-
-    // Hamama-specific: prefer L0 > L1 > L3
+    // Hamama-specific: prefer L0 > L3
     if (task.type === TaskType.Hamama) {
-      const hp = (l: Level): number => l === Level.L0 ? 0 : l === Level.L1 ? 1 : l === Level.L3 ? 2 : 3;
+      const hp = (l: Level): number => l === Level.L0 ? 0 : l === Level.L3 ? 1 : 2;
       const d = hp(a.level) - hp(b.level);
       if (d !== 0) return d;
     }
@@ -297,7 +239,6 @@ export function greedyAssign(
   tasks: Task[],
   participants: Participant[],
   lockedAssignments: Assignment[] = [],
-  l1CycleTimelines?: Map<string, CycleTimeline>,
 ): { assignments: Assignment[]; unfilledSlots: { taskId: string; slotId: string; reason: string }[] } {
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
@@ -314,7 +255,10 @@ export function greedyAssign(
   for (const a of lockedAssignments) {
     const task = taskMap.get(a.taskId);
     if (task && !task.isLight) {
-      workload.set(a.participantId, (workload.get(a.participantId) || 0) + 1);
+      workload.set(
+        a.participantId,
+        (workload.get(a.participantId) || 0) + computeTaskEffectiveHours(task),
+      );
     }
   }
 
@@ -323,7 +267,7 @@ export function greedyAssign(
   for (const task of sortedTasks) {
     // For same-group tasks (Adanit), we need special handling
     if (task.sameGroupRequired) {
-      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant, l1CycleTimelines);
+      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant);
       if (!assigned) {
         // Mark all slots as unfilled with specific reasons
         for (const slot of task.slots) {
@@ -360,7 +304,6 @@ export function greedyAssign(
         assignmentsByParticipant,
         taskMap,
         workload,
-        l1CycleTimelines,
       );
 
       if (candidates.length > 0) {
@@ -376,7 +319,7 @@ export function greedyAssign(
         assignments.push(newAssignment);
         addToAssignmentMap(assignmentsByParticipant, newAssignment);
         if (!task.isLight) {
-          workload.set(chosen.id, (workload.get(chosen.id) || 0) + 1);
+          workload.set(chosen.id, (workload.get(chosen.id) || 0) + computeTaskEffectiveHours(task));
         }
       } else {
         // Build specific reason for why this slot can't be filled
@@ -425,7 +368,6 @@ function assignSameGroupTask(
   taskMap: Map<string, Task>,
   workload: Map<string, number>,
   assignmentsByParticipant: Map<string, Assignment[]>,
-  l1CycleTimelines?: Map<string, CycleTimeline>,
 ): boolean {
   // Already have some locked assignments for this task?
   const lockedForTask = currentAssignments.filter((a) => a.taskId === task.id);
@@ -487,7 +429,6 @@ function assignSameGroupTask(
         tempMap,
         taskMap,
         workload,
-        l1CycleTimelines,
       );
 
       if (candidates.length > 0) {
@@ -512,7 +453,10 @@ function assignSameGroupTask(
         addToAssignmentMap(assignmentsByParticipant, a);
         const t = taskMap.get(a.taskId);
         if (t && !t.isLight) {
-          workload.set(a.participantId, (workload.get(a.participantId) || 0) + 1);
+          workload.set(
+            a.participantId,
+            (workload.get(a.participantId) || 0) + computeTaskEffectiveHours(t),
+          );
         }
       }
       return true;
@@ -550,8 +494,6 @@ function isSwapFeasible(
   idxJ: number,
   taskMap: Map<string, Task>,
   pMap: Map<string, Participant>,
-  l1CycleStates?: Map<string, L1CycleState>,
-  weekEnd?: Date,
 ): boolean {
   const aI = candidate[idxI];
   const aJ = candidate[idxJ];
@@ -580,6 +522,10 @@ function isSwapFeasible(
   // HC-10: L4 exclusion
   if (pI.level === Level.L4 && FORBIDDEN_FOR_L4.includes(taskI.type)) return false;
   if (pJ.level === Level.L4 && FORBIDDEN_FOR_L4.includes(taskJ.type)) return false;
+
+  // HC-11: Choresh exclusion from Mamtera
+  if (pI.chopidr && taskI.type === TaskType.Mamtera) return false;
+  if (pJ.chopidr && taskJ.type === TaskType.Mamtera) return false;
 
   // HC-7: Unique participant per task (skip the swapped assignment itself)
   for (const a of candidate) {
@@ -625,31 +571,6 @@ function isSwapFeasible(
   };
   if (!checkDoubleBooking(pI.id) || !checkDoubleBooking(pJ.id)) return false;
 
-  // HC-9 & HC-11: L1 cycle compliance + pre-gap
-  if (l1CycleStates && weekEnd) {
-    for (const p of [pI, pJ]) {
-      if (p.level !== Level.L1) continue;
-      const cs = l1CycleStates.get(p.id);
-      if (!cs) continue;
-      const timeline = getFullCycleTimeline(cs, weekEnd);
-      const pAssignments = candidate.filter(a => a.participantId === p.id);
-      for (const a of pAssignments) {
-        const t = taskMap.get(a.taskId);
-        if (!t) continue;
-        if (t.type === TaskType.Adanit) {
-          if (!isTaskAlignedWithCycle(t.timeBlock, timeline)) return false;
-          const others = pAssignments.filter(x => x.id !== a.id);
-          if (!hasAdanitPreGap(t.timeBlock.start, others, taskMap)) return false;
-        } else {
-          for (const ph of timeline) {
-            if ((ph.phase === L1CyclePhase.Rest8 || ph.phase === L1CyclePhase.Rest16) &&
-                blocksOverlap(t.timeBlock, { start: ph.start, end: ph.end })) return false;
-          }
-        }
-      }
-    }
-  }
-
   return true;
 }
 
@@ -666,8 +587,6 @@ export function localSearchOptimize(
   participants: Participant[],
   assignments: Assignment[],
   config: SchedulerConfig,
-  l1CycleStates?: Map<string, L1CycleState>,
-  weekEnd?: Date,
 ): Assignment[] {
   let current = [...assignments.map((a) => ({ ...a }))];
   let currentScore = computeScheduleScore(tasks, participants, current, config);
@@ -730,7 +649,7 @@ export function localSearchOptimize(
         candidate[j] = { ...candidate[j], participantId: ai.participantId, updatedAt: new Date() };
 
         // P1: Delta validation — only check constraints for the 2 swapped participants
-        if (!isSwapFeasible(candidate, i, j, taskMap, pMap, l1CycleStates, weekEnd)) continue;
+        if (!isSwapFeasible(candidate, i, j, taskMap, pMap)) continue;
 
         // Score the candidate
         const candidateScore = computeScheduleScore(tasks, participants, candidate, config);
@@ -768,13 +687,10 @@ export interface OptimizationResult {
   unfilledSlots: { taskId: string; slotId: string; reason: string }[];
   iterations: number;
   durationMs: number;
-  /** L1 cycle states used during optimization (for validation and UI) */
-  l1CycleStates?: Map<string, L1CycleState>;
 }
 
 /**
  * Full optimization pipeline: greedy + local search.
- * For multi-day schedules, initializes L1 cycle tracking.
  */
 export function optimize(
   tasks: Task[],
@@ -784,29 +700,8 @@ export function optimize(
 ): OptimizationResult {
   const startTime = Date.now();
 
-  // Determine scheduling window bounds
-  const sortedTasks = [...tasks].sort(
-    (a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime(),
-  );
-  const weekStart = sortedTasks.length > 0 ? sortedTasks[0].timeBlock.start : new Date();
-  const weekEnd = sortedTasks.length > 0
-    ? sortedTasks[sortedTasks.length - 1].timeBlock.end
-    : new Date();
-
-  // Initialize L1 cycle states for all L1 participants
-  const l1Participants = participants.filter(p => p.level === Level.L1);
-  const l1CycleStates = l1Participants.length > 0
-    ? initializeL1Cycles(l1Participants, weekStart)
-    : new Map<string, L1CycleState>();
-
-  // Pre-compute L1 cycle timelines for eligibility checks
-  const l1CycleTimelines = new Map<string, CycleTimeline>();
-  for (const [pid, state] of l1CycleStates) {
-    l1CycleTimelines.set(pid, getFullCycleTimeline(state, weekEnd));
-  }
-
-  // Phase 1: Greedy construction (with L1 cycle awareness)
-  const greedy = greedyAssign(tasks, participants, lockedAssignments, l1CycleTimelines);
+  // Phase 1: Greedy construction
+  const greedy = greedyAssign(tasks, participants, lockedAssignments);
 
   // Phase 2: Local search improvement
   const improved = localSearchOptimize(
@@ -814,12 +709,10 @@ export function optimize(
     participants,
     greedy.assignments,
     config,
-    l1CycleStates,
-    weekEnd,
   );
 
-  // Validate final result (with L1 cycle enforcement)
-  const validation = validateHardConstraints(tasks, participants, improved, l1CycleStates, weekEnd);
+  // Validate final result
+  const validation = validateHardConstraints(tasks, participants, improved);
   const score = computeScheduleScore(tasks, participants, improved, config);
 
   return {
@@ -829,7 +722,6 @@ export function optimize(
     unfilledSlots: greedy.unfilledSlots,
     iterations: 0,
     durationMs: Date.now() - startTime,
-    l1CycleStates: l1CycleStates.size > 0 ? l1CycleStates : undefined,
   };
 }
 

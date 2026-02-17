@@ -19,8 +19,8 @@ import {
 import {
   computeAllRestProfiles,
   computeRestFairness,
-  ParticipantRestProfile,
 } from '../web/utils/rest-calculator';
+import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 
 // ─── Individual Penalty Functions ────────────────────────────────────────────
 
@@ -64,63 +64,33 @@ export function workloadImbalancePenalty(
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
 
-  const counts: number[] = participants.map((p) => {
-    return assignments.filter((a) => {
+  const effectiveLoads: number[] = participants.map((p) => {
+    let effectiveHours = 0;
+    for (const a of assignments) {
+      if (a.participantId !== p.id) continue;
       const task = taskMap.get(a.taskId);
-      return a.participantId === p.id && task && !task.isLight;
-    }).length;
+      if (!task) continue;
+      effectiveHours += computeTaskEffectiveHours(task);
+    }
+    return effectiveHours;
   });
 
-  if (counts.length === 0) return 0;
-  const avg = counts.reduce((a, b) => a + b, 0) / counts.length;
-  const variance = counts.reduce((sum, c) => sum + (c - avg) ** 2, 0) / counts.length;
+  if (effectiveLoads.length === 0) return 0;
+  const avg = effectiveLoads.reduce((a, b) => a + b, 0) / effectiveLoads.length;
+  const variance = effectiveLoads.reduce((sum, c) => sum + (c - avg) ** 2, 0) / effectiveLoads.length;
   return Math.sqrt(variance) * 2; // Scaled penalty
 }
 
 /**
- * SC-4: Per-level workload fairness for multi-day schedules.
- * Participants at the same level should work roughly the same number of hours.
- * Returns a penalty for cross-level imbalance within each level group.
+ * SC-4: Legacy per-level fairness penalty.
+ * Removed to keep all participants in a single homogeneous fairness pool.
  */
 export function levelWorkloadFairnessPenalty(
-  participants: Participant[],
-  assignments: Assignment[],
-  tasks: Task[],
+  _participants: Participant[],
+  _assignments: Assignment[],
+  _tasks: Task[],
 ): number {
-  const taskMap = new Map<string, Task>();
-  for (const t of tasks) taskMap.set(t.id, t);
-
-  // Group participants by level
-  const byLevel = new Map<number, Participant[]>();
-  for (const p of participants) {
-    const arr = byLevel.get(p.level) || [];
-    arr.push(p);
-    byLevel.set(p.level, arr);
-  }
-
-  let totalPenalty = 0;
-
-  for (const [_level, levelParticipants] of byLevel) {
-    if (levelParticipants.length <= 1) continue;
-
-    const hours = levelParticipants.map((p) => {
-      let h = 0;
-      for (const a of assignments) {
-        if (a.participantId !== p.id) continue;
-        const task = taskMap.get(a.taskId);
-        if (!task || task.isLight) continue;
-        h += (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
-      }
-      return h;
-    });
-
-    const avg = hours.reduce((a, b) => a + b, 0) / hours.length;
-    if (avg === 0) continue;
-    const variance = hours.reduce((sum, h) => sum + (h - avg) ** 2, 0) / hours.length;
-    totalPenalty += Math.sqrt(variance);
-  }
-
-  return totalPenalty;
+  return 0;
 }
 
 /**
@@ -129,8 +99,7 @@ export function levelWorkloadFairnessPenalty(
  *
  * This is a SOFT constraint only: the optimizer will prefer schedules
  * with breathing room between shifts, but will never leave a slot
- * unassigned just to create a gap. L1 participants are excluded
- * because their hard 8-8-8-16 cycle already enforces rest.
+ * unassigned just to create a gap.
  */
 export function backToBackPenalty(
   participants: Participant[],
@@ -144,8 +113,6 @@ export function backToBackPenalty(
   let penalty = 0;
 
   for (const p of participants) {
-    // L1 excluded — hard cycle constraints handle their rest
-    if (p.level === Level.L1) continue;
 
     // Gather this participant's non-light tasks sorted by start
     const pTasks: Task[] = [];
@@ -215,7 +182,6 @@ export function collectSoftWarnings(
   const btbTaskMap = new Map<string, Task>();
   for (const t of tasks) btbTaskMap.set(t.id, t);
   for (const p of participants) {
-    if (p.level === Level.L1) continue; // Hard cycle handles L1 rest
     const pTasks: Task[] = [];
     for (const a of assignments) {
       if (a.participantId !== p.id) continue;
@@ -252,9 +218,33 @@ export function computeScheduleScore(
   assignments: Assignment[],
   config: SchedulerConfig,
 ): ScheduleScore {
-  // Rest fairness
+  // Rest metrics (still used for min/avg rest reporting)
   const profiles = computeAllRestProfiles(participants, assignments, tasks);
   const fairness = computeRestFairness(profiles);
+
+  // Effective-load fairness (used for fairness sigma and optimizer objective)
+  const taskMap = new Map<string, Task>();
+  for (const t of tasks) taskMap.set(t.id, t);
+
+  const effectiveLoads: number[] = participants.map((p) => {
+    let total = 0;
+    for (const a of assignments) {
+      if (a.participantId !== p.id) continue;
+      const task = taskMap.get(a.taskId);
+      if (!task) continue;
+      total += computeTaskEffectiveHours(task);
+    }
+    return total;
+  });
+  const effectiveAvg =
+    effectiveLoads.length > 0
+      ? effectiveLoads.reduce((sum, value) => sum + value, 0) / effectiveLoads.length
+      : 0;
+  const effectiveVar =
+    effectiveLoads.length > 0
+      ? effectiveLoads.reduce((sum, value) => sum + (value - effectiveAvg) ** 2, 0) / effectiveLoads.length
+      : 0;
+  const effectiveStdDev = Math.sqrt(effectiveVar);
 
   // Penalties
   let totalPenalty = 0;
@@ -290,7 +280,7 @@ export function computeScheduleScore(
   // Composite score
   const minRest = isFinite(fairness.globalMinRest) ? fairness.globalMinRest : 0;
   const avgRest = isFinite(fairness.globalAvgRest) ? fairness.globalAvgRest : 0;
-  const stdDev = fairness.stdDevRest;
+  const stdDev = effectiveStdDev;
 
   const compositeScore =
     config.minRestWeight * minRest -

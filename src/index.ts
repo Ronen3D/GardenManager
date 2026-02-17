@@ -13,7 +13,6 @@ export {
   ViolationSeverity,
   AdanitTeam,
   PreflightSeverity,
-  L1CyclePhase,
   DEFAULT_CONFIG,
 } from './models/types';
 
@@ -41,7 +40,6 @@ export type {
   TaskTemplate,
   PreflightFinding,
   PreflightResult,
-  L1CycleState,
   WeekConfig,
 } from './models/types';
 
@@ -96,14 +94,6 @@ export {
   computeRestFairness,
 } from './web/utils/rest-calculator';
 export type { ParticipantRestProfile } from './web/utils/rest-calculator';
-
-export {
-  initializeL1Cycles,
-  getFullCycleTimeline,
-  isTaskAlignedWithCycle,
-  computeWeeklyWorkloads,
-  CYCLE_PERIOD_HOURS,
-} from './web/utils/l1-cycle';
 
 // ─── UI Bridge ───────────────────────────────────────────────────────────────
 export {

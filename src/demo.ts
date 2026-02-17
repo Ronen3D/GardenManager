@@ -47,7 +47,7 @@ const groupAlpha: Participant[] = [
   createP('a3', 'Alpha-03', Level.L0, [Certification.Nitzan, Certification.Hamama], 'Alpha'),
   createP('a4', 'Alpha-04', Level.L0, [], 'Alpha'),
   createP('a5', 'Alpha-05', Level.L0, [], 'Alpha'),
-  createP('a6', 'Alpha-06', Level.L1, [Certification.Nitzan], 'Alpha'),
+  createP('a6', 'Alpha-06', Level.L2, [Certification.Nitzan], 'Alpha'),
   createP('a7', 'Alpha-07', Level.L3, [Certification.Nitzan, Certification.Hamama], 'Alpha'),
   createP('a8', 'Alpha-08', Level.L4, [Certification.Hamama], 'Alpha'),
 ];
@@ -59,7 +59,7 @@ const groupBeta: Participant[] = [
   createP('b3', 'Beta-03', Level.L0, [Certification.Hamama], 'Beta'),
   createP('b4', 'Beta-04', Level.L0, [], 'Beta'),
   createP('b5', 'Beta-05', Level.L0, [], 'Beta'),
-  createP('b6', 'Beta-06', Level.L1, [], 'Beta'),
+  createP('b6', 'Beta-06', Level.L2, [], 'Beta'),
   createP('b7', 'Beta-07', Level.L3, [Certification.Hamama], 'Beta'),
   createP('b8', 'Beta-08', Level.L4, [], 'Beta'),
 ];
@@ -71,7 +71,7 @@ const groupGamma: Participant[] = [
   createP('g3', 'Gamma-03', Level.L2, [Certification.Nitzan], 'Gamma'),
   createP('g4', 'Gamma-04', Level.L0, [], 'Gamma'),
   createP('g5', 'Gamma-05', Level.L0, [], 'Gamma'),
-  createP('g6', 'Gamma-06', Level.L1, [Certification.Nitzan], 'Gamma'),
+  createP('g6', 'Gamma-06', Level.L2, [Certification.Nitzan], 'Gamma'),
   createP('g7', 'Gamma-07', Level.L3, [Certification.Nitzan], 'Gamma'),
   createP('g8', 'Gamma-08', Level.L4, [Certification.Hamama], 'Gamma'),
 ];

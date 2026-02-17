@@ -4,7 +4,7 @@
  * Layout: Day 1–7 navigation with a focused 24h grid per day,
  * a sticky Weekly Dashboard header showing global fairness & KPIs,
  * and a Participant Status sidebar with cumulative orange workload bars
- * and L1 cycle availability indicators.
+ * and per-participant workload indicators.
  *
  * Every manual change triggers full 7-day re-validation so cross-day
  * conflicts are caught immediately.
@@ -25,16 +25,11 @@ import {
   Assignment,
   SlotRequirement,
   AdanitTeam,
-  L1CyclePhase,
 } from '../index';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { computeAllRestProfiles, computeRestFairness } from './utils/rest-calculator';
 import { generateShiftBlocks } from './utils/time-utils';
-import {
-  computeWeeklyWorkloads,
-  getFullCycleTimeline,
-  isInRestPhase,
-} from './utils/l1-cycle';
+import { computeWeeklyWorkloads } from './workload-utils';
 
 import * as store from './config-store';
 import { runPreflight } from './preflight';
@@ -249,6 +244,8 @@ function generateTasksFromTemplates(): Task[] {
           requiredCount: slots.length,
           slots,
           isLight: tpl.isLight,
+          baseLoadWeight: tpl.baseLoadWeight,
+          loadWindows: (tpl.loadWindows ?? []).map((w) => ({ ...w })),
           sameGroupRequired: tpl.sameGroupRequired,
         });
       }
@@ -422,7 +419,7 @@ function renderWeeklyDashboard(schedule: Schedule): string {
  * Render the participant sidebar with:
  * - Cumulative 7-day workload bar (the "orange line")
  * - Per-day contribution tooltip
- * - L1 cycle status (rest/work indicator for upcoming days)
+ * - Day-by-day workload visibility
  */
 function renderParticipantSidebar(schedule: Schedule): string {
   const workloads = computeWeeklyWorkloads(schedule.participants, schedule.assignments, schedule.tasks);
@@ -433,55 +430,29 @@ function renderParticipantSidebar(schedule: Schedule): string {
   let totalHours = 0;
   let count = 0;
   for (const w of workloads.values()) {
-    totalHours += w.totalHours;
+    totalHours += w.effectiveHours;
     count++;
   }
   const avgHours = count > 0 ? totalHours / count : 0;
-
-  // Get L1 cycle states from engine
-  const l1CycleStates = engine?.getL1CycleStates() ?? new Map();
-  const weekEnd = engine?.getWeekEnd() ?? new Date();
 
   // Build task lookup once for all participants
   const sidebarTaskMap = new Map<string, Task>(schedule.tasks.map(t => [t.id, t]));
 
   // Build participant entries
   const entries = schedule.participants.map(p => {
-    const w = workloads.get(p.id) || { totalHours: 0, nonLightCount: 0 };
-    // Percentage = heavy-task hours / total period hours
-    const pctOfPeriod = totalPeriodHours > 0 ? (w.totalHours / totalPeriodHours) * 100 : 0;
+    const w = workloads.get(p.id) || { totalHours: 0, effectiveHours: 0, hotHours: 0, coldHours: 0, nonLightCount: 0 };
+    // Percentage = effective heavy load / total period hours
+    const pctOfPeriod = totalPeriodHours > 0 ? (w.effectiveHours / totalPeriodHours) * 100 : 0;
     const perDay = computePerDayHours(p.id, schedule, sidebarTaskMap);
 
-    // L1 cycle data
-    let cycleInfo: string | null = null;
-    const cycleState = l1CycleStates.get(p.id);
-    if (cycleState && p.level === Level.L1) {
-      const timeline = getFullCycleTimeline(cycleState, weekEnd);
-
-      // Build a mini cycle strip for this participant
-      let cycleDots = '';
-      for (let d = 1; d <= numDays; d++) {
-        const { start } = getDayWindow(d);
-        const mid = new Date(start.getTime() + 12 * 3600000); // Check mid-day
-        const restStatus = isInRestPhase(timeline, mid);
-        if (restStatus.inRest) {
-          const restEndStr = restStatus.restEndsAt ? fmt(restStatus.restEndsAt) : '';
-          cycleDots += `<span class="cycle-dot cycle-rest" title="Day ${d}: Mandatory rest${restEndStr ? ' until ' + restEndStr : ''}">R</span>`;
-        } else {
-          cycleDots += `<span class="cycle-dot cycle-work" title="Day ${d}: Available (work phase)">W</span>`;
-        }
-      }
-      cycleInfo = `<div class="cycle-strip" title="L1 Adanit Cycle (8-8-8-16)">${cycleDots}</div>`;
-    }
-
-    return { p, w, pctOfPeriod, perDay, cycleInfo };
-  }).sort((a, b) => b.w.totalHours - a.w.totalHours);
+    return { p, w, pctOfPeriod, perDay };
+  }).sort((a, b) => b.w.effectiveHours - a.w.effectiveHours);
 
   // Render
   let html = `<div class="participant-sidebar">
     <div class="sidebar-header">
       <h3>Participant Status</h3>
-      <div class="sidebar-avg">Avg: ${avgHours.toFixed(1)}h · ${numDays}d (${totalPeriodHours}h)</div>
+      <div class="sidebar-avg">Avg Effective: ${avgHours.toFixed(1)}h · ${numDays}d (${totalPeriodHours}h)</div>
     </div>
     <div class="sidebar-entries">`;
 
@@ -508,7 +479,8 @@ function renderParticipantSidebar(schedule: Schedule): string {
     const todayBarWidth = Math.min(todayRatio * 100 * (100 / 30), barWidth);
 
     // Diagnostic tooltip: raw math breakdown
-    const diagTooltip = `${entry.w.totalHours.toFixed(1)}h heavy / ${totalPeriodHours}h period = ${entry.pctOfPeriod.toFixed(1)}%\n` +
+    const diagTooltip = `${entry.w.effectiveHours.toFixed(1)}h effective / ${totalPeriodHours}h period = ${entry.pctOfPeriod.toFixed(1)}%\n` +
+      `Hot: ${entry.w.hotHours.toFixed(1)}h · Cold: ${entry.w.coldHours.toFixed(1)}h · Raw: ${entry.w.totalHours.toFixed(1)}h\n` +
       `Assignments: ${entry.w.nonLightCount} heavy tasks\n` +
       tooltipParts.join(' | ');
 
@@ -521,13 +493,12 @@ function renderParticipantSidebar(schedule: Schedule): string {
         <div class="sidebar-bar-bg" title="${diagTooltip}">
           <div class="sidebar-bar-fill ${barClass}" style="width:${barWidth}%"></div>
           <div class="sidebar-bar-today" style="width:${todayBarWidth}%"></div>
-          <span class="sidebar-bar-label">${entry.w.totalHours.toFixed(1)}h (${entry.pctOfPeriod.toFixed(1)}%)</span>
+          <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)}h eff (${entry.pctOfPeriod.toFixed(1)}%)</span>
         </div>
-        <span class="sidebar-today-tag" title="Today (Day ${currentDay}): ${todayHrs.toFixed(1)}h">
-          D${currentDay}: ${todayHrs.toFixed(1)}h
+        <span class="sidebar-today-tag" title="Today (Day ${currentDay}): ${todayHrs.toFixed(1)} raw h">
+          Raw D${currentDay}: ${todayHrs.toFixed(1)}h
         </span>
       </div>
-      ${entry.cycleInfo || ''}
     </div>`;
   }
 
@@ -1053,13 +1024,9 @@ function renderAll(): void {
     const p = currentSchedule.participants.find(pp => pp.id === _profileParticipantId);
     if (!p) { _viewMode = 'SCHEDULE_VIEW'; _profileParticipantId = null; /* fall through */ }
     else {
-      const l1CycleStates = engine?.getL1CycleStates() ?? new Map();
-      const weekEnd = engine?.getWeekEnd() ?? new Date();
       const ctx: ProfileContext = {
         participant: p,
         schedule: currentSchedule,
-        l1CycleState: l1CycleStates.get(p.id),
-        weekEnd,
       };
 
       app.innerHTML = `<div class="profile-view-root">${renderProfileView(ctx)}</div>`;

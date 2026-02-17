@@ -26,16 +26,16 @@ function nextTaskId(prefix: string): string {
 
 // ─── Adanit ──────────────────────────────────────────────────────────────────
 // 8h, 3 shifts per day (05:00 cycle). 2 teams (Segol Main / Secondary).
-// All 8 participants MUST have Nitzan certification.
-// Segol Main: 2× L0, 1× L1, 1× L3/L4.
-// Segol Secondary: 2× L0, 1× L1, 1× L2/L3/L4.
-// Group constraint: all 8 participants in a shift must be from the same group.
+// All 6 participants MUST have Nitzan certification.
+// Segol Main: 2× L0, 1× L3/L4.
+// Segol Secondary: 2× L0, 1× L2/L3/L4.
+// Group constraint: all 6 participants in a shift must be from the same group.
 
 /**
- * Build slots for a single Adanit shift (both teams combined = 8 slots).
+ * Build slots for a single Adanit shift (both teams combined = 6 slots).
  *
- * Segol Main: 2× L0, 1× L1 (exactly), 1× L3+ (L3/L4)
- * Segol Secondary: 2× L0, 1× L1 (exactly), 1× L2+ (L2/L3/L4)
+ * Segol Main: 2× L0, 1× L3+ (L3/L4)
+ * Segol Secondary: 2× L0, 1× L2+ (L2/L3/L4)
  *
  * All slots require Nitzan certification.
  */
@@ -53,14 +53,6 @@ function buildAdanitSlots(): SlotRequirement[] {
       label: `Segol Main L0 #${i + 1}`,
     });
   }
-  // Segol Main: 1× L1
-  slots.push({
-    slotId: nextSlotId(prefix),
-    acceptableLevels: [Level.L1],
-    requiredCertifications: [Certification.Nitzan],
-    adanitTeam: AdanitTeam.SegolMain,
-    label: 'Segol Main L1',
-  });
   // Segol Main: 1× L3/L4
   slots.push({
     slotId: nextSlotId(prefix),
@@ -80,14 +72,6 @@ function buildAdanitSlots(): SlotRequirement[] {
       label: `Segol Secondary L0 #${i + 1}`,
     });
   }
-  // Segol Secondary: 1× L1
-  slots.push({
-    slotId: nextSlotId(prefix),
-    acceptableLevels: [Level.L1],
-    requiredCertifications: [Certification.Nitzan],
-    adanitTeam: AdanitTeam.SegolSecondary,
-    label: 'Segol Secondary L1',
-  });
   // Segol Secondary: 1× L2/L3/L4
   slots.push({
     slotId: nextSlotId(prefix),
@@ -119,7 +103,7 @@ export function createAdanitTasks(baseDate: Date): Task[] {
       type: TaskType.Adanit,
       name: `Adanit Shift ${i + 1}`,
       timeBlock: block,
-      requiredCount: 8,
+      requiredCount: 6,
       slots,
       isLight: false,
       sameGroupRequired: true,
@@ -141,7 +125,7 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
     slots: [
       {
         slotId: nextSlotId('hamama'),
-        acceptableLevels: [Level.L0, Level.L1, Level.L3],
+        acceptableLevels: [Level.L0, Level.L3],
         requiredCertifications: [Certification.Hamama],
         label: 'Hamama Operator',
       },
@@ -164,13 +148,13 @@ export function createShemeshTask(timeBlock: TimeBlock): Task {
     slots: [
       {
         slotId: nextSlotId('shemesh'),
-        acceptableLevels: [Level.L0, Level.L1, Level.L2, Level.L3],
+        acceptableLevels: [Level.L0, Level.L2, Level.L3],
         requiredCertifications: [Certification.Nitzan],
         label: 'Shemesh #1',
       },
       {
         slotId: nextSlotId('shemesh'),
-        acceptableLevels: [Level.L0, Level.L1, Level.L2, Level.L3],
+        acceptableLevels: [Level.L0, Level.L2, Level.L3],
         requiredCertifications: [Certification.Nitzan],
         label: 'Shemesh #2',
       },
@@ -212,6 +196,8 @@ export function createMamteraTask(baseDate: Date): Task {
 
 // ─── Karov ───────────────────────────────────────────────────────────────────
 // 8h, 4 participants: 1× L2/L3/L4, 3× L0 (one L0 must have Salsala).
+// Load weighting: hot windows 05:00-06:30 and 17:00-18:30 at 100%,
+// outside windows at 20% effective load.
 
 export function createKarovTask(timeBlock: TimeBlock): Task {
   return {
@@ -247,6 +233,25 @@ export function createKarovTask(timeBlock: TimeBlock): Task {
       },
     ],
     isLight: false,
+    baseLoadWeight: 0.2,
+    loadWindows: [
+      {
+        id: 'karov-hot-am',
+        startHour: 5,
+        startMinute: 0,
+        endHour: 6,
+        endMinute: 30,
+        weight: 1,
+      },
+      {
+        id: 'karov-hot-pm',
+        startHour: 17,
+        startMinute: 0,
+        endHour: 18,
+        endMinute: 30,
+        weight: 1,
+      },
+    ],
     sameGroupRequired: false,
   };
 }

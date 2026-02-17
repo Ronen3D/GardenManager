@@ -19,7 +19,6 @@ import {
   ReScheduleRequest,
   AssignmentStatus,
   ViolationSeverity,
-  L1CycleState,
 } from '../models/types';
 import { validateHardConstraints } from '../constraints/hard-constraints';
 import { computeScheduleScore, collectSoftWarnings } from '../constraints/soft-constraints';
@@ -36,7 +35,6 @@ export class SchedulingEngine {
   private tasks: Map<string, Task> = new Map();
   private currentSchedule: Schedule | null = null;
   private config: SchedulerConfig;
-  private l1CycleStates: Map<string, L1CycleState> = new Map();
   private weekEnd: Date = new Date();
 
   constructor(config: Partial<SchedulerConfig> = {}) {
@@ -147,23 +145,13 @@ export class SchedulingEngine {
     }
 
     const result: OptimizationResult = optimize(tasks, participants, this.config);
-
-    // Store L1 cycle states for validation of manual changes
-    if (result.l1CycleStates) {
-      this.l1CycleStates = result.l1CycleStates;
-    }
     // Compute week end from tasks
     const sortedByEnd = [...tasks].sort(
       (a, b) => b.timeBlock.end.getTime() - a.timeBlock.end.getTime(),
     );
     this.weekEnd = sortedByEnd.length > 0 ? sortedByEnd[0].timeBlock.end : new Date();
 
-    // Collect all violations (with L1 cycle awareness)
-    const hardValidation = validateHardConstraints(
-      tasks, participants, result.assignments,
-      this.l1CycleStates.size > 0 ? this.l1CycleStates : undefined,
-      this.weekEnd,
-    );
+    const hardValidation = validateHardConstraints(tasks, participants, result.assignments);
     const softWarnings = collectSoftWarnings(tasks, participants, result.assignments);
 
     const allViolations: ConstraintViolation[] = [
@@ -233,21 +221,13 @@ export class SchedulingEngine {
       onProgress,
     );
 
-    // Store L1 cycle states for validation of manual changes
-    if (result.l1CycleStates) {
-      this.l1CycleStates = result.l1CycleStates;
-    }
     const sortedByEnd = [...tasks].sort(
       (a, b) => b.timeBlock.end.getTime() - a.timeBlock.end.getTime(),
     );
     this.weekEnd = sortedByEnd.length > 0 ? sortedByEnd[0].timeBlock.end : new Date();
 
     // Collect all violations
-    const hardValidation = validateHardConstraints(
-      tasks, participants, result.assignments,
-      this.l1CycleStates.size > 0 ? this.l1CycleStates : undefined,
-      this.weekEnd,
-    );
+    const hardValidation = validateHardConstraints(tasks, participants, result.assignments);
     const softWarnings = collectSoftWarnings(tasks, participants, result.assignments);
 
     const allViolations: ConstraintViolation[] = [
@@ -292,13 +272,6 @@ export class SchedulingEngine {
   }
 
   /**
-   * Get L1 cycle states used in the current schedule.
-   */
-  getL1CycleStates(): Map<string, L1CycleState> {
-    return this.l1CycleStates;
-  }
-
-  /**
    * Get the scheduling window end date.
    */
   getWeekEnd(): Date {
@@ -321,8 +294,6 @@ export class SchedulingEngine {
       this.currentSchedule.tasks,
       this.currentSchedule.participants,
       this.currentSchedule.assignments,
-      this.l1CycleStates.size > 0 ? this.l1CycleStates : undefined,
-      this.weekEnd,
     );
   }
 

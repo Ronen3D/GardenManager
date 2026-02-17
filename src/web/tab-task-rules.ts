@@ -14,13 +14,14 @@ import {
   SubTeamTemplate,
   PreflightSeverity,
   PreflightResult,
+  LoadWindow,
 } from '../models/types';
 import * as store from './config-store';
 import { runPreflight } from './preflight';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const LEVEL_OPTIONS = [Level.L0, Level.L1, Level.L2, Level.L3, Level.L4];
+const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
 const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala];
 const TASK_TYPE_OPTIONS = Object.values(TaskType);
 
@@ -42,6 +43,10 @@ function levelBadge(level: Level): string {
 function certBadge(cert: Certification): string {
   const colors: Record<string, string> = { Nitzan: '#16a085', Salsala: '#8e44ad', Hamama: '#c0392b' };
   return `<span class="badge badge-sm" style="background:${colors[cert] || '#7f8c8d'}">${cert}</span>`;
+}
+
+function fmtHm(h: number, m: number): string {
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -177,10 +182,13 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <label>Duration (h): <input class="input-sm" type="number" step="0.5" min="0.5" data-tpl-field="durationHours" value="${tpl.durationHours}" data-tid="${tpl.id}" /></label>
       <label>Shifts/Day: <input class="input-sm" type="number" min="1" max="12" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" /></label>
       <label>Start Hour: <input class="input-sm" type="number" min="0" max="23" data-tpl-field="startHour" value="${tpl.startHour}" data-tid="${tpl.id}" /></label>
+      <label>Base Load (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> Same Group</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> Light Task</label>
       <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">Apply</button>
     </div>`;
+
+    html += renderLoadWindowsEditor(tpl);
 
     // Sub-teams
     if (tpl.subTeams.length > 0) {
@@ -212,6 +220,45 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
   }
 
   html += `</div>`;
+  return html;
+}
+
+function renderLoadWindowsEditor(tpl: TaskTemplate): string {
+  const windows = tpl.loadWindows ?? [];
+  let html = `<h4 style="margin:12px 0 8px;">Load Windows (Hot Zones)</h4>`;
+
+  if (windows.length === 0) {
+    html += '<p class="text-muted" style="padding:4px 0;">No hot windows. Base load applies to the whole task.</p>';
+  } else {
+    html += `<table class="table table-slots" style="margin-bottom:8px;">
+      <thead><tr><th>Window</th><th>Weight</th><th></th></tr></thead>
+      <tbody>`;
+    for (const w of windows) {
+      html += `<tr>
+        <td>
+          <input class="input-sm" type="time" data-field="lw-edit-start" data-lwid="${w.id}" value="${fmtHm(w.startHour, w.startMinute)}" />
+          -
+          <input class="input-sm" type="time" data-field="lw-edit-end" data-lwid="${w.id}" value="${fmtHm(w.endHour, w.endMinute)}" />
+        </td>
+        <td><input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-edit-weight" data-lwid="${w.id}" value="${w.weight.toFixed(2)}" /></td>
+        <td>
+          <button class="btn-sm btn-primary" data-action="update-load-window" data-tid="${tpl.id}" data-lwid="${w.id}">Save</button>
+          <button class="btn-sm btn-danger-outline" data-action="remove-load-window" data-tid="${tpl.id}" data-lwid="${w.id}">✕</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+  }
+
+  html += `<div class="add-slot-form" style="margin-top:8px;">
+    <div class="form-row">
+      <label>Start <input class="input-sm" type="time" data-field="lw-start" value="05:00" /></label>
+      <label>End <input class="input-sm" type="time" data-field="lw-end" value="06:30" /></label>
+      <label>Weight (0-1) <input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" /></label>
+      <button class="btn-sm btn-primary" data-action="add-load-window" data-tid="${tpl.id}">Add Hot Window</button>
+    </div>
+  </div>`;
+
   return html;
 }
 
@@ -299,6 +346,7 @@ function renderAddTemplateForm(): string {
       <label>Duration (h): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
       <label>Shifts/Day: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
       <label>Start Hour: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="tpl-start" /></label>
+      <label>Base Load (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="tpl-base-load" /></label>
     </div>
     <div class="form-row">
       <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> Same Group Required</label>
@@ -336,12 +384,90 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const dur = parseFloat((body.querySelector('[data-tpl-field="durationHours"]') as HTMLInputElement)?.value || '8');
         const shifts = parseInt((body.querySelector('[data-tpl-field="shiftsPerDay"]') as HTMLInputElement)?.value || '1');
         const startH = parseInt((body.querySelector('[data-tpl-field="startHour"]') as HTMLInputElement)?.value || '6');
+        const baseLoad = parseFloat((body.querySelector('[data-tpl-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1');
         const sameGroup = (body.querySelector('[data-tpl-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
         const isLight = (body.querySelector('[data-tpl-field="isLight"]') as HTMLInputElement)?.checked || false;
 
         store.updateTaskTemplate(tid, {
           durationHours: dur, shiftsPerDay: shifts, startHour: startH,
+          baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
           sameGroupRequired: sameGroup, isLight,
+        });
+        rerender();
+        break;
+      }
+      case 'add-load-window': {
+        const tid = target.dataset.tid!;
+        const tpl = store.getTaskTemplate(tid);
+        if (!tpl) break;
+        const block = target.closest('.add-slot-form');
+        if (!block) break;
+
+        const start = (block.querySelector('[data-field="lw-start"]') as HTMLInputElement | null)?.value || '05:00';
+        const end = (block.querySelector('[data-field="lw-end"]') as HTMLInputElement | null)?.value || '06:30';
+        const weight = parseFloat((block.querySelector('[data-field="lw-weight"]') as HTMLInputElement | null)?.value || '1');
+
+        const [sh, sm] = start.split(':').map((n) => parseInt(n, 10));
+        const [eh, em] = end.split(':').map((n) => parseInt(n, 10));
+        if ([sh, sm, eh, em].some(Number.isNaN)) break;
+
+        const newWindow: LoadWindow = {
+          id: `lw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          startHour: sh,
+          startMinute: sm,
+          endHour: eh,
+          endMinute: em,
+          weight: Math.max(0, Math.min(1, weight)),
+        };
+
+        store.updateTaskTemplate(tid, {
+          loadWindows: [...(tpl.loadWindows || []), newWindow],
+        });
+        rerender();
+        break;
+      }
+      case 'update-load-window': {
+        const tid = target.dataset.tid!;
+        const lwid = target.dataset.lwid!;
+        const tpl = store.getTaskTemplate(tid);
+        if (!tpl) break;
+
+        const body = target.closest('.template-body') as HTMLElement | null;
+        if (!body) break;
+        const startInput = body.querySelector(`[data-field="lw-edit-start"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
+        const endInput = body.querySelector(`[data-field="lw-edit-end"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
+        const weightInput = body.querySelector(`[data-field="lw-edit-weight"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
+        if (!startInput || !endInput || !weightInput) break;
+
+        const [sh, sm] = startInput.value.split(':').map((n) => parseInt(n, 10));
+        const [eh, em] = endInput.value.split(':').map((n) => parseInt(n, 10));
+        const weight = parseFloat(weightInput.value || '1');
+        if ([sh, sm, eh, em].some(Number.isNaN)) break;
+
+        store.updateTaskTemplate(tid, {
+          loadWindows: (tpl.loadWindows || []).map((w) =>
+            w.id === lwid
+              ? {
+                  ...w,
+                  startHour: sh,
+                  startMinute: sm,
+                  endHour: eh,
+                  endMinute: em,
+                  weight: Math.max(0, Math.min(1, weight)),
+                }
+              : w,
+          ),
+        });
+        rerender();
+        break;
+      }
+      case 'remove-load-window': {
+        const tid = target.dataset.tid!;
+        const lwid = target.dataset.lwid!;
+        const tpl = store.getTaskTemplate(tid);
+        if (!tpl) break;
+        store.updateTaskTemplate(tid, {
+          loadWindows: (tpl.loadWindows || []).filter((w) => w.id !== lwid),
         });
         rerender();
         break;
@@ -443,6 +569,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const dur = parseFloat((form.querySelector('[data-field="tpl-duration"]') as HTMLInputElement)?.value || '8');
         const shifts = parseInt((form.querySelector('[data-field="tpl-shifts"]') as HTMLInputElement)?.value || '1');
         const startH = parseInt((form.querySelector('[data-field="tpl-start"]') as HTMLInputElement)?.value || '6');
+        const baseLoad = parseFloat((form.querySelector('[data-field="tpl-base-load"]') as HTMLInputElement)?.value || '1');
         const sameGroup = (form.querySelector('[data-field="tpl-samegroup"]') as HTMLInputElement)?.checked || false;
         const isLight = (form.querySelector('[data-field="tpl-light"]') as HTMLInputElement)?.checked || false;
         const desc = (form.querySelector('[data-field="tpl-desc"]') as HTMLInputElement)?.value.trim();
@@ -455,6 +582,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           startHour: startH,
           sameGroupRequired: sameGroup,
           isLight,
+          baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
+          loadWindows: [],
           subTeams: [],
           slots: [],
           description: desc || undefined,

@@ -4,7 +4,7 @@
  * Shows a detailed per-participant view with:
  * - Top bar: Name, Level, Group, Status
  * - Personal 7-day agenda
- * - L1 Adanit cycle visualization (if applicable)
+ * - Personal unavailability and workload distribution
  * - Unavailability / blackout section
  * - Weekly workload metrics & per-task-type breakdown
  */
@@ -17,16 +17,7 @@ import {
   Schedule,
   Task,
   Assignment,
-  L1CyclePhase,
-  L1CycleState,
-  DateUnavailability,
 } from '../models/types';
-import {
-  getFullCycleTimeline,
-  isInRestPhase,
-  PHASE_DURATIONS,
-  CYCLE_PERIOD_HOURS,
-} from './utils/l1-cycle';
 import * as store from './config-store';
 import { computeTaskBreakdown } from './workload-utils';
 
@@ -79,8 +70,6 @@ function taskTypeBadge(type: TaskType): string {
 export interface ProfileContext {
   participant: Participant;
   schedule: Schedule;
-  l1CycleState: L1CycleState | undefined;
-  weekEnd: Date;
 }
 
 export function renderProfileView(ctx: ProfileContext): string {
@@ -104,12 +93,9 @@ export function renderProfileView(ctx: ProfileContext): string {
   // ── Main Grid ──
   html += '<div class="profile-grid">';
 
-  // Left column: Agenda + L1 Cycle
+  // Left column: Agenda
   html += '<div class="profile-left">';
   html += renderPersonalAgenda(p, myTasks, numDays, baseDate);
-  if (p.level === Level.L1 && ctx.l1CycleState) {
-    html += renderL1CycleVisualization(ctx.l1CycleState, ctx.weekEnd, numDays, baseDate);
-  }
   html += '</div>';
 
   // Right column: Unavailability + Metrics
@@ -128,27 +114,14 @@ export function renderProfileView(ctx: ProfileContext): string {
 function renderTopBar(
   p: Participant,
   myTasks: Array<{ assignment: Assignment; task: Task }>,
-  ctx: ProfileContext,
+  _ctx: ProfileContext,
 ): string {
   // Determine status
   let statusText = 'Available';
   let statusClass = 'status-available';
 
-  if (p.level === Level.L1 && ctx.l1CycleState) {
-    const timeline = getFullCycleTimeline(ctx.l1CycleState, ctx.weekEnd);
-    const now = new Date();
-    const restCheck = isInRestPhase(timeline, now);
-    if (restCheck.inRest) {
-      statusText = `Absolute Rest (until ${fmt(restCheck.restEndsAt!)})`;
-      statusClass = 'status-rest';
-    } else {
-      statusText = 'Active in Adanit Cycle';
-      statusClass = 'status-active';
-    }
-  }
-
   const adanitTasks = myTasks.filter(x => x.task.type === TaskType.Adanit);
-  if (adanitTasks.length > 0 && p.level !== Level.L1) {
+  if (adanitTasks.length > 0) {
     statusText = 'Assigned to Adanit';
     statusClass = 'status-active';
   }
@@ -183,14 +156,14 @@ function renderTopBar(
       </div>
       <div class="profile-kpi">
         <span class="profile-kpi-value">${computeHeavyHours(myTasks).toFixed(1)}h</span>
-        <span class="profile-kpi-label">Weekly Hours</span>
+        <span class="profile-kpi-label">Effective Load</span>
       </div>
     </div>
   </div>`;
 }
 
 function computeHeavyHours(myTasks: Array<{ assignment: Assignment; task: Task }>): number {
-  return computeTaskBreakdown(myTasks).heavyHours;
+  return computeTaskBreakdown(myTasks).effectiveHeavyHours;
 }
 
 // ─── Personal Agenda ─────────────────────────────────────────────────────────
@@ -263,89 +236,6 @@ function renderPersonalAgenda(
   return html;
 }
 
-// ─── L1 Cycle Visualization ──────────────────────────────────────────────────
-
-function renderL1CycleVisualization(
-  cycleState: L1CycleState,
-  weekEnd: Date,
-  numDays: number,
-  baseDate: Date,
-): string {
-  const timeline = getFullCycleTimeline(cycleState, weekEnd);
-  const DAY_START_HOUR = 5;
-
-  // Total timeline span in ms
-  const schedStart = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), DAY_START_HOUR, 0);
-  const schedEnd = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + numDays, DAY_START_HOUR, 0);
-  const totalMs = schedEnd.getTime() - schedStart.getTime();
-
-  if (totalMs <= 0) return '';
-
-  let html = `<div class="profile-card">
-    <h3 class="profile-card-title">🔄 L1 Adanit Cycle (8-8-8-16)</h3>
-    <p class="profile-card-subtitle">Stagger Group: ${cycleState.staggerIndex} · Cycle Period: ${CYCLE_PERIOD_HOURS}h</p>
-    <div class="l1-timeline-container">`;
-
-  // Day boundary markers
-  html += '<div class="l1-timeline-days">';
-  for (let d = 0; d <= numDays; d++) {
-    const pos = (d / numDays) * 100;
-    const dayDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d);
-    const label = d < numDays ? `D${d + 1}` : '';
-    html += `<span class="l1-day-marker" style="left:${pos}%">${label}</span>`;
-  }
-  html += '</div>';
-
-  // Phase blocks
-  html += '<div class="l1-timeline-bar">';
-  for (const entry of timeline) {
-    const entryStart = Math.max(entry.start.getTime(), schedStart.getTime());
-    const entryEnd = Math.min(entry.end.getTime(), schedEnd.getTime());
-    if (entryEnd <= entryStart) continue;
-
-    const left = ((entryStart - schedStart.getTime()) / totalMs) * 100;
-    const width = ((entryEnd - entryStart) / totalMs) * 100;
-
-    let phaseClass: string;
-    let phaseLabel: string;
-    switch (entry.phase) {
-      case L1CyclePhase.Work1:
-        phaseClass = 'l1-phase-work';
-        phaseLabel = 'W1';
-        break;
-      case L1CyclePhase.Work2:
-        phaseClass = 'l1-phase-work';
-        phaseLabel = 'W2';
-        break;
-      case L1CyclePhase.Rest8:
-        phaseClass = 'l1-phase-rest8';
-        phaseLabel = 'R8';
-        break;
-      case L1CyclePhase.Rest16:
-        phaseClass = 'l1-phase-rest16';
-        phaseLabel = 'R16';
-        break;
-    }
-
-    const durationH = (entryEnd - entryStart) / 3600000;
-    const tooltip = `${phaseLabel} (${entry.phase})\n${fmt(entry.start)} – ${fmt(entry.end)}\n${durationH.toFixed(0)}h`;
-    html += `<div class="l1-phase-block ${phaseClass}" style="left:${left}%;width:${width}%" title="${tooltip}">
-      <span class="l1-phase-label">${width > 3 ? phaseLabel : ''}</span>
-    </div>`;
-  }
-  html += '</div>';
-
-  // Legend
-  html += `<div class="l1-legend">
-    <span class="l1-legend-item"><span class="l1-legend-swatch l1-phase-work"></span> Work (8h)</span>
-    <span class="l1-legend-item"><span class="l1-legend-swatch l1-phase-rest8"></span> Rest 8h</span>
-    <span class="l1-legend-item"><span class="l1-legend-swatch l1-phase-rest16"></span> Absolute Rest 16h</span>
-  </div>`;
-
-  html += '</div></div>';
-  return html;
-}
-
 // ─── Unavailability Section ──────────────────────────────────────────────────
 
 function renderUnavailabilitySection(p: Participant): string {
@@ -409,24 +299,36 @@ function renderMetrics(
   const totalPeriodHours = numDays * 24;
 
   // Shared breakdown utility (R1)
-  const { heavyHours, lightHours, typeHours, typeCounts } = computeTaskBreakdown(myTasks);
+  const { heavyHours, effectiveHeavyHours, hotHours, coldHours, lightHours, typeHours, typeEffectiveHours, typeCounts } = computeTaskBreakdown(myTasks);
 
-  const pctOfPeriod = totalPeriodHours > 0 ? (heavyHours / totalPeriodHours) * 100 : 0;
+  const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
   const workloadClass = pctOfPeriod > 25 ? 'metric-danger' : pctOfPeriod > 18 ? 'metric-warning' : 'metric-ok';
 
   let html = `<div class="profile-card">
     <h3 class="profile-card-title">📊 Workload Metrics</h3>
     <div class="metrics-summary">
       <div class="metric-row">
-        <span class="metric-label">Heavy Hours</span>
-        <span class="metric-value">${heavyHours.toFixed(1)}h</span>
+        <span class="metric-label">Hot Time (100% load)</span>
+        <span class="metric-value">${hotHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">Light Hours</span>
+        <span class="metric-label">Cold Time (20% load)</span>
+        <span class="metric-value">${coldHours.toFixed(1)}h</span>
+      </div>
+      <div class="metric-row">
+        <span class="metric-label">Easy (Karovit)</span>
         <span class="metric-value">${lightHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">Workload % (of ${totalPeriodHours}h)</span>
+        <span class="metric-label">Effective Load</span>
+        <span class="metric-value">${effectiveHeavyHours.toFixed(1)}h</span>
+      </div>
+      <div class="metric-row">
+        <span class="metric-label">Raw Heavy Hours</span>
+        <span class="metric-value">${heavyHours.toFixed(1)}h</span>
+      </div>
+      <div class="metric-row">
+        <span class="metric-label">Workload % (effective of ${totalPeriodHours}h)</span>
         <span class="metric-value ${workloadClass}">${pctOfPeriod.toFixed(1)}%</span>
       </div>
     </div>
@@ -435,17 +337,17 @@ function renderMetrics(
     <div class="metrics-breakdown">`;
 
   // Bar chart for each task type
-  const maxHours = Math.max(...Object.values(typeHours), 1);
+  const maxHours = Math.max(...Object.values(typeEffectiveHours), 1);
   for (const tt of Object.values(TaskType)) {
     if (typeCounts[tt] === 0) continue;
     const color = TASK_COLORS[tt] || '#7f8c8d';
-    const barPct = (typeHours[tt] / maxHours) * 100;
+    const barPct = (typeEffectiveHours[tt] / maxHours) * 100;
     html += `<div class="breakdown-row">
       <span class="breakdown-label">${taskTypeBadge(tt as TaskType)}</span>
       <div class="breakdown-bar-bg">
         <div class="breakdown-bar-fill" style="width:${barPct}%;background:${color}"></div>
       </div>
-      <span class="breakdown-value">${typeCounts[tt]}× · ${typeHours[tt].toFixed(1)}h</span>
+      <span class="breakdown-value">${typeCounts[tt]}× · ${typeEffectiveHours[tt].toFixed(1)}h eff (${typeHours[tt].toFixed(1)}h raw)</span>
     </div>`;
   }
 

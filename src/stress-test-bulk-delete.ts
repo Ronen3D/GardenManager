@@ -87,7 +87,7 @@ for (let t = 0; t < 40; t++) {
     requiredCount: 5,
     slots: Array.from({ length: 5 }, (_, i) => ({
       slotId: `slot-${++slotCounter}`,
-      acceptableLevels: [Level.L0, Level.L1, Level.L2],
+      acceptableLevels: [Level.L0, Level.L2],
       requiredCertifications: [],
       label: `Slot ${i}`,
     })),

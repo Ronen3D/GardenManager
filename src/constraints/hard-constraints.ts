@@ -15,11 +15,8 @@ import {
   Level,
   Certification,
   ValidationResult,
-  L1CycleState,
-  L1CyclePhase,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
-import { isTaskAlignedWithCycle, getFullCycleTimeline, hasAdanitPreGap, ADANIT_PRE_GAP_HOURS } from '../web/utils/l1-cycle';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -175,6 +172,33 @@ export function checkL4Exclusion(
 }
 
 /**
+ * HC-11: Choresh exclusion — participants marked as "choresh" are strictly
+ * forbidden from being assigned to Mamtera tasks.
+ */
+export function checkChoreshExclusion(
+  task: Task,
+  assignedParticipants: Participant[],
+): ConstraintViolation[] {
+  if (task.type !== TaskType.Mamtera) return [];
+
+  const violations: ConstraintViolation[] = [];
+  for (const p of assignedParticipants) {
+    if (p.chopidr) {
+      violations.push(
+        violation(
+          'CHORESH_FORBIDDEN_MAMTERA',
+          `${p.name} is marked as Choresh and is strictly forbidden from Mamtera task "${task.name}"`,
+          task.id,
+          undefined,
+          p.id,
+        ),
+      );
+    }
+  }
+  return violations;
+}
+
+/**
  * HC-5: No double-booking — a participant cannot be physically present in two
  * places at once. This applies to ALL tasks including light/Karovit.
  * Physical presence is a strictly exclusive constraint.
@@ -277,9 +301,9 @@ export function checkUniqueParticipantsPerTask(
  * HC-8: Adanit group feasibility — the assigned group must have enough participants
  * at the required levels AND all must hold Nitzan certification.
  *
- * Required: 4× L0, 2× L1, 1× L2+, 1× L3/L4 (total = 8)
- * Segol Main:      2× L0, 1× L1, 1× L3/L4
- * Segol Secondary:  2× L0, 1× L1, 1× L2+
+ * Required: 4× L0, 1× L2+, 1× L3/L4 (total = 6)
+ * Segol Main:      2× L0, 1× L3/L4
+ * Segol Secondary: 2× L0, 1× L2+
  */
 export function checkAdanitGroupFeasibility(
   task: Task,
@@ -293,11 +317,11 @@ export function checkAdanitGroupFeasibility(
   const nitzanHolders = groupParticipants.filter((p) =>
     p.certifications.includes(Certification.Nitzan),
   );
-  if (nitzanHolders.length < 8) {
+  if (nitzanHolders.length < 6) {
     violations.push(
       violation(
         'ADANIT_INSUFFICIENT_NITZAN',
-        `Adanit task ${task.name}: group needs at least 8 participants with Nitzan certification, found ${nitzanHolders.length}. Missing Nitzan for Adanit.`,
+        `Adanit task ${task.name}: group needs at least 6 participants with Nitzan certification, found ${nitzanHolders.length}. Missing Nitzan for Adanit.`,
         task.id,
       ),
     );
@@ -306,27 +330,17 @@ export function checkAdanitGroupFeasibility(
   const levels = groupParticipants.map((p) => p.level);
 
   const l0Count = levels.filter((l) => l === Level.L0).length;
-  const l1Count = levels.filter((l) => l === Level.L1).length;
   const l2PlusCount = levels.filter(
     (l) => l === Level.L2 || l === Level.L3 || l === Level.L4,
   ).length;
   const l3l4Count = levels.filter((l) => l === Level.L3 || l === Level.L4).length;
 
-  // Need: 4× L0 (2 per team), 2× L1 (1 per team), 1× L3/L4 (Segol Main), 1× L2+ (Segol Secondary)
+  // Need: 4× L0 (2 per team), 1× L3/L4 (Segol Main), 1× L2+ (Segol Secondary)
   if (l0Count < 4) {
     violations.push(
       violation(
         'ADANIT_INSUFFICIENT_L0',
         `Adanit task ${task.name}: group needs at least 4 L0 participants, found ${l0Count}. Missing L0 for Adanit.`,
-        task.id,
-      ),
-    );
-  }
-  if (l1Count < 2) {
-    violations.push(
-      violation(
-        'ADANIT_INSUFFICIENT_L1',
-        `Adanit task ${task.name}: group needs at least 2 L1 participants, found ${l1Count}. Missing L1 for Adanit.`,
         task.id,
       ),
     );
@@ -353,142 +367,16 @@ export function checkAdanitGroupFeasibility(
 
   return violations;
 }
-
-// ─── HC-9: L1 Adanit Cycle Enforcement ───────────────────────────────────────
-
-/**
- * HC-9: L1 participants assigned to Adanit must respect the 8-8-8-16 cycle.
- * Each Adanit assignment for an L1 must align with one of their work phases.
- * Additionally, no non-light task should be assigned during their mandatory rest.
- */
-export function checkL1CycleCompliance(
-  participant: Participant,
-  assignments: Assignment[],
-  tasks: Task[],
-  l1CycleStates: Map<string, L1CycleState>,
-  weekEnd: Date,
-  taskMap?: Map<string, Task>,
-): ConstraintViolation[] {
-  if (participant.level !== Level.L1) return [];
-
-  const cycleState = l1CycleStates.get(participant.id);
-  if (!cycleState) return []; // Not tracked (no Adanit involvement)
-
-  const violations: ConstraintViolation[] = [];
-  const timeline = getFullCycleTimeline(cycleState, weekEnd);
-
-  // P2: Reuse taskMap from caller when provided instead of rebuilding
-  const tMap = taskMap ?? (() => {
-    const m = new Map<string, Task>();
-    for (const t of tasks) m.set(t.id, t);
-    return m;
-  })();
-
-  const participantAssignments = assignments.filter(a => a.participantId === participant.id);
-
-  for (const a of participantAssignments) {
-    const task = tMap.get(a.taskId);
-    if (!task) continue;
-
-    if (task.type === TaskType.Adanit) {
-      // Adanit assignments must align with a work phase
-      if (!isTaskAlignedWithCycle(task.timeBlock, timeline)) {
-        violations.push(
-          violation(
-            'L1_CYCLE_MISALIGNED',
-            `L1 participant ${participant.name} assigned to "${task.name}" but this does not align with their 8-8-8-16 work phase.`,
-            task.id,
-            a.slotId,
-            participant.id,
-          ),
-        );
-      }
-    } else {
-      // L1 Absolute Rest: ALL tasks (including light/Karovit) during rest are violations.
-      // L1 participants must be 100% free during off-duty hours.
-      for (const phase of timeline) {
-        if (phase.phase === L1CyclePhase.Rest8 || phase.phase === L1CyclePhase.Rest16) {
-          if (blocksOverlap(task.timeBlock, { start: phase.start, end: phase.end })) {
-            violations.push(
-              violation(
-                'L1_REST_VIOLATION',
-                `L1 participant ${participant.name} assigned to "${task.name}" during mandatory ${phase.phase === L1CyclePhase.Rest8 ? '8h' : '16h'} rest period. L1 absolute rest — no exceptions.`,
-                task.id,
-                a.slotId,
-                participant.id,
-              ),
-            );
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  return violations;
-}
-// ─── HC-11: L1 Adanit Pre-Gap Rule ───────────────────────────────────────────────
-
-/**
- * HC-11: An L1 participant cannot start an Adanit shift unless they have had
- * at least 8 hours of zero assignments beforehand.
- * This ensures they arrive rested and ready for the demanding Adanit cycle.
- */
-export function checkL1AdanitPreGap(
-  participant: Participant,
-  assignments: Assignment[],
-  tasks: Task[],
-  taskMap?: Map<string, Task>,
-): ConstraintViolation[] {
-  if (participant.level !== Level.L1) return [];
-
-  const violations: ConstraintViolation[] = [];
-  // P2: Reuse taskMap from caller when provided instead of rebuilding
-  const tMap = taskMap ?? (() => {
-    const m = new Map<string, Task>();
-    for (const t of tasks) m.set(t.id, t);
-    return m;
-  })();
-
-  const participantAssignments = assignments.filter(a => a.participantId === participant.id);
-  const adanitAssignments = participantAssignments.filter(a => {
-    const t = tMap.get(a.taskId);
-    return t && t.type === TaskType.Adanit;
-  });
-
-  for (const a of adanitAssignments) {
-    const adanitTask = tMap.get(a.taskId)!;
-    const otherAssignments = participantAssignments.filter(x => x.id !== a.id);
-    if (!hasAdanitPreGap(adanitTask.timeBlock.start, otherAssignments, tMap)) {
-      violations.push(
-        violation(
-          'L1_PRE_GAP_VIOLATION',
-          `L1 participant ${participant.name} assigned to "${adanitTask.name}" without ${ADANIT_PRE_GAP_HOURS}h of free time beforehand. The pre-gap rule requires ${ADANIT_PRE_GAP_HOURS}h of zero assignments before any Adanit shift.`,
-          adanitTask.id,
-          a.slotId,
-          participant.id,
-        ),
-      );
-    }
-  }
-
-  return violations;
-}
 // ─── Aggregate Validation ────────────────────────────────────────────────────
 
 /**
  * Run ALL hard constraint checks against a complete schedule.
  * Returns aggregated violations — if any exist, the schedule is infeasible.
- *
- * @param l1CycleStates - Optional L1 cycle tracking states for HC-9 enforcement
- * @param weekEnd - End of the scheduling window (needed for cycle timeline)
  */
 export function validateHardConstraints(
   tasks: Task[],
   participants: Participant[],
   assignments: Assignment[],
-  l1CycleStates?: Map<string, L1CycleState>,
-  weekEnd?: Date,
 ): ValidationResult {
   const allViolations: ConstraintViolation[] = [];
   const pMap = buildParticipantMap(participants);
@@ -540,27 +428,14 @@ export function validateHardConstraints(
 
     // HC-10: L4 forbidden from Shemesh/Aruga/Hamama
     allViolations.push(...checkL4Exclusion(task, assignedParticipants));
+
+    // HC-11: Choresh forbidden from Mamtera
+    allViolations.push(...checkChoreshExclusion(task, assignedParticipants));
   }
 
   // HC-5: Double booking (per participant)
   for (const p of participants) {
     allViolations.push(...checkNoDoubleBooking(p.id, assignments, tMap));
-  }
-
-  // HC-9: L1 Adanit cycle compliance (when cycle states are provided)
-  if (l1CycleStates && weekEnd) {
-    for (const p of participants) {
-      if (p.level === Level.L1) {
-        allViolations.push(...checkL1CycleCompliance(p, assignments, tasks, l1CycleStates, weekEnd, tMap));
-      }
-    }
-  }
-
-  // HC-11: L1 Adanit pre-gap rule (8h free before Adanit)
-  for (const p of participants) {
-    if (p.level === Level.L1) {
-      allViolations.push(...checkL1AdanitPreGap(p, assignments, tasks, tMap));
-    }
   }
 
   return {

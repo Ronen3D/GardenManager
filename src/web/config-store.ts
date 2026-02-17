@@ -92,6 +92,7 @@ function captureSnapshot(): StoreSnapshot {
     ? structuredClone([...taskTemplates.values()])
     : [...taskTemplates.values()].map(tpl => ({
         ...tpl,
+        loadWindows: (tpl.loadWindows || []).map(w => ({ ...w })),
         slots: tpl.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
         subTeams: tpl.subTeams.map(st => ({
           ...st,
@@ -142,6 +143,7 @@ function restoreSnapshot(snap: StoreSnapshot): void {
     for (const tpl of snap.taskTemplates) {
       taskTemplates.set(tpl.id, {
         ...tpl,
+        loadWindows: (tpl.loadWindows || []).map(w => ({ ...w })),
         slots: tpl.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
         subTeams: tpl.subTeams.map(st => ({
           ...st,
@@ -303,6 +305,7 @@ function recalcAllAvailability(): void {
 export function addParticipant(data: {
   name: string; level?: Level;
   certifications?: Certification[]; group: string;
+  chopidr?: boolean;
 }): Participant {
   pushSnapshot();
   const id = uid('p');
@@ -312,6 +315,7 @@ export function addParticipant(data: {
     level: data.level ?? Level.L0,
     certifications: data.certifications ?? [Certification.Nitzan],
     group: data.group,
+    chopidr: data.chopidr ?? false,
     availability: getDefaultAvailability(),
     dateUnavailability: [],
   };
@@ -482,7 +486,12 @@ const taskTemplates: Map<string, TaskTemplate> = new Map();
 export function addTaskTemplate(tpl: Omit<TaskTemplate, 'id'>): TaskTemplate {
   pushSnapshot();
   const id = uid('tpl');
-  const full: TaskTemplate = { ...tpl, id };
+  const full: TaskTemplate = {
+    ...tpl,
+    id,
+    baseLoadWeight: tpl.isLight ? 0 : (tpl.baseLoadWeight ?? 1),
+    loadWindows: (tpl.loadWindows || []).map(w => ({ ...w })),
+  };
   taskTemplates.set(id, full);
   notify();
   return full;
@@ -493,6 +502,15 @@ export function updateTaskTemplate(id: string, patch: Partial<Omit<TaskTemplate,
   if (!tpl) return;
   pushSnapshot();
   Object.assign(tpl, patch);
+  if (patch.loadWindows) {
+    tpl.loadWindows = patch.loadWindows.map((w) => ({ ...w }));
+  }
+  if (patch.isLight !== undefined && patch.isLight) {
+    tpl.baseLoadWeight = 0;
+  }
+  if (patch.baseLoadWeight !== undefined && !tpl.isLight) {
+    tpl.baseLoadWeight = Math.max(0, Math.min(1, patch.baseLoadWeight));
+  }
   notify();
 }
 
@@ -571,12 +589,11 @@ export function removeSlotFromSubTeam(templateId: string, subTeamId: string, slo
 // ─── Seed Default Data ───────────────────────────────────────────────────────
 
 export function seedDefaultParticipants(): void {
-  // 4 Departments × 15 participants = 60 total
+  // 4 Departments × 12 participants = 48 total
   // Per department:
   //   1× L4 (Nitzan)
   //   1× L3 (Nitzan)
   //   3× L2 (Nitzan)
-  //   3× L1 (Nitzan)
   //   1× L0 + Salsala (Nitzan)
   //   2× L0 + Hamama (Nitzan)
   //   4× L0 standard (Nitzan)
@@ -591,9 +608,6 @@ export function seedDefaultParticipants(): void {
     { level: Level.L2, certs: [Certification.Nitzan], tag: 'L2' },
     { level: Level.L2, certs: [Certification.Nitzan], tag: 'L2' },
     { level: Level.L2, certs: [Certification.Nitzan], tag: 'L2' },
-    { level: Level.L1, certs: [Certification.Nitzan], tag: 'L1' },
-    { level: Level.L1, certs: [Certification.Nitzan], tag: 'L1' },
-    { level: Level.L1, certs: [Certification.Nitzan], tag: 'L1' },
     { level: Level.L0, certs: [Certification.Nitzan, Certification.Salsala], tag: 'L0-Salsala' },
     { level: Level.L0, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L0-Hamama' },
     { level: Level.L0, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L0-Hamama' },
@@ -632,12 +646,13 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 5,
     sameGroupRequired: true,
     isLight: false,
+    baseLoadWeight: 1,
+    loadWindows: [],
     subTeams: [
       {
         id: uid('st'), name: 'Segol Main', slots: [
           { id: uid('slot'), label: 'Segol Main L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'Segol Main L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'Segol Main L1', acceptableLevels: [Level.L1], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'Segol Main L3/L4', acceptableLevels: [Level.L3, Level.L4], requiredCertifications: [Certification.Nitzan] },
         ],
       },
@@ -645,13 +660,12 @@ export function seedDefaultTaskTemplates(): void {
         id: uid('st'), name: 'Segol Secondary', slots: [
           { id: uid('slot'), label: 'Segol Secondary L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'Segol Secondary L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'Segol Secondary L1', acceptableLevels: [Level.L1], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'Segol Secondary L2+', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [Certification.Nitzan] },
         ],
       },
     ],
     slots: [],
-    description: '8h shifts (05:00 cycle), 3/day. Two sub-teams. All 8 must have Nitzan. Same group.',
+    description: '8h shifts (05:00 cycle), 3/day. Two sub-teams. All 6 must have Nitzan. Same group.',
   });
 
   // Hamama
@@ -663,11 +677,13 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 6,
     sameGroupRequired: false,
     isLight: false,
+    baseLoadWeight: 1,
+    loadWindows: [],
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'Hamama Operator', acceptableLevels: [Level.L0, Level.L3], requiredCertifications: [Certification.Hamama] },
     ],
-    description: '12h shifts (06:00-18:00, 18:00-06:00). Requires Hamama cert. L1/L2 forbidden. No Nitzan req.',
+    description: '12h shifts (06:00-18:00, 18:00-06:00). Requires Hamama cert. L2/L4 forbidden. No Nitzan req.',
   });
 
   // Shemesh
@@ -679,10 +695,12 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 5,
     sameGroupRequired: false,
     isLight: false,
+    baseLoadWeight: 1,
+    loadWindows: [],
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'Shemesh #1', acceptableLevels: [Level.L0, Level.L1, Level.L2, Level.L3], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'Shemesh #2', acceptableLevels: [Level.L0, Level.L1, Level.L2, Level.L3], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'Shemesh #1', acceptableLevels: [Level.L0, Level.L2, Level.L3], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'Shemesh #2', acceptableLevels: [Level.L0, Level.L2, Level.L3], requiredCertifications: [Certification.Nitzan] },
     ],
     description: '4h shifts (05:00 cycle), 6/day. Requires Nitzan. Prefer same group (soft).',
   });
@@ -696,6 +714,8 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 9,
     sameGroupRequired: false,
     isLight: false,
+    baseLoadWeight: 1,
+    loadWindows: [],
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'Mamtera L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
@@ -713,6 +733,25 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 5,
     sameGroupRequired: false,
     isLight: false,
+    baseLoadWeight: 0.2,
+    loadWindows: [
+      {
+        id: uid('lw'),
+        startHour: 5,
+        startMinute: 0,
+        endHour: 6,
+        endMinute: 30,
+        weight: 1,
+      },
+      {
+        id: uid('lw'),
+        startHour: 17,
+        startMinute: 0,
+        endHour: 18,
+        endMinute: 30,
+        weight: 1,
+      },
+    ],
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'Karov Commander (L2+)', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
@@ -720,7 +759,7 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'Karov L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
       { id: uid('slot'), label: 'Karov L0 #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
-    description: '8h shifts (05:00 cycle), 3/day. 1× L2+, 1× L0 w/ Salsala, 2× L0.',
+    description: '8h shifts (05:00 cycle), 3/day. 1× L2+, 1× L0 w/ Salsala, 2× L0. Hot windows 05:00-06:30 and 17:00-18:30 at 100%; outside is 20% load.',
   });
 
   // Karovit
@@ -732,6 +771,8 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 5,
     sameGroupRequired: false,
     isLight: true,
+    baseLoadWeight: 0,
+    loadWindows: [],
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'Karovit Commander (L2+)', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
@@ -751,6 +792,8 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 5,
     sameGroupRequired: false,
     isLight: false,
+    baseLoadWeight: 1,
+    loadWindows: [],
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'Aruga L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },

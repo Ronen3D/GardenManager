@@ -8,6 +8,7 @@ import {
   Task,
   Assignment,
   Participant,
+  TaskType,
   ValidationResult,
   ConstraintViolation,
   ViolationSeverity,
@@ -130,6 +131,9 @@ export function getEligibleParticipantsForSlot(
     if (currentAssignments.some((a) => a.taskId === task.id && a.participantId === p.id)) {
       return false;
     }
+
+    // HC-11: Choresh exclusion from Mamtera
+    if (p.chopidr && task.type === TaskType.Mamtera) return false;
 
     return true;
   });

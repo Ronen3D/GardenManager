@@ -9,7 +9,6 @@
 /** Participant qualification levels */
 export enum Level {
   L0 = 0,
-  L1 = 1,
   L2 = 2,
   L3 = 3,
   L4 = 4,
@@ -94,6 +93,8 @@ export interface Participant {
   level: Level;
   certifications: Certification[];
   group: string;
+  /** If true, participant is strictly forbidden from Mamtera tasks. */
+  chopidr?: boolean;
   /** Time windows when participant is available */
   availability: AvailabilityWindow[];
   /** Date-specific unavailability rules (recurring or one-off) */
@@ -129,6 +130,10 @@ export interface Task {
   slots: SlotRequirement[];
   /** Whether this task is "light" (Karovit) — doesn't break rest */
   isLight: boolean;
+  /** Base load weight applied outside explicit load windows (0..1). */
+  baseLoadWeight?: number;
+  /** Optional weighted load windows within the task's timeline. */
+  loadWindows?: LoadWindow[];
   /** Group constraint: all participants must be from same group */
   sameGroupRequired: boolean;
   /** Optional: preferred group (soft constraint) */
@@ -173,7 +178,7 @@ export interface ScheduleScore {
   minRestHours: number;
   /** Average rest period (hours) */
   avgRestHours: number;
-  /** Standard deviation of rest periods — lower is fairer */
+  /** Standard deviation of effective load hours — lower is fairer */
   restStdDev: number;
   /** Sum of penalty points (Hamama level misuse, etc.) */
   totalPenalty: number;
@@ -306,6 +311,16 @@ export interface SlotTemplate {
   adanitTeam?: AdanitTeam;
 }
 
+/** Time-of-day load window with explicit weight (0..1). */
+export interface LoadWindow {
+  id: string;
+  startHour: number;
+  startMinute: number;
+  endHour: number;
+  endMinute: number;
+  weight: number;
+}
+
 /** A sub-team definition within a task template */
 export interface SubTeamTemplate {
   id: string;
@@ -328,42 +343,16 @@ export interface TaskTemplate {
   sameGroupRequired: boolean;
   /** Whether this is a light task */
   isLight: boolean;
+  /** Base load weight outside hot windows (0..1). */
+  baseLoadWeight?: number;
+  /** Optional weighted windows (typically "hot" windows). */
+  loadWindows?: LoadWindow[];
   /** Sub-teams (each has its own slots). If empty, slots are top-level */
   subTeams: SubTeamTemplate[];
   /** Top-level slots (used when there are no sub-teams) */
   slots: SlotTemplate[];
   /** Custom notes / description */
   description?: string;
-}
-
-// ─── L1 Adanit Cycle Types ───────────────────────────────────────────────────
-
-/** Phase within the L1 Adanit 8-8-8-16 cycle */
-export enum L1CyclePhase {
-  /** Working an 8h Adanit shift */
-  Work1 = 'Work1',
-  /** 8h mandatory rest after first work block */
-  Rest8 = 'Rest8',
-  /** Working the second 8h Adanit shift */
-  Work2 = 'Work2',
-  /** 16h mandatory rest after second work block */
-  Rest16 = 'Rest16',
-}
-
-/**
- * Tracks where an L1 participant is in their Adanit duty cycle.
- * Cycle: 8h Work → 8h Rest → 8h Work → 16h Rest → repeat (40h total period)
- */
-export interface L1CycleState {
-  participantId: string;
-  /** Current phase */
-  phase: L1CyclePhase;
-  /** When this phase started */
-  phaseStart: Date;
-  /** When this phase ends */
-  phaseEnd: Date;
-  /** Which stagger group (0-based); determines initial offset */
-  staggerIndex: number;
 }
 
 // ─── Multi-Day Schedule Types ────────────────────────────────────────────────
