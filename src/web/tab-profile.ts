@@ -20,49 +20,19 @@ import {
 } from '../models/types';
 import * as store from './config-store';
 import { computeTaskBreakdown } from './workload-utils';
+import {
+  TASK_COLORS, GROUP_COLORS, LEVEL_COLORS,
+  fmt, levelBadge, certBadge, groupBadge, taskTypeBadge,
+} from './ui-helpers';
 
-// ─── Colors ──────────────────────────────────────────────────────────────────
-
-const TASK_COLORS: Record<string, string> = {
-  Adanit: '#4A90D9', Hamama: '#E74C3C', Shemesh: '#F39C12',
-  Mamtera: '#27AE60', Karov: '#8E44AD', Karovit: '#BDC3C7', Aruga: '#1ABC9C',
-};
-
-const GROUP_COLORS: Record<string, string> = {
-  'Dept A': '#3498db', 'Dept B': '#e67e22', 'Dept C': '#2ecc71', 'Dept D': '#e74c9b',
-};
-
-const LEVEL_COLORS = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
+// ─── Constants ───────────────────────────────────────────────────────────────
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-// ─── Formatting Helpers ──────────────────────────────────────────────────────
-
-function fmt(d: Date): string {
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-}
+// ─── Local Formatting Helpers ────────────────────────────────────────────────
 
 function fmtDayLabel(d: Date): string {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
-}
-
-function levelBadge(level: Level): string {
-  return `<span class="badge" style="background:${LEVEL_COLORS[level]}">L${level}</span>`;
-}
-
-function certBadge(c: Certification): string {
-  const colors: Record<string, string> = { Nitzan: '#16a085', Salsala: '#8e44ad', Hamama: '#c0392b' };
-  return `<span class="badge" style="background:${colors[c] || '#7f8c8d'}">${c}</span>`;
-}
-
-function groupBadge(group: string): string {
-  const color = GROUP_COLORS[group] || '#7f8c8d';
-  return `<span class="badge" style="background:${color}">${group}</span>`;
-}
-
-function taskTypeBadge(type: TaskType): string {
-  const color = TASK_COLORS[type] || '#7f8c8d';
-  return `<span class="badge badge-sm" style="background:${color}">${type}</span>`;
 }
 
 // ─── Main Render ─────────────────────────────────────────────────────────────

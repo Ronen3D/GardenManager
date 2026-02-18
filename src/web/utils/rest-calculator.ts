@@ -127,16 +127,77 @@ export function computeParticipantRest(
 }
 
 /**
+ * Internal: compute rest profile from pre-filtered participant assignments.
+ * Avoids re-building the task map and re-scanning all assignments.
+ */
+function computeRestFromAssignments(
+  participantId: string,
+  pAssignments: Assignment[],
+  taskMap: Map<string, Task>,
+): ParticipantRestProfile {
+  const nonLightBlocks: TimeBlock[] = [];
+  let totalWorkHours = 0;
+  let totalLightHours = 0;
+
+  for (const a of pAssignments) {
+    const task = taskMap.get(a.taskId);
+    if (!task) continue;
+    const hours = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / (1000 * 60 * 60);
+    if (task.isLight) {
+      totalLightHours += hours;
+    } else {
+      nonLightBlocks.push(task.timeBlock);
+      totalWorkHours += hours;
+    }
+  }
+
+  // Sort by start time (in-place — nonLightBlocks is a local array)
+  nonLightBlocks.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  const restGaps = computeRestGaps(nonLightBlocks);
+
+  const minRest = restGaps.length > 0 ? Math.min(...restGaps) : Infinity;
+  const maxRest = restGaps.length > 0 ? Math.max(...restGaps) : Infinity;
+  const avgRest =
+    restGaps.length > 0
+      ? restGaps.reduce((a, b) => a + b, 0) / restGaps.length
+      : Infinity;
+
+  return {
+    participantId,
+    restGaps,
+    minRestHours: minRest,
+    maxRestHours: maxRest,
+    avgRestHours: avgRest,
+    totalWorkHours,
+    totalLightHours,
+    nonLightAssignmentCount: nonLightBlocks.length,
+  };
+}
+
+/**
  * Compute rest profiles for all participants.
+ *
+ * Accepts optional pre-built data structures to avoid redundant work when
+ * called from a hot loop (e.g. the optimizer's scoring function).
  */
 export function computeAllRestProfiles(
   participants: Participant[],
   assignments: Assignment[],
   tasks: Task[],
+  prebuiltTaskMap?: Map<string, Task>,
+  assignmentsByParticipant?: Map<string, Assignment[]>,
 ): Map<string, ParticipantRestProfile> {
   const profiles = new Map<string, ParticipantRestProfile>();
-  for (const p of participants) {
-    profiles.set(p.id, computeParticipantRest(p.id, assignments, tasks));
+  if (prebuiltTaskMap && assignmentsByParticipant) {
+    for (const p of participants) {
+      const pAssignments = assignmentsByParticipant.get(p.id) || [];
+      profiles.set(p.id, computeRestFromAssignments(p.id, pAssignments, prebuiltTaskMap));
+    }
+  } else {
+    for (const p of participants) {
+      profiles.set(p.id, computeParticipantRest(p.id, assignments, tasks));
+    }
   }
   return profiles;
 }

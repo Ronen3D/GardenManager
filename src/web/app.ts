@@ -37,6 +37,10 @@ import { renderParticipantsTab, wireParticipantsEvents } from './tab-participant
 import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
 import { renderProfileView, wireProfileEvents, ProfileContext } from './tab-profile';
 import { computeTaskBreakdown } from './workload-utils';
+import {
+  TASK_COLORS, GROUP_COLORS, LEVEL_COLORS,
+  fmt, levelBadge, certBadge, certBadges, groupBadge, taskTypeBadge,
+} from './ui-helpers';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
@@ -74,22 +78,7 @@ let _optimProgress: {
 /** The 24h window boundary hour (05:00–05:00 by default) */
 const DAY_START_HOUR = 5;
 
-// ─── Color Map ───────────────────────────────────────────────────────────────
-
-const TASK_COLORS: Record<string, string> = {
-  Adanit: '#4A90D9', Hamama: '#E74C3C', Shemesh: '#F39C12',
-  Mamtera: '#27AE60', Karov: '#8E44AD', Karovit: '#BDC3C7', Aruga: '#1ABC9C',
-};
-
-const GROUP_COLORS: Record<string, string> = {
-  'Dept A': '#3498db', 'Dept B': '#e67e22', 'Dept C': '#2ecc71', 'Dept D': '#e74c9b',
-};
-
-// ─── Formatting Helpers ──────────────────────────────────────────────────────
-
-function fmt(d: Date): string {
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-}
+// ─── Formatting Helpers (app-local) ──────────────────────────────────────────
 
 function fmtDate(d: Date): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ' + fmt(d);
@@ -99,34 +88,11 @@ function fmtDayShort(d: Date): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
-function levelBadge(level: Level): string {
-  const colors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
-  return `<span class="badge" style="background:${colors[level]}">L${level}</span>`;
-}
-
-function certBadges(certs: Certification[]): string {
-  if (certs.length === 0) return '<span class="text-muted">—</span>';
-  return certs.map(c => {
-    const colors: Record<string, string> = { Nitzan: '#16a085', Salsala: '#8e44ad', Hamama: '#c0392b' };
-    return `<span class="badge" style="background:${colors[c] || '#7f8c8d'}">${c}</span>`;
-  }).join(' ');
-}
-
-function groupBadge(group: string): string {
-  const color = GROUP_COLORS[group] || '#7f8c8d';
-  return `<span class="badge" style="background:${color}">${group}</span>`;
-}
-
 function statusBadge(status: AssignmentStatus): string {
   const colors: Record<string, string> = {
     Scheduled: '#27ae60', Locked: '#2980b9', Manual: '#f39c12', Conflict: '#e74c3c'
   };
   return `<span class="badge badge-sm" style="background:${colors[status] || '#7f8c8d'}">${status}</span>`;
-}
-
-function taskTypeBadge(type: TaskType): string {
-  const color = TASK_COLORS[type] || '#7f8c8d';
-  return `<span class="badge" style="background:${color}">${type}</span>`;
 }
 
 // ─── Day Window Helpers ──────────────────────────────────────────────────────
@@ -981,15 +947,10 @@ async function doGenerate(): Promise<void> {
 function revalidateAndRefresh(): void {
   if (!engine || !currentSchedule) return;
 
-  // Full 7-day re-validation
-  const validation = engine.validate();
-  // Merge new violations into schedule
-  const softWarnings = currentSchedule.violations.filter(v => v.severity === ViolationSeverity.Warning);
-  currentSchedule = {
-    ...currentSchedule,
-    violations: [...validation.violations, ...softWarnings],
-    feasible: validation.valid,
-  };
+  // C1+R6: Full 7-day re-validation — recomputes hard constraints,
+  // soft warnings, AND schedule score so nothing is stale.
+  engine.revalidateFull();
+  currentSchedule = engine.getSchedule();
 
   renderAll();
 }
@@ -1277,7 +1238,7 @@ function buildParticipantTooltipContent(p: Participant): string {
   const totalPeriodHours = numDays * 24;
 
   // Build breakdown using shared utility (R1)
-  let bd = { heavyHours: 0, heavyCount: 0, lightHours: 0, lightCount: 0, typeHours: {} as Record<string,number>, typeCounts: {} as Record<string,number> };
+  let bd = { heavyHours: 0, heavyCount: 0, effectiveHeavyHours: 0, hotHours: 0, coldHours: 0, lightHours: 0, lightCount: 0, typeHours: {} as Record<string,number>, typeEffectiveHours: {} as Record<string,number>, typeCounts: {} as Record<string,number> };
   if (currentSchedule) {
     const taskMap = new Map<string, Task>();
     for (const t of currentSchedule.tasks) taskMap.set(t.id, t);
@@ -1287,9 +1248,10 @@ function buildParticipantTooltipContent(p: Participant): string {
       .filter(x => x.task);
     bd = computeTaskBreakdown(myItems);
   }
-  const { heavyHours, heavyCount, lightCount, typeHours, typeCounts } = bd;
+  const { heavyHours, effectiveHeavyHours, heavyCount, lightCount, typeHours, typeEffectiveHours, typeCounts } = bd;
 
-  const pctOfPeriod = totalPeriodHours > 0 ? (heavyHours / totalPeriodHours) * 100 : 0;
+  // R7: Use effectiveHeavyHours for workload %, consistent with sidebar & profile
+  const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
 
   const certsHtml = p.certifications.length > 0
     ? p.certifications.map((c: Certification) => {
@@ -1297,8 +1259,6 @@ function buildParticipantTooltipContent(p: Participant): string {
         return `<span class="tt-cert" style="background:${colors[c] || '#7f8c8d'}">${c}</span>`;
       }).join(' ')
     : '<span class="tt-dim">None</span>';
-
-  const levelColors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
 
   // Build per-task breakdown rows (only show types with hours > 0)
   const taskTypeColors: Record<string, string> = {
@@ -1311,14 +1271,14 @@ function buildParticipantTooltipContent(p: Participant): string {
       const color = taskTypeColors[tt] || '#7f8c8d';
       return `<div class="tt-row">
         <span class="tt-label"><span style="color:${color};font-weight:600">${tt}</span></span>
-        <span class="tt-value">${typeCounts[tt]}× · ${typeHours[tt].toFixed(1)}h</span>
+        <span class="tt-value">${typeCounts[tt]}× · ${typeEffectiveHours[tt].toFixed(1)}h eff</span>
       </div>`;
     }).join('');
 
   return `
     <div class="tt-header">
       <span class="tt-name">${p.name}</span>
-      <span class="tt-level" style="background:${levelColors[p.level]}">L${p.level}</span>
+      <span class="tt-level" style="background:${LEVEL_COLORS[p.level]}">L${p.level}</span>
     </div>
     <div class="tt-row"><span class="tt-label">Group</span><span class="tt-value">${p.group}</span></div>
     <div class="tt-row"><span class="tt-label">Certs</span><span class="tt-value">${certsHtml}</span></div>
@@ -1327,7 +1287,7 @@ function buildParticipantTooltipContent(p: Participant): string {
     <div class="tt-divider"></div>
     <div class="tt-row"><span class="tt-label">Heavy tasks</span><span class="tt-value">${heavyCount}</span></div>
     <div class="tt-row"><span class="tt-label">Light tasks</span><span class="tt-value">${lightCount}</span></div>
-    <div class="tt-row"><span class="tt-label">Weekly hours</span><span class="tt-value tt-bold">${heavyHours.toFixed(1)}h</span></div>
+    <div class="tt-row"><span class="tt-label">Weekly hours</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)}h eff</span></div>
     <div class="tt-row"><span class="tt-label">Workload %</span><span class="tt-value">${pctOfPeriod.toFixed(1)}% of ${totalPeriodHours}h</span></div>
   `;
 }

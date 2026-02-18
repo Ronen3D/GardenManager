@@ -75,25 +75,31 @@ export function blockDurationHours(block: TimeBlock): number {
 
 /**
  * Check if two TimeBlocks overlap (strictly — sharing an endpoint doesn't count).
+ *
+ * Uses raw .getTime() comparisons instead of date-fns for speed in tight
+ * loops (eligibility checks, swap feasibility).  Semantics are identical:
+ * isBefore(x, y) ≡ x.getTime() < y.getTime().
  */
 export function blocksOverlap(a: TimeBlock, b: TimeBlock): boolean {
-  return isBefore(a.start, b.end) && isBefore(b.start, a.end);
+  return a.start.getTime() < b.end.getTime() && b.start.getTime() < a.end.getTime();
 }
 
 /**
  * Check whether a participant's availability fully covers a task's time block.
  * The participant MUST be available for the ENTIRE duration.
+ *
+ * Uses raw .getTime() comparisons for speed in tight loops.
+ * isBefore(x,y)||isEqual(x,y) ≡ x.getTime() <= y.getTime()
+ * isAfter(x,y)||isEqual(x,y)  ≡ x.getTime() >= y.getTime()
  */
 export function isFullyCovered(
   taskBlock: TimeBlock,
   availability: AvailabilityWindow[],
 ): boolean {
+  const tStart = taskBlock.start.getTime();
+  const tEnd = taskBlock.end.getTime();
   for (const window of availability) {
-    const coversStart =
-      isBefore(window.start, taskBlock.start) || isEqual(window.start, taskBlock.start);
-    const coversEnd =
-      isAfter(window.end, taskBlock.end) || isEqual(window.end, taskBlock.end);
-    if (coversStart && coversEnd) {
+    if (window.start.getTime() <= tStart && window.end.getTime() >= tEnd) {
       return true;
     }
   }

@@ -10,6 +10,7 @@ import {
   Participant,
   TaskType,
   Certification,
+  SlotRequirement,
   ValidationResult,
   ConstraintViolation,
   ViolationSeverity,
@@ -80,6 +81,138 @@ export function previewSwap(
 }
 
 /**
+ * R4: Shared eligibility check — single source of truth for whether a
+ * participant can fill a specific slot. Used by both the optimizer
+ * (greedy construction) and the validator (UI dropdown population).
+ *
+ * @param participant  The candidate participant
+ * @param task         The target task
+ * @param slot         The specific slot within the task
+ * @param participantAssignments  Current assignments for this participant (excluding `task` itself)
+ * @param taskMap      Map of all tasks by ID
+ * @param opts         Optional flags / extra data for context-specific behaviour
+ */
+export function isEligible(
+  participant: Participant,
+  task: Task,
+  slot: SlotRequirement,
+  participantAssignments: Assignment[],
+  taskMap: Map<string, Task>,
+  opts?: {
+    /** When true, check sameGroupRequired against existing assignments */
+    checkSameGroup?: boolean;
+    /** All assignments for the task (needed for same-group check) */
+    taskAssignments?: Assignment[];
+    /** Participant lookup (needed for same-group comparison) */
+    participantMap?: Map<string, Participant>;
+  },
+): boolean {
+  // HC-13: Senior hard blocks (L4 non-natural/non-Hamama, L3 Mamtera)
+  if (checkSeniorHardBlock(participant, task, slot)) return false;
+
+  // HC-11: Choresh exclusion from Mamtera
+  if (participant.certifications.includes(Certification.Horesh) && task.type === TaskType.Mamtera) return false;
+
+  // HC-1: Level check — accept explicit match OR overqualified
+  const levelOk = slot.acceptableLevels.includes(participant.level)
+    || participant.level > Math.max(...slot.acceptableLevels);
+  if (!levelOk) return false;
+
+  // HC-2: Certification check
+  for (const cert of slot.requiredCertifications) {
+    if (!participant.certifications.includes(cert)) return false;
+  }
+
+  // HC-3: Availability check
+  if (!isFullyCovered(task.timeBlock, participant.availability)) return false;
+
+  // HC-4: Same-group check (optional — only validator uses this inline)
+  if (opts?.checkSameGroup && task.sameGroupRequired && opts.taskAssignments && opts.participantMap) {
+    const otherAssignments = opts.taskAssignments.filter(a => a.slotId !== slot.slotId);
+    if (otherAssignments.length > 0) {
+      const existingP = opts.participantMap.get(otherAssignments[0].participantId);
+      if (existingP && existingP.group !== participant.group) return false;
+    }
+  }
+
+  // HC-5: Double-booking — physical presence is exclusive for ALL tasks (including light)
+  for (const a of participantAssignments) {
+    const otherTask = taskMap.get(a.taskId);
+    if (otherTask && blocksOverlap(task.timeBlock, otherTask.timeBlock)) return false;
+  }
+
+  // HC-7: Not already assigned to this task
+  if (participantAssignments.some(a => a.taskId === task.id)) return false;
+
+  // HC-12: No consecutive high-load tasks
+  for (const a of participantAssignments) {
+    const otherTask = taskMap.get(a.taskId);
+    if (!otherTask) continue;
+    if (otherTask.timeBlock.end.getTime() === task.timeBlock.start.getTime()) {
+      if (isHighLoadAtBoundary(otherTask, 'end') && isHighLoadAtBoundary(task, 'start')) return false;
+    }
+    if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
+      if (isHighLoadAtBoundary(task, 'end') && isHighLoadAtBoundary(otherTask, 'start')) return false;
+    }
+  }
+
+  return true;
+}
+
+// ─── R8: Rejection Reason Codes ──────────────────────────────────────────────
+
+/** Constraint code identifying why a participant was rejected for a slot. */
+export type RejectionCode =
+  | 'HC-1'   // Level mismatch
+  | 'HC-2'   // Missing certification
+  | 'HC-3'   // Availability gap
+  | 'HC-4'   // Same-group conflict
+  | 'HC-5'   // Double-booking
+  | 'HC-7'   // Already assigned to this task
+  | 'HC-11'  // Choresh exclusion from Mamtera
+  | 'HC-12'  // Consecutive high-load tasks
+  | 'HC-13'; // Senior hard block
+
+/**
+ * R8: Same logic as isEligible() but returns the specific constraint code
+ * that caused rejection (or null if eligible). Useful for diagnostic
+ * messages when slots are left unfilled.
+ */
+export function getRejectionReason(
+  participant: Participant,
+  task: Task,
+  slot: SlotRequirement,
+  participantAssignments: Assignment[],
+  taskMap: Map<string, Task>,
+): RejectionCode | null {
+  if (checkSeniorHardBlock(participant, task, slot)) return 'HC-13';
+  if (participant.certifications.includes(Certification.Horesh) && task.type === TaskType.Mamtera) return 'HC-11';
+  const levelOk = slot.acceptableLevels.includes(participant.level)
+    || participant.level > Math.max(...slot.acceptableLevels);
+  if (!levelOk) return 'HC-1';
+  for (const cert of slot.requiredCertifications) {
+    if (!participant.certifications.includes(cert)) return 'HC-2';
+  }
+  if (!isFullyCovered(task.timeBlock, participant.availability)) return 'HC-3';
+  for (const a of participantAssignments) {
+    const otherTask = taskMap.get(a.taskId);
+    if (otherTask && blocksOverlap(task.timeBlock, otherTask.timeBlock)) return 'HC-5';
+  }
+  if (participantAssignments.some(a => a.taskId === task.id)) return 'HC-7';
+  for (const a of participantAssignments) {
+    const otherTask = taskMap.get(a.taskId);
+    if (!otherTask) continue;
+    if (otherTask.timeBlock.end.getTime() === task.timeBlock.start.getTime()) {
+      if (isHighLoadAtBoundary(otherTask, 'end') && isHighLoadAtBoundary(task, 'start')) return 'HC-12';
+    }
+    if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
+      if (isHighLoadAtBoundary(task, 'end') && isHighLoadAtBoundary(otherTask, 'start')) return 'HC-12';
+    }
+  }
+  return null;
+}
+
+/**
  * Identify which participants could validly fill a specific slot.
  * Useful for UI dropdown population.
  */
@@ -96,63 +229,20 @@ export function getEligibleParticipantsForSlot(
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
 
+  const pMap = new Map<string, Participant>();
+  for (const p of participants) pMap.set(p.id, p);
+
+  const taskAssignments = currentAssignments.filter(a => a.taskId === task.id);
+
   return participants.filter((p) => {
-    // Level check
-    if (!slot.acceptableLevels.includes(p.level)) return false;
-
-    // Certification check
-    for (const cert of slot.requiredCertifications) {
-      if (!p.certifications.includes(cert)) return false;
-    }
-
-    // Availability check
-    if (!isFullyCovered(task.timeBlock, p.availability)) return false;
-
-    // Same-group check for Adanit
-    if (task.sameGroupRequired) {
-      const existingAssignments = currentAssignments.filter(
-        (a) => a.taskId === task.id && a.slotId !== slotId,
-      );
-      if (existingAssignments.length > 0) {
-        const existingParticipant = participants.find(
-          (pp) => pp.id === existingAssignments[0].participantId,
-        );
-        if (existingParticipant && existingParticipant.group !== p.group) return false;
-      }
-    }
-
-    // Double-booking check: physical presence is exclusive for ALL tasks (including light)
-    const participantAssignments = currentAssignments.filter(
+    // Build participant's assignments excluding this task
+    const pAssignments = currentAssignments.filter(
       (a) => a.participantId === p.id && a.taskId !== task.id,
     );
-    for (const a of participantAssignments) {
-      const otherTask = taskMap.get(a.taskId);
-      if (otherTask && blocksOverlap(task.timeBlock, otherTask.timeBlock)) return false;
-    }
-
-    // Not already assigned to this task
-    if (currentAssignments.some((a) => a.taskId === task.id && a.participantId === p.id)) {
-      return false;
-    }
-
-    // HC-11: Choresh exclusion from Mamtera
-    if (p.certifications.includes(Certification.Horesh) && task.type === TaskType.Mamtera) return false;
-
-    // HC-13: Senior hard blocks
-    if (slot && checkSeniorHardBlock(p, task, slot)) return false;
-
-    // HC-12: No consecutive high-load tasks
-    for (const a of participantAssignments) {
-      const otherTask = taskMap.get(a.taskId);
-      if (!otherTask) continue;
-      if (otherTask.timeBlock.end.getTime() === task.timeBlock.start.getTime()) {
-        if (isHighLoadAtBoundary(otherTask, 'end') && isHighLoadAtBoundary(task, 'start')) return false;
-      }
-      if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
-        if (isHighLoadAtBoundary(task, 'end') && isHighLoadAtBoundary(otherTask, 'start')) return false;
-      }
-    }
-
-    return true;
+    return isEligible(p, task, slot, pAssignments, taskMap, {
+      checkSameGroup: true,
+      taskAssignments,
+      participantMap: pMap,
+    });
   });
 }

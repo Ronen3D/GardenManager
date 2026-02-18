@@ -51,8 +51,8 @@ export { optimize, greedyAssign, localSearchOptimize, optimizeMultiAttempt, opti
 export type { OptimizationResult, MultiAttemptProgressCallback } from './engine/optimizer';
 
 // ─── Validator ───────────────────────────────────────────────────────────────
-export { fullValidate, previewSwap, getEligibleParticipantsForSlot } from './engine/validator';
-export type { FullValidationResult } from './engine/validator';
+export { fullValidate, previewSwap, getEligibleParticipantsForSlot, isEligible, getRejectionReason } from './engine/validator';
+export type { FullValidationResult, RejectionCode } from './engine/validator';
 
 // ─── Constraints ─────────────────────────────────────────────────────────────
 export { validateHardConstraints } from './constraints/hard-constraints';

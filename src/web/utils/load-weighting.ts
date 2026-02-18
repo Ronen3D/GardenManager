@@ -26,7 +26,9 @@ export function getLoadWeightAtTime(task: Task, time: Date): number {
   const tEnd = task.timeBlock.end.getTime();
 
   // Outside the task → weight 0
-  if (t < tStart || t > tEnd) return 0;
+  // C2: Use half-open interval [start, end) — the exact end instant is
+  // outside the task duration, consistent with standard scheduling semantics.
+  if (t < tStart || t >= tEnd) return 0;
 
   if (task.isLight) return 0;
 
@@ -49,20 +51,43 @@ export function getLoadWeightAtTime(task: Task, time: Date): number {
 
 /**
  * Check whether a specific instant falls inside a LoadWindow.
- * Handles midnight-crossing windows and multi-day iteration.
+ *
+ * C3: Uses calendar-absolute comparison instead of clock-of-day
+ * matching, so the result is correct for the actual calendar day the
+ * instant falls on (including midnight-crossing windows).
  */
 function isTimeInsideWindow(time: Date, window: LoadWindow): boolean {
-  const wStartMinutes = window.startHour * 60 + window.startMinute;
-  const wEndMinutes = window.endHour * 60 + window.endMinute;
-  const timeMinutes = time.getHours() * 60 + time.getMinutes();
+  // Build the window boundaries on the same calendar day as `time`
+  const dayStart = new Date(time.getFullYear(), time.getMonth(), time.getDate());
 
-  if (wStartMinutes < wEndMinutes) {
-    // Normal window (e.g., 05:00–06:30)
-    return timeMinutes >= wStartMinutes && timeMinutes < wEndMinutes;
-  } else {
-    // Midnight-crossing window (e.g., 22:00–06:00)
-    return timeMinutes >= wStartMinutes || timeMinutes < wEndMinutes;
+  const wStartMs = new Date(
+    dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate(),
+    window.startHour, window.startMinute, 0, 0,
+  ).getTime();
+
+  const crossesMidnight =
+    window.endHour < window.startHour ||
+    (window.endHour === window.startHour && window.endMinute <= window.startMinute);
+
+  const wEndMs = new Date(
+    dayStart.getFullYear(), dayStart.getMonth(),
+    dayStart.getDate() + (crossesMidnight ? 1 : 0),
+    window.endHour, window.endMinute, 0, 0,
+  ).getTime();
+
+  const t = time.getTime();
+
+  // Half-open interval [wStart, wEnd)
+  if (t >= wStartMs && t < wEndMs) return true;
+
+  // For midnight-crossing windows, also check the previous day's occurrence
+  if (crossesMidnight) {
+    const prevStart = wStartMs - 86_400_000; // −24h
+    const prevEnd = wEndMs - 86_400_000;
+    if (t >= prevStart && t < prevEnd) return true;
   }
+
+  return false;
 }
 
 /**
@@ -71,11 +96,29 @@ function isTimeInsideWindow(time: Date, window: LoadWindow): boolean {
  * Used by HC-12: "No Consecutive High-Load Tasks". Two distinct back-to-back
  * tasks violate the constraint only if the first task ENDS at high load AND
  * the next task STARTS at high load.
+ *
+ * C2: With half-open intervals [start, end), the exact end instant is outside
+ * the task. For the 'end' edge we evaluate at 1ms before end to check the
+ * trailing load of the task.
+ *
+ * Results are memoized per task in WeakMaps — tasks are immutable objects
+ * so the boundary load never changes.
  */
+const _highLoadStartCache = new WeakMap<Task, boolean>();
+const _highLoadEndCache = new WeakMap<Task, boolean>();
+
 export function isHighLoadAtBoundary(task: Task, edge: 'start' | 'end'): boolean {
-  const time = edge === 'start' ? task.timeBlock.start : task.timeBlock.end;
+  const cache = edge === 'start' ? _highLoadStartCache : _highLoadEndCache;
+  const cached = cache.get(task);
+  if (cached !== undefined) return cached;
+
+  const time = edge === 'start'
+    ? task.timeBlock.start
+    : new Date(task.timeBlock.end.getTime() - 1);
   const weight = getLoadWeightAtTime(task, time);
-  return weight >= 1.0;
+  const result = weight >= 1.0;
+  cache.set(task, result);
+  return result;
 }
 
 function overlapHours(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): number {
@@ -129,16 +172,34 @@ function computeWindowOverlapHours(task: Task, window: LoadWindow): number {
   return total;
 }
 
+/**
+ * WeakMap cache for computeTaskEffectiveHours — the result depends only on
+ * immutable task properties (timeBlock, loadWindows, baseLoadWeight, isLight)
+ * so it is safe to cache by object identity.
+ */
+const _effectiveHoursCache = new WeakMap<Task, number>();
+
 export function computeTaskEffectiveHours(task: Task): number {
-  if (task.isLight) return 0;
+  const cached = _effectiveHoursCache.get(task);
+  if (cached !== undefined) return cached;
+
+  if (task.isLight) {
+    _effectiveHoursCache.set(task, 0);
+    return 0;
+  }
 
   const durationHours = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
-  if (durationHours <= 0) return 0;
+  if (durationHours <= 0) {
+    _effectiveHoursCache.set(task, 0);
+    return 0;
+  }
 
   const baseWeight = getTaskBaseLoadWeight(task);
   const windows = task.loadWindows ?? [];
   if (windows.length === 0) {
-    return durationHours * baseWeight;
+    const result = durationHours * baseWeight;
+    _effectiveHoursCache.set(task, result);
+    return result;
   }
 
   // ── Accumulate window (hot) hours and their weighted contribution ──
@@ -164,7 +225,9 @@ export function computeTaskEffectiveHours(task: Task): number {
   const coldHours = durationHours - hotHours;
   const effective = coldHours * baseWeight + hotWeightedHours;
 
-  return Math.max(0, effective);
+  const result = Math.max(0, effective);
+  _effectiveHoursCache.set(task, result);
+  return result;
 }
 
 /**

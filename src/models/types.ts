@@ -135,8 +135,6 @@ export interface Task {
   loadWindows?: LoadWindow[];
   /** Group constraint: all participants must be from same group */
   sameGroupRequired: boolean;
-  /** Optional: preferred group (soft constraint) */
-  preferredGroup?: string;
 }
 
 // ─── Assignment ──────────────────────────────────────────────────────────────
@@ -235,8 +233,6 @@ export interface SchedulerConfig {
   hamamaL3Penalty: number;
   /** Hamama Level 4 penalty points */
   hamamaL4Penalty: number;
-  /** Bonus for Shemesh same-group assignment */
-  shemeshSameGroupBonus: number;
   /** Penalty per zero-gap (back-to-back) assignment pair — soft only */
   backToBackPenalty: number;
   /** Max solver iterations */
@@ -251,24 +247,26 @@ export interface SchedulerConfig {
   l0OverloadThresholdHours: number;
   /** Multiplier applied to senior penalties when L0 is overloaded (0 = fully relaxed) */
   l0OverloadPenaltyMultiplier: number;
+  /** Penalty per same-group task that has mixed-group participants */
+  groupMismatchPenalty: number;
 }
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
-  minRestWeight: 15,
-  l0FairnessWeight: 10,
-  seniorFairnessWeight: 4,
-  penaltyWeight: 4,
+  minRestWeight: 10,
+  l0FairnessWeight: 40,
+  seniorFairnessWeight: 6,
+  penaltyWeight: 1,
   bonusWeight: 3,
-  hamamaL3Penalty: 50,
+  hamamaL3Penalty: 15,
   hamamaL4Penalty: 200,
-  shemeshSameGroupBonus: 10,
-  backToBackPenalty: 3,
+  backToBackPenalty: 5,
   maxIterations: 10000,
   maxSolverTimeMs: 30000,
-  seniorOutOfRolePenalty: 500,
-  l4HamamaPenalty: 300,
+  seniorOutOfRolePenalty: 200,
+  l4HamamaPenalty: 200,
   l0OverloadThresholdHours: 50,
   l0OverloadPenaltyMultiplier: 0.1,
+  groupMismatchPenalty: 100,
 };
 
 // ─── Gantt UI Bridge Types ───────────────────────────────────────────────────

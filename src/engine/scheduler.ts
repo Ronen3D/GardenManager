@@ -298,6 +298,29 @@ export class SchedulingEngine {
   }
 
   /**
+   * Full revalidation: re-run hard constraints, recompute soft warnings,
+   * and recompute the schedule score. Updates the internal schedule state.
+   *
+   * Use after any manual change (swap, lock/unlock) to ensure all
+   * violations and KPIs are fresh.
+   */
+  revalidateFull(): void {
+    if (!this.currentSchedule) return;
+    const { tasks, participants, assignments } = this.currentSchedule;
+
+    const hard = validateHardConstraints(tasks, participants, assignments);
+    const soft = collectSoftWarnings(tasks, participants, assignments);
+    const score = computeScheduleScore(tasks, participants, assignments, this.config);
+
+    this.currentSchedule = {
+      ...this.currentSchedule,
+      violations: [...hard.violations, ...soft],
+      feasible: hard.valid,
+      score,
+    };
+  }
+
+  /**
    * Swap a participant in an existing assignment (manual override).
    * Runs validate() after the swap and returns the result.
    */

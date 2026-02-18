@@ -41,19 +41,6 @@ export function hamamaPenalty(
 }
 
 /**
- * SC-2: Shemesh same-group bonus — REMOVED.
- * Shemesh now freely mixes participants from any group (no group constraint).
- * Kept as a no-op for API compatibility.
- */
-export function shemeshGroupBonus(
-  _task: Task,
-  _assignedParticipants: Participant[],
-  _config: SchedulerConfig,
-): number {
-  return 0;
-}
-
-/**
  * SC-3: Workload balance — penalize uneven distribution of non-light assignments.
  *
  * Split-pool: L0 participants are balanced among themselves, seniors (L2-L4)
@@ -65,20 +52,30 @@ export function workloadImbalanceSplit(
   participants: Participant[],
   assignments: Assignment[],
   tasks: Task[],
-): { l0Penalty: number; seniorPenalty: number; l0StdDev: number; l0Avg: number; seniorStdDev: number; seniorAvg: number } {
-  const taskMap = new Map<string, Task>();
-  for (const t of tasks) taskMap.set(t.id, t);
+  prebuiltTaskMap?: Map<string, Task>,
+  assignmentsByParticipant?: Map<string, Assignment[]>,
+): { l0Penalty: number; seniorPenalty: number; l0StdDev: number; l0Avg: number; seniorStdDev: number; seniorAvg: number; combinedStdDev: number } {
+  const taskMap = prebuiltTaskMap ?? new Map(tasks.map(t => [t.id, t]));
 
   const l0Loads: number[] = [];
   const seniorLoads: number[] = [];
 
   for (const p of participants) {
     let effectiveHours = 0;
-    for (const a of assignments) {
-      if (a.participantId !== p.id) continue;
-      const task = taskMap.get(a.taskId);
-      if (!task) continue;
-      effectiveHours += computeTaskEffectiveHours(task);
+    if (assignmentsByParticipant) {
+      const pAssignments = assignmentsByParticipant.get(p.id) || [];
+      for (const a of pAssignments) {
+        const task = taskMap.get(a.taskId);
+        if (!task) continue;
+        effectiveHours += computeTaskEffectiveHours(task);
+      }
+    } else {
+      for (const a of assignments) {
+        if (a.participantId !== p.id) continue;
+        const task = taskMap.get(a.taskId);
+        if (!task) continue;
+        effectiveHours += computeTaskEffectiveHours(task);
+      }
     }
     if (p.level === Level.L0) {
       l0Loads.push(effectiveHours);
@@ -98,6 +95,19 @@ export function workloadImbalanceSplit(
   const l0Stats = computeStats(l0Loads);
   const seniorStats = computeStats(seniorLoads);
 
+  // Compute combined std-dev across both pools, reusing the already-scanned
+  // loads so computeScheduleScore doesn't need a separate O(P×A) pass.
+  const totalCount = l0Loads.length + seniorLoads.length;
+  let combinedStdDev = 0;
+  if (totalCount > 0) {
+    let totalSum = 0;
+    let totalSumSq = 0;
+    for (const x of l0Loads) { totalSum += x; totalSumSq += x * x; }
+    for (const x of seniorLoads) { totalSum += x; totalSumSq += x * x; }
+    const avg = totalSum / totalCount;
+    combinedStdDev = Math.sqrt(Math.max(0, totalSumSq / totalCount - avg * avg));
+  }
+
   return {
     l0Penalty: l0Stats.penalty,
     seniorPenalty: seniorStats.penalty,
@@ -105,19 +115,8 @@ export function workloadImbalanceSplit(
     l0Avg: l0Stats.avg,
     seniorStdDev: seniorStats.stdDev,
     seniorAvg: seniorStats.avg,
+    combinedStdDev,
   };
-}
-
-/**
- * SC-4: Legacy per-level fairness penalty.
- * Removed to keep all participants in a single homogeneous fairness pool.
- */
-export function levelWorkloadFairnessPenalty(
-  _participants: Participant[],
-  _assignments: Assignment[],
-  _tasks: Task[],
-): number {
-  return 0;
 }
 
 /**
@@ -133,9 +132,10 @@ export function backToBackPenalty(
   assignments: Assignment[],
   tasks: Task[],
   penaltyPerPair: number,
+  prebuiltTaskMap?: Map<string, Task>,
+  assignmentsByParticipant?: Map<string, Assignment[]>,
 ): number {
-  const taskMap = new Map<string, Task>();
-  for (const t of tasks) taskMap.set(t.id, t);
+  const taskMap = prebuiltTaskMap ?? new Map(tasks.map(t => [t.id, t]));
 
   let penalty = 0;
 
@@ -143,10 +143,18 @@ export function backToBackPenalty(
 
     // Gather this participant's non-light tasks sorted by start
     const pTasks: Task[] = [];
-    for (const a of assignments) {
-      if (a.participantId !== p.id) continue;
-      const task = taskMap.get(a.taskId);
-      if (task && !task.isLight) pTasks.push(task);
+    if (assignmentsByParticipant) {
+      const pAssignments = assignmentsByParticipant.get(p.id) || [];
+      for (const a of pAssignments) {
+        const task = taskMap.get(a.taskId);
+        if (task && !task.isLight) pTasks.push(task);
+      }
+    } else {
+      for (const a of assignments) {
+        if (a.participantId !== p.id) continue;
+        const task = taskMap.get(a.taskId);
+        if (task && !task.isLight) pTasks.push(task);
+      }
     }
     if (pTasks.length < 2) continue;
 
@@ -210,7 +218,18 @@ export function collectSoftWarnings(
       }
     }
 
-    // (Shemesh group constraint removed — free mixing allowed)
+    // SC-7: Group mismatch warning (same-group tasks with mixed groups)
+    if (task.sameGroupRequired && assignedPs.length > 0) {
+      const groups = new Set(assignedPs.map((p) => p.group));
+      if (groups.size > 1) {
+        warnings.push({
+          severity: ViolationSeverity.Warning,
+          code: 'GROUP_MISMATCH',
+          message: `Task ${task.name} prefers same-group but has participants from ${groups.size} groups: [${[...groups].join(', ')}]`,
+          taskId: task.id,
+        });
+      }
+    }
   }
 
   // SC-5: Back-to-back warnings (zero gap between consecutive assignments)
@@ -245,54 +264,82 @@ export function collectSoftWarnings(
 // ─── Composite Score Calculation ─────────────────────────────────────────────
 
 /**
+ * Pre-built data structures for fast repeated scoring.
+ * Pass this to computeScheduleScore() to avoid rebuilding immutable maps
+ * on every call (critical when called thousands of times in local search).
+ */
+export interface ScoreContext {
+  taskMap: Map<string, Task>;
+  pMap: Map<string, Participant>;
+  /** Optional: per-participant assignment index maintained by the caller */
+  assignmentsByParticipant?: Map<string, Assignment[]>;
+  /** Optional: per-task assignment index maintained by the caller */
+  assignmentsByTask?: Map<string, Assignment[]>;
+}
+
+/**
  * Compute the full ScheduleScore for a set of assignments.
  *
  * Uses split-pool fairness: L0 std-dev is the primary fairness driver,
  * senior (L2-L4) std-dev is secondary. No cross-level comparison.
+ *
+ * When `ctx` is provided, reuses pre-built maps instead of constructing
+ * them from scratch — eliminates ~5 redundant O(P×A) scans per call.
  */
 export function computeScheduleScore(
   tasks: Task[],
   participants: Participant[],
   assignments: Assignment[],
   config: SchedulerConfig,
+  ctx?: ScoreContext,
 ): ScheduleScore {
-  // Rest metrics (still used for min/avg rest reporting)
-  const profiles = computeAllRestProfiles(participants, assignments, tasks);
+  // Reuse or build lookup maps
+  const taskMap = ctx?.taskMap ?? new Map(tasks.map(t => [t.id, t]));
+  const pMap = ctx?.pMap ?? new Map(participants.map(p => [p.id, p]));
+
+  // Reuse or build per-participant index
+  let byParticipant: Map<string, Assignment[]>;
+  if (ctx?.assignmentsByParticipant) {
+    byParticipant = ctx.assignmentsByParticipant;
+  } else {
+    byParticipant = new Map<string, Assignment[]>();
+    for (const a of assignments) {
+      const list = byParticipant.get(a.participantId);
+      if (list) list.push(a);
+      else byParticipant.set(a.participantId, [a]);
+    }
+  }
+
+  // Reuse or build per-task index
+  let assignmentsByTask: Map<string, Assignment[]>;
+  if (ctx?.assignmentsByTask) {
+    assignmentsByTask = ctx.assignmentsByTask;
+  } else {
+    assignmentsByTask = new Map<string, Assignment[]>();
+    for (const a of assignments) {
+      const list = assignmentsByTask.get(a.taskId);
+      if (list) list.push(a);
+      else assignmentsByTask.set(a.taskId, [a]);
+    }
+  }
+
+  // Rest metrics — pass pre-built data to avoid P redundant taskMap builds
+  const profiles = computeAllRestProfiles(participants, assignments, tasks, taskMap, byParticipant);
   const fairness = computeRestFairness(profiles);
 
-  const taskMap = new Map<string, Task>();
-  for (const t of tasks) taskMap.set(t.id, t);
+  // Split-pool workload stats — pass pre-built data
+  const wlSplit = workloadImbalanceSplit(participants, assignments, tasks, taskMap, byParticipant);
 
-  // Split-pool workload stats
-  const wlSplit = workloadImbalanceSplit(participants, assignments, tasks);
-
-  // Legacy combined restStdDev for backward compat / dashboard display
-  // Compute from all participants combined
-  const allLoads: number[] = participants.map((p) => {
-    let total = 0;
-    for (const a of assignments) {
-      if (a.participantId !== p.id) continue;
-      const task = taskMap.get(a.taskId);
-      if (!task) continue;
-      total += computeTaskEffectiveHours(task);
-    }
-    return total;
-  });
-  const allAvg = allLoads.length > 0
-    ? allLoads.reduce((s, v) => s + v, 0) / allLoads.length : 0;
-  const allVar = allLoads.length > 0
-    ? allLoads.reduce((s, v) => s + (v - allAvg) ** 2, 0) / allLoads.length : 0;
-  const combinedStdDev = Math.sqrt(allVar);
+  // Reuse the combined std-dev already computed inside workloadImbalanceSplit
+  // to avoid a redundant O(P×A) effective-hours scan.
+  const combinedStdDev = wlSplit.combinedStdDev;
 
   // Penalties
   let totalPenalty = 0;
   let totalBonus = 0;
 
-  const pMap = new Map<string, Participant>();
-  for (const p of participants) pMap.set(p.id, p);
-
   for (const task of tasks) {
-    const taskAssignments = assignments.filter((a) => a.taskId === task.id);
+    const taskAssignments = assignmentsByTask.get(task.id) || [];
     const assignedPs = taskAssignments
       .map((a) => pMap.get(a.participantId))
       .filter((p): p is Participant => !!p);
@@ -301,23 +348,33 @@ export function computeScheduleScore(
     for (const p of assignedPs) {
       totalPenalty += hamamaPenalty(task, p, config);
     }
-
-    // Shemesh bonus
-    totalBonus += shemeshGroupBonus(task, assignedPs, config);
   }
 
-  // Split-pool workload imbalance
-  totalPenalty += wlSplit.l0Penalty + wlSplit.seniorPenalty;
+  // Workload imbalance is captured directly via l0FairnessWeight * l0StdDev
+  // and seniorFairnessWeight * seniorStdDev in the composite formula — no
+  // double-counting through totalPenalty.
 
-  // Level-specific workload fairness (SC-4 — legacy no-op)
-  totalPenalty += levelWorkloadFairnessPenalty(participants, assignments, tasks);
+  // Group mismatch penalty (SC-7)
+  for (const task of tasks) {
+    if (!task.sameGroupRequired) continue;
+    const taskAssignments = assignmentsByTask.get(task.id) || [];
+    const assignedPs = taskAssignments
+      .map((a) => pMap.get(a.participantId))
+      .filter((p): p is Participant => !!p);
+    if (assignedPs.length > 0) {
+      const groups = new Set(assignedPs.map((p) => p.group));
+      if (groups.size > 1) {
+        totalPenalty += config.groupMismatchPenalty;
+      }
+    }
+  }
 
-  // Back-to-back shift penalty (SC-5)
-  totalPenalty += backToBackPenalty(participants, assignments, tasks, config.backToBackPenalty);
+  // Back-to-back shift penalty (SC-5) — pass pre-built data
+  totalPenalty += backToBackPenalty(participants, assignments, tasks, config.backToBackPenalty, taskMap, byParticipant);
 
-  // SC-6: Senior out-of-role penalty
+  // SC-6: Senior out-of-role penalty — pass pre-built maps
   const l0Avg = wlSplit.l0Avg;
-  totalPenalty += computeSeniorOutOfRolePenalty(participants, assignments, tasks, l0Avg, config);
+  totalPenalty += computeSeniorOutOfRolePenalty(participants, assignments, tasks, l0Avg, config, pMap, taskMap);
 
   // Composite score
   const minRest = isFinite(fairness.globalMinRest) ? fairness.globalMinRest : 0;

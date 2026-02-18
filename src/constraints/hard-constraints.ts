@@ -146,34 +146,6 @@ export function checkSameGroup(
 }
 
 /**
- * HC-10: Level 4 Exclusion — L4 participants are strictly forbidden from
- * Shemesh, Aruga, and Hamama tasks. This is a hard constraint, not a preference.
- */
-export function checkL4Exclusion(
-  task: Task,
-  assignedParticipants: Participant[],
-): ConstraintViolation[] {
-  const forbiddenTypes: TaskType[] = [TaskType.Shemesh, TaskType.Aruga, TaskType.Hamama];
-  if (!forbiddenTypes.includes(task.type)) return [];
-
-  const violations: ConstraintViolation[] = [];
-  for (const p of assignedParticipants) {
-    if (p.level === Level.L4) {
-      violations.push(
-        violation(
-          'L4_FORBIDDEN',
-          `${p.name} (L4) is strictly forbidden from ${task.type} task "${task.name}"`,
-          task.id,
-          undefined,
-          p.id,
-        ),
-      );
-    }
-  }
-  return violations;
-}
-
-/**
  * HC-11: Choresh exclusion — participants marked as "choresh" are strictly
  * forbidden from being assigned to Mamtera tasks.
  */
@@ -480,15 +452,15 @@ export function validateHardConstraints(
       if (availV) allViolations.push(availV);
     }
 
-    // HC-4: Same group
-    const assignedParticipants = taskAssignments
-      .map((a) => pMap.get(a.participantId))
-      .filter((p): p is Participant => p !== undefined);
-    allViolations.push(...checkSameGroup(task, assignedParticipants));
+    // HC-4: Same group — downgraded to soft constraint (see collectSoftWarnings)
+    // Groups are a strong preference, not a hard block, to avoid infeasible schedules.
 
     // HC-10 replaced by HC-13 (senior policy) — see below
 
     // HC-11: Choresh forbidden from Mamtera
+    const assignedParticipants = taskAssignments
+      .map((a) => pMap.get(a.participantId))
+      .filter((p): p is Participant => p !== undefined);
     allViolations.push(...checkChoreshExclusion(task, assignedParticipants));
   }
 

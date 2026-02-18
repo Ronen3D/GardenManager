@@ -705,7 +705,8 @@ console.log('\n── Consecutive High-Load Constraint (HC-12) ──');
   const midTime = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 9, 0);
   assert(getLoadWeightAtTime(heavyTask, midTime) === 1, 'HC-12 util: uniform heavy task → weight 1.0 at midpoint');
   assert(getLoadWeightAtTime(heavyTask, heavyTask.timeBlock.start) === 1, 'HC-12 util: heavy task → weight 1.0 at start');
-  assert(getLoadWeightAtTime(heavyTask, heavyTask.timeBlock.end) === 1, 'HC-12 util: heavy task → weight 1.0 at end');
+  // C2: With half-open [start, end), the exact end instant is outside the task
+  assert(getLoadWeightAtTime(heavyTask, heavyTask.timeBlock.end) === 0, 'HC-12 util: heavy task → weight 0 at end (half-open)');
 }
 
 // T-HC12-2: getLoadWeightAtTime for Karov returns 1.0 inside hot window, 0.2 outside

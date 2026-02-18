@@ -167,9 +167,11 @@ export function computeSeniorOutOfRolePenalty(
   tasks: Task[],
   l0AvgEffectiveHours: number,
   config: SchedulerConfig = DEFAULT_CONFIG,
+  prebuiltPMap?: Map<string, Participant>,
+  prebuiltTMap?: Map<string, Task>,
 ): number {
-  const pMap = new Map(participants.map(p => [p.id, p]));
-  const tMap = new Map(tasks.map(t => [t.id, t]));
+  const pMap = prebuiltPMap ?? new Map(participants.map(p => [p.id, p]));
+  const tMap = prebuiltTMap ?? new Map(tasks.map(t => [t.id, t]));
 
   // Determine penalty multiplier based on L0 overload
   const l0Overloaded = l0AvgEffectiveHours > config.l0OverloadThresholdHours;
