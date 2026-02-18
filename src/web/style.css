@@ -999,6 +999,62 @@ select.input-sm {
   flex-shrink: 0;
 }
 
+/* ─── Senior Toggle Panel ────────────────────────────── */
+.sidebar-senior-divider {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.btn-senior-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.btn-senior-toggle:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--text);
+}
+
+.senior-toggle-arrow {
+  margin-left: auto;
+  font-size: 0.7rem;
+  transition: transform 0.2s;
+}
+
+.sidebar-senior-panel {
+  margin-top: 8px;
+  padding-top: 4px;
+  animation: fadeIn 0.2s ease;
+}
+
+.sidebar-header-senior {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.sidebar-header-senior h3 {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* ─── Cross-Day Badges ───────────────────────────────── */
 .cross-day-badge {
   display: inline-block;
@@ -1292,6 +1348,121 @@ tr.row-rest td {
   height: 1px;
   background: var(--border);
   margin: 6px 0;
+}
+
+/* ─── Task Detail Tooltip ────────────────────────────────────────────────── */
+
+.task-detail-tooltip {
+  position: fixed;
+  z-index: 99999;
+  width: 310px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: #1e2130;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  padding: 12px 14px;
+  pointer-events: auto;
+  transition: opacity 0.1s ease;
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.task-tooltip-hover {
+  cursor: default;
+}
+
+.ttt-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.ttt-task-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+.ttt-time {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-bottom: 4px;
+}
+.ttt-dur {
+  font-weight: 600;
+  color: var(--text);
+}
+.ttt-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}
+.ttt-section-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.ttt-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.8rem;
+}
+.ttt-teammates {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ttt-mate {
+  padding: 5px 8px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+  border-left: 2px solid var(--border);
+}
+.ttt-mate-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.ttt-mate-name {
+  font-weight: 600;
+  font-size: 0.84rem;
+}
+.ttt-mate-level {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 3px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.7rem;
+}
+.ttt-mate-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+}
+.ttt-slot {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.06);
+  padding: 0 5px;
+  border-radius: 3px;
+}
+.ttt-cert {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 600;
 }
 
 /* ─── Profile View ───────────────────────────────────────────────────────── */

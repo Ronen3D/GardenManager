@@ -17,6 +17,8 @@ import {
   ValidationResult,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
+import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
+import { validateSeniorHardBlocks } from './senior-policy';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -183,7 +185,7 @@ export function checkChoreshExclusion(
 
   const violations: ConstraintViolation[] = [];
   for (const p of assignedParticipants) {
-    if (p.chopidr) {
+    if (p.certifications.includes(Certification.Horesh)) {
       violations.push(
         violation(
           'CHORESH_FORBIDDEN_MAMTERA',
@@ -367,6 +369,64 @@ export function checkAdanitGroupFeasibility(
 
   return violations;
 }
+
+// ─── HC-12: No Consecutive High-Load Tasks ──────────────────────────────────
+
+/**
+ * HC-12: A participant must NOT have two back-to-back assignments where the
+ * first task ENDS at high-load (weight ≥ 1.0) and the next task STARTS at
+ * high-load (weight ≥ 1.0).
+ *
+ * Internal transitions within a single task (e.g. Kruv hot→cold) are fine.
+ * A gap of low-load activity or off-duty time between high-load tasks is
+ * required to satisfy this constraint.
+ */
+export function checkNoConsecutiveHighLoad(
+  participantId: string,
+  assignments: Assignment[],
+  taskMap: Map<string, Task>,
+): ConstraintViolation[] {
+  const violations: ConstraintViolation[] = [];
+
+  // Collect this participant's assignments with their tasks
+  const pAssignments = assignments
+    .filter((a) => a.participantId === participantId)
+    .map((a) => ({ assignment: a, task: taskMap.get(a.taskId)! }))
+    .filter((x) => x.task != null)
+    // Sort by task start time
+    .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+
+  // Check each adjacent pair
+  for (let i = 0; i < pAssignments.length - 1; i++) {
+    const current = pAssignments[i];
+    const next = pAssignments[i + 1];
+
+    // Only check truly adjacent tasks (end of current == start of next, or overlapping boundary)
+    const gap = next.task.timeBlock.start.getTime() - current.task.timeBlock.end.getTime();
+    if (gap > 0) continue; // There's a gap → buffer exists
+
+    // Same task → internal transition, not a violation
+    if (current.task.id === next.task.id) continue;
+
+    const currentEndsHigh = isHighLoadAtBoundary(current.task, 'end');
+    const nextStartsHigh = isHighLoadAtBoundary(next.task, 'start');
+
+    if (currentEndsHigh && nextStartsHigh) {
+      violations.push(
+        violation(
+          'CONSECUTIVE_HIGH_LOAD',
+          `Participant ${participantId} has consecutive high-load tasks: "${current.task.name}" ends high-load and "${next.task.name}" starts high-load with no buffer.`,
+          next.task.id,
+          undefined,
+          participantId,
+        ),
+      );
+    }
+  }
+
+  return violations;
+}
+
 // ─── Aggregate Validation ────────────────────────────────────────────────────
 
 /**
@@ -426,8 +486,7 @@ export function validateHardConstraints(
       .filter((p): p is Participant => p !== undefined);
     allViolations.push(...checkSameGroup(task, assignedParticipants));
 
-    // HC-10: L4 forbidden from Shemesh/Aruga/Hamama
-    allViolations.push(...checkL4Exclusion(task, assignedParticipants));
+    // HC-10 replaced by HC-13 (senior policy) — see below
 
     // HC-11: Choresh forbidden from Mamtera
     allViolations.push(...checkChoreshExclusion(task, assignedParticipants));
@@ -437,6 +496,14 @@ export function validateHardConstraints(
   for (const p of participants) {
     allViolations.push(...checkNoDoubleBooking(p.id, assignments, tMap));
   }
+
+  // HC-12: No consecutive high-load tasks (per participant)
+  for (const p of participants) {
+    allViolations.push(...checkNoConsecutiveHighLoad(p.id, assignments, tMap));
+  }
+
+  // HC-13: Senior hard blocks (L4 non-natural/non-Hamama, L3 Mamtera)
+  allViolations.push(...validateSeniorHardBlocks(participants, assignments, tasks));
 
   return {
     valid: allViolations.length === 0,

@@ -9,6 +9,7 @@ import {
   Assignment,
   Participant,
   TaskType,
+  Certification,
   ValidationResult,
   ConstraintViolation,
   ViolationSeverity,
@@ -17,6 +18,8 @@ import {
 import { validateHardConstraints } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
+import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
+import { checkSeniorHardBlock } from '../constraints/senior-policy';
 
 export interface FullValidationResult extends ValidationResult {
   /** Soft constraint warnings (non-fatal) */
@@ -133,7 +136,22 @@ export function getEligibleParticipantsForSlot(
     }
 
     // HC-11: Choresh exclusion from Mamtera
-    if (p.chopidr && task.type === TaskType.Mamtera) return false;
+    if (p.certifications.includes(Certification.Horesh) && task.type === TaskType.Mamtera) return false;
+
+    // HC-13: Senior hard blocks
+    if (slot && checkSeniorHardBlock(p, task, slot)) return false;
+
+    // HC-12: No consecutive high-load tasks
+    for (const a of participantAssignments) {
+      const otherTask = taskMap.get(a.taskId);
+      if (!otherTask) continue;
+      if (otherTask.timeBlock.end.getTime() === task.timeBlock.start.getTime()) {
+        if (isHighLoadAtBoundary(otherTask, 'end') && isHighLoadAtBoundary(task, 'start')) return false;
+      }
+      if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
+        if (isHighLoadAtBoundary(task, 'end') && isHighLoadAtBoundary(otherTask, 'start')) return false;
+      }
+    }
 
     return true;
   });

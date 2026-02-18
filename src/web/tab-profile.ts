@@ -216,7 +216,7 @@ function renderPersonalAgenda(
         const crossDayBadge = crossDay
           ? `<span class="badge badge-sm" style="background:#555;color:#ffc107" title="Continues into Day ${endDayIdx}">→ Day ${endDayIdx}</span>`
           : '';
-        html += `<div class="agenda-task${crossDay ? ' agenda-task-crossday' : ''}" style="border-left:3px solid ${color}">
+        html += `<div class="agenda-task task-tooltip-hover${crossDay ? ' agenda-task-crossday' : ''}" data-task-id="${task.id}" style="border-left:3px solid ${color}">
           <div class="agenda-task-time">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</div>
           <div class="agenda-task-info">
             <span class="agenda-task-name">${task.name}</span>

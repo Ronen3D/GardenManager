@@ -15,7 +15,7 @@ import * as store from './config-store';
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
-const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala];
+const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala, Certification.Horesh];
 
 function levelBadge(level: Level): string {
   const colors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
@@ -166,7 +166,6 @@ export function renderParticipantsTab(): string {
       <th class="sortable-th" data-action="sort-column" data-sort-col="name">Name${sortIndicator('name')}</th>
       <th class="sortable-th" data-action="sort-column" data-sort-col="group">Group${sortIndicator('group')}</th>
       <th class="sortable-th" data-action="sort-column" data-sort-col="level">Level${sortIndicator('level')}</th>
-      <th>Choresh</th>
       <th>Certifications</th>
       <th>Availability</th><th>Blackouts</th><th class="col-actions">Actions</th>
     </tr></thead><tbody>`;
@@ -188,7 +187,6 @@ export function renderParticipantsTab(): string {
         <td><strong>${p.name}</strong></td>
         <td>${groupBadge(p.group)}</td>
         <td>${levelBadge(p.level)}</td>
-        <td>${p.chopidr ? '<span class="badge" style="background:#e74c3c">Choresh</span>' : '<span class="text-muted">—</span>'}</td>
         <td>${certBadges(p.certifications)}</td>
         <td class="avail-cell">
           ${p.availability.map(w => `<small>${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
@@ -259,11 +257,6 @@ function renderEditRow(p: Participant, idx: number): string {
       </select>
     </td>
     <td>
-      <label class="checkbox-label">
-        <input type="checkbox" data-field="choresh" ${p.chopidr ? 'checked' : ''} /> Choresh
-      </label>
-    </td>
-    <td>
       <div class="cert-checkboxes">
         ${CERT_OPTIONS.map(c =>
           `<label class="checkbox-label">
@@ -272,7 +265,7 @@ function renderEditRow(p: Participant, idx: number): string {
         ).join('')}
       </div>
     </td>
-    <td colspan="3"></td>
+    <td colspan="2"></td>
     <td class="col-actions">
       <button class="btn-sm btn-primary" data-action="save-participant" data-pid="${p.id}">Save</button>
       <button class="btn-sm btn-outline" data-action="cancel-edit">Cancel</button>
@@ -286,7 +279,7 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
   const dateRules = store.getDateUnavailabilities(pid);
 
   let html = `<tr class="row-blackout-expansion">
-    <td colspan="10">
+    <td colspan="9">
       <div class="blackout-panel">
         <h4>Blackout Periods</h4>
         <div class="blackout-list">`;
@@ -390,10 +383,6 @@ function renderAddForm(groups: string[]): string {
           <input type="checkbox" data-new-cert="${c}" ${c === Certification.Nitzan ? 'checked' : ''} /> ${c}
         </label>`
       ).join('')}
-      <span style="margin-left: 16px">Attributes:</span>
-      <label class="checkbox-label">
-        <input type="checkbox" data-field="new-choresh" /> Choresh
-      </label>
     </div>
     <div class="form-row">
       <button class="btn-primary btn-sm" data-action="confirm-add-participant">Add</button>
@@ -651,9 +640,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
           if (cb.checked) certs.push(cb.dataset.newCert as Certification);
         });
 
-        const chopidr = (container.querySelector('[data-field="new-choresh"]') as HTMLInputElement)?.checked ?? false;
-
-        store.addParticipant({ name, level, certifications: certs, group, chopidr });
+        store.addParticipant({ name, level, certifications: certs, group });
         rerender();
         break;
       }
@@ -684,9 +671,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
           if (cb.checked) certs.push(cb.dataset.cert as Certification);
         });
 
-        const chopidr = (row.querySelector('[data-field="choresh"]') as HTMLInputElement)?.checked ?? false;
-
-        store.updateParticipant(pid, { name, group, level, certifications: certs, chopidr });
+        store.updateParticipant(pid, { name, group, level, certifications: certs });
         editingId = null;
         rerender();
         break;

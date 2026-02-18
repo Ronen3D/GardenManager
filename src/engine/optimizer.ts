@@ -20,15 +20,14 @@ import {
   ScheduleScore,
   TaskType,
   Level,
+  Certification,
   SlotRequirement,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 import { validateHardConstraints } from '../constraints/hard-constraints';
 import { computeScheduleScore } from '../constraints/soft-constraints';
-import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
-
-/** Task types strictly forbidden for L4 participants (R4: hoisted to module scope) */
-const FORBIDDEN_FOR_L4: TaskType[] = [TaskType.Shemesh, TaskType.Aruga, TaskType.Hamama];
+import { computeTaskEffectiveHours, isHighLoadAtBoundary } from '../web/utils/load-weighting';
+import { checkSeniorHardBlock } from '../constraints/senior-policy';
 
 /** P4: Add an assignment into the per-participant index */
 function addToAssignmentMap(map: Map<string, Assignment[]>, a: Assignment): void {
@@ -83,16 +82,15 @@ function isEligibleForSlot(
 ): boolean {
   const _tag = `${participant.name} → ${task.name} [${slot.label || slot.slotId}]`;
 
-  // HC-NEW: L4 is strictly forbidden from Shemesh, Aruga, and Hamama
-  if (participant.level === Level.L4) {
-    if (FORBIDDEN_FOR_L4.includes(task.type)) {
-      if (_diagnosticLogging) console.log(`[Elig] REJECT L4-forbidden: ${_tag} — L4 cannot serve ${task.type}`);
-      return false;
-    }
+  // HC-13: Senior hard blocks (L4 non-natural/non-Hamama, L3 Mamtera)
+  const _seniorBlock = checkSeniorHardBlock(participant, task, slot);
+  if (_seniorBlock) {
+    if (_diagnosticLogging) console.log(`[Elig] REJECT senior-block: ${_tag} — ${_seniorBlock.message}`);
+    return false;
   }
 
   // HC-11: Choresh participants are strictly forbidden from Mamtera
-  if (participant.chopidr && task.type === TaskType.Mamtera) {
+  if (participant.certifications.includes(Certification.Horesh) && task.type === TaskType.Mamtera) {
     if (_diagnosticLogging) console.log(`[Elig] REJECT choresh-mamtera: ${_tag} — Choresh cannot serve Mamtera`);
     return false;
   }
@@ -135,6 +133,26 @@ function isEligibleForSlot(
   if (alreadyInTask) {
     if (_diagnosticLogging) console.log(`[Elig] REJECT already-in-task: ${_tag}`);
     return false;
+  }
+
+  // HC-12: No consecutive high-load tasks
+  for (const a of participantAssignments) {
+    const otherTask = taskMap.get(a.taskId);
+    if (!otherTask) continue;
+    // Check if the new task immediately follows the other
+    if (otherTask.timeBlock.end.getTime() === task.timeBlock.start.getTime()) {
+      if (isHighLoadAtBoundary(otherTask, 'end') && isHighLoadAtBoundary(task, 'start')) {
+        if (_diagnosticLogging) console.log(`[Elig] REJECT consecutive-high-load: ${_tag} — follows high-load ${otherTask.name}`);
+        return false;
+      }
+    }
+    // Check if the new task immediately precedes the other
+    if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
+      if (isHighLoadAtBoundary(task, 'end') && isHighLoadAtBoundary(otherTask, 'start')) {
+        if (_diagnosticLogging) console.log(`[Elig] REJECT consecutive-high-load: ${_tag} — precedes high-load ${otherTask.name}`);
+        return false;
+      }
+    }
   }
 
   return true;
@@ -519,13 +537,13 @@ function isSwapFeasible(
   if (!isFullyCovered(taskI.timeBlock, pI.availability)) return false;
   if (!isFullyCovered(taskJ.timeBlock, pJ.availability)) return false;
 
-  // HC-10: L4 exclusion
-  if (pI.level === Level.L4 && FORBIDDEN_FOR_L4.includes(taskI.type)) return false;
-  if (pJ.level === Level.L4 && FORBIDDEN_FOR_L4.includes(taskJ.type)) return false;
+  // HC-13: Senior hard blocks
+  if (slotI && checkSeniorHardBlock(pI, taskI, slotI)) return false;
+  if (slotJ && checkSeniorHardBlock(pJ, taskJ, slotJ)) return false;
 
   // HC-11: Choresh exclusion from Mamtera
-  if (pI.chopidr && taskI.type === TaskType.Mamtera) return false;
-  if (pJ.chopidr && taskJ.type === TaskType.Mamtera) return false;
+  if (pI.certifications.includes(Certification.Horesh) && taskI.type === TaskType.Mamtera) return false;
+  if (pJ.certifications.includes(Certification.Horesh) && taskJ.type === TaskType.Mamtera) return false;
 
   // HC-7: Unique participant per task (skip the swapped assignment itself)
   for (const a of candidate) {
@@ -570,6 +588,25 @@ function isSwapFeasible(
     return true;
   };
   if (!checkDoubleBooking(pI.id) || !checkDoubleBooking(pJ.id)) return false;
+
+  // HC-12: No consecutive high-load tasks for both affected participants
+  const checkConsecutiveHighLoad = (pid: string): boolean => {
+    const pAssignments = candidate
+      .filter(a => a.participantId === pid)
+      .map(a => ({ assignment: a, task: taskMap.get(a.taskId)! }))
+      .filter(x => x.task != null)
+      .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+    for (let x = 0; x < pAssignments.length - 1; x++) {
+      const cur = pAssignments[x];
+      const nxt = pAssignments[x + 1];
+      if (cur.task.id === nxt.task.id) continue;
+      const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
+      if (gap > 0) continue;
+      if (isHighLoadAtBoundary(cur.task, 'end') && isHighLoadAtBoundary(nxt.task, 'start')) return false;
+    }
+    return true;
+  };
+  if (!checkConsecutiveHighLoad(pI.id) || !checkConsecutiveHighLoad(pJ.id)) return false;
 
   return true;
 }

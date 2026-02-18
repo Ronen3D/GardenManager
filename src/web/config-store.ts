@@ -305,7 +305,6 @@ function recalcAllAvailability(): void {
 export function addParticipant(data: {
   name: string; level?: Level;
   certifications?: Certification[]; group: string;
-  chopidr?: boolean;
 }): Participant {
   pushSnapshot();
   const id = uid('p');
@@ -315,7 +314,6 @@ export function addParticipant(data: {
     level: data.level ?? Level.L0,
     certifications: data.certifications ?? [Certification.Nitzan],
     group: data.group,
-    chopidr: data.chopidr ?? false,
     availability: getDefaultAvailability(),
     dateUnavailability: [],
   };
@@ -598,6 +596,12 @@ export function seedDefaultParticipants(): void {
   //   2× L0 + Hamama (Nitzan)
   //   4× L0 standard (Nitzan)
   // All have Nitzan. 2 Hamama-certified L0, 1 Salsala-certified L0.
+  //
+  // Horesh certification defaults:
+  //   Dept A: 2 standard L0 participants (indices 8,9)
+  //   Dept B: 1 standard L0 participant  (index 8)
+  //   Dept C: 1 standard L0 participant  (index 8)
+  //   Dept D: none
 
   const deptNames = ['Dept A', 'Dept B', 'Dept C', 'Dept D'];
 
@@ -617,15 +621,25 @@ export function seedDefaultParticipants(): void {
     { level: Level.L0, certs: [Certification.Nitzan], tag: 'L0' },
   ];
 
+  // Horesh certification per department: set of template indices
+  const horeshByDept: Record<string, Set<number>> = {
+    'Dept A': new Set([8, 9]),  // 2 standard L0 participants
+    'Dept B': new Set([8]),     // 1 standard L0 participant
+    'Dept C': new Set([8]),     // 1 standard L0 participant
+  };
+
   for (const dept of deptNames) {
+    const horeshIndices = horeshByDept[dept];
     template.forEach((spec, i) => {
       const id = uid('p');
       const num = String(i + 1).padStart(2, '0');
+      const certs = [...spec.certs];
+      if (horeshIndices?.has(i)) certs.push(Certification.Horesh);
       const p: Participant = {
         id,
         name: `${dept} - Participant ${num}`,
         level: spec.level,
-        certifications: [...spec.certs],
+        certifications: certs,
         group: dept,
         availability: getDefaultAvailability(),
         dateUnavailability: [],

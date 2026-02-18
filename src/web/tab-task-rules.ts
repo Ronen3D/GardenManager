@@ -22,7 +22,7 @@ import { runPreflight } from './preflight';
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
-const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala];
+const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala, Certification.Horesh];
 const TASK_TYPE_OPTIONS = Object.values(TaskType);
 
 const TASK_COLORS: Record<string, string> = {

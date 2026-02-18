@@ -19,6 +19,7 @@ export enum Certification {
   Nitzan = 'Nitzan',
   Salsala = 'Salsala',
   Hamama = 'Hamama',
+  Horesh = 'Horesh',
 }
 
 /** Task type identifiers */
@@ -93,8 +94,6 @@ export interface Participant {
   level: Level;
   certifications: Certification[];
   group: string;
-  /** If true, participant is strictly forbidden from Mamtera tasks. */
-  chopidr?: boolean;
   /** Time windows when participant is available */
   availability: AvailabilityWindow[];
   /** Date-specific unavailability rules (recurring or one-off) */
@@ -186,6 +185,17 @@ export interface ScheduleScore {
   totalBonus: number;
   /** Composite objective: maximize this */
   compositeScore: number;
+
+  // ── Split-pool fairness metrics ──
+
+  /** L0 effective-load std-dev (primary fairness target) */
+  l0StdDev: number;
+  /** L0 average effective hours */
+  l0AvgEffective: number;
+  /** Senior (L2-L4) effective-load std-dev */
+  seniorStdDev: number;
+  /** Senior (L2-L4) average effective hours */
+  seniorAvgEffective: number;
 }
 
 // ─── Constraint Violations ───────────────────────────────────────────────────
@@ -213,8 +223,10 @@ export interface ValidationResult {
 export interface SchedulerConfig {
   /** Weight for min-rest in composite score */
   minRestWeight: number;
-  /** Weight for rest fairness (negative std dev) */
-  fairnessWeight: number;
+  /** Weight for L0 fairness (negative std dev) — primary */
+  l0FairnessWeight: number;
+  /** Weight for senior (L2-L4) fairness — secondary */
+  seniorFairnessWeight: number;
   /** Weight for penalty deduction */
   penaltyWeight: number;
   /** Weight for bonus addition */
@@ -231,11 +243,20 @@ export interface SchedulerConfig {
   maxIterations: number;
   /** Max time for solver in ms */
   maxSolverTimeMs: number;
+  /** Penalty for assigning a senior (L2/L3/L4) outside their natural role */
+  seniorOutOfRolePenalty: number;
+  /** Penalty for L4 assigned to Hamama (allowed but very undesirable) */
+  l4HamamaPenalty: number;
+  /** L0 average effective-hours threshold above which senior penalties are relaxed */
+  l0OverloadThresholdHours: number;
+  /** Multiplier applied to senior penalties when L0 is overloaded (0 = fully relaxed) */
+  l0OverloadPenaltyMultiplier: number;
 }
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
   minRestWeight: 15,
-  fairnessWeight: 8,
+  l0FairnessWeight: 10,
+  seniorFairnessWeight: 4,
   penaltyWeight: 4,
   bonusWeight: 3,
   hamamaL3Penalty: 50,
@@ -244,6 +265,10 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   backToBackPenalty: 3,
   maxIterations: 10000,
   maxSolverTimeMs: 30000,
+  seniorOutOfRolePenalty: 500,
+  l4HamamaPenalty: 300,
+  l0OverloadThresholdHours: 50,
+  l0OverloadPenaltyMultiplier: 0.1,
 };
 
 // ─── Gantt UI Bridge Types ───────────────────────────────────────────────────

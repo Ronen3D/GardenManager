@@ -9,6 +9,75 @@ export function getTaskBaseLoadWeight(task: Task): number {
   return clamp01(task.baseLoadWeight ?? 1);
 }
 
+/**
+ * Return the effective load weight at a specific instant within a task.
+ *
+ * - If `time` is outside the task's timeBlock, returns 0.
+ * - If the task has loadWindows, returns the window weight if `time` falls
+ *   inside a hot window, otherwise the baseLoadWeight.
+ * - If no loadWindows, returns the baseLoadWeight (1.0 for heavy, 0 for light).
+ *
+ * This is used by the "No Consecutive High-Load" constraint (HC-12) to
+ * determine whether the start/end boundary of a task is at high intensity.
+ */
+export function getLoadWeightAtTime(task: Task, time: Date): number {
+  const t = time.getTime();
+  const tStart = task.timeBlock.start.getTime();
+  const tEnd = task.timeBlock.end.getTime();
+
+  // Outside the task → weight 0
+  if (t < tStart || t > tEnd) return 0;
+
+  if (task.isLight) return 0;
+
+  const windows = task.loadWindows ?? [];
+  const baseWeight = clamp01(task.baseLoadWeight ?? 1);
+
+  // No load windows → uniform weight across the task
+  if (windows.length === 0) return baseWeight;
+
+  // Check if the instant falls inside any hot window
+  for (const w of windows) {
+    if (isTimeInsideWindow(time, w)) {
+      return clamp01(w.weight);
+    }
+  }
+
+  // Outside all hot windows → base (cold) weight
+  return baseWeight;
+}
+
+/**
+ * Check whether a specific instant falls inside a LoadWindow.
+ * Handles midnight-crossing windows and multi-day iteration.
+ */
+function isTimeInsideWindow(time: Date, window: LoadWindow): boolean {
+  const wStartMinutes = window.startHour * 60 + window.startMinute;
+  const wEndMinutes = window.endHour * 60 + window.endMinute;
+  const timeMinutes = time.getHours() * 60 + time.getMinutes();
+
+  if (wStartMinutes < wEndMinutes) {
+    // Normal window (e.g., 05:00–06:30)
+    return timeMinutes >= wStartMinutes && timeMinutes < wEndMinutes;
+  } else {
+    // Midnight-crossing window (e.g., 22:00–06:00)
+    return timeMinutes >= wStartMinutes || timeMinutes < wEndMinutes;
+  }
+}
+
+/**
+ * Determine whether a task is at high-load (weight ≥ 1.0) at its start or end boundary.
+ *
+ * Used by HC-12: "No Consecutive High-Load Tasks". Two distinct back-to-back
+ * tasks violate the constraint only if the first task ENDS at high load AND
+ * the next task STARTS at high load.
+ */
+export function isHighLoadAtBoundary(task: Task, edge: 'start' | 'end'): boolean {
+  const time = edge === 'start' ? task.timeBlock.start : task.timeBlock.end;
+  const weight = getLoadWeightAtTime(task, time);
+  return weight >= 1.0;
+}
+
 function overlapHours(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): number {
   const start = Math.max(aStart.getTime(), bStart.getTime());
   const end = Math.min(aEnd.getTime(), bEnd.getTime());

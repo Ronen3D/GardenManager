@@ -385,8 +385,8 @@ function renderWeeklyDashboard(schedule: Schedule): string {
           <span class="kpi-label">Weekly Score</span>
         </div>
         <div class="kpi">
-          <span class="kpi-value">${score.restStdDev.toFixed(2)}</span>
-          <span class="kpi-label">Fairness (σ)</span>
+          <span class="kpi-value">${score.l0StdDev.toFixed(2)}</span>
+          <span class="kpi-label">L0 Fairness (σ)</span>
         </div>
         <div class="kpi">
           <span class="kpi-value">${score.minRestHours.toFixed(1)}h</span>
@@ -415,94 +415,126 @@ function renderWeeklyDashboard(schedule: Schedule): string {
 
 // ─── Participant Status Sidebar ──────────────────────────────────────────────
 
+/** Build a single sidebar entry's HTML */
+function renderSidebarEntry(
+  entry: { p: Participant; w: { totalHours: number; effectiveHours: number; hotHours: number; coldHours: number; nonLightCount: number }; pctOfPeriod: number; perDay: Map<number, number> },
+  totalPeriodHours: number,
+): string {
+  const p = entry.p;
+  const barPct = Math.min(entry.pctOfPeriod * (100 / 30), 100);
+  const barWidth = barPct;
+  const overloaded = entry.pctOfPeriod > 25;
+  const underloaded = entry.pctOfPeriod < 5;
+  const barClass = overloaded ? 'wbar-over' : underloaded ? 'wbar-under' : 'wbar-normal';
+
+  let tooltipParts: string[] = [];
+  for (let d = 1; d <= store.getScheduleDays(); d++) {
+    const dayHrs = entry.perDay.get(d) || 0;
+    tooltipParts.push(`D${d}: ${dayHrs.toFixed(1)}h`);
+  }
+  const todayHrs = entry.perDay.get(currentDay) || 0;
+  const todayRatio = totalPeriodHours > 0 ? todayHrs / totalPeriodHours : 0;
+  const todayBarWidth = Math.min(todayRatio * 100 * (100 / 30), barWidth);
+
+  const diagTooltip = `${entry.w.effectiveHours.toFixed(1)}h effective / ${totalPeriodHours}h period = ${entry.pctOfPeriod.toFixed(1)}%\n` +
+    `Hot: ${entry.w.hotHours.toFixed(1)}h · Cold: ${entry.w.coldHours.toFixed(1)}h · Raw: ${entry.w.totalHours.toFixed(1)}h\n` +
+    `Assignments: ${entry.w.nonLightCount} heavy tasks\n` +
+    tooltipParts.join(' | ');
+
+  return `<div class="sidebar-entry">
+    <div class="sidebar-name">
+      <span class="participant-hover" data-pid="${p.id}">${p.name}</span>
+      <span class="sidebar-meta">${groupBadge(p.group)} ${levelBadge(p.level)}</span>
+    </div>
+    <div class="sidebar-bar-row">
+      <div class="sidebar-bar-bg" title="${diagTooltip}">
+        <div class="sidebar-bar-fill ${barClass}" style="width:${barWidth}%"></div>
+        <div class="sidebar-bar-today" style="width:${todayBarWidth}%"></div>
+        <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)}h eff (${entry.pctOfPeriod.toFixed(1)}%)</span>
+      </div>
+      <span class="sidebar-today-tag" title="Today (Day ${currentDay}): ${todayHrs.toFixed(1)} raw h">
+        Raw D${currentDay}: ${todayHrs.toFixed(1)}h
+      </span>
+    </div>
+  </div>`;
+}
+
 /**
- * Render the participant sidebar with:
- * - Cumulative 7-day workload bar (the "orange line")
- * - Per-day contribution tooltip
- * - Day-by-day workload visibility
+ * Render the participant sidebar with split pools:
+ * - L0 workload shown by default (primary focus)
+ * - Senior (L2-L4) workload hidden behind a toggle button
  */
 function renderParticipantSidebar(schedule: Schedule): string {
   const workloads = computeWeeklyWorkloads(schedule.participants, schedule.assignments, schedule.tasks);
   const numDays = store.getScheduleDays();
-  const totalPeriodHours = numDays * 24; // e.g. 168h for 7 days
+  const totalPeriodHours = numDays * 24;
 
-  // Average
-  let totalHours = 0;
-  let count = 0;
-  for (const w of workloads.values()) {
-    totalHours += w.effectiveHours;
-    count++;
-  }
-  const avgHours = count > 0 ? totalHours / count : 0;
-
-  // Build task lookup once for all participants
   const sidebarTaskMap = new Map<string, Task>(schedule.tasks.map(t => [t.id, t]));
 
-  // Build participant entries
-  const entries = schedule.participants.map(p => {
+  // Build all entries
+  const allEntries = schedule.participants.map(p => {
     const w = workloads.get(p.id) || { totalHours: 0, effectiveHours: 0, hotHours: 0, coldHours: 0, nonLightCount: 0 };
-    // Percentage = effective heavy load / total period hours
     const pctOfPeriod = totalPeriodHours > 0 ? (w.effectiveHours / totalPeriodHours) * 100 : 0;
     const perDay = computePerDayHours(p.id, schedule, sidebarTaskMap);
-
     return { p, w, pctOfPeriod, perDay };
-  }).sort((a, b) => b.w.effectiveHours - a.w.effectiveHours);
+  });
 
-  // Render
+  // Split into L0 and Senior pools
+  const l0Entries = allEntries
+    .filter(e => e.p.level === Level.L0)
+    .sort((a, b) => b.w.effectiveHours - a.w.effectiveHours);
+  const seniorEntries = allEntries
+    .filter(e => e.p.level !== Level.L0)
+    .sort((a, b) => b.w.effectiveHours - a.w.effectiveHours);
+
+  // L0 stats
+  const l0Total = l0Entries.reduce((s, e) => s + e.w.effectiveHours, 0);
+  const l0Avg = l0Entries.length > 0 ? l0Total / l0Entries.length : 0;
+  const l0Var = l0Entries.length > 0
+    ? l0Entries.reduce((s, e) => s + (e.w.effectiveHours - l0Avg) ** 2, 0) / l0Entries.length : 0;
+  const l0Sigma = Math.sqrt(l0Var);
+
+  // Senior stats
+  const seniorTotal = seniorEntries.reduce((s, e) => s + e.w.effectiveHours, 0);
+  const seniorAvg = seniorEntries.length > 0 ? seniorTotal / seniorEntries.length : 0;
+  const seniorVar = seniorEntries.length > 0
+    ? seniorEntries.reduce((s, e) => s + (e.w.effectiveHours - seniorAvg) ** 2, 0) / seniorEntries.length : 0;
+  const seniorSigma = Math.sqrt(seniorVar);
+
+  // ── L0 Section (always visible) ──
   let html = `<div class="participant-sidebar">
     <div class="sidebar-header">
-      <h3>Participant Status</h3>
-      <div class="sidebar-avg">Avg Effective: ${avgHours.toFixed(1)}h · ${numDays}d (${totalPeriodHours}h)</div>
+      <h3>Level 0 Workload</h3>
+      <div class="sidebar-avg">Avg: ${l0Avg.toFixed(1)}h eff · σ ${l0Sigma.toFixed(2)} · ${l0Entries.length} participants · ${numDays}d</div>
     </div>
     <div class="sidebar-entries">`;
 
-  for (const entry of entries) {
-    const p = entry.p;
-    // Bar fill: workload-based (pctOfPeriod scaled so ~30% of period = full bar)
-    const barPct = Math.min(entry.pctOfPeriod * (100 / 30), 100); // 30%+ of period = full bar
-    const barWidth = barPct;
-    const overloaded = entry.pctOfPeriod > 25;                    // >25% of period → red
-    const underloaded = entry.pctOfPeriod < 5;                    // <5% of period → dim
-    const barClass = overloaded ? 'wbar-over' : underloaded ? 'wbar-under' : 'wbar-normal';
-
-    // Per-day breakdown tooltip
-    let tooltipParts: string[] = [];
-    for (let d = 1; d <= store.getScheduleDays(); d++) {
-      const dayHrs = entry.perDay.get(d) || 0;
-      tooltipParts.push(`D${d}: ${dayHrs.toFixed(1)}h`);
-    }
-    // Highlight current day's contribution
-    const todayHrs = entry.perDay.get(currentDay) || 0;
-
-    // Today portion on the bar
-    const todayRatio = totalPeriodHours > 0 ? todayHrs / totalPeriodHours : 0;
-    const todayBarWidth = Math.min(todayRatio * 100 * (100 / 30), barWidth);
-
-    // Diagnostic tooltip: raw math breakdown
-    const diagTooltip = `${entry.w.effectiveHours.toFixed(1)}h effective / ${totalPeriodHours}h period = ${entry.pctOfPeriod.toFixed(1)}%\n` +
-      `Hot: ${entry.w.hotHours.toFixed(1)}h · Cold: ${entry.w.coldHours.toFixed(1)}h · Raw: ${entry.w.totalHours.toFixed(1)}h\n` +
-      `Assignments: ${entry.w.nonLightCount} heavy tasks\n` +
-      tooltipParts.join(' | ');
-
-    html += `<div class="sidebar-entry">
-      <div class="sidebar-name">
-        <span class="participant-hover" data-pid="${p.id}">${p.name}</span>
-        <span class="sidebar-meta">${groupBadge(p.group)} ${levelBadge(p.level)}</span>
-      </div>
-      <div class="sidebar-bar-row">
-        <div class="sidebar-bar-bg" title="${diagTooltip}">
-          <div class="sidebar-bar-fill ${barClass}" style="width:${barWidth}%"></div>
-          <div class="sidebar-bar-today" style="width:${todayBarWidth}%"></div>
-          <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)}h eff (${entry.pctOfPeriod.toFixed(1)}%)</span>
-        </div>
-        <span class="sidebar-today-tag" title="Today (Day ${currentDay}): ${todayHrs.toFixed(1)} raw h">
-          Raw D${currentDay}: ${todayHrs.toFixed(1)}h
-        </span>
-      </div>
-    </div>`;
+  for (const entry of l0Entries) {
+    html += renderSidebarEntry(entry, totalPeriodHours);
   }
 
-  html += `</div></div>`;
+  html += `</div>`;
+
+  // ── Senior Section (hidden by default) ──
+  html += `
+    <div class="sidebar-senior-divider">
+      <button class="btn-senior-toggle" id="btn-senior-toggle" title="Show / hide senior (L2-L4) workload">
+        👤 Senior View (${seniorEntries.length})
+        <span class="senior-toggle-arrow" id="senior-toggle-arrow">▶</span>
+      </button>
+    </div>
+    <div class="sidebar-senior-panel" id="sidebar-senior-panel" style="display:none">
+      <div class="sidebar-header sidebar-header-senior">
+        <h3>Senior Workload (L2-L4)</h3>
+        <div class="sidebar-avg">Avg: ${seniorAvg.toFixed(1)}h eff · σ ${seniorSigma.toFixed(2)} · ${seniorEntries.length} participants</div>
+      </div>
+      <div class="sidebar-entries">`;
+
+  for (const entry of seniorEntries) {
+    html += renderSidebarEntry(entry, totalPeriodHours);
+  }
+
+  html += `</div></div></div>`;
   return html;
 }
 
@@ -671,7 +703,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
       const slot = task.slots.find(s => s.slotId === a.slotId);
       html += `<tr class="${a.status === AssignmentStatus.Conflict ? 'row-error' : ''}" data-assignment-id="${a.id}">`;
       if (i === 0) {
-        html += `<td rowspan="${taskAssignments.length}" class="task-cell" style="border-left:4px solid ${TASK_COLORS[task.type] || '#999'}">
+        html += `<td rowspan="${taskAssignments.length}" class="task-cell task-tooltip-hover" data-task-id="${task.id}" style="border-left:4px solid ${TASK_COLORS[task.type] || '#999'}">
           <strong>${task.name}</strong>${task.isLight ? ' <small>(Light)</small>' : ''} ${crossDayTag}</td>
           <td rowspan="${taskAssignments.length}">${taskTypeBadge(task.type)}</td>
           <td rowspan="${taskAssignments.length}">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</td>`;
@@ -773,7 +805,7 @@ function renderGanttChart(schedule: Schedule): string {
       const crossClass = crossFrom ? 'gantt-cross-from' : crossTo ? 'gantt-cross-to' : '';
 
       const tooltip = `${block.taskName}&#10;${new Date(block.startMs).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} – ${new Date(block.endMs).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}${crossFrom ? '&#10;◀ Continued from previous day' : ''}${crossTo ? '&#10;▶ Continues to next day' : ''}`;
-      html += `<div class="gantt-block ${block.isLight ? 'gantt-light' : ''} ${crossClass}" style="left:${left}%;width:${width}%;background:${block.color}" title="${tooltip}">
+      html += `<div class="gantt-block task-tooltip-hover ${block.isLight ? 'gantt-light' : ''} ${crossClass}" data-task-id="${block.taskId}" style="left:${left}%;width:${width}%;background:${block.color}" title="${tooltip}">
         <span class="gantt-block-text">${crossFrom ? '◀ ' : ''}${block.taskName}${crossTo ? ' ▶' : ''}</span></div>`;
     }
     html += `</div></div>`;
@@ -1020,6 +1052,7 @@ function renderAll(): void {
   if (_viewMode === 'PROFILE_VIEW' && _profileParticipantId && currentSchedule) {
     // Hide the global tooltip when entering profile view
     hideTooltip();
+    hideTaskTooltip();
 
     const p = currentSchedule.participants.find(pp => pp.id === _profileParticipantId);
     if (!p) { _viewMode = 'SCHEDULE_VIEW'; _profileParticipantId = null; /* fall through */ }
@@ -1038,6 +1071,8 @@ function renderAll(): void {
         renderAll();
         requestAnimationFrame(() => window.scrollTo(0, _scheduleScrollY));
       });
+      // Wire task tooltip in profile view too
+      wireTaskTooltip(root);
       return;
     }
   }
@@ -1168,6 +1203,9 @@ function wireScheduleEvents(container: HTMLElement): void {
   // ── Participant Tooltip (event delegation) ──
   wireParticipantTooltip(container);
 
+  // ── Task Tooltip (event delegation) ──
+  wireTaskTooltip(container);
+
   // ── Participant click → Profile View ──
   container.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
@@ -1175,6 +1213,20 @@ function wireScheduleEvents(container: HTMLElement): void {
     const pid = target.dataset.pid;
     if (pid) navigateToProfile(pid);
   });
+
+  // ── Senior toggle button ──
+  const seniorToggle = container.querySelector('#btn-senior-toggle');
+  if (seniorToggle) {
+    seniorToggle.addEventListener('click', () => {
+      const panel = document.getElementById('sidebar-senior-panel');
+      const arrow = document.getElementById('senior-toggle-arrow');
+      if (panel) {
+        const visible = panel.style.display !== 'none';
+        panel.style.display = visible ? 'none' : 'block';
+        if (arrow) arrow.textContent = visible ? '▶' : '▼';
+      }
+    });
+  }
 }
 
 // ─── Global Participant Tooltip ──────────────────────────────────────────────
@@ -1329,6 +1381,151 @@ function wireParticipantTooltip(container: HTMLElement): void {
       const tooltip = getTooltipEl();
       tooltip.style.display = 'none';
     }, 120);
+  });
+}
+
+// ─── Global Task Tooltip ─────────────────────────────────────────────────────
+
+let _taskTooltipEl: HTMLElement | null = null;
+let _taskTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+function hideTaskTooltip(): void {
+  if (_taskTooltipHideTimer) { clearTimeout(_taskTooltipHideTimer); _taskTooltipHideTimer = null; }
+  if (_taskTooltipEl) _taskTooltipEl.style.display = 'none';
+}
+
+function getTaskTooltipEl(): HTMLElement {
+  if (_taskTooltipEl) return _taskTooltipEl;
+  const el = document.createElement('div');
+  el.className = 'task-detail-tooltip';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  el.addEventListener('mouseenter', () => {
+    if (_taskTooltipHideTimer) { clearTimeout(_taskTooltipHideTimer); _taskTooltipHideTimer = null; }
+  });
+  el.addEventListener('mouseleave', () => {
+    el.style.display = 'none';
+  });
+  _taskTooltipEl = el;
+  return el;
+}
+
+/** Cert color lookup for tooltip badges */
+const CERT_COLORS: Record<string, string> = {
+  Nitzan: '#16a085', Salsala: '#8e44ad', Hamama: '#c0392b', Horesh: '#e74c3c',
+};
+
+/** Build rich tooltip HTML for a task showing time, name, type, and all teammates. */
+function buildTaskTooltipContent(taskId: string): string {
+  if (!currentSchedule) return '';
+  const taskMap = new Map<string, Task>();
+  for (const t of currentSchedule.tasks) taskMap.set(t.id, t);
+  const task = taskMap.get(taskId);
+  if (!task) return '';
+
+  const pMap = new Map<string, Participant>();
+  for (const p of currentSchedule.participants) pMap.set(p.id, p);
+
+  const taskColor = TASK_COLORS[task.type] || '#7f8c8d';
+  const startStr = fmt(task.timeBlock.start);
+  const endStr = fmt(task.timeBlock.end);
+  const hrs = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
+
+  // Find all assignments for this task
+  const taskAssignments = currentSchedule.assignments.filter(a => a.taskId === taskId);
+
+  // Build teammates list
+  let teammatesHtml = '';
+  if (taskAssignments.length === 0) {
+    teammatesHtml = '<div class="ttt-empty">No assignments</div>';
+  } else {
+    teammatesHtml = '<div class="ttt-teammates">';
+    for (const a of taskAssignments) {
+      const p = pMap.get(a.participantId);
+      if (!p) continue;
+      const slot = task.slots.find(s => s.slotId === a.slotId);
+      const levelColors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
+      const certsHtml = p.certifications.length > 0
+        ? p.certifications.map(c =>
+            `<span class="ttt-cert" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${c}</span>`
+          ).join('')
+        : '';
+      teammatesHtml += `<div class="ttt-mate">
+        <div class="ttt-mate-main">
+          <span class="ttt-mate-name">${p.name}</span>
+          <span class="ttt-mate-level" style="background:${levelColors[p.level]}">L${p.level}</span>
+        </div>
+        <div class="ttt-mate-meta">
+          ${slot ? `<span class="ttt-slot">${slot.label}</span>` : ''}
+          ${certsHtml}
+        </div>
+      </div>`;
+    }
+    teammatesHtml += '</div>';
+  }
+
+  return `
+    <div class="ttt-header">
+      <span class="ttt-task-name" style="border-left:3px solid ${taskColor};padding-left:8px">${task.name}</span>
+      <span class="badge badge-sm" style="background:${taskColor}">${task.type}</span>
+      ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">Light</span>' : ''}
+    </div>
+    <div class="ttt-time">
+      <span>${startStr} – ${endStr}</span>
+      <span class="ttt-dur">${hrs.toFixed(1)}h</span>
+    </div>
+    <div class="ttt-divider"></div>
+    <div class="ttt-section-label">Shift Team (${taskAssignments.length})</div>
+    ${teammatesHtml}
+  `;
+}
+
+/** Wire event-delegated tooltip for .task-tooltip-hover elements. */
+function wireTaskTooltip(container: HTMLElement): void {
+  if (!currentSchedule) return;
+
+  container.addEventListener('mouseover', (e) => {
+    const target = (e.target as HTMLElement).closest('.task-tooltip-hover[data-task-id]') as HTMLElement | null;
+    if (!target) return;
+    const taskId = target.dataset.taskId;
+    if (!taskId) return;
+
+    if (_taskTooltipHideTimer) { clearTimeout(_taskTooltipHideTimer); _taskTooltipHideTimer = null; }
+
+    const content = buildTaskTooltipContent(taskId);
+    if (!content) return;
+
+    const tooltip = getTaskTooltipEl();
+    tooltip.innerHTML = content;
+    tooltip.style.display = 'block';
+
+    // Position near the target
+    const rect = target.getBoundingClientRect();
+    let left = rect.right + 8;
+    let top = rect.top - 4;
+
+    // Clamp to viewport
+    const ttWidth = 310;
+    const ttHeight = tooltip.offsetHeight || 200;
+    if (left + ttWidth > window.innerWidth) {
+      left = rect.left - ttWidth - 8;
+    }
+    if (top + ttHeight > window.innerHeight) {
+      top = window.innerHeight - ttHeight - 8;
+    }
+    if (top < 4) top = 4;
+
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  });
+
+  container.addEventListener('mouseout', (e) => {
+    const target = (e.target as HTMLElement).closest('.task-tooltip-hover[data-task-id]') as HTMLElement | null;
+    if (!target) return;
+    _taskTooltipHideTimer = setTimeout(() => {
+      const tooltip = getTaskTooltipEl();
+      tooltip.style.display = 'none';
+    }, 150);
   });
 }
 

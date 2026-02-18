@@ -57,6 +57,12 @@ export type { FullValidationResult } from './engine/validator';
 // ─── Constraints ─────────────────────────────────────────────────────────────
 export { validateHardConstraints } from './constraints/hard-constraints';
 export { computeScheduleScore, collectSoftWarnings } from './constraints/soft-constraints';
+export {
+  isNaturalRole,
+  checkSeniorHardBlock,
+  validateSeniorHardBlocks,
+  computeSeniorOutOfRolePenalty,
+} from './constraints/senior-policy';
 
 // ─── Task Definitions ────────────────────────────────────────────────────────
 export {
