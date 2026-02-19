@@ -26,7 +26,7 @@ import {
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 import { validateHardConstraints } from '../constraints/hard-constraints';
 import { computeScheduleScore, ScoreContext } from '../constraints/soft-constraints';
-import { computeTaskEffectiveHours, isHighLoadAtBoundary } from '../web/utils/load-weighting';
+import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
 import { isEligible, getRejectionReason } from './validator';
 
@@ -127,6 +127,15 @@ function getEligibleCandidates(
       const wa = participantWorkload.get(a.id) || 0;
       const wb = participantWorkload.get(b.id) || 0;
       if (wa !== wb) return wa - wb;
+      // T2.5: Adanit-specific assignment count — prefer participants with fewer
+      // Adanit shifts so L3/L4 naturally alternate instead of one level hoarding.
+      const adanitCountA = (assignmentsByParticipant.get(a.id) || []).filter(
+        (asgn) => taskMap.get(asgn.taskId)?.type === TaskType.Adanit,
+      ).length;
+      const adanitCountB = (assignmentsByParticipant.get(b.id) || []).filter(
+        (asgn) => taskMap.get(asgn.taskId)?.type === TaskType.Adanit,
+      ).length;
+      if (adanitCountA !== adanitCountB) return adanitCountA - adanitCountB;
       // T3: level ascending
       if (a.level !== b.level) return a.level - b.level;
       // T4: random tiebreak (pre-computed key)
@@ -151,8 +160,10 @@ function getEligibleCandidates(
     const bExact = slot.acceptableLevels.includes(b.level) ? 0 : 1;
     if (aExact !== bExact) return aExact - bExact;
 
-    // Level ascending
-    if (a.level !== b.level) return a.level - b.level;
+    // Level ascending — only for overqualified participants.
+    // When both are exact matches (e.g. L2/L3/L4 for Karov commander),
+    // skip level bias so all eligible levels compete fairly.
+    if (aExact === 1 && a.level !== b.level) return a.level - b.level;
 
     // Random tiebreak (pre-computed key)
     return (rngKey.get(a.id) || 0) - (rngKey.get(b.id) || 0);
@@ -173,11 +184,11 @@ function sortTasksByDifficulty(tasks: Task[]): Task[] {
   const priority: Record<string, number> = {
     [TaskType.Adanit]: 0,
     [TaskType.Hamama]: 1,
-    [TaskType.Mamtera]: 2,
-    [TaskType.Aruga]: 3,
-    [TaskType.Shemesh]: 4,
-    [TaskType.Karov]: 5,
-    [TaskType.Karovit]: 6,
+    [TaskType.Karov]: 2,
+    [TaskType.Karovit]: 3,
+    [TaskType.Mamtera]: 4,
+    [TaskType.Aruga]: 5,
+    [TaskType.Shemesh]: 6,
   };
   // P3: Pre-compute random keys for transitive tiebreaker
   const taskRngKey = new Map<string, number>();
@@ -622,7 +633,7 @@ function isSwapFeasible(
   };
   if (!checkDoubleBooking(pI.id) || !checkDoubleBooking(pJ.id)) return false;
 
-  // HC-12: No consecutive high-load tasks for both affected participants
+  // HC-12: No consecutive blocking tasks for both affected participants
   const checkConsecutiveHighLoad = (pid: string): boolean => {
     const pAssignments = (byParticipant.get(pid) || [])
       .map(a => ({ assignment: a, task: taskMap.get(a.taskId)! }))
@@ -634,7 +645,7 @@ function isSwapFeasible(
       if (cur.task.id === nxt.task.id) continue;
       const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
       if (gap > 0) continue;
-      if (isHighLoadAtBoundary(cur.task, 'end') && isHighLoadAtBoundary(nxt.task, 'start')) return false;
+      if (cur.task.blocksConsecutive && nxt.task.blocksConsecutive) return false;
     }
     return true;
   };

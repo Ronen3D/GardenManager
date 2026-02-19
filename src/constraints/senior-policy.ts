@@ -1,26 +1,25 @@
 /**
  * Senior Role Policy  (HC-13 hard blocks + soft penalties)
  *
- * Defines which tasks/slots are "natural" for each senior level and provides
- * hard-constraint checks + soft-penalty scoring.
+ * Strict isolation model — seniors are locked to their natural domain.
  *
  * Natural roles:
  *   L4 → Segol Main (Adanit), Karov commander, Karovit commander
  *   L3 → Segol Secondary (Adanit), Karov commander, Karovit commander
  *   L2 → Segol Secondary (Adanit), Karov commander, Karovit commander
  *
- * Hard blocks:
- *   L4 → forbidden from everything except natural roles + Hamama
- *   L3 → forbidden from Mamtera
+ * Hard blocks (apply to ALL seniors L2/L3/L4):
+ *   Forbidden from ANY task that is not their natural domain.
+ *   The ONLY exception is Hamama (see below).
  *
- * Soft penalties (very high):
- *   L4 in Hamama → allowed but heavily penalised
- *   Any senior in a non-natural slot → heavily penalised
+ * Hamama exception (absolute last resort):
+ *   Seniors MAY be assigned to Hamama, but with the maximum possible
+ *   penalty.  The system should only place a senior in Hamama when the
+ *   alternative is a complete failure to generate a schedule.
  *
- * Overload escape valve:
- *   When L0 average effective hours > threshold, senior penalties are
- *   multiplied by a small factor (e.g. 0.1) so the optimizer can assign
- *   seniors to relieve L0 pressure.
+ * Zero exceptions:
+ *   Seniors can no longer be used for general tasks even if L0 is under
+ *   extreme load.  The L0 Overload Escape Valve has been removed.
  */
 
 import {
@@ -34,7 +33,6 @@ import {
   ConstraintViolation,
   ViolationSeverity,
   SchedulerConfig,
-  DEFAULT_CONFIG,
 } from '../models/types';
 
 // ─── Natural-role detection ──────────────────────────────────────────────────
@@ -59,14 +57,18 @@ export function isNaturalRole(
   const isKarovit = task.type === TaskType.Karovit;
   const isAdanit = task.type === TaskType.Adanit;
 
-  // Karov and Karovit commander slots are natural for all seniors
-  if (isKarov || isKarovit) return true;
+  // Karov and Karovit: only the commander slots (which explicitly list
+  // the senior's level) are natural. L0-only slots are NOT natural for seniors.
+  if (isKarov || isKarovit) return slot.acceptableLevels.includes(level);
 
   if (isAdanit) {
     // L4 → only Segol Main slots
     if (level === Level.L4) return slot.adanitTeam === AdanitTeam.SegolMain;
-    // L3, L2 → only Segol Secondary slots
-    if (level === Level.L3 || level === Level.L2) return slot.adanitTeam === AdanitTeam.SegolSecondary;
+    // L3 → Segol Main or Segol Secondary (breaks L4 monopoly on Main)
+    if (level === Level.L3)
+      return slot.adanitTeam === AdanitTeam.SegolMain || slot.adanitTeam === AdanitTeam.SegolSecondary;
+    // L2 → only Segol Secondary slots
+    if (level === Level.L2) return slot.adanitTeam === AdanitTeam.SegolSecondary;
   }
 
   return false;
@@ -75,13 +77,13 @@ export function isNaturalRole(
 // ─── Hard constraint: absolute blocks ────────────────────────────────────────
 
 /**
- * HC-13 · Senior hard blocks
+ * HC-13 · Senior hard blocks (strict isolation)
  *
- * Returns a violation if:
- *   - L4 is assigned to anything other than their natural slots or Hamama
- *   - L3 is assigned to Mamtera
+ * Returns a violation if any senior (L2, L3, L4) is assigned to a task
+ * that is NOT their natural domain and NOT Hamama.
  *
- * L2 has no hard blocks (only soft penalties for out-of-role assignments).
+ * Hamama is the ONLY non-natural exception — it is allowed but carries
+ * the maximum soft penalty (absolute last resort).
  */
 export function checkSeniorHardBlock(
   participant: Participant,
@@ -90,37 +92,24 @@ export function checkSeniorHardBlock(
 ): ConstraintViolation | null {
   const lvl = participant.level;
 
-  // Only applies to L3+
-  if (lvl === Level.L0 || lvl === Level.L2) return null;
+  // Only applies to seniors (L2/L3/L4)
+  if (lvl === Level.L0) return null;
 
-  // L4: forbidden from everything except natural roles + Hamama
-  if (lvl === Level.L4) {
-    const isHamama = task.type === TaskType.Hamama;
-    if (!isHamama && !isNaturalRole(lvl, task, slot)) {
-      return {
-        code: 'SENIOR_HARD_BLOCK',
-        message: `L4 participant "${participant.name}" cannot be assigned to ${task.name} [${slot.label || slot.slotId}] — only natural Adanit(Main)/Karov/Karovit slots and Hamama are allowed`,
-        severity: ViolationSeverity.Error,
-        participantId: participant.id,
-        taskId: task.id,
-        slotId: slot.slotId,
-      };
-    }
-  }
+  // Hamama is the sole non-natural exception (soft-penalised, not blocked)
+  if (task.type === TaskType.Hamama) return null;
 
-  // L3: forbidden from Mamtera
-  if (lvl === Level.L3 && task.type === TaskType.Mamtera) {
-    return {
-      code: 'SENIOR_HARD_BLOCK',
-      message: `L3 participant "${participant.name}" cannot be assigned to Mamtera task "${task.name}"`,
-      severity: ViolationSeverity.Error,
-      participantId: participant.id,
-      taskId: task.id,
-      slotId: slot.slotId,
-    };
-  }
+  // Natural role → allowed
+  if (isNaturalRole(lvl, task, slot)) return null;
 
-  return null;
+  // Everything else is forbidden
+  return {
+    code: 'SENIOR_HARD_BLOCK',
+    message: `L${lvl} participant "${participant.name}" cannot be assigned to ${task.name} [${slot.label || slot.slotId}] — seniors are restricted to their natural domain (Adanit/Karov/Karovit) and Hamama`,
+    severity: ViolationSeverity.Error,
+    participantId: participant.id,
+    taskId: task.id,
+    slotId: slot.slotId,
+  };
 }
 
 /**
@@ -157,25 +146,23 @@ export function validateSeniorHardBlocks(
 /**
  * Compute the total soft penalty for senior out-of-role assignments.
  *
- * When `l0AvgEffectiveHours` exceeds the config threshold, penalties are
- * scaled down by `l0OverloadPenaltyMultiplier` so the optimizer can
- * relieve L0 pressure by assigning seniors to non-natural slots.
+ * Under the strict isolation model only Hamama remains as a soft-penalised
+ * exception.  All other non-natural assignments are hard-blocked and should
+ * never reach this function, but guard defensively.
+ *
+ * Hamama carries the maximum penalty (`seniorHamamaPenalty`) regardless of
+ * senior level — it is an absolute last resort.
  */
 export function computeSeniorOutOfRolePenalty(
   participants: Participant[],
   assignments: Assignment[],
   tasks: Task[],
-  l0AvgEffectiveHours: number,
-  config: SchedulerConfig = DEFAULT_CONFIG,
+  config: SchedulerConfig,
   prebuiltPMap?: Map<string, Participant>,
   prebuiltTMap?: Map<string, Task>,
 ): number {
   const pMap = prebuiltPMap ?? new Map(participants.map(p => [p.id, p]));
   const tMap = prebuiltTMap ?? new Map(tasks.map(t => [t.id, t]));
-
-  // Determine penalty multiplier based on L0 overload
-  const l0Overloaded = l0AvgEffectiveHours > config.l0OverloadThresholdHours;
-  const multiplier = l0Overloaded ? config.l0OverloadPenaltyMultiplier : 1.0;
 
   let totalPenalty = 0;
 
@@ -188,15 +175,15 @@ export function computeSeniorOutOfRolePenalty(
     const slot = task.slots.find(s => s.slotId === a.slotId);
     if (!slot) continue;
 
-    // L4 in Hamama — allowed but very undesirable
-    if (p.level === Level.L4 && task.type === TaskType.Hamama) {
-      totalPenalty += config.l4HamamaPenalty * multiplier;
+    // Any senior in Hamama — absolute last resort, maximum penalty
+    if (task.type === TaskType.Hamama) {
+      totalPenalty += config.seniorHamamaPenalty;
       continue;
     }
 
-    // Any senior in a non-natural slot
+    // Defensive: any non-natural assignment that slipped past hard blocks
     if (!isNaturalRole(p.level, task, slot)) {
-      totalPenalty += config.seniorOutOfRolePenalty * multiplier;
+      totalPenalty += config.seniorOutOfRolePenalty;
     }
   }
 

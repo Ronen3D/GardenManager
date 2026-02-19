@@ -213,6 +213,7 @@ function generateTasksFromTemplates(): Task[] {
           baseLoadWeight: tpl.baseLoadWeight,
           loadWindows: (tpl.loadWindows ?? []).map((w) => ({ ...w })),
           sameGroupRequired: tpl.sameGroupRequired,
+          blocksConsecutive: tpl.blocksConsecutive ?? !tpl.isLight,
         });
       }
     }

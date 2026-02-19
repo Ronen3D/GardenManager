@@ -93,6 +93,7 @@ for (let t = 0; t < 40; t++) {
     })),
     isLight: false,
     sameGroupRequired: false,
+    blocksConsecutive: true,
   });
 
   // 5 assignments per task = 200 total

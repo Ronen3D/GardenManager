@@ -107,6 +107,7 @@ export function createAdanitTasks(baseDate: Date): Task[] {
       slots,
       isLight: false,
       sameGroupRequired: true,
+      blocksConsecutive: true,
     };
   });
 }
@@ -125,13 +126,15 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
     slots: [
       {
         slotId: nextSlotId('hamama'),
-        acceptableLevels: [Level.L0, Level.L3],
+        acceptableLevels: [Level.L0, Level.L2, Level.L3, Level.L4],
         requiredCertifications: [Certification.Hamama],
         label: 'Hamama Operator',
       },
     ],
     isLight: false,
+    baseLoadWeight: 0.6,
     sameGroupRequired: false,
+    blocksConsecutive: true,
   };
 }
 
@@ -148,19 +151,20 @@ export function createShemeshTask(timeBlock: TimeBlock): Task {
     slots: [
       {
         slotId: nextSlotId('shemesh'),
-        acceptableLevels: [Level.L0, Level.L2, Level.L3],
+        acceptableLevels: [Level.L0],
         requiredCertifications: [Certification.Nitzan],
         label: 'Shemesh #1',
       },
       {
         slotId: nextSlotId('shemesh'),
-        acceptableLevels: [Level.L0, Level.L2, Level.L3],
+        acceptableLevels: [Level.L0],
         requiredCertifications: [Certification.Nitzan],
         label: 'Shemesh #2',
       },
     ],
     isLight: false,
     sameGroupRequired: false, // soft preference, not hard
+    blocksConsecutive: true,
   };
 }
 
@@ -191,6 +195,7 @@ export function createMamteraTask(baseDate: Date): Task {
     ],
     isLight: false,
     sameGroupRequired: false,
+    blocksConsecutive: true,
   };
 }
 
@@ -253,6 +258,7 @@ export function createKarovTask(timeBlock: TimeBlock): Task {
       },
     ],
     sameGroupRequired: false,
+    blocksConsecutive: false,
   };
 }
 
@@ -295,6 +301,7 @@ export function createKarovitTask(timeBlock: TimeBlock): Task {
     ],
     isLight: true,
     sameGroupRequired: false,
+    blocksConsecutive: false,
   };
 }
 
@@ -324,6 +331,7 @@ export function createArugaTask(timeBlock: TimeBlock, label: string = 'Aruga'): 
     ],
     isLight: false,
     sameGroupRequired: false,
+    blocksConsecutive: true,
   };
 }
 

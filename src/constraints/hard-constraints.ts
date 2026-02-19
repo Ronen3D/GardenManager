@@ -17,7 +17,6 @@ import {
   ValidationResult,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
-import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
 import { validateSeniorHardBlocks } from './senior-policy';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -345,13 +344,13 @@ export function checkAdanitGroupFeasibility(
 // ─── HC-12: No Consecutive High-Load Tasks ──────────────────────────────────
 
 /**
- * HC-12: A participant must NOT have two back-to-back assignments where the
- * first task ENDS at high-load (weight ≥ 1.0) and the next task STARTS at
- * high-load (weight ≥ 1.0).
+ * HC-12: A participant must NOT have two back-to-back assignments where
+ * both tasks have blocksConsecutive=true. This replaces the old
+ * high-load boundary check with an explicit per-task flag.
  *
- * Internal transitions within a single task (e.g. Kruv hot→cold) are fine.
- * A gap of low-load activity or off-duty time between high-load tasks is
- * required to satisfy this constraint.
+ * Tasks with blocksConsecutive=true (Adanit, Hamama, Shemesh, Mamtera,
+ * Aruga) require a buffer between them. Tasks with blocksConsecutive=false
+ * (Karov, Karovit) can be placed adjacent to any task.
  */
 export function checkNoConsecutiveHighLoad(
   participantId: string,
@@ -380,14 +379,11 @@ export function checkNoConsecutiveHighLoad(
     // Same task → internal transition, not a violation
     if (current.task.id === next.task.id) continue;
 
-    const currentEndsHigh = isHighLoadAtBoundary(current.task, 'end');
-    const nextStartsHigh = isHighLoadAtBoundary(next.task, 'start');
-
-    if (currentEndsHigh && nextStartsHigh) {
+    if (current.task.blocksConsecutive && next.task.blocksConsecutive) {
       violations.push(
         violation(
           'CONSECUTIVE_HIGH_LOAD',
-          `Participant ${participantId} has consecutive high-load tasks: "${current.task.name}" ends high-load and "${next.task.name}" starts high-load with no buffer.`,
+          `Participant ${participantId} has consecutive blocking tasks: "${current.task.name}" and "${next.task.name}" with no buffer.`,
           next.task.id,
           undefined,
           participantId,

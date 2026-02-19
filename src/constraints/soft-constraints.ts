@@ -26,17 +26,16 @@ import { computeSeniorOutOfRolePenalty } from './senior-policy';
 // ─── Individual Penalty Functions ────────────────────────────────────────────
 
 /**
- * SC-1: Hamama penalty — penalise assigning L3/L4 to Hamama.
- * Best: L0 (0 penalty), Acceptable: L3 (high), Avoid: L4 (extreme).
+ * SC-1: Hamama penalty — now handled entirely by senior policy
+ * (`seniorHamamaPenalty`).  This function is kept for API
+ * compatibility but always returns 0.
  */
 export function hamamaPenalty(
   task: Task,
   participant: Participant,
-  config: SchedulerConfig,
+  _config: SchedulerConfig,
 ): number {
-  if (task.type !== TaskType.Hamama) return 0;
-  if (participant.level === Level.L3) return config.hamamaL3Penalty;
-  if (participant.level === Level.L4) return config.hamamaL4Penalty;
+  // All senior-in-Hamama penalties are applied via computeSeniorOutOfRolePenalty.
   return 0;
 }
 
@@ -194,23 +193,14 @@ export function collectSoftWarnings(
       .map((a) => pMap.get(a.participantId))
       .filter((p): p is Participant => !!p);
 
-    // Hamama: L3 warning, L4 warning (soft — allowed but very undesirable per HC-13)
+    // Hamama: warn for ALL seniors (L2/L3/L4) — absolute last resort
     if (task.type === TaskType.Hamama) {
       for (const p of assignedPs) {
-        if (p.level === Level.L3) {
+        if (p.level === Level.L2 || p.level === Level.L3 || p.level === Level.L4) {
           warnings.push({
             severity: ViolationSeverity.Warning,
-            code: 'HAMAMA_L3',
-            message: `${p.name} (L3) assigned to Hamama — high penalty. Prefer L0.`,
-            taskId: task.id,
-            participantId: p.id,
-          });
-        }
-        if (p.level === Level.L4) {
-          warnings.push({
-            severity: ViolationSeverity.Warning,
-            code: 'HAMAMA_L4',
-            message: `${p.name} (L4) assigned to Hamama — very undesirable. Only as last resort.`,
+            code: 'HAMAMA_SENIOR',
+            message: `${p.name} (L${p.level}) assigned to Hamama — absolute last resort. Seniors should only be placed here if no other schedule is possible.`,
             taskId: task.id,
             participantId: p.id,
           });
@@ -373,8 +363,7 @@ export function computeScheduleScore(
   totalPenalty += backToBackPenalty(participants, assignments, tasks, config.backToBackPenalty, taskMap, byParticipant);
 
   // SC-6: Senior out-of-role penalty — pass pre-built maps
-  const l0Avg = wlSplit.l0Avg;
-  totalPenalty += computeSeniorOutOfRolePenalty(participants, assignments, tasks, l0Avg, config, pMap, taskMap);
+  totalPenalty += computeSeniorOutOfRolePenalty(participants, assignments, tasks, config, pMap, taskMap);
 
   // Composite score
   const minRest = isFinite(fairness.globalMinRest) ? fairness.globalMinRest : 0;

@@ -662,6 +662,7 @@ export function seedDefaultTaskTemplates(): void {
     isLight: false,
     baseLoadWeight: 1,
     loadWindows: [],
+    blocksConsecutive: true,
     subTeams: [
       {
         id: uid('st'), name: 'Segol Main', slots: [
@@ -691,11 +692,12 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 6,
     sameGroupRequired: false,
     isLight: false,
-    baseLoadWeight: 1,
+    baseLoadWeight: 0.6,
     loadWindows: [],
+    blocksConsecutive: true,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'Hamama Operator', acceptableLevels: [Level.L0, Level.L3], requiredCertifications: [Certification.Hamama] },
+      { id: uid('slot'), label: 'Hamama Operator', acceptableLevels: [Level.L0, Level.L2, Level.L3, Level.L4], requiredCertifications: [Certification.Hamama] },
     ],
     description: '12h shifts (06:00-18:00, 18:00-06:00). Requires Hamama cert. L2/L4 forbidden. No Nitzan req.',
   });
@@ -711,10 +713,11 @@ export function seedDefaultTaskTemplates(): void {
     isLight: false,
     baseLoadWeight: 1,
     loadWindows: [],
+    blocksConsecutive: true,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'Shemesh #1', acceptableLevels: [Level.L0, Level.L2, Level.L3], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'Shemesh #2', acceptableLevels: [Level.L0, Level.L2, Level.L3], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'Shemesh #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'Shemesh #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
     ],
     description: '4h shifts (05:00 cycle), 6/day. Requires Nitzan. Prefer same group (soft).',
   });
@@ -730,6 +733,7 @@ export function seedDefaultTaskTemplates(): void {
     isLight: false,
     baseLoadWeight: 1,
     loadWindows: [],
+    blocksConsecutive: true,
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'Mamtera L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
@@ -748,6 +752,7 @@ export function seedDefaultTaskTemplates(): void {
     sameGroupRequired: false,
     isLight: false,
     baseLoadWeight: 0.2,
+    blocksConsecutive: false,
     loadWindows: [
       {
         id: uid('lw'),
@@ -787,6 +792,7 @@ export function seedDefaultTaskTemplates(): void {
     isLight: true,
     baseLoadWeight: 0,
     loadWindows: [],
+    blocksConsecutive: false,
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'Karovit Commander (L2+)', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
@@ -808,6 +814,7 @@ export function seedDefaultTaskTemplates(): void {
     isLight: false,
     baseLoadWeight: 1,
     loadWindows: [],
+    blocksConsecutive: true,
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'Aruga L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },

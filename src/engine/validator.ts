@@ -19,7 +19,6 @@ import {
 import { validateHardConstraints } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
-import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
 
 export interface FullValidationResult extends ValidationResult {
@@ -144,15 +143,15 @@ export function isEligible(
   // HC-7: Not already assigned to this task
   if (participantAssignments.some(a => a.taskId === task.id)) return false;
 
-  // HC-12: No consecutive high-load tasks
+  // HC-12: No consecutive blocking tasks
   for (const a of participantAssignments) {
     const otherTask = taskMap.get(a.taskId);
     if (!otherTask) continue;
     if (otherTask.timeBlock.end.getTime() === task.timeBlock.start.getTime()) {
-      if (isHighLoadAtBoundary(otherTask, 'end') && isHighLoadAtBoundary(task, 'start')) return false;
+      if (otherTask.blocksConsecutive && task.blocksConsecutive) return false;
     }
     if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
-      if (isHighLoadAtBoundary(task, 'end') && isHighLoadAtBoundary(otherTask, 'start')) return false;
+      if (task.blocksConsecutive && otherTask.blocksConsecutive) return false;
     }
   }
 
@@ -203,10 +202,10 @@ export function getRejectionReason(
     const otherTask = taskMap.get(a.taskId);
     if (!otherTask) continue;
     if (otherTask.timeBlock.end.getTime() === task.timeBlock.start.getTime()) {
-      if (isHighLoadAtBoundary(otherTask, 'end') && isHighLoadAtBoundary(task, 'start')) return 'HC-12';
+      if (otherTask.blocksConsecutive && task.blocksConsecutive) return 'HC-12';
     }
     if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
-      if (isHighLoadAtBoundary(task, 'end') && isHighLoadAtBoundary(otherTask, 'start')) return 'HC-12';
+      if (task.blocksConsecutive && otherTask.blocksConsecutive) return 'HC-12';
     }
   }
   return null;

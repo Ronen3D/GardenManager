@@ -167,6 +167,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <div class="template-toggles">
         ${tpl.sameGroupRequired ? '<span class="badge badge-sm badge-outline">Same Group</span>' : ''}
         ${tpl.isLight ? '<span class="badge badge-sm badge-outline">Light</span>' : ''}
+        ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">No HC-12</span>'}
         <span class="expand-arrow">${isExpanded ? '▼' : '▶'}</span>
       </div>
     </div>`;
@@ -185,6 +186,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <label>Base Load (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> Same Group</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> Light Task</label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> Blocks Consecutive (HC-12)</label>
       <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">Apply</button>
     </div>`;
 
@@ -387,11 +389,12 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const baseLoad = parseFloat((body.querySelector('[data-tpl-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1');
         const sameGroup = (body.querySelector('[data-tpl-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
         const isLight = (body.querySelector('[data-tpl-field="isLight"]') as HTMLInputElement)?.checked || false;
+        const blocksConsecutive = (body.querySelector('[data-tpl-field="blocksConsecutive"]') as HTMLInputElement)?.checked || false;
 
         store.updateTaskTemplate(tid, {
           durationHours: dur, shiftsPerDay: shifts, startHour: startH,
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
-          sameGroupRequired: sameGroup, isLight,
+          sameGroupRequired: sameGroup, isLight, blocksConsecutive,
         });
         rerender();
         break;
@@ -584,6 +587,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           isLight,
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
           loadWindows: [],
+          blocksConsecutive: !isLight,
           subTeams: [],
           slots: [],
           description: desc || undefined,

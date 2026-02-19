@@ -135,6 +135,13 @@ export interface Task {
   loadWindows?: LoadWindow[];
   /** Group constraint: all participants must be from same group */
   sameGroupRequired: boolean;
+  /**
+   * HC-12 consecutive-task blocking flag.
+   * When true, this task prohibits back-to-back placement with another
+   * task that also has blocksConsecutive=true (regardless of load weight).
+   * All tasks except Karov and Karovit default to true.
+   */
+  blocksConsecutive: boolean;
 }
 
 // ─── Assignment ──────────────────────────────────────────────────────────────
@@ -229,10 +236,7 @@ export interface SchedulerConfig {
   penaltyWeight: number;
   /** Weight for bonus addition */
   bonusWeight: number;
-  /** Hamama Level 3 penalty points */
-  hamamaL3Penalty: number;
-  /** Hamama Level 4 penalty points */
-  hamamaL4Penalty: number;
+
   /** Penalty per zero-gap (back-to-back) assignment pair — soft only */
   backToBackPenalty: number;
   /** Max solver iterations */
@@ -241,12 +245,8 @@ export interface SchedulerConfig {
   maxSolverTimeMs: number;
   /** Penalty for assigning a senior (L2/L3/L4) outside their natural role */
   seniorOutOfRolePenalty: number;
-  /** Penalty for L4 assigned to Hamama (allowed but very undesirable) */
-  l4HamamaPenalty: number;
-  /** L0 average effective-hours threshold above which senior penalties are relaxed */
-  l0OverloadThresholdHours: number;
-  /** Multiplier applied to senior penalties when L0 is overloaded (0 = fully relaxed) */
-  l0OverloadPenaltyMultiplier: number;
+  /** Penalty for ANY senior (L2/L3/L4) assigned to Hamama — absolute last resort */
+  seniorHamamaPenalty: number;
   /** Penalty per same-group task that has mixed-group participants */
   groupMismatchPenalty: number;
 }
@@ -257,15 +257,12 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   seniorFairnessWeight: 6,
   penaltyWeight: 1,
   bonusWeight: 3,
-  hamamaL3Penalty: 15,
-  hamamaL4Penalty: 200,
+
   backToBackPenalty: 5,
   maxIterations: 10000,
   maxSolverTimeMs: 30000,
   seniorOutOfRolePenalty: 200,
-  l4HamamaPenalty: 200,
-  l0OverloadThresholdHours: 50,
-  l0OverloadPenaltyMultiplier: 0.1,
+  seniorHamamaPenalty: 10000,
   groupMismatchPenalty: 100,
 };
 
@@ -370,6 +367,12 @@ export interface TaskTemplate {
   baseLoadWeight?: number;
   /** Optional weighted windows (typically "hot" windows). */
   loadWindows?: LoadWindow[];
+  /**
+   * HC-12 consecutive-task blocking flag.
+   * When true, this task prohibits back-to-back placement with another
+   * blocksConsecutive task. Defaults to true for heavy tasks, false for light.
+   */
+  blocksConsecutive?: boolean;
   /** Sub-teams (each has its own slots). If empty, slots are top-level */
   subTeams: SubTeamTemplate[];
   /** Top-level slots (used when there are no sub-teams) */

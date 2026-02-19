@@ -138,13 +138,7 @@ const result2 = validateHardConstraints([hamamaTask], [testP0, testP0b], badAssi
 assert(result2.valid === false, 'Missing Hamama cert triggers violation');
 assert(result2.violations.some((v) => v.code === 'CERT_MISSING'), 'Violation code = CERT_MISSING');
 
-// Test: level mismatch — Shemesh needs Nitzan, but also test level requirements
-const testP3: Participant = {
-  id: 'tp3', name: 'TestP3', level: Level.L3,
-  certifications: [Certification.Nitzan],
-  group: 'TestGroup', availability: dayAvail, dateUnavailability: [],
-};
-
+// Test: Shemesh with L0 participants (seniors hard-blocked under strict isolation)
 const shemeshBlock = createTimeBlockFromHours(baseDate, 10, 14);
 const shemeshTask = createShemeshTask(shemeshBlock);
 const shemeshAssignment = [
@@ -154,15 +148,15 @@ const shemeshAssignment = [
   },
   {
     id: 'sa2', taskId: shemeshTask.id, slotId: shemeshTask.slots[1].slotId,
-    participantId: testP3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+    participantId: testP0b.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
   },
 ];
 const result3 = validateHardConstraints(
   [shemeshTask],
-  [testP0, testP0b, testP3],
+  [testP0, testP0b],
   shemeshAssignment,
 );
-assert(result3.valid === true, 'Valid Shemesh assignment with Nitzan-certified participants');
+assert(result3.valid === true, 'Valid Shemesh assignment with L0 participants');
 
 // Test: double-booking
 const taskA2 = createHamamaTask(hamamaBlock);
@@ -178,7 +172,7 @@ const doubleBooking = [
 ];
 const result4 = validateHardConstraints(
   [hamamaTask, taskA2],
-  [testP0, testP0b, testP3],
+  [testP0, testP0b],
   doubleBooking,
 );
 assert(result4.valid === false, 'Double-booking detected');
@@ -206,7 +200,7 @@ const score1 = computeScheduleScore(
   DEFAULT_CONFIG,
 );
 assert(score1.totalPenalty > 0, 'L4 Hamama assignment incurs penalty');
-assert(score1.totalPenalty >= DEFAULT_CONFIG.hamamaL4Penalty, 'Penalty >= hamamaL4Penalty config');
+assert(score1.totalPenalty >= DEFAULT_CONFIG.seniorHamamaPenalty, 'Penalty >= seniorHamamaPenalty config');
 
 // L0 Hamama — should have 0 hamama penalty (only workload-based penalty possible)
 const l0HamamaAssignment = [{
@@ -366,6 +360,7 @@ function makeTask(overrides: Partial<Task> & { timeBlock: Task['timeBlock'] }): 
     slots: [],
     isLight: false,
     sameGroupRequired: false,
+    blocksConsecutive: true,
     ...overrides,
   };
 }
@@ -868,29 +863,37 @@ const testAdanitTask: Task = {
   id: 'sr-adanit-t', type: TaskType.Adanit, name: 'Test Adanit',
   timeBlock: testAdanitBlock, requiredCount: 6,
   slots: [adMainSlot, adSecSlot, adL0Slot, adL0Slot, adL0Slot, adL0Slot],
-  isLight: false, sameGroupRequired: true,
+  isLight: false, sameGroupRequired: true, blocksConsecutive: true,
 };
 
 const testKarovSlot: SlotRequirement = {
   slotId: 'test-kr-cmd', acceptableLevels: [Level.L2, Level.L3, Level.L4],
   requiredCertifications: [], label: 'Karov Commander',
 };
+const testKarovL0Slot: SlotRequirement = {
+  slotId: 'test-kr-l0', acceptableLevels: [Level.L0],
+  requiredCertifications: [], label: 'Karov L0',
+};
 const testKarovTask: Task = {
   id: 'sr-karov-t', type: TaskType.Karov, name: 'Test Karov',
   timeBlock: createTimeBlockFromHours(baseDate, 5, 13),
-  requiredCount: 4, slots: [testKarovSlot],
-  isLight: false, sameGroupRequired: false,
+  requiredCount: 4, slots: [testKarovSlot, testKarovL0Slot],
+  isLight: false, sameGroupRequired: false, blocksConsecutive: false,
 };
 
 const testKarovitSlot: SlotRequirement = {
   slotId: 'test-krt-cmd', acceptableLevels: [Level.L2, Level.L3, Level.L4],
   requiredCertifications: [], label: 'Karovit Commander',
 };
+const testKarovitL0Slot: SlotRequirement = {
+  slotId: 'test-krt-l0', acceptableLevels: [Level.L0],
+  requiredCertifications: [], label: 'Karovit L0',
+};
 const testKarovitTask: Task = {
   id: 'sr-karovit-t', type: TaskType.Karovit, name: 'Test Karovit',
   timeBlock: createTimeBlockFromHours(baseDate, 5, 13),
-  requiredCount: 4, slots: [testKarovitSlot],
-  isLight: true, sameGroupRequired: false,
+  requiredCount: 4, slots: [testKarovitSlot, testKarovitL0Slot],
+  isLight: true, sameGroupRequired: false, blocksConsecutive: false,
 };
 
 const testMamSlot: SlotRequirement = {
@@ -901,29 +904,29 @@ const testMamTask: Task = {
   id: 'sr-mam-t', type: TaskType.Mamtera, name: 'Test Mamtera',
   timeBlock: createTimeBlockFromHours(baseDate, 9, 23),
   requiredCount: 2, slots: [testMamSlot],
-  isLight: false, sameGroupRequired: false,
+  isLight: false, sameGroupRequired: false, blocksConsecutive: true,
 };
 
 const testHamSlot: SlotRequirement = {
-  slotId: 'test-ham-op', acceptableLevels: [Level.L0, Level.L3],
+  slotId: 'test-ham-op', acceptableLevels: [Level.L0, Level.L2, Level.L3, Level.L4],
   requiredCertifications: [Certification.Hamama], label: 'Hamama Operator',
 };
 const testHamTask: Task = {
   id: 'sr-ham-t', type: TaskType.Hamama, name: 'Test Hamama',
   timeBlock: createTimeBlockFromHours(baseDate, 6, 18),
   requiredCount: 1, slots: [testHamSlot],
-  isLight: false, sameGroupRequired: false,
+  isLight: false, sameGroupRequired: false, blocksConsecutive: true,
 };
 
 const testShSlot: SlotRequirement = {
-  slotId: 'test-sh-1', acceptableLevels: [Level.L0, Level.L2, Level.L3],
+  slotId: 'test-sh-1', acceptableLevels: [Level.L0],
   requiredCertifications: [Certification.Nitzan], label: 'Shemesh #1',
 };
 const testShTask: Task = {
   id: 'sr-sh-t', type: TaskType.Shemesh, name: 'Test Shemesh',
   timeBlock: createTimeBlockFromHours(baseDate, 5, 9),
   requiredCount: 2, slots: [testShSlot],
-  isLight: false, sameGroupRequired: false,
+  isLight: false, sameGroupRequired: false, blocksConsecutive: true,
 };
 
 const testArSlot: SlotRequirement = {
@@ -934,7 +937,7 @@ const testArTask: Task = {
   id: 'sr-ar-t', type: TaskType.Aruga, name: 'Test Aruga',
   timeBlock: createTimeBlockFromHours(baseDate, 5, 7),
   requiredCount: 2, slots: [testArSlot],
-  isLight: false, sameGroupRequired: false,
+  isLight: false, sameGroupRequired: false, blocksConsecutive: true,
 };
 
 const spL0: Participant = {
@@ -979,7 +982,13 @@ assert(!isNaturalRole(Level.L3, testAdanitTask, adMainSlot), 'HC-13: L3 NOT natu
 assert(!isNaturalRole(Level.L3, testMamTask, testMamSlot), 'HC-13: L3 NOT natural in Mamtera');
 
 assert(isNaturalRole(Level.L2, testAdanitTask, adSecSlot), 'HC-13: L2 in Segol Secondary natural');
-assert(isNaturalRole(Level.L2, testKarovTask, testKarovSlot), 'HC-13: L2 in Karov natural');
+assert(isNaturalRole(Level.L2, testKarovTask, testKarovSlot), 'HC-13: L2 in Karov commander natural');
+assert(!isNaturalRole(Level.L2, testKarovTask, testKarovL0Slot), 'HC-13: L2 NOT natural in Karov L0 slot');
+assert(!isNaturalRole(Level.L2, testKarovitTask, testKarovitL0Slot), 'HC-13: L2 NOT natural in Karovit L0 slot');
+assert(!isNaturalRole(Level.L3, testKarovTask, testKarovL0Slot), 'HC-13: L3 NOT natural in Karov L0 slot');
+assert(!isNaturalRole(Level.L3, testKarovitTask, testKarovitL0Slot), 'HC-13: L3 NOT natural in Karovit L0 slot');
+assert(!isNaturalRole(Level.L4, testKarovTask, testKarovL0Slot), 'HC-13: L4 NOT natural in Karov L0 slot');
+assert(!isNaturalRole(Level.L4, testKarovitTask, testKarovitL0Slot), 'HC-13: L4 NOT natural in Karovit L0 slot');
 assert(!isNaturalRole(Level.L2, testAdanitTask, adMainSlot), 'HC-13: L2 NOT natural in Segol Main');
 
 // ── checkSeniorHardBlock ────────────────────────────────────────────────────────────
@@ -993,14 +1002,20 @@ assert(checkSeniorHardBlock(spL4, testShTask, testShSlot)?.code === 'SENIOR_HARD
 assert(checkSeniorHardBlock(spL4, testArTask, testArSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in Aruga → VIOLATION');
 assert(checkSeniorHardBlock(spL4, testAdanitTask, adSecSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in Segol Secondary → VIOLATION');
 assert(checkSeniorHardBlock(spL4, testAdanitTask, adL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in L0 Adanit slot → VIOLATION');
+assert(checkSeniorHardBlock(spL4, testKarovTask, testKarovL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in Karov L0 slot → VIOLATION');
+assert(checkSeniorHardBlock(spL4, testKarovitTask, testKarovitL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in Karovit L0 slot → VIOLATION');
+assert(checkSeniorHardBlock(spL3, testKarovTask, testKarovL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Karov L0 slot → VIOLATION');
+assert(checkSeniorHardBlock(spL3, testKarovitTask, testKarovitL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Karovit L0 slot → VIOLATION');
+assert(checkSeniorHardBlock(spL2, testKarovTask, testKarovL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Karov L0 slot → VIOLATION');
+assert(checkSeniorHardBlock(spL2, testKarovitTask, testKarovitL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Karovit L0 slot → VIOLATION');
 
 assert(checkSeniorHardBlock(spL3, testMamTask, testMamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Mamtera → VIOLATION');
 assert(checkSeniorHardBlock(spL3, testAdanitTask, adSecSlot) === null, 'HC-13: L3 in Segol Secondary → no violation');
-assert(checkSeniorHardBlock(spL3, testShTask, testShSlot) === null, 'HC-13: L3 in Shemesh → no hard violation (soft penalty)');
+assert(checkSeniorHardBlock(spL3, testShTask, testShSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Shemesh → VIOLATION (strict isolation)');
 assert(checkSeniorHardBlock(spL3, testHamTask, testHamSlot) === null, 'HC-13: L3 in Hamama → no hard violation');
 
-assert(checkSeniorHardBlock(spL2, testMamTask, testMamSlot) === null, 'HC-13: L2 in Mamtera → no hard violation');
-assert(checkSeniorHardBlock(spL2, testShTask, testShSlot) === null, 'HC-13: L2 in Shemesh → no hard violation');
+assert(checkSeniorHardBlock(spL2, testMamTask, testMamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Mamtera → VIOLATION (strict isolation)');
+assert(checkSeniorHardBlock(spL2, testShTask, testShSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Shemesh → VIOLATION (strict isolation)');
 assert(checkSeniorHardBlock(spL2, testHamTask, testHamSlot) === null, 'HC-13: L2 in Hamama → no hard violation');
 assert(checkSeniorHardBlock(spL0, testMamTask, testMamSlot) === null, 'HC-13: L0 never blocked');
 assert(checkSeniorHardBlock(spL0, testShTask, testShSlot) === null, 'HC-13: L0 never blocked (Shemesh)');
@@ -1051,35 +1066,35 @@ const cfg = { ...DEFAULT_CONFIG };
   const assigns: Assignment[] = [
     { id: 'sr-p1', taskId: testKarovTask.id, slotId: testKarovSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorOutOfRolePenalty([spL3], assigns, [testKarovTask], 0, cfg);
+  const pen = computeSeniorOutOfRolePenalty([spL3], assigns, [testKarovTask], cfg);
   assert(pen === 0, 'HC-13 soft: natural assignment → 0 penalty');
 }
 
-// L4 in Hamama → l4HamamaPenalty
+// Any senior in Hamama → seniorHamamaPenalty (absolute last resort)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorOutOfRolePenalty([spL4], assigns, [testHamTask], 0, cfg);
-  assert(pen === cfg.l4HamamaPenalty, `HC-13 soft: L4 Hamama → penalty ${cfg.l4HamamaPenalty}`);
+  const pen = computeSeniorOutOfRolePenalty([spL4], assigns, [testHamTask], cfg);
+  assert(pen === cfg.seniorHamamaPenalty, `HC-13 soft: L4 Hamama → penalty ${cfg.seniorHamamaPenalty}`);
 }
 
-// L3 in Shemesh → seniorOutOfRolePenalty
+// L3 in Hamama → same seniorHamamaPenalty
 {
   const assigns: Assignment[] = [
-    { id: 'sr-p3', taskId: testShTask.id, slotId: testShSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'sr-p2b', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorOutOfRolePenalty([spL3], assigns, [testShTask], 0, cfg);
-  assert(pen === cfg.seniorOutOfRolePenalty, `HC-13 soft: L3 Shemesh → penalty ${cfg.seniorOutOfRolePenalty}`);
+  const pen = computeSeniorOutOfRolePenalty([spL3], assigns, [testHamTask], cfg);
+  assert(pen === cfg.seniorHamamaPenalty, `HC-13 soft: L3 Hamama → penalty ${cfg.seniorHamamaPenalty}`);
 }
 
-// L2 in L0 Adanit slot → seniorOutOfRolePenalty
+// L2 in Hamama → same seniorHamamaPenalty
 {
   const assigns: Assignment[] = [
-    { id: 'sr-p4', taskId: testAdanitTask.id, slotId: adL0Slot.slotId, participantId: spL2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'sr-p2c', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorOutOfRolePenalty([spL2], assigns, [testAdanitTask], 0, cfg);
-  assert(pen === cfg.seniorOutOfRolePenalty, `HC-13 soft: L2 in L0 Adanit slot → penalty ${cfg.seniorOutOfRolePenalty}`);
+  const pen = computeSeniorOutOfRolePenalty([spL2], assigns, [testHamTask], cfg);
+  assert(pen === cfg.seniorHamamaPenalty, `HC-13 soft: L2 Hamama → penalty ${cfg.seniorHamamaPenalty}`);
 }
 
 // L0 participants never penalised
@@ -1087,28 +1102,8 @@ const cfg = { ...DEFAULT_CONFIG };
   const assigns: Assignment[] = [
     { id: 'sr-p5', taskId: testMamTask.id, slotId: testMamSlot.slotId, participantId: spL0.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorOutOfRolePenalty([spL0], assigns, [testMamTask], 0, cfg);
+  const pen = computeSeniorOutOfRolePenalty([spL0], assigns, [testMamTask], cfg);
   assert(pen === 0, 'HC-13 soft: L0 never penalised');
-}
-
-// Overload escape valve: penalty reduced when L0 is overloaded
-{
-  const assigns: Assignment[] = [
-    { id: 'sr-p6', taskId: testShTask.id, slotId: testShSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-  ];
-  const overloadAvg = cfg.l0OverloadThresholdHours + 10;
-  const pen = computeSeniorOutOfRolePenalty([spL3], assigns, [testShTask], overloadAvg, cfg);
-  const expected = cfg.seniorOutOfRolePenalty * cfg.l0OverloadPenaltyMultiplier;
-  assert(Math.abs(pen - expected) < 0.01, `HC-13 soft: overload → penalty reduced to ${expected}`);
-}
-
-// Below threshold → full penalty
-{
-  const assigns: Assignment[] = [
-    { id: 'sr-p7', taskId: testShTask.id, slotId: testShSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-  ];
-  const pen = computeSeniorOutOfRolePenalty([spL3], assigns, [testShTask], cfg.l0OverloadThresholdHours - 1, cfg);
-  assert(pen === cfg.seniorOutOfRolePenalty, 'HC-13 soft: below threshold → full penalty');
 }
 // ─── Summary ─────────────────────────────────────────────────────────────────
 
