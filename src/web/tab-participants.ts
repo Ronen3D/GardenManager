@@ -11,39 +11,12 @@ import {
   Participant,
 } from '../models/types';
 import * as store from './config-store';
+import { levelBadge, certBadges, groupBadge, groupColor } from './ui-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
 const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala, Certification.Horesh];
-
-function levelBadge(level: Level): string {
-  const colors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
-  return `<span class="badge" style="background:${colors[level]}">L${level}</span>`;
-}
-
-function certBadges(certs: Certification[]): string {
-  if (certs.length === 0) return '<span class="text-muted">None</span>';
-  const colors: Record<string, string> = { Nitzan: '#16a085', Salsala: '#8e44ad', Hamama: '#c0392b' };
-  return certs.map(c =>
-    `<span class="badge" style="background:${colors[c] || '#7f8c8d'}">${c}</span>`
-  ).join(' ');
-}
-
-const GROUP_PALETTE = ['#3498db', '#e67e22', '#2ecc71', '#9b59b6', '#e74c3c', '#1abc9c', '#f39c12', '#34495e'];
-const GROUP_COLOR_CACHE: Record<string, string> = {};
-
-function groupColor(group: string): string {
-  if (!GROUP_COLOR_CACHE[group]) {
-    const idx = Object.keys(GROUP_COLOR_CACHE).length % GROUP_PALETTE.length;
-    GROUP_COLOR_CACHE[group] = GROUP_PALETTE[idx];
-  }
-  return GROUP_COLOR_CACHE[group];
-}
-
-function groupBadge(group: string): string {
-  return `<span class="badge" style="background:${groupColor(group)}">${group}</span>`;
-}
 
 // ─── Group Name Validation ───────────────────────────────────────────────────
 
@@ -185,7 +158,7 @@ export function renderParticipantsTab(): string {
         <td class="col-select"><input type="checkbox" class="cb-select-participant" data-pid="${p.id}" ${isSelected ? 'checked' : ''} /></td>
         <td>${i + 1}</td>
         <td><strong>${p.name}</strong></td>
-        <td>${groupBadge(p.group)}</td>
+        <td>${groupBadge(p.group, true)}</td>
         <td>${levelBadge(p.level)}</td>
         <td>${certBadges(p.certifications)}</td>
         <td class="avail-cell">
@@ -306,6 +279,9 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
       <input type="text" class="input-sm" data-field="bo-reason" placeholder="Reason (optional)" />
       <button class="btn-sm btn-primary" data-action="add-blackout" data-pid="${pid}">Add</button>
     </div>
+    <p class="text-muted" style="font-size:0.85em;margin-top:4px">
+      Blackouts apply to the schedule start date only. For other dates, use Date-Specific Unavailability below.
+    </p>
 
     <h4 style="margin-top:12px">Date-Specific Unavailability</h4>
     <div class="blackout-list">`;
@@ -351,6 +327,7 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
       <input type="number" class="input-sm" data-field="du-end-hour" min="0" max="23" value="12" placeholder="End hour" style="width:70px" />
       <input type="text" class="input-sm" data-field="du-reason" placeholder="Reason (optional)" />
       <button class="btn-sm btn-primary" data-action="add-date-unavail" data-pid="${pid}">Add</button>
+      <span class="du-validation-error" style="display:none;color:#e74c3c;font-size:0.85em;margin-left:6px"></span>
     </div>
   </div></td></tr>`;
   return html;
@@ -488,6 +465,25 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
   }
 
   // ─── Bulk: Individual checkboxes (Shift+Click range, Ctrl+Click toggle) ───
+
+  // ─── Group badge click → select entire group ──────────────────────────────
+  container.querySelectorAll<HTMLElement>('[data-select-group]').forEach(badge => {
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const group = badge.dataset.selectGroup!;
+      const all = store.getAllParticipants();
+      const groupIds = all.filter(p => p.group === group).map(p => p.id);
+      // If all group members are already selected, deselect them; otherwise select all
+      const allSelected = groupIds.every(id => selectedIds.has(id));
+      if (allSelected) {
+        for (const id of groupIds) selectedIds.delete(id);
+      } else {
+        for (const id of groupIds) selectedIds.add(id);
+      }
+      rerender();
+    });
+  });
+
   container.querySelectorAll<HTMLInputElement>('.cb-select-participant').forEach(cb => {
     cb.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -738,6 +734,20 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const endHour = parseInt((panel.querySelector('[data-field="du-end-hour"]') as HTMLInputElement)?.value || '0');
         const reason = (panel.querySelector('[data-field="du-reason"]') as HTMLInputElement)?.value || undefined;
 
+        // Bug #13 fix: reject zero-length partial-day rules
+        if (!allDay && startHour === endHour) {
+          const errEl = panel.querySelector('.du-validation-error');
+          if (errEl) {
+            errEl.textContent = 'Start and end hour cannot be the same. Use "All Day" instead.';
+            (errEl as HTMLElement).style.display = 'block';
+          }
+          return;
+        }
+
+        // Clear any previous validation error
+        const errEl = panel.querySelector('.du-validation-error');
+        if (errEl) (errEl as HTMLElement).style.display = 'none';
+
         if (duType === 'dayOfWeek') {
           const dow = parseInt((panel.querySelector('[data-field="du-dow"]') as HTMLSelectElement)?.value || '0');
           store.addDateUnavailability(pid, { dayOfWeek: dow, allDay, startHour, endHour, reason });
@@ -780,20 +790,16 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         selectedIds.clear();
         _lastClickedId = null;
 
-        // Defer rerender to let the store settle, then show toast AFTER
-        // the DOM is rebuilt so it lives in the new container.
-        requestAnimationFrame(() => {
-          rerender();
-          // Insert toast into the NEW container
-          const newContent = document.getElementById('tab-content');
-          if (newContent) {
-            const msg = document.createElement('div');
-            msg.className = 'bulk-confirmation';
-            msg.textContent = `Successfully deleted ${deleted} participant${deleted !== 1 ? 's' : ''}.`;
-            newContent.prepend(msg);
-            setTimeout(() => msg.remove(), 3500);
-          }
-        });
+        // Render synchronously, then insert toast into the rebuilt DOM
+        rerender();
+        const newContent = document.getElementById('tab-content');
+        if (newContent) {
+          const msg = document.createElement('div');
+          msg.className = 'bulk-confirmation';
+          msg.textContent = `Successfully deleted ${deleted} participant${deleted !== 1 ? 's' : ''}.`;
+          newContent.prepend(msg);
+          setTimeout(() => msg.remove(), 3500);
+        }
         break;
       }
       case 'bulk-dialog-dismiss':

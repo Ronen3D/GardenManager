@@ -849,9 +849,9 @@ const adMainSlot: SlotRequirement = {
   label: 'Segol Main L3/L4',
 };
 const adSecSlot: SlotRequirement = {
-  slotId: 'test-ad-sec', acceptableLevels: [Level.L2, Level.L3, Level.L4],
+  slotId: 'test-ad-sec', acceptableLevels: [Level.L2],
   requiredCertifications: [Certification.Nitzan], adanitTeam: AdanitTeam.SegolSecondary,
-  label: 'Segol Secondary L2+',
+  label: 'Segol Secondary L2',
 };
 const adL0Slot: SlotRequirement = {
   slotId: 'test-ad-l0', acceptableLevels: [Level.L0],
@@ -975,10 +975,10 @@ assert(!isNaturalRole(Level.L4, testHamTask, testHamSlot), 'HC-13: L4 NOT natura
 assert(!isNaturalRole(Level.L4, testMamTask, testMamSlot), 'HC-13: L4 NOT natural in Mamtera');
 assert(!isNaturalRole(Level.L4, testShTask, testShSlot), 'HC-13: L4 NOT natural in Shemesh');
 
-assert(isNaturalRole(Level.L3, testAdanitTask, adSecSlot), 'HC-13: L3 in Segol Secondary natural');
+assert(isNaturalRole(Level.L3, testAdanitTask, adMainSlot), 'HC-13: L3 in Segol Main natural');
 assert(isNaturalRole(Level.L3, testKarovTask, testKarovSlot), 'HC-13: L3 in Karov natural');
 assert(isNaturalRole(Level.L3, testKarovitTask, testKarovitSlot), 'HC-13: L3 in Karovit natural');
-assert(!isNaturalRole(Level.L3, testAdanitTask, adMainSlot), 'HC-13: L3 NOT natural in Segol Main');
+assert(!isNaturalRole(Level.L3, testAdanitTask, adSecSlot), 'HC-13: L3 NOT natural in Segol Secondary');
 assert(!isNaturalRole(Level.L3, testMamTask, testMamSlot), 'HC-13: L3 NOT natural in Mamtera');
 
 assert(isNaturalRole(Level.L2, testAdanitTask, adSecSlot), 'HC-13: L2 in Segol Secondary natural');
@@ -1010,7 +1010,8 @@ assert(checkSeniorHardBlock(spL2, testKarovTask, testKarovL0Slot)?.code === 'SEN
 assert(checkSeniorHardBlock(spL2, testKarovitTask, testKarovitL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Karovit L0 slot → VIOLATION');
 
 assert(checkSeniorHardBlock(spL3, testMamTask, testMamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Mamtera → VIOLATION');
-assert(checkSeniorHardBlock(spL3, testAdanitTask, adSecSlot) === null, 'HC-13: L3 in Segol Secondary → no violation');
+assert(checkSeniorHardBlock(spL3, testAdanitTask, adMainSlot) === null, 'HC-13: L3 in Segol Main → no violation');
+assert(checkSeniorHardBlock(spL3, testAdanitTask, adSecSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Segol Secondary → VIOLATION');
 assert(checkSeniorHardBlock(spL3, testShTask, testShSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Shemesh → VIOLATION (strict isolation)');
 assert(checkSeniorHardBlock(spL3, testHamTask, testHamSlot) === null, 'HC-13: L3 in Hamama → no hard violation');
 
@@ -1032,8 +1033,8 @@ assert(checkSeniorHardBlock(spL0, testShTask, testShSlot) === null, 'HC-13: L0 n
 {
   const goodAssigns: Assignment[] = [
     { id: 'sr-a2', taskId: testAdanitTask.id, slotId: adMainSlot.slotId, participantId: spL4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'sr-a3', taskId: testAdanitTask.id, slotId: adSecSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'sr-a4', taskId: testKarovTask.id, slotId: testKarovSlot.slotId, participantId: spL2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'sr-a3', taskId: testAdanitTask.id, slotId: adSecSlot.slotId, participantId: spL2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'sr-a4', taskId: testKarovTask.id, slotId: testKarovSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
   const v = validateSeniorHardBlocks([spL4, spL3, spL2], goodAssigns, [testAdanitTask, testKarovTask]);
   assert(v.length === 0, 'HC-13: natural assignments → no violations');

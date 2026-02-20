@@ -16,7 +16,7 @@ import {
   ViolationSeverity,
   SwapRequest,
 } from '../models/types';
-import { validateHardConstraints } from '../constraints/hard-constraints';
+import { validateHardConstraints, isLevelSatisfied } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
@@ -112,10 +112,8 @@ export function isEligible(
   // HC-11: Choresh exclusion from Mamtera
   if (participant.certifications.includes(Certification.Horesh) && task.type === TaskType.Mamtera) return false;
 
-  // HC-1: Level check — accept explicit match OR overqualified
-  const levelOk = slot.acceptableLevels.includes(participant.level)
-    || participant.level > Math.max(...slot.acceptableLevels);
-  if (!levelOk) return false;
+  // HC-1: Level check — single source of truth in isLevelSatisfied()
+  if (!isLevelSatisfied(participant.level, slot)) return false;
 
   // HC-2: Certification check
   for (const cert of slot.requiredCertifications) {
@@ -186,9 +184,7 @@ export function getRejectionReason(
 ): RejectionCode | null {
   if (checkSeniorHardBlock(participant, task, slot)) return 'HC-13';
   if (participant.certifications.includes(Certification.Horesh) && task.type === TaskType.Mamtera) return 'HC-11';
-  const levelOk = slot.acceptableLevels.includes(participant.level)
-    || participant.level > Math.max(...slot.acceptableLevels);
-  if (!levelOk) return 'HC-1';
+  if (!isLevelSatisfied(participant.level, slot)) return 'HC-1';
   for (const cert of slot.requiredCertifications) {
     if (!participant.certifications.includes(cert)) return 'HC-2';
   }

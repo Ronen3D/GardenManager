@@ -14,6 +14,7 @@ import {
   TaskType,
   Level,
   Certification,
+  SlotRequirement,
   ValidationResult,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
@@ -46,6 +47,21 @@ function violation(
 // ─── Individual Constraint Checks ────────────────────────────────────────────
 
 /**
+ * HC-1 pure boolean check: does the participant's level satisfy the slot's
+ * acceptableLevels list?
+ *
+ * Accepts an explicit match OR a level strictly higher than the highest
+ * listed (overqualified). Note: for seniors (L2-L4), HC-13 restricts
+ * assignments to natural-domain slots BEFORE this check runs, so the
+ * overqualified path only fires when HC-13 has already approved the
+ * assignment (e.g. L4 in an L0 Hamama slot).
+ */
+export function isLevelSatisfied(level: Level, slot: SlotRequirement): boolean {
+  return slot.acceptableLevels.includes(level)
+    || level > Math.max(...slot.acceptableLevels);
+}
+
+/**
  * HC-1: Level requirement — participant's level must match slot's acceptableLevels.
  */
 export function checkLevelRequirement(
@@ -63,10 +79,7 @@ export function checkLevelRequirement(
       participant.id,
     );
   }
-  // Accept explicit match OR "level higher than max listed" (e.g., L2 can fill an L0-only slot)
-  const levelOk = slot.acceptableLevels.includes(participant.level)
-    || participant.level > Math.max(...slot.acceptableLevels);
-  if (!levelOk) {
+  if (!isLevelSatisfied(participant.level, slot)) {
     return violation(
       'LEVEL_MISMATCH',
       `Participant ${participant.name} (L${participant.level}) does not meet level requirement [${slot.acceptableLevels.map((l) => 'L' + l).join(',')}] for ${task.name} slot "${slot.label}"`,
@@ -274,9 +287,9 @@ export function checkUniqueParticipantsPerTask(
  * HC-8: Adanit group feasibility — the assigned group must have enough participants
  * at the required levels AND all must hold Nitzan certification.
  *
- * Required: 4× L0, 1× L2+, 1× L3/L4 (total = 6)
+ * Required: 4× L0, 1× L2, 1× L3/L4 (total = 6)
  * Segol Main:      2× L0, 1× L3/L4
- * Segol Secondary: 2× L0, 1× L2+
+ * Segol Secondary: 2× L0, 1× L2
  */
 export function checkAdanitGroupFeasibility(
   task: Task,
@@ -303,12 +316,13 @@ export function checkAdanitGroupFeasibility(
   const levels = groupParticipants.map((p) => p.level);
 
   const l0Count = levels.filter((l) => l === Level.L0).length;
+  const l2Count = levels.filter((l) => l === Level.L2).length;
   const l2PlusCount = levels.filter(
     (l) => l === Level.L2 || l === Level.L3 || l === Level.L4,
   ).length;
   const l3l4Count = levels.filter((l) => l === Level.L3 || l === Level.L4).length;
 
-  // Need: 4× L0 (2 per team), 1× L3/L4 (Segol Main), 1× L2+ (Segol Secondary)
+  // Need: 4× L0 (2 per team), 1× L3/L4 (Segol Main), 1× L2 (Segol Secondary)
   if (l0Count < 4) {
     violations.push(
       violation(
@@ -327,12 +341,22 @@ export function checkAdanitGroupFeasibility(
       ),
     );
   }
+  if (l2Count < 1) {
+    // Segol Secondary requires exactly L2
+    violations.push(
+      violation(
+        'ADANIT_INSUFFICIENT_L2',
+        `Adanit task ${task.name}: group needs at least 1 L2 participant (Segol Secondary), found ${l2Count}. Missing L2 for Adanit.`,
+        task.id,
+      ),
+    );
+  }
   if (l2PlusCount < 2) {
-    // Need 1× L3/L4 for Segol Main + 1× L2+ for Segol Secondary = 2 total L2+
+    // Need 1× L3/L4 for Segol Main + 1× L2 for Segol Secondary = 2 total L2+
     violations.push(
       violation(
         'ADANIT_INSUFFICIENT_L2PLUS',
-        `Adanit task ${task.name}: group needs at least 2 participants at L2 or higher (1× L3/L4 for Main, 1× L2+ for Secondary), found ${l2PlusCount}. Missing L2+ for Adanit.`,
+        `Adanit task ${task.name}: group needs at least 2 participants at L2 or higher (1× L3/L4 for Main, 1× L2 for Secondary), found ${l2PlusCount}. Missing L2+ for Adanit.`,
         task.id,
       ),
     );
@@ -448,9 +472,6 @@ export function validateHardConstraints(
       if (availV) allViolations.push(availV);
     }
 
-    // HC-4: Same group — downgraded to soft constraint (see collectSoftWarnings)
-    // Groups are a strong preference, not a hard block, to avoid infeasible schedules.
-
     // HC-10 replaced by HC-13 (senior policy) — see below
 
     // HC-11: Choresh forbidden from Mamtera
@@ -458,6 +479,9 @@ export function validateHardConstraints(
       .map((a) => pMap.get(a.participantId))
       .filter((p): p is Participant => p !== undefined);
     allViolations.push(...checkChoreshExclusion(task, assignedParticipants));
+
+    // HC-4: Same group — mandatory for tasks with sameGroupRequired
+    allViolations.push(...checkSameGroup(task, assignedParticipants));
   }
 
   // HC-5: Double booking (per participant)

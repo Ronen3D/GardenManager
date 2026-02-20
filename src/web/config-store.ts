@@ -18,6 +18,8 @@ import {
   SubTeamTemplate,
   AvailabilityWindow,
   DateUnavailability,
+  LiveModeState,
+  Schedule,
 } from '../models/types';
 
 // ─── ID Generation ───────────────────────────────────────────────────────────
@@ -43,6 +45,8 @@ function notify(): void {
   for (const fn of listeners) {
     try { fn(); } catch (_) { /* swallow */ }
   }
+  // Auto-persist state to localStorage (debounced)
+  debouncedSave();
 }
 
 // ─── Undo / Redo System ──────────────────────────────────────────────────────
@@ -134,6 +138,18 @@ function restoreSnapshot(snap: StoreSnapshot): void {
         : entry.dateUnavails.map(r => ({ ...r })));
     }
   }
+
+  // Bug #6 fix: ensure participant inline dateUnavailability shares the
+  // same array reference as the dateUnavailabilities Map entry.
+  for (const [id, p] of participants) {
+    p.dateUnavailability = dateUnavailabilities.get(id) || [];
+  }
+
+  // Recompute availability from canonical data — the snapshot does not
+  // capture scheduleDate/scheduleDays, so restored availability windows
+  // may be stale relative to the current scheduling window.
+  recalcAllAvailability();
+
   taskTemplates.clear();
   if (useStructured) {
     for (const tpl of snap.taskTemplates) {
@@ -211,11 +227,13 @@ let scheduleDays: number = 7;
 export function getScheduleDate(): Date { return scheduleDate; }
 export function getScheduleDays(): number { return scheduleDays; }
 export function setScheduleDate(d: Date): void {
+  pushSnapshot();
   scheduleDate = d;
   recalcAllAvailability();
   notify();
 }
 export function setScheduleDays(n: number): void {
+  pushSnapshot();
   scheduleDays = Math.max(1, Math.min(14, n));
   recalcAllAvailability();
   notify();
@@ -261,7 +279,7 @@ function computeAvailability(participantId: string): AvailabilityWindow[] {
         } else {
           let endH = rule.endHour;
           let endDay = dayDate.getDate();
-          if (endH <= rule.startHour) { endDay += 1; } // crosses midnight
+          if (endH < rule.startHour) { endDay += 1; } // crosses midnight
           expandedBlackouts.push({
             start: new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), rule.startHour, 0),
             end: new Date(dayDate.getFullYear(), dayDate.getMonth(), endDay, endH, 0),
@@ -675,7 +693,7 @@ export function seedDefaultTaskTemplates(): void {
         id: uid('st'), name: 'Segol Secondary', slots: [
           { id: uid('slot'), label: 'Segol Secondary L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'Segol Secondary L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'Segol Secondary L2+', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'Segol Secondary L2', acceptableLevels: [Level.L2], requiredCertifications: [Certification.Nitzan] },
         ],
       },
     ],
@@ -826,16 +844,316 @@ export function seedDefaultTaskTemplates(): void {
 
 // ─── Initialization ──────────────────────────────────────────────────────────
 
+let _initRunning = false;
+
 export function initStore(): void {
+  if (_initRunning) {
+    console.warn('[Store] initStore() re-entrance blocked');
+    return;
+  }
+  _initRunning = true;
+  try {
+    participants.clear();
+    blackouts.clear();
+    dateUnavailabilities.clear();
+    taskTemplates.clear();
+    undoStack.length = 0;
+    redoStack.length = 0;
+    // Try to load from storage first
+    if (loadFromStorage()) {
+      console.log('[Store] Restored state from localStorage');
+      return;
+    }
+    // Suppress snapshots during seed (initial state shouldn't be undoable)
+    _suppressSnapshot = true;
+    seedDefaultParticipants();
+    seedDefaultTaskTemplates();
+  } finally {
+    _suppressSnapshot = false;
+    _initRunning = false;
+  }
+}
+
+// ─── Live Mode State ─────────────────────────────────────────────────────────
+
+let liveModeState: LiveModeState = {
+  enabled: false,
+  currentTimestamp: new Date(),
+};
+
+export function getLiveModeState(): LiveModeState {
+  return { ...liveModeState, currentTimestamp: new Date(liveModeState.currentTimestamp.getTime()) };
+}
+
+export function setLiveModeEnabled(enabled: boolean): void {
+  liveModeState.enabled = enabled;
+  // Always refresh timestamp to "now" so the day picker reflects the current day
+  liveModeState.currentTimestamp = new Date();
+  // Only persist — don't fire general notify() which would falsely mark the schedule
+  // as dirty. The live-mode checkbox handler in app.ts already calls renderAll().
+  debouncedSave();
+}
+
+export function setLiveModeTimestamp(timestamp: Date): void {
+  liveModeState.currentTimestamp = timestamp;
+  // Only persist — don't fire general notify() which would falsely mark the schedule
+  // as dirty. The caller already triggers renderAll() when needed.
+  debouncedSave();
+}
+
+// ─── localStorage Persistence ────────────────────────────────────────────────
+
+const STORAGE_KEY_STATE = 'gardenmanager_state';
+const STORAGE_KEY_SCHEDULE = 'gardenmanager_schedule';
+
+let _saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const SAVE_DEBOUNCE_MS = 500;
+
+/**
+ * Deep-serialize dates to ISO strings in a JSON-compatible way.
+ * Uses a replacer function so Date objects in nested structures are handled.
+ *
+ * NOTE: This serializer (with its `{ __date__: ... }` markers and matching
+ * `jsonDeserialize` reviver) is used only for the Schedule blob, whose
+ * shape has Dates at arbitrary nesting depths.  The state blob
+ * (`saveToStorage`) uses manual `.toISOString()` + plain `JSON.parse`
+ * because its structure is flat and well-known.  The two persistence
+ * paths are intentionally separate — do not unify without updating both
+ * the save and load sides.
+ */
+function jsonSerialize(obj: unknown): string {
+  // Must use a regular function (not arrow) so `this` is the holder object.
+  // JSON.stringify calls Date.toJSON() *before* the replacer sees the value,
+  // so `value` is already a string for Dates.  `this[key]` gives the raw Date.
+  return JSON.stringify(obj, function (key, value) {
+    const raw = this[key];
+    if (raw instanceof Date) {
+      return { __date__: raw.toISOString() };
+    }
+    return value;
+  });
+}
+
+/**
+ * Deep-deserialize ISO date strings back to Date objects.
+ * Uses a reviver function that matches the serialization format.
+ */
+function jsonDeserialize<T>(json: string): T {
+  return JSON.parse(json, (_key, value) => {
+    if (value && typeof value === 'object' && '__date__' in value) {
+      return new Date(value.__date__);
+    }
+    // Backward compat: data saved by the old (broken) serializer stored
+    // Dates as bare ISO-8601 strings without the { __date__ } wrapper.
+    if (
+      typeof value === 'string' &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)
+    ) {
+      return new Date(value);
+    }
+    return value;
+  }) as T;
+}
+
+/**
+ * Save the full store state to localStorage.
+ * Called automatically (debounced) after every store mutation.
+ */
+export function saveToStorage(): void {
+  try {
+    const state = {
+      version: 1,
+      scheduleDate: scheduleDate.toISOString(),
+      scheduleDays,
+      liveMode: {
+        enabled: liveModeState.enabled,
+        currentTimestamp: liveModeState.currentTimestamp.toISOString(),
+      },
+      // Bug #8 fix: omit inline dateUnavailability from participant
+      // serialization — the dateUnavailabilities Map is the single
+      // source of truth (serialized separately below).
+      participants: Array.from(participants.values()).map(p => {
+        const { dateUnavailability: _, ...rest } = p;
+        return {
+          ...rest,
+          availability: p.availability.map(w => ({
+            start: w.start.toISOString(),
+            end: w.end.toISOString(),
+          })),
+        };
+      }),
+      blackouts: Array.from(blackouts.entries()).map(([pid, bouts]) => ({
+        pid,
+        bouts: bouts.map(b => ({
+          ...b,
+          start: b.start.toISOString(),
+          end: b.end.toISOString(),
+        })),
+      })),
+      dateUnavailabilities: Array.from(dateUnavailabilities.entries()).map(([pid, rules]) => ({
+        pid,
+        rules,
+      })),
+      taskTemplates: Array.from(taskTemplates.values()),
+    };
+    localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(state));
+  } catch (err) {
+    console.warn('[Store] Failed to save to localStorage:', err);
+  }
+}
+
+/**
+ * Load the full store state from localStorage.
+ * Returns true if state was successfully restored.
+ */
+export function loadFromStorage(): boolean {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_STATE);
+    if (!raw) return false;
+
+    const state = JSON.parse(raw);
+    if (!state || state.version !== 1) return false;
+
+    // Restore schedule date/days
+    scheduleDate = new Date(state.scheduleDate);
+    scheduleDays = state.scheduleDays || 7;
+
+    // Restore live mode state
+    if (state.liveMode) {
+      liveModeState = {
+        enabled: state.liveMode.enabled || false,
+        currentTimestamp: new Date(state.liveMode.currentTimestamp),
+      };
+    }
+
+    // Restore participants
+    participants.clear();
+    blackouts.clear();
+    dateUnavailabilities.clear();
+
+    for (const pData of (state.participants || [])) {
+      const p: Participant = {
+        ...pData,
+        availability: (pData.availability || []).map((w: { start: string; end: string }) => ({
+          start: new Date(w.start),
+          end: new Date(w.end),
+        })),
+        dateUnavailability: pData.dateUnavailability || [],
+      };
+      participants.set(p.id, p);
+    }
+
+    // Restore blackouts
+    for (const entry of (state.blackouts || [])) {
+      const bouts: BlackoutPeriod[] = (entry.bouts || []).map((b: { id: string; start: string; end: string; reason?: string }) => ({
+        ...b,
+        start: new Date(b.start),
+        end: new Date(b.end),
+      }));
+      if (bouts.length > 0) {
+        blackouts.set(entry.pid, bouts);
+      }
+    }
+
+    // Restore date unavailabilities
+    for (const entry of (state.dateUnavailabilities || [])) {
+      if (entry.rules && entry.rules.length > 0) {
+        dateUnavailabilities.set(entry.pid, entry.rules);
+      }
+    }
+
+    // Bug #1 fix: sync participant inline dateUnavailability to the canonical Map
+    for (const [id, p] of participants) {
+      p.dateUnavailability = dateUnavailabilities.get(id) || [];
+    }
+
+    // Restore task templates
+    taskTemplates.clear();
+    for (const tpl of (state.taskTemplates || [])) {
+      taskTemplates.set(tpl.id, tpl);
+    }
+
+    // Bug #5 fix: recompute availability from canonical inputs instead of
+    // using the stale windows that were serialised at save time.
+    recalcAllAvailability();
+
+    return true;
+  } catch (err) {
+    console.warn('[Store] Failed to load from localStorage:', err);
+    return false;
+  }
+}
+
+/**
+ * Save a full Schedule object to localStorage.
+ * Called after generation, swaps, locks, and rescue-apply operations.
+ */
+export function saveSchedule(schedule: Schedule): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_SCHEDULE, jsonSerialize(schedule));
+  } catch (err) {
+    console.warn('[Store] Failed to save schedule to localStorage:', err);
+  }
+}
+
+/**
+ * Load a saved Schedule from localStorage.
+ * Returns null if no schedule is saved or deserialization fails.
+ */
+export function loadSchedule(): Schedule | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_SCHEDULE);
+    if (!raw) return null;
+    return jsonDeserialize<Schedule>(raw);
+  } catch (err) {
+    console.warn('[Store] Failed to load schedule from localStorage:', err);
+    return null;
+  }
+}
+
+/**
+ * Clear all persisted state (reset to defaults on next load).
+ */
+export function clearStorage(): void {
+  // Cancel any pending debounced save to prevent re-persisting stale data
+  if (_saveDebounceTimer) {
+    clearTimeout(_saveDebounceTimer);
+    _saveDebounceTimer = null;
+  }
+  try {
+    localStorage.removeItem(STORAGE_KEY_STATE);
+    localStorage.removeItem(STORAGE_KEY_SCHEDULE);
+  } catch (err) {
+    console.warn('[Store] Failed to clear localStorage:', err);
+  }
+  // Also clear in-memory state so the app is consistent
   participants.clear();
   blackouts.clear();
   dateUnavailabilities.clear();
   taskTemplates.clear();
   undoStack.length = 0;
   redoStack.length = 0;
-  // Suppress snapshots during seed (initial state shouldn't be undoable)
-  _suppressSnapshot = true;
-  seedDefaultParticipants();
-  seedDefaultTaskTemplates();
-  _suppressSnapshot = false;
+}
+
+/**
+ * Schedule a debounced save to localStorage.
+ * Called from notify() so every store mutation triggers persistence.
+ */
+function debouncedSave(): void {
+  if (_saveDebounceTimer) clearTimeout(_saveDebounceTimer);
+  _saveDebounceTimer = setTimeout(() => {
+    saveToStorage();
+  }, SAVE_DEBOUNCE_MS);
+}
+
+/**
+ * Flush any pending debounced save immediately.
+ * Used by beforeunload to avoid losing the last mutation.
+ */
+export function flushPendingSave(): void {
+  if (_saveDebounceTimer) {
+    clearTimeout(_saveDebounceTimer);
+    _saveDebounceTimer = null;
+    saveToStorage();
+  }
 }

@@ -118,7 +118,7 @@ const fakeSchedule: Schedule = {
   participants: allParticipants.map(p => ({ ...p })),
   violations: [],
   feasible: true,
-  score: { compositeScore: 50, minRestHours: 8, avgRestHours: 12, restStdDev: 1.2, totalPenalty: 0, totalBonus: 5, l0StdDev: 1.0, l0AvgEffective: 20, seniorStdDev: 0.5, seniorAvgEffective: 10 },
+  score: { compositeScore: 50, minRestHours: 8, avgRestHours: 12, restStdDev: 1.2, totalPenalty: 0, totalBonus: 5, l0StdDev: 1.0, l0AvgEffective: 20, seniorStdDev: 0.5, seniorAvgEffective: 10, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 },
 };
 
 // ─── Test 1: Measure captureSnapshot alone ───────────────────────────────────

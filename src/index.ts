@@ -41,10 +41,32 @@ export type {
   PreflightFinding,
   PreflightResult,
   WeekConfig,
+  LiveModeState,
+  RescueSwap,
+  RescuePlan,
+  RescueRequest,
+  RescueResult,
 } from './models/types';
 
 // ─── Engine ──────────────────────────────────────────────────────────────────
 export { SchedulingEngine } from './engine/scheduler';
+
+// ─── Temporal Engine (Live Mode) ─────────────────────────────────────────────
+export {
+  isFutureTask,
+  isPastTask,
+  isInProgressTask,
+  isModifiableAssignment,
+  freezeAssignments,
+  unfreezeAll,
+  getFutureWindow,
+  getAnchorDayIndex,
+  isDayFrozen,
+  isDayPartiallyFrozen,
+} from './engine/temporal';
+
+// ─── Rescue Engine (Live Mode) ───────────────────────────────────────────────
+export { generateRescuePlans } from './engine/rescue';
 
 // ─── Optimizer ───────────────────────────────────────────────────────────────
 export { optimize, greedyAssign, localSearchOptimize, optimizeMultiAttempt, optimizeMultiAttemptAsync } from './engine/optimizer';

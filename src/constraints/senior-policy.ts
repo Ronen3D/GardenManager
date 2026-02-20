@@ -5,7 +5,7 @@
  *
  * Natural roles:
  *   L4 → Segol Main (Adanit), Karov commander, Karovit commander
- *   L3 → Segol Secondary (Adanit), Karov commander, Karovit commander
+ *   L3 → Segol Main (Adanit), Karov commander, Karovit commander
  *   L2 → Segol Secondary (Adanit), Karov commander, Karovit commander
  *
  * Hard blocks (apply to ALL seniors L2/L3/L4):
@@ -13,9 +13,11 @@
  *   The ONLY exception is Hamama (see below).
  *
  * Hamama exception (absolute last resort):
- *   Seniors MAY be assigned to Hamama, but with the maximum possible
- *   penalty.  The system should only place a senior in Hamama when the
- *   alternative is a complete failure to generate a schedule.
+ *   ONLY L4 may be assigned to Hamama, and only when no L0 participant
+ *   is available. L2 and L3 are completely forbidden from Hamama.
+ *   L4 in Hamama carries the maximum possible penalty — the system
+ *   should only place L4 there when the alternative is a complete
+ *   failure to generate a schedule.
  *
  * Zero exceptions:
  *   Seniors can no longer be used for general tasks even if L0 is under
@@ -43,7 +45,7 @@ import {
  *
  *  L0 → always natural (no restrictions from this policy)
  *  L4 → Segol Main (Adanit), Karov, Karovit
- *  L3 → Segol Secondary (Adanit), Karov, Karovit
+ *  L3 → Segol Main (Adanit), Karov, Karovit
  *  L2 → Segol Secondary (Adanit), Karov, Karovit
  */
 export function isNaturalRole(
@@ -64,9 +66,8 @@ export function isNaturalRole(
   if (isAdanit) {
     // L4 → only Segol Main slots
     if (level === Level.L4) return slot.adanitTeam === AdanitTeam.SegolMain;
-    // L3 → Segol Main or Segol Secondary (breaks L4 monopoly on Main)
-    if (level === Level.L3)
-      return slot.adanitTeam === AdanitTeam.SegolMain || slot.adanitTeam === AdanitTeam.SegolSecondary;
+    // L3 → only Segol Main slots (same as L4)
+    if (level === Level.L3) return slot.adanitTeam === AdanitTeam.SegolMain;
     // L2 → only Segol Secondary slots
     if (level === Level.L2) return slot.adanitTeam === AdanitTeam.SegolSecondary;
   }
@@ -82,8 +83,9 @@ export function isNaturalRole(
  * Returns a violation if any senior (L2, L3, L4) is assigned to a task
  * that is NOT their natural domain and NOT Hamama.
  *
- * Hamama is the ONLY non-natural exception — it is allowed but carries
- * the maximum soft penalty (absolute last resort).
+ * Hamama exception: ONLY L4 may be assigned to Hamama as an absolute
+ * last resort (with maximum soft penalty). L2 and L3 are hard-blocked
+ * from Hamama entirely.
  */
 export function checkSeniorHardBlock(
   participant: Participant,
@@ -95,8 +97,18 @@ export function checkSeniorHardBlock(
   // Only applies to seniors (L2/L3/L4)
   if (lvl === Level.L0) return null;
 
-  // Hamama is the sole non-natural exception (soft-penalised, not blocked)
-  if (task.type === TaskType.Hamama) return null;
+  // Hamama: only L4 is allowed (soft-penalised). L2 and L3 are hard-blocked.
+  if (task.type === TaskType.Hamama) {
+    if (lvl === Level.L4) return null; // L4 allowed (penalised via soft constraint)
+    return {
+      code: 'SENIOR_HARD_BLOCK',
+      message: `L${lvl} participant "${participant.name}" is forbidden from Hamama — only L0 (preferred) or L4 (last resort) may be assigned`,
+      severity: ViolationSeverity.Error,
+      participantId: participant.id,
+      taskId: task.id,
+      slotId: slot.slotId,
+    };
+  }
 
   // Natural role → allowed
   if (isNaturalRole(lvl, task, slot)) return null;
@@ -146,12 +158,13 @@ export function validateSeniorHardBlocks(
 /**
  * Compute the total soft penalty for senior out-of-role assignments.
  *
- * Under the strict isolation model only Hamama remains as a soft-penalised
- * exception.  All other non-natural assignments are hard-blocked and should
- * never reach this function, but guard defensively.
+ * Under the strict isolation model only Hamama for L4 remains as a
+ * soft-penalised exception. L2 and L3 are hard-blocked from Hamama.
+ * All other non-natural assignments are hard-blocked and should never
+ * reach this function, but guard defensively.
  *
- * Hamama carries the maximum penalty (`seniorHamamaPenalty`) regardless of
- * senior level — it is an absolute last resort.
+ * L4 in Hamama carries the maximum penalty (`seniorHamamaPenalty`) —
+ * it is an absolute last resort.
  */
 export function computeSeniorOutOfRolePenalty(
   participants: Participant[],
@@ -175,9 +188,12 @@ export function computeSeniorOutOfRolePenalty(
     const slot = task.slots.find(s => s.slotId === a.slotId);
     if (!slot) continue;
 
-    // Any senior in Hamama — absolute last resort, maximum penalty
+    // L4 in Hamama — absolute last resort, maximum penalty
+    // (L2/L3 are hard-blocked from Hamama and should never reach here)
     if (task.type === TaskType.Hamama) {
-      totalPenalty += config.seniorHamamaPenalty;
+      if (p.level === Level.L4) {
+        totalPenalty += config.seniorHamamaPenalty;
+      }
       continue;
     }
 

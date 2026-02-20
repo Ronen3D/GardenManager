@@ -39,6 +39,7 @@ export enum AssignmentStatus {
   Locked = 'Locked',     // Locked by user or partial re-schedule
   Manual = 'Manual',     // Manually overridden by user
   Conflict = 'Conflict', // Hard constraint violation detected
+  Frozen = 'Frozen',     // Temporally locked — past the live-mode anchor
 }
 
 /** Severity for constraint violations */
@@ -155,6 +156,8 @@ export interface Assignment {
   status: AssignmentStatus;
   /** Timestamp of last modification */
   updatedAt: Date;
+  /** Status before temporal freezing (so we can restore on unfreeze) */
+  preFreezeStatus?: AssignmentStatus;
 }
 
 // ─── Schedule ────────────────────────────────────────────────────────────────
@@ -201,6 +204,12 @@ export interface ScheduleScore {
   seniorStdDev: number;
   /** Senior (L2-L4) average effective hours */
   seniorAvgEffective: number;
+  /** Avg of each participant's daily-load std-dev (per-person day spread) */
+  dailyPerParticipantStdDev: number;
+  /** Std-dev of total hours per calendar day (global day spread) */
+  dailyGlobalStdDev: number;
+  /** Penalty for disrupting existing assignments (rescue mode only) */
+  disruptionPenalty?: number;
 }
 
 // ─── Constraint Violations ───────────────────────────────────────────────────
@@ -249,6 +258,8 @@ export interface SchedulerConfig {
   seniorHamamaPenalty: number;
   /** Penalty per same-group task that has mixed-group participants */
   groupMismatchPenalty: number;
+  /** Weight for daily workload balance (penalises busy-day / light-day spread) */
+  dailyBalanceWeight: number;
 }
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
@@ -258,12 +269,13 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   penaltyWeight: 1,
   bonusWeight: 3,
 
-  backToBackPenalty: 5,
+  backToBackPenalty: 0,
   maxIterations: 10000,
   maxSolverTimeMs: 30000,
   seniorOutOfRolePenalty: 200,
   seniorHamamaPenalty: 10000,
   groupMismatchPenalty: 100,
+  dailyBalanceWeight: 40,
 };
 
 // ─── Gantt UI Bridge Types ───────────────────────────────────────────────────
@@ -359,6 +371,8 @@ export interface TaskTemplate {
   shiftsPerDay: number;
   /** First shift start hour */
   startHour: number;
+  /** Evening shift start hour (Aruga dual-shift tasks). Defaults to 17. */
+  eveningStartHour?: number;
   /** Whether all participants must be from the same group */
   sameGroupRequired: boolean;
   /** Whether this is a light task */
@@ -389,6 +403,71 @@ export interface WeekConfig {
   startDate: Date;
   /** Number of days (default 7) */
   numDays: number;
+}
+
+// ─── Live Mode Types ─────────────────────────────────────────────────────────
+
+/** State of the live-mode temporal anchor */
+export interface LiveModeState {
+  /** Whether live mode is enabled */
+  enabled: boolean;
+  /** The temporal anchor point (everything before this is frozen) */
+  currentTimestamp: Date;
+}
+
+/** A single swap within a rescue plan */
+export interface RescueSwap {
+  /** The assignment being changed */
+  assignmentId: string;
+  /** The participant being moved out (null if the slot was vacated) */
+  fromParticipantId: string | null;
+  /** The participant being moved in */
+  toParticipantId: string;
+  /** Human-readable task name */
+  taskName: string;
+  /** Human-readable slot label */
+  slotLabel: string;
+}
+
+/** A single rescue plan (one of 3 presented to the user) */
+export interface RescuePlan {
+  id: string;
+  /** Display rank within the page (1, 2, 3) */
+  rank: number;
+  /** Chain of swaps required to implement this plan */
+  swaps: RescueSwap[];
+  /** Composite impact score (lower = less disruption) */
+  impactScore: number;
+  /** Change in daily workload std-dev for the affected day */
+  dailyLoadDelta: number;
+  /** Change in weekly workload std-dev */
+  weeklyLoadDelta: number;
+  /** Constraint violations that would exist after applying this plan */
+  violations: ConstraintViolation[];
+}
+
+/** Request to generate rescue plans for a vacated assignment */
+export interface RescueRequest {
+  /** The assignment that was vacated */
+  vacatedAssignmentId: string;
+  /** Task containing the vacated slot */
+  taskId: string;
+  /** Slot that was vacated */
+  slotId: string;
+  /** Participant who vacated the slot */
+  vacatedBy: string;
+}
+
+/** Result of rescue plan generation (paginated) */
+export interface RescueResult {
+  /** The original request */
+  request: RescueRequest;
+  /** Up to 3 plans for this page */
+  plans: RescuePlan[];
+  /** Whether more plans exist beyond this page */
+  hasMore: boolean;
+  /** Current page number (0-based) */
+  page: number;
 }
 
 /** Severity levels for preflight checks */

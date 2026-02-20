@@ -173,6 +173,108 @@ export function backToBackPenalty(
 
 // ─── Soft Constraint Warnings ────────────────────────────────────────────────
 
+// ─── SC-8: Daily Workload Balance ────────────────────────────────────────────
+
+/** Helper: calendar date key from a Date (YYYY-MM-DD in local time) */
+function dateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * SC-8: Daily workload imbalance — penalise schedules where some calendar
+ * days are extremely busy while others are extremely light.
+ *
+ * Two complementary metrics:
+ *  1. **Per-participant daily std-dev** — each participant should have their
+ *     effective hours spread roughly evenly across the days they work.
+ *     We compute the std-dev of each participant's daily load and return
+ *     the average across all participants.
+ *  2. **Global daily std-dev** — the total effective hours scheduled per
+ *     calendar day (across all participants) should be roughly equal.
+ *
+ * Both values are returned so the caller can weight them in the composite.
+ */
+export function dailyWorkloadImbalance(
+  participants: Participant[],
+  assignments: Assignment[],
+  tasks: Task[],
+  prebuiltTaskMap?: Map<string, Task>,
+  assignmentsByParticipant?: Map<string, Assignment[]>,
+): { dailyPerParticipantStdDev: number; dailyGlobalStdDev: number } {
+  const taskMap = prebuiltTaskMap ?? new Map(tasks.map(t => [t.id, t]));
+
+  // ── Collect all calendar days present in the schedule ──
+  const allDays = new Set<string>();
+  for (const t of tasks) {
+    allDays.add(dateKey(t.timeBlock.start));
+  }
+  const dayList = [...allDays].sort();
+  if (dayList.length <= 1) {
+    // Only one day — nothing to balance
+    return { dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 };
+  }
+
+  // ── Per-participant daily loads ──
+  // participantId → (dateKey → effectiveHours)
+  const dayIndex = new Map<string, number>();
+  for (let i = 0; i < dayList.length; i++) dayIndex.set(dayList[i], i);
+  const numDays = dayList.length;
+
+  // Global totals per day (sum of all participants' loads on that day)
+  const globalDayTotals = new Float64Array(numDays);
+
+  let sumOfParticipantStdDevs = 0;
+  let participantCount = 0;
+
+  for (const p of participants) {
+    const dailyLoad = new Float64Array(numDays); // zero-initialised
+
+    const pAssignments = assignmentsByParticipant
+      ? (assignmentsByParticipant.get(p.id) || [])
+      : assignments.filter(a => a.participantId === p.id);
+
+    for (const a of pAssignments) {
+      const task = taskMap.get(a.taskId);
+      if (!task) continue;
+      const dk = dateKey(task.timeBlock.start);
+      const idx = dayIndex.get(dk);
+      if (idx === undefined) continue;
+      const eff = computeTaskEffectiveHours(task);
+      dailyLoad[idx] += eff;
+      globalDayTotals[idx] += eff;
+    }
+
+    // Std-dev of this participant's daily loads
+    let sum = 0;
+    for (let i = 0; i < numDays; i++) sum += dailyLoad[i];
+    const avg = sum / numDays;
+    let variance = 0;
+    for (let i = 0; i < numDays; i++) variance += (dailyLoad[i] - avg) ** 2;
+    variance /= numDays;
+    sumOfParticipantStdDevs += Math.sqrt(variance);
+    participantCount++;
+  }
+
+  const dailyPerParticipantStdDev =
+    participantCount > 0 ? sumOfParticipantStdDevs / participantCount : 0;
+
+  // ── Global daily std-dev ──
+  let gSum = 0;
+  for (let i = 0; i < numDays; i++) gSum += globalDayTotals[i];
+  const gAvg = gSum / numDays;
+  let gVariance = 0;
+  for (let i = 0; i < numDays; i++) gVariance += (globalDayTotals[i] - gAvg) ** 2;
+  gVariance /= numDays;
+  const dailyGlobalStdDev = Math.sqrt(gVariance);
+
+  return { dailyPerParticipantStdDev, dailyGlobalStdDev };
+}
+
+// ─── Soft Constraint Warnings ────────────────────────────────────────────────
+
 /**
  * Generate warnings (non-fatal) for soft constraint issues.
  */
@@ -193,14 +295,15 @@ export function collectSoftWarnings(
       .map((a) => pMap.get(a.participantId))
       .filter((p): p is Participant => !!p);
 
-    // Hamama: warn for ALL seniors (L2/L3/L4) — absolute last resort
+    // Hamama: warn for L4 in Hamama — absolute last resort
+    // (L2/L3 are hard-blocked from Hamama by HC-13 and should never appear here)
     if (task.type === TaskType.Hamama) {
       for (const p of assignedPs) {
-        if (p.level === Level.L2 || p.level === Level.L3 || p.level === Level.L4) {
+        if (p.level === Level.L4) {
           warnings.push({
             severity: ViolationSeverity.Warning,
             code: 'HAMAMA_SENIOR',
-            message: `${p.name} (L${p.level}) assigned to Hamama — absolute last resort. Seniors should only be placed here if no other schedule is possible.`,
+            message: `${p.name} (L4) assigned to Hamama — absolute last resort. Only L0 should be here; L4 is a fallback when no L0 is available.`,
             taskId: task.id,
             participantId: p.id,
           });
@@ -208,40 +311,52 @@ export function collectSoftWarnings(
       }
     }
 
-    // SC-7: Group mismatch warning (same-group tasks with mixed groups)
+    // SC-7: Group mismatch — safety-net warning (HC-4 hard constraint should
+    // prevent this; if it appears, something bypassed the constraint).
     if (task.sameGroupRequired && assignedPs.length > 0) {
       const groups = new Set(assignedPs.map((p) => p.group));
       if (groups.size > 1) {
         warnings.push({
           severity: ViolationSeverity.Warning,
           code: 'GROUP_MISMATCH',
-          message: `Task ${task.name} prefers same-group but has participants from ${groups.size} groups: [${[...groups].join(', ')}]`,
+          message: `Task ${task.name} requires same-group but has participants from ${groups.size} groups: [${[...groups].join(', ')}] — this should be caught by HC-4`,
           taskId: task.id,
         });
       }
     }
   }
 
-  // SC-5: Back-to-back warnings (zero gap between consecutive assignments)
-  const btbTaskMap = new Map<string, Task>();
-  for (const t of tasks) btbTaskMap.set(t.id, t);
-  for (const p of participants) {
-    const pTasks: Task[] = [];
-    for (const a of assignments) {
-      if (a.participantId !== p.id) continue;
-      const task = btbTaskMap.get(a.taskId);
-      if (task && !task.isLight) pTasks.push(task);
-    }
-    if (pTasks.length < 2) continue;
-    pTasks.sort((x, y) => x.timeBlock.start.getTime() - y.timeBlock.start.getTime());
-    for (let i = 0; i < pTasks.length - 1; i++) {
-      const gapMs = pTasks[i + 1].timeBlock.start.getTime() - pTasks[i].timeBlock.end.getTime();
-      if (gapMs <= 0) {
+  // SC-8: Daily imbalance — warn if a participant's busiest day is ≥ 2× their lightest
+  const warnTaskMap = new Map(tasks.map(t => [t.id, t]));
+  const allDaysSet = new Set<string>();
+  for (const t of tasks) allDaysSet.add(dateKey(t.timeBlock.start));
+  const warnDayList = [...allDaysSet].sort();
+
+  if (warnDayList.length > 1) {
+    const dayIdx = new Map<string, number>();
+    for (let i = 0; i < warnDayList.length; i++) dayIdx.set(warnDayList[i], i);
+
+    for (const p of participants) {
+      const dailyLoad = new Float64Array(warnDayList.length);
+      const pAssigns = assignments.filter(a => a.participantId === p.id);
+      for (const a of pAssigns) {
+        const task = warnTaskMap.get(a.taskId);
+        if (!task) continue;
+        const idx = dayIdx.get(dateKey(task.timeBlock.start));
+        if (idx === undefined) continue;
+        dailyLoad[idx] += computeTaskEffectiveHours(task);
+      }
+      // Only consider days where participant has some load
+      const activeDays = Array.from(dailyLoad).filter(h => h > 0);
+      if (activeDays.length < 2) continue;
+      const maxDay = Math.max(...activeDays);
+      const minDay = Math.min(...activeDays);
+      if (minDay > 0 && maxDay >= 2 * minDay) {
         warnings.push({
           severity: ViolationSeverity.Warning,
-          code: 'BACK_TO_BACK',
-          message: `${p.name} has back-to-back shifts: "${pTasks[i].name}" ends at ${pTasks[i].timeBlock.end.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} and "${pTasks[i + 1].name}" starts immediately.`,
-          taskId: pTasks[i + 1].id,
+          code: 'DAILY_IMBALANCE',
+          message: `${p.name} has uneven daily workload: busiest day ${maxDay.toFixed(1)}h vs lightest ${minDay.toFixed(1)}h (${(maxDay / minDay).toFixed(1)}× ratio).`,
+          taskId: '',
           participantId: p.id,
         });
       }
@@ -344,26 +459,19 @@ export function computeScheduleScore(
   // and seniorFairnessWeight * seniorStdDev in the composite formula — no
   // double-counting through totalPenalty.
 
-  // Group mismatch penalty (SC-7)
-  for (const task of tasks) {
-    if (!task.sameGroupRequired) continue;
-    const taskAssignments = assignmentsByTask.get(task.id) || [];
-    const assignedPs = taskAssignments
-      .map((a) => pMap.get(a.participantId))
-      .filter((p): p is Participant => !!p);
-    if (assignedPs.length > 0) {
-      const groups = new Set(assignedPs.map((p) => p.group));
-      if (groups.size > 1) {
-        totalPenalty += config.groupMismatchPenalty;
-      }
-    }
-  }
+  // Group mismatch penalty (SC-7) — removed: HC-4 is now a hard constraint.
+  // Mixed-group assignments are blocked by the optimizer and validated by
+  // checkSameGroup() in hard-constraints.ts. groupMismatchPenalty config
+  // field is retained for backwards compatibility but no longer applied.
 
   // Back-to-back shift penalty (SC-5) — pass pre-built data
   totalPenalty += backToBackPenalty(participants, assignments, tasks, config.backToBackPenalty, taskMap, byParticipant);
 
   // SC-6: Senior out-of-role penalty — pass pre-built maps
   totalPenalty += computeSeniorOutOfRolePenalty(participants, assignments, tasks, config, pMap, taskMap);
+
+  // SC-8: Daily workload balance — pass pre-built data
+  const dailyBalance = dailyWorkloadImbalance(participants, assignments, tasks, taskMap, byParticipant);
 
   // Composite score
   const minRest = isFinite(fairness.globalMinRest) ? fairness.globalMinRest : 0;
@@ -373,6 +481,7 @@ export function computeScheduleScore(
     config.minRestWeight * minRest -
     config.l0FairnessWeight * wlSplit.l0StdDev -
     config.seniorFairnessWeight * wlSplit.seniorStdDev -
+    config.dailyBalanceWeight * (dailyBalance.dailyPerParticipantStdDev + dailyBalance.dailyGlobalStdDev) -
     config.penaltyWeight * totalPenalty +
     config.bonusWeight * totalBonus;
 
@@ -387,5 +496,7 @@ export function computeScheduleScore(
     l0AvgEffective: wlSplit.l0Avg,
     seniorStdDev: wlSplit.seniorStdDev,
     seniorAvgEffective: wlSplit.seniorAvg,
+    dailyPerParticipantStdDev: dailyBalance.dailyPerParticipantStdDev,
+    dailyGlobalStdDev: dailyBalance.dailyGlobalStdDev,
   };
 }

@@ -25,11 +25,24 @@ import {
   Assignment,
   SlotRequirement,
   AdanitTeam,
+  RescueResult,
+  RescuePlan,
+  RescueRequest,
+  LiveModeState,
 } from '../index';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { computeAllRestProfiles, computeRestFairness } from './utils/rest-calculator';
 import { generateShiftBlocks } from './utils/time-utils';
 import { computeWeeklyWorkloads } from './workload-utils';
+import {
+  freezeAssignments,
+  unfreezeAll,
+  isFutureTask,
+  isModifiableAssignment,
+  isDayFrozen,
+  isDayPartiallyFrozen,
+} from '../engine/temporal';
+import { generateRescuePlans } from '../engine/rescue';
 
 import * as store from './config-store';
 import { runPreflight } from './preflight';
@@ -38,7 +51,7 @@ import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
 import { renderProfileView, wireProfileEvents, ProfileContext } from './tab-profile';
 import { computeTaskBreakdown } from './workload-utils';
 import {
-  TASK_COLORS, GROUP_COLORS, LEVEL_COLORS,
+  TASK_COLORS, LEVEL_COLORS, CERT_COLORS,
   fmt, levelBadge, certBadge, certBadges, groupBadge, taskTypeBadge,
 } from './ui-helpers';
 
@@ -78,6 +91,15 @@ let _optimProgress: {
 /** The 24h window boundary hour (05:00–05:00 by default) */
 const DAY_START_HOUR = 5;
 
+// ─── Rescue Modal State ──────────────────────────────────────────────────────
+
+/** Currently displayed rescue result (null when modal is closed) */
+let _rescueResult: RescueResult | null = null;
+/** Which assignment ID the rescue modal is open for */
+let _rescueAssignmentId: string | null = null;
+/** Current rescue page (0-based) */
+let _rescuePage = 0;
+
 // ─── Formatting Helpers (app-local) ──────────────────────────────────────────
 
 function fmtDate(d: Date): string {
@@ -90,7 +112,7 @@ function fmtDayShort(d: Date): string {
 
 function statusBadge(status: AssignmentStatus): string {
   const colors: Record<string, string> = {
-    Scheduled: '#27ae60', Locked: '#2980b9', Manual: '#f39c12', Conflict: '#e74c3c'
+    Scheduled: '#27ae60', Locked: '#2980b9', Manual: '#f39c12', Conflict: '#e74c3c', Frozen: '#00bcd4'
   };
   return `<span class="badge badge-sm" style="background:${colors[status] || '#7f8c8d'}">${status}</span>`;
 }
@@ -158,7 +180,8 @@ function generateTasksFromTemplates(): Task[] {
       if (tpl.taskType === TaskType.Aruga) {
         const morningStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tpl.startHour, 0);
         const morningEnd = new Date(morningStart.getTime() + tpl.durationHours * 3600000);
-        const eveningStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 17, 0);
+        const eveHour = tpl.eveningStartHour ?? 17;
+        const eveningStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), eveHour, 0);
         const eveningEnd = new Date(eveningStart.getTime() + tpl.durationHours * 3600000);
         shifts = [
           { start: morningStart, end: morningEnd },
@@ -236,8 +259,13 @@ function getFilteredAssignments(schedule: Schedule): Assignment[] {
 }
 
 /**
- * Compute per-day hours for a participant.
+ * Compute per-day raw clock hours for a participant.
  * Returns a Map<dayIndex, hours> for days 1..numDays.
+ *
+ * Intentionally uses raw (un-weighted) hours — this measures how many
+ * hours of the day the participant is physically occupied, regardless
+ * of load weighting. For weighted effort see computeTaskBreakdown()
+ * and computeTaskEffectiveHours().
  */
 function computePerDayHours(
   participantId: string,
@@ -279,6 +307,7 @@ function computePerDayHours(
 function renderDayNavigator(): string {
   const numDays = store.getScheduleDays();
   const baseDate = store.getScheduleDate();
+  const liveMode = store.getLiveModeState();
 
   let html = `<div class="day-navigator">`;
 
@@ -303,12 +332,26 @@ function renderDayNavigator(): string {
       ? `<span class="day-violation-dot" title="${violationCount} violation(s)">!</span>`
       : '';
 
-    html += `<button class="day-tab ${currentDay === d ? 'day-tab-active' : ''}" data-day="${d}">
+    // Frozen / partially frozen indicators
+    let frozenTag = '';
+    let frozenClass = '';
+    if (liveMode.enabled) {
+      if (isDayFrozen(d, baseDate, liveMode.currentTimestamp, DAY_START_HOUR)) {
+        frozenTag = `<span class="day-frozen-badge" title="This day is frozen (past)">🧊</span>`;
+        frozenClass = ' day-tab-frozen';
+      } else if (isDayPartiallyFrozen(d, baseDate, liveMode.currentTimestamp, DAY_START_HOUR)) {
+        frozenTag = `<span class="day-frozen-badge day-frozen-partial" title="Partially frozen">⏳</span>`;
+        frozenClass = ' day-tab-partial-frozen';
+      }
+    }
+
+    html += `<button class="day-tab ${currentDay === d ? 'day-tab-active' : ''}${frozenClass}" data-day="${d}">
       <span class="day-tab-name">${dayName}</span>
       <span class="day-tab-num">${dayNum}</span>
       <span class="day-tab-label">Day ${d}</span>
       ${taskCount > 0 ? `<span class="day-tab-count">${taskCount} tasks</span>` : ''}
       ${violationDot}
+      ${frozenTag}
     </button>`;
   }
 
@@ -509,16 +552,66 @@ function renderParticipantSidebar(schedule: Schedule): string {
 
 function renderScheduleTab(): string {
   const preflight = runPreflight();
+  const liveMode = store.getLiveModeState();
+  const numDays = store.getScheduleDays();
+
+  // Build Live Mode day/hour options
+  let liveModeControls = '';
+  if (currentSchedule) {
+    const baseDate = store.getScheduleDate();
+    let dayOptions = '';
+    for (let d = 1; d <= numDays; d++) {
+      const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
+      const label = `Day ${d} (${date.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })})`;
+      // Determine which day is currently selected
+      let selected = false;
+      if (liveMode.enabled) {
+        const anchor = liveMode.currentTimestamp;
+        const dayStart = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1, DAY_START_HOUR, 0);
+        const dayEnd = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d, DAY_START_HOUR, 0);
+        selected = anchor.getTime() >= dayStart.getTime() && anchor.getTime() < dayEnd.getTime();
+      }
+      dayOptions += `<option value="${d}" ${selected ? 'selected' : ''}>${label}</option>`;
+    }
+
+    // Current anchor hour
+    const anchorHour = liveMode.enabled ? liveMode.currentTimestamp.getHours() : 5;
+    let hourOptions = '';
+    for (let h = 0; h < 24; h++) {
+      hourOptions += `<option value="${h}" ${h === anchorHour ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`;
+    }
+
+    liveModeControls = `
+      <div class="live-mode-controls">
+        <label class="live-mode-toggle" title="Enable Live Mode to freeze past assignments">
+          <input type="checkbox" id="chk-live-mode" ${liveMode.enabled ? 'checked' : ''} />
+          <span class="live-toggle-label">🔴 Live Mode</span>
+        </label>
+        ${liveMode.enabled ? `
+          <div class="live-mode-picker">
+            <label>Now at:
+              <select id="sel-live-day" class="input-sm">${dayOptions}</select>
+              <select id="sel-live-hour" class="input-sm">${hourOptions}</select>
+            </label>
+          </div>
+        ` : ''}
+      </div>`;
+  }
 
   let html = `<div class="tab-toolbar">
     <div class="toolbar-left"><h2>Schedule View</h2>
-      <span class="text-muted" style="margin-left:12px">${store.getScheduleDays()}-Day Schedule</span>
+      <span class="text-muted" style="margin-left:12px">${numDays}-Day Schedule</span>
     </div>
     <div class="toolbar-right">
+      ${liveModeControls}
+      <label class="scenarios-label" for="input-scenarios" title="Number of optimization scenarios to evaluate">Scenarios
+        <input type="number" id="input-scenarios" class="input-scenarios" min="1" max="50000" step="100" value="${OPTIM_ATTEMPTS}" ${_isOptimizing ? 'disabled' : ''} />
+      </label>
       <button class="btn-primary ${_scheduleDirty && currentSchedule ? 'btn-generate-dirty' : ''}" id="btn-generate" ${!preflight.canGenerate || _isOptimizing ? 'disabled' : ''}
         ${!preflight.canGenerate ? 'title="Fix critical issues in Task Rules first"' : ''}>
         ${_isOptimizing ? '⏳ Optimizing…' : currentSchedule ? '🔄 Regenerate' : '⚡ Generate Schedule'}
       </button>
+      ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="Reset to defaults and clear saved state">🔄 Reset</button>` : ''}
     </div>
   </div>`;
 
@@ -621,6 +714,7 @@ function renderViolations(schedule: Schedule): string {
 function renderAssignmentsTable(schedule: Schedule): string {
   const filteredTasks = getFilteredTasks(schedule);
   const filteredAssignments = getFilteredAssignments(schedule);
+  const liveMode = store.getLiveModeState();
 
   const taskMap = new Map<string, Task>();
   for (const t of filteredTasks) taskMap.set(t.id, t);
@@ -645,6 +739,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
 
   for (const task of sortedTasks) {
     const taskAssignments = groupedByTask.get(task.id) || [];
+    const taskIsFrozen = liveMode.enabled && !isFutureTask(task, liveMode.currentTimestamp);
 
     // Cross-day indicators
     const contFromPrev = taskStartsBefore(task, currentDay);
@@ -668,10 +763,13 @@ function renderAssignmentsTable(schedule: Schedule): string {
     taskAssignments.forEach((a, i) => {
       const p = pMap.get(a.participantId);
       const slot = task.slots.find(s => s.slotId === a.slotId);
-      html += `<tr class="${a.status === AssignmentStatus.Conflict ? 'row-error' : ''}" data-assignment-id="${a.id}">`;
+      const isFrozen = a.status === AssignmentStatus.Frozen;
+      const rowClass = a.status === AssignmentStatus.Conflict ? 'row-error' : isFrozen ? 'row-frozen' : '';
+      html += `<tr class="${rowClass}" data-assignment-id="${a.id}">`;
       if (i === 0) {
-        html += `<td rowspan="${taskAssignments.length}" class="task-cell task-tooltip-hover" data-task-id="${task.id}" style="border-left:4px solid ${TASK_COLORS[task.type] || '#999'}">
-          <strong>${task.name}</strong>${task.isLight ? ' <small>(Light)</small>' : ''} ${crossDayTag}</td>
+        html += `<td rowspan="${taskAssignments.length}" class="task-cell task-tooltip-hover${taskIsFrozen ? ' task-cell-frozen' : ''}" data-task-id="${task.id}" style="border-left:4px solid ${TASK_COLORS[task.type] || '#999'}">
+          <strong>${task.name}</strong>${task.isLight ? ' <small>(Light)</small>' : ''} ${crossDayTag}
+          ${taskIsFrozen ? '<span class="frozen-label">🧊 Frozen</span>' : ''}</td>
           <td rowspan="${taskAssignments.length}">${taskTypeBadge(task.type)}</td>
           <td rowspan="${taskAssignments.length}">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</td>`;
       }
@@ -681,8 +779,12 @@ function renderAssignmentsTable(schedule: Schedule): string {
         <td>${p ? groupBadge(p.group) : '—'}</td>
         <td>${statusBadge(a.status)}</td>
         <td>
-          <button class="btn-swap" data-assignment-id="${a.id}" data-task-id="${task.id}" title="Swap">⇄</button>
-          <button class="btn-lock" data-assignment-id="${a.id}" title="Lock/Unlock">🔒</button>
+          ${isFrozen
+            ? `<span class="frozen-action-icon" title="Frozen — cannot modify past assignments">🧊</span>`
+            : `<button class="btn-swap" data-assignment-id="${a.id}" data-task-id="${task.id}" title="Swap">⇄</button>
+               <button class="btn-lock" data-assignment-id="${a.id}" title="Lock/Unlock">🔒</button>
+               ${liveMode.enabled ? `<button class="btn-rescue" data-assignment-id="${a.id}" title="Generate Rescue Plans">🆘</button>` : ''}`
+          }
         </td></tr>`;
     });
   }
@@ -783,8 +885,8 @@ function renderGanttChart(schedule: Schedule): string {
 
 // ─── Schedule Generation ─────────────────────────────────────────────────────
 
-/** Number of optimization attempts per generation */
-const OPTIM_ATTEMPTS = 40;
+/** Number of optimization attempts per generation (user-configurable) */
+let OPTIM_ATTEMPTS = 2000;
 
 /**
  * Render the optimization overlay that covers the schedule board
@@ -853,6 +955,13 @@ async function doGenerate(): Promise<void> {
   // Prevent double-click
   if (_isOptimizing) return;
 
+  // Read user-configured scenario count
+  const scenarioInput = document.getElementById('input-scenarios') as HTMLInputElement | null;
+  if (scenarioInput) {
+    const val = parseInt(scenarioInput.value, 10);
+    if (val > 0) OPTIM_ATTEMPTS = val;
+  }
+
   const participants = store.getAllParticipants();
   const tasks = generateTasksFromTemplates();
 
@@ -908,6 +1017,15 @@ async function doGenerate(): Promise<void> {
     scheduleElapsed = Math.round(performance.now() - t0);
     currentDay = 1;
     _scheduleDirty = false;
+
+    // Persist schedule to localStorage
+    store.saveSchedule(schedule);
+
+    // Apply live mode freeze if active
+    const liveMode = store.getLiveModeState();
+    if (liveMode.enabled) {
+      freezeAssignments(currentSchedule, liveMode.currentTimestamp);
+    }
   } catch (err) {
     // Safety buffer: if all attempts fail, show error without clearing board
     console.error('[Scheduler] All optimization attempts failed:', err);
@@ -953,6 +1071,17 @@ function revalidateAndRefresh(): void {
   engine.revalidateFull();
   currentSchedule = engine.getSchedule();
 
+  // Re-apply freeze if live mode is active
+  const liveMode = store.getLiveModeState();
+  if (liveMode.enabled && currentSchedule) {
+    freezeAssignments(currentSchedule, liveMode.currentTimestamp);
+  }
+
+  // Persist updated schedule
+  if (currentSchedule) {
+    store.saveSchedule(currentSchedule);
+  }
+
   renderAll();
 }
 
@@ -960,6 +1089,10 @@ function handleSwap(assignmentId: string): void {
   if (!currentSchedule || !engine) return;
   const assignment = currentSchedule.assignments.find(a => a.id === assignmentId);
   if (!assignment) return;
+  if (assignment.status === AssignmentStatus.Frozen) {
+    alert('🧊 This assignment is frozen (in the past). It cannot be modified.');
+    return;
+  }
   const task = currentSchedule.tasks.find(t => t.id === assignment.taskId);
   if (!task) return;
   const currentP = currentSchedule.participants.find(p => p.id === assignment.participantId);
@@ -996,6 +1129,11 @@ function handleLock(assignmentId: string): void {
   const a = currentSchedule.assignments.find(a => a.id === assignmentId);
   if (!a) return;
 
+  if (a.status === AssignmentStatus.Frozen) {
+    alert('🧊 This assignment is frozen (in the past). It cannot be modified.');
+    return;
+  }
+
   if (a.status === AssignmentStatus.Locked) {
     engine.unlockAssignment(assignmentId);
   } else {
@@ -1003,6 +1141,170 @@ function handleLock(assignmentId: string): void {
   }
   currentSchedule = engine.getSchedule();
   revalidateAndRefresh();
+}
+
+// ─── Rescue Modal ────────────────────────────────────────────────────────────
+
+function openRescueModal(assignmentId: string): void {
+  if (!currentSchedule) return;
+  const assignment = currentSchedule.assignments.find(a => a.id === assignmentId);
+  if (!assignment) return;
+  const task = currentSchedule.tasks.find(t => t.id === assignment.taskId);
+  if (!task) return;
+
+  const liveMode = store.getLiveModeState();
+
+  const request: RescueRequest = {
+    vacatedAssignmentId: assignmentId,
+    taskId: task.id,
+    slotId: assignment.slotId,
+    vacatedBy: assignment.participantId,
+  };
+
+  _rescuePage = 0;
+  _rescueAssignmentId = assignmentId;
+  _rescueResult = generateRescuePlans(currentSchedule, request, liveMode.currentTimestamp, _rescuePage);
+  showRescueModal();
+}
+
+function showRescueModal(): void {
+  // Remove any existing modal
+  document.getElementById('rescue-modal-backdrop')?.remove();
+
+  if (!_rescueResult || !currentSchedule) return;
+
+  const pMap = new Map<string, Participant>();
+  for (const p of currentSchedule.participants) pMap.set(p.id, p);
+  const taskMap = new Map<string, Task>();
+  for (const t of currentSchedule.tasks) taskMap.set(t.id, t);
+
+  const { request, plans, hasMore } = _rescueResult;
+  const vacatedP = pMap.get(request.vacatedBy);
+  const task = taskMap.get(request.taskId) || null;
+
+  let html = `<div id="rescue-modal-backdrop" class="rescue-backdrop">
+    <div class="rescue-modal">
+      <div class="rescue-header">
+        <h3>🆘 Rescue Plans</h3>
+        <button class="rescue-close" id="btn-rescue-close">✕</button>
+      </div>
+      <div class="rescue-context">
+        <p>Slot vacated by <strong>${vacatedP?.name || '???'}</strong> in
+        <strong>${task?.name || '???'}</strong></p>
+      </div>
+      <div class="rescue-plans">`;
+
+  if (plans.length === 0) {
+    html += `<div class="rescue-empty">No eligible rescue plans found.</div>`;
+  }
+
+  for (const plan of plans) {
+    html += `<div class="rescue-plan" data-plan-id="${plan.id}">
+      <div class="rescue-plan-header">
+        <span class="rescue-rank">#${plan.rank}</span>
+        <span class="rescue-score">Impact: ${plan.impactScore.toFixed(2)}</span>
+        <span class="rescue-swaps">${plan.swaps.length} swap${plan.swaps.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div class="rescue-plan-details">
+        <div class="rescue-metrics">
+          <span>Daily Δ: ${plan.dailyLoadDelta >= 0 ? '+' : ''}${plan.dailyLoadDelta.toFixed(2)}</span>
+          <span>Weekly Δ: ${plan.weeklyLoadDelta >= 0 ? '+' : ''}${plan.weeklyLoadDelta.toFixed(2)}</span>
+        </div>
+        <table class="rescue-swap-table">
+          <thead><tr><th>Step</th><th>Assigned</th><th>Replacing</th><th>Task / Slot</th></tr></thead>
+          <tbody>`;
+
+    for (let i = 0; i < plan.swaps.length; i++) {
+      const sw = plan.swaps[i];
+      const swP = pMap.get(sw.toParticipantId);
+      const fromP = pMap.get(sw.fromParticipantId || '');
+      html += `<tr>
+        <td>${i + 1}</td>
+        <td><strong>${swP?.name || '???'}</strong></td>
+        <td>${fromP?.name || '(vacant)'}</td>
+        <td>${sw.taskName} — ${sw.slotLabel}</td>
+      </tr>`;
+    }
+
+    html += `</tbody></table>
+      </div>
+      <button class="btn-apply-plan" data-plan-id="${plan.id}">✅ Apply Plan</button>
+    </div>`;
+  }
+
+  html += `</div>
+    <div class="rescue-footer">
+      ${hasMore ? `<button class="btn-rescue-more" id="btn-rescue-more">Show More Options</button>` : ''}
+      <button class="btn-rescue-dismiss" id="btn-rescue-dismiss">Dismiss</button>
+    </div>
+    </div></div>`;
+
+  document.body.insertAdjacentHTML('beforeend', html);
+  wireRescueModalEvents();
+}
+
+function wireRescueModalEvents(): void {
+  const backdrop = document.getElementById('rescue-modal-backdrop');
+  if (!backdrop) return;
+
+  // Close button
+  backdrop.querySelector('#btn-rescue-close')?.addEventListener('click', closeRescueModal);
+  backdrop.querySelector('#btn-rescue-dismiss')?.addEventListener('click', closeRescueModal);
+
+  // Click backdrop to close
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) closeRescueModal();
+  });
+
+  // Show More
+  backdrop.querySelector('#btn-rescue-more')?.addEventListener('click', () => {
+    if (!currentSchedule || !_rescueResult) return;
+    _rescuePage++;
+    const liveMode = store.getLiveModeState();
+    _rescueResult = generateRescuePlans(currentSchedule, _rescueResult.request, liveMode.currentTimestamp, _rescuePage);
+    showRescueModal();
+  });
+
+  // Apply plan buttons
+  backdrop.querySelectorAll('.btn-apply-plan').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const planId = (e.target as HTMLElement).dataset.planId;
+      if (!planId || !_rescueResult || !currentSchedule || !engine) return;
+      const plan = _rescueResult.plans.find(p => p.id === planId);
+      if (!plan) return;
+      applyRescuePlan(plan);
+    });
+  });
+}
+
+function applyRescuePlan(plan: RescuePlan): void {
+  if (!currentSchedule || !engine) return;
+
+  // Each swap has the exact assignment ID to change and the new participant
+  for (const sw of plan.swaps) {
+    const result = engine.swapParticipant({ assignmentId: sw.assignmentId, newParticipantId: sw.toParticipantId });
+    const updated = engine.getSchedule();
+    if (!updated) {
+      console.error('[Rescue] Engine returned null schedule after swap', sw);
+      alert('Rescue plan could not be applied — engine error.');
+      closeRescueModal();
+      return;
+    }
+    currentSchedule = updated;
+    if (!result.valid) {
+      console.warn('[Rescue] Swap created violations:', result.violations);
+    }
+  }
+
+  closeRescueModal();
+  revalidateAndRefresh();
+}
+
+function closeRescueModal(): void {
+  document.getElementById('rescue-modal-backdrop')?.remove();
+  _rescueResult = null;
+  _rescueAssignmentId = null;
+  _rescuePage = 0;
 }
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -1189,6 +1491,57 @@ function wireScheduleEvents(container: HTMLElement): void {
       }
     });
   }
+
+  // ── Live Mode toggle ──
+  const liveModeChk = container.querySelector('#chk-live-mode') as HTMLInputElement | null;
+  if (liveModeChk) {
+    liveModeChk.addEventListener('change', () => {
+      store.setLiveModeEnabled(liveModeChk.checked);
+      if (liveModeChk.checked && currentSchedule) {
+        freezeAssignments(currentSchedule, store.getLiveModeState().currentTimestamp);
+      } else if (currentSchedule) {
+        unfreezeAll(currentSchedule);
+      }
+      renderAll();
+    });
+  }
+
+  // ── Live Mode day/hour pickers ──
+  const liveDay = container.querySelector('#sel-live-day') as HTMLSelectElement | null;
+  const liveHour = container.querySelector('#sel-live-hour') as HTMLSelectElement | null;
+  const updateLiveTimestamp = () => {
+    if (!liveDay || !liveHour) return;
+    const dayIdx = parseInt(liveDay.value, 10);
+    const hour = parseInt(liveHour.value, 10);
+    const base = store.getScheduleDate();
+    const ts = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIdx - 1, hour, 0);
+    store.setLiveModeTimestamp(ts);
+    if (currentSchedule && store.getLiveModeState().enabled) {
+      freezeAssignments(currentSchedule, ts);
+    }
+    renderAll();
+  };
+  if (liveDay) liveDay.addEventListener('change', updateLiveTimestamp);
+  if (liveHour) liveHour.addEventListener('change', updateLiveTimestamp);
+
+  // ── Reset storage button ──
+  const resetBtn = container.querySelector('#btn-reset-storage');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      if (confirm('Clear all saved data and reload? This cannot be undone.')) {
+        store.clearStorage();
+        location.reload();
+      }
+    });
+  }
+
+  // ── Rescue buttons ──
+  container.querySelectorAll('.btn-rescue').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const aId = (e.target as HTMLElement).dataset.assignmentId!;
+      openRescueModal(aId);
+    });
+  });
 }
 
 // ─── Global Participant Tooltip ──────────────────────────────────────────────
@@ -1371,11 +1724,6 @@ function getTaskTooltipEl(): HTMLElement {
   return el;
 }
 
-/** Cert color lookup for tooltip badges */
-const CERT_COLORS: Record<string, string> = {
-  Nitzan: '#16a085', Salsala: '#8e44ad', Hamama: '#c0392b', Horesh: '#e74c3c',
-};
-
 /** Build rich tooltip HTML for a task showing time, name, type, and all teammates. */
 function buildTaskTooltipContent(taskId: string): string {
   if (!currentSchedule) return '';
@@ -1504,28 +1852,100 @@ function onStoreChanged(): void {
 
   _scheduleDirty = true;
 
-  // Build a set of current participant IDs from the store
-  const storeIds = new Set(store.getAllParticipants().map(p => p.id));
+  // Refresh participant metadata from the store (Bug #10 fix)
+  const currentParticipants = store.getAllParticipants();
+  const storeIds = new Set(currentParticipants.map(p => p.id));
+  const storeMap = new Map(currentParticipants.map(p => [p.id, p]));
 
   // Strip assignments for participants that no longer exist
   const before = currentSchedule.assignments.length;
   const cleanedAssignments = currentSchedule.assignments.filter(
     a => storeIds.has(a.participantId),
   );
-  if (cleanedAssignments.length !== before) {
+
+  // Rebuild participants from current store state so levels/certs/groups
+  // stay in sync (Bug #10 fix). Only include participants that still exist.
+  const refreshedParticipants = currentSchedule.participants
+    .filter(p => storeIds.has(p.id))
+    .map(p => storeMap.get(p.id)!);
+
+  const changed = cleanedAssignments.length !== before
+    || refreshedParticipants.some((sp, i) => sp !== currentSchedule!.participants[i]);
+
+  if (changed) {
     currentSchedule = {
       ...currentSchedule,
       assignments: cleanedAssignments,
-      // Also trim the participant list to match the store
-      participants: currentSchedule.participants.filter(p => storeIds.has(p.id)),
+      participants: refreshedParticipants,
     };
+
+    // Revalidate violations/score after reconciliation (Bug #11 fix)
+    if (engine) {
+      engine.importSchedule(currentSchedule);
+      engine.addParticipants(refreshedParticipants);
+      engine.revalidateFull();
+      currentSchedule = engine.getSchedule()!;
+    }
   }
 }
 
 function init(): void {
   store.initStore();
   store.subscribe(onStoreChanged);
+
+  // Restore saved schedule from localStorage
+  const savedSchedule = store.loadSchedule();
+  if (savedSchedule) {
+    engine = new SchedulingEngine({
+      maxIterations: 6000,
+      maxSolverTimeMs: 15000,
+    });
+
+    // Bug #10 fix: use current store participants instead of stale
+    // schedule snapshot — levels/certs/groups may have changed.
+    const currentParticipants = store.getAllParticipants();
+    const storeIds = new Set(currentParticipants.map(p => p.id));
+
+    // Prune assignments/tasks for deleted participants
+    const reconciledAssignments = savedSchedule.assignments.filter(
+      a => storeIds.has(a.participantId),
+    );
+    const reconciledParticipants = currentParticipants.filter(
+      p => savedSchedule.participants.some(sp => sp.id === p.id),
+    );
+
+    const reconciledSchedule: Schedule = {
+      ...savedSchedule,
+      participants: reconciledParticipants,
+      assignments: reconciledAssignments,
+    };
+
+    engine.addParticipants(reconciledParticipants);
+    engine.addTasks(savedSchedule.tasks);
+    engine.importSchedule(reconciledSchedule);
+
+    // Bug #11 fix: revalidate so violations/score reflect current state
+    engine.revalidateFull();
+    currentSchedule = engine.getSchedule()!;
+    currentDay = 1;
+
+    // Re-apply freeze if live mode was active
+    const liveMode = store.getLiveModeState();
+    if (liveMode.enabled) {
+      freezeAssignments(currentSchedule, liveMode.currentTimestamp);
+    }
+  }
+
   renderAll();
+
+  // Flush any pending debounced save on page unload to prevent data loss
+  window.addEventListener('beforeunload', (e) => {
+    store.flushPendingSave();
+    if (_isOptimizing) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
 
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {

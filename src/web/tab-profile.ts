@@ -21,7 +21,7 @@ import {
 import * as store from './config-store';
 import { computeTaskBreakdown } from './workload-utils';
 import {
-  TASK_COLORS, GROUP_COLORS, LEVEL_COLORS,
+  TASK_COLORS, LEVEL_COLORS,
   fmt, levelBadge, certBadge, groupBadge, taskTypeBadge,
 } from './ui-helpers';
 

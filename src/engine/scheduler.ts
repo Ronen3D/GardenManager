@@ -29,6 +29,7 @@ import {
   resetAssignmentCounter,
   MultiAttemptProgressCallback,
 } from './optimizer';
+import { resetSlotCounter, resetTaskCounter } from '../tasks/task-definitions';
 
 export class SchedulingEngine {
   private participants: Map<string, Participant> = new Map();
@@ -39,6 +40,11 @@ export class SchedulingEngine {
 
   constructor(config: Partial<SchedulerConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    // Bug #12 fix: reset module-level counters so IDs start fresh
+    // for each new engine instance.
+    resetAssignmentCounter();
+    resetSlotCounter();
+    resetTaskCounter();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -123,6 +129,8 @@ export class SchedulingEngine {
     this.tasks.clear();
     this.currentSchedule = null;
     resetAssignmentCounter();
+    resetSlotCounter();
+    resetTaskCounter();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -195,11 +203,11 @@ export class SchedulingEngine {
    * yielding to the event loop between each so the UI can show progress.
    * Only the best result is committed to the engine state.
    *
-   * @param attempts Number of optimization attempts (default: 6)
+   * @param attempts Number of optimization attempts (default: 2000)
    * @param onProgress Callback fired after each attempt for progress UI
    */
   async generateScheduleAsync(
-    attempts: number = 40,
+    attempts: number = 2000,
     onProgress?: MultiAttemptProgressCallback,
   ): Promise<Schedule> {
     const tasks = this.getAllTasks();
@@ -269,6 +277,17 @@ export class SchedulingEngine {
    */
   getSchedule(): Schedule | null {
     return this.currentSchedule;
+  }
+
+  /**
+   * Import a previously saved schedule so real-time adjustments
+   * (swap, lock, revalidate) work without re-generating.
+   *
+   * The participants and tasks must have been added via addParticipants/addTasks
+   * before calling this method.
+   */
+  importSchedule(schedule: Schedule): void {
+    this.currentSchedule = schedule;
   }
 
   /**

@@ -33,6 +33,7 @@ const STATUS_OPACITY: Record<AssignmentStatus, number> = {
   [AssignmentStatus.Locked]: 0.9,
   [AssignmentStatus.Manual]: 1.0,
   [AssignmentStatus.Conflict]: 0.5,
+  [AssignmentStatus.Frozen]: 0.4,
 };
 
 /**
@@ -110,8 +111,9 @@ export function scheduleToGantt(schedule: Schedule): GanttData {
   const allBlocks = tasks.map((t) => t.timeBlock);
   const bounds = getTimelineBounds(allBlocks);
 
-  const timelineStartMs = bounds?.start.getTime() ?? 0;
-  const timelineEndMs = bounds?.end.getTime() ?? 0;
+  // Guard against empty task list — use sensible defaults
+  const timelineStartMs = bounds?.start.getTime() ?? Date.now();
+  const timelineEndMs = bounds?.end.getTime() ?? Date.now();
   const totalDurationMs = timelineEndMs - timelineStartMs;
 
   // Auto-scale: aim for ~1200px wide chart

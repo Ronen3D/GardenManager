@@ -24,18 +24,23 @@ function nextTaskId(prefix: string): string {
   return `${prefix}-${++_taskCounter}`;
 }
 
+/** Reset slot counter — call at the start of each generation pass. */
+export function resetSlotCounter(): void { _slotCounter = 0; }
+/** Reset task counter — call at the start of each generation pass. */
+export function resetTaskCounter(): void { _taskCounter = 0; }
+
 // ─── Adanit ──────────────────────────────────────────────────────────────────
 // 8h, 3 shifts per day (05:00 cycle). 2 teams (Segol Main / Secondary).
 // All 6 participants MUST have Nitzan certification.
 // Segol Main: 2× L0, 1× L3/L4.
-// Segol Secondary: 2× L0, 1× L2/L3/L4.
+// Segol Secondary: 2× L0, 1× L2.
 // Group constraint: all 6 participants in a shift must be from the same group.
 
 /**
  * Build slots for a single Adanit shift (both teams combined = 6 slots).
  *
  * Segol Main: 2× L0, 1× L3+ (L3/L4)
- * Segol Secondary: 2× L0, 1× L2+ (L2/L3/L4)
+ * Segol Secondary: 2× L0, 1× L2
  *
  * All slots require Nitzan certification.
  */
@@ -72,13 +77,13 @@ function buildAdanitSlots(): SlotRequirement[] {
       label: `Segol Secondary L0 #${i + 1}`,
     });
   }
-  // Segol Secondary: 1× L2/L3/L4
+  // Segol Secondary: 1× L2
   slots.push({
     slotId: nextSlotId(prefix),
-    acceptableLevels: [Level.L2, Level.L3, Level.L4],
+    acceptableLevels: [Level.L2],
     requiredCertifications: [Certification.Nitzan],
     adanitTeam: AdanitTeam.SegolSecondary,
-    label: 'Segol Secondary L2+',
+    label: 'Segol Secondary L2',
   });
 
   return slots;
@@ -347,6 +352,8 @@ export function createArugaTask(timeBlock: TimeBlock, label: string = 'Aruga'): 
  *  - 2 Aruga (morning 05:00-06:30, evening 17:00-18:30)
  */
 export function generateDailyTasks(baseDate: Date): Task[] {
+  resetSlotCounter();
+  resetTaskCounter();
   const tasks: Task[] = [];
   const d = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
 
@@ -417,6 +424,8 @@ export function generateDailyTasks(baseDate: Date): Task[] {
  * @returns All tasks across the multi-day window
  */
 export function generateWeeklyTasks(startDate: Date, numDays: number = 7): Task[] {
+  resetSlotCounter();
+  resetTaskCounter();
   const allTasks: Task[] = [];
 
   for (let day = 0; day < numDays; day++) {

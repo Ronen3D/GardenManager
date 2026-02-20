@@ -24,11 +24,19 @@ import {
   SlotRequirement,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
-import { validateHardConstraints } from '../constraints/hard-constraints';
+import { validateHardConstraints, isLevelSatisfied } from '../constraints/hard-constraints';
 import { computeScheduleScore, ScoreContext } from '../constraints/soft-constraints';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
 import { isEligible, getRejectionReason } from './validator';
+
+/** Calendar-date key from a Date (YYYY-MM-DD in local time) */
+function dateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 /** P4: Add an assignment into the per-participant index */
 function addToAssignmentMap(map: Map<string, Assignment[]>, a: Assignment): void {
@@ -103,10 +111,14 @@ function getEligibleCandidates(
   assignmentsByParticipant: Map<string, Assignment[]>,
   taskMap: Map<string, Task>,
   participantWorkload: Map<string, number>,
+  dailyWorkload?: Map<string, Map<string, number>>,
 ): Participant[] {
   const eligible = participants.filter((p) =>
     isEligibleForSlot(p, task, slot, assignmentsByParticipant.get(p.id) || [], taskMap),
   );
+
+  // Calendar day of the task being assigned
+  const taskDay = dateKey(task.timeBlock.start);
 
   // ── C1 FIX: Single composite comparator ──
   // Merges what were three sequential (destructive) sorts into one stable sort.
@@ -123,10 +135,15 @@ function getEligibleCandidates(
       const aExact = slot.acceptableLevels.includes(a.level) ? 0 : 1;
       const bExact = slot.acceptableLevels.includes(b.level) ? 0 : 1;
       if (aExact !== bExact) return aExact - bExact;
-      // T2: workload ascending (fairness)
+      // T2: blended workload score — combines total fairness with daily spread.
+      // The day-load factor (×2) strongly discourages piling work on the same day.
       const wa = participantWorkload.get(a.id) || 0;
       const wb = participantWorkload.get(b.id) || 0;
-      if (wa !== wb) return wa - wb;
+      const dayA = dailyWorkload?.get(a.id)?.get(taskDay) ?? 0;
+      const dayB = dailyWorkload?.get(b.id)?.get(taskDay) ?? 0;
+      const scoreA = wa + 2.0 * dayA;
+      const scoreB = wb + 2.0 * dayB;
+      if (scoreA !== scoreB) return scoreA - scoreB;
       // T2.5: Adanit-specific assignment count — prefer participants with fewer
       // Adanit shifts so L3/L4 naturally alternate instead of one level hoarding.
       const adanitCountA = (assignmentsByParticipant.get(a.id) || []).filter(
@@ -143,17 +160,24 @@ function getEligibleCandidates(
     }
 
     // ── All non-Adanit tasks ──
-    // Hamama-specific: prefer L0 > L3
+    // Hamama-specific: prefer L0 first, L4 only as absolute last resort
+    // (L2/L3 are hard-blocked from Hamama by HC-13 and won't be candidates)
     if (task.type === TaskType.Hamama) {
-      const hp = (l: Level): number => l === Level.L0 ? 0 : l === Level.L3 ? 1 : 2;
+      const hp = (l: Level): number => l === Level.L0 ? 0 : l === Level.L4 ? 1 : 2;
       const d = hp(a.level) - hp(b.level);
       if (d !== 0) return d;
     }
 
-    // Primary fairness driver: workload ascending
+    // Primary fairness driver: blended workload score.
+    // Combines total fairness with daily spread — day-load factor (×2) strongly
+    // discourages piling work on the same day while still respecting overall balance.
     const wa = participantWorkload.get(a.id) || 0;
     const wb = participantWorkload.get(b.id) || 0;
-    if (wa !== wb) return wa - wb;
+    const dayA = dailyWorkload?.get(a.id)?.get(taskDay) ?? 0;
+    const dayB = dailyWorkload?.get(b.id)?.get(taskDay) ?? 0;
+    const scoreA = wa + 2.0 * dayA;
+    const scoreB = wb + 2.0 * dayB;
+    if (scoreA !== scoreB) return scoreA - scoreB;
 
     // Prefer exact level match
     const aExact = slot.acceptableLevels.includes(a.level) ? 0 : 1;
@@ -226,14 +250,29 @@ export function greedyAssign(
 
   // Track workload
   const workload = new Map<string, number>();
-  for (const p of participants) workload.set(p.id, 0);
+  // Track per-day workload: participantId → (dateKey → effectiveHours)
+  const dailyWorkload = new Map<string, Map<string, number>>();
+  for (const p of participants) {
+    workload.set(p.id, 0);
+    dailyWorkload.set(p.id, new Map());
+  }
   for (const a of lockedAssignments) {
     const task = taskMap.get(a.taskId);
-    if (task && !task.isLight) {
-      workload.set(
-        a.participantId,
-        (workload.get(a.participantId) || 0) + computeTaskEffectiveHours(task),
-      );
+    if (task) {
+      // For daily spread: count all tasks (light tasks get a floor of 1h so
+      // the day registers as occupied). For total workload: skip light tasks.
+      const eff = computeTaskEffectiveHours(task);
+      const dailyEff = task.isLight ? Math.max(1, eff) : eff;
+      if (!task.isLight) {
+        workload.set(
+          a.participantId,
+          (workload.get(a.participantId) || 0) + eff,
+        );
+      }
+      const dk = dateKey(task.timeBlock.start);
+      let pDaily = dailyWorkload.get(a.participantId);
+      if (!pDaily) { pDaily = new Map(); dailyWorkload.set(a.participantId, pDaily); }
+      pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
     }
   }
 
@@ -242,7 +281,7 @@ export function greedyAssign(
   for (const task of sortedTasks) {
     // For same-group tasks (Adanit), we need special handling
     if (task.sameGroupRequired) {
-      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant);
+      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant, dailyWorkload);
       if (!assigned) {
         // Mark all slots as unfilled with specific reasons
         for (const slot of task.slots) {
@@ -279,6 +318,7 @@ export function greedyAssign(
         assignmentsByParticipant,
         taskMap,
         workload,
+        dailyWorkload,
       );
 
       if (candidates.length > 0) {
@@ -293,9 +333,16 @@ export function greedyAssign(
         };
         assignments.push(newAssignment);
         addToAssignmentMap(assignmentsByParticipant, newAssignment);
+        const eff = computeTaskEffectiveHours(task);
+        const dailyEff = task.isLight ? Math.max(1, eff) : eff;
         if (!task.isLight) {
-          workload.set(chosen.id, (workload.get(chosen.id) || 0) + computeTaskEffectiveHours(task));
+          workload.set(chosen.id, (workload.get(chosen.id) || 0) + eff);
         }
+        // Always update daily workload (light tasks get floor of 1h)
+        const dk = dateKey(task.timeBlock.start);
+        let pDaily = dailyWorkload.get(chosen.id);
+        if (!pDaily) { pDaily = new Map(); dailyWorkload.set(chosen.id, pDaily); }
+        pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
       } else {
         // R8: Build specific reason with constraint codes for diagnostics
         const levelStr = slot.acceptableLevels.map((l) => 'L' + l).join('/');
@@ -367,6 +414,7 @@ function assignSameGroupTask(
   taskMap: Map<string, Task>,
   workload: Map<string, number>,
   assignmentsByParticipant: Map<string, Assignment[]>,
+  dailyWorkload?: Map<string, Map<string, number>>,
 ): boolean {
   // Already have some locked assignments for this task?
   const lockedForTask = currentAssignments.filter((a) => a.taskId === task.id);
@@ -439,6 +487,7 @@ function assignSameGroupTask(
         tempMap,
         taskMap,
         workload,
+        dailyWorkload,
       );
 
       if (candidates.length > 0) {
@@ -462,11 +511,21 @@ function assignSameGroupTask(
         currentAssignments.push(a);
         addToAssignmentMap(assignmentsByParticipant, a);
         const t = taskMap.get(a.taskId);
-        if (t && !t.isLight) {
-          workload.set(
-            a.participantId,
-            (workload.get(a.participantId) || 0) + computeTaskEffectiveHours(t),
-          );
+        if (t) {
+          const eff = computeTaskEffectiveHours(t);
+          const dailyEff = t.isLight ? Math.max(1, eff) : eff;
+          if (!t.isLight) {
+            workload.set(
+              a.participantId,
+              (workload.get(a.participantId) || 0) + eff,
+            );
+          }
+          if (dailyWorkload) {
+            const dk = dateKey(t.timeBlock.start);
+            let pDaily = dailyWorkload.get(a.participantId);
+            if (!pDaily) { pDaily = new Map(); dailyWorkload.set(a.participantId, pDaily); }
+            pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
+          }
         }
       }
       return true;
@@ -479,70 +538,12 @@ function assignSameGroupTask(
     }
   }
 
-  // No group could fill ALL slots — commit best partial + cross-group fill.
-  // A mixed-group fill is penalised by the scoring but keeps the schedule functional.
-  if (bestGroupAssignments.length > 0) {
+  // HC-4: No group could fill ALL slots. Cross-group fill is forbidden
+  // (sameGroupRequired is a hard constraint). Report as infeasible.
+  if (bestFilledCount > 0) {
     console.warn(
       `[Scheduler] ${task.name}: no group could fill all ${slotsToFill.length} slots. ` +
-      `Best group filled ${bestFilledCount}/${slotsToFill.length}. Trying cross-group fill for remaining.`,
-    );
-
-    // Commit best partial group's assignments
-    for (const a of bestGroupAssignments) {
-      currentAssignments.push(a);
-      addToAssignmentMap(assignmentsByParticipant, a);
-      const t = taskMap.get(a.taskId);
-      if (t && !t.isLight) {
-        workload.set(
-          a.participantId,
-          (workload.get(a.participantId) || 0) + computeTaskEffectiveHours(t),
-        );
-      }
-    }
-
-    // Find remaining unfilled slots
-    const filledSlotIds = new Set([
-      ...lockedForTask.map((a) => a.slotId),
-      ...bestGroupAssignments.map((a) => a.slotId),
-    ]);
-    const remainingSlots = slotsToFill.filter((s) => !filledSlotIds.has(s.slotId));
-
-    // Fill remaining from ANY eligible participant (cross-group)
-    for (const slot of remainingSlots) {
-      const candidates = getEligibleCandidates(
-        task,
-        slot,
-        participants,
-        assignmentsByParticipant,
-        taskMap,
-        workload,
-      );
-
-      if (candidates.length > 0) {
-        const chosen = candidates[0];
-        const newAssignment: Assignment = {
-          id: nextAssignmentId(),
-          taskId: task.id,
-          slotId: slot.slotId,
-          participantId: chosen.id,
-          status: AssignmentStatus.Scheduled,
-          updatedAt: new Date(),
-        };
-        currentAssignments.push(newAssignment);
-        addToAssignmentMap(assignmentsByParticipant, newAssignment);
-        if (!task.isLight) {
-          workload.set(chosen.id, (workload.get(chosen.id) || 0) + computeTaskEffectiveHours(task));
-        }
-      }
-    }
-
-    // Check if all slots are now filled
-    const totalFilled = currentAssignments.filter((a) => a.taskId === task.id).length;
-    if (totalFilled >= task.slots.length) {
-      return true;
-    }
-    console.warn(
-      `[Scheduler] ${task.name}: cross-group fill incomplete. ${totalFilled}/${task.slots.length} filled.`,
+      `Best group filled ${bestFilledCount}/${slotsToFill.length}. HC-4 forbids cross-group fill.`,
     );
   }
 
@@ -579,13 +580,11 @@ function isSwapFeasible(
   const taskJ = taskMap.get(aJ.taskId);
   if (!pI || !pJ || !taskI || !taskJ) return false;
 
-  // HC-1: Level check
+  // HC-1: Level check — single source of truth in isLevelSatisfied()
   const slotI = taskI.slots.find(s => s.slotId === aI.slotId);
   const slotJ = taskJ.slots.find(s => s.slotId === aJ.slotId);
   if (!slotI || !slotJ) return false;
-  const levelOk = (p: Participant, slot: SlotRequirement) =>
-    slot.acceptableLevels.includes(p.level) || p.level > Math.max(...slot.acceptableLevels);
-  if (!levelOk(pI, slotI) || !levelOk(pJ, slotJ)) return false;
+  if (!isLevelSatisfied(pI.level, slotI) || !isLevelSatisfied(pJ.level, slotJ)) return false;
 
   // HC-2: Certification
   for (const c of slotI.requiredCertifications) if (!pI.certifications.includes(c)) return false;
@@ -615,9 +614,20 @@ function isSwapFeasible(
     if (a.participantId === aJ.participantId) return false;
   }
 
-  // HC-4: Same-group — downgraded to soft constraint. The scoring penalises
-  // mixed-group fills so the optimizer naturally prefers same-group, but swaps
-  // are not blocked outright to allow workload balancing in cross-group fills.
+  // HC-4: Same-group — mandatory. If either swapped assignment belongs to a
+  // sameGroupRequired task, verify all participants in that task share one group.
+  const checkSameGroupForTask = (taskId: string): boolean => {
+    const task = taskMap.get(taskId);
+    if (!task || !task.sameGroupRequired) return true;
+    const taskAssigns = byTask.get(taskId) || [];
+    const groups = new Set<string>();
+    for (const a of taskAssigns) {
+      const p = pMap.get(a.participantId);
+      if (p) groups.add(p.group);
+    }
+    return groups.size <= 1;
+  };
+  if (!checkSameGroupForTask(aI.taskId) || !checkSameGroupForTask(aJ.taskId)) return false;
 
   // HC-5: Double-booking for both affected participants — use per-participant index
   const checkDoubleBooking = (pid: string): boolean => {
@@ -753,9 +763,9 @@ export function localSearchOptimize(
         const ai = current[i];
         const aj = current[j];
 
-        // Skip locked/manual assignments (don't count as iterations)
-        if (ai.status === AssignmentStatus.Locked || ai.status === AssignmentStatus.Manual) continue;
-        if (aj.status === AssignmentStatus.Locked || aj.status === AssignmentStatus.Manual) continue;
+        // Skip locked/manual/frozen assignments (don't count as iterations)
+        if (ai.status === AssignmentStatus.Locked || ai.status === AssignmentStatus.Manual || ai.status === AssignmentStatus.Frozen) continue;
+        if (aj.status === AssignmentStatus.Locked || aj.status === AssignmentStatus.Manual || aj.status === AssignmentStatus.Frozen) continue;
 
         // Skip if same participant (don't count as iterations)
         if (ai.participantId === aj.participantId) continue;
@@ -935,7 +945,7 @@ function isBetterResult(candidate: OptimizationResult, current: OptimizationResu
  * keeping the best result. This introduces diversity in the greedy
  * construction without changing the core algorithm.
  *
- * @param attempts Number of optimization attempts (default: 6)
+ * @param attempts Number of optimization attempts (default: 2000)
  * @param onProgress Optional callback fired after each attempt
  */
 export function optimizeMultiAttempt(
@@ -943,7 +953,7 @@ export function optimizeMultiAttempt(
   participants: Participant[],
   config: SchedulerConfig,
   lockedAssignments: Assignment[] = [],
-  attempts: number = 40,
+  attempts: number = 2000,
   onProgress?: MultiAttemptProgressCallback,
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
@@ -1008,7 +1018,7 @@ export function optimizeMultiAttempt(
  *
  * Uses batched execution: runs BATCH_SIZE attempts synchronously, then
  * yields once via setTimeout so the browser can repaint the progress
- * overlay. This avoids 40 individual setTimeout round-trips while
+ * overlay. This avoids 2000 individual setTimeout round-trips while
  * still keeping the UI responsive.
  */
 const ASYNC_BATCH_SIZE = 4;
@@ -1018,7 +1028,7 @@ export function optimizeMultiAttemptAsync(
   participants: Participant[],
   config: SchedulerConfig,
   lockedAssignments: Assignment[] = [],
-  attempts: number = 40,
+  attempts: number = 2000,
   onProgress?: MultiAttemptProgressCallback,
 ): Promise<OptimizationResult> {
   return new Promise((resolve) => {
