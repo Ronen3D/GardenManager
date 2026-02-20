@@ -282,7 +282,7 @@ function renderMetrics(
         <span class="metric-value">${hotHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">Cold Time (20% load)</span>
+        <span class="metric-label">Cold Time (reduced load)</span>
         <span class="metric-value">${coldHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">

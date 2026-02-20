@@ -20,6 +20,13 @@ import {
   DateUnavailability,
   LiveModeState,
   Schedule,
+  AlgorithmSettings,
+  DEFAULT_ALGORITHM_SETTINGS,
+  HardConstraintCode,
+  SoftWarningCode,
+  SchedulerConfig,
+  AlgorithmPreset,
+  DEFAULT_PRESET,
 } from '../models/types';
 
 // ─── ID Generation ───────────────────────────────────────────────────────────
@@ -710,7 +717,7 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 6,
     sameGroupRequired: false,
     isLight: false,
-    baseLoadWeight: 0.6,
+    baseLoadWeight: 5 / 6,
     loadWindows: [],
     blocksConsecutive: true,
     subTeams: [],
@@ -749,7 +756,7 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 9,
     sameGroupRequired: false,
     isLight: false,
-    baseLoadWeight: 1,
+    baseLoadWeight: 4 / 9,
     loadWindows: [],
     blocksConsecutive: true,
     subTeams: [],
@@ -769,7 +776,7 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 5,
     sameGroupRequired: false,
     isLight: false,
-    baseLoadWeight: 0.2,
+    baseLoadWeight: 1 / 3,
     blocksConsecutive: false,
     loadWindows: [
       {
@@ -796,7 +803,7 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'Karov L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
       { id: uid('slot'), label: 'Karov L0 #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
-    description: '8h shifts (05:00 cycle), 3/day. 1× L2+, 1× L0 w/ Salsala, 2× L0. Hot windows 05:00-06:30 and 17:00-18:30 at 100%; outside is 20% load.',
+    description: '8h shifts (05:00 cycle), 3/day. 1× L2+, 1× L0 w/ Salsala, 2× L0. Hot windows 05:00-06:30 and 17:00-18:30 at 100%; outside is ~33% load.',
   });
 
   // Karovit
@@ -962,7 +969,7 @@ function jsonDeserialize<T>(json: string): T {
 export function saveToStorage(): void {
   try {
     const state = {
-      version: 1,
+      version: 2,
       scheduleDate: scheduleDate.toISOString(),
       scheduleDays,
       liveMode: {
@@ -1012,7 +1019,26 @@ export function loadFromStorage(): boolean {
     if (!raw) return false;
 
     const state = JSON.parse(raw);
-    if (!state || state.version !== 1) return false;
+    if (!state || (state.version !== 1 && state.version !== 2)) return false;
+
+    // ── Migration v1 → v2: update baseLoadWeight for Hamama/Mamtera/Karov ──
+    if (state.version === 1 && Array.isArray(state.taskTemplates)) {
+      for (const tpl of state.taskTemplates) {
+        if (tpl.taskType === 'Hamama' && (tpl.baseLoadWeight === 0.6 || tpl.baseLoadWeight === undefined)) {
+          tpl.baseLoadWeight = 5 / 6;
+        }
+        if (tpl.taskType === 'Mamtera' && (tpl.baseLoadWeight === 1 || tpl.baseLoadWeight === undefined)) {
+          tpl.baseLoadWeight = 4 / 9;
+        }
+        if (tpl.taskType === 'Karov' && (tpl.baseLoadWeight === 0.2 || tpl.baseLoadWeight === undefined)) {
+          tpl.baseLoadWeight = 1 / 3;
+          if (typeof tpl.description === 'string') {
+            tpl.description = tpl.description.replace('outside is 20% load', 'outside is ~33% load');
+          }
+        }
+      }
+      state.version = 2;
+    }
 
     // Restore schedule date/days
     scheduleDate = new Date(state.scheduleDate);
@@ -1076,6 +1102,11 @@ export function loadFromStorage(): boolean {
     // Bug #5 fix: recompute availability from canonical inputs instead of
     // using the stale windows that were serialised at save time.
     recalcAllAvailability();
+
+    // Re-persist after migration so updated version/values are saved
+    if (state.version === 2) {
+      try { saveToStorage(); } catch (_) { /* best-effort */ }
+    }
 
     return true;
   } catch (err) {
@@ -1156,4 +1187,390 @@ export function flushPendingSave(): void {
     _saveDebounceTimer = null;
     saveToStorage();
   }
+}
+
+// ─── Algorithm Settings (separate from undo/redo) ────────────────────────────
+
+const STORAGE_KEY_ALGORITHM = 'gardenmanager_algorithm';
+
+let _algorithmSettings: AlgorithmSettings | null = null;
+
+/**
+ * Get current algorithm settings (lazy-loaded from localStorage).
+ * Returns a deep copy so mutations don't leak.
+ */
+export function getAlgorithmSettings(): AlgorithmSettings {
+  if (!_algorithmSettings) {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_ALGORITHM);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<AlgorithmSettings>;
+        // Merge with defaults to handle any newly-added fields
+        _algorithmSettings = {
+          config: { ...DEFAULT_ALGORITHM_SETTINGS.config, ...(parsed.config || {}) },
+          disabledHardConstraints: Array.isArray(parsed.disabledHardConstraints)
+            ? parsed.disabledHardConstraints as HardConstraintCode[]
+            : [],
+          disabledSoftWarnings: Array.isArray(parsed.disabledSoftWarnings)
+            ? parsed.disabledSoftWarnings as SoftWarningCode[]
+            : [],
+        };
+      } else {
+        _algorithmSettings = {
+          config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
+          disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
+          disabledSoftWarnings: [...DEFAULT_ALGORITHM_SETTINGS.disabledSoftWarnings],
+        };
+      }
+    } catch {
+      _algorithmSettings = {
+        config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
+        disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
+        disabledSoftWarnings: [...DEFAULT_ALGORITHM_SETTINGS.disabledSoftWarnings],
+      };
+    }
+  }
+  return {
+    config: { ..._algorithmSettings.config },
+    disabledHardConstraints: [..._algorithmSettings.disabledHardConstraints],
+    disabledSoftWarnings: [..._algorithmSettings.disabledSoftWarnings],
+  };
+}
+
+/**
+ * Update algorithm settings (partial merge). Persists immediately.
+ * Does NOT fire notify() — changes take effect on next generate/revalidate.
+ */
+export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
+  const current = getAlgorithmSettings();
+  _algorithmSettings = {
+    config: patch.config ? { ...current.config, ...patch.config } : current.config,
+    disabledHardConstraints: patch.disabledHardConstraints !== undefined
+      ? [...patch.disabledHardConstraints]
+      : current.disabledHardConstraints,
+    disabledSoftWarnings: patch.disabledSoftWarnings !== undefined
+      ? [...patch.disabledSoftWarnings]
+      : current.disabledSoftWarnings,
+  };
+  _saveAlgorithmSettings();
+}
+
+/**
+ * Reset algorithm settings to factory defaults. Persists immediately.
+ * Also sets the active preset to the built-in Default.
+ */
+export function resetAlgorithmSettings(): void {
+  _algorithmSettings = {
+    config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
+    disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
+    disabledSoftWarnings: [...DEFAULT_ALGORITHM_SETTINGS.disabledSoftWarnings],
+  };
+  _saveAlgorithmSettings();
+  // Also switch active preset to Default
+  _initPresets(); // ensure loaded
+  _activePresetId = DEFAULT_PRESET.id;
+  _saveActivePresetId();
+}
+
+/**
+ * Build a Set of disabled hard constraint codes for efficient lookup.
+ */
+export function getDisabledHCSet(): Set<string> {
+  const settings = getAlgorithmSettings();
+  return new Set(settings.disabledHardConstraints);
+}
+
+/**
+ * Build a Set of disabled soft warning codes for efficient lookup.
+ */
+export function getDisabledSWSet(): Set<string> {
+  const settings = getAlgorithmSettings();
+  return new Set(settings.disabledSoftWarnings);
+}
+
+function _saveAlgorithmSettings(): void {
+  if (!_algorithmSettings) return;
+  try {
+    localStorage.setItem(STORAGE_KEY_ALGORITHM, JSON.stringify(_algorithmSettings));
+  } catch (err) {
+    console.warn('[Store] Failed to save algorithm settings:', err);
+  }
+}
+
+// ─── Algorithm Presets ───────────────────────────────────────────────────────
+
+const STORAGE_KEY_PRESETS = 'gardenmanager_algorithm_presets';
+const STORAGE_KEY_ACTIVE_PRESET = 'gardenmanager_active_preset_id';
+
+let _presets: AlgorithmPreset[] | null = null;
+let _activePresetId: string | null | undefined = undefined; // undefined = not yet loaded
+
+/**
+ * Hook for tab-algorithm to register its debounce-flush function.
+ * Called before any save/update operation to ensure pending slider
+ * changes are applied to the working copy first.
+ */
+let _flushPendingWeightUpdate: (() => void) | null = null;
+
+export function registerWeightFlush(fn: () => void): void {
+  _flushPendingWeightUpdate = fn;
+}
+
+function _flushWeights(): void {
+  if (_flushPendingWeightUpdate) _flushPendingWeightUpdate();
+}
+
+/** Lazily initialise presets from localStorage, with first-load migration. */
+function _initPresets(): AlgorithmPreset[] {
+  if (_presets) return _presets;
+
+  const raw = localStorage.getItem(STORAGE_KEY_PRESETS);
+  if (raw) {
+    try {
+      _presets = JSON.parse(raw) as AlgorithmPreset[];
+      // Ensure the built-in Default preset always exists
+      if (!_presets.find(p => p.id === DEFAULT_PRESET.id)) {
+        _presets.unshift(_deepCopyPreset(DEFAULT_PRESET));
+      }
+    } catch {
+      _presets = [_deepCopyPreset(DEFAULT_PRESET)];
+    }
+  } else {
+    // First load — migrate existing working copy
+    _presets = [_deepCopyPreset(DEFAULT_PRESET)];
+    const current = getAlgorithmSettings();
+    const defaultJson = JSON.stringify(DEFAULT_ALGORITHM_SETTINGS);
+    const currentJson = JSON.stringify(current);
+    if (currentJson !== defaultJson) {
+      // User had customised settings before presets existed — preserve them
+      const migrated: AlgorithmPreset = {
+        id: uid('preset'),
+        name: 'My Settings',
+        description: 'Migrated from your previous algorithm configuration',
+        settings: current,
+        createdAt: Date.now(),
+      };
+      _presets.push(migrated);
+      _activePresetId = migrated.id;
+    } else {
+      _activePresetId = DEFAULT_PRESET.id;
+    }
+    _savePresets();
+    _saveActivePresetId();
+  }
+
+  // Load active preset id if not already set by migration
+  if (_activePresetId === undefined) {
+    _activePresetId = localStorage.getItem(STORAGE_KEY_ACTIVE_PRESET) || DEFAULT_PRESET.id;
+  }
+
+  return _presets;
+}
+
+function _deepCopyPreset(p: AlgorithmPreset): AlgorithmPreset {
+  return {
+    ...p,
+    settings: {
+      config: { ...p.settings.config },
+      disabledHardConstraints: [...p.settings.disabledHardConstraints],
+      disabledSoftWarnings: [...p.settings.disabledSoftWarnings],
+    },
+  };
+}
+
+function _savePresets(): void {
+  if (!_presets) return;
+  try {
+    localStorage.setItem(STORAGE_KEY_PRESETS, JSON.stringify(_presets));
+  } catch (err) {
+    console.warn('[Store] Failed to save algorithm presets:', err);
+  }
+}
+
+function _saveActivePresetId(): void {
+  try {
+    if (_activePresetId) {
+      localStorage.setItem(STORAGE_KEY_ACTIVE_PRESET, _activePresetId);
+    } else {
+      localStorage.removeItem(STORAGE_KEY_ACTIVE_PRESET);
+    }
+  } catch (err) {
+    console.warn('[Store] Failed to save active preset id:', err);
+  }
+}
+
+/** Case-insensitive trimmed name duplicate check */
+function _isPresetNameTaken(name: string, excludeId?: string): boolean {
+  const norm = name.trim().toLowerCase();
+  const presets = _initPresets();
+  return presets.some(p => p.name.trim().toLowerCase() === norm && p.id !== excludeId);
+}
+
+// ─── Preset Public API ──────────────────────────────────────────────────────
+
+/** Get all presets (built-in first, then by createdAt) */
+export function getAllPresets(): AlgorithmPreset[] {
+  const presets = _initPresets();
+  return presets
+    .slice()
+    .sort((a, b) => {
+      if (a.builtIn && !b.builtIn) return -1;
+      if (!a.builtIn && b.builtIn) return 1;
+      return a.createdAt - b.createdAt;
+    })
+    .map(p => _deepCopyPreset(p));
+}
+
+/** Get a single preset by id */
+export function getPresetById(id: string): AlgorithmPreset | undefined {
+  const presets = _initPresets();
+  const found = presets.find(p => p.id === id);
+  return found ? _deepCopyPreset(found) : undefined;
+}
+
+/** Get the active preset id (may be null if none) */
+export function getActivePresetId(): string | null {
+  _initPresets(); // ensure loaded
+  return _activePresetId ?? null;
+}
+
+/**
+ * Load a preset into the working copy.
+ * Replaces algorithm settings entirely (not a partial merge).
+ */
+export function loadPreset(id: string): void {
+  const preset = getPresetById(id);
+  if (!preset) return;
+  // Full replacement — not partial merge
+  _algorithmSettings = {
+    config: { ...preset.settings.config },
+    disabledHardConstraints: [...preset.settings.disabledHardConstraints],
+    disabledSoftWarnings: [...preset.settings.disabledSoftWarnings],
+  };
+  _saveAlgorithmSettings();
+  _activePresetId = id;
+  _saveActivePresetId();
+}
+
+/**
+ * Save the current working copy as a new preset.
+ * Returns the new preset, or null if the name is taken.
+ */
+export function saveCurrentAsPreset(name: string, description: string): AlgorithmPreset | null {
+  _flushWeights();
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  if (_isPresetNameTaken(trimmed)) return null;
+
+  const preset: AlgorithmPreset = {
+    id: uid('preset'),
+    name: trimmed,
+    description: description.trim(),
+    settings: getAlgorithmSettings(), // deep copy via getter
+    createdAt: Date.now(),
+  };
+
+  const presets = _initPresets();
+  presets.push(preset);
+  _savePresets();
+
+  _activePresetId = preset.id;
+  _saveActivePresetId();
+
+  return _deepCopyPreset(preset);
+}
+
+/**
+ * Overwrite an existing preset's settings with the current working copy.
+ * Returns false if preset not found or is built-in.
+ */
+export function updatePreset(id: string): boolean {
+  _flushWeights();
+  const presets = _initPresets();
+  const idx = presets.findIndex(p => p.id === id);
+  if (idx === -1) return false;
+  if (presets[idx].builtIn) return false;
+
+  presets[idx].settings = getAlgorithmSettings(); // deep copy via getter
+  _savePresets();
+  return true;
+}
+
+/**
+ * Rename a preset. Returns null on success, or an error string.
+ */
+export function renamePreset(id: string, name: string, description: string): string | null {
+  const presets = _initPresets();
+  const preset = presets.find(p => p.id === id);
+  if (!preset) return 'Preset not found';
+  if (preset.builtIn) return 'Cannot rename built-in preset';
+
+  const trimmed = name.trim();
+  if (!trimmed) return 'Name cannot be empty';
+  if (_isPresetNameTaken(trimmed, id)) return 'A preset with this name already exists';
+
+  preset.name = trimmed;
+  preset.description = description.trim();
+  _savePresets();
+  return null;
+}
+
+/**
+ * Duplicate a preset with a unique name.
+ * Returns the new preset.
+ */
+export function duplicatePreset(id: string): AlgorithmPreset | null {
+  const source = getPresetById(id);
+  if (!source) return null;
+
+  const presets = _initPresets();
+  let newName = source.name + ' (copy)';
+  let attempt = 2;
+  while (_isPresetNameTaken(newName)) {
+    newName = `${source.name} (copy ${attempt++})`;
+  }
+
+  const dup: AlgorithmPreset = {
+    id: uid('preset'),
+    name: newName,
+    description: source.description,
+    settings: source.settings, // already a deep copy from getPresetById
+    builtIn: false,
+    createdAt: Date.now(),
+  };
+  presets.push(dup);
+  _savePresets();
+  return _deepCopyPreset(dup);
+}
+
+/**
+ * Delete a preset. If it was the active one, load the Default preset.
+ * Returns false if preset not found or is built-in.
+ */
+export function deletePreset(id: string): boolean {
+  const presets = _initPresets();
+  const idx = presets.findIndex(p => p.id === id);
+  if (idx === -1) return false;
+  if (presets[idx].builtIn) return false;
+
+  presets.splice(idx, 1);
+  _savePresets();
+
+  if (_activePresetId === id) {
+    loadPreset(DEFAULT_PRESET.id);
+  }
+  return true;
+}
+
+/**
+ * Compare the current working copy against the active preset.
+ * Returns true if they differ (preset is "dirty").
+ * Survives page reloads because both sides come from localStorage.
+ */
+export function isPresetDirty(): boolean {
+  const activeId = getActivePresetId();
+  if (!activeId) return false;
+  const preset = getPresetById(activeId);
+  if (!preset) return false;
+  return JSON.stringify(getAlgorithmSettings()) !== JSON.stringify(preset.settings);
 }

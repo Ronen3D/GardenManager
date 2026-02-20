@@ -29,8 +29,10 @@ import {
   RescuePlan,
   RescueRequest,
   LiveModeState,
+  ConstraintViolation,
 } from '../index';
 import { scheduleToGantt } from '../ui/gantt-bridge';
+import { renderScheduleGrid } from './schedule-grid-view';
 import { computeAllRestProfiles, computeRestFairness } from './utils/rest-calculator';
 import { generateShiftBlocks } from './utils/time-utils';
 import { computeWeeklyWorkloads } from './workload-utils';
@@ -49,15 +51,16 @@ import { runPreflight } from './preflight';
 import { renderParticipantsTab, wireParticipantsEvents } from './tab-participants';
 import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
 import { renderProfileView, wireProfileEvents, ProfileContext } from './tab-profile';
+import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
 import { computeTaskBreakdown } from './workload-utils';
 import {
   TASK_COLORS, LEVEL_COLORS, CERT_COLORS,
-  fmt, levelBadge, certBadge, certBadges, groupBadge, taskTypeBadge,
+  fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge,
 } from './ui-helpers';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
-let currentTab: 'participants' | 'task-rules' | 'schedule' = 'participants';
+let currentTab: 'participants' | 'task-rules' | 'schedule' | 'algorithm' = 'participants';
 let engine: SchedulingEngine | null = null;
 let currentSchedule: Schedule | null = null;
 let scheduleElapsed = 0;
@@ -118,6 +121,18 @@ function statusBadge(status: AssignmentStatus): string {
 }
 
 // ─── Day Window Helpers ──────────────────────────────────────────────────────
+
+/**
+ * Filter out violations whose constraint code has been disabled by the user
+ * in the Algorithm Settings panel.  This is a UI-only safety net; the engine
+ * should already omit them, but we guard the display layer too.
+ */
+function filterVisibleViolations(violations: ConstraintViolation[]): ConstraintViolation[] {
+  const disabledHC = store.getDisabledHCSet();
+  const disabledSW = store.getDisabledSWSet();
+  if (disabledHC.size === 0 && disabledSW.size === 0) return violations;
+  return violations.filter(v => !disabledHC.has(v.code) && !disabledSW.has(v.code));
+}
 
 /**
  * Returns {start, end} for the 24h window of a given day index (1-based).
@@ -323,7 +338,7 @@ function renderDayNavigator(): string {
       taskCount = currentSchedule.tasks.filter(t => taskIntersectsDay(t, d)).length;
       // Count violations for tasks on this day
       const dayTaskIds = new Set(currentSchedule.tasks.filter(t => taskIntersectsDay(t, d)).map(t => t.id));
-      violationCount = currentSchedule.violations.filter(v =>
+      violationCount = filterVisibleViolations(currentSchedule.violations).filter(v =>
         v.severity === ViolationSeverity.Error && v.taskId && dayTaskIds.has(v.taskId)
       ).length;
     }
@@ -365,8 +380,9 @@ function renderDayNavigator(): string {
 function renderWeeklyDashboard(schedule: Schedule): string {
   const score = schedule.score;
   const numDays = store.getScheduleDays();
-  const totalViolations = schedule.violations.filter(v => v.severity === ViolationSeverity.Error).length;
-  const warnings = schedule.violations.filter(v => v.severity === ViolationSeverity.Warning).length;
+  const visibleViolations = filterVisibleViolations(schedule.violations);
+  const totalViolations = visibleViolations.filter(v => v.severity === ViolationSeverity.Error).length;
+  const warnings = visibleViolations.filter(v => v.severity === ViolationSeverity.Warning).length;
   const feasibleClass = schedule.feasible ? 'kpi-ok' : 'kpi-error';
   const feasibleText = schedule.feasible ? '✓ Feasible' : '✗ Infeasible';
 
@@ -374,7 +390,7 @@ function renderWeeklyDashboard(schedule: Schedule): string {
   let dayDots = '';
   for (let d = 1; d <= numDays; d++) {
     const count = schedule.tasks.filter(t => taskIntersectsDay(t, d)).length;
-    const dayViolations = schedule.violations.filter(v => {
+    const dayViolations = filterVisibleViolations(schedule.violations).filter(v => {
       if (v.severity !== ViolationSeverity.Error || !v.taskId) return false;
       const task = schedule.tasks.find(t => t.id === v.taskId);
       return task ? taskIntersectsDay(task, d) : false;
@@ -656,9 +672,9 @@ function renderScheduleTab(): string {
   // Main layout: content + sidebar
   html += `<div class="schedule-layout">`;
   html += `<div class="schedule-main">`;
-  html += `<section><h2>Assignments <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderAssignmentsTable(s)}</section>`;
+  html += `<section><h2>Assignments <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState())}</section>`;
   html += `<section><h2>Gantt Timeline</h2>${renderGanttChart(s)}</section>`;
-  html += `<section><h2>Constraint Violations <span class="count">${s.violations.length}</span></h2>${renderViolations(s)}</section>`;
+  html += `<section><h2>Constraint Violations <span class="count">${filterVisibleViolations(s.violations).length}</span></h2>${renderViolations(s)}</section>`;
   html += `<section><h2>Rest Fairness</h2>${renderRestTable(s)}</section>`;
   html += `</div>`;
   html += renderParticipantSidebar(s);
@@ -673,8 +689,9 @@ function renderScheduleTab(): string {
 // ─── Violations ──────────────────────────────────────────────────────────────
 
 function renderViolations(schedule: Schedule): string {
-  const hard = schedule.violations.filter(v => v.severity === ViolationSeverity.Error);
-  const warn = schedule.violations.filter(v => v.severity === ViolationSeverity.Warning);
+  const visible = filterVisibleViolations(schedule.violations);
+  const hard = visible.filter(v => v.severity === ViolationSeverity.Error);
+  const warn = visible.filter(v => v.severity === ViolationSeverity.Warning);
 
   if (hard.length === 0 && warn.length === 0) {
     return '<div class="alert alert-ok">✓ No constraint violations across all 7 days.</div>';
@@ -711,6 +728,7 @@ function renderViolations(schedule: Schedule): string {
 
 // ─── Assignments Table ───────────────────────────────────────────────────────
 
+/*
 function renderAssignmentsTable(schedule: Schedule): string {
   const filteredTasks = getFilteredTasks(schedule);
   const filteredAssignments = getFilteredAssignments(schedule);
@@ -791,6 +809,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
   html += '</tbody></table></div>';
   return html;
 }
+*/
 
 // ─── Rest Fairness Table ─────────────────────────────────────────────────────
 
@@ -965,10 +984,12 @@ async function doGenerate(): Promise<void> {
   const participants = store.getAllParticipants();
   const tasks = generateTasksFromTemplates();
 
-  engine = new SchedulingEngine({
-    maxIterations: 6000,
-    maxSolverTimeMs: 15000,
-  });
+  const algoSettings = store.getAlgorithmSettings();
+  engine = new SchedulingEngine(
+    algoSettings.config,
+    store.getDisabledHCSet(),
+    store.getDisabledSWSet(),
+  );
   engine.addParticipants(participants);
   engine.addTasks(tasks);
 
@@ -1218,17 +1239,38 @@ function showRescueModal(): void {
       const sw = plan.swaps[i];
       const swP = pMap.get(sw.toParticipantId);
       const fromP = pMap.get(sw.fromParticipantId || '');
+      const assignedSpan = `<span class="rescue-participant-hover" data-pid="${sw.toParticipantId}" data-plan-id="${plan.id}"><strong>${swP?.name || '???'}</strong></span>`;
+      const replacingSpan = fromP
+        ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${fromP.name}</span>`
+        : '(vacant)';
       html += `<tr>
         <td>${i + 1}</td>
-        <td><strong>${swP?.name || '???'}</strong></td>
-        <td>${fromP?.name || '(vacant)'}</td>
+        <td>${assignedSpan}</td>
+        <td>${replacingSpan}</td>
         <td>${sw.taskName} — ${sw.slotLabel}</td>
       </tr>`;
     }
 
     html += `</tbody></table>
-      </div>
-      <button class="btn-apply-plan" data-plan-id="${plan.id}">✅ Apply Plan</button>
+      </div>`;
+
+    // Show violation warnings if the plan has hard-constraint violations
+    if (plan.violations && plan.violations.length > 0) {
+      html += `<div class="rescue-violations-warning">
+        <span class="rescue-violations-icon">⚠️</span>
+        <span>${plan.violations.length} constraint violation${plan.violations.length !== 1 ? 's' : ''}</span>
+        <details class="rescue-violations-details">
+          <summary>Show details</summary>
+          <ul>`;
+      for (const v of plan.violations) {
+        html += `<li><code>${v.code}</code> — ${v.message}</li>`;
+      }
+      html += `</ul>
+        </details>
+      </div>`;
+    }
+
+    html += `<button class="btn-apply-plan${plan.violations && plan.violations.length > 0 ? ' btn-apply-plan--warn' : ''}" data-plan-id="${plan.id}">${plan.violations && plan.violations.length > 0 ? '⚠️ Apply Plan (has violations)' : '✅ Apply Plan'}</button>
     </div>`;
   }
 
@@ -1241,6 +1283,109 @@ function showRescueModal(): void {
 
   document.body.insertAdjacentHTML('beforeend', html);
   wireRescueModalEvents();
+}
+
+// ─── Rescue Tooltip: Next-3-Tasks Preview ────────────────────────────────────
+
+let _rescueTooltipEl: HTMLElement | null = null;
+let _rescueTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+function getRescueTooltipEl(): HTMLElement {
+  if (_rescueTooltipEl) return _rescueTooltipEl;
+  const el = document.createElement('div');
+  el.className = 'rescue-hover-tt';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  el.addEventListener('mouseenter', () => {
+    if (_rescueTooltipHideTimer) { clearTimeout(_rescueTooltipHideTimer); _rescueTooltipHideTimer = null; }
+  });
+  el.addEventListener('mouseleave', () => {
+    el.style.display = 'none';
+  });
+  _rescueTooltipEl = el;
+  return el;
+}
+
+/**
+ * Compute the next 3 tasks a participant would have after applying a plan's swaps.
+ * Uses the vacated task's start as the "now" anchor so it works for future schedules.
+ */
+function computePostSwapTasks(
+  participantId: string,
+  plan: RescuePlan,
+  schedule: Schedule,
+): Array<{ taskName: string; start: Date; end: Date }> {
+  const taskMap = new Map<string, Task>();
+  for (const t of schedule.tasks) taskMap.set(t.id, t);
+
+  // Start with the participant's current task IDs (assignment → taskId)
+  // Build a set of assignment IDs this participant currently holds
+  const myAssignmentTaskIds = new Map<string, string>(); // assignmentId → taskId
+  for (const a of schedule.assignments) {
+    if (a.participantId === participantId) {
+      myAssignmentTaskIds.set(a.id, a.taskId);
+    }
+  }
+
+  // Apply the plan's swaps
+  for (const sw of plan.swaps) {
+    // If participant is being moved OUT of an assignment
+    if (sw.fromParticipantId === participantId) {
+      myAssignmentTaskIds.delete(sw.assignmentId);
+    }
+    // If participant is being moved IN to an assignment
+    if (sw.toParticipantId === participantId) {
+      myAssignmentTaskIds.set(sw.assignmentId, sw.taskId);
+    }
+  }
+
+  // Resolve to task objects with time info
+  const tasks: Array<{ taskName: string; start: Date; end: Date }> = [];
+  for (const [, taskId] of myAssignmentTaskIds) {
+    const task = taskMap.get(taskId);
+    if (!task) continue;
+    tasks.push({
+      taskName: task.name,
+      start: task.timeBlock.start,
+      end: task.timeBlock.end,
+    });
+  }
+
+  // Sort by start time ascending
+  tasks.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  // Find the anchor: the earliest swap task's start time
+  let anchorTime = Infinity;
+  for (const sw of plan.swaps) {
+    const task = taskMap.get(sw.taskId);
+    if (task) {
+      const t = task.timeBlock.start.getTime();
+      if (t < anchorTime) anchorTime = t;
+    }
+  }
+  if (anchorTime === Infinity) anchorTime = 0;
+
+  // Filter to tasks starting from the anchor onward and return first 3
+  return tasks.filter(t => t.start.getTime() >= anchorTime).slice(0, 3);
+}
+
+/** Build HTML content for the rescue participant hover tooltip. */
+function buildRescueParticipantTooltip(
+  participantName: string,
+  nextTasks: Array<{ taskName: string; start: Date; end: Date }>,
+): string {
+  let html = `<div class="rescue-hover-tt-header">${participantName} — next tasks if applied</div>`;
+  if (nextTasks.length === 0) {
+    html += `<div class="rescue-hover-tt-empty">No upcoming tasks</div>`;
+  } else {
+    for (let i = 0; i < nextTasks.length; i++) {
+      const t = nextTasks[i];
+      const dayStr = t.start.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+      const timeStr = fmt(t.start) + ' – ' + fmt(t.end);
+      html += `<div class="rescue-hover-tt-task">${i + 1}. ${t.taskName}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
+    }
+  }
+  return html;
 }
 
 function wireRescueModalEvents(): void {
@@ -1256,12 +1401,16 @@ function wireRescueModalEvents(): void {
     if (e.target === backdrop) closeRescueModal();
   });
 
-  // Show More
+  // Show More — request all plans up to the next page boundary in one shot
+  // to avoid duplicates from re-generation (engine is stateless).
   backdrop.querySelector('#btn-rescue-more')?.addEventListener('click', () => {
     if (!currentSchedule || !_rescueResult) return;
     _rescuePage++;
     const liveMode = store.getLiveModeState();
-    _rescueResult = generateRescuePlans(currentSchedule, _rescueResult.request, liveMode.currentTimestamp, _rescuePage);
+    const wantTotal = (_rescuePage + 1) * 3; // PAGE_SIZE = 3
+    const result = generateRescuePlans(currentSchedule, _rescueResult.request, liveMode.currentTimestamp, 0, wantTotal);
+    // Ranks are already sequential from the engine (1-based per returned plan)
+    _rescueResult = result;
     showRescueModal();
   });
 
@@ -1275,25 +1424,109 @@ function wireRescueModalEvents(): void {
       applyRescuePlan(plan);
     });
   });
+
+  // Rescue participant hover tooltip — show next 3 tasks if plan applied
+  const pMap = new Map<string, Participant>();
+  if (currentSchedule) {
+    for (const p of currentSchedule.participants) pMap.set(p.id, p);
+  }
+
+  backdrop.addEventListener('mouseover', (e) => {
+    const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
+    if (!target) return;
+    const pid = target.dataset.pid;
+    const planId = target.dataset.planId;
+    if (!pid || !planId || !_rescueResult || !currentSchedule) return;
+
+    const plan = _rescueResult.plans.find(p => p.id === planId);
+    if (!plan) return;
+    const participant = pMap.get(pid);
+    if (!participant) return;
+
+    if (_rescueTooltipHideTimer) { clearTimeout(_rescueTooltipHideTimer); _rescueTooltipHideTimer = null; }
+
+    const nextTasks = computePostSwapTasks(pid, plan, currentSchedule);
+    const tooltip = getRescueTooltipEl();
+    tooltip.innerHTML = buildRescueParticipantTooltip(participant.name, nextTasks);
+    tooltip.style.display = 'block';
+
+    // Position near the target element
+    const rect = target.getBoundingClientRect();
+    let left = rect.right + 8;
+    let top = rect.top - 4;
+
+    const ttWidth = 260;
+    const ttHeight = tooltip.offsetHeight || 140;
+    if (left + ttWidth > window.innerWidth) {
+      left = rect.left - ttWidth - 8;
+    }
+    if (top + ttHeight > window.innerHeight) {
+      top = window.innerHeight - ttHeight - 8;
+    }
+    if (top < 4) top = 4;
+
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  });
+
+  backdrop.addEventListener('mouseout', (e) => {
+    const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
+    if (!target) return;
+    _rescueTooltipHideTimer = setTimeout(() => {
+      const tooltip = getRescueTooltipEl();
+      tooltip.style.display = 'none';
+    }, 120);
+  });
 }
 
 function applyRescuePlan(plan: RescuePlan): void {
   if (!currentSchedule || !engine) return;
 
+  // Snapshot the schedule before applying any swaps for atomic rollback.
+  // Deep-clone assignments (the mutable parts) so we can restore on failure.
+  // NOTE: This snapshot relies on swapParticipant only mutating assignment fields
+  // that are captured by the spread clone (participantId, status, updatedAt).
+  // If swapParticipant ever mutates preFreezeStatus, tasks, or nested objects,
+  // this snapshot must be updated accordingly.
+  const snapshotAssignments = currentSchedule.assignments.map(a => ({
+    ...a,
+    updatedAt: new Date(a.updatedAt.getTime()),
+  }));
+  const snapshotFeasible = currentSchedule.feasible;
+  const snapshotViolations = [...currentSchedule.violations];
+  const snapshotScore = { ...currentSchedule.score };
+
   // Each swap has the exact assignment ID to change and the new participant
+  let failed = false;
   for (const sw of plan.swaps) {
     const result = engine.swapParticipant({ assignmentId: sw.assignmentId, newParticipantId: sw.toParticipantId });
     const updated = engine.getSchedule();
     if (!updated) {
       console.error('[Rescue] Engine returned null schedule after swap', sw);
-      alert('Rescue plan could not be applied — engine error.');
-      closeRescueModal();
-      return;
+      failed = true;
+      break;
     }
     currentSchedule = updated;
     if (!result.valid) {
       console.warn('[Rescue] Swap created violations:', result.violations);
+      failed = true;
+      break;
     }
+  }
+
+  if (failed) {
+    // Rollback: restore the snapshot
+    if (currentSchedule) {
+      currentSchedule.assignments = snapshotAssignments;
+      currentSchedule.feasible = snapshotFeasible;
+      currentSchedule.violations = snapshotViolations;
+      currentSchedule.score = snapshotScore;
+      engine.importSchedule(currentSchedule);
+    }
+    alert('Rescue plan could not be applied cleanly — rolled back to previous state.');
+    closeRescueModal();
+    revalidateAndRefresh();
+    return;
   }
 
   closeRescueModal();
@@ -1305,6 +1538,9 @@ function closeRescueModal(): void {
   _rescueResult = null;
   _rescueAssignmentId = null;
   _rescuePage = 0;
+  // Hide rescue tooltip if visible
+  if (_rescueTooltipHideTimer) { clearTimeout(_rescueTooltipHideTimer); _rescueTooltipHideTimer = null; }
+  if (_rescueTooltipEl) _rescueTooltipEl.style.display = 'none';
 }
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -1312,11 +1548,12 @@ function closeRescueModal(): void {
 function renderAll(): void {
   const app = document.getElementById('app')!;
 
+  // Always hide tooltips on re-render to avoid stale state
+  hideTooltip();
+  hideTaskTooltip();
+
   // ── Profile View: completely different layout, no re-optimization ──
   if (_viewMode === 'PROFILE_VIEW' && _profileParticipantId && currentSchedule) {
-    // Hide the global tooltip when entering profile view
-    hideTooltip();
-    hideTaskTooltip();
 
     const p = currentSchedule.participants.find(pp => pp.id === _profileParticipantId);
     if (!p) { _viewMode = 'SCHEDULE_VIEW'; _profileParticipantId = null; /* fall through */ }
@@ -1355,6 +1592,9 @@ function renderAll(): void {
         <button class="btn-sm btn-outline" id="btn-redo" ${!store.getUndoRedoState().canRedo ? 'disabled' : ''}
           title="Redo (Ctrl+Y)">↪ Redo${store.getUndoRedoState().redoDepth ? ' (' + store.getUndoRedoState().redoDepth + ')' : ''}</button>
       </div>
+      <button class="theme-toggle" id="btn-theme-toggle" title="Toggle light/dark mode">
+        ${document.documentElement.dataset.theme === 'light' ? '🌙' : '☀️'}
+      </button>
     </div>
     <p class="subtitle">
       ${store.getScheduleDate().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
@@ -1376,6 +1616,9 @@ function renderAll(): void {
       📊 Schedule View
       ${currentSchedule ? '<span class="badge badge-sm" style="background:var(--success);margin-left:4px">✓</span>' : ''}
     </button>
+    <button class="tab-btn ${currentTab === 'algorithm' ? 'tab-active' : ''}" data-tab="algorithm">
+      ⚙️ Algorithm
+    </button>
   </nav>
 
   <div class="tab-content" id="tab-content">`;
@@ -1390,6 +1633,9 @@ function renderAll(): void {
     case 'schedule':
       html += renderScheduleTab();
       break;
+    case 'algorithm':
+      html += renderAlgorithmTab();
+      break;
   }
 
   html += '</div>';
@@ -1398,6 +1644,7 @@ function renderAll(): void {
   // Wire events
   wireTabNav(app);
   wireUndoRedo(app);
+  wireThemeToggle(app);
 
   const content = document.getElementById('tab-content')!;
   if (currentTab === 'participants') {
@@ -1406,6 +1653,8 @@ function renderAll(): void {
     wireTaskRulesEvents(content, renderAll);
   } else if (currentTab === 'schedule') {
     wireScheduleEvents(content);
+  } else if (currentTab === 'algorithm') {
+    wireAlgorithmEvents(content, renderAll);
   }
 }
 
@@ -1437,6 +1686,39 @@ function wireUndoRedo(container: HTMLElement): void {
   if (redoBtn) redoBtn.addEventListener('click', () => doUndoRedo('redo'));
 }
 
+// ─── Theme Toggle ────────────────────────────────────────────────────────────
+
+const THEME_STORAGE_KEY = 'gardenmanager_theme';
+
+function applyTheme(theme: 'dark' | 'light'): void {
+  if (theme === 'light') {
+    document.documentElement.dataset.theme = 'light';
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+}
+
+function getStoredTheme(): 'dark' | 'light' {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === 'light' || stored === 'dark') return stored;
+  // Fallback to system preference
+  if (window.matchMedia?.('(prefers-color-scheme: light)').matches) return 'light';
+  return 'dark';
+}
+
+function toggleTheme(): void {
+  const current = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  localStorage.setItem(THEME_STORAGE_KEY, next);
+  renderAll();
+}
+
+function wireThemeToggle(container: HTMLElement): void {
+  const btn = container.querySelector('#btn-theme-toggle');
+  if (btn) btn.addEventListener('click', toggleTheme);
+}
+
 function wireScheduleEvents(container: HTMLElement): void {
   const genBtn = container.querySelector('#btn-generate');
   if (genBtn) genBtn.addEventListener('click', doGenerate);
@@ -1449,18 +1731,6 @@ function wireScheduleEvents(container: HTMLElement): void {
         currentDay = day;
         renderAll();
       }
-    });
-  });
-
-  container.querySelectorAll('.btn-swap').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      handleSwap((e.target as HTMLElement).dataset.assignmentId!);
-    });
-  });
-
-  container.querySelectorAll('.btn-lock').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      handleLock((e.target as HTMLElement).dataset.assignmentId!);
     });
   });
 
@@ -1534,14 +1804,6 @@ function wireScheduleEvents(container: HTMLElement): void {
       }
     });
   }
-
-  // ── Rescue buttons ──
-  container.querySelectorAll('.btn-rescue').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const aId = (e.target as HTMLElement).dataset.assignmentId!;
-      openRescueModal(aId);
-    });
-  });
 }
 
 // ─── Global Participant Tooltip ──────────────────────────────────────────────
@@ -1581,12 +1843,31 @@ function getTooltipEl(): HTMLElement {
   el.addEventListener('mouseleave', () => {
     el.style.display = 'none';
   });
+
+  // Delegate action button clicks (swap/lock/rescue) inside the tooltip
+  el.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button') as HTMLElement | null;
+    if (!btn) return;
+    const assignmentId = btn.dataset.assignmentId;
+    if (!assignmentId) return;
+    e.stopPropagation(); // prevent navigateToProfile from triggering
+    el.style.display = 'none'; // hide tooltip immediately
+
+    if (btn.classList.contains('btn-swap')) {
+      handleSwap(assignmentId);
+    } else if (btn.classList.contains('btn-lock')) {
+      handleLock(assignmentId);
+    } else if (btn.classList.contains('btn-rescue')) {
+      openRescueModal(assignmentId);
+    }
+  });
+
   _tooltipEl = el;
   return el;
 }
 
 /** Build tooltip HTML content for a participant. */
-function buildParticipantTooltipContent(p: Participant): string {
+function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId: string; taskId: string; isFrozen: boolean; isLocked: boolean } | null): string {
   // Workload data
   const numDays = store.getScheduleDays();
   const totalPeriodHours = numDays * 24;
@@ -1629,12 +1910,26 @@ function buildParticipantTooltipContent(p: Participant): string {
       </div>`;
     }).join('');
 
+  // Build action buttons for the Group row (if we have slot context)
+  let actionsHtml = '';
+  if (slotCtx && !slotCtx.isFrozen) {
+    const lm = store.getLiveModeState();
+    actionsHtml = `<span class="tt-actions">
+      <button class="btn-lock ${slotCtx.isLocked ? 'active' : ''}" data-assignment-id="${slotCtx.assignmentId}" title="${slotCtx.isLocked ? 'Unlock' : 'Lock'}">${slotCtx.isLocked ? '🔒' : '🔓'}</button>
+      <button class="btn-swap" data-assignment-id="${slotCtx.assignmentId}" data-task-id="${slotCtx.taskId}" title="Swap">⇄</button>
+      ${lm.enabled ? `<button class="btn-rescue" data-assignment-id="${slotCtx.assignmentId}" title="Rescue">🆘</button>` : ''}
+    </span>`;
+  } else if (slotCtx && slotCtx.isFrozen) {
+    actionsHtml = '<span class="tt-actions"><span class="tt-dim">❄️</span></span>';
+  }
+
   return `
     <div class="tt-header">
       <span class="tt-name">${p.name}</span>
+      ${actionsHtml}
       <span class="tt-level" style="background:${LEVEL_COLORS[p.level]}">L${p.level}</span>
     </div>
-    <div class="tt-row"><span class="tt-label">Group</span><span class="tt-value">${p.group}</span></div>
+    <div class="tt-row"><span class="tt-label">Group</span><span class="tt-value" style="color:${groupColor(p.group)}">${p.group}</span></div>
     <div class="tt-row"><span class="tt-label">Certs</span><span class="tt-value">${certsHtml}</span></div>
     <div class="tt-divider"></div>
     ${breakdownRows}
@@ -1663,8 +1958,18 @@ function wireParticipantTooltip(container: HTMLElement): void {
 
     if (_tooltipHideTimer) { clearTimeout(_tooltipHideTimer); _tooltipHideTimer = null; }
 
+    // Build slot context from data attributes on the participant-hover span
+    const slotCtx = target.dataset.assignmentId
+      ? {
+          assignmentId: target.dataset.assignmentId,
+          taskId: target.dataset.taskId || '',
+          isFrozen: target.dataset.frozen === '1',
+          isLocked: target.dataset.locked === '1',
+        }
+      : null;
+
     const tooltip = getTooltipEl();
-    tooltip.innerHTML = buildParticipantTooltipContent(p);
+    tooltip.innerHTML = buildParticipantTooltipContent(p, slotCtx);
     tooltip.style.display = 'block';
 
     // Position near the target
@@ -1890,16 +2195,21 @@ function onStoreChanged(): void {
 }
 
 function init(): void {
+  // Apply saved theme before first render to prevent flash
+  applyTheme(getStoredTheme());
+
   store.initStore();
   store.subscribe(onStoreChanged);
 
   // Restore saved schedule from localStorage
   const savedSchedule = store.loadSchedule();
   if (savedSchedule) {
-    engine = new SchedulingEngine({
-      maxIterations: 6000,
-      maxSolverTimeMs: 15000,
-    });
+    const algoInit = store.getAlgorithmSettings();
+    engine = new SchedulingEngine(
+      algoInit.config,
+      store.getDisabledHCSet(),
+      store.getDisabledSWSet(),
+    );
 
     // Bug #10 fix: use current store participants instead of stale
     // schedule snapshot — levels/certs/groups may have changed.

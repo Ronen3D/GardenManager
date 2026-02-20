@@ -30,6 +30,8 @@ import {
 import { isEligible } from './validator';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
+import { validateHardConstraints } from '../constraints/hard-constraints';
+import { dateKey } from '../utils/date-utils';
 
 // ─── Scoring Weights ─────────────────────────────────────────────────────────
 
@@ -49,14 +51,6 @@ interface CandidatePlan {
 }
 
 // ─── Internal Helpers ────────────────────────────────────────────────────────
-
-/** Calendar-date key from a Date (YYYY-MM-DD in local time) */
-function dateKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
 
 /**
  * Compute the daily workload std-dev for a specific day, given assignments.
@@ -87,10 +81,11 @@ function computeDayLoadStdDev(
 }
 
 /**
- * Compute the weekly workload std-dev across all participants.
+ * Compute the total workload std-dev across all participants.
  * Uses effective hours (excluding light tasks, applying load windows).
+ * Note: this measures total load across ALL assignments, not per-week.
  */
-function computeWeeklyLoadStdDev(
+function computeTotalLoadStdDev(
   participants: Participant[],
   assignments: Assignment[],
   taskMap: Map<string, Task>,
@@ -114,14 +109,14 @@ function computeWeeklyLoadStdDev(
 
 /**
  * Simulate a set of swaps and compute the impact on daily and weekly std-dev.
+ * Measures daily delta for ALL days affected by the swap chain, not just one.
  */
 function computeSwapImpact(
   baseAssignments: Assignment[],
   swaps: Array<{ assignmentId: string; newParticipantId: string }>,
   taskMap: Map<string, Task>,
   participants: Participant[],
-  affectedDayKey: string,
-  baseDayStdDev: number,
+  baseDayStdDevs: Map<string, number>,
   baseWeeklyStdDev: number,
 ): { dailyLoadDelta: number; weeklyLoadDelta: number } {
   // Apply swaps to a temporary assignment list
@@ -133,11 +128,33 @@ function computeSwapImpact(
     return a;
   });
 
-  const newDayStdDev = computeDayLoadStdDev(affectedDayKey, participants, tempAssignments, taskMap);
-  const newWeeklyStdDev = computeWeeklyLoadStdDev(participants, tempAssignments, taskMap);
+  // Collect all days affected by the swaps
+  const affectedDays = new Set<string>();
+  for (const sw of swaps) {
+    const assignment = baseAssignments.find(a => a.id === sw.assignmentId);
+    if (assignment) {
+      const task = taskMap.get(assignment.taskId);
+      if (task) affectedDays.add(dateKey(task.timeBlock.start));
+    }
+  }
+
+  // Sum daily deltas across all affected days
+  let totalDailyDelta = 0;
+  for (const day of affectedDays) {
+    let baseDayStdDev = baseDayStdDevs.get(day);
+    if (baseDayStdDev === undefined) {
+      baseDayStdDev = computeDayLoadStdDev(day, participants, baseAssignments, taskMap);
+      // Cache for subsequent candidate evaluations at this depth
+      baseDayStdDevs.set(day, baseDayStdDev);
+    }
+    const newDayStdDev = computeDayLoadStdDev(day, participants, tempAssignments, taskMap);
+    totalDailyDelta += newDayStdDev - baseDayStdDev;
+  }
+
+  const newWeeklyStdDev = computeTotalLoadStdDev(participants, tempAssignments, taskMap);
 
   return {
-    dailyLoadDelta: newDayStdDev - baseDayStdDev,
+    dailyLoadDelta: totalDailyDelta,
     weeklyLoadDelta: newWeeklyStdDev - baseWeeklyStdDev,
   };
 }
@@ -149,6 +166,298 @@ function scorePlan(swapCount: number, dailyDelta: number, weeklyDelta: number): 
   return W_DAILY * dailyDelta + W_WEEKLY * weeklyDelta + W_SWAPS * swapCount;
 }
 
+// ─── Shared context for depth-search functions ──────────────────────────────
+
+interface RescueContext {
+  schedule: Schedule;
+  taskMap: Map<string, Task>;
+  participantMap: Map<string, Participant>;
+  vacatedAssignment: Assignment;
+  vacatedTask: Task;
+  vacatedSlot: import('../models/types').SlotRequirement;
+  assignmentsByParticipant: Map<string, Assignment[]>;
+  baseDayStdDevs: Map<string, number>;
+  baseWeeklyStdDev: number;
+  anchor: Date;
+  taskAssignmentsFor: (
+    taskId: string,
+    excludeIds: Set<string>,
+    extraAssignments?: Array<{ slotId: string; participantId: string }>,
+  ) => Assignment[];
+  disabledHC?: Set<string>;
+}
+
+// ─── Depth 1: Direct replacements ───────────────────────────────────────────
+
+function generateDepth1Plans(ctx: RescueContext): CandidatePlan[] {
+  const plans: CandidatePlan[] = [];
+
+  for (const p of ctx.schedule.participants) {
+    if (p.id === ctx.vacatedAssignment.participantId) continue;
+
+    const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
+    const vacatedExclude = new Set([ctx.vacatedAssignment.id]);
+    if (!isEligible(p, ctx.vacatedTask, ctx.vacatedSlot, pAssignments, ctx.taskMap, {
+      checkSameGroup: true,
+      taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, vacatedExclude),
+      participantMap: ctx.participantMap,
+      disabledHC: ctx.disabledHC,
+    })) continue;
+
+    const swap = { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id };
+    const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
+      ctx.schedule.assignments, [swap], ctx.taskMap, ctx.schedule.participants,
+      ctx.baseDayStdDevs, ctx.baseWeeklyStdDev,
+    );
+    const impactScore = scorePlan(1, dailyLoadDelta, weeklyLoadDelta);
+
+    plans.push({
+      swaps: [{
+        assignmentId: ctx.vacatedAssignment.id,
+        fromParticipantId: ctx.vacatedAssignment.participantId,
+        toParticipantId: p.id,
+        taskId: ctx.vacatedTask.id,
+        taskName: ctx.vacatedTask.name,
+        slotLabel: ctx.vacatedSlot.label || ctx.vacatedSlot.slotId,
+      }],
+      impactScore,
+      dailyLoadDelta,
+      weeklyLoadDelta,
+    });
+  }
+
+  plans.sort((a, b) => a.impactScore - b.impactScore);
+  return plans;
+}
+
+// ─── Depth 2: One-hop chains ────────────────────────────────────────────────
+
+function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
+  const plans: CandidatePlan[] = [];
+
+  for (const p of ctx.schedule.participants) {
+    if (p.id === ctx.vacatedAssignment.participantId) continue;
+
+    const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
+    const pFutureAssignments = pAssignments.filter(a => {
+      const t = ctx.taskMap.get(a.taskId);
+      return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
+    });
+
+    for (const donorAssignment of pFutureAssignments) {
+      const donorTask = ctx.taskMap.get(donorAssignment.taskId);
+      if (!donorTask) continue;
+      const donorSlot = donorTask.slots.find(s => s.slotId === donorAssignment.slotId);
+      if (!donorSlot) continue;
+
+      const pAssignmentsWithout = pAssignments.filter(a => a.id !== donorAssignment.id);
+      const d2VacatedExclude = new Set([ctx.vacatedAssignment.id]);
+      if (!isEligible(p, ctx.vacatedTask, ctx.vacatedSlot, pAssignmentsWithout, ctx.taskMap, {
+        checkSameGroup: true,
+        taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, d2VacatedExclude),
+        participantMap: ctx.participantMap,
+        disabledHC: ctx.disabledHC,
+      })) continue;
+
+      for (const q of ctx.schedule.participants) {
+        if (q.id === p.id || q.id === ctx.vacatedAssignment.participantId) continue;
+
+        const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
+        const d2DonorExclude = new Set([donorAssignment.id]);
+
+        const d2DonorExtra = donorTask.id === ctx.vacatedTask.id
+          ? [{ slotId: ctx.vacatedSlot.slotId, participantId: p.id }]
+          : undefined;
+
+        if (!isEligible(q, donorTask, donorSlot, qAssignments, ctx.taskMap, {
+          checkSameGroup: true,
+          taskAssignments: ctx.taskAssignmentsFor(donorTask.id, d2DonorExclude, d2DonorExtra),
+          participantMap: ctx.participantMap,
+          disabledHC: ctx.disabledHC,
+        })) continue;
+
+        const swapSet = [
+          { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id },
+          { assignmentId: donorAssignment.id, newParticipantId: q.id },
+        ];
+        const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
+          ctx.schedule.assignments, swapSet, ctx.taskMap, ctx.schedule.participants,
+          ctx.baseDayStdDevs, ctx.baseWeeklyStdDev,
+        );
+        const impactScore = scorePlan(2, dailyLoadDelta, weeklyLoadDelta);
+
+        plans.push({
+          swaps: [
+            {
+              assignmentId: ctx.vacatedAssignment.id,
+              fromParticipantId: ctx.vacatedAssignment.participantId,
+              toParticipantId: p.id,
+              taskId: ctx.vacatedTask.id,
+              taskName: ctx.vacatedTask.name,
+              slotLabel: ctx.vacatedSlot.label || ctx.vacatedSlot.slotId,
+            },
+            {
+              assignmentId: donorAssignment.id,
+              fromParticipantId: p.id,
+              toParticipantId: q.id,
+              taskId: donorTask.id,
+              taskName: donorTask.name,
+              slotLabel: donorSlot.label || donorSlot.slotId,
+            },
+          ],
+          impactScore,
+          dailyLoadDelta,
+          weeklyLoadDelta,
+        });
+      }
+    }
+  }
+
+  plans.sort((a, b) => a.impactScore - b.impactScore);
+  return plans;
+}
+
+// ─── Depth 3: Two-hop chains ────────────────────────────────────────────────
+
+function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
+  const plans: CandidatePlan[] = [];
+  const MAX_P_DONORS = 5;
+  const MAX_Q_DONORS = 3;
+  const MAX_DEPTH3 = 200;
+
+  outer:
+  for (const p of ctx.schedule.participants) {
+    if (p.id === ctx.vacatedAssignment.participantId) continue;
+    const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
+
+    const pDonors = pAssignments
+      .filter(a => {
+        const t = ctx.taskMap.get(a.taskId);
+        return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
+      })
+      .slice(0, MAX_P_DONORS);
+
+    for (const donorP of pDonors) {
+      const donorPTask = ctx.taskMap.get(donorP.taskId);
+      if (!donorPTask) continue;
+      const donorPSlot = donorPTask.slots.find(s => s.slotId === donorP.slotId);
+      if (!donorPSlot) continue;
+
+      const pWithout = pAssignments.filter(a => a.id !== donorP.id);
+      const d3VacatedExclude = new Set([ctx.vacatedAssignment.id]);
+      if (!isEligible(p, ctx.vacatedTask, ctx.vacatedSlot, pWithout, ctx.taskMap, {
+        checkSameGroup: true,
+        taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, d3VacatedExclude),
+        participantMap: ctx.participantMap,
+        disabledHC: ctx.disabledHC,
+      })) continue;
+
+      for (const q of ctx.schedule.participants) {
+        if (q.id === p.id || q.id === ctx.vacatedAssignment.participantId) continue;
+        const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
+
+        const qDonors = qAssignments
+          .filter(a => {
+            const t = ctx.taskMap.get(a.taskId);
+            return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
+          })
+          .slice(0, MAX_Q_DONORS);
+
+        for (const donorQ of qDonors) {
+          const donorQTask = ctx.taskMap.get(donorQ.taskId);
+          if (!donorQTask) continue;
+          const donorQSlot = donorQTask.slots.find(s => s.slotId === donorQ.slotId);
+          if (!donorQSlot) continue;
+
+          const qWithout = qAssignments.filter(a => a.id !== donorQ.id);
+          const d3DonorPExclude = new Set([donorP.id]);
+
+          const d3DonorPExtra: Array<{ slotId: string; participantId: string }> = [];
+          if (donorPTask.id === ctx.vacatedTask.id) {
+            d3DonorPExtra.push({ slotId: ctx.vacatedSlot.slotId, participantId: p.id });
+          }
+
+          if (!isEligible(q, donorPTask, donorPSlot, qWithout, ctx.taskMap, {
+            checkSameGroup: true,
+            taskAssignments: ctx.taskAssignmentsFor(donorPTask.id, d3DonorPExclude, d3DonorPExtra.length > 0 ? d3DonorPExtra : undefined),
+            participantMap: ctx.participantMap,
+            disabledHC: ctx.disabledHC,
+          })) continue;
+
+          for (const r of ctx.schedule.participants) {
+            if (r.id === p.id || r.id === q.id || r.id === ctx.vacatedAssignment.participantId) continue;
+            const rAssignments = ctx.assignmentsByParticipant.get(r.id) || [];
+            const d3DonorQExclude = new Set([donorQ.id]);
+
+            const d3DonorQExtra: Array<{ slotId: string; participantId: string }> = [];
+            if (donorQTask.id === ctx.vacatedTask.id) {
+              d3DonorQExtra.push({ slotId: ctx.vacatedSlot.slotId, participantId: p.id });
+            }
+            if (donorQTask.id === donorPTask.id) {
+              d3DonorQExtra.push({ slotId: donorPSlot.slotId, participantId: q.id });
+            }
+
+            if (!isEligible(r, donorQTask, donorQSlot, rAssignments, ctx.taskMap, {
+              checkSameGroup: true,
+              taskAssignments: ctx.taskAssignmentsFor(donorQTask.id, d3DonorQExclude, d3DonorQExtra.length > 0 ? d3DonorQExtra : undefined),
+              participantMap: ctx.participantMap,
+              disabledHC: ctx.disabledHC,
+            })) continue;
+
+            const swapSet = [
+              { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id },
+              { assignmentId: donorP.id, newParticipantId: q.id },
+              { assignmentId: donorQ.id, newParticipantId: r.id },
+            ];
+            const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
+              ctx.schedule.assignments, swapSet, ctx.taskMap, ctx.schedule.participants,
+              ctx.baseDayStdDevs, ctx.baseWeeklyStdDev,
+            );
+            const impactScore = scorePlan(3, dailyLoadDelta, weeklyLoadDelta);
+
+            plans.push({
+              swaps: [
+                {
+                  assignmentId: ctx.vacatedAssignment.id,
+                  fromParticipantId: ctx.vacatedAssignment.participantId,
+                  toParticipantId: p.id,
+                  taskId: ctx.vacatedTask.id,
+                  taskName: ctx.vacatedTask.name,
+                  slotLabel: ctx.vacatedSlot.label || ctx.vacatedSlot.slotId,
+                },
+                {
+                  assignmentId: donorP.id,
+                  fromParticipantId: p.id,
+                  toParticipantId: q.id,
+                  taskId: donorPTask.id,
+                  taskName: donorPTask.name,
+                  slotLabel: donorPSlot.label || donorPSlot.slotId,
+                },
+                {
+                  assignmentId: donorQ.id,
+                  fromParticipantId: q.id,
+                  toParticipantId: r.id,
+                  taskId: donorQTask.id,
+                  taskName: donorQTask.name,
+                  slotLabel: donorQSlot.label || donorQSlot.slotId,
+                },
+              ],
+              impactScore,
+              dailyLoadDelta,
+              weeklyLoadDelta,
+            });
+
+            if (plans.length >= MAX_DEPTH3) break outer;
+          }
+        }
+      }
+    }
+  }
+
+  plans.sort((a, b) => a.impactScore - b.impactScore);
+  return plans;
+}
+
 // ─── Main Entry Point ────────────────────────────────────────────────────────
 
 /**
@@ -158,23 +467,26 @@ function scorePlan(swapCount: number, dailyDelta: number, weeklyDelta: number): 
  * @param request The rescue request (which assignment was vacated)
  * @param anchor The temporal anchor (only future slots are eligible)
  * @param page Page number (0-based) for pagination
- * @returns Up to 3 plans for this page, ranked by impact score
+ * @param maxPlans Maximum number of plans to return (overrides page slicing).
+ *   When set, returns the top `maxPlans` plans regardless of page.
+ * @returns Up to `maxPlans` (or PAGE_SIZE) plans, ranked by impact score
  */
 export function generateRescuePlans(
   schedule: Schedule,
   request: RescueRequest,
   anchor: Date,
   page: number = 0,
+  maxPlans?: number,
+  disabledHC?: Set<string>,
 ): RescueResult {
+  // Validate page parameter
+  page = Math.max(0, Math.floor(page));
+
   const taskMap = new Map<string, Task>();
   for (const t of schedule.tasks) taskMap.set(t.id, t);
 
-  // Build participant lookup for same-group checks (HC-4)
   const participantMap = new Map<string, Participant>(schedule.participants.map(p => [p.id, p]));
 
-  // Helper: get current assignments for a given task, optionally excluding
-  // specific assignment IDs (vacated / donated slots) and adding virtual
-  // assignments from earlier swaps in the chain.
   function taskAssignmentsFor(
     taskId: string,
     excludeIds: Set<string>,
@@ -207,312 +519,78 @@ export function generateRescuePlans(
     return { request, plans: [], hasMore: false, page };
   }
 
-  // Must be a future task
   if (!isFutureTask(vacatedTask, anchor)) {
     return { request, plans: [], hasMore: false, page };
   }
 
-  // Compute baseline metrics for the affected day
+  if (!isModifiableAssignment(vacatedAssignment, taskMap, anchor)) {
+    return { request, plans: [], hasMore: false, page };
+  }
+
+  // Compute baseline metrics
   const affectedDayKey = dateKey(vacatedTask.timeBlock.start);
-  const baseDayStdDev = computeDayLoadStdDev(affectedDayKey, schedule.participants, schedule.assignments, taskMap);
-  const baseWeeklyStdDev = computeWeeklyLoadStdDev(schedule.participants, schedule.assignments, taskMap);
+  const baseDayStdDevs = new Map<string, number>();
+  baseDayStdDevs.set(affectedDayKey, computeDayLoadStdDev(affectedDayKey, schedule.participants, schedule.assignments, taskMap));
+  const baseWeeklyStdDev = computeTotalLoadStdDev(schedule.participants, schedule.assignments, taskMap);
 
   // Build per-participant assignment index (excluding the vacated assignment)
   const assignmentsByParticipant = new Map<string, Assignment[]>();
   for (const a of schedule.assignments) {
-    if (a.id === vacatedAssignment.id) continue; // exclude vacated
+    if (a.id === vacatedAssignment.id) continue;
     const list = assignmentsByParticipant.get(a.participantId) || [];
     list.push(a);
     assignmentsByParticipant.set(a.participantId, list);
   }
 
-  // ── Depth 1: Direct replacements ──────────────────────────────────────
+  const ctx: RescueContext = {
+    schedule, taskMap, participantMap,
+    vacatedAssignment, vacatedTask, vacatedSlot,
+    assignmentsByParticipant,
+    baseDayStdDevs, baseWeeklyStdDev,
+    anchor, taskAssignmentsFor,
+    disabledHC,
+  };
 
-  const depth1Plans: CandidatePlan[] = [];
+  // Generate plans at each depth, expanding only when needed
+  const needed = maxPlans ?? (page + 1) * PAGE_SIZE;
+  const depth1Plans = generateDepth1Plans(ctx);
 
-  for (const p of schedule.participants) {
-    // Skip the person who was removed
-    if (p.id === vacatedAssignment.participantId) continue;
-
-    // Check eligibility
-    const pAssignments = assignmentsByParticipant.get(p.id) || [];
-    const vacatedExclude = new Set([vacatedAssignment.id]);
-    if (!isEligible(p, vacatedTask, vacatedSlot, pAssignments, taskMap, {
-      checkSameGroup: true,
-      taskAssignments: taskAssignmentsFor(vacatedTask.id, vacatedExclude),
-      participantMap,
-    })) continue;
-
-    // Compute impact
-    const swap = { assignmentId: vacatedAssignment.id, newParticipantId: p.id };
-    const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
-      schedule.assignments, [swap], taskMap, schedule.participants,
-      affectedDayKey, baseDayStdDev, baseWeeklyStdDev,
-    );
-    const impactScore = scorePlan(1, dailyLoadDelta, weeklyLoadDelta);
-
-    const rescueSwap: RescueSwap = {
-      assignmentId: vacatedAssignment.id,
-      fromParticipantId: vacatedAssignment.participantId,
-      toParticipantId: p.id,
-      taskName: vacatedTask.name,
-      slotLabel: vacatedSlot.label || vacatedSlot.slotId,
-    };
-
-    depth1Plans.push({
-      swaps: [rescueSwap],
-      impactScore,
-      dailyLoadDelta,
-      weeklyLoadDelta,
-    });
-  }
-
-  // Sort depth-1 plans
-  depth1Plans.sort((a, b) => a.impactScore - b.impactScore);
-
-  // ── Depth 2: One-hop chains ───────────────────────────────────────────
-
-  const depth2Plans: CandidatePlan[] = [];
-
-  // Only generate depth 2 if we need more plans
-  if (depth1Plans.length < (page + 1) * PAGE_SIZE) {
-    for (const p of schedule.participants) {
-      if (p.id === vacatedAssignment.participantId) continue;
-
-      // p must be eligible for the vacated slot
-      const pAssignments = assignmentsByParticipant.get(p.id) || [];
-
-      // Check if p can fill the vacated slot WITHOUT their current assignments
-      // (they'll give up one of their future assignments)
-      const pFutureAssignments = pAssignments.filter(a => {
-        const t = taskMap.get(a.taskId);
-        return t && isFutureTask(t, anchor) && isModifiableAssignment(a, taskMap, anchor);
-      });
-
-      for (const donorAssignment of pFutureAssignments) {
-        const donorTask = taskMap.get(donorAssignment.taskId);
-        if (!donorTask) continue;
-        const donorSlot = donorTask.slots.find(s => s.slotId === donorAssignment.slotId);
-        if (!donorSlot) continue;
-
-        // Check if p can fill vacated slot when their donor assignment is removed
-        const pAssignmentsWithout = pAssignments.filter(a => a.id !== donorAssignment.id);
-        const d2VacatedExclude = new Set([vacatedAssignment.id]);
-        if (!isEligible(p, vacatedTask, vacatedSlot, pAssignmentsWithout, taskMap, {
-          checkSameGroup: true,
-          taskAssignments: taskAssignmentsFor(vacatedTask.id, d2VacatedExclude),
-          participantMap,
-        })) continue;
-
-        // Find someone to fill p's donor slot
-        for (const q of schedule.participants) {
-          if (q.id === p.id || q.id === vacatedAssignment.participantId) continue;
-
-          const qAssignments = assignmentsByParticipant.get(q.id) || [];
-          const d2DonorExclude = new Set([donorAssignment.id]);
-          if (!isEligible(q, donorTask, donorSlot, qAssignments, taskMap, {
-            checkSameGroup: true,
-            taskAssignments: taskAssignmentsFor(donorTask.id, d2DonorExclude),
-            participantMap,
-          })) continue;
-
-          // Compute 2-swap impact
-          const swapSet = [
-            { assignmentId: vacatedAssignment.id, newParticipantId: p.id },
-            { assignmentId: donorAssignment.id, newParticipantId: q.id },
-          ];
-          const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
-            schedule.assignments, swapSet, taskMap, schedule.participants,
-            affectedDayKey, baseDayStdDev, baseWeeklyStdDev,
-          );
-          const impactScore = scorePlan(2, dailyLoadDelta, weeklyLoadDelta);
-
-          const rescueSwaps: RescueSwap[] = [
-            {
-              assignmentId: vacatedAssignment.id,
-              fromParticipantId: vacatedAssignment.participantId,
-              toParticipantId: p.id,
-              taskName: vacatedTask.name,
-              slotLabel: vacatedSlot.label || vacatedSlot.slotId,
-            },
-            {
-              assignmentId: donorAssignment.id,
-              fromParticipantId: p.id,
-              toParticipantId: q.id,
-              taskName: donorTask.name,
-              slotLabel: donorSlot.label || donorSlot.slotId,
-            },
-          ];
-
-          depth2Plans.push({
-            swaps: rescueSwaps,
-            impactScore,
-            dailyLoadDelta,
-            weeklyLoadDelta,
-          });
-        }
-      }
-    }
-    depth2Plans.sort((a, b) => a.impactScore - b.impactScore);
-  }
-
-  // ── Depth 3: Three-swap chains ─────────────────────────────────────────
-  //
-  // A depth-3 chain extends depth-1 by two hops:
-  //   Swap 1: P → vacated slot (P can fill it after giving up donorP)
-  //   Swap 2: Q → donorP slot (Q can fill it after giving up donorQ)
-  //   Swap 3: R → donorQ slot (R directly eligible)
-  //
-  // This handles cases where P isn't directly eligible (depth-1) because
-  // of a time conflict, but would be if P gave up donorP — and donorP
-  // similarly can only be filled by Q who also needs to give something up.
-
-  const depth3Plans: CandidatePlan[] = [];
+  const depth2Plans = depth1Plans.length < needed
+    ? generateDepth2Plans(ctx)
+    : [];
 
   const totalSoFar = depth1Plans.length + depth2Plans.length;
-  if (totalSoFar < (page + 1) * PAGE_SIZE) {
-    // Limit search space: for each P, try their top-N donor assignments,
-    // and for each Q, try their top-M donor assignments.
-    const MAX_P_DONORS = 5;
-    const MAX_Q_DONORS = 3;
-    const MAX_DEPTH3 = 200; // bail out once we have enough candidates
+  const depth3Plans = totalSoFar < needed
+    ? generateDepth3Plans(ctx)
+    : [];
 
-    outer:
-    for (const p of schedule.participants) {
-      if (p.id === vacatedAssignment.participantId) continue;
-      const pAssignments = assignmentsByParticipant.get(p.id) || [];
-
-      // P's future modifiable assignments that P could give up
-      const pDonors = pAssignments
-        .filter(a => {
-          const t = taskMap.get(a.taskId);
-          return t && isFutureTask(t, anchor) && isModifiableAssignment(a, taskMap, anchor);
-        })
-        .slice(0, MAX_P_DONORS);
-
-      for (const donorP of pDonors) {
-        const donorPTask = taskMap.get(donorP.taskId);
-        if (!donorPTask) continue;
-        const donorPSlot = donorPTask.slots.find(s => s.slotId === donorP.slotId);
-        if (!donorPSlot) continue;
-
-        // Check if P can fill vacated slot when donorP is removed
-        const pWithout = pAssignments.filter(a => a.id !== donorP.id);
-        const d3VacatedExclude = new Set([vacatedAssignment.id]);
-        if (!isEligible(p, vacatedTask, vacatedSlot, pWithout, taskMap, {
-          checkSameGroup: true,
-          taskAssignments: taskAssignmentsFor(vacatedTask.id, d3VacatedExclude),
-          participantMap,
-        })) continue;
-
-        // Now find Q to fill donorP, where Q also gives up a donor
-        for (const q of schedule.participants) {
-          if (q.id === p.id || q.id === vacatedAssignment.participantId) continue;
-          const qAssignments = assignmentsByParticipant.get(q.id) || [];
-
-          // Q's future modifiable assignments
-          const qDonors = qAssignments
-            .filter(a => {
-              const t = taskMap.get(a.taskId);
-              return t && isFutureTask(t, anchor) && isModifiableAssignment(a, taskMap, anchor);
-            })
-            .slice(0, MAX_Q_DONORS);
-
-          for (const donorQ of qDonors) {
-            const donorQTask = taskMap.get(donorQ.taskId);
-            if (!donorQTask) continue;
-            const donorQSlot = donorQTask.slots.find(s => s.slotId === donorQ.slotId);
-            if (!donorQSlot) continue;
-
-            // Check if Q can fill donorP slot when donorQ is removed
-            const qWithout = qAssignments.filter(a => a.id !== donorQ.id);
-            const d3DonorPExclude = new Set([donorP.id]);
-            if (!isEligible(q, donorPTask, donorPSlot, qWithout, taskMap, {
-              checkSameGroup: true,
-              taskAssignments: taskAssignmentsFor(donorPTask.id, d3DonorPExclude),
-              participantMap,
-            })) continue;
-
-            // Find R to directly fill donorQ
-            for (const r of schedule.participants) {
-              if (r.id === p.id || r.id === q.id || r.id === vacatedAssignment.participantId) continue;
-              const rAssignments = assignmentsByParticipant.get(r.id) || [];
-              const d3DonorQExclude = new Set([donorQ.id]);
-              if (!isEligible(r, donorQTask, donorQSlot, rAssignments, taskMap, {
-                checkSameGroup: true,
-                taskAssignments: taskAssignmentsFor(donorQTask.id, d3DonorQExclude),
-                participantMap,
-              })) continue;
-
-              // Compute 3-swap impact
-              const swapSet = [
-                { assignmentId: vacatedAssignment.id, newParticipantId: p.id },
-                { assignmentId: donorP.id, newParticipantId: q.id },
-                { assignmentId: donorQ.id, newParticipantId: r.id },
-              ];
-              const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
-                schedule.assignments, swapSet, taskMap, schedule.participants,
-                affectedDayKey, baseDayStdDev, baseWeeklyStdDev,
-              );
-              const impactScore = scorePlan(3, dailyLoadDelta, weeklyLoadDelta);
-
-              depth3Plans.push({
-                swaps: [
-                  {
-                    assignmentId: vacatedAssignment.id,
-                    fromParticipantId: vacatedAssignment.participantId,
-                    toParticipantId: p.id,
-                    taskName: vacatedTask.name,
-                    slotLabel: vacatedSlot.label || vacatedSlot.slotId,
-                  },
-                  {
-                    assignmentId: donorP.id,
-                    fromParticipantId: p.id,
-                    toParticipantId: q.id,
-                    taskName: donorPTask.name,
-                    slotLabel: donorPSlot.label || donorPSlot.slotId,
-                  },
-                  {
-                    assignmentId: donorQ.id,
-                    fromParticipantId: q.id,
-                    toParticipantId: r.id,
-                    taskName: donorQTask.name,
-                    slotLabel: donorQSlot.label || donorQSlot.slotId,
-                  },
-                ],
-                impactScore,
-                dailyLoadDelta,
-                weeklyLoadDelta,
-              });
-
-              if (depth3Plans.length >= MAX_DEPTH3) break outer;
-            }
-          }
-        }
-      }
-    }
-    depth3Plans.sort((a, b) => a.impactScore - b.impactScore);
-  }
-
-  // ── Assemble all plans in priority order: depth 1 → depth 2 → depth 3 ──
-
+  // Assemble all plans in priority order: depth 1 → depth 2 → depth 3
   const allPlans = [...depth1Plans, ...depth2Plans, ...depth3Plans];
 
-  // Paginate
-  const startIdx = page * PAGE_SIZE;
-  const endIdx = startIdx + PAGE_SIZE;
+  // When maxPlans is specified, return the top N plans (no page slicing)
+  const startIdx = maxPlans !== undefined ? 0 : page * PAGE_SIZE;
+  const endIdx = maxPlans !== undefined ? maxPlans : startIdx + PAGE_SIZE;
   const pagePlans = allPlans.slice(startIdx, endIdx);
 
-  // Convert to RescuePlan format
-  const plans: RescuePlan[] = pagePlans.map((cp, i) => ({
-    id: `rescue-${Date.now()}-${page}-${i}`,
-    rank: i + 1,
-    swaps: cp.swaps,
-    impactScore: cp.impactScore,
-    dailyLoadDelta: cp.dailyLoadDelta,
-    weeklyLoadDelta: cp.weeklyLoadDelta,
-    violations: [], // Will be populated during apply validation
-  }));
+  // Convert to RescuePlan format with pre-computed violations
+  const plans: RescuePlan[] = pagePlans.map((cp, i) => {
+    const tempAssignments = schedule.assignments.map(a => {
+      const sw = cp.swaps.find(s => s.assignmentId === a.id);
+      if (sw) return { ...a, participantId: sw.toParticipantId };
+      return a;
+    });
+    const validation = validateHardConstraints(schedule.tasks, schedule.participants, tempAssignments, disabledHC);
+
+    return {
+      id: `rescue-${Date.now()}-${page}-${i}`,
+      rank: i + 1,
+      swaps: cp.swaps,
+      impactScore: cp.impactScore,
+      dailyLoadDelta: cp.dailyLoadDelta,
+      weeklyLoadDelta: cp.weeklyLoadDelta,
+      violations: validation.violations,
+    };
+  });
 
   return {
     request,

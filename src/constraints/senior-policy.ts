@@ -153,20 +153,17 @@ export function validateSeniorHardBlocks(
   return violations;
 }
 
-// ─── Soft penalty: out-of-role assignments ───────────────────────────────────
+// ─── Soft penalty: L4 in Hamama ──────────────────────────────────────────────
 
 /**
- * Compute the total soft penalty for senior out-of-role assignments.
+ * Compute the total soft penalty for L4 participants assigned to Hamama.
  *
- * Under the strict isolation model only Hamama for L4 remains as a
- * soft-penalised exception. L2 and L3 are hard-blocked from Hamama.
- * All other non-natural assignments are hard-blocked and should never
- * reach this function, but guard defensively.
- *
- * L4 in Hamama carries the maximum penalty (`seniorHamamaPenalty`) —
- * it is an absolute last resort.
+ * This is the sole remaining soft-penalised senior exception. L2 and L3
+ * are hard-blocked from Hamama by HC-13. All other non-natural assignments
+ * are also hard-blocked. L4 in Hamama carries the maximum penalty
+ * (`seniorHamamaPenalty`) — it is an absolute last resort.
  */
-export function computeSeniorOutOfRolePenalty(
+export function computeSeniorHamamaPenalty(
   participants: Participant[],
   assignments: Assignment[],
   tasks: Task[],
@@ -185,21 +182,10 @@ export function computeSeniorOutOfRolePenalty(
     if (!p || !task) continue;
     if (p.level === Level.L0) continue;
 
-    const slot = task.slots.find(s => s.slotId === a.slotId);
-    if (!slot) continue;
-
     // L4 in Hamama — absolute last resort, maximum penalty
-    // (L2/L3 are hard-blocked from Hamama and should never reach here)
-    if (task.type === TaskType.Hamama) {
-      if (p.level === Level.L4) {
-        totalPenalty += config.seniorHamamaPenalty;
-      }
-      continue;
-    }
-
-    // Defensive: any non-natural assignment that slipped past hard blocks
-    if (!isNaturalRole(p.level, task, slot)) {
-      totalPenalty += config.seniorOutOfRolePenalty;
+    // (L2/L3 are hard-blocked from Hamama by HC-13 and should never reach here)
+    if (task.type === TaskType.Hamama && p.level === Level.L4) {
+      totalPenalty += config.seniorHamamaPenalty;
     }
   }
 

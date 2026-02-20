@@ -21,23 +21,8 @@ import {
   computeRestFairness,
 } from '../web/utils/rest-calculator';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
-import { computeSeniorOutOfRolePenalty } from './senior-policy';
-
-// ─── Individual Penalty Functions ────────────────────────────────────────────
-
-/**
- * SC-1: Hamama penalty — now handled entirely by senior policy
- * (`seniorHamamaPenalty`).  This function is kept for API
- * compatibility but always returns 0.
- */
-export function hamamaPenalty(
-  task: Task,
-  participant: Participant,
-  _config: SchedulerConfig,
-): number {
-  // All senior-in-Hamama penalties are applied via computeSeniorOutOfRolePenalty.
-  return 0;
-}
+import { computeSeniorHamamaPenalty } from './senior-policy';
+import { dateKey } from '../utils/date-utils';
 
 /**
  * SC-3: Workload balance — penalize uneven distribution of non-light assignments.
@@ -118,70 +103,9 @@ export function workloadImbalanceSplit(
   };
 }
 
-/**
- * SC-5: Back-to-back shift penalty — penalise 0-minute gaps between
- * consecutive assignments for the same participant.
- *
- * This is a SOFT constraint only: the optimizer will prefer schedules
- * with breathing room between shifts, but will never leave a slot
- * unassigned just to create a gap.
- */
-export function backToBackPenalty(
-  participants: Participant[],
-  assignments: Assignment[],
-  tasks: Task[],
-  penaltyPerPair: number,
-  prebuiltTaskMap?: Map<string, Task>,
-  assignmentsByParticipant?: Map<string, Assignment[]>,
-): number {
-  const taskMap = prebuiltTaskMap ?? new Map(tasks.map(t => [t.id, t]));
-
-  let penalty = 0;
-
-  for (const p of participants) {
-
-    // Gather this participant's non-light tasks sorted by start
-    const pTasks: Task[] = [];
-    if (assignmentsByParticipant) {
-      const pAssignments = assignmentsByParticipant.get(p.id) || [];
-      for (const a of pAssignments) {
-        const task = taskMap.get(a.taskId);
-        if (task && !task.isLight) pTasks.push(task);
-      }
-    } else {
-      for (const a of assignments) {
-        if (a.participantId !== p.id) continue;
-        const task = taskMap.get(a.taskId);
-        if (task && !task.isLight) pTasks.push(task);
-      }
-    }
-    if (pTasks.length < 2) continue;
-
-    pTasks.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
-
-    for (let i = 0; i < pTasks.length - 1; i++) {
-      const gapMs = pTasks[i + 1].timeBlock.start.getTime() - pTasks[i].timeBlock.end.getTime();
-      if (gapMs <= 0) {
-        // Zero or negative gap (overlap should not happen after HC, but guard anyway)
-        penalty += penaltyPerPair;
-      }
-    }
-  }
-
-  return penalty;
-}
-
 // ─── Soft Constraint Warnings ────────────────────────────────────────────────
 
 // ─── SC-8: Daily Workload Balance ────────────────────────────────────────────
-
-/** Helper: calendar date key from a Date (YYYY-MM-DD in local time) */
-function dateKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
 
 /**
  * SC-8: Daily workload imbalance — penalise schedules where some calendar
@@ -282,6 +206,7 @@ export function collectSoftWarnings(
   tasks: Task[],
   participants: Participant[],
   assignments: Assignment[],
+  disabledSW?: Set<string>,
 ): ConstraintViolation[] {
   const warnings: ConstraintViolation[] = [];
   const pMap = new Map<string, Participant>();
@@ -297,7 +222,7 @@ export function collectSoftWarnings(
 
     // Hamama: warn for L4 in Hamama — absolute last resort
     // (L2/L3 are hard-blocked from Hamama by HC-13 and should never appear here)
-    if (task.type === TaskType.Hamama) {
+    if (!disabledSW?.has('HAMAMA_SENIOR') && task.type === TaskType.Hamama) {
       for (const p of assignedPs) {
         if (p.level === Level.L4) {
           warnings.push({
@@ -313,7 +238,7 @@ export function collectSoftWarnings(
 
     // SC-7: Group mismatch — safety-net warning (HC-4 hard constraint should
     // prevent this; if it appears, something bypassed the constraint).
-    if (task.sameGroupRequired && assignedPs.length > 0) {
+    if (!disabledSW?.has('GROUP_MISMATCH') && task.sameGroupRequired && assignedPs.length > 0) {
       const groups = new Set(assignedPs.map((p) => p.group));
       if (groups.size > 1) {
         warnings.push({
@@ -327,38 +252,40 @@ export function collectSoftWarnings(
   }
 
   // SC-8: Daily imbalance — warn if a participant's busiest day is ≥ 2× their lightest
-  const warnTaskMap = new Map(tasks.map(t => [t.id, t]));
-  const allDaysSet = new Set<string>();
-  for (const t of tasks) allDaysSet.add(dateKey(t.timeBlock.start));
-  const warnDayList = [...allDaysSet].sort();
+  if (!disabledSW?.has('DAILY_IMBALANCE')) {
+    const warnTaskMap = new Map(tasks.map(t => [t.id, t]));
+    const allDaysSet = new Set<string>();
+    for (const t of tasks) allDaysSet.add(dateKey(t.timeBlock.start));
+    const warnDayList = [...allDaysSet].sort();
 
-  if (warnDayList.length > 1) {
-    const dayIdx = new Map<string, number>();
-    for (let i = 0; i < warnDayList.length; i++) dayIdx.set(warnDayList[i], i);
+    if (warnDayList.length > 1) {
+      const dayIdx = new Map<string, number>();
+      for (let i = 0; i < warnDayList.length; i++) dayIdx.set(warnDayList[i], i);
 
-    for (const p of participants) {
-      const dailyLoad = new Float64Array(warnDayList.length);
-      const pAssigns = assignments.filter(a => a.participantId === p.id);
-      for (const a of pAssigns) {
-        const task = warnTaskMap.get(a.taskId);
-        if (!task) continue;
-        const idx = dayIdx.get(dateKey(task.timeBlock.start));
-        if (idx === undefined) continue;
-        dailyLoad[idx] += computeTaskEffectiveHours(task);
-      }
-      // Only consider days where participant has some load
-      const activeDays = Array.from(dailyLoad).filter(h => h > 0);
-      if (activeDays.length < 2) continue;
-      const maxDay = Math.max(...activeDays);
-      const minDay = Math.min(...activeDays);
-      if (minDay > 0 && maxDay >= 2 * minDay) {
-        warnings.push({
-          severity: ViolationSeverity.Warning,
-          code: 'DAILY_IMBALANCE',
-          message: `${p.name} has uneven daily workload: busiest day ${maxDay.toFixed(1)}h vs lightest ${minDay.toFixed(1)}h (${(maxDay / minDay).toFixed(1)}× ratio).`,
-          taskId: '',
-          participantId: p.id,
-        });
+      for (const p of participants) {
+        const dailyLoad = new Float64Array(warnDayList.length);
+        const pAssigns = assignments.filter(a => a.participantId === p.id);
+        for (const a of pAssigns) {
+          const task = warnTaskMap.get(a.taskId);
+          if (!task) continue;
+          const idx = dayIdx.get(dateKey(task.timeBlock.start));
+          if (idx === undefined) continue;
+          dailyLoad[idx] += computeTaskEffectiveHours(task);
+        }
+        // Only consider days where participant has some load
+        const activeDays = Array.from(dailyLoad).filter(h => h > 0);
+        if (activeDays.length < 2) continue;
+        const maxDay = Math.max(...activeDays);
+        const minDay = Math.min(...activeDays);
+        if (minDay > 0 && maxDay >= 2 * minDay) {
+          warnings.push({
+            severity: ViolationSeverity.Warning,
+            code: 'DAILY_IMBALANCE',
+            message: `${p.name} has uneven daily workload: busiest day ${maxDay.toFixed(1)}h vs lightest ${minDay.toFixed(1)}h (${(maxDay / minDay).toFixed(1)}× ratio).`,
+            taskId: '',
+            participantId: p.id,
+          });
+        }
       }
     }
   }
@@ -397,6 +324,7 @@ export function computeScheduleScore(
   assignments: Assignment[],
   config: SchedulerConfig,
   ctx?: ScoreContext,
+  disabledSW?: Set<string>,
 ): ScheduleScore {
   // Reuse or build lookup maps
   const taskMap = ctx?.taskMap ?? new Map(tasks.map(t => [t.id, t]));
@@ -443,18 +371,6 @@ export function computeScheduleScore(
   let totalPenalty = 0;
   let totalBonus = 0;
 
-  for (const task of tasks) {
-    const taskAssignments = assignmentsByTask.get(task.id) || [];
-    const assignedPs = taskAssignments
-      .map((a) => pMap.get(a.participantId))
-      .filter((p): p is Participant => !!p);
-
-    // Hamama penalties
-    for (const p of assignedPs) {
-      totalPenalty += hamamaPenalty(task, p, config);
-    }
-  }
-
   // Workload imbalance is captured directly via l0FairnessWeight * l0StdDev
   // and seniorFairnessWeight * seniorStdDev in the composite formula — no
   // double-counting through totalPenalty.
@@ -464,11 +380,15 @@ export function computeScheduleScore(
   // checkSameGroup() in hard-constraints.ts. groupMismatchPenalty config
   // field is retained for backwards compatibility but no longer applied.
 
-  // Back-to-back shift penalty (SC-5) — pass pre-built data
-  totalPenalty += backToBackPenalty(participants, assignments, tasks, config.backToBackPenalty, taskMap, byParticipant);
+  // SC-5 (back-to-back penalty) removed — redundant with minRestWeight and HC-12.
 
-  // SC-6: Senior out-of-role penalty — pass pre-built maps
-  totalPenalty += computeSeniorOutOfRolePenalty(participants, assignments, tasks, config, pMap, taskMap);
+  // SC-6: Senior Hamama penalty — pass pre-built maps
+  // When HAMAMA_SENIOR is disabled, zero out seniorHamamaPenalty so L4-in-Hamama
+  // assignments are not penalised in the composite score.
+  const effectiveConfig = disabledSW?.has('HAMAMA_SENIOR')
+    ? { ...config, seniorHamamaPenalty: 0 }
+    : config;
+  totalPenalty += computeSeniorHamamaPenalty(participants, assignments, tasks, effectiveConfig, pMap, taskMap);
 
   // SC-8: Daily workload balance — pass pre-built data
   const dailyBalance = dailyWorkloadImbalance(participants, assignments, tasks, taskMap, byParticipant);
@@ -477,11 +397,16 @@ export function computeScheduleScore(
   const minRest = isFinite(fairness.globalMinRest) ? fairness.globalMinRest : 0;
   const avgRest = isFinite(fairness.globalAvgRest) ? fairness.globalAvgRest : 0;
 
+  // When DAILY_IMBALANCE is disabled, zero out the daily balance weight
+  const effectiveDailyBalanceWeight = disabledSW?.has('DAILY_IMBALANCE')
+    ? 0
+    : config.dailyBalanceWeight;
+
   const compositeScore =
     config.minRestWeight * minRest -
     config.l0FairnessWeight * wlSplit.l0StdDev -
     config.seniorFairnessWeight * wlSplit.seniorStdDev -
-    config.dailyBalanceWeight * (dailyBalance.dailyPerParticipantStdDev + dailyBalance.dailyGlobalStdDev) -
+    effectiveDailyBalanceWeight * (dailyBalance.dailyPerParticipantStdDev + dailyBalance.dailyGlobalStdDev) -
     config.penaltyWeight * totalPenalty +
     config.bonusWeight * totalBonus;
 

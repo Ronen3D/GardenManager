@@ -29,14 +29,7 @@ import { computeScheduleScore, ScoreContext } from '../constraints/soft-constrai
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
 import { isEligible, getRejectionReason } from './validator';
-
-/** Calendar-date key from a Date (YYYY-MM-DD in local time) */
-function dateKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
+import { dateKey } from '../utils/date-utils';
 
 /** P4: Add an assignment into the per-participant index */
 function addToAssignmentMap(map: Map<string, Assignment[]>, a: Assignment): void {
@@ -92,8 +85,9 @@ function isEligibleForSlot(
   slot: SlotRequirement,
   participantAssignments: Assignment[],
   taskMap: Map<string, Task>,
+  disabledHC?: Set<string>,
 ): boolean {
-  const result = isEligible(participant, task, slot, participantAssignments, taskMap);
+  const result = isEligible(participant, task, slot, participantAssignments, taskMap, { disabledHC });
   if (!result && _diagnosticLogging) {
     const _tag = `${participant.name} → ${task.name} [${slot.label || slot.slotId}]`;
     console.log(`[Elig] REJECT: ${_tag}`);
@@ -112,9 +106,10 @@ function getEligibleCandidates(
   taskMap: Map<string, Task>,
   participantWorkload: Map<string, number>,
   dailyWorkload?: Map<string, Map<string, number>>,
+  disabledHC?: Set<string>,
 ): Participant[] {
   const eligible = participants.filter((p) =>
-    isEligibleForSlot(p, task, slot, assignmentsByParticipant.get(p.id) || [], taskMap),
+    isEligibleForSlot(p, task, slot, assignmentsByParticipant.get(p.id) || [], taskMap, disabledHC),
   );
 
   // Calendar day of the task being assigned
@@ -238,6 +233,7 @@ export function greedyAssign(
   tasks: Task[],
   participants: Participant[],
   lockedAssignments: Assignment[] = [],
+  disabledHC?: Set<string>,
 ): { assignments: Assignment[]; unfilledSlots: { taskId: string; slotId: string; reason: string }[] } {
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
@@ -281,7 +277,7 @@ export function greedyAssign(
   for (const task of sortedTasks) {
     // For same-group tasks (Adanit), we need special handling
     if (task.sameGroupRequired) {
-      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant, dailyWorkload);
+      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant, dailyWorkload, disabledHC);
       if (!assigned) {
         // Mark all slots as unfilled with specific reasons
         for (const slot of task.slots) {
@@ -319,6 +315,7 @@ export function greedyAssign(
         taskMap,
         workload,
         dailyWorkload,
+        disabledHC,
       );
 
       if (candidates.length > 0) {
@@ -353,7 +350,7 @@ export function greedyAssign(
         const rejectionCounts = new Map<string, number>();
         for (const p of participants) {
           const pAssigns = assignmentsByParticipant.get(p.id) || [];
-          const code = getRejectionReason(p, task, slot, pAssigns, taskMap);
+          const code = getRejectionReason(p, task, slot, pAssigns, taskMap, { disabledHC });
           if (code) {
             rejectionCounts.set(code, (rejectionCounts.get(code) || 0) + 1);
           }
@@ -415,6 +412,7 @@ function assignSameGroupTask(
   workload: Map<string, number>,
   assignmentsByParticipant: Map<string, Assignment[]>,
   dailyWorkload?: Map<string, Map<string, number>>,
+  disabledHC?: Set<string>,
 ): boolean {
   // Already have some locked assignments for this task?
   const lockedForTask = currentAssignments.filter((a) => a.taskId === task.id);
@@ -488,6 +486,7 @@ function assignSameGroupTask(
         taskMap,
         workload,
         dailyWorkload,
+        disabledHC,
       );
 
       if (candidates.length > 0) {
@@ -571,6 +570,7 @@ function isSwapFeasible(
   byParticipant: Map<string, Assignment[]>,
   /** P1: Pre-built per-task assignment index for the candidate */
   byTask: Map<string, Assignment[]>,
+  disabledHC?: Set<string>,
 ): boolean {
   const aI = candidate[idxI];
   const aJ = candidate[idxJ];
@@ -584,82 +584,100 @@ function isSwapFeasible(
   const slotI = taskI.slots.find(s => s.slotId === aI.slotId);
   const slotJ = taskJ.slots.find(s => s.slotId === aJ.slotId);
   if (!slotI || !slotJ) return false;
-  if (!isLevelSatisfied(pI.level, slotI) || !isLevelSatisfied(pJ.level, slotJ)) return false;
+  if (!disabledHC?.has('HC-1')) {
+    if (!isLevelSatisfied(pI.level, slotI) || !isLevelSatisfied(pJ.level, slotJ)) return false;
+  }
 
   // HC-2: Certification
-  for (const c of slotI.requiredCertifications) if (!pI.certifications.includes(c)) return false;
-  for (const c of slotJ.requiredCertifications) if (!pJ.certifications.includes(c)) return false;
+  if (!disabledHC?.has('HC-2')) {
+    for (const c of slotI.requiredCertifications) if (!pI.certifications.includes(c)) return false;
+    for (const c of slotJ.requiredCertifications) if (!pJ.certifications.includes(c)) return false;
+  }
 
   // HC-3: Availability
-  if (!isFullyCovered(taskI.timeBlock, pI.availability)) return false;
-  if (!isFullyCovered(taskJ.timeBlock, pJ.availability)) return false;
+  if (!disabledHC?.has('HC-3')) {
+    if (!isFullyCovered(taskI.timeBlock, pI.availability)) return false;
+    if (!isFullyCovered(taskJ.timeBlock, pJ.availability)) return false;
+  }
 
   // HC-13: Senior hard blocks
-  if (slotI && checkSeniorHardBlock(pI, taskI, slotI)) return false;
-  if (slotJ && checkSeniorHardBlock(pJ, taskJ, slotJ)) return false;
+  if (!disabledHC?.has('HC-13')) {
+    if (slotI && checkSeniorHardBlock(pI, taskI, slotI)) return false;
+    if (slotJ && checkSeniorHardBlock(pJ, taskJ, slotJ)) return false;
+  }
 
   // HC-11: Choresh exclusion from Mamtera
-  if (pI.certifications.includes(Certification.Horesh) && taskI.type === TaskType.Mamtera) return false;
-  if (pJ.certifications.includes(Certification.Horesh) && taskJ.type === TaskType.Mamtera) return false;
+  if (!disabledHC?.has('HC-11')) {
+    if (pI.certifications.includes(Certification.Horesh) && taskI.type === TaskType.Mamtera) return false;
+    if (pJ.certifications.includes(Certification.Horesh) && taskJ.type === TaskType.Mamtera) return false;
+  }
 
   // HC-7: Unique participant per task — use per-task index (O(k) instead of O(n))
-  const taskIAssignments = byTask.get(aI.taskId) || [];
-  for (const a of taskIAssignments) {
-    if (a === aI) continue;
-    if (a.participantId === aI.participantId) return false;
-  }
-  const taskJAssignments = byTask.get(aJ.taskId) || [];
-  for (const a of taskJAssignments) {
-    if (a === aJ) continue;
-    if (a.participantId === aJ.participantId) return false;
+  if (!disabledHC?.has('HC-7')) {
+    const taskIAssignments = byTask.get(aI.taskId) || [];
+    for (const a of taskIAssignments) {
+      if (a === aI) continue;
+      if (a.participantId === aI.participantId) return false;
+    }
+    const taskJAssignments = byTask.get(aJ.taskId) || [];
+    for (const a of taskJAssignments) {
+      if (a === aJ) continue;
+      if (a.participantId === aJ.participantId) return false;
+    }
   }
 
   // HC-4: Same-group — mandatory. If either swapped assignment belongs to a
   // sameGroupRequired task, verify all participants in that task share one group.
-  const checkSameGroupForTask = (taskId: string): boolean => {
-    const task = taskMap.get(taskId);
-    if (!task || !task.sameGroupRequired) return true;
-    const taskAssigns = byTask.get(taskId) || [];
-    const groups = new Set<string>();
-    for (const a of taskAssigns) {
-      const p = pMap.get(a.participantId);
-      if (p) groups.add(p.group);
-    }
-    return groups.size <= 1;
-  };
-  if (!checkSameGroupForTask(aI.taskId) || !checkSameGroupForTask(aJ.taskId)) return false;
+  if (!disabledHC?.has('HC-4')) {
+    const checkSameGroupForTask = (taskId: string): boolean => {
+      const task = taskMap.get(taskId);
+      if (!task || !task.sameGroupRequired) return true;
+      const taskAssigns = byTask.get(taskId) || [];
+      const groups = new Set<string>();
+      for (const a of taskAssigns) {
+        const p = pMap.get(a.participantId);
+        if (p) groups.add(p.group);
+      }
+      return groups.size <= 1;
+    };
+    if (!checkSameGroupForTask(aI.taskId) || !checkSameGroupForTask(aJ.taskId)) return false;
+  }
 
   // HC-5: Double-booking for both affected participants — use per-participant index
-  const checkDoubleBooking = (pid: string): boolean => {
-    const pAssignments = byParticipant.get(pid) || [];
-    for (let x = 0; x < pAssignments.length; x++) {
-      for (let y = x + 1; y < pAssignments.length; y++) {
-        const tX = taskMap.get(pAssignments[x].taskId);
-        const tY = taskMap.get(pAssignments[y].taskId);
-        if (tX && tY && blocksOverlap(tX.timeBlock, tY.timeBlock)) return false;
+  if (!disabledHC?.has('HC-5')) {
+    const checkDoubleBooking = (pid: string): boolean => {
+      const pAssignments = byParticipant.get(pid) || [];
+      for (let x = 0; x < pAssignments.length; x++) {
+        for (let y = x + 1; y < pAssignments.length; y++) {
+          const tX = taskMap.get(pAssignments[x].taskId);
+          const tY = taskMap.get(pAssignments[y].taskId);
+          if (tX && tY && blocksOverlap(tX.timeBlock, tY.timeBlock)) return false;
+        }
       }
-    }
-    return true;
-  };
-  if (!checkDoubleBooking(pI.id) || !checkDoubleBooking(pJ.id)) return false;
+      return true;
+    };
+    if (!checkDoubleBooking(pI.id) || !checkDoubleBooking(pJ.id)) return false;
+  }
 
   // HC-12: No consecutive blocking tasks for both affected participants
-  const checkConsecutiveHighLoad = (pid: string): boolean => {
-    const pAssignments = (byParticipant.get(pid) || [])
-      .map(a => ({ assignment: a, task: taskMap.get(a.taskId)! }))
-      .filter(x => x.task != null)
-      .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
-    for (let x = 0; x < pAssignments.length - 1; x++) {
-      const cur = pAssignments[x];
-      const nxt = pAssignments[x + 1];
-      if (cur.task.id === nxt.task.id) continue;
-      const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
-      if (gap > 0) continue;
-      if (cur.task.blocksConsecutive && nxt.task.blocksConsecutive) return false;
-    }
-    return true;
-  };
-  if (!checkConsecutiveHighLoad(pI.id) || !checkConsecutiveHighLoad(pJ.id)) return false;
+  if (!disabledHC?.has('HC-12')) {
+    const checkConsecutiveHighLoad = (pid: string): boolean => {
+      const pAssignments = (byParticipant.get(pid) || [])
+        .map(a => ({ assignment: a, task: taskMap.get(a.taskId)! }))
+        .filter(x => x.task != null)
+        .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+      for (let x = 0; x < pAssignments.length - 1; x++) {
+        const cur = pAssignments[x];
+        const nxt = pAssignments[x + 1];
+        if (cur.task.id === nxt.task.id) continue;
+        const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
+        if (gap > 0) continue;
+        if (cur.task.blocksConsecutive && nxt.task.blocksConsecutive) return false;
+      }
+      return true;
+    };
+    if (!checkConsecutiveHighLoad(pI.id) || !checkConsecutiveHighLoad(pJ.id)) return false;
+  }
 
   return true;
 }
@@ -682,6 +700,7 @@ export function localSearchOptimize(
   participants: Participant[],
   assignments: Assignment[],
   config: SchedulerConfig,
+  disabledHC?: Set<string>,
 ): Assignment[] {
   const current = [...assignments.map((a) => ({ ...a }))];
 
@@ -799,7 +818,7 @@ export function localSearchOptimize(
         // byTask: no change needed — same object references, same taskIds
 
         // 3. Delta validation with patched indices
-        if (!isSwapFeasible(current, i, j, taskMap, pMap, byParticipant, byTask)) {
+        if (!isSwapFeasible(current, i, j, taskMap, pMap, byParticipant, byTask, disabledHC)) {
           // Undo in-place swap
           ai.participantId = oldPidI;
           aj.participantId = oldPidJ;
@@ -867,11 +886,12 @@ export function optimize(
   participants: Participant[],
   config: SchedulerConfig,
   lockedAssignments: Assignment[] = [],
+  disabledHC?: Set<string>,
 ): OptimizationResult {
   const startTime = Date.now();
 
   // Phase 1: Greedy construction
-  const greedy = greedyAssign(tasks, participants, lockedAssignments);
+  const greedy = greedyAssign(tasks, participants, lockedAssignments, disabledHC);
 
   // Phase 2: Local search improvement
   const improved = localSearchOptimize(
@@ -879,10 +899,11 @@ export function optimize(
     participants,
     greedy.assignments,
     config,
+    disabledHC,
   );
 
   // Validate final result
-  const validation = validateHardConstraints(tasks, participants, improved);
+  const validation = validateHardConstraints(tasks, participants, improved, disabledHC);
   const score = computeScheduleScore(tasks, participants, improved, config);
 
   return {
@@ -955,6 +976,7 @@ export function optimizeMultiAttempt(
   lockedAssignments: Assignment[] = [],
   attempts: number = 2000,
   onProgress?: MultiAttemptProgressCallback,
+  disabledHC?: Set<string>,
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
   const totalStart = Date.now();
@@ -967,7 +989,7 @@ export function optimizeMultiAttempt(
       ? [...participants]
       : shuffle([...participants]);
 
-    const result = optimize(tasks, shuffledParticipants, config, lockedAssignments);
+    const result = optimize(tasks, shuffledParticipants, config, lockedAssignments, disabledHC);
 
     const improved = best === null || isBetterResult(result, best);
     if (improved) {
@@ -1030,6 +1052,7 @@ export function optimizeMultiAttemptAsync(
   lockedAssignments: Assignment[] = [],
   attempts: number = 2000,
   onProgress?: MultiAttemptProgressCallback,
+  disabledHC?: Set<string>,
 ): Promise<OptimizationResult> {
   return new Promise((resolve) => {
     let best: OptimizationResult | null = null;
@@ -1046,7 +1069,7 @@ export function optimizeMultiAttemptAsync(
           ? [...participants]
           : shuffle([...participants]);
 
-        const result = optimize(tasks, shuffledParticipants, config, lockedAssignments);
+        const result = optimize(tasks, shuffledParticipants, config, lockedAssignments, disabledHC);
 
         const improved = best === null || isBetterResult(result, best);
         if (improved) {

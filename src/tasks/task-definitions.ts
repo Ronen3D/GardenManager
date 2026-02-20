@@ -137,7 +137,7 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
       },
     ],
     isLight: false,
-    baseLoadWeight: 0.6,
+    baseLoadWeight: 5 / 6,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -199,6 +199,7 @@ export function createMamteraTask(baseDate: Date): Task {
       },
     ],
     isLight: false,
+    baseLoadWeight: 4 / 9,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -207,7 +208,7 @@ export function createMamteraTask(baseDate: Date): Task {
 // ─── Karov ───────────────────────────────────────────────────────────────────
 // 8h, 4 participants: 1× L2/L3/L4, 3× L0 (one L0 must have Salsala).
 // Load weighting: hot windows 05:00-06:30 and 17:00-18:30 at 100%,
-// outside windows at 20% effective load.
+// outside windows at ~33% effective load.
 
 export function createKarovTask(timeBlock: TimeBlock): Task {
   return {
@@ -243,7 +244,7 @@ export function createKarovTask(timeBlock: TimeBlock): Task {
       },
     ],
     isLight: false,
-    baseLoadWeight: 0.2,
+    baseLoadWeight: 1 / 3,
     loadWindows: [
       {
         id: 'karov-hot-am',

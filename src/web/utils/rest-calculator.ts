@@ -1,16 +1,28 @@
 /**
- * Rest Calculator - Computes rest periods between non-light tasks for each participant.
+ * Rest Calculator - Computes rest periods between blocking tasks for each participant.
  *
- * Rest Definition: Time between non-light tasks.
- * "Karovit" (Light Task) can be performed during rest periods without resetting rest.
+ * Rest Definition: Time between consecutive non-light tasks where BOTH have
+ * blocksConsecutive=true. This mirrors HC-12's logic — tasks that are allowed
+ * to be placed back-to-back (e.g. Karov with blocksConsecutive=false) do not
+ * generate rest-gap penalties.
+ *
+ * "Karovit" (Light Task) is excluded entirely (doesn't count as work).
+ * "Karov" (non-light but blocksConsecutive=false) counts toward work hours
+ * but its gaps with adjacent tasks are not penalised by minRestWeight.
  */
 
 import { Task, Assignment, Participant, TimeBlock } from '../../models/types';
 import { gapHours, sortBlocksByStart } from './time-utils';
 
+/** A non-light time block tagged with its HC-12 blocking flag. */
+interface TaggedBlock {
+  block: TimeBlock;
+  blocksConsecutive: boolean;
+}
+
 export interface ParticipantRestProfile {
   participantId: string;
-  /** All rest gaps (hours) between consecutive non-light tasks */
+  /** Rest gaps (hours) between consecutive dual-blocking task pairs */
   restGaps: number[];
   /** Minimum rest gap (hours) — the bottleneck */
   minRestHours: number;
@@ -38,21 +50,22 @@ function buildTaskMap(tasks: Task[]): Map<string, Task> {
 }
 
 /**
- * Get all non-light TimeBlocks assigned to a participant, sorted by start.
+ * Get all non-light tagged blocks assigned to a participant, sorted by start.
+ * Each entry carries the task's blocksConsecutive flag for rest-gap filtering.
  */
 function getNonLightBlocks(
   participantId: string,
   assignments: Assignment[],
   taskMap: Map<string, Task>,
-): TimeBlock[] {
-  const blocks: TimeBlock[] = [];
+): TaggedBlock[] {
+  const blocks: TaggedBlock[] = [];
   for (const a of assignments) {
     if (a.participantId !== participantId) continue;
     const task = taskMap.get(a.taskId);
     if (!task || task.isLight) continue;
-    blocks.push(task.timeBlock);
+    blocks.push({ block: task.timeBlock, blocksConsecutive: task.blocksConsecutive });
   }
-  return sortBlocksByStart(blocks);
+  return blocks.sort((a, b) => a.block.start.getTime() - b.block.start.getTime());
 }
 
 /**
@@ -75,11 +88,17 @@ function getLightBlocks(
 
 /**
  * Compute rest gaps between consecutive non-light task blocks.
+ * Only gaps where BOTH the preceding and following tasks have
+ * blocksConsecutive=true are included — mirroring HC-12's rule.
  */
-function computeRestGaps(sortedNonLightBlocks: TimeBlock[]): number[] {
+function computeRestGaps(sortedBlocks: TaggedBlock[]): number[] {
   const gaps: number[] = [];
-  for (let i = 1; i < sortedNonLightBlocks.length; i++) {
-    const gap = gapHours(sortedNonLightBlocks[i - 1], sortedNonLightBlocks[i]);
+  for (let i = 1; i < sortedBlocks.length; i++) {
+    const prev = sortedBlocks[i - 1];
+    const curr = sortedBlocks[i];
+    // Only penalise gaps between two blocking tasks
+    if (!prev.blocksConsecutive || !curr.blocksConsecutive) continue;
+    const gap = gapHours(prev.block, curr.block);
     gaps.push(gap);
   }
   return gaps;
@@ -99,8 +118,8 @@ export function computeParticipantRest(
 
   const restGaps = computeRestGaps(nonLightBlocks);
 
-  const totalWorkHours = nonLightBlocks.reduce((sum, b) => {
-    return sum + (b.end.getTime() - b.start.getTime()) / (1000 * 60 * 60);
+  const totalWorkHours = nonLightBlocks.reduce((sum, tb) => {
+    return sum + (tb.block.end.getTime() - tb.block.start.getTime()) / (1000 * 60 * 60);
   }, 0);
 
   const totalLightHours = lightBlocks.reduce((sum, b) => {
@@ -135,7 +154,7 @@ function computeRestFromAssignments(
   pAssignments: Assignment[],
   taskMap: Map<string, Task>,
 ): ParticipantRestProfile {
-  const nonLightBlocks: TimeBlock[] = [];
+  const nonLightBlocks: TaggedBlock[] = [];
   let totalWorkHours = 0;
   let totalLightHours = 0;
 
@@ -146,13 +165,13 @@ function computeRestFromAssignments(
     if (task.isLight) {
       totalLightHours += hours;
     } else {
-      nonLightBlocks.push(task.timeBlock);
+      nonLightBlocks.push({ block: task.timeBlock, blocksConsecutive: task.blocksConsecutive });
       totalWorkHours += hours;
     }
   }
 
   // Sort by start time (in-place — nonLightBlocks is a local array)
-  nonLightBlocks.sort((a, b) => a.start.getTime() - b.start.getTime());
+  nonLightBlocks.sort((a, b) => a.block.start.getTime() - b.block.start.getTime());
 
   const restGaps = computeRestGaps(nonLightBlocks);
 

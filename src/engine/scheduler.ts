@@ -37,9 +37,13 @@ export class SchedulingEngine {
   private currentSchedule: Schedule | null = null;
   private config: SchedulerConfig;
   private weekEnd: Date = new Date();
+  private disabledHC?: Set<string>;
+  private disabledSW?: Set<string>;
 
-  constructor(config: Partial<SchedulerConfig> = {}) {
+  constructor(config: Partial<SchedulerConfig> = {}, disabledHC?: Set<string>, disabledSW?: Set<string>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.disabledHC = disabledHC;
+    this.disabledSW = disabledSW;
     // Bug #12 fix: reset module-level counters so IDs start fresh
     // for each new engine instance.
     resetAssignmentCounter();
@@ -152,15 +156,15 @@ export class SchedulingEngine {
       throw new Error('No participants registered. Add participants before generating a schedule.');
     }
 
-    const result: OptimizationResult = optimize(tasks, participants, this.config);
+    const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC);
     // Compute week end from tasks
     const sortedByEnd = [...tasks].sort(
       (a, b) => b.timeBlock.end.getTime() - a.timeBlock.end.getTime(),
     );
     this.weekEnd = sortedByEnd.length > 0 ? sortedByEnd[0].timeBlock.end : new Date();
 
-    const hardValidation = validateHardConstraints(tasks, participants, result.assignments);
-    const softWarnings = collectSoftWarnings(tasks, participants, result.assignments);
+    const hardValidation = validateHardConstraints(tasks, participants, result.assignments, this.disabledHC);
+    const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.disabledSW);
 
     const allViolations: ConstraintViolation[] = [
       ...hardValidation.violations,
@@ -227,6 +231,7 @@ export class SchedulingEngine {
       [],
       attempts,
       onProgress,
+      this.disabledHC,
     );
 
     const sortedByEnd = [...tasks].sort(
@@ -235,8 +240,8 @@ export class SchedulingEngine {
     this.weekEnd = sortedByEnd.length > 0 ? sortedByEnd[0].timeBlock.end : new Date();
 
     // Collect all violations
-    const hardValidation = validateHardConstraints(tasks, participants, result.assignments);
-    const softWarnings = collectSoftWarnings(tasks, participants, result.assignments);
+    const hardValidation = validateHardConstraints(tasks, participants, result.assignments, this.disabledHC);
+    const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.disabledSW);
 
     const allViolations: ConstraintViolation[] = [
       ...hardValidation.violations,
@@ -313,6 +318,7 @@ export class SchedulingEngine {
       this.currentSchedule.tasks,
       this.currentSchedule.participants,
       this.currentSchedule.assignments,
+      this.disabledHC,
     );
   }
 
@@ -327,9 +333,9 @@ export class SchedulingEngine {
     if (!this.currentSchedule) return;
     const { tasks, participants, assignments } = this.currentSchedule;
 
-    const hard = validateHardConstraints(tasks, participants, assignments);
-    const soft = collectSoftWarnings(tasks, participants, assignments);
-    const score = computeScheduleScore(tasks, participants, assignments, this.config);
+    const hard = validateHardConstraints(tasks, participants, assignments, this.disabledHC);
+    const soft = collectSoftWarnings(tasks, participants, assignments, this.disabledSW);
+    const score = computeScheduleScore(tasks, participants, assignments, this.config, undefined, this.disabledSW);
 
     this.currentSchedule = {
       ...this.currentSchedule,
@@ -390,6 +396,8 @@ export class SchedulingEngine {
       this.currentSchedule.participants,
       this.currentSchedule.assignments,
       this.config,
+      undefined,
+      this.disabledSW,
     );
     this.currentSchedule.feasible = validation.valid;
     this.currentSchedule.violations = [
@@ -398,6 +406,7 @@ export class SchedulingEngine {
         this.currentSchedule.tasks,
         this.currentSchedule.participants,
         this.currentSchedule.assignments,
+        this.disabledSW,
       ),
     ];
 
@@ -446,6 +455,7 @@ export class SchedulingEngine {
       availableParticipants,
       this.config,
       lockedAssignments,
+      this.disabledHC,
     );
 
     // Validate
@@ -453,11 +463,13 @@ export class SchedulingEngine {
       this.currentSchedule.tasks,
       this.getAllParticipants(),
       result.assignments,
+      this.disabledHC,
     );
     const softWarnings = collectSoftWarnings(
       this.currentSchedule.tasks,
       this.getAllParticipants(),
       result.assignments,
+      this.disabledSW,
     );
 
     const schedule: Schedule = {

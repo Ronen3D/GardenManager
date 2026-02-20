@@ -51,10 +51,17 @@ function violation(
  * acceptableLevels list?
  *
  * Accepts an explicit match OR a level strictly higher than the highest
- * listed (overqualified). Note: for seniors (L2-L4), HC-13 restricts
- * assignments to natural-domain slots BEFORE this check runs, so the
- * overqualified path only fires when HC-13 has already approved the
- * assignment (e.g. L4 in an L0 Hamama slot).
+ * listed (overqualified).  The overqualified path is intentional for
+ * natural-domain tasks where a senior may fill a junior slot as a fallback.
+ *
+ * Callers must enforce HC-13 (senior hard blocks) independently to prevent
+ * seniors entering non-natural / restricted task types.  In particular,
+ * `isEligibleForSlot()` in validator.ts checks HC-13 BEFORE calling this
+ * function, ensuring the overqualified path only fires when HC-13 has
+ * already approved the assignment (e.g. L4 in an L0 Hamama slot).
+ * The optimizer's swap-feasibility check and `validateHardConstraints()`
+ * both evaluate HC-1 and HC-13 as independent constraints that must all
+ * pass — ordering between them is irrelevant there.
  */
 export function isLevelSatisfied(level: Level, slot: SlotRequirement): boolean {
   return slot.acceptableLevels.includes(level)
@@ -200,22 +207,46 @@ export function checkNoDoubleBooking(
   // Check ALL assignments for physical overlap (including light tasks)
   const allWithTasks = participantAssignments.filter((a) => taskMap.has(a.taskId));
 
-  for (let i = 0; i < allWithTasks.length; i++) {
-    for (let j = i + 1; j < allWithTasks.length; j++) {
-      const taskA = taskMap.get(allWithTasks[i].taskId)!;
-      const taskB = taskMap.get(allWithTasks[j].taskId)!;
-      if (blocksOverlap(taskA.timeBlock, taskB.timeBlock)) {
-        violations.push(
-          violation(
-            'DOUBLE_BOOKING',
-            `Participant ${participantId} is double-booked: "${taskA.name}" and "${taskB.name}" overlap`,
-            taskA.id,
-            undefined,
-            participantId,
-          ),
-        );
+  if (allWithTasks.length < 2) return violations;
+
+  // Sort by start time for O(n log n) sweep-line overlap detection
+  allWithTasks.sort((a, b) => {
+    const tA = taskMap.get(a.taskId)!;
+    const tB = taskMap.get(b.taskId)!;
+    return tA.timeBlock.start.getTime() - tB.timeBlock.start.getTime();
+  });
+
+  // Sweep-line: track the maximum end time seen so far
+  let maxEndMs = taskMap.get(allWithTasks[0].taskId)!.timeBlock.end.getTime();
+
+  for (let i = 1; i < allWithTasks.length; i++) {
+    const task = taskMap.get(allWithTasks[i].taskId)!;
+    const startMs = task.timeBlock.start.getTime();
+    const endMs = task.timeBlock.end.getTime();
+
+    if (startMs < maxEndMs) {
+      // Overlap detected — find the previous task(s) that overlap
+      // Walk backwards to report all overlapping pairs with this task
+      for (let j = i - 1; j >= 0; j--) {
+        const prevTask = taskMap.get(allWithTasks[j].taskId)!;
+        if (blocksOverlap(prevTask.timeBlock, task.timeBlock)) {
+          violations.push(
+            violation(
+              'DOUBLE_BOOKING',
+              `Participant ${participantId} is double-booked: "${prevTask.name}" and "${task.name}" overlap`,
+              prevTask.id,
+              undefined,
+              participantId,
+            ),
+          );
+        } else {
+          // Since sorted by start, earlier tasks that don't overlap won't overlap either
+          break;
+        }
       }
     }
+
+    if (endMs > maxEndMs) maxEndMs = endMs;
   }
   return violations;
 }
@@ -429,6 +460,7 @@ export function validateHardConstraints(
   tasks: Task[],
   participants: Participant[],
   assignments: Assignment[],
+  disabledHC?: Set<string>,
 ): ValidationResult {
   const allViolations: ConstraintViolation[] = [];
   const pMap = buildParticipantMap(participants);
@@ -438,10 +470,14 @@ export function validateHardConstraints(
     const taskAssignments = assignments.filter((a) => a.taskId === task.id);
 
     // HC-6: All slots filled
-    allViolations.push(...checkSlotsFilled(task, assignments));
+    if (!disabledHC?.has('HC-6')) {
+      allViolations.push(...checkSlotsFilled(task, assignments));
+    }
 
     // HC-7: Unique participants per task
-    allViolations.push(...checkUniqueParticipantsPerTask(task, assignments));
+    if (!disabledHC?.has('HC-7')) {
+      allViolations.push(...checkUniqueParticipantsPerTask(task, assignments));
+    }
 
     // Per-assignment checks
     for (const a of taskAssignments) {
@@ -460,42 +496,61 @@ export function validateHardConstraints(
       }
 
       // HC-1: Level
-      const levelV = checkLevelRequirement(participant, task, a.slotId);
-      if (levelV) allViolations.push(levelV);
+      if (!disabledHC?.has('HC-1')) {
+        const levelV = checkLevelRequirement(participant, task, a.slotId);
+        if (levelV) allViolations.push(levelV);
+      }
 
       // HC-2: Certifications
-      const certV = checkCertificationRequirement(participant, task, a.slotId);
-      if (certV) allViolations.push(certV);
+      if (!disabledHC?.has('HC-2')) {
+        const certV = checkCertificationRequirement(participant, task, a.slotId);
+        if (certV) allViolations.push(certV);
+      }
 
       // HC-3: Availability
-      const availV = checkAvailability(participant, task);
-      if (availV) allViolations.push(availV);
+      if (!disabledHC?.has('HC-3')) {
+        const availV = checkAvailability(participant, task);
+        if (availV) allViolations.push(availV);
+      }
     }
 
     // HC-10 replaced by HC-13 (senior policy) — see below
 
     // HC-11: Choresh forbidden from Mamtera
-    const assignedParticipants = taskAssignments
-      .map((a) => pMap.get(a.participantId))
-      .filter((p): p is Participant => p !== undefined);
-    allViolations.push(...checkChoreshExclusion(task, assignedParticipants));
+    if (!disabledHC?.has('HC-11')) {
+      const assignedParticipants = taskAssignments
+        .map((a) => pMap.get(a.participantId))
+        .filter((p): p is Participant => p !== undefined);
+      allViolations.push(...checkChoreshExclusion(task, assignedParticipants));
+    }
 
     // HC-4: Same group — mandatory for tasks with sameGroupRequired
-    allViolations.push(...checkSameGroup(task, assignedParticipants));
+    if (!disabledHC?.has('HC-4')) {
+      const assignedParticipants = taskAssignments
+        .map((a) => pMap.get(a.participantId))
+        .filter((p): p is Participant => p !== undefined);
+      allViolations.push(...checkSameGroup(task, assignedParticipants));
+    }
   }
 
   // HC-5: Double booking (per participant)
-  for (const p of participants) {
-    allViolations.push(...checkNoDoubleBooking(p.id, assignments, tMap));
+  if (!disabledHC?.has('HC-5')) {
+    for (const p of participants) {
+      allViolations.push(...checkNoDoubleBooking(p.id, assignments, tMap));
+    }
   }
 
   // HC-12: No consecutive high-load tasks (per participant)
-  for (const p of participants) {
-    allViolations.push(...checkNoConsecutiveHighLoad(p.id, assignments, tMap));
+  if (!disabledHC?.has('HC-12')) {
+    for (const p of participants) {
+      allViolations.push(...checkNoConsecutiveHighLoad(p.id, assignments, tMap));
+    }
   }
 
   // HC-13: Senior hard blocks (L4 non-natural/non-Hamama, L3 Mamtera)
-  allViolations.push(...validateSeniorHardBlocks(participants, assignments, tasks));
+  if (!disabledHC?.has('HC-13')) {
+    allViolations.push(...validateSeniorHardBlocks(participants, assignments, tasks));
+  }
 
   return {
     valid: allViolations.length === 0,

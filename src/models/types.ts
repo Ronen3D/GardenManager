@@ -246,14 +246,10 @@ export interface SchedulerConfig {
   /** Weight for bonus addition */
   bonusWeight: number;
 
-  /** Penalty per zero-gap (back-to-back) assignment pair — soft only */
-  backToBackPenalty: number;
   /** Max solver iterations */
   maxIterations: number;
   /** Max time for solver in ms */
   maxSolverTimeMs: number;
-  /** Penalty for assigning a senior (L2/L3/L4) outside their natural role */
-  seniorOutOfRolePenalty: number;
   /** Penalty for ANY senior (L2/L3/L4) assigned to Hamama — absolute last resort */
   seniorHamamaPenalty: number;
   /** Penalty per same-group task that has mixed-group participants */
@@ -269,13 +265,106 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   penaltyWeight: 1,
   bonusWeight: 3,
 
-  backToBackPenalty: 0,
   maxIterations: 10000,
   maxSolverTimeMs: 30000,
-  seniorOutOfRolePenalty: 200,
   seniorHamamaPenalty: 10000,
   groupMismatchPenalty: 100,
-  dailyBalanceWeight: 40,
+  dailyBalanceWeight: 90,
+};
+
+// ─── Algorithm Settings (user-configurable control panel) ────────────────────
+
+/** All hard constraint codes that can be toggled */
+export type HardConstraintCode =
+  | 'HC-1'   // Level requirement
+  | 'HC-2'   // Certification requirement
+  | 'HC-3'   // Availability check
+  | 'HC-4'   // Same-group (Adanit)
+  | 'HC-5'   // No double-booking
+  | 'HC-6'   // Slots filled
+  | 'HC-7'   // Unique participant per task
+  | 'HC-8'   // Adanit feasibility
+  | 'HC-11'  // Choresh exclusion
+  | 'HC-12'  // No consecutive high-load
+  | 'HC-13'; // Senior hard blocks
+
+/** All soft warning codes that can be toggled */
+export type SoftWarningCode =
+  | 'HAMAMA_SENIOR'
+  | 'GROUP_MISMATCH'
+  | 'DAILY_IMBALANCE';
+
+/** Full algorithm settings: weights + constraint toggles */
+export interface AlgorithmSettings {
+  /** All SchedulerConfig weight fields */
+  config: SchedulerConfig;
+  /** Hard constraints that are DISABLED (unchecked by user) */
+  disabledHardConstraints: HardConstraintCode[];
+  /** Soft warnings that are DISABLED (unchecked by user) */
+  disabledSoftWarnings: SoftWarningCode[];
+}
+
+/** Human-readable labels for hard constraints */
+export const HC_LABELS: Record<HardConstraintCode, string> = {
+  'HC-1': 'Level Requirement',
+  'HC-2': 'Certification Requirement',
+  'HC-3': 'Availability Check',
+  'HC-4': 'Same-Group (Adanit)',
+  'HC-5': 'No Double-Booking',
+  'HC-6': 'Slots Filled',
+  'HC-7': 'Unique Participant Per Task',
+  'HC-8': 'Adanit Group Feasibility',
+  'HC-11': 'Choresh Exclusion from Mamtera',
+  'HC-12': 'No Consecutive High-Load',
+  'HC-13': 'Senior Hard Blocks',
+};
+
+/** Human-readable labels for soft warnings */
+export const SW_LABELS: Record<SoftWarningCode, string> = {
+  'HAMAMA_SENIOR': 'Hamama Senior Warning',
+  'GROUP_MISMATCH': 'Group Mismatch Warning',
+  'DAILY_IMBALANCE': 'Daily Workload Imbalance Warning',
+};
+
+/** All hard constraint codes in display order */
+export const ALL_HC_CODES: HardConstraintCode[] = [
+  'HC-1', 'HC-2', 'HC-3', 'HC-4', 'HC-5', 'HC-6', 'HC-7', 'HC-8', 'HC-11', 'HC-12', 'HC-13',
+];
+
+/** All soft warning codes in display order */
+export const ALL_SW_CODES: SoftWarningCode[] = [
+  'HAMAMA_SENIOR', 'GROUP_MISMATCH', 'DAILY_IMBALANCE',
+];
+
+/** Factory default algorithm settings */
+export const DEFAULT_ALGORITHM_SETTINGS: AlgorithmSettings = {
+  config: { ...DEFAULT_CONFIG },
+  disabledHardConstraints: [],
+  disabledSoftWarnings: [],
+};
+
+// ─── Algorithm Presets ───────────────────────────────────────────────────────
+
+/** A named, saveable snapshot of AlgorithmSettings */
+export interface AlgorithmPreset {
+  id: string;
+  name: string;
+  description: string;
+  settings: AlgorithmSettings;
+  /** If true the preset cannot be deleted or renamed */
+  builtIn?: boolean;
+  /** Epoch ms — used for ordering user-created presets */
+  createdAt: number;
+}
+
+/** The built-in factory-default preset */
+export const DEFAULT_PRESET: AlgorithmPreset = {
+  id: 'preset-default',
+  name: 'Default',
+  description: 'Factory defaults',
+  settings: { ...DEFAULT_ALGORITHM_SETTINGS, config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], disabledSoftWarnings: [] },
+  builtIn: true,
+  createdAt: 0,
 };
 
 // ─── Gantt UI Bridge Types ───────────────────────────────────────────────────
@@ -423,6 +512,8 @@ export interface RescueSwap {
   fromParticipantId: string | null;
   /** The participant being moved in */
   toParticipantId: string;
+  /** Task ID for this swap's assignment */
+  taskId: string;
   /** Human-readable task name */
   taskName: string;
   /** Human-readable slot label */

@@ -83,7 +83,7 @@ export {
   isNaturalRole,
   checkSeniorHardBlock,
   validateSeniorHardBlocks,
-  computeSeniorOutOfRolePenalty,
+  computeSeniorHamamaPenalty,
 } from './constraints/senior-policy';
 
 // ─── Task Definitions ────────────────────────────────────────────────────────

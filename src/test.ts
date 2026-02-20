@@ -628,7 +628,7 @@ import {
   isNaturalRole,
   checkSeniorHardBlock,
   validateSeniorHardBlocks,
-  computeSeniorOutOfRolePenalty,
+  computeSeniorHamamaPenalty,
 } from './constraints/senior-policy';
 import { AdanitTeam } from './models/types';
 import type { SlotRequirement, Assignment } from './models/types';
@@ -1058,7 +1058,7 @@ assert(checkSeniorHardBlock(spL0, testShTask, testShSlot) === null, 'HC-13: L0 n
   assert(!r.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'HC-13: L4 in Hamama no hard violation in full validation');
 }
 
-// ── computeSeniorOutOfRolePenalty ─────────────────────────────────────────────────
+// ── computeSeniorHamamaPenalty ────────────────────────────────────────────────────
 
 const cfg = { ...DEFAULT_CONFIG };
 
@@ -1067,35 +1067,35 @@ const cfg = { ...DEFAULT_CONFIG };
   const assigns: Assignment[] = [
     { id: 'sr-p1', taskId: testKarovTask.id, slotId: testKarovSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorOutOfRolePenalty([spL3], assigns, [testKarovTask], cfg);
-  assert(pen === 0, 'HC-13 soft: natural assignment → 0 penalty');
+  const pen = computeSeniorHamamaPenalty([spL3], assigns, [testKarovTask], cfg);
+  assert(pen === 0, 'Senior Hamama: natural assignment → 0 penalty');
 }
 
-// Any senior in Hamama → seniorHamamaPenalty (absolute last resort)
+// L4 in Hamama → seniorHamamaPenalty (absolute last resort)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorOutOfRolePenalty([spL4], assigns, [testHamTask], cfg);
-  assert(pen === cfg.seniorHamamaPenalty, `HC-13 soft: L4 Hamama → penalty ${cfg.seniorHamamaPenalty}`);
+  const pen = computeSeniorHamamaPenalty([spL4], assigns, [testHamTask], cfg);
+  assert(pen === cfg.seniorHamamaPenalty, `Senior Hamama: L4 Hamama → penalty ${cfg.seniorHamamaPenalty}`);
 }
 
-// L3 in Hamama → same seniorHamamaPenalty
+// L3 in Hamama → 0 (hard-blocked by HC-13, should never occur)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2b', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorOutOfRolePenalty([spL3], assigns, [testHamTask], cfg);
-  assert(pen === cfg.seniorHamamaPenalty, `HC-13 soft: L3 Hamama → penalty ${cfg.seniorHamamaPenalty}`);
+  const pen = computeSeniorHamamaPenalty([spL3], assigns, [testHamTask], cfg);
+  assert(pen === 0, 'Senior Hamama: L3 Hamama → 0 (hard-blocked)');
 }
 
-// L2 in Hamama → same seniorHamamaPenalty
+// L2 in Hamama → 0 (hard-blocked by HC-13, should never occur)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2c', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorOutOfRolePenalty([spL2], assigns, [testHamTask], cfg);
-  assert(pen === cfg.seniorHamamaPenalty, `HC-13 soft: L2 Hamama → penalty ${cfg.seniorHamamaPenalty}`);
+  const pen = computeSeniorHamamaPenalty([spL2], assigns, [testHamTask], cfg);
+  assert(pen === 0, 'Senior Hamama: L2 Hamama → 0 (hard-blocked)');
 }
 
 // L0 participants never penalised
@@ -1103,8 +1103,8 @@ const cfg = { ...DEFAULT_CONFIG };
   const assigns: Assignment[] = [
     { id: 'sr-p5', taskId: testMamTask.id, slotId: testMamSlot.slotId, participantId: spL0.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorOutOfRolePenalty([spL0], assigns, [testMamTask], cfg);
-  assert(pen === 0, 'HC-13 soft: L0 never penalised');
+  const pen = computeSeniorHamamaPenalty([spL0], assigns, [testMamTask], cfg);
+  assert(pen === 0, 'Senior Hamama: L0 never penalised');
 }
 // ─── Summary ─────────────────────────────────────────────────────────────────
 
