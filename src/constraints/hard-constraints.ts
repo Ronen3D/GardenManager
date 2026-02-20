@@ -51,10 +51,17 @@ function violation(
  * acceptableLevels list?
  *
  * Accepts an explicit match OR a level strictly higher than the highest
- * listed (overqualified). Note: for seniors (L2-L4), HC-13 restricts
- * assignments to natural-domain slots BEFORE this check runs, so the
- * overqualified path only fires when HC-13 has already approved the
- * assignment (e.g. L4 in an L0 Hamama slot).
+ * listed (overqualified).  The overqualified path is intentional for
+ * natural-domain tasks where a senior may fill a junior slot as a fallback.
+ *
+ * Callers must enforce HC-13 (senior hard blocks) independently to prevent
+ * seniors entering non-natural / restricted task types.  In particular,
+ * `isEligibleForSlot()` in validator.ts checks HC-13 BEFORE calling this
+ * function, ensuring the overqualified path only fires when HC-13 has
+ * already approved the assignment (e.g. L4 in an L0 Hamama slot).
+ * The optimizer's swap-feasibility check and `validateHardConstraints()`
+ * both evaluate HC-1 and HC-13 as independent constraints that must all
+ * pass — ordering between them is irrelevant there.
  */
 export function isLevelSatisfied(level: Level, slot: SlotRequirement): boolean {
   return slot.acceptableLevels.includes(level)
@@ -200,22 +207,46 @@ export function checkNoDoubleBooking(
   // Check ALL assignments for physical overlap (including light tasks)
   const allWithTasks = participantAssignments.filter((a) => taskMap.has(a.taskId));
 
-  for (let i = 0; i < allWithTasks.length; i++) {
-    for (let j = i + 1; j < allWithTasks.length; j++) {
-      const taskA = taskMap.get(allWithTasks[i].taskId)!;
-      const taskB = taskMap.get(allWithTasks[j].taskId)!;
-      if (blocksOverlap(taskA.timeBlock, taskB.timeBlock)) {
-        violations.push(
-          violation(
-            'DOUBLE_BOOKING',
-            `Participant ${participantId} is double-booked: "${taskA.name}" and "${taskB.name}" overlap`,
-            taskA.id,
-            undefined,
-            participantId,
-          ),
-        );
+  if (allWithTasks.length < 2) return violations;
+
+  // Sort by start time for O(n log n) sweep-line overlap detection
+  allWithTasks.sort((a, b) => {
+    const tA = taskMap.get(a.taskId)!;
+    const tB = taskMap.get(b.taskId)!;
+    return tA.timeBlock.start.getTime() - tB.timeBlock.start.getTime();
+  });
+
+  // Sweep-line: track the maximum end time seen so far
+  let maxEndMs = taskMap.get(allWithTasks[0].taskId)!.timeBlock.end.getTime();
+
+  for (let i = 1; i < allWithTasks.length; i++) {
+    const task = taskMap.get(allWithTasks[i].taskId)!;
+    const startMs = task.timeBlock.start.getTime();
+    const endMs = task.timeBlock.end.getTime();
+
+    if (startMs < maxEndMs) {
+      // Overlap detected — find the previous task(s) that overlap
+      // Walk backwards to report all overlapping pairs with this task
+      for (let j = i - 1; j >= 0; j--) {
+        const prevTask = taskMap.get(allWithTasks[j].taskId)!;
+        if (blocksOverlap(prevTask.timeBlock, task.timeBlock)) {
+          violations.push(
+            violation(
+              'DOUBLE_BOOKING',
+              `Participant ${participantId} is double-booked: "${prevTask.name}" and "${task.name}" overlap`,
+              prevTask.id,
+              undefined,
+              participantId,
+            ),
+          );
+        } else {
+          // Since sorted by start, earlier tasks that don't overlap won't overlap either
+          break;
+        }
       }
     }
+
+    if (endMs > maxEndMs) maxEndMs = endMs;
   }
   return violations;
 }
