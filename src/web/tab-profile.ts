@@ -27,12 +27,12 @@ import {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 
 // ─── Local Formatting Helpers ────────────────────────────────────────────────
 
 function fmtDayLabel(d: Date): string {
-  return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+  return d.toLocaleDateString('he-IL', { weekday: 'short', day: '2-digit', month: 'short' });
 }
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -87,24 +87,24 @@ function renderTopBar(
   _ctx: ProfileContext,
 ): string {
   // Determine status
-  let statusText = 'Available';
+  let statusText = 'זמין';
   let statusClass = 'status-available';
 
   const adanitTasks = myTasks.filter(x => x.task.type === TaskType.Adanit);
   if (adanitTasks.length > 0) {
-    statusText = 'Assigned to Adanit';
+    statusText = 'משובץ לאדנית';
     statusClass = 'status-active';
   }
 
   const certHtml = p.certifications.length > 0
     ? p.certifications.map(c => certBadge(c)).join(' ')
-    : '<span class="text-muted">None</span>';
+    : '<span class="text-muted">אין</span>';
 
   return `
   <div class="profile-topbar">
-    <button class="btn-back" data-action="back-to-schedule" title="Back to Full Schedule">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <span>Back to Schedule</span>
+    <button class="btn-back" data-action="back-to-schedule" title="חזור לשבצ&quot;ק">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M7.5 15L12.5 10L7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>חזור לשבצ"ק</span>
     </button>
     <div class="profile-identity">
       <h2 class="profile-name">${p.name}</h2>
@@ -113,20 +113,20 @@ function renderTopBar(
         ${groupBadge(p.group)}
         <span class="profile-status ${statusClass}">${statusText}</span>
       </div>
-      <div class="profile-certs">Certs: ${certHtml}</div>
+      <div class="profile-certs">הסמכות: ${certHtml}</div>
     </div>
     <div class="profile-summary-kpis">
       <div class="profile-kpi">
         <span class="profile-kpi-value">${myTasks.filter(x => !x.task.isLight).length}</span>
-        <span class="profile-kpi-label">Heavy Tasks</span>
+        <span class="profile-kpi-label">משימות כבדות</span>
       </div>
       <div class="profile-kpi">
         <span class="profile-kpi-value">${myTasks.filter(x => x.task.isLight).length}</span>
-        <span class="profile-kpi-label">Light Tasks</span>
+        <span class="profile-kpi-label">משימות קלות</span>
       </div>
       <div class="profile-kpi">
         <span class="profile-kpi-value">${computeHeavyHours(myTasks).toFixed(1)}h</span>
-        <span class="profile-kpi-label">Effective Load</span>
+        <span class="profile-kpi-label">עומס אפקטיבי</span>
       </div>
     </div>
   </div>`;
@@ -147,7 +147,7 @@ function renderPersonalAgenda(
   const DAY_START_HOUR = 5;
 
   let html = `<div class="profile-card">
-    <h3 class="profile-card-title">📅 Personal Agenda</h3>
+    <h3 class="profile-card-title">📅 לו"ז אישי</h3>
     <div class="agenda-days">`;
 
   for (let d = 1; d <= numDays; d++) {
@@ -167,12 +167,12 @@ function renderPersonalAgenda(
 
     html += `<div class="agenda-day ${isToday ? 'agenda-day-current' : ''}">
       <div class="agenda-day-header">
-        <span class="agenda-day-label">Day ${d} · ${dayLabel}</span>
-        <span class="agenda-day-count">${dayTasks.length} task${dayTasks.length !== 1 ? 's' : ''}</span>
+        <span class="agenda-day-label">יום ${d} · ${dayLabel}</span>
+        <span class="agenda-day-count">${dayTasks.length} ${dayTasks.length !== 1 ? 'משימות' : 'משימה'}</span>
       </div>`;
 
     if (dayTasks.length === 0) {
-      html += '<div class="agenda-empty">No assignments</div>';
+      html += '<div class="agenda-empty">אין שיבוצים</div>';
     } else {
       html += '<div class="agenda-tasks">';
       for (const { task } of dayTasks) {
@@ -184,15 +184,15 @@ function renderPersonalAgenda(
           ? Math.ceil((task.timeBlock.end.getTime() - new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), DAY_START_HOUR, 0).getTime()) / 86400000)
           : 0;
         const crossDayBadge = crossDay
-          ? `<span class="badge badge-sm" style="background:#555;color:#ffc107" title="Continues into Day ${endDayIdx}">→ Day ${endDayIdx}</span>`
+          ? `<span class="badge badge-sm" style="background:#555;color:#ffc107" title="ממשיך ליום ${endDayIdx}">← יום ${endDayIdx}</span>`
           : '';
-        html += `<div class="agenda-task task-tooltip-hover${crossDay ? ' agenda-task-crossday' : ''}" data-task-id="${task.id}" style="border-left:3px solid ${color}">
+        html += `<div class="agenda-task task-tooltip-hover${crossDay ? ' agenda-task-crossday' : ''}" data-task-id="${task.id}" style="border-inline-start:3px solid ${color}">
           <div class="agenda-task-time">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</div>
           <div class="agenda-task-info">
             <span class="agenda-task-name">${task.name}</span>
             ${taskTypeBadge(task.type)}
             <span class="agenda-task-dur">${hrs.toFixed(1)}h</span>
-            ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">Light</span>' : ''}
+            ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
             ${crossDayBadge}
           </div>
         </div>`;
@@ -213,16 +213,16 @@ function renderUnavailabilitySection(p: Participant): string {
   const dateRules = store.getDateUnavailabilities(p.id);
 
   let html = `<div class="profile-card">
-    <h3 class="profile-card-title">🚫 Unavailability</h3>`;
+    <h3 class="profile-card-title">🚫 חוסר זמינות</h3>`;
 
   // Blackout periods
   if (blackouts.length > 0) {
-    html += '<h4 class="profile-sub-title">Blackout Periods</h4><ul class="profile-list">';
+    html += '<h4 class="profile-sub-title">תקופות חסימה</h4><ul class="profile-list">';
     for (const b of blackouts) {
       html += `<li>
         <strong>${fmt(b.start)} – ${fmt(b.end)}</strong>
         ${b.reason ? `<span class="text-muted"> · ${b.reason}</span>` : ''}
-        <span class="badge badge-sm" style="background:#e74c3c;margin-left:6px">One-time</span>
+        <span class="badge badge-sm" style="background:#e74c3c;margin-inline-start:6px">חד-פעמי</span>
       </li>`;
     }
     html += '</ul>';
@@ -230,29 +230,29 @@ function renderUnavailabilitySection(p: Participant): string {
 
   // Date-specific rules
   if (dateRules.length > 0) {
-    html += '<h4 class="profile-sub-title">Date-Specific Rules</h4><ul class="profile-list">';
+    html += '<h4 class="profile-sub-title">כללים לפי תאריך</h4><ul class="profile-list">';
     for (const r of dateRules) {
       const isRecurring = r.dayOfWeek !== undefined;
       let label: string;
       if (r.specificDate) {
         label = r.specificDate;
       } else if (r.dayOfWeek !== undefined) {
-        label = `Every ${DAY_NAMES[r.dayOfWeek]}`;
+        label = `כל ${DAY_NAMES[r.dayOfWeek]}`;
       } else {
-        label = 'Unknown';
+        label = 'לא ידוע';
       }
-      const timeLabel = r.allDay ? 'All Day' : `${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00`;
+      const timeLabel = r.allDay ? 'כל היום' : `${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00`;
       html += `<li>
         <strong>${label}</strong> — ${timeLabel}
         ${r.reason ? `<span class="text-muted"> · ${r.reason}</span>` : ''}
-        <span class="badge badge-sm" style="background:${isRecurring ? '#8e44ad' : '#e74c3c'};margin-left:6px">${isRecurring ? 'Recurring' : 'Specific Date'}</span>
+        <span class="badge badge-sm" style="background:${isRecurring ? '#8e44ad' : '#e74c3c'};margin-inline-start:6px">${isRecurring ? 'חוזר' : 'תאריך ספציפי'}</span>
       </li>`;
     }
     html += '</ul>';
   }
 
   if (blackouts.length === 0 && dateRules.length === 0) {
-    html += '<p class="text-muted profile-empty-note">No unavailability rules configured. Participant is available 24/7.</p>';
+    html += '<p class="text-muted profile-empty-note">אין כללי זמינות מוגדרים. המשתתף זמין 24/7.</p>';
   }
 
   html += '</div>';
@@ -275,35 +275,35 @@ function renderMetrics(
   const workloadClass = pctOfPeriod > 25 ? 'metric-danger' : pctOfPeriod > 18 ? 'metric-warning' : 'metric-ok';
 
   let html = `<div class="profile-card">
-    <h3 class="profile-card-title">📊 Workload Metrics</h3>
+    <h3 class="profile-card-title">📊 מדדי עומס</h3>
     <div class="metrics-summary">
       <div class="metric-row">
-        <span class="metric-label">Hot Time (100% load)</span>
+        <span class="metric-label">זמן חם (100% עומס)</span>
         <span class="metric-value">${hotHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">Cold Time (reduced load)</span>
+        <span class="metric-label">זמן קר (עומס מופחת)</span>
         <span class="metric-value">${coldHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">Easy (Karovit)</span>
+        <span class="metric-label">קל (כרובית)</span>
         <span class="metric-value">${lightHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">Effective Load</span>
+        <span class="metric-label">עומס אפקטיבי</span>
         <span class="metric-value">${effectiveHeavyHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">Raw Heavy Hours</span>
+        <span class="metric-label">שעות כבדות גולמיות</span>
         <span class="metric-value">${heavyHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">Workload % (effective of ${totalPeriodHours}h)</span>
+        <span class="metric-label">% עומס (אפקטיבי מתוך ${totalPeriodHours}h)</span>
         <span class="metric-value ${workloadClass}">${pctOfPeriod.toFixed(1)}%</span>
       </div>
     </div>
 
-    <h4 class="profile-sub-title" style="margin-top:16px">Breakdown by Task Type</h4>
+    <h4 class="profile-sub-title" style="margin-top:16px">פירוט לפי סוג משימה</h4>
     <div class="metrics-breakdown">`;
 
   // Bar chart for each task type

@@ -61,14 +61,14 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[]):
       const eligible = participants.filter(p => participantMatchesSlot(p, slot));
       if (eligible.length === 0) {
         // Build a human-readable requirement string
-        const levelStr = slot.acceptableLevels.map(l => `L${l}`).join('/');
+        const levelStr = slot.acceptableLevels.map(l => `דרגה ${l}`).join('/');
         const certStr = slot.requiredCertifications.length > 0
           ? ` + ${slot.requiredCertifications.join(', ')}`
           : '';
         findings.push({
           severity: PreflightSeverity.Critical,
           code: 'SKILL_GAP',
-          message: `No participants meet the ${levelStr}${certStr} requirement for "${tpl.name}" slot "${slot.label}".`,
+          message: `אין משתתפים העומדים בדרישת ${levelStr}${certStr} עבור משימה "${tpl.name}" משבצת "${slot.label}".`,
           templateId: tpl.id,
           slotId: slot.id,
         });
@@ -76,7 +76,7 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[]):
         findings.push({
           severity: PreflightSeverity.Warning,
           code: 'SKILL_SCARCITY',
-          message: `Only 1 participant can fill "${tpl.name}" slot "${slot.label}" (${eligible[0].name}). No fallback available.`,
+          message: `רק משתתף אחד יכול למלא משבצת "${slot.label}" במשימה "${tpl.name}" (${eligible[0].name}). אין חלופה זמינה.`,
           templateId: tpl.id,
           slotId: slot.id,
         });
@@ -126,13 +126,13 @@ function checkCapacity(participants: Participant[], templates: TaskTemplate[]): 
     findings.push({
       severity: PreflightSeverity.Critical,
       code: 'CAPACITY_EXCEEDED',
-      message: `Required hours (${totalRequiredHours.toFixed(0)}h) exceed available hours (${totalAvailableParticipantHours.toFixed(0)}h). Schedule is impossible.`,
+      message: `שעות נדרשות (${totalRequiredHours.toFixed(0)} שע') חורגות משעות זמינות (${totalAvailableParticipantHours.toFixed(0)} שע'). השבצ"ק בלתי אפשרי.`,
     });
   } else if (utilizationPercent > 90) {
     findings.push({
       severity: PreflightSeverity.Warning,
       code: 'HIGH_DENSITY',
-      message: `High-Density Risk: ${utilizationPercent.toFixed(1)}% utilization (${totalRequiredHours.toFixed(0)}h required / ${totalAvailableParticipantHours.toFixed(0)}h available). May not leave adequate rest between tasks.`,
+      message: `סיכון צפיפות גבוהה: ${utilizationPercent.toFixed(1)}% ניצולת (${totalRequiredHours.toFixed(0)} שע' נדרשות / ${totalAvailableParticipantHours.toFixed(0)} שע' זמינות). ייתכן שלא יישאר מנוחה מספקת בין משימות.`,
     });
   }
 
@@ -180,7 +180,7 @@ function checkGroupIntegrity(participants: Participant[], templates: TaskTemplat
       findings.push({
         severity: PreflightSeverity.Critical,
         code: 'GROUP_INTEGRITY',
-        message: `No single group can fill all ${allSlots.length} slots for "${tpl.name}" (same-group required). Need at least 1 group with matching members.`,
+        message: `אף קבוצה לא יכולה למלא את כל ${allSlots.length} המשבצות עבור "${tpl.name}" (נדרשת אותה קבוצה). נדרשת לפחות קבוצה אחת עם משתתפים מתאימים.`,
         templateId: tpl.id,
       });
     } else {
@@ -204,7 +204,7 @@ function checkGroupIntegrity(participants: Participant[], templates: TaskTemplat
         findings.push({
           severity: PreflightSeverity.Warning,
           code: 'GROUP_ROTATION_GAP',
-          message: `"${tpl.name}" has ${tpl.shiftsPerDay} shifts/day but groups [${insufficientGroups.join(', ')}] cannot fill all slots. Shift rotation may be limited.`,
+          message: `"${tpl.name}" כולל ${tpl.shiftsPerDay} משמרות/יום אך קבוצות [${insufficientGroups.join(', ')}] לא יכולות למלא את כל המשבצות. רוטציית משמרות עלולה להיות מוגבלת.`,
           templateId: tpl.id,
         });
       }

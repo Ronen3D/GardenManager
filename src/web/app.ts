@@ -54,7 +54,7 @@ import { renderProfileView, wireProfileEvents, ProfileContext } from './tab-prof
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
 import { computeTaskBreakdown } from './workload-utils';
 import {
-  TASK_COLORS, LEVEL_COLORS, CERT_COLORS,
+  TASK_COLORS, LEVEL_COLORS, CERT_COLORS, CERT_LABELS, TASK_TYPE_LABELS,
   fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge,
 } from './ui-helpers';
 
@@ -106,18 +106,21 @@ let _rescuePage = 0;
 // ─── Formatting Helpers (app-local) ──────────────────────────────────────────
 
 function fmtDate(d: Date): string {
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + ' ' + fmt(d);
+  return d.toLocaleDateString('he-IL', { day: '2-digit', month: 'short' }) + ' ' + fmt(d);
 }
 
 function fmtDayShort(d: Date): string {
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  return d.toLocaleDateString('he-IL', { day: '2-digit', month: 'short' });
 }
 
 function statusBadge(status: AssignmentStatus): string {
   const colors: Record<string, string> = {
     Scheduled: '#27ae60', Locked: '#2980b9', Manual: '#f39c12', Conflict: '#e74c3c', Frozen: '#00bcd4'
   };
-  return `<span class="badge badge-sm" style="background:${colors[status] || '#7f8c8d'}">${status}</span>`;
+  const labels: Record<string, string> = {
+    Scheduled: 'משובץ', Locked: 'נעול', Manual: 'ידני', Conflict: 'התנגשות', Frozen: 'מוקפא'
+  };
+  return `<span class="badge badge-sm" style="background:${colors[status] || '#7f8c8d'}">${labels[status] || status}</span>`;
 }
 
 // ─── Day Window Helpers ──────────────────────────────────────────────────────
@@ -213,9 +216,9 @@ function generateTasksFromTemplates(): Task[] {
         const slots: SlotRequirement[] = [];
 
         for (const st of tpl.subTeams) {
-          const adanitTeam = st.name.toLowerCase().includes('main')
+          const adanitTeam = st.name.includes('ראשי')
             ? AdanitTeam.SegolMain
-            : st.name.toLowerCase().includes('secondary')
+            : st.name.includes('משני')
               ? AdanitTeam.SegolSecondary
               : undefined;
 
@@ -239,7 +242,7 @@ function generateTasksFromTemplates(): Task[] {
           });
         }
 
-        const shiftLabel = tpl.shiftsPerDay > 1 ? ` Shift ${si + 1}` : '';
+        const shiftLabel = tpl.shiftsPerDay > 1 ? ` משמרת ${si + 1}` : '';
         allTasks.push({
           id: `${tpl.name.toLowerCase()}-d${dayIdx + 1}-${++_tTaskCounter}`,
           type: (tpl.taskType as TaskType) || TaskType.Adanit,
@@ -328,7 +331,7 @@ function renderDayNavigator(): string {
 
   for (let d = 1; d <= numDays; d++) {
     const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-    const dayName = date.toLocaleDateString('en-GB', { weekday: 'short' });
+    const dayName = date.toLocaleDateString('he-IL', { weekday: 'short' });
     const dayNum = date.getDate();
 
     // Count tasks and assignments for this day
@@ -344,7 +347,7 @@ function renderDayNavigator(): string {
     }
 
     const violationDot = violationCount > 0
-      ? `<span class="day-violation-dot" title="${violationCount} violation(s)">!</span>`
+      ? `<span class="day-violation-dot" title="${violationCount} הפרות">!</span>`
       : '';
 
     // Frozen / partially frozen indicators
@@ -352,10 +355,10 @@ function renderDayNavigator(): string {
     let frozenClass = '';
     if (liveMode.enabled) {
       if (isDayFrozen(d, baseDate, liveMode.currentTimestamp, DAY_START_HOUR)) {
-        frozenTag = `<span class="day-frozen-badge" title="This day is frozen (past)">🧊</span>`;
+        frozenTag = `<span class="day-frozen-badge" title="יום זה מוקפא (עבר)">🧊</span>`;
         frozenClass = ' day-tab-frozen';
       } else if (isDayPartiallyFrozen(d, baseDate, liveMode.currentTimestamp, DAY_START_HOUR)) {
-        frozenTag = `<span class="day-frozen-badge day-frozen-partial" title="Partially frozen">⏳</span>`;
+        frozenTag = `<span class="day-frozen-badge day-frozen-partial" title="מוקפא חלקית">⏳</span>`;
         frozenClass = ' day-tab-partial-frozen';
       }
     }
@@ -363,8 +366,8 @@ function renderDayNavigator(): string {
     html += `<button class="day-tab ${currentDay === d ? 'day-tab-active' : ''}${frozenClass}" data-day="${d}">
       <span class="day-tab-name">${dayName}</span>
       <span class="day-tab-num">${dayNum}</span>
-      <span class="day-tab-label">Day ${d}</span>
-      ${taskCount > 0 ? `<span class="day-tab-count">${taskCount} tasks</span>` : ''}
+      <span class="day-tab-label">יום ${d}</span>
+      ${taskCount > 0 ? `<span class="day-tab-count">${taskCount} משימות</span>` : ''}
       ${violationDot}
       ${frozenTag}
     </button>`;
@@ -384,7 +387,7 @@ function renderWeeklyDashboard(schedule: Schedule): string {
   const totalViolations = visibleViolations.filter(v => v.severity === ViolationSeverity.Error).length;
   const warnings = visibleViolations.filter(v => v.severity === ViolationSeverity.Warning).length;
   const feasibleClass = schedule.feasible ? 'kpi-ok' : 'kpi-error';
-  const feasibleText = schedule.feasible ? '✓ Feasible' : '✗ Infeasible';
+  const feasibleText = schedule.feasible ? '✓ ישים' : '✗ לא ישים';
 
   // Per-day task counts
   let dayDots = '';
@@ -396,7 +399,7 @@ function renderWeeklyDashboard(schedule: Schedule): string {
       return task ? taskIntersectsDay(task, d) : false;
     }).length;
     const dotClass = dayViolations > 0 ? 'dot-error' : count > 0 ? 'dot-ok' : 'dot-empty';
-    dayDots += `<span class="week-dot ${dotClass}" title="Day ${d}: ${count} tasks, ${dayViolations} violations"></span>`;
+    dayDots += `<span class="week-dot ${dotClass}" title="יום ${d}: ${count} משימות, ${dayViolations} הפרות"></span>`;
   }
 
   return `<div class="weekly-dashboard">
@@ -404,37 +407,29 @@ function renderWeeklyDashboard(schedule: Schedule): string {
       <div class="kpi-group">
         <div class="kpi ${feasibleClass}">
           <span class="kpi-value">${feasibleText}</span>
-          <span class="kpi-label">${numDays}-Day Status</span>
+          <span class="kpi-label">סטטוס ${numDays} ימים</span>
         </div>
         <div class="kpi">
           <span class="kpi-value">${score.compositeScore.toFixed(1)}</span>
-          <span class="kpi-label">Weekly Score</span>
-        </div>
-        <div class="kpi">
-          <span class="kpi-value">${score.l0StdDev.toFixed(2)}</span>
-          <span class="kpi-label">L0 Fairness (σ)</span>
-        </div>
-        <div class="kpi">
-          <span class="kpi-value">${score.minRestHours.toFixed(1)}h</span>
-          <span class="kpi-label">Min Rest</span>
+          <span class="kpi-label">ציון שבועי</span>
         </div>
         <div class="kpi ${totalViolations > 0 ? 'kpi-error' : 'kpi-ok'}">
           <span class="kpi-value">${totalViolations}</span>
-          <span class="kpi-label">Violations</span>
+          <span class="kpi-label">הפרות</span>
         </div>
         <div class="kpi">
           <span class="kpi-value">${warnings}</span>
-          <span class="kpi-label">Warnings</span>
+          <span class="kpi-label">אזהרות</span>
         </div>
       </div>
       <div class="week-dots-strip">
-        <span class="week-dots-label">Days</span>
+        <span class="week-dots-label">ימים</span>
         <div class="week-dots">${dayDots}</div>
       </div>
     </div>
     <div class="dashboard-meta">
-      Best of ${OPTIM_ATTEMPTS} attempts in ${scheduleElapsed}ms · ${schedule.participants.length} participants ·
-      ${schedule.tasks.length} tasks · ${schedule.assignments.length} assignments
+      הטוב מתוך ${OPTIM_ATTEMPTS} ניסיונות ב-${scheduleElapsed}ms · ${schedule.participants.length} משתתפים ·
+      ${schedule.tasks.length} משימות · ${schedule.assignments.length} שיבוצים
     </div>
   </div>`;
 }
@@ -456,15 +451,15 @@ function renderSidebarEntry(
   let tooltipParts: string[] = [];
   for (let d = 1; d <= store.getScheduleDays(); d++) {
     const dayHrs = entry.perDay.get(d) || 0;
-    tooltipParts.push(`D${d}: ${dayHrs.toFixed(1)}h`);
+    tooltipParts.push(`י${d}: ${dayHrs.toFixed(1)} שע'`);
   }
   const todayHrs = entry.perDay.get(currentDay) || 0;
   const todayRatio = totalPeriodHours > 0 ? todayHrs / totalPeriodHours : 0;
   const todayBarWidth = Math.min(todayRatio * 100 * (100 / 30), barWidth);
 
-  const diagTooltip = `${entry.w.effectiveHours.toFixed(1)}h effective / ${totalPeriodHours}h period = ${entry.pctOfPeriod.toFixed(1)}%\n` +
-    `Hot: ${entry.w.hotHours.toFixed(1)}h · Cold: ${entry.w.coldHours.toFixed(1)}h · Raw: ${entry.w.totalHours.toFixed(1)}h\n` +
-    `Assignments: ${entry.w.nonLightCount} heavy tasks\n` +
+  const diagTooltip = `${entry.w.effectiveHours.toFixed(1)} שע' אפקטיביות / ${totalPeriodHours} שע' תקופה = ${entry.pctOfPeriod.toFixed(1)}%\n` +
+    `חם: ${entry.w.hotHours.toFixed(1)} שע' · קר: ${entry.w.coldHours.toFixed(1)} שע' · גולמי: ${entry.w.totalHours.toFixed(1)} שע'\n` +
+    `שיבוצים: ${entry.w.nonLightCount} משימות כבדות\n` +
     tooltipParts.join(' | ');
 
   return `<div class="sidebar-entry">
@@ -476,10 +471,10 @@ function renderSidebarEntry(
       <div class="sidebar-bar-bg" title="${diagTooltip}">
         <div class="sidebar-bar-fill ${barClass}" style="width:${barWidth}%"></div>
         <div class="sidebar-bar-today" style="width:${todayBarWidth}%"></div>
-        <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)}h eff (${entry.pctOfPeriod.toFixed(1)}%)</span>
+        <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שע' אפק' (${entry.pctOfPeriod.toFixed(1)}%)</span>
       </div>
-      <span class="sidebar-today-tag" title="Today (Day ${currentDay}): ${todayHrs.toFixed(1)} raw h">
-        Raw D${currentDay}: ${todayHrs.toFixed(1)}h
+      <span class="sidebar-today-tag" title="היום (יום ${currentDay}): ${todayHrs.toFixed(1)} שע' גולמיות">
+        גולמי י${currentDay}: ${todayHrs.toFixed(1)} שע'
       </span>
     </div>
   </div>`;
@@ -530,8 +525,8 @@ function renderParticipantSidebar(schedule: Schedule): string {
   // ── L0 Section (always visible) ──
   let html = `<div class="participant-sidebar">
     <div class="sidebar-header">
-      <h3>Level 0 Workload</h3>
-      <div class="sidebar-avg">Avg: ${l0Avg.toFixed(1)}h eff · σ ${l0Sigma.toFixed(2)} · ${l0Entries.length} participants · ${numDays}d</div>
+      <h3>עומס דרגה 0</h3>
+      <div class="sidebar-avg">ממוצע: ${l0Avg.toFixed(1)} שע' אפק' · ${l0Entries.length} משתתפים · ${numDays} ימים</div>
     </div>
     <div class="sidebar-entries">`;
 
@@ -544,15 +539,15 @@ function renderParticipantSidebar(schedule: Schedule): string {
   // ── Senior Section (hidden by default) ──
   html += `
     <div class="sidebar-senior-divider">
-      <button class="btn-senior-toggle" id="btn-senior-toggle" title="Show / hide senior (L2-L4) workload">
-        👤 Senior View (${seniorEntries.length})
+      <button class="btn-senior-toggle" id="btn-senior-toggle" title="הצג / הסתר עומס בכירים (L2-L4)">
+        👤 תצוגת בכירים (${seniorEntries.length})
         <span class="senior-toggle-arrow" id="senior-toggle-arrow">▶</span>
       </button>
     </div>
     <div class="sidebar-senior-panel" id="sidebar-senior-panel" style="display:none">
       <div class="sidebar-header sidebar-header-senior">
-        <h3>Senior Workload (L2-L4)</h3>
-        <div class="sidebar-avg">Avg: ${seniorAvg.toFixed(1)}h eff · σ ${seniorSigma.toFixed(2)} · ${seniorEntries.length} participants</div>
+        <h3>עומס בכירים (L2-L4)</h3>
+        <div class="sidebar-avg">ממוצע: ${seniorAvg.toFixed(1)} שע' אפק' · σ ${seniorSigma.toFixed(2)} · ${seniorEntries.length} משתתפים</div>
       </div>
       <div class="sidebar-entries">`;
 
@@ -578,7 +573,7 @@ function renderScheduleTab(): string {
     let dayOptions = '';
     for (let d = 1; d <= numDays; d++) {
       const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-      const label = `Day ${d} (${date.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })})`;
+      const label = `יום ${d} (${date.toLocaleDateString('he-IL', { weekday: 'short', day: '2-digit', month: 'short' })})`;
       // Determine which day is currently selected
       let selected = false;
       if (liveMode.enabled) {
@@ -601,11 +596,11 @@ function renderScheduleTab(): string {
       <div class="live-mode-controls">
         <label class="live-mode-toggle" title="Enable Live Mode to freeze past assignments">
           <input type="checkbox" id="chk-live-mode" ${liveMode.enabled ? 'checked' : ''} />
-          <span class="live-toggle-label">🔴 Live Mode</span>
+          <span class="live-toggle-label">🔴 מצב חי</span>
         </label>
         ${liveMode.enabled ? `
           <div class="live-mode-picker">
-            <label>Now at:
+            <label>עכשיו ב:
               <select id="sel-live-day" class="input-sm">${dayOptions}</select>
               <select id="sel-live-hour" class="input-sm">${hourOptions}</select>
             </label>
@@ -615,32 +610,32 @@ function renderScheduleTab(): string {
   }
 
   let html = `<div class="tab-toolbar">
-    <div class="toolbar-left"><h2>Schedule View</h2>
-      <span class="text-muted" style="margin-left:12px">${numDays}-Day Schedule</span>
+    <div class="toolbar-left"><h2>תצוגת שבצ"ק</h2>
+      <span class="text-muted" style="margin-inline-start:12px">שבצ"ק ל-${numDays} ימים</span>
     </div>
     <div class="toolbar-right">
       ${liveModeControls}
-      <label class="scenarios-label" for="input-scenarios" title="Number of optimization scenarios to evaluate">Scenarios
+      <label class="scenarios-label" for="input-scenarios" title="מספר תרחישי אופטימיזציה לבדיקה">תרחישים
         <input type="number" id="input-scenarios" class="input-scenarios" min="1" max="50000" step="100" value="${OPTIM_ATTEMPTS}" ${_isOptimizing ? 'disabled' : ''} />
       </label>
       <button class="btn-primary ${_scheduleDirty && currentSchedule ? 'btn-generate-dirty' : ''}" id="btn-generate" ${!preflight.canGenerate || _isOptimizing ? 'disabled' : ''}
-        ${!preflight.canGenerate ? 'title="Fix critical issues in Task Rules first"' : ''}>
-        ${_isOptimizing ? '⏳ Optimizing…' : currentSchedule ? '🔄 Regenerate' : '⚡ Generate Schedule'}
+        ${!preflight.canGenerate ? 'title="תקן בעיות קריטיות בכללי המשימות תחילה"' : ''}>
+        ${_isOptimizing ? '⏳ מייעל…' : currentSchedule ? '🔄 צור מחדש' : '⚡ צור שבצ"ק'}
       </button>
-      ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="Reset to defaults and clear saved state">🔄 Reset</button>` : ''}
+      ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
     </div>
   </div>`;
 
   if (_scheduleDirty && currentSchedule) {
-    html += `<div class="dirty-notice">⚠ Schedule out of sync — Re-generate recommended</div>`;
+    html += `<div class="dirty-notice">⚠ השבצ"ק לא מעודכן — מומלץ ליצור מחדש</div>`;
   }
 
   if (!preflight.canGenerate) {
     const crits = preflight.findings.filter(f => f.severity === 'Critical');
     html += `<div class="alert alert-error">
-      <strong>Cannot generate — ${crits.length} critical issue(s):</strong>
+      <strong>לא ניתן ליצור — ${crits.length} בעיות קריטיות:</strong>
       <ul>${crits.map(f => `<li>${f.message}</li>`).join('')}</ul>
-      <p>Switch to <strong>Task Rules</strong> to resolve.</p>
+      <p>עבור ל<strong>פירוט משימות</strong> כדי לתקן.</p>
     </div>`;
   }
 
@@ -648,8 +643,8 @@ function renderScheduleTab(): string {
     if (preflight.canGenerate) {
       html += `<div class="empty-state">
         <div class="empty-icon">📋</div>
-        <p>No schedule generated yet.</p>
-        <p class="text-muted">Configure participants and task rules, then click "Generate Schedule".</p>
+        <p>טרם נוצר שבצ"ק.</p>
+        <p class="text-muted">הגדר משתתפים ופירוט משימות, ולאחר מכן לחץ "צור שבצ"ק".</p>
       </div>`;
     }
     return html;
@@ -666,16 +661,16 @@ function renderScheduleTab(): string {
   // Day window label
   const { start: dayStart, end: dayEnd } = getDayWindow(currentDay);
   html += `<div class="day-window-label">
-    Showing <strong>Day ${currentDay}</strong>: ${fmtDayShort(dayStart)} ${fmt(dayStart)} – ${fmtDayShort(dayEnd)} ${fmt(dayEnd)}
+    מציג <strong>יום ${currentDay}</strong>: ${fmtDayShort(dayStart)} ${fmt(dayStart)} – ${fmtDayShort(dayEnd)} ${fmt(dayEnd)}
   </div>`;
 
   // Main layout: content + sidebar
   html += `<div class="schedule-layout">`;
   html += `<div class="schedule-main">`;
-  html += `<section><h2>Assignments <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState())}</section>`;
-  html += `<section><h2>Gantt Timeline</h2>${renderGanttChart(s)}</section>`;
-  html += `<section><h2>Constraint Violations <span class="count">${filterVisibleViolations(s.violations).length}</span></h2>${renderViolations(s)}</section>`;
-  html += `<section><h2>Rest Fairness</h2>${renderRestTable(s)}</section>`;
+  html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState())}</section>`;
+  html += `<section><h2>ציר זמן גאנט</h2>${renderGanttChart(s)}</section>`;
+  html += `<section><h2>הפרות אילוצים <span class="count">${filterVisibleViolations(s.violations).length}</span></h2>${renderViolations(s)}</section>`;
+  html += `<section><h2>שיוויוניות מנוחה</h2>${renderRestTable(s)}</section>`;
   html += `</div>`;
   html += renderParticipantSidebar(s);
   html += `</div>`;
@@ -694,7 +689,7 @@ function renderViolations(schedule: Schedule): string {
   const warn = visible.filter(v => v.severity === ViolationSeverity.Warning);
 
   if (hard.length === 0 && warn.length === 0) {
-    return '<div class="alert alert-ok">✓ No constraint violations across all 7 days.</div>';
+    return '<div class="alert alert-ok">✓ אין הפרות אילוצים בכל 7 הימים.</div>';
   }
 
   // Separate into current-day and other-day violations
@@ -705,21 +700,21 @@ function renderViolations(schedule: Schedule): string {
     const today = hard.filter(v => v.taskId && dayTaskIds.has(v.taskId));
     const other = hard.filter(v => !v.taskId || !dayTaskIds.has(v.taskId));
 
-    html += `<div class="alert alert-error"><strong>Hard Violations (${hard.length})</strong>`;
+    html += `<div class="alert alert-error"><strong>הפרות חמורות (${hard.length})</strong>`;
     if (today.length > 0) {
-      html += `<div class="violation-section"><em>Day ${currentDay}:</em><ul>`;
+      html += `<div class="violation-section"><em>יום ${currentDay}:</em><ul>`;
       for (const v of today) html += `<li><code>${v.code}</code> ${v.message}</li>`;
       html += `</ul></div>`;
     }
     if (other.length > 0) {
-      html += `<div class="violation-section violation-other"><em>Other days:</em><ul>`;
+      html += `<div class="violation-section violation-other"><em>ימים אחרים:</em><ul>`;
       for (const v of other) html += `<li><code>${v.code}</code> ${v.message}</li>`;
       html += `</ul></div>`;
     }
     html += '</div>';
   }
   if (warn.length > 0) {
-    html += `<div class="alert alert-warn"><strong>Warnings (${warn.length})</strong><ul>`;
+    html += `<div class="alert alert-warn"><strong>אזהרות (${warn.length})</strong><ul>`;
     for (const w of warn) html += `<li><code>${w.code}</code> ${w.message}</li>`;
     html += '</ul></div>';
   }
@@ -752,8 +747,8 @@ function renderAssignmentsTable(schedule: Schedule): string {
   );
 
   let html = `<div class="table-responsive"><table class="table">
-    <thead><tr><th>Task</th><th>Type</th><th>Time</th><th>Slot</th><th>Participant</th>
-    <th>Level</th><th>Group</th><th>Status</th><th>Actions</th></tr></thead><tbody>`;
+    <thead><tr><th>משימה</th><th>סוג</th><th>זמן</th><th>עמדה</th><th>משתתף</th>
+    <th>דרגה</th><th>קבוצה</th><th>סטטוס</th><th>פעולות</th></tr></thead><tbody>`;
 
   for (const task of sortedTasks) {
     const taskAssignments = groupedByTask.get(task.id) || [];
@@ -764,17 +759,17 @@ function renderAssignmentsTable(schedule: Schedule): string {
     const contToNext = taskEndsAfter(task, currentDay);
     let crossDayTag = '';
     if (contFromPrev && contToNext) {
-      crossDayTag = `<span class="cross-day-badge cross-both" title="Continues from Day ${currentDay - 1} into Day ${currentDay + 1}">◀ ▶</span>`;
+      crossDayTag = `<span class="cross-day-badge cross-both" title="ממשיך מיום ${currentDay - 1} ליום ${currentDay + 1}">◀ ▶</span>`;
     } else if (contFromPrev) {
-      crossDayTag = `<span class="cross-day-badge cross-from" title="Continued from Day ${currentDay - 1}">◀ from D${currentDay - 1}</span>`;
+      crossDayTag = `<span class="cross-day-badge cross-from" title="המשך מיום ${currentDay - 1}">▶ מיום ${currentDay - 1}</span>`;
     } else if (contToNext) {
-      crossDayTag = `<span class="cross-day-badge cross-to" title="Continues into Day ${currentDay + 1}">▶ to D${currentDay + 1}</span>`;
+      crossDayTag = `<span class="cross-day-badge cross-to" title="ממשיך ליום ${currentDay + 1}">◀ ליום ${currentDay + 1}</span>`;
     }
 
     if (taskAssignments.length === 0) {
       html += `<tr class="row-warning"><td><strong>${task.name}</strong> ${crossDayTag}</td><td>${taskTypeBadge(task.type)}</td>
         <td>${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</td>
-        <td colspan="6"><em class="text-danger">⚠ No assignments</em></td></tr>`;
+        <td colspan="6"><em class="text-danger">⚠ אין שיבוצים</em></td></tr>`;
       continue;
     }
 
@@ -785,9 +780,9 @@ function renderAssignmentsTable(schedule: Schedule): string {
       const rowClass = a.status === AssignmentStatus.Conflict ? 'row-error' : isFrozen ? 'row-frozen' : '';
       html += `<tr class="${rowClass}" data-assignment-id="${a.id}">`;
       if (i === 0) {
-        html += `<td rowspan="${taskAssignments.length}" class="task-cell task-tooltip-hover${taskIsFrozen ? ' task-cell-frozen' : ''}" data-task-id="${task.id}" style="border-left:4px solid ${TASK_COLORS[task.type] || '#999'}">
-          <strong>${task.name}</strong>${task.isLight ? ' <small>(Light)</small>' : ''} ${crossDayTag}
-          ${taskIsFrozen ? '<span class="frozen-label">🧊 Frozen</span>' : ''}</td>
+        html += `<td rowspan="${taskAssignments.length}" class="task-cell task-tooltip-hover${taskIsFrozen ? ' task-cell-frozen' : ''}" data-task-id="${task.id}" style="border-inline-start:4px solid ${TASK_COLORS[task.type] || '#999'}">
+          <strong>${task.name}</strong>${task.isLight ? ' <small>(קלה)</small>' : ''} ${crossDayTag}
+          ${taskIsFrozen ? '<span class="frozen-label">🧊 מוקפא</span>' : ''}</td>
           <td rowspan="${taskAssignments.length}">${taskTypeBadge(task.type)}</td>
           <td rowspan="${taskAssignments.length}">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</td>`;
       }
@@ -798,10 +793,10 @@ function renderAssignmentsTable(schedule: Schedule): string {
         <td>${statusBadge(a.status)}</td>
         <td>
           ${isFrozen
-            ? `<span class="frozen-action-icon" title="Frozen — cannot modify past assignments">🧊</span>`
-            : `<button class="btn-swap" data-assignment-id="${a.id}" data-task-id="${task.id}" title="Swap">⇄</button>
-               <button class="btn-lock" data-assignment-id="${a.id}" title="Lock/Unlock">🔒</button>
-               ${liveMode.enabled ? `<button class="btn-rescue" data-assignment-id="${a.id}" title="Generate Rescue Plans">🆘</button>` : ''}`
+            ? `<span class="frozen-action-icon" title="מוקפא — לא ניתן לשנות שיבוצי עבר">🧊</span>`
+            : `<button class="btn-swap" data-assignment-id="${a.id}" data-task-id="${task.id}" title="החלפה">⇄</button>
+               <button class="btn-lock" data-assignment-id="${a.id}" title="נעילה/שחרור">🔒</button>
+               ${liveMode.enabled ? `<button class="btn-rescue" data-assignment-id="${a.id}" title="תוכניות חילוץ">🆘</button>` : ''}`
           }
         </td></tr>`;
     });
@@ -818,14 +813,14 @@ function renderRestTable(schedule: Schedule): string {
   const fairness = computeRestFairness(profiles);
 
   let html = `<div class="rest-summary">
-    <span><strong>Min Rest:</strong> ${isFinite(fairness.globalMinRest) ? fairness.globalMinRest.toFixed(1) + 'h' : 'N/A'}</span>
-    <span><strong>Avg Rest:</strong> ${isFinite(fairness.globalAvgRest) ? fairness.globalAvgRest.toFixed(1) + 'h' : 'N/A'}</span>
-    <span><strong>Std Dev:</strong> ${fairness.stdDevRest.toFixed(2)}</span>
+    <span><strong>מנוחה מינ':</strong> ${isFinite(fairness.globalMinRest) ? fairness.globalMinRest.toFixed(1) + 'h' : 'N/A'}</span>
+    <span><strong>מנוחה ממוצעת:</strong> ${isFinite(fairness.globalAvgRest) ? fairness.globalAvgRest.toFixed(1) + 'h' : 'N/A'}</span>
+    <span><strong>סטיית תקן:</strong> ${fairness.stdDevRest.toFixed(2)}</span>
   </div>`;
 
   html += `<div class="table-responsive"><table class="table">
-    <thead><tr><th>Participant</th><th>Group</th><th>Level</th><th>Non-Light</th>
-    <th>Work Hours</th><th>Min Rest</th><th>Avg Rest</th><th>Gaps</th></tr></thead><tbody>`;
+    <thead><tr><th>משתתף</th><th>קבוצה</th><th>דרגה</th><th>לא-קלות</th>
+    <th>שעות עבודה</th><th>מנוחה מינ'</th><th>מנוחה ממוצעת</th><th>הפסקות</th></tr></thead><tbody>`;
 
   const sorted = [...profiles.entries()].sort((a, b) => a[1].minRestHours - b[1].minRestHours);
   for (const [pid, profile] of sorted) {
@@ -858,7 +853,7 @@ function renderGanttChart(schedule: Schedule): string {
   };
   const ganttData = scheduleToGantt(filteredSchedule);
   const totalMs = ganttData.timelineEndMs - ganttData.timelineStartMs;
-  if (totalMs <= 0) return '<p>No timeline data for this day.</p>';
+  if (totalMs <= 0) return '<p>אין נתוני ציר זמן ליום זה.</p>';
 
   const totalHours = totalMs / 3600000;
   // Use smaller tick interval for single day view
@@ -892,9 +887,9 @@ function renderGanttChart(schedule: Schedule): string {
       const crossTo = task && taskEndsAfter(task, currentDay);
       const crossClass = crossFrom ? 'gantt-cross-from' : crossTo ? 'gantt-cross-to' : '';
 
-      const tooltip = `${block.taskName}&#10;${new Date(block.startMs).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} – ${new Date(block.endMs).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}${crossFrom ? '&#10;◀ Continued from previous day' : ''}${crossTo ? '&#10;▶ Continues to next day' : ''}`;
+      const tooltip = `${block.taskName}&#10;${new Date(block.startMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} – ${new Date(block.endMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}${crossFrom ? '&#10;▶ המשך מהיום הקודם' : ''}${crossTo ? '&#10;◀ ממשיך ליום הבא' : ''}`;
       html += `<div class="gantt-block task-tooltip-hover ${block.isLight ? 'gantt-light' : ''} ${crossClass}" data-task-id="${block.taskId}" style="left:${left}%;width:${width}%;background:${block.color}" title="${tooltip}">
-        <span class="gantt-block-text">${crossFrom ? '◀ ' : ''}${block.taskName}${crossTo ? ' ▶' : ''}</span></div>`;
+        <span class="gantt-block-text">${crossFrom ? '▶ ' : ''}${block.taskName}${crossTo ? ' ◀' : ''}</span></div>`;
     }
     html += `</div></div>`;
   }
@@ -920,21 +915,21 @@ function renderOptimOverlay(): string {
   return `<div class="optim-overlay">
     <div class="optim-card">
       <div class="optim-spinner"></div>
-      <h3>Evaluating ${totalAttempts} scenarios for maximum fairness…</h3>
+      <h3>מעריך ${totalAttempts} תרחישים לשיוויוניות מרבית…</h3>
       <div class="optim-progress-bar">
         <div class="optim-progress-fill" style="width:${pct}%"></div>
       </div>
       <div class="optim-status">
-        Attempt <strong>${attempt}</strong> / ${totalAttempts}
-        ${lastImproved ? '<span class="optim-improved">★ Improved!</span>' : ''}
+        ניסיון <strong>${attempt}</strong> / ${totalAttempts}
+        ${lastImproved ? '<span class="optim-improved">★ שיפור!</span>' : ''}
       </div>
       <div class="optim-metrics">
         <div class="optim-metric">
-          <span class="optim-metric-label">Best Score</span>
+          <span class="optim-metric-label">ציון הטוב ביותר</span>
           <span class="optim-metric-value">${bestScore.toFixed(1)}</span>
         </div>
         <div class="optim-metric">
-          <span class="optim-metric-label">Unfilled Slots</span>
+          <span class="optim-metric-label">משבצות ריקות</span>
           <span class="optim-metric-value ${bestUnfilled === 0 ? 'optim-ok' : 'optim-warn'}">${bestUnfilled}</span>
         </div>
       </div>
@@ -1011,7 +1006,7 @@ async function doGenerate(): Promise<void> {
   const genBtn = document.getElementById('btn-generate') as HTMLButtonElement | null;
   if (genBtn) {
     genBtn.disabled = true;
-    genBtn.textContent = '⏳ Optimizing…';
+    genBtn.textContent = '⏳ מייעל…';
   }
 
   const t0 = performance.now();
@@ -1054,10 +1049,10 @@ async function doGenerate(): Promise<void> {
     if (errDiv) {
       errDiv.innerHTML = `
         <div class="optim-error">
-          <h3>⚠ Optimization Failed</h3>
-          <p>Could not find a valid solution within ${OPTIM_ATTEMPTS} attempts.</p>
-          <p>Please check your constraints and participant availability.</p>
-          <button class="btn-primary" id="btn-dismiss-error">Dismiss</button>
+          <h3>⚠ האופטימיזציה נכשלה</h3>
+          <p>לא נמצא פתרון תקין ב-${OPTIM_ATTEMPTS} ניסיונות.</p>
+          <p>בדוק את האילוצים ואת זמינות המשתתפים.</p>
+          <button class="btn-primary" id="btn-dismiss-error">סגור</button>
         </div>`;
       const dismissBtn = document.getElementById('btn-dismiss-error');
       if (dismissBtn) {
@@ -1111,7 +1106,7 @@ function handleSwap(assignmentId: string): void {
   const assignment = currentSchedule.assignments.find(a => a.id === assignmentId);
   if (!assignment) return;
   if (assignment.status === AssignmentStatus.Frozen) {
-    alert('🧊 This assignment is frozen (in the past). It cannot be modified.');
+    alert('🧊 שיבוץ זה מוקפא (בעבר). לא ניתן לשנותו.');
     return;
   }
   const task = currentSchedule.tasks.find(t => t.id === assignment.taskId);
@@ -1124,21 +1119,21 @@ function handleSwap(assignmentId: string): void {
     .join('\n');
 
   const choice = prompt(
-    `Swap in "${task.name}".\nCurrently: ${currentP?.name}\n\nEnter participant name:\n\n${options}`
+    `החלפה ב-"${task.name}".\nנוכחי: ${currentP?.name}\n\nהזן שם משתתף:\n\n${options}`
   );
   if (!choice) return;
 
   const newP = currentSchedule.participants.find(
     p => choice.includes(p.name) || choice === p.id
   );
-  if (!newP) { alert('Participant not found.'); return; }
+  if (!newP) { alert('המשתתף לא נמצא.'); return; }
 
   const result = engine.swapParticipant({ assignmentId, newParticipantId: newP.id });
   currentSchedule = engine.getSchedule();
 
   if (!result.valid) {
     const msgs = result.violations.map(v => `[${v.code}] ${v.message}`).join('\n');
-    alert(`⚠ Swap created violations across the 7-day schedule:\n\n${msgs}`);
+    alert(`⚠ ההחלפה יצרה הפרות בשבצ"ק של 7 ימים:\n\n${msgs}`);
   }
 
   // Full re-validation + refresh
@@ -1151,7 +1146,7 @@ function handleLock(assignmentId: string): void {
   if (!a) return;
 
   if (a.status === AssignmentStatus.Frozen) {
-    alert('🧊 This assignment is frozen (in the past). It cannot be modified.');
+    alert('🧊 שיבוץ זה מוקפא (בעבר). לא ניתן לשנותו.');
     return;
   }
 
@@ -1206,33 +1201,33 @@ function showRescueModal(): void {
   let html = `<div id="rescue-modal-backdrop" class="rescue-backdrop">
     <div class="rescue-modal">
       <div class="rescue-header">
-        <h3>🆘 Rescue Plans</h3>
+        <h3>🆘 תוכניות החלפה</h3>
         <button class="rescue-close" id="btn-rescue-close">✕</button>
       </div>
       <div class="rescue-context">
-        <p>Slot vacated by <strong>${vacatedP?.name || '???'}</strong> in
+        <p>משבצת שהתפנתה על ידי <strong>${vacatedP?.name || '???'}</strong> ב-
         <strong>${task?.name || '???'}</strong></p>
       </div>
       <div class="rescue-plans">`;
 
   if (plans.length === 0) {
-    html += `<div class="rescue-empty">No eligible rescue plans found.</div>`;
+    html += `<div class="rescue-empty">לא נמצאו תוכניות החלפה מתאימות.</div>`;
   }
 
   for (const plan of plans) {
     html += `<div class="rescue-plan" data-plan-id="${plan.id}">
       <div class="rescue-plan-header">
         <span class="rescue-rank">#${plan.rank}</span>
-        <span class="rescue-score">Impact: ${plan.impactScore.toFixed(2)}</span>
-        <span class="rescue-swaps">${plan.swaps.length} swap${plan.swaps.length !== 1 ? 's' : ''}</span>
+        <span class="rescue-score">השפעה: ${plan.impactScore.toFixed(2)}</span>
+        <span class="rescue-swaps">${plan.swaps.length} החלפות</span>
       </div>
       <div class="rescue-plan-details">
         <div class="rescue-metrics">
-          <span>Daily Δ: ${plan.dailyLoadDelta >= 0 ? '+' : ''}${plan.dailyLoadDelta.toFixed(2)}</span>
-          <span>Weekly Δ: ${plan.weeklyLoadDelta >= 0 ? '+' : ''}${plan.weeklyLoadDelta.toFixed(2)}</span>
+          <span>Δ יומי: ${plan.dailyLoadDelta >= 0 ? '+' : ''}${plan.dailyLoadDelta.toFixed(2)}</span>
+          <span>Δ שבועי: ${plan.weeklyLoadDelta >= 0 ? '+' : ''}${plan.weeklyLoadDelta.toFixed(2)}</span>
         </div>
         <table class="rescue-swap-table">
-          <thead><tr><th>Step</th><th>Assigned</th><th>Replacing</th><th>Task / Slot</th></tr></thead>
+          <thead><tr><th>שלב</th><th>שובץ</th><th>מחליף</th><th>משימה / משבצת</th></tr></thead>
           <tbody>`;
 
     for (let i = 0; i < plan.swaps.length; i++) {
@@ -1242,7 +1237,7 @@ function showRescueModal(): void {
       const assignedSpan = `<span class="rescue-participant-hover" data-pid="${sw.toParticipantId}" data-plan-id="${plan.id}"><strong>${swP?.name || '???'}</strong></span>`;
       const replacingSpan = fromP
         ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${fromP.name}</span>`
-        : '(vacant)';
+        : '(פנויה)';
       html += `<tr>
         <td>${i + 1}</td>
         <td>${assignedSpan}</td>
@@ -1258,9 +1253,9 @@ function showRescueModal(): void {
     if (plan.violations && plan.violations.length > 0) {
       html += `<div class="rescue-violations-warning">
         <span class="rescue-violations-icon">⚠️</span>
-        <span>${plan.violations.length} constraint violation${plan.violations.length !== 1 ? 's' : ''}</span>
+        <span>${plan.violations.length} הפרות אילוצים</span>
         <details class="rescue-violations-details">
-          <summary>Show details</summary>
+          <summary>הצג פרטים</summary>
           <ul>`;
       for (const v of plan.violations) {
         html += `<li><code>${v.code}</code> — ${v.message}</li>`;
@@ -1270,14 +1265,14 @@ function showRescueModal(): void {
       </div>`;
     }
 
-    html += `<button class="btn-apply-plan${plan.violations && plan.violations.length > 0 ? ' btn-apply-plan--warn' : ''}" data-plan-id="${plan.id}">${plan.violations && plan.violations.length > 0 ? '⚠️ Apply Plan (has violations)' : '✅ Apply Plan'}</button>
+    html += `<button class="btn-apply-plan${plan.violations && plan.violations.length > 0 ? ' btn-apply-plan--warn' : ''}" data-plan-id="${plan.id}">${plan.violations && plan.violations.length > 0 ? '⚠️ החל תוכנית (יש הפרות)' : '✅ החל תוכנית'}</button>
     </div>`;
   }
 
   html += `</div>
     <div class="rescue-footer">
-      ${hasMore ? `<button class="btn-rescue-more" id="btn-rescue-more">Show More Options</button>` : ''}
-      <button class="btn-rescue-dismiss" id="btn-rescue-dismiss">Dismiss</button>
+      ${hasMore ? `<button class="btn-rescue-more" id="btn-rescue-more">הצג אפשרויות נוספות</button>` : ''}
+      <button class="btn-rescue-dismiss" id="btn-rescue-dismiss">סגור</button>
     </div>
     </div></div>`;
 
@@ -1374,13 +1369,13 @@ function buildRescueParticipantTooltip(
   participantName: string,
   nextTasks: Array<{ taskName: string; start: Date; end: Date }>,
 ): string {
-  let html = `<div class="rescue-hover-tt-header">${participantName} — next tasks if applied</div>`;
+  let html = `<div class="rescue-hover-tt-header">${participantName} — משימות הבאות אם יוחל</div>`;
   if (nextTasks.length === 0) {
-    html += `<div class="rescue-hover-tt-empty">No upcoming tasks</div>`;
+    html += `<div class="rescue-hover-tt-empty">אין משימות קרובות</div>`;
   } else {
     for (let i = 0; i < nextTasks.length; i++) {
       const t = nextTasks[i];
-      const dayStr = t.start.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+      const dayStr = t.start.toLocaleDateString('he-IL', { weekday: 'short', day: '2-digit', month: 'short' });
       const timeStr = fmt(t.start) + ' – ' + fmt(t.end);
       html += `<div class="rescue-hover-tt-task">${i + 1}. ${t.taskName}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
     }
@@ -1523,7 +1518,7 @@ function applyRescuePlan(plan: RescuePlan): void {
       currentSchedule.score = snapshotScore;
       engine.importSchedule(currentSchedule);
     }
-    alert('Rescue plan could not be applied cleanly — rolled back to previous state.');
+    alert('תוכנית ההחלפה לא יושמה בהצלחה — בוצע שחזור למצב הקודם.');
     closeRescueModal();
     revalidateAndRefresh();
     return;
@@ -1585,39 +1580,39 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ Resource Scheduling Engine</h1>
+      <h1>⏱ מערכת שיבוץ חכמה</h1>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
-          title="Undo (Ctrl+Z)">↩ Undo${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</button>
+          title="ביטול (Ctrl+Z)">↪ ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</button>
         <button class="btn-sm btn-outline" id="btn-redo" ${!store.getUndoRedoState().canRedo ? 'disabled' : ''}
-          title="Redo (Ctrl+Y)">↪ Redo${store.getUndoRedoState().redoDepth ? ' (' + store.getUndoRedoState().redoDepth + ')' : ''}</button>
+          title="שחזור (Ctrl+Y)">↩ שחזור${store.getUndoRedoState().redoDepth ? ' (' + store.getUndoRedoState().redoDepth + ')' : ''}</button>
       </div>
-      <button class="theme-toggle" id="btn-theme-toggle" title="Toggle light/dark mode">
+      <button class="theme-toggle" id="btn-theme-toggle" title="החלף מצב בהיר/כהה">
         ${document.documentElement.dataset.theme === 'light' ? '🌙' : '☀️'}
       </button>
     </div>
     <p class="subtitle">
-      ${store.getScheduleDate().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
-      · ${store.getScheduleDays()}-Day Schedule
-      · ${participants.length} Participants
-      · ${templates.length} Task Templates
+      ${store.getScheduleDate().toLocaleDateString('he-IL', { day: '2-digit', month: 'short', year: 'numeric' })}
+      · שבצ"ק ל-${store.getScheduleDays()} ימים
+      · ${participants.length} משתתפים
+      · ${templates.length} תבניות משימות
     </p>
   </header>
 
   <nav class="tab-nav">
     <button class="tab-btn ${currentTab === 'participants' ? 'tab-active' : ''}" data-tab="participants">
-      👥 Participants <span class="count">${participants.length}</span>
+      👥 משתתפים <span class="count">${participants.length}</span>
     </button>
     <button class="tab-btn ${currentTab === 'task-rules' ? 'tab-active' : ''}" data-tab="task-rules">
-      📋 Task Rules <span class="count">${templates.length}</span>
-      ${!preflight.canGenerate ? '<span class="badge badge-sm" style="background:var(--danger);margin-left:4px">!</span>' : ''}
+      📋 פירוט משימות <span class="count">${templates.length}</span>
+      ${!preflight.canGenerate ? '<span class="badge badge-sm" style="background:var(--danger);margin-inline-start:4px">!</span>' : ''}
     </button>
     <button class="tab-btn ${currentTab === 'schedule' ? 'tab-active' : ''}" data-tab="schedule">
-      📊 Schedule View
-      ${currentSchedule ? '<span class="badge badge-sm" style="background:var(--success);margin-left:4px">✓</span>' : ''}
+      📊 תצוגת שבצ"ק
+      ${currentSchedule ? '<span class="badge badge-sm" style="background:var(--success);margin-inline-start:4px">✓</span>' : ''}
     </button>
     <button class="tab-btn ${currentTab === 'algorithm' ? 'tab-active' : ''}" data-tab="algorithm">
-      ⚙️ Algorithm
+      ⚙️ אלגוריתם
     </button>
   </nav>
 
@@ -1798,7 +1793,7 @@ function wireScheduleEvents(container: HTMLElement): void {
   const resetBtn = container.querySelector('#btn-reset-storage');
   if (resetBtn) {
     resetBtn.addEventListener('click', () => {
-      if (confirm('Clear all saved data and reload? This cannot be undone.')) {
+      if (confirm('למחוק את כל הנתונים השמורים ולטעון מחדש? לא ניתן לבטל פעולה זו.')) {
         store.clearStorage();
         location.reload();
       }
@@ -1890,10 +1885,9 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
 
   const certsHtml = p.certifications.length > 0
     ? p.certifications.map((c: Certification) => {
-        const colors: Record<string, string> = { Nitzan: '#16a085', Salsala: '#8e44ad', Hamama: '#c0392b' };
-        return `<span class="tt-cert" style="background:${colors[c] || '#7f8c8d'}">${c}</span>`;
+        return `<span class="tt-cert" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${CERT_LABELS[c] || c}</span>`;
       }).join(' ')
-    : '<span class="tt-dim">None</span>';
+    : '<span class="tt-dim">אין</span>';
 
   // Build per-task breakdown rows (only show types with hours > 0)
   const taskTypeColors: Record<string, string> = {
@@ -1905,8 +1899,8 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
     .map(tt => {
       const color = taskTypeColors[tt] || '#7f8c8d';
       return `<div class="tt-row">
-        <span class="tt-label"><span style="color:${color};font-weight:600">${tt}</span></span>
-        <span class="tt-value">${typeCounts[tt]}× · ${typeEffectiveHours[tt].toFixed(1)}h eff</span>
+        <span class="tt-label"><span style="color:${color};font-weight:600">${TASK_TYPE_LABELS[tt] || tt}</span></span>
+        <span class="tt-value">${typeCounts[tt]}× · ${typeEffectiveHours[tt].toFixed(1)} שע' אפק'</span>
       </div>`;
     }).join('');
 
@@ -1915,9 +1909,9 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
   if (slotCtx && !slotCtx.isFrozen) {
     const lm = store.getLiveModeState();
     actionsHtml = `<span class="tt-actions">
-      <button class="btn-lock ${slotCtx.isLocked ? 'active' : ''}" data-assignment-id="${slotCtx.assignmentId}" title="${slotCtx.isLocked ? 'Unlock' : 'Lock'}">${slotCtx.isLocked ? '🔒' : '🔓'}</button>
-      <button class="btn-swap" data-assignment-id="${slotCtx.assignmentId}" data-task-id="${slotCtx.taskId}" title="Swap">⇄</button>
-      ${lm.enabled ? `<button class="btn-rescue" data-assignment-id="${slotCtx.assignmentId}" title="Rescue">🆘</button>` : ''}
+      <button class="btn-lock ${slotCtx.isLocked ? 'active' : ''}" data-assignment-id="${slotCtx.assignmentId}" title="${slotCtx.isLocked ? 'בטל נעילה' : 'נעל'}">${slotCtx.isLocked ? '🔒' : '🔓'}</button>
+      <button class="btn-swap" data-assignment-id="${slotCtx.assignmentId}" data-task-id="${slotCtx.taskId}" title="החלף">⇄</button>
+      ${lm.enabled ? `<button class="btn-rescue" data-assignment-id="${slotCtx.assignmentId}" title="החלפה">🆘</button>` : ''}
     </span>`;
   } else if (slotCtx && slotCtx.isFrozen) {
     actionsHtml = '<span class="tt-actions"><span class="tt-dim">❄️</span></span>';
@@ -1929,15 +1923,15 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
       ${actionsHtml}
       <span class="tt-level" style="background:${LEVEL_COLORS[p.level]}">L${p.level}</span>
     </div>
-    <div class="tt-row"><span class="tt-label">Group</span><span class="tt-value" style="color:${groupColor(p.group)}">${p.group}</span></div>
-    <div class="tt-row"><span class="tt-label">Certs</span><span class="tt-value">${certsHtml}</span></div>
+    <div class="tt-row"><span class="tt-label">קבוצה</span><span class="tt-value" style="color:${groupColor(p.group)}">${p.group}</span></div>
+    <div class="tt-row"><span class="tt-label">הסמכות</span><span class="tt-value">${certsHtml}</span></div>
     <div class="tt-divider"></div>
     ${breakdownRows}
     <div class="tt-divider"></div>
-    <div class="tt-row"><span class="tt-label">Heavy tasks</span><span class="tt-value">${heavyCount}</span></div>
-    <div class="tt-row"><span class="tt-label">Light tasks</span><span class="tt-value">${lightCount}</span></div>
-    <div class="tt-row"><span class="tt-label">Weekly hours</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)}h eff</span></div>
-    <div class="tt-row"><span class="tt-label">Workload %</span><span class="tt-value">${pctOfPeriod.toFixed(1)}% of ${totalPeriodHours}h</span></div>
+    <div class="tt-row"><span class="tt-label">משימות כבדות</span><span class="tt-value">${heavyCount}</span></div>
+    <div class="tt-row"><span class="tt-label">משימות קלות</span><span class="tt-value">${lightCount}</span></div>
+    <div class="tt-row"><span class="tt-label">שעות שבועיות</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)} שע' אפק'</span></div>
+    <div class="tt-row"><span class="tt-label">% עומס</span><span class="tt-value">${pctOfPeriod.toFixed(1)}% מתוך ${totalPeriodHours} שע'</span></div>
   `;
 }
 
@@ -2051,7 +2045,7 @@ function buildTaskTooltipContent(taskId: string): string {
   // Build teammates list
   let teammatesHtml = '';
   if (taskAssignments.length === 0) {
-    teammatesHtml = '<div class="ttt-empty">No assignments</div>';
+    teammatesHtml = '<div class="ttt-empty">אין שיבוצים</div>';
   } else {
     teammatesHtml = '<div class="ttt-teammates">';
     for (const a of taskAssignments) {
@@ -2061,7 +2055,7 @@ function buildTaskTooltipContent(taskId: string): string {
       const levelColors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
       const certsHtml = p.certifications.length > 0
         ? p.certifications.map(c =>
-            `<span class="ttt-cert" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${c}</span>`
+            `<span class="ttt-cert" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${CERT_LABELS[c] || c}</span>`
           ).join('')
         : '';
       teammatesHtml += `<div class="ttt-mate">
@@ -2080,16 +2074,16 @@ function buildTaskTooltipContent(taskId: string): string {
 
   return `
     <div class="ttt-header">
-      <span class="ttt-task-name" style="border-left:3px solid ${taskColor};padding-left:8px">${task.name}</span>
-      <span class="badge badge-sm" style="background:${taskColor}">${task.type}</span>
-      ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">Light</span>' : ''}
+      <span class="ttt-task-name" style="border-inline-start:3px solid ${taskColor};padding-inline-start:8px">${task.name}</span>
+      <span class="badge badge-sm" style="background:${taskColor}">${TASK_TYPE_LABELS[task.type] || task.type}</span>
+      ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
     </div>
     <div class="ttt-time">
       <span>${startStr} – ${endStr}</span>
-      <span class="ttt-dur">${hrs.toFixed(1)}h</span>
+      <span class="ttt-dur">${hrs.toFixed(1)} שע'</span>
     </div>
     <div class="ttt-divider"></div>
-    <div class="ttt-section-label">Shift Team (${taskAssignments.length})</div>
+    <div class="ttt-section-label">צוות משמרת (${taskAssignments.length})</div>
     ${teammatesHtml}
   `;
 }
@@ -2267,10 +2261,10 @@ function init(): void {
     }
     // Arrow keys for day navigation when in schedule tab
     if (currentTab === 'schedule' && currentSchedule) {
-      if (e.key === 'ArrowRight' && currentDay < store.getScheduleDays()) {
+      if (e.key === 'ArrowLeft' && currentDay < store.getScheduleDays()) {
         currentDay++;
         renderAll();
-      } else if (e.key === 'ArrowLeft' && currentDay > 1) {
+      } else if (e.key === 'ArrowRight' && currentDay > 1) {
         currentDay--;
         renderAll();
       }

@@ -11,7 +11,7 @@ import {
   Participant,
 } from '../models/types';
 import * as store from './config-store';
-import { levelBadge, certBadges, groupBadge, groupColor } from './ui-helpers';
+import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS } from './ui-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -31,15 +31,15 @@ interface GroupValidation { valid: boolean; error: string }
 
 function validateGroupName(raw: string, existingGroups: string[]): GroupValidation {
   const name = raw.trim();
-  if (!name) return { valid: false, error: 'Group name cannot be empty.' };
-  if (name.length < 2) return { valid: false, error: 'Group name must be at least 2 characters.' };
+  if (!name) return { valid: false, error: 'קבוצה לא יכולה להיות ריקה.' };
+  if (name.length < 2) return { valid: false, error: 'שם קבוצה חייב להכיל לפחות 2 תווים.' };
   for (const pat of FORBIDDEN_GROUP_PATTERNS) {
-    if (pat.test(name)) return { valid: false, error: `"${name}" is not allowed as a group name.` };
+    if (pat.test(name)) return { valid: false, error: `"${name}" אינו מותר כשם קבוצה.` };
   }
   // Check for near-duplicates (case-insensitive)
   const lower = name.toLowerCase();
   const dup = existingGroups.find(g => g.toLowerCase() === lower && g !== name);
-  if (dup) return { valid: false, error: `A similar group "${dup}" already exists. Use it instead.` };
+  if (dup) return { valid: false, error: `קבוצה דומה "${dup}" כבר קיימת. השתמש בה.` };
   return { valid: true, error: '' };
 }
 
@@ -64,7 +64,7 @@ function resolveGroupInput(
 }
 
 function fmtTime(d: Date): string {
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -118,29 +118,29 @@ export function renderParticipantsTab(): string {
   let html = `
   <div class="tab-toolbar">
     <div class="toolbar-left">
-      <h2>Participants <span class="count">${allParticipants.length}</span></h2>
+      <h2>משתתפים <span class="count">${allParticipants.length}</span></h2>
       <div class="filter-pills">
-        <button class="pill ${filterGroup === '' ? 'pill-active' : ''}" data-action="filter-group" data-group="">All</button>
+        <button class="pill ${filterGroup === '' ? 'pill-active' : ''}" data-action="filter-group" data-group="">הכל</button>
         ${groups.map(g =>
           `<button class="pill ${filterGroup === g ? 'pill-active' : ''}" data-action="filter-group" data-group="${g}">${g}</button>`
         ).join('')}
       </div>
     </div>
     <div class="toolbar-right">
-      <button class="btn-primary btn-sm" data-action="add-participant">+ Add Participant</button>
+      <button class="btn-primary btn-sm" data-action="add-participant">+ הוסף משתתף</button>
     </div>
   </div>`;
 
   // Table
   html += `<div class="table-responsive"><table class="table table-participants">
     <thead><tr>
-      <th class="col-select"><input type="checkbox" id="cb-select-all" title="Select all" ${selectedIds.size > 0 && selectedIds.size === sorted.length ? 'checked' : ''} /></th>
+      <th class="col-select"><input type="checkbox" id="cb-select-all" title="בחר הכל" ${selectedIds.size > 0 && selectedIds.size === sorted.length ? 'checked' : ''} /></th>
       <th>#</th>
-      <th class="sortable-th" data-action="sort-column" data-sort-col="name">Name${sortIndicator('name')}</th>
-      <th class="sortable-th" data-action="sort-column" data-sort-col="group">Group${sortIndicator('group')}</th>
-      <th class="sortable-th" data-action="sort-column" data-sort-col="level">Level${sortIndicator('level')}</th>
-      <th>Certifications</th>
-      <th>Availability</th><th>Blackouts</th><th class="col-actions">Actions</th>
+      <th class="sortable-th" data-action="sort-column" data-sort-col="name">שם${sortIndicator('name')}</th>
+      <th class="sortable-th" data-action="sort-column" data-sort-col="group">קבוצה${sortIndicator('group')}</th>
+      <th class="sortable-th" data-action="sort-column" data-sort-col="level">דרגה${sortIndicator('level')}</th>
+      <th>הסמכות</th>
+      <th>זמינות</th><th>חסימות</th><th class="col-actions">פעולות</th>
     </tr></thead><tbody>`;
 
   sorted.forEach((p, i) => {
@@ -170,8 +170,8 @@ export function renderParticipantsTab(): string {
           </button>
         </td>
         <td class="col-actions">
-          <button class="btn-sm btn-outline" data-action="edit-participant" data-pid="${p.id}" title="Edit">✏️</button>
-          <button class="btn-sm btn-outline btn-danger-outline" data-action="remove-participant" data-pid="${p.id}" title="Remove">🗑️</button>
+          <button class="btn-sm btn-outline" data-action="edit-participant" data-pid="${p.id}" title="עריכה">✏️</button>
+          <button class="btn-sm btn-outline btn-danger-outline" data-action="remove-participant" data-pid="${p.id}" title="הסרה">🗑️</button>
         </td>
       </tr>`;
 
@@ -190,10 +190,10 @@ export function renderParticipantsTab(): string {
   // ── Bulk Actions Toolbar (shown when selection is non-empty) ──
   if (selectedIds.size > 0) {
     html += `<div class="bulk-toolbar">
-      <span class="bulk-count">${selectedIds.size} participant${selectedIds.size > 1 ? 's' : ''} selected</span>
-      <button class="btn-primary btn-sm" data-action="bulk-add-unavailability">📅 Add Unavailability</button>
-      <button class="btn-danger btn-sm" data-action="bulk-delete-participants">🗑️ Delete Participants</button>
-      <button class="btn-sm btn-outline" data-action="bulk-clear-selection">Clear Selection</button>
+      <span class="bulk-count">${selectedIds.size} משתתפים נבחרו</span>
+      <button class="btn-primary btn-sm" data-action="bulk-add-unavailability">📅 הוסף חוסר זמינות</button>
+      <button class="btn-danger btn-sm" data-action="bulk-delete-participants">🗑️ מחק משתתפים</button>
+      <button class="btn-sm btn-outline" data-action="bulk-clear-selection">נקה בחירה</button>
     </div>`;
   }
 
@@ -219,9 +219,9 @@ function renderEditRow(p: Participant, idx: number): string {
     <td>
       <select class="input-sm" data-field="group" data-group-select>
         ${groups.map(g => `<option value="${g}" ${p.group === g ? 'selected' : ''}>${g}</option>`).join('')}
-        <option value="__new__">+ New Group…</option>
+        <option value="__new__">+ קבוצה חדשה…</option>
       </select>
-      <input class="input-sm" type="text" data-field="new-group-name" placeholder="Enter group name" style="display:none; margin-top:4px" />
+      <input class="input-sm" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="display:none; margin-top:4px" />
       <span class="group-error" style="display:none; color:var(--error); font-size:0.75rem;"></span>
     </td>
     <td>
@@ -233,20 +233,20 @@ function renderEditRow(p: Participant, idx: number): string {
       <div class="cert-checkboxes">
         ${CERT_OPTIONS.map(c =>
           `<label class="checkbox-label">
-            <input type="checkbox" data-cert="${c}" ${p.certifications.includes(c) ? 'checked' : ''} /> ${c}
+            <input type="checkbox" data-cert="${c}" ${p.certifications.includes(c) ? 'checked' : ''} /> ${CERT_LABELS[c] || c}
           </label>`
         ).join('')}
       </div>
     </td>
     <td colspan="2"></td>
     <td class="col-actions">
-      <button class="btn-sm btn-primary" data-action="save-participant" data-pid="${p.id}">Save</button>
-      <button class="btn-sm btn-outline" data-action="cancel-edit">Cancel</button>
+      <button class="btn-sm btn-primary" data-action="save-participant" data-pid="${p.id}">שמור</button>
+      <button class="btn-sm btn-outline" data-action="cancel-edit">ביטול</button>
     </td>
   </tr>`;
 }
 
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 
 function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlackouts>): string {
   const dateRules = store.getDateUnavailabilities(pid);
@@ -254,53 +254,37 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
   let html = `<tr class="row-blackout-expansion">
     <td colspan="9">
       <div class="blackout-panel">
-        <h4>Blackout Periods</h4>
+        <h4>חסימות מוגדרות</h4>
         <div class="blackout-list">`;
 
-  if (bouts.length === 0) {
-    html += '<p class="text-muted">No blackouts configured.</p>';
+  if (bouts.length === 0 && dateRules.length === 0) {
+    html += '<p class="text-muted">אין חסימות מוגדרות.</p>';
   } else {
     html += '<ul>';
+    
+    // Render current shift blackouts
     for (const b of bouts) {
       html += `<li>
+        <span class="constraint-type">משמרת נוכחית</span>
         <strong>${fmtTime(b.start)} – ${fmtTime(b.end)}</strong>
         ${b.reason ? `<span class="text-muted"> (${b.reason})</span>` : ''}
         <button class="btn-sm btn-danger-outline" data-action="remove-blackout" data-pid="${pid}" data-bid="${b.id}">✕</button>
       </li>`;
     }
-    html += '</ul>';
-  }
 
-  html += `</div>
-    <div class="blackout-add">
-      <input type="time" class="input-sm" data-field="bo-start" value="00:00" />
-      <span>to</span>
-      <input type="time" class="input-sm" data-field="bo-end" value="08:00" />
-      <input type="text" class="input-sm" data-field="bo-reason" placeholder="Reason (optional)" />
-      <button class="btn-sm btn-primary" data-action="add-blackout" data-pid="${pid}">Add</button>
-    </div>
-    <p class="text-muted" style="font-size:0.85em;margin-top:4px">
-      Blackouts apply to the schedule start date only. For other dates, use Date-Specific Unavailability below.
-    </p>
-
-    <h4 style="margin-top:12px">Date-Specific Unavailability</h4>
-    <div class="blackout-list">`;
-
-  if (dateRules.length === 0) {
-    html += '<p class="text-muted">No date-specific rules. Participant follows standard availability.</p>';
-  } else {
-    html += '<ul>';
+    // Render date/day unavailabilities
     for (const r of dateRules) {
       let label: string;
       if (r.specificDate) {
         label = r.specificDate;
       } else if (r.dayOfWeek !== undefined) {
-        label = `Every ${DAY_NAMES[r.dayOfWeek]}`;
+        label = `כל ${DAY_NAMES[r.dayOfWeek]}`;
       } else {
-        label = 'Unknown rule';
+        label = 'כלל לא ידוע';
       }
-      const timeLabel = r.allDay ? 'All Day' : `${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00`;
+      const timeLabel = r.allDay ? 'כל היום' : `${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00`;
       html += `<li>
+        <span class="constraint-type">${r.specificDate ? 'תאריך ספציפי' : 'יום קבוע'}</span>
         <strong>${label}</strong> — <span>${timeLabel}</span>
         ${r.reason ? `<span class="text-muted"> (${r.reason})</span>` : ''}
         <button class="btn-sm btn-danger-outline" data-action="remove-date-unavail" data-pid="${pid}" data-rid="${r.id}">✕</button>
@@ -310,24 +294,32 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
   }
 
   html += `</div>
-    <div class="blackout-add">
-      <select class="input-sm" data-field="du-type">
-        <option value="dayOfWeek">Day of Week</option>
-        <option value="specificDate">Specific Date</option>
+    <h4 style="margin-top:16px">הוספת חסימה חדשה</h4>
+    <div class="blackout-add unified-constraint-form">
+      <select class="input-sm" data-field="constraint-type">
+        <option value="current_shift">למשמרת הנוכחית</option>
+        <option value="dayOfWeek">יום קבוע בשבוע</option>
+        <option value="specificDate">תאריך ספציפי</option>
       </select>
-      <select class="input-sm" data-field="du-dow" style="width:120px">
+      
+      <select class="input-sm" data-field="du-dow" style="width:120px; display:none;">
         ${DAY_NAMES.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
       </select>
-      <input type="date" class="input-sm" data-field="du-date" style="display:none" />
-      <label class="checkbox-label" style="white-space:nowrap">
-        <input type="checkbox" data-field="du-allday" /> All Day
-      </label>
-      <input type="number" class="input-sm" data-field="du-start-hour" min="0" max="23" value="8" placeholder="Start hour" style="width:70px" />
-      <span>to</span>
-      <input type="number" class="input-sm" data-field="du-end-hour" min="0" max="23" value="12" placeholder="End hour" style="width:70px" />
-      <input type="text" class="input-sm" data-field="du-reason" placeholder="Reason (optional)" />
-      <button class="btn-sm btn-primary" data-action="add-date-unavail" data-pid="${pid}">Add</button>
-      <span class="du-validation-error" style="display:none;color:#e74c3c;font-size:0.85em;margin-left:6px"></span>
+      
+      <input type="date" class="input-sm" data-field="du-date" style="display:none;" />
+      
+      <div class="time-inputs-group">
+        <label class="checkbox-label" style="white-space:nowrap; display:none;" data-field="du-allday-wrapper">
+          <input type="checkbox" data-field="du-allday" /> כל היום
+        </label>
+        <input type="time" class="input-sm" data-field="bo-start" value="08:00" />
+        <span class="time-separator">עד</span>
+        <input type="time" class="input-sm" data-field="bo-end" value="12:00" />
+      </div>
+      
+      <input type="text" class="input-sm" data-field="bo-reason" placeholder="סיבה (אופציונלי)" />
+      <button class="btn-sm btn-primary" data-action="add-unified-constraint" data-pid="${pid}">הוסף</button>
+      <span class="du-validation-error" style="display:none;color:#e74c3c;font-size:0.85em;margin-inline-start:6px"></span>
     </div>
   </div></td></tr>`;
   return html;
@@ -336,34 +328,34 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
 function renderAddForm(groups: string[]): string {
   return `
   <div id="add-participant-form" class="add-form" style="display:none;">
-    <h4>New Participant</h4>
+    <h4>הוסף משתתף</h4>
     <div class="form-row">
-      <label>Name <input class="input-sm" type="text" data-field="new-name" placeholder="Name" /></label>
-      <label>Group
+      <label>שם <input class="input-sm" type="text" data-field="new-name" placeholder="שם" /></label>
+      <label>קבוצה
         <select class="input-sm" data-field="new-group" data-group-select>
           ${groups.map(g => `<option value="${g}">${g}</option>`).join('')}
-          <option value="__new__">+ New Group…</option>
+          <option value="__new__">+ קבוצה חדשה…</option>
         </select>
-        <input class="input-sm" type="text" data-field="new-group-name" placeholder="Enter group name" style="display:none; margin-top:4px" />
+        <input class="input-sm" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="display:none; margin-top:4px" />
         <span class="group-error" style="display:none; color:var(--error); font-size:0.75rem;"></span>
       </label>
-      <label>Level
+      <label>דרגה
         <select class="input-sm" data-field="new-level">
           ${LEVEL_OPTIONS.map(l => `<option value="${l}" ${l === Level.L0 ? 'selected' : ''}>L${l}</option>`).join('')}
         </select>
       </label>
     </div>
     <div class="form-row">
-      <span>Certifications:</span>
+      <span>הסמכות:</span>
       ${CERT_OPTIONS.map(c =>
         `<label class="checkbox-label">
-          <input type="checkbox" data-new-cert="${c}" ${c === Certification.Nitzan ? 'checked' : ''} /> ${c}
+          <input type="checkbox" data-new-cert="${c}" ${c === Certification.Nitzan ? 'checked' : ''} /> ${CERT_LABELS[c] || c}
         </label>`
       ).join('')}
     </div>
     <div class="form-row">
-      <button class="btn-primary btn-sm" data-action="confirm-add-participant">Add</button>
-      <button class="btn-sm btn-outline" data-action="cancel-add-participant">Cancel</button>
+      <button class="btn-primary btn-sm" data-action="confirm-add-participant">הוסף</button>
+      <button class="btn-sm btn-outline" data-action="cancel-add-participant">ביטול</button>
     </div>
   </div>`;
 }
@@ -371,23 +363,23 @@ function renderAddForm(groups: string[]): string {
 // ─── Bulk Unavailability Dialog ──────────────────────────────────────────────
 
 function renderBulkUnavailDialog(): string {
-  const DAY_NAMES_LOCAL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const DAY_NAMES_LOCAL = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
   return `<div class="bulk-dialog-backdrop" data-action="bulk-dialog-dismiss">
     <div class="bulk-dialog">
-      <h3>Add Unavailability for ${selectedIds.size} Participant${selectedIds.size > 1 ? 's' : ''}</h3>
+      <h3>הוסף חוסר זמינות עבור ${selectedIds.size} משתתפים</h3>
 
       <div class="bulk-dialog-body">
         <div class="form-row">
-          <label>Type
+          <label>סוג
             <select class="input-sm" data-field="bulk-type">
-              <option value="specificDate">Specific Date</option>
-              <option value="dayOfWeek">Day of Week</option>
+              <option value="specificDate">תאריך ספציפי</option>
+              <option value="dayOfWeek">יום בשבוע</option>
             </select>
           </label>
-          <label class="bulk-field-date">Date
+          <label class="bulk-field-date">תאריך
             <input type="date" class="input-sm" data-field="bulk-date" />
           </label>
-          <label class="bulk-field-dow" style="display:none">Day
+          <label class="bulk-field-dow" style="display:none">יום
             <select class="input-sm" data-field="bulk-dow">
               ${DAY_NAMES_LOCAL.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
             </select>
@@ -396,30 +388,30 @@ function renderBulkUnavailDialog(): string {
 
         <div class="form-row">
           <label class="checkbox-label">
-            <input type="checkbox" data-field="bulk-allday" /> All Day
+            <input type="checkbox" data-field="bulk-allday" /> כל היום
           </label>
         </div>
 
         <div class="form-row bulk-time-fields">
-          <label>Start Hour
+          <label>שעת התחלה
             <input type="number" class="input-sm" data-field="bulk-start" min="0" max="23" value="8" style="width:70px" />
           </label>
-          <span style="align-self:end;padding-bottom:4px">to</span>
-          <label>End Hour
+          <span style="align-self:end;padding-bottom:4px">עד</span>
+          <label>שעת סיום
             <input type="number" class="input-sm" data-field="bulk-end" min="0" max="23" value="16" style="width:70px" />
           </label>
         </div>
 
         <div class="form-row">
-          <label style="flex:1">Reason / Label
-            <input type="text" class="input-sm" data-field="bulk-reason" placeholder="e.g. Team Training" style="width:100%" />
+          <label style="flex:1">סיבה
+            <input type="text" class="input-sm" data-field="bulk-reason" placeholder="למשל: הכשרת צוות" style="width:100%" />
           </label>
         </div>
       </div>
 
       <div class="bulk-dialog-footer">
-        <button class="btn-sm btn-outline" data-action="bulk-dialog-cancel">Cancel</button>
-        <button class="btn-primary btn-sm" data-action="bulk-dialog-save">Save for ${selectedIds.size}</button>
+        <button class="btn-sm btn-outline" data-action="bulk-dialog-cancel">ביטול</button>
+        <button class="btn-primary btn-sm" data-action="bulk-dialog-save">שמור עבור ${selectedIds.size}</button>
       </div>
     </div>
   </div>`;
@@ -431,15 +423,15 @@ function renderBulkDeleteDialog(): string {
   const n = selectedIds.size;
   return `<div class="bulk-dialog-backdrop" data-action="bulk-delete-dismiss">
     <div class="bulk-dialog bulk-delete-dialog">
-      <h3>⚠️ Delete ${n} Participant${n > 1 ? 's' : ''}?</h3>
+      <h3>⚠️ מחק ${n} משתתפים?</h3>
       <p class="bulk-delete-warning">
-        Are you sure you want to delete <strong>${n}</strong> participant${n > 1 ? 's' : ''}?
-        This action will also remove all their associated assignments and
-        unavailability records. This cannot be undone.
+        האם למחוק <strong>${n}</strong> משתתפים?
+        פעולה זו תסיר גם את כל השיבוצים וכללי חוסר הזמינות המשויכים.
+        לא ניתן לבטל פעולה זו.
       </p>
       <div class="bulk-dialog-footer">
-        <button class="btn-sm btn-outline" data-action="bulk-delete-cancel">Cancel</button>
-        <button class="btn-danger btn-sm" data-action="bulk-delete-confirm">Confirm Delete</button>
+        <button class="btn-sm btn-outline" data-action="bulk-delete-cancel">ביטול</button>
+        <button class="btn-danger btn-sm" data-action="bulk-delete-confirm">אישור מחיקה</button>
       </div>
     </div>
   </div>`;
@@ -553,20 +545,47 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     }
   });
 
-  // Date-unavailability type toggle (day-of-week vs specific date)
+  // Constraint type toggle (current shift vs day-of-week vs specific date)
   container.addEventListener('change', (e) => {
     const target = e.target as HTMLElement;
-    if ((target as HTMLSelectElement).dataset?.field === 'du-type') {
+    if ((target as HTMLSelectElement).dataset?.field === 'constraint-type') {
       const sel = target as HTMLSelectElement;
       const panel = sel.closest('.blackout-panel')!;
       const dowSel = panel.querySelector('[data-field="du-dow"]') as HTMLElement;
       const dateInp = panel.querySelector('[data-field="du-date"]') as HTMLElement;
-      if (sel.value === 'dayOfWeek') {
+      const allDayWrapper = panel.querySelector('[data-field="du-allday-wrapper"]') as HTMLElement;
+      
+      if (sel.value === 'current_shift') {
+        if (dowSel) dowSel.style.display = 'none';
+        if (dateInp) dateInp.style.display = 'none';
+        if (allDayWrapper) allDayWrapper.style.display = 'none';
+      } else if (sel.value === 'dayOfWeek') {
         if (dowSel) dowSel.style.display = '';
         if (dateInp) dateInp.style.display = 'none';
+        if (allDayWrapper) allDayWrapper.style.display = '';
       } else {
         if (dowSel) dowSel.style.display = 'none';
         if (dateInp) dateInp.style.display = '';
+        if (allDayWrapper) allDayWrapper.style.display = '';
+      }
+    }
+    
+    // Handle "All Day" checkbox toggle
+    if ((target as HTMLInputElement).dataset?.field === 'du-allday') {
+      const cb = target as HTMLInputElement;
+      const panel = cb.closest('.blackout-panel')!;
+      const startInp = panel.querySelector('[data-field="bo-start"]') as HTMLInputElement;
+      const endInp = panel.querySelector('[data-field="bo-end"]') as HTMLInputElement;
+      const separator = panel.querySelector('.time-separator') as HTMLElement;
+      
+      if (cb.checked) {
+        if (startInp) startInp.style.display = 'none';
+        if (endInp) endInp.style.display = 'none';
+        if (separator) separator.style.display = 'none';
+      } else {
+        if (startInp) startInp.style.display = '';
+        if (endInp) endInp.style.display = '';
+        if (separator) separator.style.display = '';
       }
     }
   });
@@ -680,7 +699,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       case 'remove-participant': {
         const pid = target.dataset.pid!;
         const p = store.getParticipant(pid);
-        if (p && confirm(`Remove ${p.name}?`)) {
+        if (p && confirm(`להסיר את ${p.name}?`)) {
           store.removeParticipant(pid);
           rerender();
         }
@@ -699,22 +718,51 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         rerender();
         break;
       }
-      case 'add-blackout': {
+      case 'add-unified-constraint': {
         const pid = target.dataset.pid!;
         const panel = target.closest('.blackout-panel')!;
-        const startStr = (panel.querySelector('[data-field="bo-start"]') as HTMLInputElement)?.value;
-        const endStr = (panel.querySelector('[data-field="bo-end"]') as HTMLInputElement)?.value;
-        const reason = (panel.querySelector('[data-field="bo-reason"]') as HTMLInputElement)?.value;
-        if (!startStr || !endStr) return;
+        const type = (panel.querySelector('[data-field="constraint-type"]') as HTMLSelectElement)?.value;
+        const reason = (panel.querySelector('[data-field="bo-reason"]') as HTMLInputElement)?.value || undefined;
+        const errEl = panel.querySelector('.du-validation-error') as HTMLElement;
+        if (errEl) errEl.style.display = 'none';
 
-        const d = store.getScheduleDate();
-        const [sh, sm] = startStr.split(':').map(Number);
-        const [eh, em] = endStr.split(':').map(Number);
-        const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), sh, sm);
-        let end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), eh, em);
-        if (end <= start) end = new Date(end.getTime() + 24 * 3600000);
+        if (type === 'current_shift') {
+          const startStr = (panel.querySelector('[data-field="bo-start"]') as HTMLInputElement)?.value;
+          const endStr = (panel.querySelector('[data-field="bo-end"]') as HTMLInputElement)?.value;
+          if (!startStr || !endStr) return;
 
-        store.addBlackout(pid, start, end, reason || undefined);
+          const d = store.getScheduleDate();
+          const [sh, sm] = startStr.split(':').map(Number);
+          const [eh, em] = endStr.split(':').map(Number);
+          const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), sh, sm);
+          let end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), eh, em);
+          if (end <= start) end = new Date(end.getTime() + 24 * 3600000);
+
+          store.addBlackout(pid, start, end, reason);
+        } else {
+          const allDay = (panel.querySelector('[data-field="du-allday"]') as HTMLInputElement)?.checked ?? false;
+          const startStr = (panel.querySelector('[data-field="bo-start"]') as HTMLInputElement)?.value || '00:00';
+          const endStr = (panel.querySelector('[data-field="bo-end"]') as HTMLInputElement)?.value || '00:00';
+          const startHour = parseInt(startStr.split(':')[0]);
+          const endHour = parseInt(endStr.split(':')[0]);
+
+          if (!allDay && startHour === endHour) {
+            if (errEl) {
+              errEl.textContent = 'שעת התחלה ושעת סיום לא יכולות להיות זהות. השתמש ב"כל היום".';
+              errEl.style.display = 'block';
+            }
+            return;
+          }
+
+          if (type === 'dayOfWeek') {
+            const dow = parseInt((panel.querySelector('[data-field="du-dow"]') as HTMLSelectElement)?.value || '0');
+            store.addDateUnavailability(pid, { dayOfWeek: dow, allDay, startHour, endHour, reason });
+          } else if (type === 'specificDate') {
+            const dateStr = (panel.querySelector('[data-field="du-date"]') as HTMLInputElement)?.value;
+            if (!dateStr) return;
+            store.addDateUnavailability(pid, { specificDate: dateStr, allDay, startHour, endHour, reason });
+          }
+        }
         rerender();
         break;
       }
@@ -722,40 +770,6 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const pid = target.dataset.pid!;
         const rid = target.dataset.rid!;
         store.removeDateUnavailability(pid, rid);
-        rerender();
-        break;
-      }
-      case 'add-date-unavail': {
-        const pid = target.dataset.pid!;
-        const panel = target.closest('.blackout-panel')!;
-        const duType = (panel.querySelector('[data-field="du-type"]') as HTMLSelectElement)?.value;
-        const allDay = (panel.querySelector('[data-field="du-allday"]') as HTMLInputElement)?.checked ?? false;
-        const startHour = parseInt((panel.querySelector('[data-field="du-start-hour"]') as HTMLInputElement)?.value || '0');
-        const endHour = parseInt((panel.querySelector('[data-field="du-end-hour"]') as HTMLInputElement)?.value || '0');
-        const reason = (panel.querySelector('[data-field="du-reason"]') as HTMLInputElement)?.value || undefined;
-
-        // Bug #13 fix: reject zero-length partial-day rules
-        if (!allDay && startHour === endHour) {
-          const errEl = panel.querySelector('.du-validation-error');
-          if (errEl) {
-            errEl.textContent = 'Start and end hour cannot be the same. Use "All Day" instead.';
-            (errEl as HTMLElement).style.display = 'block';
-          }
-          return;
-        }
-
-        // Clear any previous validation error
-        const errEl = panel.querySelector('.du-validation-error');
-        if (errEl) (errEl as HTMLElement).style.display = 'none';
-
-        if (duType === 'dayOfWeek') {
-          const dow = parseInt((panel.querySelector('[data-field="du-dow"]') as HTMLSelectElement)?.value || '0');
-          store.addDateUnavailability(pid, { dayOfWeek: dow, allDay, startHour, endHour, reason });
-        } else {
-          const dateStr = (panel.querySelector('[data-field="du-date"]') as HTMLInputElement)?.value;
-          if (!dateStr) return;
-          store.addDateUnavailability(pid, { specificDate: dateStr, allDay, startHour, endHour, reason });
-        }
         rerender();
         break;
       }
@@ -796,7 +810,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         if (newContent) {
           const msg = document.createElement('div');
           msg.className = 'bulk-confirmation';
-          msg.textContent = `Successfully deleted ${deleted} participant${deleted !== 1 ? 's' : ''}.`;
+          msg.textContent = `${deleted} משתתפים נמחקו בהצלחה.`;
           newContent.prepend(msg);
           setTimeout(() => msg.remove(), 3500);
         }
@@ -843,7 +857,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
           if (newContent) {
             const msg = document.createElement('div');
             msg.className = 'bulk-confirmation';
-            msg.textContent = `Added unavailability for ${count} participant${count !== 1 ? 's' : ''}.`;
+            msg.textContent = `חוסר זמינות נוסף עבור ${count} משתתפים.`;
             newContent.prepend(msg);
             setTimeout(() => msg.remove(), 3500);
           }

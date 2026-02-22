@@ -30,9 +30,14 @@ const TASK_COLORS: Record<string, string> = {
   Mamtera: '#27AE60', Karov: '#8E44AD', Karovit: '#BDC3C7', Aruga: '#1ABC9C',
 };
 
+const TASK_TYPE_LABELS: Record<string, string> = {
+  Adanit: 'אדנית', Hamama: 'חממה', Shemesh: 'שמש',
+  Mamtera: 'ממטרה', Karov: 'כרוב', Karovit: 'כרובית', Aruga: 'ערוגה',
+};
+
 function taskTypeBadge(type: string): string {
   const color = TASK_COLORS[type] || '#7f8c8d';
-  return `<span class="badge" style="background:${color}">${type}</span>`;
+  return `<span class="badge" style="background:${color}">${TASK_TYPE_LABELS[type] || type}</span>`;
 }
 
 function levelBadge(level: Level): string {
@@ -61,18 +66,21 @@ export function renderTaskRulesTab(): string {
   const templates = store.getAllTaskTemplates();
   const preflight = runPreflight();
 
+  const criticals = preflight.findings.filter(f => f.severity === PreflightSeverity.Critical);
+
   let html = `
   <div class="tab-toolbar">
     <div class="toolbar-left">
-      <h2>Task Rules <span class="count">${templates.length}</span></h2>
+      <h2>פירוט משימות <span class="count">${templates.length}</span></h2>
+      <div class="score-card inline-badge ${criticals.length > 0 ? 'status-error' : 'status-ok'}">
+        <span class="score-value">${criticals.length > 0 ? '✗ חסום' : '✓ מוכן'}</span>
+        <span class="score-label">סטטוס יצירה</span>
+      </div>
     </div>
     <div class="toolbar-right">
-      <button class="btn-primary btn-sm" data-action="toggle-add-template">+ New Task Template</button>
+      <button class="btn-primary btn-sm" data-action="toggle-add-template">+ תבנית משימה חדשה</button>
     </div>
   </div>`;
-
-  // Preflight panel
-  html += renderPreflightPanel(preflight);
 
   // Template cards
   html += '<div class="template-list">';
@@ -89,58 +97,7 @@ export function renderTaskRulesTab(): string {
   return html;
 }
 
-function renderPreflightPanel(pf: PreflightResult): string {
-  const criticals = pf.findings.filter(f => f.severity === PreflightSeverity.Critical);
-  const warnings = pf.findings.filter(f => f.severity === PreflightSeverity.Warning);
-  const infos = pf.findings.filter(f => f.severity === PreflightSeverity.Info);
 
-  const cs = pf.utilizationSummary;
-  const utilizationClass = cs.utilizationPercent > 100 ? 'text-danger'
-    : cs.utilizationPercent > 90 ? 'text-warn' : '';
-
-  let html = `<div class="preflight-panel">
-    <h3>Pre-Flight Check</h3>
-    <div class="preflight-summary">
-      <div class="score-grid" style="margin-bottom:12px;">
-        <div class="score-card ${criticals.length > 0 ? 'status-error' : 'status-ok'}">
-          <div class="score-value">${criticals.length > 0 ? '✗ Blocked' : '✓ Ready'}</div>
-          <div class="score-label">Generate Status</div>
-        </div>
-        <div class="score-card">
-          <div class="score-value">${cs.totalRequiredSlots}</div>
-          <div class="score-label">Total Slots/Day</div>
-        </div>
-        <div class="score-card">
-          <div class="score-value">${cs.totalRequiredHours.toFixed(0)}h</div>
-          <div class="score-label">Required Hours</div>
-        </div>
-        <div class="score-card">
-          <div class="score-value">${cs.totalAvailableParticipantHours.toFixed(0)}h</div>
-          <div class="score-label">Available Hours</div>
-        </div>
-        <div class="score-card">
-          <div class="score-value ${utilizationClass}">${cs.utilizationPercent.toFixed(1)}%</div>
-          <div class="score-label">Utilization</div>
-        </div>
-      </div>`;
-
-  if (criticals.length > 0) {
-    html += `<div class="alert alert-error"><strong>Critical Issues (${criticals.length})</strong><ul>`;
-    for (const f of criticals) html += `<li><code>${f.code}</code> ${f.message}</li>`;
-    html += '</ul></div>';
-  }
-  if (warnings.length > 0) {
-    html += `<div class="alert alert-warn"><strong>Warnings (${warnings.length})</strong><ul>`;
-    for (const f of warnings) html += `<li><code>${f.code}</code> ${f.message}</li>`;
-    html += '</ul></div>';
-  }
-  if (criticals.length === 0 && warnings.length === 0) {
-    html += '<div class="alert alert-ok">All pre-flight checks passed. Ready to generate schedule.</div>';
-  }
-
-  html += `</div></div>`;
-  return html;
-}
 
 function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
   const isExpanded = expandedTemplateId === tpl.id;
@@ -160,14 +117,14 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <div class="template-title">
         ${taskTypeBadge(tpl.taskType)}
         <strong>${tpl.name}</strong>
-        <span class="text-muted"> · ${tpl.durationHours}h × ${tpl.shiftsPerDay} shifts · ${totalSlots} slots/shift · ${totalPeople} people/day</span>
+        <span class="text-muted"> · ${tpl.durationHours}h × ${tpl.shiftsPerDay} משמרות · ${totalSlots} משבצות/משמרת · ${totalPeople} אנשים/יום</span>
         ${hasCritical ? '<span class="badge badge-sm" style="background:var(--danger)">!</span>' : ''}
         ${hasWarning && !hasCritical ? '<span class="badge badge-sm" style="background:var(--warning)">⚠</span>' : ''}
       </div>
       <div class="template-toggles">
-        ${tpl.sameGroupRequired ? '<span class="badge badge-sm badge-outline">Same Group</span>' : ''}
-        ${tpl.isLight ? '<span class="badge badge-sm badge-outline">Light</span>' : ''}
-        ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">No HC-12</span>'}
+        ${tpl.sameGroupRequired ? '<span class="badge badge-sm badge-outline">אותה קבוצה</span>' : ''}
+        ${tpl.isLight ? '<span class="badge badge-sm badge-outline">קל</span>' : ''}
+        ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">ללא HC-12</span>'}
         <span class="expand-arrow">${isExpanded ? '▼' : '▶'}</span>
       </div>
     </div>`;
@@ -180,21 +137,21 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
 
     // Template properties
     html += `<div class="template-props">
-      <label>Duration (h): <input class="input-sm" type="number" step="0.5" min="0.5" data-tpl-field="durationHours" value="${tpl.durationHours}" data-tid="${tpl.id}" /></label>
-      <label>Shifts/Day: <input class="input-sm" type="number" min="1" max="12" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" /></label>
-      <label>Start Hour: <input class="input-sm" type="number" min="0" max="23" data-tpl-field="startHour" value="${tpl.startHour}" data-tid="${tpl.id}" /></label>
-      <label>Base Load (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> Same Group</label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> Light Task</label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> Blocks Consecutive (HC-12)</label>
-      <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">Apply</button>
+      <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" data-tpl-field="durationHours" value="${tpl.durationHours}" data-tid="${tpl.id}" /></label>
+      <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" /></label>
+      <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" data-tpl-field="startHour" value="${tpl.startHour}" data-tid="${tpl.id}" /></label>
+      <label>עומס בסיס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> אותה קבוצה</label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חסימה עוקבת (HC-12)</label>
+      <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
     </div>`;
 
     html += renderLoadWindowsEditor(tpl);
 
     // Sub-teams
     if (tpl.subTeams.length > 0) {
-      html += '<h4 style="margin:12px 0 8px;">Sub-Teams</h4>';
+      html += '<h4 style="margin:12px 0 8px;">תת-צוותים</h4>';
       for (const st of tpl.subTeams) {
         html += renderSubTeam(tpl.id, st, pf);
       }
@@ -202,15 +159,15 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
 
     // Top-level slots
     if (tpl.slots.length > 0 || tpl.subTeams.length === 0) {
-      html += `<h4 style="margin:12px 0 8px;">${tpl.subTeams.length > 0 ? 'Additional' : ''} Slots</h4>`;
+      html += `<h4 style="margin:12px 0 8px;">משבצות${tpl.subTeams.length > 0 ? ' נוספות' : ''}</h4>`;
       html += renderSlotTable(tpl.id, tpl.slots, undefined, pf);
     }
 
     // Add sub-team / slot buttons
     html += `<div class="template-actions">
-      <button class="btn-sm btn-outline" data-action="add-subteam" data-tid="${tpl.id}">+ Sub-Team</button>
-      <button class="btn-sm btn-outline" data-action="add-slot" data-tid="${tpl.id}">+ Slot</button>
-      <button class="btn-sm btn-danger-outline" data-action="remove-template" data-tid="${tpl.id}">Remove Template</button>
+      <button class="btn-sm btn-outline" data-action="add-subteam" data-tid="${tpl.id}">+ תת-צוות</button>
+      <button class="btn-sm btn-outline" data-action="add-slot" data-tid="${tpl.id}">+ משבצת</button>
+      <button class="btn-sm btn-danger-outline" data-action="remove-template" data-tid="${tpl.id}">הסר תבנית</button>
     </div>`;
 
     // Inline add-slot form
@@ -227,13 +184,13 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
 
 function renderLoadWindowsEditor(tpl: TaskTemplate): string {
   const windows = tpl.loadWindows ?? [];
-  let html = `<h4 style="margin:12px 0 8px;">Load Windows (Hot Zones)</h4>`;
+  let html = `<h4 style="margin:12px 0 8px;">חלונות עומס (אזורים חמים)</h4>`;
 
   if (windows.length === 0) {
-    html += '<p class="text-muted" style="padding:4px 0;">No hot windows. Base load applies to the whole task.</p>';
+    html += '<p class="text-muted" style="padding:4px 0;">אין חלונות חמים. עומס בסיס חל על כל המשימה.</p>';
   } else {
     html += `<table class="table table-slots" style="margin-bottom:8px;">
-      <thead><tr><th>Window</th><th>Weight</th><th></th></tr></thead>
+      <thead><tr><th>חלון</th><th>משקל</th><th></th></tr></thead>
       <tbody>`;
     for (const w of windows) {
       html += `<tr>
@@ -244,7 +201,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
         </td>
         <td><input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-edit-weight" data-lwid="${w.id}" value="${w.weight.toFixed(2)}" /></td>
         <td>
-          <button class="btn-sm btn-primary" data-action="update-load-window" data-tid="${tpl.id}" data-lwid="${w.id}">Save</button>
+          <button class="btn-sm btn-primary" data-action="update-load-window" data-tid="${tpl.id}" data-lwid="${w.id}">שמור</button>
           <button class="btn-sm btn-danger-outline" data-action="remove-load-window" data-tid="${tpl.id}" data-lwid="${w.id}">✕</button>
         </td>
       </tr>`;
@@ -254,10 +211,10 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
 
   html += `<div class="add-slot-form" style="margin-top:8px;">
     <div class="form-row">
-      <label>Start <input class="input-sm" type="time" data-field="lw-start" value="05:00" /></label>
-      <label>End <input class="input-sm" type="time" data-field="lw-end" value="06:30" /></label>
-      <label>Weight (0-1) <input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" /></label>
-      <button class="btn-sm btn-primary" data-action="add-load-window" data-tid="${tpl.id}">Add Hot Window</button>
+      <label>התחלה <input class="input-sm" type="time" data-field="lw-start" value="05:00" /></label>
+      <label>סיום <input class="input-sm" type="time" data-field="lw-end" value="06:30" /></label>
+      <label>משקל (0-1) <input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" /></label>
+      <button class="btn-sm btn-primary" data-action="add-load-window" data-tid="${tpl.id}">הוסף חלון חם</button>
     </div>
   </div>`;
 
@@ -268,8 +225,8 @@ function renderSubTeam(templateId: string, st: SubTeamTemplate, pf: PreflightRes
   let html = `<div class="subteam-card">
     <div class="subteam-header">
       <strong>${st.name}</strong>
-      <span class="text-muted">(${st.slots.length} slots)</span>
-      <button class="btn-sm btn-outline" data-action="add-slot-subteam" data-tid="${templateId}" data-stid="${st.id}">+ Slot</button>
+      <span class="text-muted">(${st.slots.length} משבצות)</span>
+      <button class="btn-sm btn-outline" data-action="add-slot-subteam" data-tid="${templateId}" data-stid="${st.id}">+ משבצת</button>
       <button class="btn-sm btn-danger-outline" data-action="remove-subteam" data-tid="${templateId}" data-stid="${st.id}">✕</button>
     </div>`;
 
@@ -284,10 +241,10 @@ function renderSubTeam(templateId: string, st: SubTeamTemplate, pf: PreflightRes
 }
 
 function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: string | undefined, pf: PreflightResult): string {
-  if (slots.length === 0) return '<p class="text-muted" style="padding:4px 0;">No slots defined.</p>';
+  if (slots.length === 0) return '<p class="text-muted" style="padding:4px 0;">לא הוגדרו משבצות.</p>';
 
   let html = `<table class="table table-slots">
-    <thead><tr><th>Label</th><th>Levels</th><th>Certifications</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>תווית</th><th>דרגות</th><th>הסמכות</th><th>סטטוס</th><th></th></tr></thead>
     <tbody>`;
 
   for (const slot of slots) {
@@ -299,7 +256,7 @@ function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: s
     html += `<tr>
       <td>${slot.label}</td>
       <td>${slot.acceptableLevels.map(l => levelBadge(l)).join(' ')}</td>
-      <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map(c => certBadge(c)).join(' ') : '<span class="text-muted">None</span>'}</td>
+      <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map(c => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${statusHtml}</td>
       <td><button class="btn-sm btn-danger-outline" data-action="remove-slot" data-tid="${templateId}" ${subTeamId ? `data-stid="${subTeamId}"` : ''} data-slotid="${slot.id}">✕</button></td>
     </tr>`;
@@ -311,55 +268,55 @@ function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: s
 
 function renderAddSlotForm(templateId: string, subTeamId?: string): string {
   return `<div class="add-slot-form">
-    <h5>Add Slot</h5>
+    <h5>הוסף משבצת</h5>
     <div class="form-row">
-      <label>Label: <input class="input-sm" type="text" data-field="slot-label" placeholder="e.g. L0 #1" /></label>
+      <label>תווית: <input class="input-sm" type="text" data-field="slot-label" placeholder="למשל L0 #1" /></label>
     </div>
     <div class="form-row">
-      <span>Levels:</span>
+      <span>דרגות:</span>
       ${LEVEL_OPTIONS.map(l =>
         `<label class="checkbox-label"><input type="checkbox" data-slot-level="${l}" checked /> L${l}</label>`
       ).join('')}
     </div>
     <div class="form-row">
-      <span>Certifications:</span>
+      <span>הסמכות:</span>
       ${CERT_OPTIONS.map(c =>
         `<label class="checkbox-label"><input type="checkbox" data-slot-cert="${c}" /> ${c}</label>`
       ).join('')}
     </div>
     <div class="form-row">
-      <button class="btn-sm btn-primary" data-action="confirm-add-slot" data-tid="${templateId}" ${subTeamId ? `data-stid="${subTeamId}"` : ''}>Add</button>
-      <button class="btn-sm btn-outline" data-action="cancel-add-slot">Cancel</button>
+      <button class="btn-sm btn-primary" data-action="confirm-add-slot" data-tid="${templateId}" ${subTeamId ? `data-stid="${subTeamId}"` : ''}>הוסף</button>
+      <button class="btn-sm btn-outline" data-action="cancel-add-slot">ביטול</button>
     </div>
   </div>`;
 }
 
 function renderAddTemplateForm(): string {
   return `<div class="add-form" id="add-template-form">
-    <h4>New Task Template</h4>
+    <h4>תבנית משימה חדשה</h4>
     <div class="form-row">
-      <label>Name: <input class="input-sm" type="text" data-field="tpl-name" placeholder="Task name" /></label>
-      <label>Type:
+      <label>שם: <input class="input-sm" type="text" data-field="tpl-name" placeholder="שם משימה" /></label>
+      <label>סוג:
         <select class="input-sm" data-field="tpl-type">
-          ${TASK_TYPE_OPTIONS.map(t => `<option value="${t}">${t}</option>`).join('')}
-          <option value="Custom">Custom</option>
+          ${TASK_TYPE_OPTIONS.map(t => `<option value="${t}">${TASK_TYPE_LABELS[t] || t}</option>`).join('')}
+          <option value="Custom">מותאם אישית</option>
         </select>
       </label>
-      <label>Duration (h): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
-      <label>Shifts/Day: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
-      <label>Start Hour: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="tpl-start" /></label>
-      <label>Base Load (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="tpl-base-load" /></label>
+      <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
+      <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
+      <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="tpl-start" /></label>
+      <label>עומס בסיס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="tpl-base-load" /></label>
     </div>
     <div class="form-row">
-      <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> Same Group Required</label>
-      <label class="checkbox-label"><input type="checkbox" data-field="tpl-light" /> Light Task</label>
+      <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> אותה קבוצה</label>
+      <label class="checkbox-label"><input type="checkbox" data-field="tpl-light" /> משימה קלה</label>
     </div>
     <div class="form-row">
-      <label>Description: <input class="input-sm" type="text" data-field="tpl-desc" placeholder="Optional" style="width:300px;" /></label>
+      <label>תיאור: <input class="input-sm" type="text" data-field="tpl-desc" placeholder="אופציונלי" style="width:300px;" /></label>
     </div>
     <div class="form-row">
-      <button class="btn-sm btn-primary" data-action="confirm-add-template">Create</button>
-      <button class="btn-sm btn-outline" data-action="cancel-add-template">Cancel</button>
+      <button class="btn-sm btn-primary" data-action="confirm-add-template">צור</button>
+      <button class="btn-sm btn-outline" data-action="cancel-add-template">ביטול</button>
     </div>
   </div>`;
 }
@@ -477,7 +434,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       }
       case 'add-subteam': {
         const tid = target.dataset.tid!;
-        const name = prompt('Sub-team name:');
+        const name = prompt('שם תת-צוות:');
         if (!name) return;
         store.addSubTeamToTemplate(tid, name.trim());
         rerender();
@@ -486,7 +443,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'remove-subteam': {
         const tid = target.dataset.tid!;
         const stid = target.dataset.stid!;
-        if (confirm('Remove this sub-team and all its slots?')) {
+        if (confirm('להסיר תת-צוות זה ואת כל המשבצות שלו?')) {
           store.removeSubTeamFromTemplate(tid, stid);
           rerender();
         }
@@ -509,7 +466,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const tid = target.dataset.tid!;
         const stid = target.dataset.stid;
         const form = target.closest('.add-slot-form')!;
-        const label = (form.querySelector('[data-field="slot-label"]') as HTMLInputElement)?.value.trim() || 'Slot';
+        const label = (form.querySelector('[data-field="slot-label"]') as HTMLInputElement)?.value.trim() || 'משבצת';
         const levels: Level[] = [];
         form.querySelectorAll<HTMLInputElement>('[data-slot-level]').forEach(cb => {
           if (cb.checked) levels.push(parseInt(cb.dataset.slotLevel!) as Level);
@@ -552,7 +509,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'remove-template': {
         const tid = target.dataset.tid!;
         const tpl = store.getTaskTemplate(tid);
-        if (tpl && confirm(`Remove template "${tpl.name}"?`)) {
+        if (tpl && confirm(`להסיר תבנית "${tpl.name}"?`)) {
           store.removeTaskTemplate(tid);
           if (expandedTemplateId === tid) expandedTemplateId = null;
           rerender();

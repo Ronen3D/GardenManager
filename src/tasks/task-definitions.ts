@@ -55,7 +55,7 @@ function buildAdanitSlots(): SlotRequirement[] {
       acceptableLevels: [Level.L0],
       requiredCertifications: [Certification.Nitzan],
       adanitTeam: AdanitTeam.SegolMain,
-      label: `Segol Main L0 #${i + 1}`,
+      label: `סגול ראשי דרגה 0 #${i + 1}`,
     });
   }
   // Segol Main: 1× L3/L4
@@ -64,7 +64,7 @@ function buildAdanitSlots(): SlotRequirement[] {
     acceptableLevels: [Level.L3, Level.L4],
     requiredCertifications: [Certification.Nitzan],
     adanitTeam: AdanitTeam.SegolMain,
-    label: 'Segol Main L3/L4',
+    label: 'סגול ראשי דרגה 3/4',
   });
 
   // Segol Secondary: 2× L0
@@ -74,7 +74,7 @@ function buildAdanitSlots(): SlotRequirement[] {
       acceptableLevels: [Level.L0],
       requiredCertifications: [Certification.Nitzan],
       adanitTeam: AdanitTeam.SegolSecondary,
-      label: `Segol Secondary L0 #${i + 1}`,
+      label: `סגול משני דרגה 0 #${i + 1}`,
     });
   }
   // Segol Secondary: 1× L2
@@ -83,7 +83,7 @@ function buildAdanitSlots(): SlotRequirement[] {
     acceptableLevels: [Level.L2],
     requiredCertifications: [Certification.Nitzan],
     adanitTeam: AdanitTeam.SegolSecondary,
-    label: 'Segol Secondary L2',
+    label: 'סגול משני דרגה 2',
   });
 
   return slots;
@@ -106,7 +106,7 @@ export function createAdanitTasks(baseDate: Date): Task[] {
     return {
       id: nextTaskId('adanit'),
       type: TaskType.Adanit,
-      name: `Adanit Shift ${i + 1}`,
+      name: `משמרת אדנית ${i + 1}`,
       timeBlock: block,
       requiredCount: 6,
       slots,
@@ -125,7 +125,7 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
   return {
     id: nextTaskId('hamama'),
     type: TaskType.Hamama,
-    name: 'Hamama',
+    name: 'חממה',
     timeBlock,
     requiredCount: 1,
     slots: [
@@ -133,7 +133,7 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
         slotId: nextSlotId('hamama'),
         acceptableLevels: [Level.L0, Level.L2, Level.L3, Level.L4],
         requiredCertifications: [Certification.Hamama],
-        label: 'Hamama Operator',
+        label: 'מפעיל חממה',
       },
     ],
     isLight: false,
@@ -150,7 +150,7 @@ export function createShemeshTask(timeBlock: TimeBlock): Task {
   return {
     id: nextTaskId('shemesh'),
     type: TaskType.Shemesh,
-    name: 'Shemesh',
+    name: 'שמש',
     timeBlock,
     requiredCount: 2,
     slots: [
@@ -158,13 +158,13 @@ export function createShemeshTask(timeBlock: TimeBlock): Task {
         slotId: nextSlotId('shemesh'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [Certification.Nitzan],
-        label: 'Shemesh #1',
+        label: 'שמש #1',
       },
       {
         slotId: nextSlotId('shemesh'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [Certification.Nitzan],
-        label: 'Shemesh #2',
+        label: 'שמש #2',
       },
     ],
     isLight: false,
@@ -181,7 +181,7 @@ export function createMamteraTask(baseDate: Date): Task {
   return {
     id: nextTaskId('mamtera'),
     type: TaskType.Mamtera,
-    name: 'Mamtera',
+    name: 'ממטרה',
     timeBlock: block,
     requiredCount: 2,
     slots: [
@@ -189,13 +189,13 @@ export function createMamteraTask(baseDate: Date): Task {
         slotId: nextSlotId('mamtera'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
-        label: 'Mamtera L0 #1',
+        label: 'ממטרה דרגה 0 #1',
       },
       {
         slotId: nextSlotId('mamtera'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
-        label: 'Mamtera L0 #2',
+        label: 'ממטרה דרגה 0 #2',
       },
     ],
     isLight: false,
@@ -214,7 +214,7 @@ export function createKarovTask(timeBlock: TimeBlock): Task {
   return {
     id: nextTaskId('karov'),
     type: TaskType.Karov,
-    name: 'Karov',
+    name: 'כרוב',
     timeBlock,
     requiredCount: 4,
     slots: [
@@ -222,25 +222,25 @@ export function createKarovTask(timeBlock: TimeBlock): Task {
         slotId: nextSlotId('karov'),
         acceptableLevels: [Level.L2, Level.L3, Level.L4],
         requiredCertifications: [],
-        label: 'Karov Commander (L2/L3/L4)',
+        label: 'מפקד כרוב (דרגה 2/3/4)',
       },
       {
         slotId: nextSlotId('karov'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [Certification.Salsala],
-        label: 'Karov L0 + Salsala',
+        label: 'כרוב דרגה 0 + סלסלה',
       },
       {
         slotId: nextSlotId('karov'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
-        label: 'Karov L0 #2',
+        label: 'כרוב דרגה 0 #2',
       },
       {
         slotId: nextSlotId('karov'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
-        label: 'Karov L0 #3',
+        label: 'כרוב דרגה 0 #3',
       },
     ],
     isLight: false,
@@ -276,7 +276,7 @@ export function createKarovitTask(timeBlock: TimeBlock): Task {
   return {
     id: nextTaskId('karovit'),
     type: TaskType.Karovit,
-    name: 'Karovit',
+    name: 'כרובית',
     timeBlock,
     requiredCount: 4,
     slots: [
@@ -284,25 +284,25 @@ export function createKarovitTask(timeBlock: TimeBlock): Task {
         slotId: nextSlotId('karovit'),
         acceptableLevels: [Level.L2, Level.L3, Level.L4],
         requiredCertifications: [],
-        label: 'Karovit Commander (L2+)',
+        label: 'מפקד כרובית (דרגה 2+)',
       },
       {
         slotId: nextSlotId('karovit'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
-        label: 'Karovit L0 #1',
+        label: 'כרובית דרגה 0 #1',
       },
       {
         slotId: nextSlotId('karovit'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
-        label: 'Karovit L0 #2',
+        label: 'כרובית דרגה 0 #2',
       },
       {
         slotId: nextSlotId('karovit'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
-        label: 'Karovit L0 #3',
+        label: 'כרובית דרגה 0 #3',
       },
     ],
     isLight: true,
@@ -314,7 +314,7 @@ export function createKarovitTask(timeBlock: TimeBlock): Task {
 // ─── Aruga ───────────────────────────────────────────────────────────────────
 // 1.5h, 2× L0. Specific morning/evening slots.
 
-export function createArugaTask(timeBlock: TimeBlock, label: string = 'Aruga'): Task {
+export function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוגה'): Task {
   return {
     id: nextTaskId('aruga'),
     type: TaskType.Aruga,
@@ -326,13 +326,13 @@ export function createArugaTask(timeBlock: TimeBlock, label: string = 'Aruga'): 
         slotId: nextSlotId('aruga'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
-        label: `${label} L0 #1`,
+        label: `${label} דרגה 0 #1`,
       },
       {
         slotId: nextSlotId('aruga'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
-        label: `${label} L0 #2`,
+        label: `${label} דרגה 0 #2`,
       },
     ],
     isLight: false,
@@ -407,11 +407,11 @@ export function generateDailyTasks(baseDate: Date): Task[] {
   // Aruga: morning 05:00-06:30, evening 17:00-18:30
   const arugaMorningStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5, 0);
   const arugaMorningEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 6, 30);
-  tasks.push(createArugaTask({ start: arugaMorningStart, end: arugaMorningEnd }, 'Aruga Morning'));
+  tasks.push(createArugaTask({ start: arugaMorningStart, end: arugaMorningEnd }, 'ערוגה בוקר'));
 
   const arugaEveningStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 17, 0);
   const arugaEveningEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 18, 30);
-  tasks.push(createArugaTask({ start: arugaEveningStart, end: arugaEveningEnd }, 'Aruga Evening'));
+  tasks.push(createArugaTask({ start: arugaEveningStart, end: arugaEveningEnd }, 'ערוגה ערב'));
 
   return tasks;
 }
@@ -439,7 +439,7 @@ export function generateWeeklyTasks(startDate: Date, numDays: number = 7): Task[
 
     // Prefix task names with day number for clarity
     for (const t of dayTasks) {
-      t.name = `D${day + 1} ${t.name}`;
+      t.name = `יום ${day + 1} ${t.name}`;
     }
 
     allTasks.push(...dayTasks);

@@ -228,7 +228,7 @@ export function collectSoftWarnings(
           warnings.push({
             severity: ViolationSeverity.Warning,
             code: 'HAMAMA_SENIOR',
-            message: `${p.name} (L4) assigned to Hamama — absolute last resort. Only L0 should be here; L4 is a fallback when no L0 is available.`,
+            message: `${p.name} (דרגה 4) משובץ לחממה — מוצא אחרון. רק דרגה 0 צריכים להיות כאן; דרגה 4 הוא חלופה כשאין דרגה 0 זמינים.`,
             taskId: task.id,
             participantId: p.id,
           });
@@ -244,48 +244,9 @@ export function collectSoftWarnings(
         warnings.push({
           severity: ViolationSeverity.Warning,
           code: 'GROUP_MISMATCH',
-          message: `Task ${task.name} requires same-group but has participants from ${groups.size} groups: [${[...groups].join(', ')}] — this should be caught by HC-4`,
+          message: `משימה ${task.name} דורשת אותה קבוצה אך כוללת משתתפים מ-${groups.size} קבוצות: [${[...groups].join(', ')}] — זה אמור להיתפס על ידי HC-4`,
           taskId: task.id,
         });
-      }
-    }
-  }
-
-  // SC-8: Daily imbalance — warn if a participant's busiest day is ≥ 2× their lightest
-  if (!disabledSW?.has('DAILY_IMBALANCE')) {
-    const warnTaskMap = new Map(tasks.map(t => [t.id, t]));
-    const allDaysSet = new Set<string>();
-    for (const t of tasks) allDaysSet.add(dateKey(t.timeBlock.start));
-    const warnDayList = [...allDaysSet].sort();
-
-    if (warnDayList.length > 1) {
-      const dayIdx = new Map<string, number>();
-      for (let i = 0; i < warnDayList.length; i++) dayIdx.set(warnDayList[i], i);
-
-      for (const p of participants) {
-        const dailyLoad = new Float64Array(warnDayList.length);
-        const pAssigns = assignments.filter(a => a.participantId === p.id);
-        for (const a of pAssigns) {
-          const task = warnTaskMap.get(a.taskId);
-          if (!task) continue;
-          const idx = dayIdx.get(dateKey(task.timeBlock.start));
-          if (idx === undefined) continue;
-          dailyLoad[idx] += computeTaskEffectiveHours(task);
-        }
-        // Only consider days where participant has some load
-        const activeDays = Array.from(dailyLoad).filter(h => h > 0);
-        if (activeDays.length < 2) continue;
-        const maxDay = Math.max(...activeDays);
-        const minDay = Math.min(...activeDays);
-        if (minDay > 0 && maxDay >= 2 * minDay) {
-          warnings.push({
-            severity: ViolationSeverity.Warning,
-            code: 'DAILY_IMBALANCE',
-            message: `${p.name} has uneven daily workload: busiest day ${maxDay.toFixed(1)}h vs lightest ${minDay.toFixed(1)}h (${(maxDay / minDay).toFixed(1)}× ratio).`,
-            taskId: '',
-            participantId: p.id,
-          });
-        }
       }
     }
   }
@@ -397,16 +358,11 @@ export function computeScheduleScore(
   const minRest = isFinite(fairness.globalMinRest) ? fairness.globalMinRest : 0;
   const avgRest = isFinite(fairness.globalAvgRest) ? fairness.globalAvgRest : 0;
 
-  // When DAILY_IMBALANCE is disabled, zero out the daily balance weight
-  const effectiveDailyBalanceWeight = disabledSW?.has('DAILY_IMBALANCE')
-    ? 0
-    : config.dailyBalanceWeight;
-
   const compositeScore =
     config.minRestWeight * minRest -
     config.l0FairnessWeight * wlSplit.l0StdDev -
     config.seniorFairnessWeight * wlSplit.seniorStdDev -
-    effectiveDailyBalanceWeight * (dailyBalance.dailyPerParticipantStdDev + dailyBalance.dailyGlobalStdDev) -
+    config.dailyBalanceWeight * (dailyBalance.dailyPerParticipantStdDev + dailyBalance.dailyGlobalStdDev) -
     config.penaltyWeight * totalPenalty +
     config.bonusWeight * totalBonus;
 

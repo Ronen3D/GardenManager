@@ -46,11 +46,11 @@ export function fullValidate(
 
   let summary: string;
   if (hardCount === 0 && warnCount === 0) {
-    summary = 'Schedule is valid with no issues.';
+    summary = 'השבצ"ק תקין ללא בעיות.';
   } else if (hardCount === 0) {
-    summary = `Schedule is valid but has ${warnCount} warning(s).`;
+    summary = `השבצ"ק תקין אך יש ${warnCount} אזהרה/ות.`;
   } else {
-    summary = `INVALID SCHEDULE: ${hardCount} hard constraint violation(s), ${warnCount} warning(s).`;
+    summary = `שבצ"ק לא תקין: ${hardCount} הפרת אילוץ קשיח, ${warnCount} אזהרה/ות.`;
   }
 
   return {

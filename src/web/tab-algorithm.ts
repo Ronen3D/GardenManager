@@ -39,68 +39,68 @@ interface WeightGroup {
 
 const WEIGHT_GROUPS: WeightGroup[] = [
   {
-    title: 'Workload Fairness',
-    description: 'Controls how aggressively the optimizer equalizes workload across participants. Higher values produce more even distribution but may reduce overall scheduling flexibility.',
+    title: 'שיוויוניות עומס',
+    description: 'קובע עד כמה האופטימייזר משווה עומסי עבודה בין המשתתפים. ערכים גבוהים מייצרים חלוקה שוויונית יותר אך עלולים להפחית גמישות בשיבוץ.',
     fields: [
       {
         key: 'l0FairnessWeight',
-        label: 'Standard participant fairness',
+        label: 'משקל שיוויוניות L0',
         min: 0, max: 200, step: 1,
-        description: 'How evenly work hours are spread among standard (L0) participants. Higher = more equal distribution.',
-        detail: 'If participant A works 12 effective hours and participant B works 6, the optimizer penalizes this gap. At weight 40 (default), evening out L0 workload matters more than almost any other factor. Set to 0 to ignore L0 fairness entirely.',
+        description: 'עד כמה שעות העבודה מתחלקות באופן שווה בין משתתפים רגילים (L0). ערך גבוה = חלוקה שוויונית יותר.',
+        detail: 'אם משתתף א\' עובד 12 שעות אפקטיביות ומשתתף ב\' עובד 6, האופטימייזר מעניש פער זה. במשקל 40 (ברירת מחדל), שיוויון עומס L0 חשוב יותר מכמעט כל גורם אחר. הגדר 0 כדי להתעלם משיוויוניות L0 לחלוטין.',
       },
       {
         key: 'seniorFairnessWeight',
-        label: 'Senior participant fairness',
+        label: 'משקל שיוויוניות בכירים',
         min: 0, max: 200, step: 1,
-        description: 'How evenly work hours are spread among senior (L2–L4) participants. Lower priority since the senior pool is smaller.',
-        detail: 'Seniors have fewer eligible tasks (mainly Adanit), so their workload range is narrower. Default 6 is intentionally low compared to L0 fairness (40). Increase if you notice senior workload becoming lopsided.',
+        description: 'עד כמה שעות העבודה מתחלקות באופן שווה בין משתתפים בכירים (L2–L4). עדיפות נמוכה יותר כי מאגר הבכירים קטן.',
+        detail: 'לבכירים יש פחות משימות מתאימות (בעיקר אדנית), ולכן טווח העומס שלהם מצומצם יותר. ברירת מחדל 6 נמוכה בכוונה בהשוואה לשיוויוניות L0 (40). הגדל אם אתה מבחין שעומס הבכירים הופך לא מאוזן.',
       },
       {
         key: 'dailyBalanceWeight',
-        label: 'Day-to-day balance',
+        label: 'משקל איזון יומי',
         min: 0, max: 200, step: 1,
-        description: 'Discourages "heavy day / light day" patterns — aims for consistent daily workload per person and across the schedule.',
-        detail: 'Two metrics are combined: (1) each participant\'s daily hours should be roughly even, and (2) the total hours across all participants per calendar day should be roughly even. Default 90 makes daily balance one of the strongest scoring factors.',
+        description: 'מונע דפוסי "יום כבד / יום קל" — שואף לעומס עבודה יומי עקבי לכל אדם ולאורך כל הלו"ז.',
+        detail: 'שני מדדים משולבים: (1) שעות העבודה היומיות של כל משתתף צריכות להיות אחידות בקירוב, ו-(2) סה"כ השעות של כל המשתתפים ביום קלנדרי נתון צריך להיות אחיד בקירוב. ברירת מחדל 90 הופכת את האיזון היומי לאחד מגורמי הניקוד החזקים ביותר.',
       },
     ],
   },
   {
-    title: 'Rest & Safety',
-    description: 'Controls how the optimizer values rest time between consecutive blocking assignments (HC-12 tasks). Non-blocking tasks like Karov are excluded from rest penalty.',
+    title: 'מנוחה ובטיחות',
+    description: 'קובע כיצד האופטימייזר מעריך זמן מנוחה בין שיבוצים חוסמים רצופים (משימות HC-12). משימות לא חוסמות כמו כרוב אינן נכללות בעונש המנוחה.',
     fields: [
       {
         key: 'minRestWeight',
-        label: 'Minimum rest priority',
+        label: 'משקל מנוחה מינימלית',
         min: 0, max: 200, step: 1,
-        description: 'How much the optimizer values rest between blocking shifts. Higher = longer gaps between a person\'s consecutive blocking tasks.',
-        detail: 'Only gaps where BOTH adjacent tasks have "Blocks Consecutive" (HC-12) enabled count toward rest scoring. For example, Adanit→Shemesh gaps are penalised, but Karov→Shemesh gaps are not. The composite score adds (minRestWeight × minimum rest hours). At the default of 10, each additional hour of minimum rest is worth 10 score points.',
+        description: 'עד כמה האופטימייזר מעריך מנוחה בין משמרות חוסמות. ערך גבוה = הפסקות ארוכות יותר בין משימות חוסמות רצופות.',
+        detail: 'רק פערים שבהם לשתי המשימות הצמודות יש "חוסם רצף" (HC-12) מופעל נספרים לניקוד מנוחה. לדוגמה, פערי אדנית→שמש מועשנים, אבל פערי כרוב→שמש לא. הניקוד המשולב מוסיף (minRestWeight × שעות מנוחה מינימליות). בברירת מחדל 10, כל שעת מנוחה מינימלית נוספת שווה 10 נקודות ניקוד.',
       },
     ],
   },
   {
-    title: 'Senior Participant Policy',
-    description: 'Penalty applied when an L4 participant is assigned to Hamama as a last resort. All other out-of-role assignments are hard-blocked by HC-13.',
+    title: 'מדיניות בכירים',
+    description: 'עונש המוטל כאשר משתתף L4 משובץ לחממה כמוצא אחרון. כל שיבוץ חריג אחר נחסם על ידי HC-13.',
     fields: [
       {
         key: 'seniorHamamaPenalty',
-        label: 'Senior on Hamama',
+        label: 'עונש בכירים בחממה',
         min: 0, max: 50000, step: 100,
-        description: 'Heavy penalty when an L4 is placed on Hamama duty. This is an absolute last resort — only L4 can be assigned (L2/L3 are hard-blocked).',
-        detail: 'At the default of 10,000, placing one L4 on Hamama costs the same as having 250 units of workload unfairness. The optimizer will try every other option before resorting to this. Only L4 can be placed here (L2/L3 are hard-blocked by HC-13).',
+        description: 'עונש כבד כאשר L4 משובץ לתפקיד חממה. זהו מוצא אחרון בלבד — רק L4 יכול להיות משובץ (L2/L3 חסומים לחלוטין).',
+        detail: 'בברירת מחדל 10,000, שיבוץ L4 אחד בחממה עולה כמו 250 יחידות של חוסר שיוויון בעומס עבודה. האופטימייזר ינסה כל אפשרות אחרת לפני שיפנה לזה. רק L4 יכול להיות משובץ כאן (L2/L3 חסומים על ידי HC-13).',
       },
     ],
   },
   {
-    title: 'General Scoring',
-    description: 'Multiplier that scales all penalty points in the final composite score.',
+    title: 'ניקוד כללי',
+    description: 'מכפיל שמשקלל את כל נקודות העונשין בניקוד המשולב הסופי.',
     fields: [
       {
         key: 'penaltyWeight',
-        label: 'Overall penalty multiplier',
+        label: 'משקל עונשין',
         min: 0, max: 100, step: 1,
-        description: 'Scales all penalty points (senior Hamama, etc.) in the final score. Increase to make penalty avoidance more aggressive.',
-        detail: 'The composite score subtracts (penaltyWeight × totalPenalty). At the default of 1, penalties are applied at face value. At 2, every penalty point hurts twice as much. Set to 0 to ignore all penalties (not recommended).',
+        description: 'משקלל את כל נקודות העונשין (בכירים בחממה וכו\') בניקוד הסופי. הגדל כדי להפוך את הימנעות מעונשין לאגרסיבית יותר.',
+        detail: 'הניקוד המשולב מחסיר (penaltyWeight × סה"כ עונשין). בברירת מחדל 1, עונשין מוחלים בערכם הנקוב. ב-2, כל נקודת עונשין כואבת פי שניים. הגדר 0 כדי להתעלם מכל העונשין (לא מומלץ).',
       },
     ],
   },
@@ -109,47 +109,45 @@ const WEIGHT_GROUPS: WeightGroup[] = [
 const SOLVER_FIELDS: WeightField[] = [
   {
     key: 'maxIterations',
-    label: 'Maximum iterations',
+    label: 'מספר איטרציות מקסימלי',
     min: 1000, max: 200000, step: 1000,
-    description: 'How many swap attempts the optimizer explores. More iterations = potentially better results but longer run time.',
-    detail: 'The simulated annealing optimizer tries swapping pairs of assignments to improve the score. Each swap attempt counts as one iteration. Default 10,000 gives good results for most schedules. For very large participant pools (30+), try 50,000+.',
+    description: 'כמה ניסיונות החלפה האופטימייזר בוחן. יותר איטרציות = תוצאות טובות יותר פוטנציאלית אך זמן ריצה ארוך יותר.',
+    detail: 'אופטימייזר הצינון המדומה מנסה להחליף זוגות שיבוצים כדי לשפר את הניקוד. כל ניסיון החלפה נחשב כאיטרציה אחת. ברירת מחדל 10,000 נותנת תוצאות טובות לרוב הלוחות. עבור מאגרי משתתפים גדולים מאוד (30+), נסה 50,000+.',
   },
   {
     key: 'maxSolverTimeMs',
-    label: 'Time limit (ms)',
+    label: 'מגבלת זמן (מ"ש)',
     min: 1000, max: 120000, step: 1000,
-    description: 'Maximum wall-clock time the optimizer is allowed to run. The solver stops early when this limit is reached.',
-    detail: 'Even if iterations remain, the solver stops when this time limit is reached. Default 30,000ms (30 seconds) is sufficient for most cases. For very tight schedules, allowing more time (60,000+) may find better solutions.',
+    description: 'זמן שעון קיר מקסימלי שהאופטימייזר רשאי לרוץ. הפותר עוצר מוקדם כשמגיעים למגבלה זו.',
+    detail: 'גם אם נותרו איטרציות, הפותר עוצר כשמגיעים למגבלת הזמן. ברירת מחדל 30,000 מ"ש (30 שניות) מספיקה לרוב המקרים. עבור לוחות צפופים מאוד, הקצאת זמן נוסף (60,000+) עשויה למצוא פתרונות טובים יותר.',
   },
 ];
 
 // ─── HC/SW Extended Descriptions ─────────────────────────────────────────────
 
 const HC_DESCRIPTIONS: Record<HardConstraintCode, string> = {
-  'HC-1': 'Participant\'s level must match or exceed the slot\'s acceptable levels.',
-  'HC-2': 'Participant must hold all certifications required by the slot.',
-  'HC-3': 'Participant must be available during the entire task time window.',
-  'HC-4': 'All participants in a same-group task must belong to the same group.',
-  'HC-5': 'A participant cannot be assigned to two overlapping tasks.',
-  'HC-6': 'Every slot in every task must have exactly one assigned participant.',
-  'HC-7': 'A participant cannot fill multiple slots in the same task.',
-  'HC-8': 'The chosen group must have enough qualified participants (≥4 L0, ≥1 L2, ≥1 L3/L4 with Nitzan).',
-  'HC-11': 'Participants with Horesh certification cannot be assigned to Mamtera tasks.',
-  'HC-12': 'Two back-to-back heavy tasks (both blocking) cannot be assigned to the same person.',
-  'HC-13': 'Seniors (L2/L3/L4) can only be assigned to their natural domain; L2/L3 fully blocked from Hamama.',
+  'HC-1': 'רמת המשתתף חייבת להתאים או לעלות על הרמות המותרות למשבצת.',
+  'HC-2': 'המשתתף חייב להחזיק בכל ההסמכות הנדרשות למשבצת.',
+  'HC-3': 'המשתתף חייב להיות זמין לאורך כל חלון הזמן של המשימה.',
+  'HC-4': 'כל המשתתפים במשימת אדנית (קבוצה אחידה) חייבים להיות מאותה קבוצה.',
+  'HC-5': 'לא ניתן לשבץ משתתף לשתי משימות חופפות.',
+  'HC-6': 'כל משבצת בכל משימה חייבת להיות מאוישת במשתתף אחד בדיוק.',
+  'HC-7': 'משתתף לא יכול למלא יותר ממשבצת אחת באותה משימה.',
+  'HC-8': 'לקבוצה הנבחרת חייבים להיות מספיק משתתפים כשירים (≥4 L0, ≥1 L2, ≥1 L3/L4 עם ניצן).',
+  'HC-11': 'משתתפים עם הסמכת חורש לא יכולים להיות משובצים למשימות ממטרה.',
+  'HC-12': 'לא ניתן לשבץ שתי משימות כבדות רצופות (שתיהן חוסמות) לאותו אדם.',
+  'HC-13': 'בכירים (L2/L3/L4) יכולים להיות משובצים רק לתחום הטבעי שלהם; L2/L3 חסומים לחלוטין מחממה.',
 };
 
 const SW_DESCRIPTIONS: Record<SoftWarningCode, string> = {
-  'HAMAMA_SENIOR': 'When enabled: warns if L4 is placed on Hamama, and applies the "Senior on Hamama" penalty to scoring. Disable to allow L4 on Hamama without penalty.',
-  'GROUP_MISMATCH': 'Safety-net warning if a same-group task ends up with participants from different groups (should be caught by HC-4).',
-  'DAILY_IMBALANCE': 'When enabled: warns when someone\'s busiest day is ≥2× their lightest, and applies the daily balance scoring weight. Disable to allow uneven day distribution.',
+  'HAMAMA_SENIOR': 'כאשר מופעל: מתריע אם L4 משובץ לחממה, ומחיל את עונש "בכירים בחממה" על הניקוד. בטל כדי לאפשר L4 בחממה ללא עונש.',
+  'GROUP_MISMATCH': 'אזהרת רשת ביטחון אם משימת קבוצה אחידה מסתיימת עם משתתפים מקבוצות שונות (אמור להיתפס על ידי HC-4).',
 };
 
 // Improved SW labels for clarity
 const SW_LABELS_EXTENDED: Record<SoftWarningCode, string> = {
-  'HAMAMA_SENIOR': 'Senior on Hamama — warning + penalty',
-  'GROUP_MISMATCH': 'Group mismatch — safety warning',
-  'DAILY_IMBALANCE': 'Daily workload imbalance — warning + penalty',
+  'HAMAMA_SENIOR': 'בכירים בחממה — אזהרה + עונש',
+  'GROUP_MISMATCH': 'אי-התאמת קבוצה — אזהרת בטיחות',
 };
 
 // ─── Debounce-safe pending weight state ──────────────────────────────────────
@@ -192,27 +190,27 @@ export function renderAlgorithmTab(): string {
   let html = `
   <div class="tab-toolbar">
     <div class="toolbar-left">
-      <h2>Algorithm Settings</h2>
+      <h2>הגדרות אלגוריתם</h2>
     </div>
     <div class="toolbar-right">
       <select class="preset-select" data-action="algo-preset-select">
-        ${presets.map(p => `<option value="${p.id}"${p.id === activeId ? ' selected' : ''}>${_escHtml(p.name)}${p.id === activeId && dirty ? ' (modified)' : ''}</option>`).join('')}
+        ${presets.map(p => `<option value="${p.id}"${p.id === activeId ? ' selected' : ''}>${_escHtml(p.name)}${p.id === activeId && dirty ? ' (שונה)' : ''}</option>`).join('')}
       </select>
-      ${dirty ? '<span class="preset-dirty-badge">modified</span>' : ''}
-      <button class="btn btn-sm btn-primary" data-action="algo-preset-save" ${(!dirty || isBuiltIn) ? 'disabled' : ''} title="${isBuiltIn ? 'Cannot overwrite built-in preset — use Save As' : 'Save changes to this preset'}">Save</button>
-      <button class="btn btn-sm" data-action="algo-preset-saveas">Save As…</button>
-      <button class="btn btn-sm" data-action="algo-preset-rename" ${isBuiltIn ? 'disabled' : ''}>Rename</button>
-      <button class="btn btn-sm btn-danger" data-action="algo-preset-delete" ${isBuiltIn ? 'disabled' : ''}>Delete</button>
+      ${dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
+      <button class="btn btn-sm btn-primary" data-action="algo-preset-save" ${(!dirty || isBuiltIn) ? 'disabled' : ''} title="${isBuiltIn ? 'לא ניתן לדרוס תבנית מובנית — השתמש בשמור בשם' : 'שמור שינויים לתבנית זו'}">שמור</button>
+      <button class="btn btn-sm" data-action="algo-preset-saveas">שמור בשם…</button>
+      <button class="btn btn-sm" data-action="algo-preset-rename" ${isBuiltIn ? 'disabled' : ''}>שנה שם</button>
+      <button class="btn btn-sm btn-danger" data-action="algo-preset-delete" ${isBuiltIn ? 'disabled' : ''}>מחק</button>
     </div>
   </div>
 
   <!-- Save-As inline form (hidden by default) -->
   <div class="preset-inline-form" id="preset-saveas-form" style="display:none;">
     <div class="preset-form-row">
-      <label>Name: <input type="text" class="preset-name-input" data-field="saveas-name" maxlength="60" placeholder="My preset" /></label>
-      <label>Description: <input type="text" class="preset-desc-input" data-field="saveas-desc" maxlength="200" placeholder="Optional description" /></label>
-      <button class="btn btn-sm btn-primary" data-action="algo-preset-saveas-confirm">Confirm</button>
-      <button class="btn btn-sm" data-action="algo-preset-saveas-cancel">Cancel</button>
+      <label>שם: <input type="text" class="preset-name-input" data-field="saveas-name" maxlength="60" placeholder="התבנית שלי" /></label>
+      <label>תיאור: <input type="text" class="preset-desc-input" data-field="saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
+      <button class="btn btn-sm btn-primary" data-action="algo-preset-saveas-confirm">אשר</button>
+      <button class="btn btn-sm" data-action="algo-preset-saveas-cancel">ביטול</button>
     </div>
     <div class="preset-validation-error" id="saveas-error"></div>
   </div>
@@ -220,10 +218,10 @@ export function renderAlgorithmTab(): string {
   <!-- Rename inline form (hidden by default) -->
   <div class="preset-inline-form" id="preset-rename-form" style="display:none;">
     <div class="preset-form-row">
-      <label>Name: <input type="text" class="preset-name-input" data-field="rename-name" maxlength="60" /></label>
-      <label>Description: <input type="text" class="preset-desc-input" data-field="rename-desc" maxlength="200" /></label>
-      <button class="btn btn-sm btn-primary" data-action="algo-preset-rename-confirm">Confirm</button>
-      <button class="btn btn-sm" data-action="algo-preset-rename-cancel">Cancel</button>
+      <label>שם: <input type="text" class="preset-name-input" data-field="rename-name" maxlength="60" /></label>
+      <label>תיאור: <input type="text" class="preset-desc-input" data-field="rename-desc" maxlength="200" /></label>
+      <button class="btn btn-sm btn-primary" data-action="algo-preset-rename-confirm">אשר</button>
+      <button class="btn btn-sm" data-action="algo-preset-rename-cancel">ביטול</button>
     </div>
     <div class="preset-validation-error" id="rename-error"></div>
   </div>`;
@@ -251,8 +249,8 @@ export function renderAlgorithmTab(): string {
   // ── Solver Parameters ──
   html += `
   <div class="algo-section">
-    <h3 class="algo-section-title">Solver Tuning</h3>
-    <p class="algo-section-desc">Control how long and how hard the optimizer searches for a good schedule. Higher values may produce better results but take longer.</p>
+    <h3 class="algo-section-title">כוונון פותר</h3>
+    <p class="algo-section-desc">שליטה בכמה זמן ובאיזו עוצמה האופטימייזר מחפש לו"ז טוב. ערכים גבוהים עשויים לייצר תוצאות טובות יותר אך לקחת יותר זמן.</p>
     <div class="algo-grid">`;
 
   for (const f of SOLVER_FIELDS) {
@@ -269,8 +267,8 @@ export function renderAlgorithmTab(): string {
   // ── Hard Constraint Toggles ──
   html += `
   <div class="algo-section">
-    <h3 class="algo-section-title">Hard Constraints</h3>
-    <p class="algo-section-desc">Rules that must be satisfied for a valid schedule. Uncheck to skip a rule everywhere — optimizer, validator, and UI warnings. <strong>Disabling constraints may produce invalid schedules.</strong></p>
+    <h3 class="algo-section-title">תנאים מחייבים</h3>
+    <p class="algo-section-desc">כללים שחייבים להתקיים עבור לו"ז תקין. בטל סימון כדי לדלג על כלל בכל מקום — אופטימייזר, מאמת, ואזהרות ממשק. <strong>ביטול אילוצים עלול לייצר לוחות לא תקינים.</strong></p>
     <div class="algo-toggle-list">`;
 
   for (const code of ALL_HC_CODES) {
@@ -282,7 +280,7 @@ export function renderAlgorithmTab(): string {
         <div class="algo-toggle-content">
           <span class="algo-toggle-label">${HC_LABELS[code]}</span>
           <span class="algo-toggle-desc">${HC_DESCRIPTIONS[code]}</span>
-          ${!enabled ? '<span class="algo-toggle-warning">⚠ Disabled — the optimizer and validator will skip this check</span>' : ''}
+          ${!enabled ? '<span class="algo-toggle-warning">⚠ מושבת — האופטימייזר והמאמת ידלגו על בדיקה זו</span>' : ''}
         </div>
       </label>`;
   }
@@ -294,8 +292,8 @@ export function renderAlgorithmTab(): string {
   // ── Soft Warning Toggles ──
   html += `
   <div class="algo-section">
-    <h3 class="algo-section-title">Soft Warnings</h3>
-    <p class="algo-section-desc">Warnings and scoring penalties that guide the optimizer toward better schedules without making them invalid. Unchecking disables both the warning message <strong>and</strong> the associated scoring penalty.</p>
+    <h3 class="algo-section-title">עקרונות מנחים</h3>
+    <p class="algo-section-desc">אזהרות ועונשי ניקוד שמנחים את האופטימייזר לעבר לוחות טובים יותר מבלי להפוך אותם ללא תקינים. ביטול סימון משבית גם את הודעת האזהרה <strong>וגם</strong> את עונש הניקוד המשויך.</p>
     <div class="algo-toggle-list">`;
 
   for (const code of ALL_SW_CODES) {
@@ -306,7 +304,7 @@ export function renderAlgorithmTab(): string {
         <div class="algo-toggle-content">
           <span class="algo-toggle-label">${SW_LABELS_EXTENDED[code]}</span>
           <span class="algo-toggle-desc">${SW_DESCRIPTIONS[code]}</span>
-          ${!enabled ? '<span class="algo-toggle-warning">⚠ Disabled — warning suppressed and scoring penalty removed</span>' : ''}
+          ${!enabled ? '<span class="algo-toggle-warning">⚠ מושבת — האזהרה מושתקת ועונש הניקוד הוסר</span>' : ''}
         </div>
       </label>`;
   }
@@ -325,7 +323,7 @@ function renderWeightInput(f: WeightField, value: number, defaultVal: number, is
     <div class="algo-weight-card${isCustom ? ' modified' : ''}">
       <div class="algo-weight-header">
         <label class="algo-weight-label" title="${f.description}">${f.label}</label>
-        ${isCustom ? `<span class="algo-weight-default" title="Default: ${defaultVal}">↺ ${defaultVal}</span>` : ''}
+        ${isCustom ? `<span class="algo-weight-default" title="ברירת מחדל: ${defaultVal}">↺ ${defaultVal}</span>` : ''}
       </div>
       <div class="algo-weight-controls">
         <input type="range"
@@ -344,7 +342,7 @@ function renderWeightInput(f: WeightField, value: number, defaultVal: number, is
       <p class="algo-weight-desc">${f.description}</p>
       ${f.detail ? `
       <details class="algo-weight-details">
-        <summary>Learn more</summary>
+        <summary>למידע נוסף</summary>
         <p>${f.detail}</p>
       </details>` : ''}
     </div>`;
@@ -396,12 +394,12 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         const name = nameInput?.value.trim() ?? '';
         const desc = descInput?.value.trim() ?? '';
         if (!name) {
-          if (errEl) errEl.textContent = 'Name cannot be empty';
+          if (errEl) errEl.textContent = 'השם לא יכול להיות ריק';
           return;
         }
         const result = store.saveCurrentAsPreset(name, desc);
         if (!result) {
-          if (errEl) errEl.textContent = 'A preset with this name already exists';
+          if (errEl) errEl.textContent = 'תבנית עם שם זה כבר קיימת';
           return;
         }
         rerender();
@@ -443,7 +441,7 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         const name = nameInput?.value.trim() ?? '';
         const desc = descInput?.value.trim() ?? '';
         if (!name) {
-          if (errEl) errEl.textContent = 'Name cannot be empty';
+          if (errEl) errEl.textContent = 'השם לא יכול להיות ריק';
           return;
         }
         const err = store.renamePreset(activeId, name, desc);
@@ -466,7 +464,7 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         if (!activeId) return;
         const preset = store.getPresetById(activeId);
         if (!preset || preset.builtIn) return;
-        if (!confirm(`Delete preset "${preset.name}"? This cannot be undone.`)) return;
+        if (!confirm(`למחוק את התבנית "${preset.name}"? לא ניתן לבטל פעולה זו.`)) return;
         store.deletePreset(activeId);
         rerender();
         break;

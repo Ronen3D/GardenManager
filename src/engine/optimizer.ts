@@ -288,7 +288,7 @@ export function greedyAssign(
             const levelStr = slot.acceptableLevels.map((l) => 'L' + l).join('/');
             const certStr = slot.requiredCertifications.length > 0
               ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
-            const reason = `No group can fill all ${task.name} slots. Missing ${levelStr}${certStr} for ${task.name}`;
+            const reason = `אף קבוצה לא יכולה למלא את כל העמדות ב${task.name}. חסר ${levelStr}${certStr} עבור ${task.name}`;
             unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason });
           }
         }
@@ -362,13 +362,13 @@ export function greedyAssign(
         const hc12Count = rejectionCounts.get('HC-12') || 0;
         const hc13Count = rejectionCounts.get('HC-13') || 0;
         if (hc12Count > 0 && hc13Count > 0) {
-          reason = `HC-12×HC-13 conflict for ${task.name}: ${hc13Count} blocked by senior policy, ${hc12Count} by consecutive high-load. ${levelStr}${certStr}`;
+          reason = `התנגשות HC-12×HC-13 ב${task.name}: ${hc13Count} נחסמו ע"י מדיניות בכירים, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
         } else if (hc12Count > 0) {
-          reason = `HC-12 consecutive high-load block: all ${levelStr}${certStr} candidates for ${task.name} have adjacent heavy tasks`;
+          reason = `חסימת HC-12 עומס רצוף: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות כבדות סמוכות`;
         } else if (hc13Count > 0) {
-          reason = `HC-13 senior policy block: all ${levelStr}${certStr} candidates for ${task.name} restricted by senior role constraints`;
+          reason = `חסימת HC-13 מדיניות בכירים: כל המועמדים ${levelStr}${certStr} ל${task.name} מוגבלים ע"י אילוצי תפקיד בכיר`;
         } else {
-          reason = `Missing ${levelStr}${certStr} for ${task.name}`;
+          reason = `חסר ${levelStr}${certStr} עבור ${task.name}`;
         }
         unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason });
       }

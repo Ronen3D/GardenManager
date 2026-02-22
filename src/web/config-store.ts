@@ -628,7 +628,7 @@ export function seedDefaultParticipants(): void {
   //   Dept C: 1 standard L0 participant  (index 8)
   //   Dept D: none
 
-  const deptNames = ['Dept A', 'Dept B', 'Dept C', 'Dept D'];
+  const deptNames = ['מחלקה א', 'מחלקה ב', 'מחלקה ג', 'מחלקה ד'];
 
   interface MemberSpec { level: Level; certs: Certification[]; tag: string }
   const template: MemberSpec[] = [
@@ -648,9 +648,9 @@ export function seedDefaultParticipants(): void {
 
   // Horesh certification per department: set of template indices
   const horeshByDept: Record<string, Set<number>> = {
-    'Dept A': new Set([8, 9]),  // 2 standard L0 participants
-    'Dept B': new Set([8]),     // 1 standard L0 participant
-    'Dept C': new Set([8]),     // 1 standard L0 participant
+    'מחלקה א': new Set([8, 9]),  // 2 standard L0 participants
+    'מחלקה ב': new Set([8]),     // 1 standard L0 participant
+    'מחלקה ג': new Set([8]),     // 1 standard L0 participant
   };
 
   for (const dept of deptNames) {
@@ -662,7 +662,7 @@ export function seedDefaultParticipants(): void {
       if (horeshIndices?.has(i)) certs.push(Certification.Horesh);
       const p: Participant = {
         id,
-        name: `${dept} - Participant ${num}`,
+        name: `${dept} - משתתף ${num}`,
         level: spec.level,
         certifications: certs,
         group: dept,
@@ -678,7 +678,7 @@ export function seedDefaultParticipants(): void {
 export function seedDefaultTaskTemplates(): void {
   // Adanit
   addTaskTemplate({
-    name: 'Adanit',
+    name: 'אדנית',
     taskType: TaskType.Adanit,
     durationHours: 8,
     shiftsPerDay: 3,
@@ -690,27 +690,27 @@ export function seedDefaultTaskTemplates(): void {
     blocksConsecutive: true,
     subTeams: [
       {
-        id: uid('st'), name: 'Segol Main', slots: [
-          { id: uid('slot'), label: 'Segol Main L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'Segol Main L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'Segol Main L3/L4', acceptableLevels: [Level.L3, Level.L4], requiredCertifications: [Certification.Nitzan] },
+        id: uid('st'), name: 'סגול ראשי', slots: [
+          { id: uid('slot'), label: 'סגול ראשי L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול ראשי L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול ראשי L3/L4', acceptableLevels: [Level.L3, Level.L4], requiredCertifications: [Certification.Nitzan] },
         ],
       },
       {
-        id: uid('st'), name: 'Segol Secondary', slots: [
-          { id: uid('slot'), label: 'Segol Secondary L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'Segol Secondary L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'Segol Secondary L2', acceptableLevels: [Level.L2], requiredCertifications: [Certification.Nitzan] },
+        id: uid('st'), name: 'סגול משני', slots: [
+          { id: uid('slot'), label: 'סגול משני L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול משני L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול משני L2', acceptableLevels: [Level.L2], requiredCertifications: [Certification.Nitzan] },
         ],
       },
     ],
     slots: [],
-    description: '8h shifts (05:00 cycle), 3/day. Two sub-teams. All 6 must have Nitzan. Same group.',
+    description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. שתי תת-קבוצות. כל 6 חייבים ניצן. אותה קבוצה.',
   });
 
   // Hamama
   addTaskTemplate({
-    name: 'Hamama',
+    name: 'חממה',
     taskType: TaskType.Hamama,
     durationHours: 12,
     shiftsPerDay: 2,
@@ -722,14 +722,14 @@ export function seedDefaultTaskTemplates(): void {
     blocksConsecutive: true,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'Hamama Operator', acceptableLevels: [Level.L0, Level.L2, Level.L3, Level.L4], requiredCertifications: [Certification.Hamama] },
+      { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [Level.L0, Level.L2, Level.L3, Level.L4], requiredCertifications: [Certification.Hamama] },
     ],
-    description: '12h shifts (06:00-18:00, 18:00-06:00). Requires Hamama cert. L2/L4 forbidden. No Nitzan req.',
+    description: 'משמרות 12 שעות (06:00-18:00, 18:00-06:00). דורש הסמכת חממה. L2/L4 אסור. ללא דרישת ניצן.',
   });
 
   // Shemesh
   addTaskTemplate({
-    name: 'Shemesh',
+    name: 'שמש',
     taskType: TaskType.Shemesh,
     durationHours: 4,
     shiftsPerDay: 6,
@@ -741,15 +741,15 @@ export function seedDefaultTaskTemplates(): void {
     blocksConsecutive: true,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'Shemesh #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'Shemesh #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'שמש #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'שמש #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
     ],
-    description: '4h shifts (05:00 cycle), 6/day. Requires Nitzan. Prefer same group (soft).',
+    description: 'משמרות 4 שעות (מחזור 05:00), 6 ביום. דורש ניצן. עדיפות לאותה קבוצה (רך).',
   });
 
   // Mamtera
   addTaskTemplate({
-    name: 'Mamtera',
+    name: 'ממטרה',
     taskType: TaskType.Mamtera,
     durationHours: 14,
     shiftsPerDay: 1,
@@ -761,15 +761,15 @@ export function seedDefaultTaskTemplates(): void {
     blocksConsecutive: true,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'Mamtera L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'Mamtera L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ממטרה L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ממטרה L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
     description: '09:00-23:00. 2× L0.',
   });
 
   // Karov
   addTaskTemplate({
-    name: 'Karov',
+    name: 'כרוב',
     taskType: TaskType.Karov,
     durationHours: 8,
     shiftsPerDay: 3,
@@ -798,17 +798,17 @@ export function seedDefaultTaskTemplates(): void {
     ],
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'Karov Commander (L2+)', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
-      { id: uid('slot'), label: 'Karov L0 + Salsala', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Salsala] },
-      { id: uid('slot'), label: 'Karov L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'Karov L0 #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרוב מפקד (L2+)', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרוב L0 + סלסלה', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Salsala] },
+      { id: uid('slot'), label: 'כרוב L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרוב L0 #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
-    description: '8h shifts (05:00 cycle), 3/day. 1× L2+, 1× L0 w/ Salsala, 2× L0. Hot windows 05:00-06:30 and 17:00-18:30 at 100%; outside is ~33% load.',
+    description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
   });
 
   // Karovit
   addTaskTemplate({
-    name: 'Karovit',
+    name: 'כרובית',
     taskType: TaskType.Karovit,
     durationHours: 8,
     shiftsPerDay: 3,
@@ -820,17 +820,17 @@ export function seedDefaultTaskTemplates(): void {
     blocksConsecutive: false,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'Karovit Commander (L2+)', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
-      { id: uid('slot'), label: 'Karovit L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'Karovit L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'Karovit L0 #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית מפקד (L2+)', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית L0 #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
-    description: '8h shifts (05:00 cycle), 3/day. 1× L2+, 3× L0. Light — no rest impact.',
+    description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 3× L0. קל — ללא השפעה על מנוחה.',
   });
 
   // Aruga
   addTaskTemplate({
-    name: 'Aruga',
+    name: 'ערוגה',
     taskType: TaskType.Aruga,
     durationHours: 1.5,
     shiftsPerDay: 2,
@@ -842,10 +842,10 @@ export function seedDefaultTaskTemplates(): void {
     blocksConsecutive: true,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'Aruga L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'Aruga L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ערוגה L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ערוגה L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
-    description: '1.5h, 2/day (morning 05:00-06:30, evening 17:00-18:30). 2× L0.',
+    description: '1.5 שעות, 2 ביום (בוקר 05:00-06:30, ערב 17:00-18:30). 2× L0.',
   });
 }
 
@@ -1033,7 +1033,7 @@ export function loadFromStorage(): boolean {
         if (tpl.taskType === 'Karov' && (tpl.baseLoadWeight === 0.2 || tpl.baseLoadWeight === undefined)) {
           tpl.baseLoadWeight = 1 / 3;
           if (typeof tpl.description === 'string') {
-            tpl.description = tpl.description.replace('outside is 20% load', 'outside is ~33% load');
+            tpl.description = tpl.description.replace('חיצוני הוא 20% עומס', 'חיצוני הוא ~33% עומס');
           }
         }
       }
@@ -1345,8 +1345,8 @@ function _initPresets(): AlgorithmPreset[] {
       // User had customised settings before presets existed — preserve them
       const migrated: AlgorithmPreset = {
         id: uid('preset'),
-        name: 'My Settings',
-        description: 'Migrated from your previous algorithm configuration',
+        name: 'ההגדרות שלי',
+        description: 'הועבר מהגדרות האלגוריתם הקודמות שלך',
         settings: current,
         createdAt: Date.now(),
       };
@@ -1502,12 +1502,12 @@ export function updatePreset(id: string): boolean {
 export function renamePreset(id: string, name: string, description: string): string | null {
   const presets = _initPresets();
   const preset = presets.find(p => p.id === id);
-  if (!preset) return 'Preset not found';
-  if (preset.builtIn) return 'Cannot rename built-in preset';
+  if (!preset) return 'פריסט לא נמצא';
+  if (preset.builtIn) return 'לא ניתן לשנות שם של פריסט מובנה';
 
   const trimmed = name.trim();
-  if (!trimmed) return 'Name cannot be empty';
-  if (_isPresetNameTaken(trimmed, id)) return 'A preset with this name already exists';
+  if (!trimmed) return 'השם לא יכול להיות ריק';
+  if (_isPresetNameTaken(trimmed, id)) return 'פריסט עם שם זה כבר קיים';
 
   preset.name = trimmed;
   preset.description = description.trim();
@@ -1524,10 +1524,10 @@ export function duplicatePreset(id: string): AlgorithmPreset | null {
   if (!source) return null;
 
   const presets = _initPresets();
-  let newName = source.name + ' (copy)';
+  let newName = source.name + ' (עותק)';
   let attempt = 2;
   while (_isPresetNameTaken(newName)) {
-    newName = `${source.name} (copy ${attempt++})`;
+    newName = `${source.name} (עותק ${attempt++})`;
   }
 
   const dup: AlgorithmPreset = {

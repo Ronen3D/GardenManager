@@ -42,17 +42,27 @@ export const CERT_COLORS: Record<string, string> = {
 
 /** Format a Date as HH:MM (24h, en-GB). */
 export function fmt(d: Date): string {
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
 }
 
 /** Level badge HTML. */
 export function levelBadge(level: Level): string {
-  return `<span class="badge" style="background:${LEVEL_COLORS[level]}">L${level}</span>`;
+  const labels: Record<Level, string> = { [Level.L0]: 'דרגה 0', [Level.L2]: 'דרגה 2', [Level.L3]: 'דרגה 3', [Level.L4]: 'דרגה 4' };
+  return `<span class="badge" style="background:${LEVEL_COLORS[level]}">${labels[level]}</span>`;
 }
+
+/** Hebrew labels for certification enum values. */
+export const CERT_LABELS: Record<string, string> = { Nitzan: 'ניצן', Salsala: 'סלסלה', Hamama: 'חממה', Horesh: 'חורש' };
+
+/** Hebrew labels for task-type enum values. */
+export const TASK_TYPE_LABELS: Record<string, string> = {
+  Adanit: 'אדנית', Hamama: 'חממה', Shemesh: 'שמש',
+  Mamtera: 'ממטרה', Karov: 'כרוב', Karovit: 'כרובית', Aruga: 'ערוגה',
+};
 
 /** Single certification badge HTML. */
 export function certBadge(c: Certification): string {
-  return `<span class="badge" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${c}</span>`;
+  return `<span class="badge" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${CERT_LABELS[c] || c}</span>`;
 }
 
 /** Multiple certification badges (returns dash when empty). */
@@ -65,7 +75,7 @@ export function certBadges(certs: Certification[], emptyLabel = '—'): string {
 export function groupBadge(group: string, clickable = false): string {
   const color = groupColor(group);
   if (clickable) {
-    return `<span class="badge badge-group-select" style="background:${color};cursor:pointer" data-select-group="${group}" title="Select all ${group} members">${group}</span>`;
+    return `<span class="badge badge-group-select" style="background:${color};cursor:pointer" data-select-group="${group}" title="בחר את כל חברי ${group}">${group}</span>`;
   }
   return `<span class="badge" style="background:${color}">${group}</span>`;
 }
@@ -73,5 +83,5 @@ export function groupBadge(group: string, clickable = false): string {
 /** Task-type badge HTML. */
 export function taskTypeBadge(type: TaskType): string {
   const color = TASK_COLORS[type] || '#7f8c8d';
-  return `<span class="badge" style="background:${color}">${type}</span>`;
+  return `<span class="badge" style="background:${color}">${TASK_TYPE_LABELS[type] || type}</span>`;
 }

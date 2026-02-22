@@ -80,7 +80,7 @@ export function checkLevelRequirement(
   if (!slot) {
     return violation(
       'SLOT_NOT_FOUND',
-      `Slot ${slotId} not found in task ${task.id}`,
+      `משבצת ${slotId} לא נמצאה במשימה ${task.id}`,
       task.id,
       slotId,
       participant.id,
@@ -89,7 +89,7 @@ export function checkLevelRequirement(
   if (!isLevelSatisfied(participant.level, slot)) {
     return violation(
       'LEVEL_MISMATCH',
-      `Participant ${participant.name} (L${participant.level}) does not meet level requirement [${slot.acceptableLevels.map((l) => 'L' + l).join(',')}] for ${task.name} slot "${slot.label}"`,
+      `משתתף ${participant.name} (דרגה ${participant.level}) לא עומד בדרישת הדרגה [${slot.acceptableLevels.map((l) => 'דרגה ' + l).join(',')}] עבור ${task.name} משבצת "${slot.label}"`,
       task.id,
       slotId,
       participant.id,
@@ -113,7 +113,7 @@ export function checkCertificationRequirement(
     if (!participant.certifications.includes(cert)) {
       return violation(
         'CERT_MISSING',
-        `Participant ${participant.name} lacks required certification "${cert}" for ${task.name} slot "${slot.label}"`,
+        `משתתף ${participant.name} חסר הסמכה נדרשת "${cert}" עבור ${task.name} משבצת "${slot.label}"`,
         task.id,
         slotId,
         participant.id,
@@ -133,7 +133,7 @@ export function checkAvailability(
   if (!isFullyCovered(task.timeBlock, participant.availability)) {
     return violation(
       'AVAILABILITY_VIOLATION',
-      `Participant ${participant.name} is not available for the full duration of ${task.name}`,
+      `משתתף ${participant.name} לא זמין למשך הזמן המלא של ${task.name}`,
       task.id,
       undefined,
       participant.id,
@@ -156,7 +156,7 @@ export function checkSameGroup(
     return [
       violation(
         'GROUP_MISMATCH',
-        `Task ${task.name} requires all participants from the same group, but found groups: [${[...groups].join(', ')}]`,
+        `משימה ${task.name} דורשת שכל המשתתפים יהיו מאותה קבוצה, אך נמצאו קבוצות: [${[...groups].join(', ')}]`,
         task.id,
       ),
     ];
@@ -180,7 +180,7 @@ export function checkChoreshExclusion(
       violations.push(
         violation(
           'CHORESH_FORBIDDEN_MAMTERA',
-          `${p.name} is marked as Choresh and is strictly forbidden from Mamtera task "${task.name}"`,
+          `${p.name} מסומן כחורש ואסור לחלוטין במשימת ממטרה "${task.name}"`,
           task.id,
           undefined,
           p.id,
@@ -233,7 +233,7 @@ export function checkNoDoubleBooking(
           violations.push(
             violation(
               'DOUBLE_BOOKING',
-              `Participant ${participantId} is double-booked: "${prevTask.name}" and "${task.name}" overlap`,
+              `משתתף ${participantId} משובץ בכפל: "${prevTask.name}" ו-"${task.name}" חופפים`,
               prevTask.id,
               undefined,
               participantId,
@@ -267,7 +267,7 @@ export function checkSlotsFilled(
       violations.push(
         violation(
           'SLOT_UNFILLED',
-          `Slot "${slot.label}" in ${task.name} has no participant assigned`,
+          `למשבצת "${slot.label}" ב-${task.name} לא משובץ משתתף`,
           task.id,
           slot.slotId,
         ),
@@ -276,7 +276,7 @@ export function checkSlotsFilled(
       violations.push(
         violation(
           'SLOT_OVERBOOKED',
-          `Slot "${slot.label}" in ${task.name} has ${slotAssignments.length} participants (expected 1)`,
+          `למשבצת "${slot.label}" ב-${task.name} יש ${slotAssignments.length} משתתפים (צפוי 1)`,
           task.id,
           slot.slotId,
         ),
@@ -302,7 +302,7 @@ export function checkUniqueParticipantsPerTask(
       violations.push(
         violation(
           'DUPLICATE_IN_TASK',
-          `Participant ${a.participantId} is assigned multiple times to ${task.name}`,
+          `משתתף ${a.participantId} משובץ מספר פעמים ב-${task.name}`,
           task.id,
           a.slotId,
           a.participantId,
@@ -338,7 +338,7 @@ export function checkAdanitGroupFeasibility(
     violations.push(
       violation(
         'ADANIT_INSUFFICIENT_NITZAN',
-        `Adanit task ${task.name}: group needs at least 6 participants with Nitzan certification, found ${nitzanHolders.length}. Missing Nitzan for Adanit.`,
+        `משימת אדנית ${task.name}: הקבוצה צריכה לפחות 6 משתתפים עם הסמכת ניצן, נמצאו ${nitzanHolders.length}. חסרה הסמכת ניצן לאדנית.`,
         task.id,
       ),
     );
@@ -358,7 +358,7 @@ export function checkAdanitGroupFeasibility(
     violations.push(
       violation(
         'ADANIT_INSUFFICIENT_L0',
-        `Adanit task ${task.name}: group needs at least 4 L0 participants, found ${l0Count}. Missing L0 for Adanit.`,
+        `משימת אדנית ${task.name}: הקבוצה צריכה לפחות 4 משתתפים בדרגה 0, נמצאו ${l0Count}. חסרים משתתפי דרגה 0 לאדנית.`,
         task.id,
       ),
     );
@@ -367,7 +367,7 @@ export function checkAdanitGroupFeasibility(
     violations.push(
       violation(
         'ADANIT_INSUFFICIENT_L3L4',
-        `Adanit task ${task.name}: group needs at least 1 L3/L4 participant (Segol Main), found ${l3l4Count}. Missing L3/L4 for Adanit.`,
+        `משימת אדנית ${task.name}: הקבוצה צריכה לפחות משתתף אחד בדרגה 3/4 (סגול ראשי), נמצאו ${l3l4Count}. חסר משתתף דרגה 3/4 לאדנית.`,
         task.id,
       ),
     );
@@ -377,7 +377,7 @@ export function checkAdanitGroupFeasibility(
     violations.push(
       violation(
         'ADANIT_INSUFFICIENT_L2',
-        `Adanit task ${task.name}: group needs at least 1 L2 participant (Segol Secondary), found ${l2Count}. Missing L2 for Adanit.`,
+        `משימת אדנית ${task.name}: הקבוצה צריכה לפחות משתתף אחד בדרגה 2 (סגול משני), נמצאו ${l2Count}. חסר משתתף דרגה 2 לאדנית.`,
         task.id,
       ),
     );
@@ -387,7 +387,7 @@ export function checkAdanitGroupFeasibility(
     violations.push(
       violation(
         'ADANIT_INSUFFICIENT_L2PLUS',
-        `Adanit task ${task.name}: group needs at least 2 participants at L2 or higher (1× L3/L4 for Main, 1× L2 for Secondary), found ${l2PlusCount}. Missing L2+ for Adanit.`,
+        `משימת אדנית ${task.name}: הקבוצה צריכה לפחות 2 משתתפים בדרגה 2 ומעלה (1× דרגה 3/4 לראשי, 1× דרגה 2 למשני), נמצאו ${l2PlusCount}. חסרים משתתפי דרגה 2+ לאדנית.`,
         task.id,
       ),
     );
@@ -438,7 +438,7 @@ export function checkNoConsecutiveHighLoad(
       violations.push(
         violation(
           'CONSECUTIVE_HIGH_LOAD',
-          `Participant ${participantId} has consecutive blocking tasks: "${current.task.name}" and "${next.task.name}" with no buffer.`,
+          `למשתתף ${participantId} משימות חוסמות עוקבות: "${current.task.name}" ו-"${next.task.name}" ללא הפסקה.`,
           next.task.id,
           undefined,
           participantId,
@@ -486,7 +486,7 @@ export function validateHardConstraints(
         allViolations.push(
           violation(
             'PARTICIPANT_NOT_FOUND',
-            `Assignment references unknown participant ${a.participantId}`,
+            `שיבוץ מפנה למשתתף לא ידוע ${a.participantId}`,
             task.id,
             a.slotId,
             a.participantId,

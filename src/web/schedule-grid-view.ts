@@ -80,17 +80,17 @@ function renderAssignmentCard(
 
         content = `
             <div class="card-header">
-                <span class="participant-name participant-hover" ${hoverAttrs} style="color:${groupColor(participant.group)}">
+                <span class="participant-name participant-hover" role="button" tabindex="0" ${hoverAttrs} style="color:${groupColor(participant.group)}">
                     ${participant.name}
                 </span>
             </div>
             <div class="card-details">
-                 ${isLocked ? '<span title="Locked">🔒</span>' : ''}
-                 ${isFrozen ? '<span title="Frozen">❄️</span>' : ''}
+                 ${isLocked ? '<span title="נעל">🔒</span>' : ''}
+                 ${isFrozen ? '<span title="מוקפא">❄️</span>' : ''}
             </div>
         `;
     } else {
-        content = `<div class="empty-slot-label">${slot.label || 'Empty'}</div>`;
+        content = `<div class="empty-slot-label">${slot.label || 'ריק'}</div>`;
     }
 
     return `
@@ -125,9 +125,9 @@ function renderHamamaTable(tasks: Task[], schedule: Schedule, liveMode: LiveMode
 
     return `
         <div class="schedule-table-wrapper hamama-wrapper">
-            <h3 class="table-title">Hamama</h3>
+            <h3 class="table-title">חממה</h3>
             <table class="table schedule-grid-table">
-                <thead><tr><th class="col-time">Time</th><th>Hamama</th></tr></thead>
+                <thead><tr><th class="col-time">זמן</th><th>חממה</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -171,9 +171,9 @@ function renderArogaTable(tasks: Task[], schedule: Schedule, liveMode: LiveModeS
 
     return `
         <div class="schedule-table-wrapper aroga-wrapper">
-            <h3 class="table-title">Aroga</h3>
+            <h3 class="table-title">ערוגה</h3>
             <table class="table schedule-grid-table">
-                <thead><tr><th class="col-time">Time</th><th>Aroga #2</th><th>Aroga #1</th></tr></thead>
+                <thead><tr><th class="col-time">זמן</th><th>ערוגה #2</th><th>ערוגה #1</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -238,15 +238,15 @@ function renderPatrolTable(
 
     return `
         <div class="schedule-table-wrapper patrol-wrapper">
-            <h3 class="table-title">Patrol & Adanit</h3>
+            <h3 class="table-title">סיור ואדנית</h3>
             <table class="table schedule-grid-table">
                 <thead>
                     <tr>
-                        <th class="col-time">Time</th>
-                        <th>Karovit</th>
-                        <th>Karov</th>
-                        <th>Sagol Secondary</th>
-                        <th>Sagol Main</th>
+                        <th class="col-time">זמן</th>
+                        <th>כרובית</th>
+                        <th>כרוב</th>
+                        <th>סגול משני</th>
+                        <th>סגול ראשי</th>
                     </tr>
                 </thead>
                 <tbody>${rows}</tbody>
@@ -278,9 +278,9 @@ function renderMamteraTable(tasks: Task[], schedule: Schedule, liveMode: LiveMod
 
     return `
         <div class="schedule-table-wrapper mamtera-wrapper">
-            <h3 class="table-title">Mamtera</h3>
+            <h3 class="table-title">ממטרה</h3>
             <table class="table schedule-grid-table">
-                <thead><tr><th class="col-time">Time</th><th>Mamtera</th></tr></thead>
+                <thead><tr><th class="col-time">זמן</th><th>ממטרה</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -325,9 +325,9 @@ function renderShemeshTable(tasks: Task[], schedule: Schedule, liveMode: LiveMod
 
     return `
         <div class="schedule-table-wrapper shemesh-wrapper">
-            <h3 class="table-title">Shemesh</h3>
+            <h3 class="table-title">שמש</h3>
             <table class="table schedule-grid-table">
-                <thead><tr><th class="col-time">Time</th><th>Shemesh 2#</th><th>Shemesh #1</th></tr></thead>
+                <thead><tr><th class="col-time">זמן</th><th>שמש #2</th><th>שמש #1</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -337,7 +337,7 @@ function renderShemeshTable(tasks: Task[], schedule: Schedule, liveMode: LiveMod
 // ─── Main View Export ────────────────────────────────────────────────────────
 
 export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveMode: LiveModeState): string {
-    if (schedule.tasks.length === 0) return '<div class="alert alert-info">No tasks in schedule.</div>';
+    if (schedule.tasks.length === 0) return '<div class="alert alert-info">אין משימות בשבצ"ק.</div>';
 
     // 1. Calculate Day Range
     // Find the earliest start time to anchor the schedule days

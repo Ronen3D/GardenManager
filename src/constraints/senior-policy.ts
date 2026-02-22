@@ -102,7 +102,7 @@ export function checkSeniorHardBlock(
     if (lvl === Level.L4) return null; // L4 allowed (penalised via soft constraint)
     return {
       code: 'SENIOR_HARD_BLOCK',
-      message: `L${lvl} participant "${participant.name}" is forbidden from Hamama — only L0 (preferred) or L4 (last resort) may be assigned`,
+      message: `משתתף בדרגה ${lvl} "${participant.name}" אסור בחממה — רק דרגה 0 (מועדף) או דרגה 4 (מוצא אחרון) ניתנים לשיבוץ`,
       severity: ViolationSeverity.Error,
       participantId: participant.id,
       taskId: task.id,
@@ -116,7 +116,7 @@ export function checkSeniorHardBlock(
   // Everything else is forbidden
   return {
     code: 'SENIOR_HARD_BLOCK',
-    message: `L${lvl} participant "${participant.name}" cannot be assigned to ${task.name} [${slot.label || slot.slotId}] — seniors are restricted to their natural domain (Adanit/Karov/Karovit) and Hamama`,
+    message: `משתתף בדרגה ${lvl} "${participant.name}" לא ניתן לשיבוץ ב-${task.name} [${slot.label || slot.slotId}] — בכירים מוגבלים לתחום הטבעי שלהם (אדנית/כרוב/כרובית) וחממה`,
     severity: ViolationSeverity.Error,
     participantId: participant.id,
     taskId: task.id,

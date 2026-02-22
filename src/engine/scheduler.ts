@@ -150,10 +150,10 @@ export class SchedulingEngine {
     const participants = this.getAllParticipants();
 
     if (tasks.length === 0) {
-      throw new Error('No tasks registered. Add tasks before generating a schedule.');
+      throw new Error('לא נרשמו משימות. יש להוסיף משימות לפני יצירת שבצ\"ק.');
     }
     if (participants.length === 0) {
-      throw new Error('No participants registered. Add participants before generating a schedule.');
+      throw new Error('לא נרשמו משתתפים. יש להוסיף משתתפים לפני יצירת שבצ\"ק.');
     }
 
     const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC);
@@ -179,8 +179,8 @@ export class SchedulingEngine {
         severity: ViolationSeverity.Error,
         code: 'INFEASIBLE_SLOT',
         message: reason
-          ? `Infeasible: ${reason} (slot "${slot?.label ?? slotId}" in "${task?.name ?? taskId}")`
-          : `Infeasible Schedule: Cannot fill slot "${slot?.label ?? slotId}" in task "${task?.name ?? taskId}". No eligible participants available.`,
+          ? `לא ניתן לשבץ: ${reason} (עמדה "${slot?.label ?? slotId}" במשימה "${task?.name ?? taskId}")`
+          : `שבצ"ק בלתי אפשרי: לא ניתן למלא עמדה "${slot?.label ?? slotId}" במשימה "${task?.name ?? taskId}". אין משתתפים זמינים.`,
         taskId,
         slotId,
       });
@@ -218,10 +218,10 @@ export class SchedulingEngine {
     const participants = this.getAllParticipants();
 
     if (tasks.length === 0) {
-      throw new Error('No tasks registered. Add tasks before generating a schedule.');
+      throw new Error('לא נרשמו משימות. יש להוסיף משימות לפני יצירת שבצ\"ק.');
     }
     if (participants.length === 0) {
-      throw new Error('No participants registered. Add participants before generating a schedule.');
+      throw new Error('לא נרשמו משתתפים. יש להוסיף משתתפים לפני יצירת שבצ\"ק.');
     }
 
     const result = await optimizeMultiAttemptAsync(
@@ -255,8 +255,8 @@ export class SchedulingEngine {
         severity: ViolationSeverity.Error,
         code: 'INFEASIBLE_SLOT',
         message: reason
-          ? `Infeasible: ${reason} (slot "${slot?.label ?? slotId}" in "${task?.name ?? taskId}")`
-          : `Infeasible Schedule: Cannot fill slot "${slot?.label ?? slotId}" in task "${task?.name ?? taskId}". No eligible participants available.`,
+          ? `לא ניתן לשבץ: ${reason} (עמדה "${slot?.label ?? slotId}" במשימה "${task?.name ?? taskId}")`
+          : `שבצ"ק בלתי אפשרי: לא ניתן למלא עמדה "${slot?.label ?? slotId}" במשימה "${task?.name ?? taskId}". אין משתתפים זמינים.`,
         taskId,
         slotId,
       });
@@ -312,7 +312,7 @@ export class SchedulingEngine {
    */
   validate(): ValidationResult {
     if (!this.currentSchedule) {
-      return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'No schedule has been generated yet.', taskId: '' }] };
+      return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'טרם נוצר שבצ"ק.', taskId: '' }] };
     }
     return validateHardConstraints(
       this.currentSchedule.tasks,
@@ -351,7 +351,7 @@ export class SchedulingEngine {
    */
   swapParticipant(request: SwapRequest): ValidationResult {
     if (!this.currentSchedule) {
-      return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'No schedule exists to modify.', taskId: '' }] };
+      return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'אין שבצ"ק לעריכה.', taskId: '' }] };
     }
 
     const assignment = this.currentSchedule.assignments.find(
@@ -363,7 +363,7 @@ export class SchedulingEngine {
         violations: [{
           severity: ViolationSeverity.Error,
           code: 'ASSIGNMENT_NOT_FOUND',
-          message: `Assignment ${request.assignmentId} not found.`,
+          message: `שיבוץ ${request.assignmentId} לא נמצא.`,
           taskId: '',
         }],
       };
@@ -376,7 +376,7 @@ export class SchedulingEngine {
         violations: [{
           severity: ViolationSeverity.Error,
           code: 'PARTICIPANT_NOT_FOUND',
-          message: `Participant ${request.newParticipantId} not found.`,
+          message: `משתתף ${request.newParticipantId} לא נמצא.`,
           taskId: assignment.taskId,
         }],
       };
@@ -419,7 +419,7 @@ export class SchedulingEngine {
    */
   partialReSchedule(request: ReScheduleRequest): Schedule {
     if (!this.currentSchedule) {
-      throw new Error('No schedule exists to partially re-schedule.');
+      throw new Error('אין שבצ\"ק לתזמון מחדש חלקי.');
     }
 
     const { lockedAssignmentIds, unavailableParticipantIds } = request;

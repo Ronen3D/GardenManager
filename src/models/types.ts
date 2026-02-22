@@ -291,8 +291,7 @@ export type HardConstraintCode =
 /** All soft warning codes that can be toggled */
 export type SoftWarningCode =
   | 'HAMAMA_SENIOR'
-  | 'GROUP_MISMATCH'
-  | 'DAILY_IMBALANCE';
+  | 'GROUP_MISMATCH';
 
 /** Full algorithm settings: weights + constraint toggles */
 export interface AlgorithmSettings {
@@ -306,24 +305,23 @@ export interface AlgorithmSettings {
 
 /** Human-readable labels for hard constraints */
 export const HC_LABELS: Record<HardConstraintCode, string> = {
-  'HC-1': 'Level Requirement',
-  'HC-2': 'Certification Requirement',
-  'HC-3': 'Availability Check',
-  'HC-4': 'Same-Group (Adanit)',
-  'HC-5': 'No Double-Booking',
-  'HC-6': 'Slots Filled',
-  'HC-7': 'Unique Participant Per Task',
-  'HC-8': 'Adanit Group Feasibility',
-  'HC-11': 'Choresh Exclusion from Mamtera',
-  'HC-12': 'No Consecutive High-Load',
-  'HC-13': 'Senior Hard Blocks',
+  'HC-1': 'דרישת דרגה',
+  'HC-2': 'דרישת הסמכה',
+  'HC-3': 'בדיקת זמינות',
+  'HC-4': 'אותה קבוצה (אדנית)',
+  'HC-5': 'ללא שיבוץ כפול',
+  'HC-6': 'משבצות מלאות',
+  'HC-7': 'משתתף ייחודי למשימה',
+  'HC-8': 'היתכנות קבוצת אדנית',
+  'HC-11': 'הרחקת חורש מממטרה',
+  'HC-12': 'ללא עומס רצוף',
+  'HC-13': 'חסימות בכירים',
 };
 
 /** Human-readable labels for soft warnings */
 export const SW_LABELS: Record<SoftWarningCode, string> = {
-  'HAMAMA_SENIOR': 'Hamama Senior Warning',
-  'GROUP_MISMATCH': 'Group Mismatch Warning',
-  'DAILY_IMBALANCE': 'Daily Workload Imbalance Warning',
+  'HAMAMA_SENIOR': 'אזהרת בכירים בחממה',
+  'GROUP_MISMATCH': 'אזהרת אי-התאמת קבוצה',
 };
 
 /** All hard constraint codes in display order */
@@ -333,7 +331,7 @@ export const ALL_HC_CODES: HardConstraintCode[] = [
 
 /** All soft warning codes in display order */
 export const ALL_SW_CODES: SoftWarningCode[] = [
-  'HAMAMA_SENIOR', 'GROUP_MISMATCH', 'DAILY_IMBALANCE',
+  'HAMAMA_SENIOR', 'GROUP_MISMATCH',
 ];
 
 /** Factory default algorithm settings */
@@ -360,8 +358,8 @@ export interface AlgorithmPreset {
 /** The built-in factory-default preset */
 export const DEFAULT_PRESET: AlgorithmPreset = {
   id: 'preset-default',
-  name: 'Default',
-  description: 'Factory defaults',
+  name: 'ברירת מחדל',
+  description: 'הגדרות מקוריות',
   settings: { ...DEFAULT_ALGORITHM_SETTINGS, config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], disabledSoftWarnings: [] },
   builtIn: true,
   createdAt: 0,
