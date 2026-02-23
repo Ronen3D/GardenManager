@@ -628,7 +628,7 @@ export function seedDefaultParticipants(): void {
   //   Dept C: 1 standard L0 participant  (index 8)
   //   Dept D: none
 
-  const deptNames = ['מחלקה א', 'מחלקה ב', 'מחלקה ג', 'מחלקה ד'];
+  const deptNames = ['קבוצה 1', 'קבוצה 2', 'קבוצה 3', 'קבוצה 4'];
 
   interface MemberSpec { level: Level; certs: Certification[]; tag: string }
   const template: MemberSpec[] = [
@@ -648,21 +648,20 @@ export function seedDefaultParticipants(): void {
 
   // Horesh certification per department: set of template indices
   const horeshByDept: Record<string, Set<number>> = {
-    'מחלקה א': new Set([8, 9]),  // 2 standard L0 participants
-    'מחלקה ב': new Set([8]),     // 1 standard L0 participant
-    'מחלקה ג': new Set([8]),     // 1 standard L0 participant
+    'קבוצה 1': new Set([8, 9]),  // 2 standard L0 participants
+    'קבוצה 2': new Set([8]),     // 1 standard L0 participant
+    'קבוצה 3': new Set([8]),     // 1 standard L0 participant
   };
 
   for (const dept of deptNames) {
     const horeshIndices = horeshByDept[dept];
     template.forEach((spec, i) => {
       const id = uid('p');
-      const num = String(i + 1).padStart(2, '0');
       const certs = [...spec.certs];
       if (horeshIndices?.has(i)) certs.push(Certification.Horesh);
       const p: Participant = {
         id,
-        name: `${dept} - משתתף ${num}`,
+        name: `חלוץ ${i + 1} ${dept}`,
         level: spec.level,
         certifications: certs,
         group: dept,

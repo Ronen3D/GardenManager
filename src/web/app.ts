@@ -216,9 +216,9 @@ function generateTasksFromTemplates(): Task[] {
         const slots: SlotRequirement[] = [];
 
         for (const st of tpl.subTeams) {
-          const adanitTeam = st.name.includes('ראשי')
+          const adanitTeam = (st.name.includes('ראשי') || /main/i.test(st.name))
             ? AdanitTeam.SegolMain
-            : st.name.includes('משני')
+            : (st.name.includes('משני') || /secondary/i.test(st.name))
               ? AdanitTeam.SegolSecondary
               : undefined;
 
@@ -428,8 +428,7 @@ function renderWeeklyDashboard(schedule: Schedule): string {
       </div>
     </div>
     <div class="dashboard-meta">
-      הטוב מתוך ${OPTIM_ATTEMPTS} ניסיונות ב-${scheduleElapsed}ms · ${schedule.participants.length} משתתפים ·
-      ${schedule.tasks.length} משימות · ${schedule.assignments.length} שיבוצים
+      הטוב מתוך ${OPTIM_ATTEMPTS} ניסיונות ב${(scheduleElapsed / 1000).toFixed(1)} שניות ביצוע.
     </div>
   </div>`;
 }
