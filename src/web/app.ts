@@ -33,7 +33,6 @@ import {
 } from '../index';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { renderScheduleGrid } from './schedule-grid-view';
-import { computeAllRestProfiles, computeRestFairness } from './utils/rest-calculator';
 import { generateShiftBlocks } from './utils/time-utils';
 import { computeWeeklyWorkloads } from './workload-utils';
 import {
@@ -524,7 +523,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
   // ── L0 Section (always visible) ──
   let html = `<div class="participant-sidebar">
     <div class="sidebar-header">
-      <h3>עומס דרגה 0</h3>
+      <h3>השוואת עומס</h3>
       <div class="sidebar-avg">ממוצע: ${l0Avg.toFixed(1)} שע' אפק' · ${l0Entries.length} משתתפים · ${numDays} ימים</div>
     </div>
     <div class="sidebar-entries">`;
@@ -669,7 +668,6 @@ function renderScheduleTab(): string {
   html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState())}</section>`;
   html += `<section><h2>ציר זמן גאנט</h2>${renderGanttChart(s)}</section>`;
   html += `<section><h2>הפרות אילוצים <span class="count">${filterVisibleViolations(s.violations).length}</span></h2>${renderViolations(s)}</section>`;
-  html += `<section><h2>שיוויוניות מנוחה</h2>${renderRestTable(s)}</section>`;
   html += `</div>`;
   html += renderParticipantSidebar(s);
   html += `</div>`;
@@ -805,40 +803,6 @@ function renderAssignmentsTable(schedule: Schedule): string {
 }
 */
 
-// ─── Rest Fairness Table ─────────────────────────────────────────────────────
-
-function renderRestTable(schedule: Schedule): string {
-  const profiles = computeAllRestProfiles(schedule.participants, schedule.assignments, schedule.tasks);
-  const fairness = computeRestFairness(profiles);
-
-  let html = `<div class="rest-summary">
-    <span><strong>מנוחה מינ':</strong> ${isFinite(fairness.globalMinRest) ? fairness.globalMinRest.toFixed(1) + 'h' : 'N/A'}</span>
-    <span><strong>מנוחה ממוצעת:</strong> ${isFinite(fairness.globalAvgRest) ? fairness.globalAvgRest.toFixed(1) + 'h' : 'N/A'}</span>
-    <span><strong>סטיית תקן:</strong> ${fairness.stdDevRest.toFixed(2)}</span>
-  </div>`;
-
-  html += `<div class="table-responsive"><table class="table">
-    <thead><tr><th>משתתף</th><th>קבוצה</th><th>דרגה</th><th>לא-קלות</th>
-    <th>שעות עבודה</th><th>מנוחה מינ'</th><th>מנוחה ממוצעת</th><th>הפסקות</th></tr></thead><tbody>`;
-
-  const sorted = [...profiles.entries()].sort((a, b) => a[1].minRestHours - b[1].minRestHours);
-  for (const [pid, profile] of sorted) {
-    const p = schedule.participants.find(pp => pp.id === pid);
-    if (!p) continue;
-    const cls = profile.minRestHours < 4 ? 'text-danger' : profile.minRestHours < 8 ? 'text-warn' : '';
-    const minR = isFinite(profile.minRestHours) ? profile.minRestHours.toFixed(1) + 'h' : '—';
-    const avgR = isFinite(profile.avgRestHours) ? profile.avgRestHours.toFixed(1) + 'h' : '—';
-    const gaps = profile.restGaps.length > 0 ? profile.restGaps.map(g => g.toFixed(1) + 'h').join(', ') : '—';
-
-    html += `<tr><td><strong>${p.name}</strong></td><td>${groupBadge(p.group)}</td>
-      <td>${levelBadge(p.level)}</td><td>${profile.nonLightAssignmentCount}</td>
-      <td>${profile.totalWorkHours.toFixed(1)}h</td><td class="${cls}"><strong>${minR}</strong></td>
-      <td>${avgR}</td><td><small>${gaps}</small></td></tr>`;
-  }
-  html += '</tbody></table></div>';
-  return html;
-}
-
 // ─── Gantt Chart ─────────────────────────────────────────────────────────────
 
 function renderGanttChart(schedule: Schedule): string {
@@ -887,8 +851,9 @@ function renderGanttChart(schedule: Schedule): string {
       const crossClass = crossFrom ? 'gantt-cross-from' : crossTo ? 'gantt-cross-to' : '';
 
       const tooltip = `${block.taskName}&#10;${new Date(block.startMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} – ${new Date(block.endMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}${crossFrom ? '&#10;▶ המשך מהיום הקודם' : ''}${crossTo ? '&#10;◀ ממשיך ליום הבא' : ''}`;
+      const shortName = block.taskName.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
       html += `<div class="gantt-block task-tooltip-hover ${block.isLight ? 'gantt-light' : ''} ${crossClass}" data-task-id="${block.taskId}" style="left:${left}%;width:${width}%;background:${block.color}" title="${tooltip}">
-        <span class="gantt-block-text">${crossFrom ? '▶ ' : ''}${block.taskName}${crossTo ? ' ◀' : ''}</span></div>`;
+        <span class="gantt-block-text">${crossFrom ? '▶ ' : ''}${shortName}${crossTo ? ' ◀' : ''}</span></div>`;
     }
     html += `</div></div>`;
   }

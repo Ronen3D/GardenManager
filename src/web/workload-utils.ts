@@ -5,7 +5,7 @@
  * tooltip, profile metrics, and sidebar computations (R1).
  */
 
-import { Task, TaskType, Participant, Assignment } from '../models/types';
+import { Task, TaskType, Participant, Assignment, ParticipantCapacity } from '../models/types';
 import { computeTaskEffectiveHours, computeTaskHotHours, computeTaskColdHours } from './utils/load-weighting';
 
 export interface TaskBreakdown {
@@ -87,15 +87,28 @@ export function computeTaskBreakdown(
   };
 }
 
+export interface WeeklyWorkload {
+  totalHours: number;
+  effectiveHours: number;
+  hotHours: number;
+  coldHours: number;
+  nonLightCount: number;
+  /** Total available hours within the schedule window (undefined if capacities not provided) */
+  availableHours?: number;
+  /** Effective hours as a ratio of available hours: effectiveHours / availableHours (undefined if capacities not provided) */
+  loadRatio?: number;
+}
+
 export function computeWeeklyWorkloads(
   participants: Participant[],
   assignments: Assignment[],
   tasks: Task[],
-): Map<string, { totalHours: number; effectiveHours: number; hotHours: number; coldHours: number; nonLightCount: number }> {
+  capacities?: Map<string, ParticipantCapacity>,
+): Map<string, WeeklyWorkload> {
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
 
-  const result = new Map<string, { totalHours: number; effectiveHours: number; hotHours: number; coldHours: number; nonLightCount: number }>();
+  const result = new Map<string, WeeklyWorkload>();
 
   for (const p of participants) {
     let totalHours = 0;
@@ -116,7 +129,13 @@ export function computeWeeklyWorkloads(
       nonLightCount++;
     }
 
-    result.set(p.id, { totalHours, effectiveHours, hotHours, coldHours, nonLightCount });
+    const cap = capacities?.get(p.id);
+    const availableHours = cap?.totalAvailableHours;
+    const loadRatio = availableHours && availableHours > 0
+      ? effectiveHours / availableHours
+      : undefined;
+
+    result.set(p.id, { totalHours, effectiveHours, hotHours, coldHours, nonLightCount, availableHours, loadRatio });
   }
 
   return result;

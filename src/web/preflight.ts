@@ -24,6 +24,7 @@ import {
   getScheduleDate,
   getScheduleDays,
 } from './config-store';
+import { computeAllCapacities } from '../utils/capacity';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -109,13 +110,16 @@ function checkCapacity(participants: Participant[], templates: TaskTemplate[]): 
     totalRequiredSlots += slotsPerShift * tpl.shiftsPerDay * numDays;
   }
 
-  // Calculate total available hours = sum of participant availability window hours
+  // Calculate total available hours using capacity calculator.
+  // This accounts for both AvailabilityWindow ranges and DateUnavailability
+  // holes, giving a more accurate picture than raw availability windows.
+  const scheduleStart = getScheduleDate();
+  const scheduleEnd = new Date(scheduleStart);
+  scheduleEnd.setDate(scheduleEnd.getDate() + numDays - 1);
+  const capacities = computeAllCapacities(participants, scheduleStart, scheduleEnd);
   let totalAvailableParticipantHours = 0;
-  for (const p of participants) {
-    for (const w of p.availability) {
-      const hours = (w.end.getTime() - w.start.getTime()) / 3600000;
-      totalAvailableParticipantHours += hours;
-    }
+  for (const cap of capacities.values()) {
+    totalAvailableParticipantHours += cap.totalAvailableHours;
   }
 
   const utilizationPercent = totalAvailableParticipantHours > 0

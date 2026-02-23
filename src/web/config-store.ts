@@ -721,7 +721,7 @@ export function seedDefaultTaskTemplates(): void {
     blocksConsecutive: true,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [Level.L0, Level.L2, Level.L3, Level.L4], requiredCertifications: [Certification.Hamama] },
+      { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [Level.L0, Level.L4], requiredCertifications: [Certification.Hamama] },
     ],
     description: 'משמרות 12 שעות (06:00-18:00, 18:00-06:00). דורש הסמכת חממה. L2/L4 אסור. ללא דרישת ניצן.',
   });
@@ -743,7 +743,7 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'שמש #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
       { id: uid('slot'), label: 'שמש #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
     ],
-    description: 'משמרות 4 שעות (מחזור 05:00), 6 ביום. דורש ניצן. עדיפות לאותה קבוצה (רך).',
+    description: 'משמרות 4 שעות (מחזור 05:00), 6 ביום. דורש ניצן.',
   });
 
   // Mamtera

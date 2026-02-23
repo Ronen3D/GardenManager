@@ -9,6 +9,7 @@ import {
   Task,
   Assignment,
   Participant,
+  ParticipantCapacity,
   TaskType,
   Level,
   SchedulerConfig,
@@ -30,6 +31,12 @@ import { dateKey } from '../utils/date-utils';
  * Split-pool: L0 participants are balanced among themselves, seniors (L2-L4)
  * are balanced among themselves. No cross-level comparison.
  *
+ * When `capacities` is provided, each participant's "fair share" target is
+ * proportional to their available hours rather than the flat pool average.
+ * E.g. if pool total is 100h and participant A has 60% of the pool's capacity,
+ * their target is 60h, not the simple average. Deviations remain in hours so
+ * the weight calibration and display values are preserved.
+ *
  * Returns { l0Penalty, seniorPenalty, l0StdDev, l0Avg, seniorStdDev, seniorAvg }.
  */
 export function workloadImbalanceSplit(
@@ -38,11 +45,13 @@ export function workloadImbalanceSplit(
   tasks: Task[],
   prebuiltTaskMap?: Map<string, Task>,
   assignmentsByParticipant?: Map<string, Assignment[]>,
+  capacities?: Map<string, ParticipantCapacity>,
 ): { l0Penalty: number; seniorPenalty: number; l0StdDev: number; l0Avg: number; seniorStdDev: number; seniorAvg: number; combinedStdDev: number } {
   const taskMap = prebuiltTaskMap ?? new Map(tasks.map(t => [t.id, t]));
 
-  const l0Loads: number[] = [];
-  const seniorLoads: number[] = [];
+  // Accumulate per-participant effective hours and capacity
+  const l0Data: { hours: number; cap: number }[] = [];
+  const seniorData: { hours: number; cap: number }[] = [];
 
   for (const p of participants) {
     let effectiveHours = 0;
@@ -61,35 +70,64 @@ export function workloadImbalanceSplit(
         effectiveHours += computeTaskEffectiveHours(task);
       }
     }
+
+    const cap = capacities?.get(p.id)?.totalAvailableHours ?? 0;
     if (p.level === Level.L0) {
-      l0Loads.push(effectiveHours);
+      l0Data.push({ hours: effectiveHours, cap });
     } else {
-      seniorLoads.push(effectiveHours);
+      seniorData.push({ hours: effectiveHours, cap });
     }
   }
 
-  const computeStats = (loads: number[]) => {
-    if (loads.length === 0) return { stdDev: 0, avg: 0, penalty: 0 };
-    const avg = loads.reduce((a, b) => a + b, 0) / loads.length;
-    const variance = loads.reduce((sum, c) => sum + (c - avg) ** 2, 0) / loads.length;
+  /**
+   * Compute stats with proportional targets when capacities are available.
+   *
+   * Without capacities: target_i = totalLoad / N (flat average, legacy behaviour).
+   * With capacities:    target_i = totalLoad × (cap_i / totalCap).
+   *
+   * All values remain in hours, preserving weight calibration.
+   */
+  const computeStats = (data: { hours: number; cap: number }[]) => {
+    if (data.length === 0) return { stdDev: 0, avg: 0, penalty: 0 };
+    const totalLoad = data.reduce((s, d) => s + d.hours, 0);
+    const avg = totalLoad / data.length;
+
+    const totalCap = data.reduce((s, d) => s + d.cap, 0);
+    const useProportional = capacities && totalCap > 0;
+
+    let variance = 0;
+    for (const d of data) {
+      // Proportional target: each person's fair share scales with their capacity
+      const target = useProportional
+        ? totalLoad * (d.cap / totalCap)
+        : avg;
+      variance += (d.hours - target) ** 2;
+    }
+    variance /= data.length;
     const stdDev = Math.sqrt(variance);
     return { stdDev, avg, penalty: stdDev * 2 };
   };
 
-  const l0Stats = computeStats(l0Loads);
-  const seniorStats = computeStats(seniorLoads);
+  const l0Stats = computeStats(l0Data);
+  const seniorStats = computeStats(seniorData);
 
-  // Compute combined std-dev across both pools, reusing the already-scanned
-  // loads so computeScheduleScore doesn't need a separate O(P×A) pass.
-  const totalCount = l0Loads.length + seniorLoads.length;
+  // Compute combined std-dev across both pools with proportional targets
+  const allData = [...l0Data, ...seniorData];
   let combinedStdDev = 0;
-  if (totalCount > 0) {
-    let totalSum = 0;
-    let totalSumSq = 0;
-    for (const x of l0Loads) { totalSum += x; totalSumSq += x * x; }
-    for (const x of seniorLoads) { totalSum += x; totalSumSq += x * x; }
-    const avg = totalSum / totalCount;
-    combinedStdDev = Math.sqrt(Math.max(0, totalSumSq / totalCount - avg * avg));
+  if (allData.length > 0) {
+    const totalLoad = allData.reduce((s, d) => s + d.hours, 0);
+    const totalCap = allData.reduce((s, d) => s + d.cap, 0);
+    const useProportional = capacities && totalCap > 0;
+    const avg = totalLoad / allData.length;
+
+    let sumSqDev = 0;
+    for (const d of allData) {
+      const target = useProportional
+        ? totalLoad * (d.cap / totalCap)
+        : avg;
+      sumSqDev += (d.hours - target) ** 2;
+    }
+    combinedStdDev = Math.sqrt(sumSqDev / allData.length);
   }
 
   return {
@@ -114,10 +152,12 @@ export function workloadImbalanceSplit(
  * Two complementary metrics:
  *  1. **Per-participant daily std-dev** — each participant should have their
  *     effective hours spread roughly evenly across the days they work.
- *     We compute the std-dev of each participant's daily load and return
- *     the average across all participants.
+ *     When `capacities` is provided, days where a participant has zero
+ *     available hours are excluded from their std-dev calculation so that
+ *     unavailable days don't inflate the penalty with phantom zeros.
  *  2. **Global daily std-dev** — the total effective hours scheduled per
  *     calendar day (across all participants) should be roughly equal.
+ *     This metric is absolute and unaffected by individual availability.
  *
  * Both values are returned so the caller can weight them in the composite.
  */
@@ -127,6 +167,7 @@ export function dailyWorkloadImbalance(
   tasks: Task[],
   prebuiltTaskMap?: Map<string, Task>,
   assignmentsByParticipant?: Map<string, Assignment[]>,
+  capacities?: Map<string, ParticipantCapacity>,
 ): { dailyPerParticipantStdDev: number; dailyGlobalStdDev: number } {
   const taskMap = prebuiltTaskMap ?? new Map(tasks.map(t => [t.id, t]));
 
@@ -171,14 +212,33 @@ export function dailyWorkloadImbalance(
       globalDayTotals[idx] += eff;
     }
 
-    // Std-dev of this participant's daily loads
+    // Std-dev of this participant's daily loads.
+    // When capacities are available, exclude days where the participant
+    // has zero available hours — those are fully-unavailable days whose
+    // "0 load" is expected, not a sign of imbalance.
+    const pCap = capacities?.get(p.id);
     let sum = 0;
-    for (let i = 0; i < numDays; i++) sum += dailyLoad[i];
-    const avg = sum / numDays;
-    let variance = 0;
-    for (let i = 0; i < numDays; i++) variance += (dailyLoad[i] - avg) ** 2;
-    variance /= numDays;
-    sumOfParticipantStdDevs += Math.sqrt(variance);
+    let availableDayCount = 0;
+    for (let i = 0; i < numDays; i++) {
+      const dk = dayList[i];
+      const dayAvail = pCap?.dailyAvailableHours.get(dk);
+      //  Skip fully-unavailable days when capacity data is present
+      if (pCap && (dayAvail === undefined || dayAvail <= 0)) continue;
+      sum += dailyLoad[i];
+      availableDayCount++;
+    }
+    if (availableDayCount > 0) {
+      const avg = sum / availableDayCount;
+      let variance = 0;
+      for (let i = 0; i < numDays; i++) {
+        const dk = dayList[i];
+        const dayAvail = pCap?.dailyAvailableHours.get(dk);
+        if (pCap && (dayAvail === undefined || dayAvail <= 0)) continue;
+        variance += (dailyLoad[i] - avg) ** 2;
+      }
+      variance /= availableDayCount;
+      sumOfParticipantStdDevs += Math.sqrt(variance);
+    }
     participantCount++;
   }
 
@@ -268,6 +328,8 @@ export interface ScoreContext {
   assignmentsByParticipant?: Map<string, Assignment[]>;
   /** Optional: per-task assignment index maintained by the caller */
   assignmentsByTask?: Map<string, Assignment[]>;
+  /** Optional: pre-computed per-participant capacities for proportional workload */
+  capacities?: Map<string, ParticipantCapacity>;
 }
 
 /**
@@ -321,8 +383,8 @@ export function computeScheduleScore(
   const profiles = computeAllRestProfiles(participants, assignments, tasks, taskMap, byParticipant);
   const fairness = computeRestFairness(profiles);
 
-  // Split-pool workload stats — pass pre-built data
-  const wlSplit = workloadImbalanceSplit(participants, assignments, tasks, taskMap, byParticipant);
+  // Split-pool workload stats — pass pre-built data + capacities
+  const wlSplit = workloadImbalanceSplit(participants, assignments, tasks, taskMap, byParticipant, ctx?.capacities);
 
   // Reuse the combined std-dev already computed inside workloadImbalanceSplit
   // to avoid a redundant O(P×A) effective-hours scan.
@@ -330,16 +392,11 @@ export function computeScheduleScore(
 
   // Penalties
   let totalPenalty = 0;
-  let totalBonus = 0;
 
   // Workload imbalance is captured directly via l0FairnessWeight * l0StdDev
   // and seniorFairnessWeight * seniorStdDev in the composite formula — no
   // double-counting through totalPenalty.
 
-  // Group mismatch penalty (SC-7) — removed: HC-4 is now a hard constraint.
-  // Mixed-group assignments are blocked by the optimizer and validated by
-  // checkSameGroup() in hard-constraints.ts. groupMismatchPenalty config
-  // field is retained for backwards compatibility but no longer applied.
 
   // SC-5 (back-to-back penalty) removed — redundant with minRestWeight and HC-12.
 
@@ -351,8 +408,8 @@ export function computeScheduleScore(
     : config;
   totalPenalty += computeSeniorHamamaPenalty(participants, assignments, tasks, effectiveConfig, pMap, taskMap);
 
-  // SC-8: Daily workload balance — pass pre-built data
-  const dailyBalance = dailyWorkloadImbalance(participants, assignments, tasks, taskMap, byParticipant);
+  // SC-8: Daily workload balance — pass pre-built data + capacities
+  const dailyBalance = dailyWorkloadImbalance(participants, assignments, tasks, taskMap, byParticipant, ctx?.capacities);
 
   // Composite score
   const minRest = isFinite(fairness.globalMinRest) ? fairness.globalMinRest : 0;
@@ -363,15 +420,13 @@ export function computeScheduleScore(
     config.l0FairnessWeight * wlSplit.l0StdDev -
     config.seniorFairnessWeight * wlSplit.seniorStdDev -
     config.dailyBalanceWeight * (dailyBalance.dailyPerParticipantStdDev + dailyBalance.dailyGlobalStdDev) -
-    config.penaltyWeight * totalPenalty +
-    config.bonusWeight * totalBonus;
+    totalPenalty;
 
   return {
     minRestHours: minRest,
     avgRestHours: avgRest,
     restStdDev: combinedStdDev,
     totalPenalty,
-    totalBonus,
     compositeScore,
     l0StdDev: wlSplit.l0StdDev,
     l0AvgEffective: wlSplit.l0Avg,

@@ -21,7 +21,8 @@ import {
   ViolationSeverity,
 } from '../models/types';
 import { validateHardConstraints } from '../constraints/hard-constraints';
-import { computeScheduleScore, collectSoftWarnings } from '../constraints/soft-constraints';
+import { computeScheduleScore, collectSoftWarnings, ScoreContext } from '../constraints/soft-constraints';
+import { computeAllCapacities } from '../utils/capacity';
 import {
   optimize,
   optimizeMultiAttemptAsync,
@@ -49,6 +50,21 @@ export class SchedulingEngine {
     resetAssignmentCounter();
     resetSlotCounter();
     resetTaskCounter();
+  }
+
+  /** Build a ScoreContext with pre-computed capacities for proportional scoring */
+  private _buildScoreCtx(tasks: Task[], participants: Participant[]): ScoreContext {
+    let schedStart = tasks[0]?.timeBlock.start ?? new Date();
+    let schedEnd = tasks[0]?.timeBlock.end ?? new Date();
+    for (const t of tasks) {
+      if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+      if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+    }
+    return {
+      taskMap: new Map(tasks.map(t => [t.id, t])),
+      pMap: new Map(participants.map(p => [p.id, p])),
+      capacities: computeAllCapacities(participants, schedStart, schedEnd),
+    };
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -335,7 +351,7 @@ export class SchedulingEngine {
 
     const hard = validateHardConstraints(tasks, participants, assignments, this.disabledHC);
     const soft = collectSoftWarnings(tasks, participants, assignments, this.disabledSW);
-    const score = computeScheduleScore(tasks, participants, assignments, this.config, undefined, this.disabledSW);
+    const score = computeScheduleScore(tasks, participants, assignments, this.config, this._buildScoreCtx(tasks, participants), this.disabledSW);
 
     this.currentSchedule = {
       ...this.currentSchedule,
@@ -396,7 +412,7 @@ export class SchedulingEngine {
       this.currentSchedule.participants,
       this.currentSchedule.assignments,
       this.config,
-      undefined,
+      this._buildScoreCtx(this.currentSchedule.tasks, this.currentSchedule.participants),
       this.disabledSW,
     );
     this.currentSchedule.feasible = validation.valid;

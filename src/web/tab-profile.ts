@@ -187,7 +187,7 @@ function renderPersonalAgenda(
           ? `<span class="badge badge-sm" style="background:#555;color:#ffc107" title="ממשיך ליום ${endDayIdx}">← יום ${endDayIdx}</span>`
           : '';
         html += `<div class="agenda-task task-tooltip-hover${crossDay ? ' agenda-task-crossday' : ''}" data-task-id="${task.id}" style="border-inline-start:3px solid ${color}">
-          <div class="agenda-task-time">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</div>
+          <div class="agenda-task-time" dir="ltr">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</div>
           <div class="agenda-task-info">
             <span class="agenda-task-name">${task.name}</span>
             ${taskTypeBadge(task.type)}

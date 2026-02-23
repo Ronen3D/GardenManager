@@ -1,8 +1,8 @@
 /**
- * Optimizer - Max-Min Fairness scheduler with penalty/bonus heuristics.
+ * Optimizer - Max-Min Fairness scheduler with penalty heuristics.
  *
  * Uses a greedy constructive heuristic followed by local search (swap-based)
- * to maximize the composite score (rest fairness + penalties + bonuses).
+ * to maximize the composite score (rest fairness + penalties).
  *
  * Algorithm:
  *  1. Greedy Phase: Assign participants to task slots respecting hard constraints,
@@ -30,6 +30,7 @@ import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
 import { isEligible, getRejectionReason } from './validator';
 import { dateKey } from '../utils/date-utils';
+import { computeAllCapacities } from '../utils/capacity';
 
 /** P4: Add an assignment into the per-participant index */
 function addToAssignmentMap(map: Map<string, Assignment[]>, a: Assignment): void {
@@ -130,8 +131,9 @@ function getEligibleCandidates(
       const aExact = slot.acceptableLevels.includes(a.level) ? 0 : 1;
       const bExact = slot.acceptableLevels.includes(b.level) ? 0 : 1;
       if (aExact !== bExact) return aExact - bExact;
-      // T2: blended workload score — combines total fairness with daily spread.
-      // The day-load factor (×2) strongly discourages piling work on the same day.
+      // T2: blended workload score — flat (absolute hours).
+      // Proportional fairness is handled by SC-3/SC-8 in the scoring phase;
+      // greedy phase uses flat workload to maximise slot coverage.
       const wa = participantWorkload.get(a.id) || 0;
       const wb = participantWorkload.get(b.id) || 0;
       const dayA = dailyWorkload?.get(a.id)?.get(taskDay) ?? 0;
@@ -163,9 +165,9 @@ function getEligibleCandidates(
       if (d !== 0) return d;
     }
 
-    // Primary fairness driver: blended workload score.
-    // Combines total fairness with daily spread — day-load factor (×2) strongly
-    // discourages piling work on the same day while still respecting overall balance.
+    // Primary fairness driver: flat blended workload score.
+    // Proportional fairness is handled by SC-3/SC-8 in the scoring phase;
+    // greedy phase uses flat workload to maximise slot coverage.
     const wa = participantWorkload.get(a.id) || 0;
     const wb = participantWorkload.get(b.id) || 0;
     const dayA = dailyWorkload?.get(a.id)?.get(taskDay) ?? 0;
@@ -721,6 +723,15 @@ export function localSearchOptimize(
     else byTask.set(a.taskId, [a]);
   }
 
+  // Pre-compute capacities for proportional workload scoring
+  let schedStart = tasks[0]?.timeBlock.start ?? new Date();
+  let schedEnd = tasks[0]?.timeBlock.end ?? new Date();
+  for (const t of tasks) {
+    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+  }
+  const capacities = computeAllCapacities(participants, schedStart, schedEnd);
+
   // Build ScoreContext once — taskMap, pMap, and the mutable indices are
   // kept consistent via in-place patching so the same ctx is valid for
   // every scoring call throughout the search.
@@ -729,6 +740,7 @@ export function localSearchOptimize(
     pMap,
     assignmentsByParticipant: byParticipant,
     assignmentsByTask: byTask,
+    capacities,
   };
 
   let currentScore = computeScheduleScore(tasks, participants, current, config, scoreCtx);
@@ -904,7 +916,21 @@ export function optimize(
 
   // Validate final result
   const validation = validateHardConstraints(tasks, participants, improved, disabledHC);
-  const score = computeScheduleScore(tasks, participants, improved, config);
+
+  // Build capacities for final scoring
+  let schedStart = tasks[0]?.timeBlock.start ?? new Date();
+  let schedEnd = tasks[0]?.timeBlock.end ?? new Date();
+  for (const t of tasks) {
+    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+  }
+  const finalCapacities = computeAllCapacities(participants, schedStart, schedEnd);
+  const finalCtx: ScoreContext = {
+    taskMap: new Map(tasks.map(t => [t.id, t])),
+    pMap: new Map(participants.map(p => [p.id, p])),
+    capacities: finalCapacities,
+  };
+  const score = computeScheduleScore(tasks, participants, improved, config, finalCtx);
 
   return {
     assignments: improved,
@@ -947,7 +973,7 @@ function shuffle<T>(arr: T[]): T[] {
  *
  * Priority order:
  *  1. Fewer unfilled slots (more tasks filled)
- *  2. Higher composite score (fairness + bonuses - penalties)
+ *  2. Higher composite score (fairness - penalties)
  */
 function isBetterResult(candidate: OptimizationResult, current: OptimizationResult): boolean {
   const candUnfilled = candidate.unfilledSlots.length;
@@ -980,7 +1006,7 @@ export function optimizeMultiAttempt(
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
   const totalStart = Date.now();
-  const diagRows: Array<{ '#': number; score: string; unfilled: number; stdDev: string; penalty: string; bonus: string; improved: string }> = [];
+  const diagRows: Array<{ '#': number; score: string; unfilled: number; stdDev: string; penalty: string; improved: string }> = [];
 
   for (let i = 0; i < attempts; i++) {
     // Shuffle participant order to create diversity
@@ -1002,7 +1028,6 @@ export function optimizeMultiAttempt(
       unfilled: result.unfilledSlots.length,
       stdDev: result.score.restStdDev.toFixed(4),
       penalty: result.score.totalPenalty.toFixed(2),
-      bonus: result.score.totalBonus.toFixed(2),
       improved: improved ? '★ YES' : '',
     });
 
@@ -1058,7 +1083,7 @@ export function optimizeMultiAttemptAsync(
     let best: OptimizationResult | null = null;
     let i = 0;
     const totalStart = Date.now();
-    const diagRows: Array<{ '#': number; score: string; unfilled: number; stdDev: string; penalty: string; bonus: string; improved: string }> = [];
+    const diagRows: Array<{ '#': number; score: string; unfilled: number; stdDev: string; penalty: string; improved: string }> = [];
 
     function runBatch(): void {
       const batchEnd = Math.min(i + ASYNC_BATCH_SIZE, attempts);
@@ -1084,7 +1109,6 @@ export function optimizeMultiAttemptAsync(
           unfilled: result.unfilledSlots.length,
           stdDev: result.score.restStdDev.toFixed(4),
           penalty: result.score.totalPenalty.toFixed(2),
-          bonus: result.score.totalBonus.toFixed(2),
           improved: improved ? '★ YES' : '',
         });
 

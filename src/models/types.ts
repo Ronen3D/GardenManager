@@ -101,6 +101,19 @@ export interface Participant {
   dateUnavailability: DateUnavailability[];
 }
 
+// ─── Capacity ────────────────────────────────────────────────────────────────
+
+/**
+ * Pre-computed capacity for a participant within a schedule window.
+ * Used to scale "fair share" targets proportionally to availability.
+ */
+export interface ParticipantCapacity {
+  /** Total available hours across the entire schedule window */
+  totalAvailableHours: number;
+  /** Available hours per calendar day (keyed by YYYY-MM-DD dateKey) */
+  dailyAvailableHours: Map<string, number>;
+}
+
 // ─── Task ────────────────────────────────────────────────────────────────────
 
 /** Slot requirement within a task (e.g., "2x Level 0" is two slots) */
@@ -189,8 +202,6 @@ export interface ScheduleScore {
   restStdDev: number;
   /** Sum of penalty points (Hamama level misuse, etc.) */
   totalPenalty: number;
-  /** Sum of bonus points (same-group Shemesh, etc.) */
-  totalBonus: number;
   /** Composite objective: maximize this */
   compositeScore: number;
 
@@ -241,10 +252,6 @@ export interface SchedulerConfig {
   l0FairnessWeight: number;
   /** Weight for senior (L2-L4) fairness — secondary */
   seniorFairnessWeight: number;
-  /** Weight for penalty deduction */
-  penaltyWeight: number;
-  /** Weight for bonus addition */
-  bonusWeight: number;
 
   /** Max solver iterations */
   maxIterations: number;
@@ -252,8 +259,6 @@ export interface SchedulerConfig {
   maxSolverTimeMs: number;
   /** Penalty for ANY senior (L2/L3/L4) assigned to Hamama — absolute last resort */
   seniorHamamaPenalty: number;
-  /** Penalty per same-group task that has mixed-group participants */
-  groupMismatchPenalty: number;
   /** Weight for daily workload balance (penalises busy-day / light-day spread) */
   dailyBalanceWeight: number;
 }
@@ -262,13 +267,10 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   minRestWeight: 10,
   l0FairnessWeight: 40,
   seniorFairnessWeight: 6,
-  penaltyWeight: 1,
-  bonusWeight: 3,
 
   maxIterations: 10000,
   maxSolverTimeMs: 30000,
   seniorHamamaPenalty: 10000,
-  groupMismatchPenalty: 100,
   dailyBalanceWeight: 90,
 };
 

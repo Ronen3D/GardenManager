@@ -21,6 +21,7 @@ export type {
   AvailabilityWindow,
   DateUnavailability,
   Participant,
+  ParticipantCapacity,
   SlotRequirement,
   Task,
   Assignment,
@@ -122,6 +123,11 @@ export {
   computeRestFairness,
 } from './web/utils/rest-calculator';
 export type { ParticipantRestProfile } from './web/utils/rest-calculator';
+
+export {
+  computeParticipantCapacity,
+  computeAllCapacities,
+} from './utils/capacity';
 
 // ─── UI Bridge ───────────────────────────────────────────────────────────────
 export {

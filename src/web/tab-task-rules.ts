@@ -140,7 +140,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" data-tpl-field="durationHours" value="${tpl.durationHours}" data-tid="${tpl.id}" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" /></label>
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" data-tpl-field="startHour" value="${tpl.startHour}" data-tid="${tpl.id}" /></label>
-      <label>עומס בסיס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
+      <label>יחס חישוב עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> אותה קבוצה</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חסימה עוקבת (HC-12)</label>
@@ -187,7 +187,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
   let html = `<h4 style="margin:12px 0 8px;">חלונות עומס (אזורים חמים)</h4>`;
 
   if (windows.length === 0) {
-    html += '<p class="text-muted" style="padding:4px 0;">אין חלונות חמים. עומס בסיס חל על כל המשימה.</p>';
+    html += '<p class="text-muted" style="padding:4px 0;">אין חלונות חמים. יחס חישוב עומס חל על כל המשימה.</p>';
   } else {
     html += `<table class="table table-slots" style="margin-bottom:8px;">
       <thead><tr><th>חלון</th><th>משקל</th><th></th></tr></thead>
@@ -305,7 +305,7 @@ function renderAddTemplateForm(): string {
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="tpl-start" /></label>
-      <label>עומס בסיס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="tpl-base-load" /></label>
+      <label>יחס חישוב עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="tpl-base-load" /></label>
     </div>
     <div class="form-row">
       <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> אותה קבוצה</label>

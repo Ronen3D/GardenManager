@@ -115,7 +115,6 @@ console.log(`  Min Rest:     ${schedule.score.minRestHours.toFixed(1)}h`);
 console.log(`  Avg Rest:     ${schedule.score.avgRestHours.toFixed(1)}h`);
 console.log(`  Rest StdDev:  ${schedule.score.restStdDev.toFixed(2)}`);
 console.log(`  Penalty:      ${schedule.score.totalPenalty.toFixed(1)}`);
-console.log(`  Bonus:        ${schedule.score.totalBonus.toFixed(1)}`);
 console.log(`  Composite:    ${schedule.score.compositeScore.toFixed(1)}`);
 console.log();
 
