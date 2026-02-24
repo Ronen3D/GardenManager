@@ -93,23 +93,6 @@ const WEIGHT_GROUPS: WeightGroup[] = [
   },
 ];
 
-const SOLVER_FIELDS: WeightField[] = [
-  {
-    key: 'maxIterations',
-    label: 'מספר איטרציות מקסימלי',
-    min: 1000, max: 200000, step: 1000,
-    description: 'כמה ניסיונות החלפה האופטימייזר בוחן. יותר איטרציות = תוצאות טובות יותר פוטנציאלית אך זמן ריצה ארוך יותר.',
-    detail: 'אופטימייזר הצינון המדומה מנסה להחליף זוגות שיבוצים כדי לשפר את הניקוד. כל ניסיון החלפה נחשב כאיטרציה אחת. ברירת מחדל 10,000 נותנת תוצאות טובות לרוב הלוחות. עבור מאגרי משתתפים גדולים מאוד (30+), נסה 50,000+.',
-  },
-  {
-    key: 'maxSolverTimeMs',
-    label: 'מגבלת זמן (מ"ש)',
-    min: 1000, max: 120000, step: 1000,
-    description: 'זמן שעון קיר מקסימלי שהאופטימייזר רשאי לרוץ. הפותר עוצר מוקדם כשמגיעים למגבלה זו.',
-    detail: 'גם אם נותרו איטרציות, הפותר עוצר כשמגיעים למגבלת הזמן. ברירת מחדל 30,000 מ"ש (30 שניות) מספיקה לרוב המקרים. עבור לוחות צפופים מאוד, הקצאת זמן נוסף (60,000+) עשויה למצוא פתרונות טובים יותר.',
-  },
-];
-
 // ─── HC/SW Extended Descriptions ─────────────────────────────────────────────
 
 const HC_DESCRIPTIONS: Record<HardConstraintCode, string> = {
@@ -232,24 +215,6 @@ export function renderAlgorithmTab(): string {
     </div>
   </div>`;
   }
-
-  // ── Solver Parameters ──
-  html += `
-  <div class="algo-section">
-    <h3 class="algo-section-title">כוונון פותר</h3>
-    <p class="algo-section-desc">שליטה בכמה זמן ובאיזו עוצמה האופטימייזר מחפש לו"ז טוב. ערכים גבוהים עשויים לייצר תוצאות טובות יותר אך לקחת יותר זמן.</p>
-    <div class="algo-grid">`;
-
-  for (const f of SOLVER_FIELDS) {
-    const val = cfg[f.key];
-    const defaultVal = DEFAULT_CONFIG[f.key];
-    const isCustom = val !== defaultVal;
-    html += renderWeightInput(f, val, defaultVal, isCustom);
-  }
-
-  html += `
-    </div>
-  </div>`;
 
   // ── Hard Constraint Toggles ──
   html += `

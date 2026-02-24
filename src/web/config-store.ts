@@ -27,6 +27,7 @@ import {
   SchedulerConfig,
   AlgorithmPreset,
   DEFAULT_PRESET,
+  ScheduleSnapshot,
 } from '../models/types';
 
 // ─── ID Generation ───────────────────────────────────────────────────────────
@@ -611,6 +612,21 @@ export function removeSlotFromSubTeam(templateId: string, subTeamId: string, slo
 
 // ─── Seed Default Data ───────────────────────────────────────────────────────
 
+const defaultNames: string[] = [
+  'איתי לוין', 'נועה אברהמי', 'עידו כהן', 'מאיה ישראלי',
+  'יונתן רפאלי', 'עדי מזרחי', 'רועי שפירא', 'מיכל אשכנזי',
+  'עומר דרוקר', 'ענבר חזן', 'אורי גבאי', 'טל בן-דור',
+  'דניאל וייס', 'שירה אדרי', 'אסף גרינברג', 'ליאור פלד',
+  'נדב הראל', 'רוני סגל', 'גיא מור', 'יעל שלום',
+  'אלון ברק', 'הילה חדד', 'מתן אלוני', 'שחר עמר',
+  'איתן דהן', 'עמית מלכה', 'יובל קליין', 'נטע לביא',
+  'דורון פרידמן', 'קרן אורן', 'אריאל נחום', 'דנה צור',
+  'אביב סוויסה', 'גלית שדה', 'תומר גולן', 'ספיר מלמד',
+  'אופיר ביטון', 'נועם פרץ', 'אייל רוזנפלד', 'ליהי כץ',
+  'בועז נאמן', 'תמר יוספי', 'יואב פולק', 'סיון ריבלין',
+  'אוהד שטרן', 'רותם גנות', 'ברק אוריון', 'נעמה שקד',
+];
+
 export function seedDefaultParticipants(): void {
   // 4 Departments × 12 participants = 48 total
   // Per department:
@@ -653,6 +669,7 @@ export function seedDefaultParticipants(): void {
     'קבוצה 3': new Set([8]),     // 1 standard L0 participant
   };
 
+  let nameIdx = 0;
   for (const dept of deptNames) {
     const horeshIndices = horeshByDept[dept];
     template.forEach((spec, i) => {
@@ -661,7 +678,7 @@ export function seedDefaultParticipants(): void {
       if (horeshIndices?.has(i)) certs.push(Certification.Horesh);
       const p: Participant = {
         id,
-        name: `חלוץ ${i + 1} ${dept}`,
+        name: defaultNames[nameIdx++],
         level: spec.level,
         certifications: certs,
         group: dept,
@@ -1572,4 +1589,242 @@ export function isPresetDirty(): boolean {
   const preset = getPresetById(activeId);
   if (!preset) return false;
   return JSON.stringify(getAlgorithmSettings()) !== JSON.stringify(preset.settings);
+}
+
+// ─── Schedule Snapshots ─────────────────────────────────────────────────────
+
+const STORAGE_KEY_SNAPSHOTS = 'gardenmanager_schedule_snapshots';
+const STORAGE_KEY_ACTIVE_SNAPSHOT = 'gardenmanager_active_snapshot_id';
+const MAX_SNAPSHOTS = 30;
+
+let _snapshots: ScheduleSnapshot[] | null = null;
+let _activeSnapshotId: string | null | undefined = undefined; // undefined = not yet loaded
+
+/** Deep-copy a snapshot using JSON serialize round-trip (handles Dates). */
+function _deepCopySnapshot(s: ScheduleSnapshot): ScheduleSnapshot {
+  return jsonDeserialize<ScheduleSnapshot>(jsonSerialize(s));
+}
+
+/** Lazily initialise snapshots from localStorage. */
+function _initSnapshots(): ScheduleSnapshot[] {
+  if (_snapshots) return _snapshots;
+
+  const raw = localStorage.getItem(STORAGE_KEY_SNAPSHOTS);
+  if (raw) {
+    try {
+      _snapshots = jsonDeserialize<ScheduleSnapshot[]>(raw);
+    } catch {
+      _snapshots = [];
+    }
+  } else {
+    _snapshots = [];
+  }
+
+  // Load active snapshot id
+  if (_activeSnapshotId === undefined) {
+    _activeSnapshotId = localStorage.getItem(STORAGE_KEY_ACTIVE_SNAPSHOT) || null;
+  }
+
+  return _snapshots;
+}
+
+function _saveSnapshots(): void {
+  if (!_snapshots) return;
+  try {
+    localStorage.setItem(STORAGE_KEY_SNAPSHOTS, jsonSerialize(_snapshots));
+  } catch (err: unknown) {
+    // Handle localStorage quota exceeded
+    if (err instanceof DOMException && err.name === 'QuotaExceededError') {
+      console.warn('[Store] localStorage quota exceeded for snapshots. Consider deleting old snapshots.');
+    } else {
+      console.warn('[Store] Failed to save schedule snapshots:', err);
+    }
+  }
+}
+
+function _saveActiveSnapshotId(): void {
+  try {
+    if (_activeSnapshotId) {
+      localStorage.setItem(STORAGE_KEY_ACTIVE_SNAPSHOT, _activeSnapshotId);
+    } else {
+      localStorage.removeItem(STORAGE_KEY_ACTIVE_SNAPSHOT);
+    }
+  } catch (err) {
+    console.warn('[Store] Failed to save active snapshot id:', err);
+  }
+}
+
+/** Case-insensitive trimmed name duplicate check */
+function _isSnapshotNameTaken(name: string, excludeId?: string): boolean {
+  const norm = name.trim().toLowerCase();
+  const snapshots = _initSnapshots();
+  return snapshots.some(s => s.name.trim().toLowerCase() === norm && s.id !== excludeId);
+}
+
+// ─── Snapshot Public API ────────────────────────────────────────────────────
+
+/** Get all snapshots sorted by createdAt descending (newest first) */
+export function getAllSnapshots(): ScheduleSnapshot[] {
+  const snapshots = _initSnapshots();
+  return snapshots
+    .slice()
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map(s => _deepCopySnapshot(s));
+}
+
+/** Get a single snapshot by id */
+export function getSnapshotById(id: string): ScheduleSnapshot | undefined {
+  const snapshots = _initSnapshots();
+  const found = snapshots.find(s => s.id === id);
+  return found ? _deepCopySnapshot(found) : undefined;
+}
+
+/** Get the active snapshot id (may be null if none) */
+export function getActiveSnapshotId(): string | null {
+  _initSnapshots(); // ensure loaded
+  return _activeSnapshotId ?? null;
+}
+
+/** Set the active snapshot id */
+export function setActiveSnapshotId(id: string | null): void {
+  _initSnapshots(); // ensure loaded
+  _activeSnapshotId = id;
+  _saveActiveSnapshotId();
+}
+
+/**
+ * Save a schedule as a new named snapshot.
+ * Returns the new snapshot, or null if the name is taken or limit reached.
+ */
+export function saveScheduleAsSnapshot(
+  schedule: Schedule,
+  algorithmSettings: AlgorithmSettings,
+  name: string,
+  description: string,
+): ScheduleSnapshot | null {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  if (_isSnapshotNameTaken(trimmed)) return null;
+
+  const snapshots = _initSnapshots();
+  if (snapshots.length >= MAX_SNAPSHOTS) {
+    console.warn(`[Store] Snapshot limit reached (${MAX_SNAPSHOTS}). Delete older snapshots first.`);
+    return null;
+  }
+
+  const snapshot: ScheduleSnapshot = {
+    id: uid('snap'),
+    name: trimmed,
+    description: description.trim(),
+    schedule: jsonDeserialize<Schedule>(jsonSerialize(schedule)), // deep copy
+    algorithmSettings: {
+      config: { ...algorithmSettings.config },
+      disabledHardConstraints: [...algorithmSettings.disabledHardConstraints],
+      disabledSoftWarnings: [...algorithmSettings.disabledSoftWarnings],
+    },
+    createdAt: Date.now(),
+  };
+
+  snapshots.push(snapshot);
+  _saveSnapshots();
+
+  _activeSnapshotId = snapshot.id;
+  _saveActiveSnapshotId();
+
+  return _deepCopySnapshot(snapshot);
+}
+
+/**
+ * Overwrite an existing snapshot's schedule and algorithm settings.
+ * Returns false if snapshot not found or is built-in.
+ */
+export function updateSnapshot(id: string, schedule: Schedule, algorithmSettings: AlgorithmSettings): boolean {
+  const snapshots = _initSnapshots();
+  const idx = snapshots.findIndex(s => s.id === id);
+  if (idx === -1) return false;
+  if (snapshots[idx].builtIn) return false;
+
+  snapshots[idx].schedule = jsonDeserialize<Schedule>(jsonSerialize(schedule));
+  snapshots[idx].algorithmSettings = {
+    config: { ...algorithmSettings.config },
+    disabledHardConstraints: [...algorithmSettings.disabledHardConstraints],
+    disabledSoftWarnings: [...algorithmSettings.disabledSoftWarnings],
+  };
+  _saveSnapshots();
+  return true;
+}
+
+/**
+ * Rename a snapshot. Returns null on success, or an error string.
+ */
+export function renameSnapshot(id: string, name: string, description: string): string | null {
+  const snapshots = _initSnapshots();
+  const snapshot = snapshots.find(s => s.id === id);
+  if (!snapshot) return 'תמונת מצב לא נמצאה';
+  if (snapshot.builtIn) return 'לא ניתן לשנות שם של תמונת מצב מובנית';
+
+  const trimmed = name.trim();
+  if (!trimmed) return 'השם לא יכול להיות ריק';
+  if (_isSnapshotNameTaken(trimmed, id)) return 'תמונת מצב עם שם זה כבר קיימת';
+
+  snapshot.name = trimmed;
+  snapshot.description = description.trim();
+  _saveSnapshots();
+  return null;
+}
+
+/**
+ * Duplicate a snapshot with a unique name.
+ * Returns the new snapshot.
+ */
+export function duplicateSnapshot(id: string): ScheduleSnapshot | null {
+  const source = getSnapshotById(id);
+  if (!source) return null;
+
+  const snapshots = _initSnapshots();
+  if (snapshots.length >= MAX_SNAPSHOTS) return null;
+
+  let newName = source.name + ' (עותק)';
+  let attempt = 2;
+  while (_isSnapshotNameTaken(newName)) {
+    newName = `${source.name} (עותק ${attempt++})`;
+  }
+
+  const dup: ScheduleSnapshot = {
+    id: uid('snap'),
+    name: newName,
+    description: source.description,
+    schedule: source.schedule, // already a deep copy from getSnapshotById
+    algorithmSettings: source.algorithmSettings,
+    builtIn: false,
+    createdAt: Date.now(),
+  };
+  snapshots.push(dup);
+  _saveSnapshots();
+  return _deepCopySnapshot(dup);
+}
+
+/**
+ * Delete a snapshot. If it was the active one, clears active snapshot.
+ * Returns false if snapshot not found or is built-in.
+ */
+export function deleteSnapshot(id: string): boolean {
+  const snapshots = _initSnapshots();
+  const idx = snapshots.findIndex(s => s.id === id);
+  if (idx === -1) return false;
+  if (snapshots[idx].builtIn) return false;
+
+  snapshots.splice(idx, 1);
+  _saveSnapshots();
+
+  if (_activeSnapshotId === id) {
+    _activeSnapshotId = null;
+    _saveActiveSnapshotId();
+  }
+  return true;
+}
+
+/** Get the maximum number of snapshots allowed */
+export function getMaxSnapshots(): number {
+  return MAX_SNAPSHOTS;
 }

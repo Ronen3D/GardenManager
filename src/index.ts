@@ -30,6 +30,8 @@ export type {
   ConstraintViolation,
   ValidationResult,
   SchedulerConfig,
+  AlgorithmSettings,
+  ScheduleSnapshot,
   GanttRow,
   GanttBlock,
   GanttData,

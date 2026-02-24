@@ -367,6 +367,23 @@ export const DEFAULT_PRESET: AlgorithmPreset = {
   createdAt: 0,
 };
 
+// ─── Schedule Snapshots ──────────────────────────────────────────────────────
+
+/** A named, saveable snapshot of a complete Schedule + algorithm settings */
+export interface ScheduleSnapshot {
+  id: string;
+  name: string;
+  description: string;
+  /** The full schedule state at the time of the snapshot */
+  schedule: Schedule;
+  /** Algorithm settings that were active when the snapshot was saved */
+  algorithmSettings: AlgorithmSettings;
+  /** If true the snapshot cannot be deleted or renamed */
+  builtIn?: boolean;
+  /** Epoch ms — used for ordering snapshots */
+  createdAt: number;
+}
+
 // ─── Gantt UI Bridge Types ───────────────────────────────────────────────────
 
 export interface GanttRow {

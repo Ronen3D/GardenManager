@@ -30,6 +30,7 @@ import {
   RescueRequest,
   LiveModeState,
   ConstraintViolation,
+  AlgorithmSettings,
 } from '../index';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { renderScheduleGrid } from './schedule-grid-view';
@@ -52,6 +53,7 @@ import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
 import { renderProfileView, wireProfileEvents, ProfileContext } from './tab-profile';
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
 import { computeTaskBreakdown } from './workload-utils';
+import { exportWeeklyOverview, exportDailyDetail } from './pdf-export';
 import {
   TASK_COLORS, LEVEL_COLORS, CERT_COLORS, CERT_LABELS, TASK_TYPE_LABELS,
   fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge,
@@ -73,6 +75,14 @@ let _isOptimizing = false;
  * participants / rules.
  */
 let _scheduleDirty = false;
+
+/** True when the current schedule differs from the active snapshot */
+let _snapshotDirty = false;
+/** State for inline snapshot forms */
+let _snapshotFormMode: 'none' | 'save-as' | 'rename' = 'none';
+let _snapshotFormError = '';
+/** Whether the snapshot panel is expanded */
+let _snapshotPanelOpen = false;
 
 // ─── View Router ─────────────────────────────────────────────────────────────
 
@@ -621,8 +631,15 @@ function renderScheduleTab(): string {
         ${_isOptimizing ? '⏳ מייעל…' : currentSchedule ? '🔄 צור מחדש' : '⚡ צור שבצ"ק'}
       </button>
       ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
+      <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
+      ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא PDF">📤 ייצוא</button>` : ''}
     </div>
   </div>`;
+
+  // ── Snapshot Library Panel (collapsible) ──
+  if (_snapshotPanelOpen) {
+    html += renderSnapshotPanel();
+  }
 
   if (_scheduleDirty && currentSchedule) {
     html += `<div class="dirty-notice">⚠ השבצ"ק לא מעודכן — מומלץ ליצור מחדש</div>`;
@@ -666,7 +683,7 @@ function renderScheduleTab(): string {
   html += `<div class="schedule-layout">`;
   html += `<div class="schedule-main">`;
   html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState())}</section>`;
-  html += `<section><h2>ציר זמן גאנט</h2>${renderGanttChart(s)}</section>`;
+  html += `<section><h2>מערכת שעות כללית</h2>${renderGanttChart(s)}</section>`;
   html += `<section><h2>הפרות אילוצים <span class="count">${filterVisibleViolations(s.violations).length}</span></h2>${renderViolations(s)}</section>`;
   html += `</div>`;
   html += renderParticipantSidebar(s);
@@ -676,6 +693,150 @@ function renderScheduleTab(): string {
   html += renderOptimOverlay();
 
   return html;
+}
+
+// ─── Snapshot Panel ─────────────────────────────────────────────────────────
+
+function renderSnapshotPanel(): string {
+  const snapshots = store.getAllSnapshots();
+  const activeId = store.getActiveSnapshotId();
+  const hasSchedule = !!currentSchedule;
+  const maxSnaps = store.getMaxSnapshots();
+
+  let html = `<div class="snapshot-panel">`;
+
+  // ── Header row ──
+  html += `<div class="snapshot-panel-header">
+    <h3>💾 תמונות מצב <span class="count">${snapshots.length}/${maxSnaps}</span></h3>
+    <button class="btn-sm btn-outline" id="btn-snap-close" title="סגור">✕</button>
+  </div>`;
+
+  // ── Save-as form / rename form ──
+  if (_snapshotFormMode === 'save-as') {
+    html += `<div class="snapshot-inline-form" id="snap-form">
+      <div class="snapshot-form-row">
+        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" placeholder="לדוגמה: טיוטה 1" autofocus /></label>
+        <label>תיאור: <input class="snapshot-desc-input" type="text" id="snap-desc" placeholder="אופציונלי" /></label>
+        <button class="btn-sm btn-primary" id="btn-snap-confirm-save">שמור</button>
+        <button class="btn-sm btn-outline" id="btn-snap-cancel">ביטול</button>
+      </div>
+      <div class="snapshot-validation-error" id="snap-error">${_snapshotFormError}</div>
+    </div>`;
+  } else if (_snapshotFormMode === 'rename' && activeId) {
+    const active = snapshots.find(s => s.id === activeId);
+    html += `<div class="snapshot-inline-form" id="snap-form">
+      <div class="snapshot-form-row">
+        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" value="${active?.name || ''}" /></label>
+        <label>תיאור: <input class="snapshot-desc-input" type="text" id="snap-desc" value="${active?.description || ''}" /></label>
+        <button class="btn-sm btn-primary" id="btn-snap-confirm-rename">שמור</button>
+        <button class="btn-sm btn-outline" id="btn-snap-cancel">ביטול</button>
+      </div>
+      <div class="snapshot-validation-error" id="snap-error">${_snapshotFormError}</div>
+    </div>`;
+  } else {
+    // Primary action: Save current schedule
+    html += `<div class="snapshot-actions-primary">
+      <button class="btn-sm btn-primary" id="btn-snap-save-as" ${!hasSchedule ? 'disabled' : ''}>+ שמור תמונת מצב חדשה</button>
+    </div>`;
+  }
+
+  // ── Snapshot list ──
+  if (snapshots.length === 0) {
+    html += `<div class="snapshot-empty">
+      <span class="text-muted">אין תמונות מצב שמורות. צור שבצ"ק ושמור תמונת מצב.</span>
+    </div>`;
+  } else {
+    html += `<div class="snapshot-list">`;
+    for (const snap of snapshots) {
+      const isActive = snap.id === activeId;
+      const date = new Date(snap.createdAt);
+      const dateStr = date.toLocaleDateString('he-IL', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      html += `<div class="snapshot-item ${isActive ? 'snapshot-item-active' : ''}" data-snap-id="${snap.id}">
+        <div class="snapshot-item-main">
+          <span class="snapshot-item-name">${snap.name}</span>
+          ${isActive && _snapshotDirty ? '<span class="snapshot-dirty-badge">שונה</span>' : ''}
+          <span class="snapshot-item-date text-muted">${dateStr}</span>
+        </div>
+        ${snap.description ? `<div class="snapshot-item-desc text-muted">${snap.description}</div>` : ''}
+        <div class="snapshot-item-actions">
+          <button class="btn-xs btn-primary" data-snap-action="load" data-snap-id="${snap.id}" title="טען תמונת מצב זו">▶ טען</button>
+          ${isActive && _snapshotDirty ? `<button class="btn-xs btn-outline" data-snap-action="update" data-snap-id="${snap.id}" title="עדכן עם השבצ\\"ק הנוכחי">עדכן</button>` : ''}
+          <button class="btn-xs btn-outline" data-snap-action="rename" data-snap-id="${snap.id}" title="שנה שם">✎</button>
+          <button class="btn-xs btn-outline" data-snap-action="duplicate" data-snap-id="${snap.id}" title="שכפל">⧉</button>
+          <button class="btn-xs btn-danger-outline" data-snap-action="delete" data-snap-id="${snap.id}" title="מחק">✕</button>
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+// ─── Snapshot Load Logic ─────────────────────────────────────────────────────
+
+function loadScheduleSnapshot(snapshotId: string): void {
+  const snapshot = store.getSnapshotById(snapshotId);
+  if (!snapshot) return;
+
+  // 1. Restore algorithm settings
+  store.setAlgorithmSettings({
+    config: snapshot.algorithmSettings.config,
+    disabledHardConstraints: snapshot.algorithmSettings.disabledHardConstraints,
+    disabledSoftWarnings: snapshot.algorithmSettings.disabledSoftWarnings,
+  });
+
+  // 2. Reconcile with current participants
+  const currentParticipants = store.getAllParticipants();
+  const storeIds = new Set(currentParticipants.map(p => p.id));
+  const storeMap = new Map(currentParticipants.map(p => [p.id, p]));
+
+  const reconciledAssignments = snapshot.schedule.assignments.filter(
+    a => storeIds.has(a.participantId),
+  );
+  const reconciledParticipants = currentParticipants.filter(
+    p => snapshot.schedule.participants.some(sp => sp.id === p.id),
+  );
+
+  const reconciledSchedule: Schedule = {
+    ...snapshot.schedule,
+    participants: reconciledParticipants,
+    assignments: reconciledAssignments,
+  };
+
+  // 3. Create engine with restored algorithm settings
+  const algoSettings = store.getAlgorithmSettings();
+  engine = new SchedulingEngine(
+    algoSettings.config,
+    store.getDisabledHCSet(),
+    store.getDisabledSWSet(),
+  );
+
+  // 4. Load data into engine
+  engine.addParticipants(reconciledParticipants);
+  engine.addTasks(snapshot.schedule.tasks);
+  engine.importSchedule(reconciledSchedule);
+
+  // 5. Re-validate
+  engine.revalidateFull();
+  currentSchedule = engine.getSchedule()!;
+  currentDay = 1;
+  _scheduleDirty = false;
+  _snapshotDirty = false;
+
+  // 6. Apply live mode freeze if active
+  const liveMode = store.getLiveModeState();
+  if (liveMode.enabled && currentSchedule) {
+    freezeAssignments(currentSchedule, liveMode.currentTimestamp);
+  }
+
+  // 7. Persist as current schedule
+  store.saveSchedule(currentSchedule);
+  store.setActiveSnapshotId(snapshotId);
+
+  // 8. Re-render
+  renderAll();
 }
 
 // ─── Violations ──────────────────────────────────────────────────────────────
@@ -819,11 +980,18 @@ function renderGanttChart(schedule: Schedule): string {
   if (totalMs <= 0) return '<p>אין נתוני ציר זמן ליום זה.</p>';
 
   const totalHours = totalMs / 3600000;
-  // Use smaller tick interval for single day view
-  const tickInterval = totalHours <= 26 ? 1 : 2;
+  // 2-hour labelled ticks for readability; 1-hour subtle gridlines
+  const tickInterval = 2;
 
   let html = `<div class="gantt-container"><div class="gantt-header"><div class="gantt-label-col"></div><div class="gantt-timeline-col">`;
 
+  // Subtle gridlines for every hour
+  for (let h = 0; h <= totalHours; h += 1) {
+    const pos = (h / totalHours) * 100;
+    html += `<span class="gantt-gridline" style="left:${pos}%"></span>`;
+  }
+
+  // Labelled hour marks every 2 hours
   for (let h = 0; h <= totalHours; h += tickInterval) {
     const pos = (h / totalHours) * 100;
     const d = new Date(ganttData.timelineStartMs + h * 3600000);
@@ -997,6 +1165,8 @@ async function doGenerate(): Promise<void> {
     scheduleElapsed = Math.round(performance.now() - t0);
     currentDay = 1;
     _scheduleDirty = false;
+    _snapshotDirty = true;
+    store.setActiveSnapshotId(null);
 
     // Persist schedule to localStorage
     store.saveSchedule(schedule);
@@ -1050,6 +1220,9 @@ function revalidateAndRefresh(): void {
   // soft warnings, AND schedule score so nothing is stale.
   engine.revalidateFull();
   currentSchedule = engine.getSchedule();
+
+  // Mark snapshot as dirty (schedule was modified since last save/load)
+  _snapshotDirty = true;
 
   // Re-apply freeze if live mode is active
   const liveMode = store.getLiveModeState();
@@ -1504,6 +1677,13 @@ function closeRescueModal(): void {
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
 
+function formatLiveClock(): string {
+  const now = new Date();
+  const date = now.toLocaleDateString('he-IL', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
+  const time = now.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  return `${date} · ${time}`;
+}
+
 function renderAll(): void {
   const app = document.getElementById('app')!;
 
@@ -1544,7 +1724,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1>
+      <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">beta</span></h1>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול (Ctrl+Z)">↪ ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</button>
@@ -1556,7 +1736,7 @@ function renderAll(): void {
       </button>
     </div>
     <p class="subtitle">
-      ${store.getScheduleDate().toLocaleDateString('he-IL', { day: '2-digit', month: 'short', year: 'numeric' })}
+      <span id="live-clock">${formatLiveClock()}</span>
       · שבצ"ק ל-${store.getScheduleDays()} ימים
       · ${participants.length} משתתפים
       · ${templates.length} תבניות משימות
@@ -1678,9 +1858,168 @@ function wireThemeToggle(container: HTMLElement): void {
   if (btn) btn.addEventListener('click', toggleTheme);
 }
 
+// ─── Snapshot Event Wiring ───────────────────────────────────────────────────
+
+function wireSnapshotEvents(container: HTMLElement): void {
+  // Toggle panel open/close
+  const toggleBtn = container.querySelector('#btn-snap-toggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      _snapshotPanelOpen = !_snapshotPanelOpen;
+      _snapshotFormMode = 'none';
+      _snapshotFormError = '';
+      renderAll();
+    });
+  }
+
+  // Close button inside panel
+  const closeBtn = container.querySelector('#btn-snap-close');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      _snapshotPanelOpen = false;
+      _snapshotFormMode = 'none';
+      _snapshotFormError = '';
+      renderAll();
+    });
+  }
+
+  // Save As → show form
+  const saveAsBtn = container.querySelector('#btn-snap-save-as');
+  if (saveAsBtn) {
+    saveAsBtn.addEventListener('click', () => {
+      _snapshotFormMode = 'save-as';
+      _snapshotFormError = '';
+      renderAll();
+    });
+  }
+
+  // Confirm Save As
+  const confirmSaveBtn = container.querySelector('#btn-snap-confirm-save');
+  if (confirmSaveBtn) {
+    confirmSaveBtn.addEventListener('click', () => {
+      if (!currentSchedule) return;
+      const nameInput = document.getElementById('snap-name') as HTMLInputElement | null;
+      const descInput = document.getElementById('snap-desc') as HTMLInputElement | null;
+      const name = nameInput?.value.trim() || '';
+      const desc = descInput?.value.trim() || '';
+      if (!name) {
+        _snapshotFormError = 'השם לא יכול להיות ריק';
+        renderAll();
+        return;
+      }
+      const algoSettings = store.getAlgorithmSettings();
+      const result = store.saveScheduleAsSnapshot(currentSchedule, algoSettings, name, desc);
+      if (!result) {
+        _snapshotFormError = 'שם זה כבר תפוס או שהגעת למגבלת תמונות המצב';
+        renderAll();
+        return;
+      }
+      _snapshotFormMode = 'none';
+      _snapshotFormError = '';
+      _snapshotDirty = false;
+      renderAll();
+    });
+  }
+
+  // Confirm Rename
+  const confirmRenameBtn = container.querySelector('#btn-snap-confirm-rename');
+  if (confirmRenameBtn) {
+    confirmRenameBtn.addEventListener('click', () => {
+      const activeId = store.getActiveSnapshotId();
+      if (!activeId) return;
+      const nameInput = document.getElementById('snap-name') as HTMLInputElement | null;
+      const descInput = document.getElementById('snap-desc') as HTMLInputElement | null;
+      const name = nameInput?.value.trim() || '';
+      const desc = descInput?.value.trim() || '';
+      if (!name) {
+        _snapshotFormError = 'השם לא יכול להיות ריק';
+        renderAll();
+        return;
+      }
+      const err = store.renameSnapshot(activeId, name, desc);
+      if (err) {
+        _snapshotFormError = err;
+        renderAll();
+        return;
+      }
+      _snapshotFormMode = 'none';
+      _snapshotFormError = '';
+      renderAll();
+    });
+  }
+
+  // Cancel form
+  const cancelBtn = container.querySelector('#btn-snap-cancel');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      _snapshotFormMode = 'none';
+      _snapshotFormError = '';
+      renderAll();
+    });
+  }
+
+  // Delegated click handler for snapshot item actions
+  container.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('[data-snap-action]') as HTMLElement | null;
+    if (!btn) return;
+    const action = btn.dataset.snapAction;
+    const snapId = btn.dataset.snapId;
+    if (!action || !snapId) return;
+
+    switch (action) {
+      case 'load': {
+        if (_snapshotDirty && currentSchedule) {
+          if (!confirm('השבצ"ק הנוכחי שונה. לטעון תמונת מצב ולאבד שינויים?')) return;
+        }
+        loadScheduleSnapshot(snapId);
+        break;
+      }
+      case 'update': {
+        if (!currentSchedule) return;
+        const algoSettings = store.getAlgorithmSettings();
+        const ok = store.updateSnapshot(snapId, currentSchedule, algoSettings);
+        if (ok) {
+          _snapshotDirty = false;
+          renderAll();
+        }
+        break;
+      }
+      case 'rename': {
+        store.setActiveSnapshotId(snapId);
+        _snapshotFormMode = 'rename';
+        _snapshotFormError = '';
+        renderAll();
+        break;
+      }
+      case 'duplicate': {
+        const dup = store.duplicateSnapshot(snapId);
+        if (dup) {
+          store.setActiveSnapshotId(dup.id);
+          renderAll();
+        } else {
+          alert(`לא ניתן לשכפל — מגבלת ${store.getMaxSnapshots()} תמונות מצב.`);
+        }
+        break;
+      }
+      case 'delete': {
+        const snap = store.getSnapshotById(snapId);
+        if (snap && confirm(`למחוק את תמונת המצב "${snap.name}"?`)) {
+          store.deleteSnapshot(snapId);
+          _snapshotFormMode = 'none';
+          renderAll();
+        }
+        break;
+      }
+    }
+  });
+}
+
 function wireScheduleEvents(container: HTMLElement): void {
   const genBtn = container.querySelector('#btn-generate');
   if (genBtn) genBtn.addEventListener('click', doGenerate);
+
+  // ── Snapshot Library Events ──
+  wireSnapshotEvents(container);
 
   // Day navigator tabs
   container.querySelectorAll('.day-tab').forEach(btn => {
@@ -1763,6 +2102,133 @@ function wireScheduleEvents(container: HTMLElement): void {
       }
     });
   }
+
+  // ── Export PDF button ──
+  const exportBtn = container.querySelector('#btn-export-pdf');
+  if (exportBtn) exportBtn.addEventListener('click', openExportModal);
+}
+
+// ─── Export PDF Modal ────────────────────────────────────────────────────────
+
+function openExportModal(): void {
+  if (!currentSchedule) return;
+
+  const numDays = store.getScheduleDays();
+  const baseDate = store.getScheduleDate();
+
+  // Build day options for the daily picker
+  let dayOptions = '';
+  for (let d = 1; d <= numDays; d++) {
+    const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
+    const dayName = date.toLocaleDateString('he-IL', { weekday: 'short' });
+    const dayNum = date.getDate();
+    const monthName = date.toLocaleDateString('he-IL', { month: 'short' });
+    const selected = d === currentDay ? 'selected' : '';
+    dayOptions += `<option value="${d}" ${selected}>יום ${d} — ${dayName} ${dayNum} ${monthName}</option>`;
+  }
+
+  const html = `
+    <div class="export-backdrop" id="export-modal-backdrop">
+      <div class="export-modal">
+        <div class="export-header">
+          <h3>📤 ייצוא PDF</h3>
+          <button class="export-close" id="export-close">✕</button>
+        </div>
+        <div class="export-body">
+          <div class="export-mode-group">
+            <label class="export-mode-option selected" id="opt-weekly">
+              <input type="radio" name="export-mode" value="weekly" checked />
+              <div>
+                <div class="export-mode-label">סיכום שבועי</div>
+                <div class="export-mode-desc">טבלת סיכום מרוכזת של כל השבוע — משתתפים × ימים</div>
+              </div>
+            </label>
+            <label class="export-mode-option" id="opt-daily">
+              <input type="radio" name="export-mode" value="daily" />
+              <div>
+                <div class="export-mode-label">פירוט יומי</div>
+                <div class="export-mode-desc">טבלאות מפורטות לפי סוג משימה ליום ספציפי</div>
+              </div>
+            </label>
+          </div>
+          <div class="export-day-picker" id="export-day-picker" style="display:none">
+            <label>בחר יום:</label>
+            <select id="export-day-select">${dayOptions}</select>
+          </div>
+        </div>
+        <div class="export-footer">
+          <button class="btn-primary" id="export-do">📄 ייצוא</button>
+          <button class="btn-sm btn-outline" id="export-cancel">ביטול</button>
+          <span class="export-status" id="export-status"></span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML('beforeend', html);
+  wireExportModalEvents();
+}
+
+function wireExportModalEvents(): void {
+  const backdrop = document.getElementById('export-modal-backdrop');
+  if (!backdrop) return;
+
+  const closeModal = () => backdrop.remove();
+
+  // Close buttons
+  backdrop.querySelector('#export-close')?.addEventListener('click', closeModal);
+  backdrop.querySelector('#export-cancel')?.addEventListener('click', closeModal);
+
+  // Click outside modal closes
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) closeModal();
+  });
+
+  // Escape key closes
+  const onEscape = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onEscape); }
+  };
+  document.addEventListener('keydown', onEscape);
+
+  // Mode radio toggle
+  const optWeekly = backdrop.querySelector('#opt-weekly') as HTMLElement;
+  const optDaily = backdrop.querySelector('#opt-daily') as HTMLElement;
+  const dayPicker = backdrop.querySelector('#export-day-picker') as HTMLElement;
+  const radios = backdrop.querySelectorAll('input[name="export-mode"]');
+
+  radios.forEach(r => {
+    r.addEventListener('change', () => {
+      const mode = (r as HTMLInputElement).value;
+      optWeekly.classList.toggle('selected', mode === 'weekly');
+      optDaily.classList.toggle('selected', mode === 'daily');
+      dayPicker.style.display = mode === 'daily' ? 'flex' : 'none';
+    });
+  });
+
+  // Export action
+  backdrop.querySelector('#export-do')?.addEventListener('click', () => {
+    if (!currentSchedule) return;
+    const status = backdrop.querySelector('#export-status') as HTMLElement;
+
+    const selectedMode = (backdrop.querySelector('input[name="export-mode"]:checked') as HTMLInputElement)?.value;
+
+    try {
+      status.textContent = 'מייצא…';
+      if (selectedMode === 'weekly') {
+        exportWeeklyOverview(currentSchedule);
+      } else {
+        const daySelect = backdrop.querySelector('#export-day-select') as HTMLSelectElement;
+        const dayIdx = parseInt(daySelect.value, 10);
+        exportDailyDetail(currentSchedule, dayIdx);
+      }
+      status.textContent = '✓ הייצוא הושלם';
+      setTimeout(closeModal, 1200);
+    } catch (err) {
+      console.error('PDF export error:', err);
+      status.textContent = '✗ שגיאה בייצוא';
+      status.style.color = '#e74c3c';
+    }
+  });
 }
 
 // ─── Global Participant Tooltip ──────────────────────────────────────────────
@@ -2205,6 +2671,12 @@ function init(): void {
   }
 
   renderAll();
+
+  // Update the live clock every 30 seconds without a full re-render
+  setInterval(() => {
+    const el = document.getElementById('live-clock');
+    if (el) el.textContent = formatLiveClock();
+  }, 30_000);
 
   // Flush any pending debounced save on page unload to prevent data loss
   window.addEventListener('beforeunload', (e) => {

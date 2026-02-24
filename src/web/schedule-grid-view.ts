@@ -17,19 +17,19 @@ import { addDays } from 'date-fns';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function getUniqueStartTimes(tasks: Task[]): number[] {
+export function getUniqueStartTimes(tasks: Task[]): number[] {
     const times = new Set<number>();
     tasks.forEach(t => times.add(new Date(t.timeBlock.start).getTime()));
     return Array.from(times).sort((a, b) => a - b);
 }
 
-interface AssignedSlot {
+export interface AssignedSlot {
     assignment?: Assignment;
     participant?: Participant;
     slot: SlotRequirement;
 }
 
-function getTaskAssignments(task: Task, schedule: Schedule): AssignedSlot[] {
+export function getTaskAssignments(task: Task, schedule: Schedule): AssignedSlot[] {
     const taskAssignments = schedule.assignments.filter(a => a.taskId === task.id);
     const participantMap = new Map(schedule.participants.map(p => [p.id, p]));
     
@@ -228,25 +228,25 @@ function renderPatrolTable(
         return `
             <tr>
                 <td class="time-cell">${fmt(time)}</td>
-                <td class="task-cell">${karovitHtml}</td>
-                <td class="task-cell">${karovHtml}</td>
-                <td class="task-cell">${sagolSecHtml}</td>
                 <td class="task-cell">${sagolMainHtml}</td>
+                <td class="task-cell">${sagolSecHtml}</td>
+                <td class="task-cell">${karovHtml}</td>
+                <td class="task-cell">${karovitHtml}</td>
             </tr>
         `;
     }).join('');
 
     return `
         <div class="schedule-table-wrapper patrol-wrapper">
-            <h3 class="table-title">סיור ואדנית</h3>
+            <h3 class="table-title">כרוב, כרובית ואדנית</h3>
             <table class="table schedule-grid-table">
                 <thead>
                     <tr>
                         <th class="col-time">זמן</th>
-                        <th>כרובית</th>
-                        <th>כרוב</th>
-                        <th>סגול משני</th>
                         <th>סגול ראשי</th>
+                        <th>סגול משני</th>
+                        <th>כרוב</th>
+                        <th>כרובית</th>
                     </tr>
                 </thead>
                 <tbody>${rows}</tbody>
@@ -385,24 +385,19 @@ export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveM
     const shemesh = dayTasks.filter(t => t.type === TaskType.Shemesh);
 
     // 3. Render Grid Layout
-    // We want a flex container or grid layout. Using flex-wrap for responsiveness.
-    // Layout based on image:
-    //  [ Hamama ]   [ Patrol / Adanit (Wide) ]
-    //  [ Aroga ]    [ Mamtera ] [ Shemesh ] (Stacked? No, Mamtera is separate)
-    
-    // Attempting to match image layout roughly with flexbox
+    // CSS Grid layout:
+    //  [ Patrol (wide) ]  [ Hamama  ]
+    //                     [ Aruga   ]
+    //                     [ Mamtera ]
+    //  [        Shemesh (full width)        ]
     
     return `
         <div class="schedule-grid-container">
-            <div class="grid-row top-row">
-                 <div class="grid-col narrow">${renderHamamaTable(hamama, schedule, liveMode)}</div>
-                 <div class="grid-col wide">${renderPatrolTable(patrol, schedule, liveMode)}</div>
-            </div>
-            <div class="grid-row bottom-row">
-                 <div class="grid-col narrow">${renderArogaTable(aruga, schedule, liveMode)}</div>
-                 <div class="grid-col narrow">${renderMamteraTable(mamtera, schedule, liveMode)}</div>
-                 <div class="grid-col normal">${renderShemeshTable(shemesh, schedule, liveMode)}</div>
-            </div>
+            <div class="area-patrol">${renderPatrolTable(patrol, schedule, liveMode)}</div>
+            <div class="area-hamama">${renderHamamaTable(hamama, schedule, liveMode)}</div>
+            <div class="area-aruga">${renderArogaTable(aruga, schedule, liveMode)}</div>
+            <div class="area-mamtera">${renderMamteraTable(mamtera, schedule, liveMode)}</div>
+            <div class="area-shemesh">${renderShemeshTable(shemesh, schedule, liveMode)}</div>
         </div>
     `;
 }
