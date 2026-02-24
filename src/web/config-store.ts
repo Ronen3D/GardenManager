@@ -707,16 +707,16 @@ export function seedDefaultTaskTemplates(): void {
     subTeams: [
       {
         id: uid('st'), name: 'סגול ראשי', slots: [
-          { id: uid('slot'), label: 'סגול ראשי L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול ראשי L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול ראשי L3/L4', acceptableLevels: [Level.L3, Level.L4], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול ראשי #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול ראשי #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול ראשי #3', acceptableLevels: [Level.L3, Level.L4], requiredCertifications: [Certification.Nitzan] },
         ],
       },
       {
         id: uid('st'), name: 'סגול משני', slots: [
-          { id: uid('slot'), label: 'סגול משני L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול משני L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול משני L2', acceptableLevels: [Level.L2], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול משני #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול משני #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול משני #3', acceptableLevels: [Level.L2], requiredCertifications: [Certification.Nitzan] },
         ],
       },
     ],
@@ -777,8 +777,8 @@ export function seedDefaultTaskTemplates(): void {
     blocksConsecutive: true,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'ממטרה L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'ממטרה L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ממטרה #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ממטרה #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
     description: '09:00-23:00. 2× L0.',
   });
@@ -814,10 +814,10 @@ export function seedDefaultTaskTemplates(): void {
     ],
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'כרוב מפקד (L2+)', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרוב L0 + סלסלה', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Salsala] },
-      { id: uid('slot'), label: 'כרוב L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרוב L0 #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרוב מפקד', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרוב + סלסלה', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Salsala] },
+      { id: uid('slot'), label: 'כרוב #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרוב #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
   });
@@ -836,10 +836,10 @@ export function seedDefaultTaskTemplates(): void {
     blocksConsecutive: false,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'כרובית מפקד (L2+)', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרובית L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרובית L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרובית L0 #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית מפקד', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 3× L0. קל — ללא השפעה על מנוחה.',
   });
@@ -858,8 +858,8 @@ export function seedDefaultTaskTemplates(): void {
     blocksConsecutive: true,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'ערוגה L0 #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'ערוגה L0 #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ערוגה #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ערוגה #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
     description: '1.5 שעות, 2 ביום (בוקר 05:00-06:30, ערב 17:00-18:30). 2× L0.',
   });

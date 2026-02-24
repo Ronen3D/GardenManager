@@ -312,9 +312,9 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
         <label class="checkbox-label" style="white-space:nowrap; display:none;" data-field="du-allday-wrapper">
           <input type="checkbox" data-field="du-allday" /> כל היום
         </label>
-        <input type="time" class="input-sm" data-field="bo-start" value="08:00" />
+        <input type="text" class="input-sm time-24h" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="bo-start" value="08:00" />
         <span class="time-separator">עד</span>
-        <input type="time" class="input-sm" data-field="bo-end" value="12:00" />
+        <input type="text" class="input-sm time-24h" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="bo-end" value="12:00" />
       </div>
       
       <input type="text" class="input-sm" data-field="bo-reason" placeholder="סיבה (אופציונלי)" />

@@ -116,7 +116,7 @@ function renderHamamaTable(tasks: Task[], schedule: Schedule, liveMode: LiveMode
         }).join('');
 
         return `
-            <tr>
+            <tr data-time="${timeNum}">
                 <td class="time-cell">${fmt(time)}</td>
                 <td class="task-cell">${cellContent}</td>
             </tr>
@@ -161,7 +161,7 @@ function renderArogaTable(tasks: Task[], schedule: Schedule, liveMode: LiveModeS
         });
 
         return `
-            <tr>
+            <tr data-time="${timeNum}">
                 <td class="time-cell">${fmt(time)}</td>
                 <td class="task-cell">${slot2Html}</td>
                 <td class="task-cell">${slot1Html}</td>
@@ -226,7 +226,7 @@ function renderPatrolTable(
         if (!karovitHtml && !karovHtml && !sagolSecHtml && !sagolMainHtml) return '';
 
         return `
-            <tr>
+            <tr data-time="${timeNum}">
                 <td class="time-cell">${fmt(time)}</td>
                 <td class="task-cell">${sagolMainHtml}</td>
                 <td class="task-cell">${sagolSecHtml}</td>
@@ -269,7 +269,7 @@ function renderMamteraTable(tasks: Task[], schedule: Schedule, liveMode: LiveMod
         }).join('');
 
         return `
-            <tr>
+            <tr data-time="${timeNum}">
                 <td class="time-cell">${fmt(time)}</td>
                 <td class="task-cell">${cellContent}</td>
             </tr>
@@ -315,7 +315,7 @@ function renderShemeshTable(tasks: Task[], schedule: Schedule, liveMode: LiveMod
         });
 
         return `
-            <tr>
+            <tr data-time="${timeNum}">
                 <td class="time-cell">${fmt(time)}</td>
                 <td class="task-cell">${slot2Html}</td>
                 <td class="task-cell">${slot1Html}</td>

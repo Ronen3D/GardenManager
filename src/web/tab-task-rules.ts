@@ -50,6 +50,11 @@ function certBadge(cert: Certification): string {
   return `<span class="badge badge-sm" style="background:${colors[cert] || '#7f8c8d'}">${cert}</span>`;
 }
 
+/** Strip English level references (L0, L3/L4, (L2+), etc.) from a slot label. */
+function stripLevelText(label: string): string {
+  return label.replace(/\s*\(?L\d[\d/+L]*\)?\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
 function fmtHm(h: number, m: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
@@ -195,9 +200,9 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
     for (const w of windows) {
       html += `<tr>
         <td>
-          <input class="input-sm" type="time" data-field="lw-edit-start" data-lwid="${w.id}" value="${fmtHm(w.startHour, w.startMinute)}" />
+          <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-start" data-lwid="${w.id}" value="${fmtHm(w.startHour, w.startMinute)}" />
           -
-          <input class="input-sm" type="time" data-field="lw-edit-end" data-lwid="${w.id}" value="${fmtHm(w.endHour, w.endMinute)}" />
+          <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-end" data-lwid="${w.id}" value="${fmtHm(w.endHour, w.endMinute)}" />
         </td>
         <td><input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-edit-weight" data-lwid="${w.id}" value="${w.weight.toFixed(2)}" /></td>
         <td>
@@ -211,8 +216,8 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
 
   html += `<div class="add-slot-form" style="margin-top:8px;">
     <div class="form-row">
-      <label>התחלה <input class="input-sm" type="time" data-field="lw-start" value="05:00" /></label>
-      <label>סיום <input class="input-sm" type="time" data-field="lw-end" value="06:30" /></label>
+      <label>התחלה <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-start" value="05:00" /></label>
+      <label>סיום <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-end" value="06:30" /></label>
       <label>משקל (0-1) <input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" /></label>
       <button class="btn-sm btn-primary" data-action="add-load-window" data-tid="${tpl.id}">הוסף חלון חם</button>
     </div>
@@ -254,7 +259,7 @@ function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: s
       : '<span style="color:var(--success)">✓</span>';
 
     html += `<tr>
-      <td>${slot.label}</td>
+      <td>${stripLevelText(slot.label)}</td>
       <td>${slot.acceptableLevels.map(l => levelBadge(l)).join(' ')}</td>
       <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map(c => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${statusHtml}</td>
@@ -270,7 +275,7 @@ function renderAddSlotForm(templateId: string, subTeamId?: string): string {
   return `<div class="add-slot-form">
     <h5>הוסף משבצת</h5>
     <div class="form-row">
-      <label>תווית: <input class="input-sm" type="text" data-field="slot-label" placeholder="למשל L0 #1" /></label>
+      <label>תווית: <input class="input-sm" type="text" data-field="slot-label" placeholder="למשל #1" /></label>
     </div>
     <div class="form-row">
       <span>דרגות:</span>

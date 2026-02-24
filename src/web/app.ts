@@ -111,6 +111,8 @@ let _rescueResult: RescueResult | null = null;
 let _rescueAssignmentId: string | null = null;
 /** Current rescue page (0-based) */
 let _rescuePage = 0;
+/** Escape key handler for rescue modal (stored for cleanup) */
+let _rescueEscHandler: ((e: KeyboardEvent) => void) | null = null;
 
 // ─── Formatting Helpers (app-local) ──────────────────────────────────────────
 
@@ -1032,7 +1034,7 @@ function renderGanttChart(schedule: Schedule): string {
 // ─── Schedule Generation ─────────────────────────────────────────────────────
 
 /** Number of optimization attempts per generation (user-configurable) */
-let OPTIM_ATTEMPTS = 2000;
+let OPTIM_ATTEMPTS = 150;
 
 /**
  * Render the optimization overlay that covers the schedule board
@@ -1352,57 +1354,75 @@ function showRescueModal(): void {
   }
 
   for (const plan of plans) {
-    html += `<div class="rescue-plan" data-plan-id="${plan.id}">
-      <div class="rescue-plan-header">
-        <span class="rescue-rank">#${plan.rank}</span>
-        <span class="rescue-score">השפעה: ${plan.impactScore.toFixed(2)}</span>
-        <span class="rescue-swaps">${plan.swaps.length} החלפות</span>
-      </div>
-      <div class="rescue-plan-details">
-        <div class="rescue-metrics">
-          <span>Δ יומי: ${plan.dailyLoadDelta >= 0 ? '+' : ''}${plan.dailyLoadDelta.toFixed(2)}</span>
-          <span>Δ שבועי: ${plan.weeklyLoadDelta >= 0 ? '+' : ''}${plan.weeklyLoadDelta.toFixed(2)}</span>
-        </div>
-        <table class="rescue-swap-table">
-          <thead><tr><th>שלב</th><th>שובץ</th><th>מחליף</th><th>משימה / משבצת</th></tr></thead>
-          <tbody>`;
+    const isRecommended = plan.rank === 1;
+    const hasViolations = plan.violations && plan.violations.length > 0;
 
+    // Quality tier from impact score
+    const qualityTier = plan.impactScore < 3 ? 'excellent' : plan.impactScore < 7 ? 'fair' : 'significant';
+    const qualityLabel = qualityTier === 'excellent' ? 'מצוין' : qualityTier === 'fair' ? 'סביר' : 'משמעותי';
+
+    // Swap count label — friendly wording
+    const swapLabel = plan.swaps.length === 1 ? 'החלפה ישירה' : `שרשרת של ${plan.swaps.length}`;
+
+    html += `<div class="rescue-plan${isRecommended ? ' rescue-plan--recommended' : ''}" data-plan-id="${plan.id}">
+      <div class="rescue-plan-header">
+        <span class="rescue-rank">#${plan.rank}${isRecommended ? ' <span class="rescue-recommended-tag">מומלץ ✓</span>' : ''}</span>
+        <span class="rescue-quality rescue-quality--${qualityTier}">● ${qualityLabel}</span>
+        <span class="rescue-swaps">${swapLabel}</span>
+        ${hasViolations ? `<span class="rescue-violations-badge" title="${plan.violations!.length} הפרות אילוצים">⚠️</span>` : ''}
+      </div>`;
+
+    // Build swap steps as plain-language list
+    let stepsHtml = `<ol class="rescue-steps">`;
     for (let i = 0; i < plan.swaps.length; i++) {
       const sw = plan.swaps[i];
       const swP = pMap.get(sw.toParticipantId);
       const fromP = pMap.get(sw.fromParticipantId || '');
       const assignedSpan = `<span class="rescue-participant-hover" data-pid="${sw.toParticipantId}" data-plan-id="${plan.id}"><strong>${swP?.name || '???'}</strong></span>`;
-      const replacingSpan = fromP
+      const fromSpan = fromP
         ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${fromP.name}</span>`
-        : '(פנויה)';
-      html += `<tr>
-        <td>${i + 1}</td>
-        <td>${assignedSpan}</td>
-        <td>${replacingSpan}</td>
-        <td>${sw.taskName} — ${sw.slotLabel}</td>
-      </tr>`;
+        : '';
+
+      if (plan.swaps.length === 1) {
+        // Direct swap: natural sentence
+        stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${sw.taskName}</strong> (${sw.slotLabel})</li>`;
+      } else {
+        // Chain swap: arrow style
+        stepsHtml += `<li>${assignedSpan} → <strong>${sw.taskName}</strong> (${sw.slotLabel})${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
+      }
     }
+    stepsHtml += `</ol>`;
 
-    html += `</tbody></table>
-      </div>`;
-
-    // Show violation warnings if the plan has hard-constraint violations
-    if (plan.violations && plan.violations.length > 0) {
-      html += `<div class="rescue-violations-warning">
+    // Violations section
+    let violationsHtml = '';
+    if (hasViolations) {
+      violationsHtml = `<div class="rescue-violations-warning">
         <span class="rescue-violations-icon">⚠️</span>
-        <span>${plan.violations.length} הפרות אילוצים</span>
+        <span>${plan.violations!.length} הפרות אילוצים</span>
         <details class="rescue-violations-details">
           <summary>הצג פרטים</summary>
           <ul>`;
-      for (const v of plan.violations) {
-        html += `<li><code>${v.code}</code> — ${v.message}</li>`;
+      for (const v of plan.violations!) {
+        violationsHtml += `<li><code>${v.code}</code> — ${v.message}</li>`;
       }
-      html += `</ul>
-        </details>
-      </div>`;
+      violationsHtml += `</ul></details></div>`;
     }
 
-    html += `<button class="btn-apply-plan${plan.violations && plan.violations.length > 0 ? ' btn-apply-plan--warn' : ''}" data-plan-id="${plan.id}">${plan.violations && plan.violations.length > 0 ? '⚠️ החל תוכנית (יש הפרות)' : '✅ החל תוכנית'}</button>
+    // Plan #1: expanded by default. Others: collapsed.
+    if (isRecommended) {
+      html += `<div class="rescue-plan-details">
+        ${stepsHtml}
+        ${violationsHtml}
+      </div>`;
+    } else {
+      html += `<details class="rescue-plan-details rescue-plan-collapsible">
+        <summary class="rescue-plan-expand">הצג פרטים</summary>
+        ${stepsHtml}
+        ${violationsHtml}
+      </details>`;
+    }
+
+    html += `<button class="btn-apply-plan${hasViolations ? ' btn-apply-plan--warn' : ''}" data-plan-id="${plan.id}">${hasViolations ? '⚠️ החל תוכנית (יש הפרות)' : '✅ החל תוכנית'}</button>
     </div>`;
   }
 
@@ -1533,6 +1553,13 @@ function wireRescueModalEvents(): void {
     if (e.target === backdrop) closeRescueModal();
   });
 
+  // Escape key to close
+  if (_rescueEscHandler) document.removeEventListener('keydown', _rescueEscHandler);
+  _rescueEscHandler = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') closeRescueModal();
+  };
+  document.addEventListener('keydown', _rescueEscHandler);
+
   // Show More — request all plans up to the next page boundary in one shot
   // to avoid duplicates from re-generation (engine is stateless).
   backdrop.querySelector('#btn-rescue-more')?.addEventListener('click', () => {
@@ -1655,8 +1682,16 @@ function applyRescuePlan(plan: RescuePlan): void {
       currentSchedule.score = snapshotScore;
       engine.importSchedule(currentSchedule);
     }
-    alert('תוכנית ההחלפה לא יושמה בהצלחה — בוצע שחזור למצב הקודם.');
-    closeRescueModal();
+    // Show inline error banner instead of native alert
+    const errorBanner = document.createElement('div');
+    errorBanner.className = 'rescue-error-banner';
+    errorBanner.innerHTML = `<span>תוכנית ההחלפה לא יושמה בהצלחה — בוצע שחזור למצב הקודם.</span>
+      <button class="rescue-error-dismiss">✕</button>`;
+    errorBanner.querySelector('.rescue-error-dismiss')?.addEventListener('click', () => errorBanner.remove());
+    const modal = document.querySelector('.rescue-modal');
+    if (modal) {
+      modal.insertBefore(errorBanner, modal.firstChild);
+    }
     revalidateAndRefresh();
     return;
   }
@@ -1670,6 +1705,8 @@ function closeRescueModal(): void {
   _rescueResult = null;
   _rescueAssignmentId = null;
   _rescuePage = 0;
+  // Remove Escape key handler
+  if (_rescueEscHandler) { document.removeEventListener('keydown', _rescueEscHandler); _rescueEscHandler = null; }
   // Hide rescue tooltip if visible
   if (_rescueTooltipHideTimer) { clearTimeout(_rescueTooltipHideTimer); _rescueTooltipHideTimer = null; }
   if (_rescueTooltipEl) _rescueTooltipEl.style.display = 'none';
@@ -1682,6 +1719,50 @@ function formatLiveClock(): string {
   const date = now.toLocaleDateString('he-IL', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
   const time = now.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
   return `${date} · ${time}`;
+}
+
+/**
+ * Scroll the schedule grid to the row closest to the current live-mode timestamp.
+ * Highlights the target row briefly with an animation.
+ */
+function scrollToNow(storeRef: typeof store): void {
+  const liveState = storeRef.getLiveModeState();
+  if (!liveState.enabled) return;
+
+  const target = liveState.currentTimestamp.getTime();
+  const container = document.querySelector('.schedule-grid-container');
+  if (!container) return;
+
+  const rows = container.querySelectorAll<HTMLTableRowElement>('tr[data-time]');
+  if (rows.length === 0) return;
+
+  // Remove previous now-row highlights
+  container.querySelectorAll('.now-row, .now-row-animate').forEach(el => {
+    el.classList.remove('now-row', 'now-row-animate');
+  });
+
+  // Find the row with the largest data-time <= target (current or most recent shift)
+  let bestRow: HTMLTableRowElement | null = null;
+  let bestTime = -Infinity;
+
+  rows.forEach(row => {
+    const t = Number(row.dataset.time);
+    if (t <= target && t > bestTime) {
+      bestTime = t;
+      bestRow = row;
+    }
+  });
+
+  // If no row <= target, pick the first row (earliest time)
+  if (!bestRow) bestRow = rows[0];
+
+  // Highlight all rows with the same time across all tables
+  container.querySelectorAll<HTMLTableRowElement>(`tr[data-time="${bestRow.dataset.time}"]`).forEach(r => {
+    r.classList.add('now-row', 'now-row-animate');
+  });
+
+  // Scroll the first matching row into view
+  bestRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function renderAll(): void {
@@ -2071,6 +2152,9 @@ function wireScheduleEvents(container: HTMLElement): void {
         unfreezeAll(currentSchedule);
       }
       renderAll();
+      if (liveModeChk.checked) {
+        requestAnimationFrame(() => scrollToNow(store));
+      }
     });
   }
 
@@ -2088,6 +2172,7 @@ function wireScheduleEvents(container: HTMLElement): void {
       freezeAssignments(currentSchedule, ts);
     }
     renderAll();
+    requestAnimationFrame(() => scrollToNow(store));
   };
   if (liveDay) liveDay.addEventListener('change', updateLiveTimestamp);
   if (liveHour) liveHour.addEventListener('change', updateLiveTimestamp);

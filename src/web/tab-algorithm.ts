@@ -14,6 +14,7 @@ import {
   ALL_SW_CODES,
   HC_LABELS,
   SW_LABELS,
+  AlgorithmPreset,
 } from '../models/types';
 import * as store from './config-store';
 
@@ -120,6 +121,14 @@ const SW_LABELS_EXTENDED: Record<SoftWarningCode, string> = {
   'GROUP_MISMATCH': 'אי-התאמת קבוצה — אזהרת בטיחות',
 };
 
+// ─── Panel state (mirrors snapshot panel pattern) ────────────────────────────
+
+let _presetPanelOpen = false;
+let _presetFormMode: 'none' | 'save-as' | 'rename' = 'none';
+let _presetFormError = '';
+/** When renaming a non-active preset we track its id here */
+let _presetRenameTargetId: string | null = null;
+
 // ─── Debounce-safe pending weight state ──────────────────────────────────────
 
 let _weightDebounce: number = 0;
@@ -156,7 +165,8 @@ export function renderAlgorithmTab(): string {
   const activePreset = activeId ? presets.find(p => p.id === activeId) : undefined;
   const isBuiltIn = activePreset?.builtIn ?? false;
 
-  // ── Preset Toolbar ──
+  // ── Preset Toolbar (simplified — panel behind toggle) ──
+  const presetCount = presets.length;
   let html = `
   <div class="tab-toolbar">
     <div class="toolbar-left">
@@ -167,34 +177,14 @@ export function renderAlgorithmTab(): string {
         ${presets.map(p => `<option value="${p.id}"${p.id === activeId ? ' selected' : ''}>${_escHtml(p.name)}${p.id === activeId && dirty ? ' (שונה)' : ''}</option>`).join('')}
       </select>
       ${dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
-      <button class="btn btn-sm btn-primary" data-action="algo-preset-save" ${(!dirty || isBuiltIn) ? 'disabled' : ''} title="${isBuiltIn ? 'לא ניתן לדרוס תבנית מובנית — השתמש בשמור בשם' : 'שמור שינויים לתבנית זו'}">שמור</button>
-      <button class="btn btn-sm" data-action="algo-preset-saveas">שמור בשם…</button>
-      <button class="btn btn-sm" data-action="algo-preset-rename" ${isBuiltIn ? 'disabled' : ''}>שנה שם</button>
-      <button class="btn btn-sm btn-danger" data-action="algo-preset-delete" ${isBuiltIn ? 'disabled' : ''}>מחק</button>
+      <button class="btn btn-sm ${_presetPanelOpen ? 'btn-primary' : 'btn-outline'}" data-action="algo-preset-panel-toggle" title="ניהול תבניות">💾${presetCount > 0 ? ` (${presetCount})` : ''}</button>
     </div>
-  </div>
-
-  <!-- Save-As inline form (hidden by default) -->
-  <div class="preset-inline-form" id="preset-saveas-form" style="display:none;">
-    <div class="preset-form-row">
-      <label>שם: <input type="text" class="preset-name-input" data-field="saveas-name" maxlength="60" placeholder="התבנית שלי" /></label>
-      <label>תיאור: <input type="text" class="preset-desc-input" data-field="saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
-      <button class="btn btn-sm btn-primary" data-action="algo-preset-saveas-confirm">אשר</button>
-      <button class="btn btn-sm" data-action="algo-preset-saveas-cancel">ביטול</button>
-    </div>
-    <div class="preset-validation-error" id="saveas-error"></div>
-  </div>
-
-  <!-- Rename inline form (hidden by default) -->
-  <div class="preset-inline-form" id="preset-rename-form" style="display:none;">
-    <div class="preset-form-row">
-      <label>שם: <input type="text" class="preset-name-input" data-field="rename-name" maxlength="60" /></label>
-      <label>תיאור: <input type="text" class="preset-desc-input" data-field="rename-desc" maxlength="200" /></label>
-      <button class="btn btn-sm btn-primary" data-action="algo-preset-rename-confirm">אשר</button>
-      <button class="btn btn-sm" data-action="algo-preset-rename-cancel">ביטול</button>
-    </div>
-    <div class="preset-validation-error" id="rename-error"></div>
   </div>`;
+
+  // ── Collapsible Preset Panel ──
+  if (_presetPanelOpen) {
+    html += renderPresetPanel(presets, activeId, dirty, isBuiltIn);
+  }
 
   // ── Grouped Scoring Weight Sections ──
   for (const group of WEIGHT_GROUPS) {
@@ -268,6 +258,82 @@ export function renderAlgorithmTab(): string {
   return html;
 }
 
+// ─── Preset Panel Renderer ───────────────────────────────────────────────────
+
+function renderPresetPanel(
+  presets: AlgorithmPreset[],
+  activeId: string | null,
+  dirty: boolean,
+  _activeIsBuiltIn: boolean,
+): string {
+  let html = `<div class="preset-panel">`;
+
+  // Header
+  html += `<div class="preset-panel-header">
+    <h3>💾 תבניות <span class="count">${presets.length}</span></h3>
+    <button class="btn-xs btn-outline" data-action="algo-preset-panel-close" title="סגור">✕</button>
+  </div>`;
+
+  // Conditional form area
+  if (_presetFormMode === 'save-as') {
+    html += `<div class="preset-inline-form" id="preset-saveas-form">
+      <div class="preset-form-row">
+        <label>שם: <input type="text" class="preset-name-input" data-field="saveas-name" maxlength="60" placeholder="התבנית שלי" autofocus /></label>
+        <label>תיאור: <input type="text" class="preset-desc-input" data-field="saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
+        <button class="btn btn-sm btn-primary" data-action="algo-preset-saveas-confirm">שמור</button>
+        <button class="btn btn-sm btn-outline" data-action="algo-preset-form-cancel">ביטול</button>
+      </div>
+      <div class="preset-validation-error" id="preset-form-error">${_presetFormError}</div>
+    </div>`;
+  } else if (_presetFormMode === 'rename') {
+    const targetId = _presetRenameTargetId ?? activeId;
+    const target = targetId ? store.getPresetById(targetId) : undefined;
+    html += `<div class="preset-inline-form" id="preset-rename-form">
+      <div class="preset-form-row">
+        <label>שם: <input type="text" class="preset-name-input" data-field="rename-name" maxlength="60" value="${_escHtml(target?.name ?? '')}" /></label>
+        <label>תיאור: <input type="text" class="preset-desc-input" data-field="rename-desc" maxlength="200" value="${_escHtml(target?.description ?? '')}" /></label>
+        <button class="btn btn-sm btn-primary" data-action="algo-preset-rename-confirm">שמור</button>
+        <button class="btn btn-sm btn-outline" data-action="algo-preset-form-cancel">ביטול</button>
+      </div>
+      <div class="preset-validation-error" id="preset-form-error">${_presetFormError}</div>
+    </div>`;
+  } else {
+    html += `<div class="preset-actions-primary">
+      <button class="btn-sm btn-primary" data-action="algo-preset-new">+ שמור תבנית חדשה</button>
+    </div>`;
+  }
+
+  // Preset list
+  if (presets.length === 0) {
+    html += `<div class="preset-empty"><span class="text-muted">אין תבניות שמורות.</span></div>`;
+  } else {
+    html += `<div class="preset-list">`;
+    for (const p of presets) {
+      const isActive = p.id === activeId;
+      const isBuiltIn = p.builtIn ?? false;
+      html += `<div class="preset-item ${isActive ? 'preset-item-active' : ''}" data-preset-id="${p.id}">
+        <div class="preset-item-main">
+          <span class="preset-item-name">${_escHtml(p.name)}</span>
+          ${isBuiltIn ? '<span class="preset-builtin-badge">מובנית</span>' : ''}
+          ${isActive && dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
+        </div>
+        ${p.description ? `<div class="preset-item-desc text-muted">${_escHtml(p.description)}</div>` : ''}
+        <div class="preset-item-actions">
+          ${!isActive ? `<button class="btn-xs btn-primary" data-preset-action="load" data-preset-id="${p.id}" title="טען תבנית זו">▶ טען</button>` : ''}
+          ${isActive && dirty && !isBuiltIn ? `<button class="btn-xs btn-outline" data-preset-action="update" data-preset-id="${p.id}" title="עדכן עם ההגדרות הנוכחיות">עדכן</button>` : ''}
+          ${!isBuiltIn ? `<button class="btn-xs btn-outline" data-preset-action="rename" data-preset-id="${p.id}" title="שנה שם">✎</button>` : ''}
+          <button class="btn-xs btn-outline" data-preset-action="duplicate" data-preset-id="${p.id}" title="שכפל">⧉</button>
+          ${!isBuiltIn ? `<button class="btn-xs btn-danger-outline" data-preset-action="delete" data-preset-id="${p.id}" title="מחק">✕</button>` : ''}
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
 // ─── Weight Input Renderer ───────────────────────────────────────────────────
 
 function renderWeightInput(f: WeightField, value: number, defaultVal: number, isCustom: boolean): string {
@@ -308,116 +374,97 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
 
   container.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
-    if (!btn) return;
+    if (!btn) {
+      // Check delegated preset-item actions
+      const itemBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-preset-action]');
+      if (itemBtn) {
+        _handlePresetItemAction(itemBtn, rerender);
+      }
+      return;
+    }
     const action = btn.dataset.action;
 
     switch (action) {
-      case 'algo-preset-save': {
-        const activeId = store.getActivePresetId();
-        if (activeId) {
-          store.updatePreset(activeId);
-          rerender();
-        }
+      // ── Panel toggle ──
+      case 'algo-preset-panel-toggle': {
+        _presetPanelOpen = !_presetPanelOpen;
+        _presetFormMode = 'none';
+        _presetFormError = '';
+        _presetRenameTargetId = null;
+        rerender();
+        break;
+      }
+      case 'algo-preset-panel-close': {
+        _presetPanelOpen = false;
+        _presetFormMode = 'none';
+        _presetFormError = '';
+        _presetRenameTargetId = null;
+        rerender();
         break;
       }
 
-      case 'algo-preset-saveas': {
-        const form = container.querySelector<HTMLElement>('#preset-saveas-form');
-        if (form) {
-          form.style.display = form.style.display === 'none' ? '' : 'none';
-          // Hide rename form if open
-          const renameForm = container.querySelector<HTMLElement>('#preset-rename-form');
-          if (renameForm) renameForm.style.display = 'none';
-          // Focus name input
-          const nameInput = form.querySelector<HTMLInputElement>('[data-field="saveas-name"]');
-          if (nameInput) { nameInput.value = ''; nameInput.focus(); }
-          const descInput = form.querySelector<HTMLInputElement>('[data-field="saveas-desc"]');
-          if (descInput) descInput.value = '';
-          const errEl = form.querySelector<HTMLElement>('#saveas-error');
-          if (errEl) errEl.textContent = '';
-        }
+      // ── New preset (opens save-as form) ──
+      case 'algo-preset-new': {
+        _presetFormMode = 'save-as';
+        _presetFormError = '';
+        rerender();
         break;
       }
 
+      // ── Save-as confirm ──
       case 'algo-preset-saveas-confirm': {
         const nameInput = container.querySelector<HTMLInputElement>('[data-field="saveas-name"]');
         const descInput = container.querySelector<HTMLInputElement>('[data-field="saveas-desc"]');
-        const errEl = container.querySelector<HTMLElement>('#saveas-error');
         const name = nameInput?.value.trim() ?? '';
         const desc = descInput?.value.trim() ?? '';
         if (!name) {
-          if (errEl) errEl.textContent = 'השם לא יכול להיות ריק';
+          _presetFormError = 'השם לא יכול להיות ריק';
+          rerender();
           return;
         }
         const result = store.saveCurrentAsPreset(name, desc);
         if (!result) {
-          if (errEl) errEl.textContent = 'תבנית עם שם זה כבר קיימת';
+          _presetFormError = 'תבנית עם שם זה כבר קיימת';
+          rerender();
           return;
         }
+        _presetFormMode = 'none';
+        _presetFormError = '';
         rerender();
         break;
       }
 
-      case 'algo-preset-saveas-cancel': {
-        const form = container.querySelector<HTMLElement>('#preset-saveas-form');
-        if (form) form.style.display = 'none';
-        break;
-      }
-
-      case 'algo-preset-rename': {
-        const form = container.querySelector<HTMLElement>('#preset-rename-form');
-        if (form) {
-          form.style.display = form.style.display === 'none' ? '' : 'none';
-          // Hide save-as form if open
-          const saveAsForm = container.querySelector<HTMLElement>('#preset-saveas-form');
-          if (saveAsForm) saveAsForm.style.display = 'none';
-          // Pre-fill with current preset info
-          const activeId = store.getActivePresetId();
-          const preset = activeId ? store.getPresetById(activeId) : undefined;
-          const nameInput = form.querySelector<HTMLInputElement>('[data-field="rename-name"]');
-          const descInput = form.querySelector<HTMLInputElement>('[data-field="rename-desc"]');
-          if (nameInput) { nameInput.value = preset?.name ?? ''; nameInput.focus(); }
-          if (descInput) descInput.value = preset?.description ?? '';
-          const errEl = form.querySelector<HTMLElement>('#rename-error');
-          if (errEl) errEl.textContent = '';
-        }
-        break;
-      }
-
+      // ── Rename confirm ──
       case 'algo-preset-rename-confirm': {
-        const activeId = store.getActivePresetId();
-        if (!activeId) return;
+        const targetId = _presetRenameTargetId ?? store.getActivePresetId();
+        if (!targetId) return;
         const nameInput = container.querySelector<HTMLInputElement>('[data-field="rename-name"]');
         const descInput = container.querySelector<HTMLInputElement>('[data-field="rename-desc"]');
-        const errEl = container.querySelector<HTMLElement>('#rename-error');
         const name = nameInput?.value.trim() ?? '';
         const desc = descInput?.value.trim() ?? '';
         if (!name) {
-          if (errEl) errEl.textContent = 'השם לא יכול להיות ריק';
+          _presetFormError = 'השם לא יכול להיות ריק';
+          rerender();
           return;
         }
-        const err = store.renamePreset(activeId, name, desc);
+        const err = store.renamePreset(targetId, name, desc);
         if (err) {
-          if (errEl) errEl.textContent = err;
+          _presetFormError = err;
+          rerender();
           return;
         }
+        _presetFormMode = 'none';
+        _presetFormError = '';
+        _presetRenameTargetId = null;
         rerender();
         break;
       }
 
-      case 'algo-preset-rename-cancel': {
-        const form = container.querySelector<HTMLElement>('#preset-rename-form');
-        if (form) form.style.display = 'none';
-        break;
-      }
-
-      case 'algo-preset-delete': {
-        const activeId = store.getActivePresetId();
-        if (!activeId) return;
-        const preset = store.getPresetById(activeId);
-        if (!preset || preset.builtIn) return;
-        if (!confirm(`למחוק את התבנית "${preset.name}"? לא ניתן לבטל פעולה זו.`)) return;
-        store.deletePreset(activeId);
+      // ── Form cancel ──
+      case 'algo-preset-form-cancel': {
+        _presetFormMode = 'none';
+        _presetFormError = '';
+        _presetRenameTargetId = null;
         rerender();
         break;
       }
@@ -492,6 +539,50 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
       }, 300);
     }
   });
+}
+
+// ─── Delegated preset-item actions ───────────────────────────────────────────
+
+function _handlePresetItemAction(btn: HTMLElement, rerender: () => void): void {
+  const action = btn.dataset.presetAction;
+  const id = btn.dataset.presetId;
+  if (!action || !id) return;
+
+  switch (action) {
+    case 'load': {
+      store.loadPreset(id);
+      rerender();
+      break;
+    }
+    case 'update': {
+      store.updatePreset(id);
+      rerender();
+      break;
+    }
+    case 'rename': {
+      _presetRenameTargetId = id;
+      _presetFormMode = 'rename';
+      _presetFormError = '';
+      rerender();
+      break;
+    }
+    case 'duplicate': {
+      store.duplicatePreset(id);
+      rerender();
+      break;
+    }
+    case 'delete': {
+      const preset = store.getPresetById(id);
+      if (!preset || preset.builtIn) return;
+      if (!confirm(`למחוק את התבנית "${preset.name}"? לא ניתן לבטל פעולה זו.`)) return;
+      store.deletePreset(id);
+      _presetFormMode = 'none';
+      _presetFormError = '';
+      _presetRenameTargetId = null;
+      rerender();
+      break;
+    }
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
