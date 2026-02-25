@@ -1,9 +1,19 @@
 /**
  * Professional PDF Export — Hebrew / RTL Support
  *
- * Two export modes, each designed to fit on a single A4 landscape page:
- *   1. Weekly Overview  — participant × day matrix with task-type names only
- *   2. Daily Detail     — compact per-category tables mirroring the on-screen grid
+ * Grid-based spatial layout that mirrors the on-screen CSS grid:
+ *   ┌─────────────────────┬──────────────┐
+ *   │  Patrol (Karov +    │   Hamama     │
+ *   │  Karovit + Adanit)  ├──────────────┤
+ *   │     (2/3 width)     │   Aruga      │
+ *   │                     │   (1/3 width)│
+ *   ├─────────────────────┴──────────────┤
+ *   │  Mamtera  │  Shemesh               │
+ *   └───────────┴────────────────────────┘
+ *
+ * All columns, rows, and table presence are derived dynamically from
+ * schedule data — if a task type is absent its region collapses, and
+ * if slot counts change extra columns appear automatically.
  *
  * Uses jsPDF + jsPDF-AutoTable with an embedded Rubik TTF font for
  * correct Hebrew (Right-to-Left) rendering.
@@ -16,16 +26,27 @@ import {
   Schedule,
   Task,
   TaskType,
-  Level,
   AdanitTeam,
 } from '../models/types';
 import { getTaskAssignments, getUniqueStartTimes } from './schedule-grid-view';
 import { TASK_COLORS, TASK_TYPE_LABELS } from './ui-helpers';
+import { HEBREW_DAYS } from '../utils/date-utils';
 import { addDays } from 'date-fns';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const DAY_START_HOUR = 5;
+const PAGE_MARGIN = 8;                // mm from each edge
+const COL_GAP = 4;                    // mm between grid columns
+const ROW_GAP = 3;                    // mm between grid rows
+const TABLE_LABEL_OFFSET = 3;         // mm from label text to table top
+
+/** Named Hebrew shift labels by start-hour ranges */
+const SHIFT_NAMES: Record<number, string> = {
+  5: 'בוקר', 6: 'בוקר', 7: 'בוקר', 8: 'בוקר',
+  12: 'צהריים', 13: 'צהריים', 14: 'צהריים',
+  17: 'ערב', 18: 'ערב', 19: 'ערב', 20: 'ערב', 21: 'לילה', 22: 'לילה', 23: 'לילה',
+};
 
 /** Hex colour string → [R, G, B] tuple */
 function hexToRgb(hex: string): [number, number, number] {
@@ -99,47 +120,410 @@ function fmtTime(d: Date): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function fmtDateShort(d: Date): string {
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+/** Format time — if ≤ 2 unique shifts in a category, use named labels; otherwise HH:MM */
+function fmtTimeLabel(d: Date, totalShifts: number): string {
+  if (totalShifts <= 2) {
+    const name = SHIFT_NAMES[d.getHours()];
+    if (name) return rtl(name);
+  }
+  return fmtTime(d);
 }
 
-const HEBREW_DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 
-function drawTitle(doc: jsPDF, title: string, subtitle: string): number {
+
+/** Draw centred page title + day subtitle. Returns Y below the separator line. */
+function drawTitle(doc: jsPDF, dayTitle: string, daySubtitle: string): number {
   const w = doc.internal.pageSize.getWidth();
-  doc.setFontSize(14); doc.setTextColor(55, 65, 81);
-  doc.text(rtl(title), w - 8, 11, { align: 'right' });
-  doc.setFontSize(8); doc.setTextColor(130, 130, 130);
-  doc.text(rtl(subtitle), w - 8, 16, { align: 'right' });
+
+  // Main title — "ניהול גינה" centred
+  doc.setFontSize(16); doc.setTextColor(55, 65, 81);
+  doc.text(rtl('ניהול גינה'), w / 2, 11, { align: 'center' });
+
+  // Day subtitle right-aligned
+  doc.setFontSize(9); doc.setTextColor(100, 100, 100);
+  doc.text(rtl(dayTitle), w - PAGE_MARGIN, 18, { align: 'right' });
+
+  doc.setFontSize(7); doc.setTextColor(150, 150, 150);
+  doc.text(rtl(daySubtitle), w - PAGE_MARGIN, 22, { align: 'right' });
+
   doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3);
-  doc.line(8, 18, w - 8, 18);
-  return 21;
+  doc.line(PAGE_MARGIN, 24, w - PAGE_MARGIN, 24);
+  return 27;
 }
 
-/** Shared compact table defaults */
-function tblDefaults(doc: jsPDF, y: number): Partial<UserOptions> {
+/** Shared compact table defaults — positioned at (x, y) with a fixed width */
+function tblDefaults(doc: jsPDF, y: number, fontSize = 7): Partial<UserOptions> {
   return {
     startY: y,
     theme: 'grid',
     styles: {
-      font: 'Rubik', fontStyle: 'normal', fontSize: 7,
-      halign: 'right', cellPadding: { top: 2, bottom: 2, left: 1.2, right: 1.2 },
+      font: 'Rubik', fontStyle: 'normal', fontSize,
+      halign: 'right', cellPadding: { top: 1.8, bottom: 1.8, left: 1, right: 1 },
       lineColor: [210, 210, 210], lineWidth: 0.2,
       overflow: 'ellipsize',
     },
     headStyles: {
       fillColor: [55, 65, 81], textColor: [255, 255, 255],
-      fontSize: 7, halign: 'center', fontStyle: 'normal', cellPadding: 1.5,
+      fontSize, halign: 'center', fontStyle: 'normal', cellPadding: 1.5,
     },
-    margin: { right: 8, left: 8, top: 8, bottom: 8 },
+    margin: { right: PAGE_MARGIN, left: PAGE_MARGIN, top: PAGE_MARGIN, bottom: PAGE_MARGIN },
     didParseCell: (data: any) => { data.cell.styles.font = 'Rubik'; },
   };
 }
 
-// ─── Daily Detail Export ─────────────────────────────────────────────────────
+// ─── Grid Layout Engine ──────────────────────────────────────────────────────
+
+/** Describes a positioned table region on the page */
+interface GridRegion {
+  key: string;
+  label: string;
+  tasks: Task[];
+  color: string;
+  x: number;
+  y: number;
+  width: number;
+}
 
 /**
- * Render a single day's schedule onto the current page of `doc`.
+ * Compute spatial layout regions mirroring the on-screen CSS grid:
+ *
+ *  RTL reading order (right = start):
+ *  ┌────────────────────┬─────────────┐
+ *  │  PATROL (right)    │  HAMAMA     │
+ *  │  spans full height ├─────────────┤
+ *  │  of right col      │  ARUGA      │
+ *  ├────────────────────┴─────────────┤
+ *  │  MAMTERA  │  SHEMESH (bottom)    │
+ *  └───────────┴──────────────────────┘
+ *
+ * When a category has zero tasks, its slot is removed and neighbours expand.
+ */
+function computeGridLayout(
+  dayTasks: Task[],
+  pageW: number,
+  topY: number,
+): { upperRegions: GridRegion[]; lowerRegions: GridRegion[]; patrol: GridRegion | null } {
+  const patrol = dayTasks.filter(t =>
+    t.type === TaskType.Karov || t.type === TaskType.Karovit || t.type === TaskType.Adanit);
+  const hamama = dayTasks.filter(t => t.type === TaskType.Hamama);
+  const aruga = dayTasks.filter(t => t.type === TaskType.Aruga);
+  const mamtera = dayTasks.filter(t => t.type === TaskType.Mamtera);
+  const shemesh = dayTasks.filter(t => t.type === TaskType.Shemesh);
+
+  const usable = pageW - 2 * PAGE_MARGIN;
+  const hasPatrol = patrol.length > 0;
+  const hasRight = hamama.length > 0 || aruga.length > 0; // right-side stacked column (left on page due to RTL PDF)
+
+  // ── Upper area: Patrol (right / wider) + Hamama/Aruga stacked (left / narrower) ──
+  let patrolW = 0;
+  let rightColW = 0;
+
+  if (hasPatrol && hasRight) {
+    patrolW = Math.round(usable * 0.6);
+    rightColW = usable - patrolW - COL_GAP;
+  } else if (hasPatrol) {
+    patrolW = usable;
+  } else if (hasRight) {
+    rightColW = usable;
+  }
+
+  // Patrol region — positioned at the RIGHT side of the page (high x in landscape)
+  // Because jsPDF autoTable is LTR-positioned, right side = higher x
+  const patrolRegion: GridRegion | null = hasPatrol ? {
+    key: 'patrol', label: 'כרוב, כרובית ואדנית', tasks: patrol,
+    color: '', x: pageW - PAGE_MARGIN - patrolW, y: topY, width: patrolW,
+  } : null;
+
+  // Stacked right regions (Hamama on top, Aruga below)
+  const upperRegions: GridRegion[] = [];
+  if (hamama.length > 0) {
+    upperRegions.push({
+      key: 'hamama', label: TASK_TYPE_LABELS.Hamama, tasks: hamama,
+      color: TASK_COLORS.Hamama,
+      x: PAGE_MARGIN, y: topY, width: rightColW,
+    });
+  }
+  if (aruga.length > 0) {
+    upperRegions.push({
+      key: 'aruga', label: TASK_TYPE_LABELS.Aruga, tasks: aruga,
+      color: TASK_COLORS.Aruga,
+      x: PAGE_MARGIN, y: topY, width: rightColW, // y will be adjusted after hamama renders
+    });
+  }
+
+  // ── Lower area: Mamtera + Shemesh side-by-side, full width ──
+  const lowerCats: { key: string; label: string; tasks: Task[]; color: string }[] = [];
+  if (shemesh.length > 0) lowerCats.push({ key: 'shemesh', label: TASK_TYPE_LABELS.Shemesh, tasks: shemesh, color: TASK_COLORS.Shemesh });
+  if (mamtera.length > 0) lowerCats.push({ key: 'mamtera', label: TASK_TYPE_LABELS.Mamtera, tasks: mamtera, color: TASK_COLORS.Mamtera });
+
+  const lowerRegions: GridRegion[] = [];
+  if (lowerCats.length > 0) {
+    const catW = lowerCats.length > 1
+      ? (usable - COL_GAP * (lowerCats.length - 1)) / lowerCats.length
+      : usable;
+    // Place from right to left (RTL)
+    let xCursor = pageW - PAGE_MARGIN;
+    for (const cat of lowerCats) {
+      xCursor -= catW;
+      lowerRegions.push({
+        key: cat.key, label: cat.label, tasks: cat.tasks,
+        color: cat.color, x: xCursor, y: 0, width: catW, // y set later
+      });
+      xCursor -= COL_GAP;
+    }
+  }
+
+  return { upperRegions, lowerRegions, patrol: patrolRegion };
+}
+
+// ─── Table Renderers ─────────────────────────────────────────────────────────
+
+/**
+ * Render the Patrol table (Karov + Karovit + Adanit combined) at a given
+ * position. Dynamically builds columns based on which sub-types are present.
+ * Returns the finalY after the table.
+ */
+function renderPatrolTable(
+  doc: jsPDF, tasks: Task[], schedule: Schedule,
+  region: GridRegion, fontSize: number,
+): number {
+  const karovit = tasks.filter(t => t.type === TaskType.Karovit);
+  const karov = tasks.filter(t => t.type === TaskType.Karov);
+  const adanit = tasks.filter(t => t.type === TaskType.Adanit);
+  const uniqueTimes = getUniqueStartTimes(tasks);
+
+  // Section label
+  doc.setFontSize(fontSize); doc.setTextColor(80, 80, 80);
+  doc.text(rtl(region.label), region.x + region.width - 1, region.y, { align: 'right' });
+  const tableY = region.y + TABLE_LABEL_OFFSET;
+
+  // ── Dynamic columns (RTL order: data cols left-to-right, Time rightmost) ──
+  type ColDef = { header: string; build: (timeNum: number) => { content: string; colorKey: string } };
+  const columns: ColDef[] = [];
+
+  if (karovit.length > 0) {
+    columns.push({
+      header: TASK_TYPE_LABELS.Karovit,
+      build: (timeNum) => {
+        const atTime = karovit.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
+        const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
+          .filter(s => s.participant).map(s => rtl(s.participant!.name))).join('\n\n');
+        return { content: names || '—', colorKey: 'Karovit' };
+      },
+    });
+  }
+
+  if (karov.length > 0) {
+    columns.push({
+      header: TASK_TYPE_LABELS.Karov,
+      build: (timeNum) => {
+        const atTime = karov.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
+        const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
+          .filter(s => s.participant).map(s => rtl(s.participant!.name))).join('\n\n');
+        return { content: names || '—', colorKey: 'Karov' };
+      },
+    });
+  }
+
+  // Adanit — one column per team that is actually present
+  if (adanit.length > 0) {
+    const allAdanitSlots = adanit.flatMap(tk => tk.slots);
+    const hasSecondary = allAdanitSlots.some(s => s.adanitTeam === AdanitTeam.SegolSecondary);
+    const hasMain = allAdanitSlots.some(s => s.adanitTeam === AdanitTeam.SegolMain);
+
+    if (hasSecondary) {
+      columns.push({
+        header: 'סגול משני',
+        build: (timeNum) => {
+          const atTime = adanit.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
+          const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
+            .filter(s => s.slot.adanitTeam === AdanitTeam.SegolSecondary && s.participant)
+            .map(s => rtl(s.participant!.name))).join('\n\n');
+          return { content: names || '—', colorKey: 'Adanit' };
+        },
+      });
+    }
+
+    if (hasMain) {
+      columns.push({
+        header: 'סגול ראשי',
+        build: (timeNum) => {
+          const atTime = adanit.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
+          const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
+            .filter(s => s.slot.adanitTeam === AdanitTeam.SegolMain && s.participant)
+            .map(s => rtl(s.participant!.name))).join('\n\n');
+          return { content: names || '—', colorKey: 'Adanit' };
+        },
+      });
+    }
+  }
+
+  // Time column is always last (rightmost in the RTL table)
+  const head: CellDef[] = [
+    ...columns.map(c => ({ content: rtl(c.header), styles: { halign: 'center' as const } })),
+    { content: rtl('זמן'), styles: { halign: 'center' as const } },
+  ];
+
+  const emptyStyle = { halign: 'center' as const, textColor: [190, 190, 190] as [number, number, number] };
+  const filledStyle = (colorKey: string) => ({
+    halign: 'center' as const,
+    fillColor: tint(TASK_COLORS[colorKey] || '#ecf0f1') as [number, number, number],
+  });
+
+  const body: CellDef[][] = uniqueTimes.map(timeNum => {
+    const time = new Date(timeNum);
+    const cells: CellDef[] = columns.map(col => {
+      const { content, colorKey } = col.build(timeNum);
+      return { content, styles: content === '—' ? emptyStyle : filledStyle(colorKey) };
+    });
+    cells.push({ content: fmtTime(time), styles: { halign: 'center' as const } });
+    return cells;
+  });
+
+  // Column widths: time col = 14mm, data cols share the rest
+  const timeW = 14;
+  const dataColW = columns.length > 0 ? (region.width - timeW) / columns.length : region.width - timeW;
+  const colStyles: Record<number, Partial<{ cellWidth: number }>> = {};
+  for (let i = 0; i < columns.length; i++) colStyles[i] = { cellWidth: dataColW };
+  colStyles[columns.length] = { cellWidth: timeW };
+
+  autoTable(doc, {
+    ...tblDefaults(doc, tableY, fontSize),
+    head: [head],
+    body,
+    tableWidth: region.width,
+    margin: { left: region.x, right: doc.internal.pageSize.getWidth() - region.x - region.width },
+    columnStyles: colStyles,
+  });
+
+  return (doc as any).lastAutoTable.finalY;
+}
+
+/**
+ * Render a generic category table (Hamama, Aruga, Mamtera, Shemesh, or any
+ * future task type) at a given position. Columns are derived dynamically
+ * from the number of slots in the tasks.
+ * Returns the finalY after the table.
+ */
+function renderCategoryTable(
+  doc: jsPDF, tasks: Task[], schedule: Schedule,
+  region: GridRegion, fontSize: number,
+): number {
+  // Section label
+  doc.setFontSize(fontSize); doc.setTextColor(80, 80, 80);
+  doc.text(rtl(region.label), region.x + region.width - 1, region.y, { align: 'right' });
+  const tableY = region.y + TABLE_LABEL_OFFSET;
+
+  const uniqueTimes = getUniqueStartTimes(tasks);
+  const totalShifts = uniqueTimes.length;
+
+  // Determine how many slot columns this category needs
+  const maxSlots = Math.max(...tasks.map(t => t.slots.length), 1);
+
+  // Build header — for 1 slot use the category name, for N slots: "#N | ... | #1"
+  // Column order: data columns (high # to low #) then Time (rightmost)
+  const head: CellDef[] = [];
+  if (maxSlots > 1) {
+    for (let i = maxSlots; i >= 1; i--) {
+      const slotLabel = `${region.label} #${i}`;
+      head.push({ content: rtl(slotLabel), styles: { halign: 'center' as const } });
+    }
+  } else {
+    head.push({ content: rtl(region.label), styles: { halign: 'center' as const } });
+  }
+  head.push({ content: rtl('זמן'), styles: { halign: 'center' as const } });
+
+  const emptyStyle = { halign: 'center' as const, textColor: [190, 190, 190] as [number, number, number] };
+  const filledStyle = { halign: 'center' as const, fillColor: tint(region.color) as [number, number, number] };
+
+  const body: CellDef[][] = uniqueTimes.map(timeNum => {
+    const time = new Date(timeNum);
+    const atTime = tasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
+    const allAssigned = atTime.flatMap(t => getTaskAssignments(t, schedule));
+
+    const row: CellDef[] = [];
+    if (maxSlots > 1) {
+      // Reverse slot order to match on-screen (#N left → #1 right)
+      for (let i = maxSlots - 1; i >= 0; i--) {
+        const s = allAssigned[i];
+        const name = s?.participant ? rtl(s.participant.name) : '—';
+        row.push({ content: name, styles: name === '—' ? emptyStyle : filledStyle });
+      }
+    } else {
+      const names = allAssigned.filter(s => s.participant).map(s => rtl(s.participant!.name)).join('\n\n') || '—';
+      row.push({ content: names, styles: names === '—' ? emptyStyle : filledStyle });
+    }
+    row.push({ content: fmtTimeLabel(time, totalShifts), styles: { halign: 'center' as const } });
+    return row;
+  });
+
+  // Column widths: time col = 14mm, data cols share the rest
+  const timeW = 14;
+  const slotW = (region.width - timeW) / maxSlots;
+  const colStyles: Record<number, Partial<{ cellWidth: number }>> = {};
+  for (let i = 0; i < maxSlots; i++) colStyles[i] = { cellWidth: slotW };
+  colStyles[maxSlots] = { cellWidth: timeW };
+
+  autoTable(doc, {
+    ...tblDefaults(doc, tableY, fontSize),
+    head: [head],
+    body,
+    tableWidth: region.width,
+    margin: { left: region.x, right: doc.internal.pageSize.getWidth() - region.x - region.width },
+    columnStyles: colStyles,
+  });
+
+  return (doc as any).lastAutoTable.finalY;
+}
+
+// ─── Daily Detail Export (Grid Layout) ───────────────────────────────────────
+
+/**
+ * Smart font-size selection based on schedule density.
+ *
+ * Considers three dimensions:
+ *  1. Max time-rows in any single category (vertical pressure)
+ *  2. Max names per cell — i.e. max slot count per task (cell-height pressure)
+ *  3. Total unique participants assigned this day (overall density signal)
+ *
+ * Returns a value between 6 and 9 that keeps the layout compact.
+ */
+function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
+  const types = [TaskType.Karov, TaskType.Karovit, TaskType.Adanit, TaskType.Hamama,
+    TaskType.Aruga, TaskType.Mamtera, TaskType.Shemesh];
+
+  let maxRows = 0;
+  let maxSlotsPerCell = 1;
+  for (const t of types) {
+    const tasks = dayTasks.filter(tk => tk.type === t);
+    if (tasks.length === 0) continue;
+    maxRows = Math.max(maxRows, getUniqueStartTimes(tasks).length);
+    // For merged-slot columns (e.g. Karov with 4 slots shown in one cell),
+    // count the most names that can land in a single column.
+    for (const tk of tasks) {
+      maxSlotsPerCell = Math.max(maxSlotsPerCell, tk.slots.length);
+    }
+  }
+
+  // Count unique participants assigned today
+  const dayTaskIds = new Set(dayTasks.map(t => t.id));
+  const dayAssignments = schedule.assignments.filter(a => dayTaskIds.has(a.taskId));
+  const uniqueParticipants = new Set(dayAssignments.map(a => a.participantId)).size;
+
+  // Base size: start generous, then reduce for density
+  // Few rows + few people → 9pt;  moderate → 8pt;  dense → 7pt;  very dense → 6pt
+  let size = 9;
+
+  if (maxRows > 6 || uniqueParticipants > 30) size = Math.min(size, 8);
+  if (maxRows > 8 || uniqueParticipants > 45 || maxSlotsPerCell > 4) size = Math.min(size, 7);
+  if (maxRows > 10 || uniqueParticipants > 60) size = Math.min(size, 6);
+
+  return size;
+}
+
+/**
+ * Render a single day's schedule onto the current page of `doc` using
+ * the spatial grid layout that mirrors the on-screen CSS grid.
  * Used by both single-day export and the weekly multi-page export.
  */
 function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number): void {
@@ -147,59 +531,42 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number): void {
   const dayName = HEBREW_DAYS[start.getDay()];
   const numDays = getNumDays(schedule);
 
-  let y = drawTitle(
+  const topY = drawTitle(
     doc,
-    `יום ${dayName} ${fmtDateShort(start)}`,
+    `יום ${dayName}`,
     `יום ${dayIndex} / ${numDays}`,
   );
 
   const dayTasks = getTasksForDay(schedule, dayIndex);
   if (dayTasks.length === 0) {
     doc.setFontSize(10); doc.setTextColor(150, 150, 150);
-    doc.text(rtl('אין משימות ביום זה'), doc.internal.pageSize.getWidth() / 2, y + 15, { align: 'center' });
+    doc.text(rtl('אין משימות ביום זה'), doc.internal.pageSize.getWidth() / 2, topY + 15, { align: 'center' });
     return;
   }
 
-  // ── Patrol / Adanit table ──
-  const patrolTasks = dayTasks.filter(t =>
-    t.type === TaskType.Karov || t.type === TaskType.Karovit || t.type === TaskType.Adanit
-  );
-  if (patrolTasks.length > 0) {
-    y = renderPatrolTable(doc, patrolTasks, schedule, y);
+  const pageW = doc.internal.pageSize.getWidth();
+  const fontSize = chooseFontSize(dayTasks, schedule);
+  const { upperRegions, lowerRegions, patrol } = computeGridLayout(dayTasks, pageW, topY);
+
+  // ── Render upper-right: Patrol ──
+  let patrolBottomY = topY;
+  if (patrol) {
+    patrolBottomY = renderPatrolTable(doc, patrol.tasks, schedule, patrol, fontSize);
   }
 
-  // ── Side-by-side small tables: Hamama | Aruga | Shemesh | Mamtera ──
-  const hamama = dayTasks.filter(t => t.type === TaskType.Hamama);
-  const aruga = dayTasks.filter(t => t.type === TaskType.Aruga);
-  const shemesh = dayTasks.filter(t => t.type === TaskType.Shemesh);
-  const mamtera = dayTasks.filter(t => t.type === TaskType.Mamtera);
+  // ── Render upper-left: Hamama then Aruga (stacked) ──
+  let leftBottomY = topY;
+  for (const region of upperRegions) {
+    region.y = leftBottomY;
+    leftBottomY = renderCategoryTable(doc, region.tasks, schedule, region, fontSize);
+    leftBottomY += ROW_GAP;
+  }
 
-  const smallCategories: { label: string; tasks: Task[]; color: string }[] = [
-    { label: 'חממה', tasks: hamama, color: TASK_COLORS.Hamama },
-    { label: 'ערוגה', tasks: aruga, color: TASK_COLORS.Aruga },
-    { label: 'שמש', tasks: shemesh, color: TASK_COLORS.Shemesh },
-    { label: 'ממטרה', tasks: mamtera, color: TASK_COLORS.Mamtera },
-  ].filter(c => c.tasks.length > 0);
-
-  if (smallCategories.length > 0) {
-    y += 2;
-    // Lay them out left-to-right, each as a narrow autoTable
-    const pageW = doc.internal.pageSize.getWidth();
-    const usable = pageW - 16; // margins
-    const gap = 4;
-    const catW = (usable - gap * (smallCategories.length - 1)) / smallCategories.length;
-    let xOffset = 8; // start from left margin
-
-    for (const cat of smallCategories) {
-      renderSmallCategoryTable(doc, cat.tasks, schedule, cat.label, cat.color, y, xOffset, catW);
-      xOffset += catW + gap;
-    }
-
-    // Advance y past the tallest table
-    const endYs = smallCategories.map(() => {
-      try { return (doc as any).lastAutoTable?.finalY ?? y; } catch { return y; }
-    });
-    y = Math.max(...endYs, y + 20);
+  // ── Render lower row: Mamtera + Shemesh side-by-side (full width) ──
+  const lowerTopY = Math.max(patrolBottomY, leftBottomY) + ROW_GAP;
+  for (const region of lowerRegions) {
+    region.y = lowerTopY;
+    renderCategoryTable(doc, region.tasks, schedule, region, fontSize);
   }
 }
 
@@ -227,134 +594,4 @@ export function exportWeeklyOverview(schedule: Schedule): void {
   }
 
   doc.save('weekly-overview.pdf');
-}
-function renderPatrolTable(doc: jsPDF, tasks: Task[], schedule: Schedule, startY: number): number {
-  const karovit = tasks.filter(t => t.type === TaskType.Karovit);
-  const karov = tasks.filter(t => t.type === TaskType.Karov);
-  const adanit = tasks.filter(t => t.type === TaskType.Adanit);
-  const uniqueTimes = getUniqueStartTimes(tasks);
-
-  // Section label
-  doc.setFontSize(8); doc.setTextColor(80, 80, 80);
-  doc.text(rtl('כרוב, כרובית ואדנית'), doc.internal.pageSize.getWidth() - 8, startY, { align: 'right' });
-  startY += 3;
-
-  // Columns RTL: כרובית | כרוב | סגול משני | סגול ראשי | משמרת
-  const head: CellDef[] = [
-    rtl('כרובית'), rtl('כרוב'), rtl('סגול משני'), rtl('סגול ראשי'), rtl('משמרת'),
-  ].map(c => ({ content: c, styles: { halign: 'center' as const } }));
-
-  const body: CellDef[][] = uniqueTimes.map(timeNum => {
-    const time = new Date(timeNum);
-    const timeLabel = fmtTime(time);
-
-    const getName = (t: Task[]): string => {
-      const atTime = t.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
-      return atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-        .filter(s => s.participant)
-        .map(s => rtl(s.participant!.name))
-      ).join('\n\n') || '—';
-    };
-
-    // Adanit split by team
-    const adanitAtTime = adanit.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
-    let segolMain = '—';
-    let segolSec = '—';
-    if (adanitAtTime.length > 0) {
-      const allSlots = adanitAtTime.flatMap(tk => getTaskAssignments(tk, schedule));
-      const mainNames = allSlots.filter(s => s.slot.adanitTeam === AdanitTeam.SegolMain && s.participant)
-        .map(s => rtl(s.participant!.name));
-      const secNames = allSlots.filter(s => s.slot.adanitTeam === AdanitTeam.SegolSecondary && s.participant)
-        .map(s => rtl(s.participant!.name));
-      if (mainNames.length) segolMain = mainNames.join('\n\n');
-      if (secNames.length) segolSec = secNames.join('\n\n');
-    }
-
-    const emptyStyle = { halign: 'center' as const, textColor: [190, 190, 190] as [number, number, number] };
-    const filledStyle = (type: string) => ({
-      halign: 'center' as const,
-      fillColor: tint(TASK_COLORS[type] || '#ecf0f1') as [number, number, number],
-    });
-
-    const karovitNames = getName(karovit);
-    const karovNames = getName(karov);
-
-    return [
-      { content: karovitNames, styles: karovitNames === '—' ? emptyStyle : filledStyle('Karovit') },
-      { content: karovNames, styles: karovNames === '—' ? emptyStyle : filledStyle('Karov') },
-      { content: segolSec, styles: segolSec === '—' ? emptyStyle : filledStyle('Adanit') },
-      { content: segolMain, styles: segolMain === '—' ? emptyStyle : filledStyle('Adanit') },
-      { content: timeLabel, styles: { halign: 'center' as const } },
-    ];
-  });
-
-  autoTable(doc, { ...tblDefaults(doc, startY), head: [head], body });
-  return (doc as any).lastAutoTable.finalY + 3;
-}
-
-/** Render a small single-category table (Hamama, Aruga, Shemesh, Mamtera)
- *  at a specific x-offset with a fixed width. Columns: shift | names */
-function renderSmallCategoryTable(
-  doc: jsPDF, tasks: Task[], schedule: Schedule,
-  label: string, color: string,
-  startY: number, x: number, width: number,
-): void {
-  // Label
-  doc.setFontSize(7); doc.setTextColor(80, 80, 80);
-  doc.text(rtl(label), x + width - 1, startY, { align: 'right' });
-  const tableY = startY + 3;
-
-  const uniqueTimes = getUniqueStartTimes(tasks);
-
-  // Determine how many slot columns this category needs
-  const maxSlots = Math.max(...tasks.map(t => t.slots.length), 1);
-
-  // Build header — for 1 slot just "שם", for 2 slots "#2 | #1"
-  const head: CellDef[] = [];
-  if (maxSlots > 1) {
-    for (let i = maxSlots; i >= 1; i--) head.push({ content: `#${i}`, styles: { halign: 'center' as const } });
-  } else {
-    head.push({ content: rtl('שם'), styles: { halign: 'center' as const } });
-  }
-  head.push({ content: rtl('משמרת'), styles: { halign: 'center' as const } });
-
-  const body: CellDef[][] = uniqueTimes.map(timeNum => {
-    const time = new Date(timeNum);
-    const atTime = tasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
-    const allAssigned = atTime.flatMap(t => getTaskAssignments(t, schedule));
-
-    const emptyStyle = { halign: 'center' as const, textColor: [190, 190, 190] as [number, number, number] };
-    const filledStyle = { halign: 'center' as const, fillColor: tint(color) as [number, number, number] };
-
-    const row: CellDef[] = [];
-    if (maxSlots > 1) {
-      // Reverse slot order to match on-screen (#2 left, #1 right)
-      for (let i = maxSlots - 1; i >= 0; i--) {
-        const s = allAssigned[i];
-        const name = s?.participant ? rtl(s.participant.name) : '—';
-        row.push({ content: name, styles: name === '—' ? emptyStyle : filledStyle });
-      }
-    } else {
-      const names = allAssigned.filter(s => s.participant).map(s => rtl(s.participant!.name)).join('\n\n') || '—';
-      row.push({ content: names, styles: names === '—' ? emptyStyle : filledStyle });
-    }
-    row.push({ content: fmtTime(time), styles: { halign: 'center' as const } });
-    return row;
-  });
-
-  // Distribute column widths: shift time = 14mm, rest evenly split
-  const shiftW = 14;
-  const slotW = (width - shiftW) / maxSlots;
-  const colStyles: Record<number, Partial<{ cellWidth: number }>> = {};
-  for (let i = 0; i < maxSlots; i++) colStyles[i] = { cellWidth: slotW };
-  colStyles[maxSlots] = { cellWidth: shiftW };
-
-  autoTable(doc, {
-    ...tblDefaults(doc, tableY),
-    head: [head],
-    body,
-    tableWidth: width,
-    margin: { left: x, right: doc.internal.pageSize.getWidth() - x - width },
-    columnStyles: colStyles,
-  });
 }

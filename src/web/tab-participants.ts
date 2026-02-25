@@ -11,7 +11,9 @@ import {
   Participant,
 } from '../models/types';
 import * as store from './config-store';
+import { showConfirm, showToast } from './ui-modal';
 import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS } from './ui-helpers';
+import { HEBREW_DAYS, hebrewDayName, hebrewDayNameFromISO } from '../utils/date-utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -246,7 +248,7 @@ function renderEditRow(p: Participant, idx: number): string {
   </tr>`;
 }
 
-const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
 
 function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlackouts>): string {
   const dateRules = store.getDateUnavailabilities(pid);
@@ -276,9 +278,9 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
     for (const r of dateRules) {
       let label: string;
       if (r.specificDate) {
-        label = r.specificDate;
+        label = 'יום ' + hebrewDayNameFromISO(r.specificDate);
       } else if (r.dayOfWeek !== undefined) {
-        label = `כל ${DAY_NAMES[r.dayOfWeek]}`;
+        label = `כל ${HEBREW_DAYS[r.dayOfWeek]}`;
       } else {
         label = 'כלל לא ידוע';
       }
@@ -303,7 +305,7 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
       </select>
       
       <select class="input-sm" data-field="du-dow" style="width:120px; display:none;">
-        ${DAY_NAMES.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
+        ${HEBREW_DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
       </select>
       
       <input type="date" class="input-sm" data-field="du-date" style="display:none;" />
@@ -363,7 +365,7 @@ function renderAddForm(groups: string[]): string {
 // ─── Bulk Unavailability Dialog ──────────────────────────────────────────────
 
 function renderBulkUnavailDialog(): string {
-  const DAY_NAMES_LOCAL = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
   return `<div class="bulk-dialog-backdrop" data-action="bulk-dialog-dismiss">
     <div class="bulk-dialog">
       <h3>הוסף חוסר זמינות עבור ${selectedIds.size} משתתפים</h3>
@@ -381,7 +383,7 @@ function renderBulkUnavailDialog(): string {
           </label>
           <label class="bulk-field-dow" style="display:none">יום
             <select class="input-sm" data-field="bulk-dow">
-              ${DAY_NAMES_LOCAL.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
+              ${HEBREW_DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
             </select>
           </label>
         </div>
@@ -608,7 +610,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     }
   });
 
-  container.addEventListener('click', (e) => {
+  container.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
     const action = target.dataset.action;
     if (!action) return;
@@ -699,9 +701,13 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       case 'remove-participant': {
         const pid = target.dataset.pid!;
         const p = store.getParticipant(pid);
-        if (p && confirm(`להסיר את ${p.name}?`)) {
-          store.removeParticipant(pid);
-          rerender();
+        if (p) {
+          const okRm = await showConfirm(`להסיר את ${p.name}?`, { danger: true, title: 'הסרת משתתף', confirmLabel: 'הסר' });
+          if (okRm) {
+            store.removeParticipant(pid);
+            showToast(`${p.name} הוסר/ה`, { type: 'success' });
+            rerender();
+          }
         }
         break;
       }
@@ -804,16 +810,8 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         selectedIds.clear();
         _lastClickedId = null;
 
-        // Render synchronously, then insert toast into the rebuilt DOM
         rerender();
-        const newContent = document.getElementById('tab-content');
-        if (newContent) {
-          const msg = document.createElement('div');
-          msg.className = 'bulk-confirmation';
-          msg.textContent = `${deleted} משתתפים נמחקו בהצלחה.`;
-          newContent.prepend(msg);
-          setTimeout(() => msg.remove(), 3500);
-        }
+        showToast(`${deleted} משתתפים נמחקו בהצלחה.`, { type: 'success' });
         break;
       }
       case 'bulk-dialog-dismiss':
@@ -850,18 +848,8 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         selectedIds.clear();
         _lastClickedId = null;
 
-        // Defer rerender so store settles; show toast in the new container
-        requestAnimationFrame(() => {
-          rerender();
-          const newContent = document.getElementById('tab-content');
-          if (newContent) {
-            const msg = document.createElement('div');
-            msg.className = 'bulk-confirmation';
-            msg.textContent = `חוסר זמינות נוסף עבור ${count} משתתפים.`;
-            newContent.prepend(msg);
-            setTimeout(() => msg.remove(), 3500);
-          }
-        });
+        rerender();
+        showToast(`חוסר זמינות נוסף עבור ${count} משתתפים.`, { type: 'success' });
         break;
       }
     }

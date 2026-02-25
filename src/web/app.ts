@@ -32,6 +32,7 @@ import {
   ConstraintViolation,
   AlgorithmSettings,
 } from '../index';
+import { hebrewDayName } from '../utils/date-utils';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { renderScheduleGrid } from './schedule-grid-view';
 import { generateShiftBlocks } from './utils/time-utils';
@@ -58,6 +59,7 @@ import {
   TASK_COLORS, LEVEL_COLORS, CERT_COLORS, CERT_LABELS, TASK_TYPE_LABELS,
   fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge,
 } from './ui-helpers';
+import { showAlert, showPrompt, showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
@@ -83,6 +85,8 @@ let _snapshotFormMode: 'none' | 'save-as' | 'rename' = 'none';
 let _snapshotFormError = '';
 /** Whether the snapshot panel is expanded */
 let _snapshotPanelOpen = false;
+/** Whether the workload sidebar is collapsed */
+let _sidebarCollapsed = localStorage.getItem('gm-sidebar-collapsed') === '1';
 
 // ─── View Router ─────────────────────────────────────────────────────────────
 
@@ -117,11 +121,11 @@ let _rescueEscHandler: ((e: KeyboardEvent) => void) | null = null;
 // ─── Formatting Helpers (app-local) ──────────────────────────────────────────
 
 function fmtDate(d: Date): string {
-  return d.toLocaleDateString('he-IL', { day: '2-digit', month: 'short' }) + ' ' + fmt(d);
+  return hebrewDayName(d) + ' ' + fmt(d);
 }
 
 function fmtDayShort(d: Date): string {
-  return d.toLocaleDateString('he-IL', { day: '2-digit', month: 'short' });
+  return 'יום ' + hebrewDayName(d);
 }
 
 function statusBadge(status: AssignmentStatus): string {
@@ -342,8 +346,7 @@ function renderDayNavigator(): string {
 
   for (let d = 1; d <= numDays; d++) {
     const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-    const dayName = date.toLocaleDateString('he-IL', { weekday: 'short' });
-    const dayNum = date.getDate();
+    const dayName = hebrewDayName(date);
 
     // Count tasks and assignments for this day
     let taskCount = 0;
@@ -376,7 +379,6 @@ function renderDayNavigator(): string {
 
     html += `<button class="day-tab ${currentDay === d ? 'day-tab-active' : ''}${frozenClass}" data-day="${d}">
       <span class="day-tab-name">${dayName}</span>
-      <span class="day-tab-num">${dayNum}</span>
       <span class="day-tab-label">יום ${d}</span>
       ${taskCount > 0 ? `<span class="day-tab-count">${taskCount} משימות</span>` : ''}
       ${violationDot}
@@ -417,19 +419,19 @@ function renderWeeklyDashboard(schedule: Schedule): string {
     <div class="dashboard-row">
       <div class="kpi-group">
         <div class="kpi ${feasibleClass}">
-          <span class="kpi-value">${feasibleText}</span>
+          <span class="kpi-value" id="kpi-feasible">${feasibleText}</span>
           <span class="kpi-label">סטטוס ${numDays} ימים</span>
         </div>
         <div class="kpi">
-          <span class="kpi-value">${score.compositeScore.toFixed(1)}</span>
+          <span class="kpi-value" id="kpi-score" data-target="${score.compositeScore.toFixed(1)}">${score.compositeScore.toFixed(1)}</span>
           <span class="kpi-label">ציון שבועי</span>
         </div>
         <div class="kpi ${totalViolations > 0 ? 'kpi-error' : 'kpi-ok'}">
-          <span class="kpi-value">${totalViolations}</span>
+          <span class="kpi-value" id="kpi-violations" data-target="${totalViolations}">${totalViolations}</span>
           <span class="kpi-label">הפרות</span>
         </div>
         <div class="kpi">
-          <span class="kpi-value">${warnings}</span>
+          <span class="kpi-value" id="kpi-warnings" data-target="${warnings}">${warnings}</span>
           <span class="kpi-label">אזהרות</span>
         </div>
       </div>
@@ -461,7 +463,9 @@ function renderSidebarEntry(
   let tooltipParts: string[] = [];
   for (let d = 1; d <= store.getScheduleDays(); d++) {
     const dayHrs = entry.perDay.get(d) || 0;
-    tooltipParts.push(`י${d}: ${dayHrs.toFixed(1)} שע'`);
+    const ttBase = store.getScheduleDate();
+    const ttDate = new Date(ttBase.getFullYear(), ttBase.getMonth(), ttBase.getDate() + d - 1);
+    tooltipParts.push(`${hebrewDayName(ttDate)}: ${dayHrs.toFixed(1)} שע'`);
   }
   const todayHrs = entry.perDay.get(currentDay) || 0;
   const todayRatio = totalPeriodHours > 0 ? todayHrs / totalPeriodHours : 0;
@@ -484,7 +488,7 @@ function renderSidebarEntry(
         <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שע' אפק' (${entry.pctOfPeriod.toFixed(1)}%)</span>
       </div>
       <span class="sidebar-today-tag" title="היום (יום ${currentDay}): ${todayHrs.toFixed(1)} שע' גולמיות">
-        גולמי י${currentDay}: ${todayHrs.toFixed(1)} שע'
+        גולמי ${hebrewDayName(new Date(store.getScheduleDate().getFullYear(), store.getScheduleDate().getMonth(), store.getScheduleDate().getDate() + currentDay - 1))}: ${todayHrs.toFixed(1)} שע'
       </span>
     </div>
   </div>`;
@@ -533,9 +537,27 @@ function renderParticipantSidebar(schedule: Schedule): string {
   const seniorSigma = Math.sqrt(seniorVar);
 
   // ── L0 Section (always visible) ──
-  let html = `<div class="participant-sidebar">
-    <div class="sidebar-header">
-      <h3>השוואת עומס</h3>
+  let html = `<div class="participant-sidebar${_sidebarCollapsed ? ' sidebar-collapsed' : ''}">`;
+
+  // Always render the toggle button
+  html += `<button class="sidebar-toggle" data-action="sidebar-toggle" title="${_sidebarCollapsed ? 'הרחב סרגל עומס' : 'כווץ סרגל עומס'}">${_sidebarCollapsed ? '◀' : '▶'}</button>`;
+
+  if (_sidebarCollapsed) {
+    // Mini bars — tiny workload indicators for each L0 participant
+    html += `<div class="sidebar-mini">`;
+    for (const entry of l0Entries) {
+      const pct = entry.w.effectiveHours / totalPeriodHours;
+      const cls = pct > 0.18 ? 'mini-over' : pct < 0.08 ? 'mini-under' : 'mini-normal';
+      html += `<div class="sidebar-mini-bar ${cls}" title="${entry.p.name}: ${entry.w.effectiveHours.toFixed(1)} שע' אפק'"></div>`;
+    }
+    html += `</div></div>`;
+    return html;
+  }
+
+  html += `<div class="sidebar-header">
+      <div class="sidebar-header-row">
+        <h3>השוואת עומס</h3>
+      </div>
       <div class="sidebar-avg">ממוצע: ${l0Avg.toFixed(1)} שע' אפק' · ${l0Entries.length} משתתפים · ${numDays} ימים</div>
     </div>
     <div class="sidebar-entries">`;
@@ -580,11 +602,10 @@ function renderScheduleTab(): string {
   let liveModeControls = '';
   if (currentSchedule) {
     const baseDate = store.getScheduleDate();
-    let dayOptions = '';
+    const daySelectOpts: { value: string; label: string; selected: boolean }[] = [];
     for (let d = 1; d <= numDays; d++) {
       const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-      const label = `יום ${d} (${date.toLocaleDateString('he-IL', { weekday: 'short', day: '2-digit', month: 'short' })})`;
-      // Determine which day is currently selected
+      const label = `יום ${hebrewDayName(date)}`;
       let selected = false;
       if (liveMode.enabled) {
         const anchor = liveMode.currentTimestamp;
@@ -592,14 +613,17 @@ function renderScheduleTab(): string {
         const dayEnd = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d, DAY_START_HOUR, 0);
         selected = anchor.getTime() >= dayStart.getTime() && anchor.getTime() < dayEnd.getTime();
       }
-      dayOptions += `<option value="${d}" ${selected ? 'selected' : ''}>${label}</option>`;
+      daySelectOpts.push({ value: String(d), label, selected });
+    }
+    // Fallback: if no day matched (anchor outside schedule range), select day 1
+    if (liveMode.enabled && !daySelectOpts.some(o => o.selected) && daySelectOpts.length > 0) {
+      daySelectOpts[0].selected = true;
     }
 
-    // Current anchor hour
     const anchorHour = liveMode.enabled ? liveMode.currentTimestamp.getHours() : 5;
-    let hourOptions = '';
+    const hourSelectOpts: { value: string; label: string; selected: boolean }[] = [];
     for (let h = 0; h < 24; h++) {
-      hourOptions += `<option value="${h}" ${h === anchorHour ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`;
+      hourSelectOpts.push({ value: String(h), label: `${String(h).padStart(2, '0')}:00`, selected: h === anchorHour });
     }
 
     liveModeControls = `
@@ -610,10 +634,9 @@ function renderScheduleTab(): string {
         </label>
         ${liveMode.enabled ? `
           <div class="live-mode-picker">
-            <label>עכשיו ב:
-              <select id="sel-live-day" class="input-sm">${dayOptions}</select>
-              <select id="sel-live-hour" class="input-sm">${hourOptions}</select>
-            </label>
+            <span class="live-picker-label">עכשיו ב:</span>
+            ${renderCustomSelect({ id: 'gm-live-day', options: daySelectOpts, className: 'input-sm' })}
+            ${renderCustomSelect({ id: 'gm-live-hour', options: hourSelectOpts, className: 'input-sm' })}
           </div>
         ` : ''}
       </div>`;
@@ -1048,7 +1071,19 @@ function renderOptimOverlay(): string {
 
   return `<div class="optim-overlay">
     <div class="optim-card">
-      <div class="optim-spinner"></div>
+      <div class="cube-loader-wrapper optim-cube">
+        <div class="cube-loader">
+          <div class="cube-cell" style="--cell-color:#4A90D9"></div>
+          <div class="cube-cell" style="--cell-color:#E74C3C"></div>
+          <div class="cube-cell" style="--cell-color:#F39C12"></div>
+          <div class="cube-cell" style="--cell-color:#27AE60"></div>
+          <div class="cube-cell" style="--cell-color:#8E44AD"></div>
+          <div class="cube-cell" style="--cell-color:#1ABC9C"></div>
+          <div class="cube-cell" style="--cell-color:#3498db"></div>
+          <div class="cube-cell" style="--cell-color:#e67e22"></div>
+          <div class="cube-cell" style="--cell-color:#2ecc71"></div>
+        </div>
+      </div>
       <h3>מעריך ${totalAttempts} תרחישים לשיוויוניות מרבית…</h3>
       <div class="optim-progress-bar">
         <div class="optim-progress-fill" style="width:${pct}%"></div>
@@ -1076,22 +1111,32 @@ function renderOptimOverlay(): string {
  * This avoids a full renderAll cycle during optimization.
  */
 function updateOverlay(): void {
-  let overlay = document.querySelector('.optim-overlay') as HTMLElement | null;
-  const html = renderOptimOverlay();
+  const overlay = document.querySelector('.optim-overlay') as HTMLElement | null;
 
-  if (!html) {
-    // Remove overlay if present
+  if (!_isOptimizing || !_optimProgress) {
     overlay?.remove();
     return;
   }
 
+  const { attempt, totalAttempts, bestScore, bestUnfilled, lastImproved } = _optimProgress;
+  const pct = Math.round((attempt / totalAttempts) * 100);
+
   if (overlay) {
-    // Update in place
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    overlay.replaceWith(tmp.firstElementChild!);
+    // Surgically update only the changing parts — keep the cube animation running
+    const fill = overlay.querySelector('.optim-progress-fill') as HTMLElement | null;
+    if (fill) fill.style.width = `${pct}%`;
+    const status = overlay.querySelector('.optim-status') as HTMLElement | null;
+    if (status) status.innerHTML = `ניסיון <strong>${attempt}</strong> / ${totalAttempts} ${lastImproved ? '<span class="optim-improved">★ שיפור!</span>' : ''}`;
+    const scoreVal = overlay.querySelector('.optim-metric-value') as HTMLElement | null;
+    if (scoreVal) scoreVal.textContent = bestScore.toFixed(1);
+    const unfilledVal = overlay.querySelectorAll('.optim-metric-value')[1] as HTMLElement | null;
+    if (unfilledVal) {
+      unfilledVal.textContent = String(bestUnfilled);
+      unfilledVal.className = `optim-metric-value ${bestUnfilled === 0 ? 'optim-ok' : 'optim-warn'}`;
+    }
   } else {
-    // Insert overlay into tab-content
+    // First render — insert full overlay with cube
+    const html = renderOptimOverlay();
     const content = document.getElementById('tab-content');
     if (content) {
       content.insertAdjacentHTML('beforeend', html);
@@ -1207,6 +1252,7 @@ async function doGenerate(): Promise<void> {
 
   // Final atomic render with the winning schedule
   renderAll();
+  showToast(`שבצ"ק נוצר בהצלחה (${(scheduleElapsed / 1000).toFixed(1)} שניות)`, { type: 'success' });
 }
 
 // ─── Interactive Handlers ────────────────────────────────────────────────────
@@ -1240,52 +1286,54 @@ function revalidateAndRefresh(): void {
   renderAll();
 }
 
-function handleSwap(assignmentId: string): void {
+async function handleSwap(assignmentId: string): Promise<void> {
   if (!currentSchedule || !engine) return;
   const assignment = currentSchedule.assignments.find(a => a.id === assignmentId);
   if (!assignment) return;
   if (assignment.status === AssignmentStatus.Frozen) {
-    alert('🧊 שיבוץ זה מוקפא (בעבר). לא ניתן לשנותו.');
+    await showAlert('שיבוץ זה מוקפא (בעבר). לא ניתן לשנותו.', { icon: '🧊' });
     return;
   }
   const task = currentSchedule.tasks.find(t => t.id === assignment.taskId);
   if (!task) return;
   const currentP = currentSchedule.participants.find(p => p.id === assignment.participantId);
 
-  const options = currentSchedule.participants
+  const suggestions = currentSchedule.participants
     .filter(p => p.id !== assignment.participantId)
-    .map(p => `${p.name} (L${p.level}, ${p.group})`)
-    .join('\n');
+    .map(p => `${p.name} (L${p.level}, ${p.group})`);
 
-  const choice = prompt(
-    `החלפה ב-"${task.name}".\nנוכחי: ${currentP?.name}\n\nהזן שם משתתף:\n\n${options}`
+  const choice = await showPrompt(
+    `החלפה ב-"${task.name}".\nנוכחי: ${currentP?.name}`,
+    { title: 'החלפת משתתף', suggestions }
   );
   if (!choice) return;
 
   const newP = currentSchedule.participants.find(
     p => choice.includes(p.name) || choice === p.id
   );
-  if (!newP) { alert('המשתתף לא נמצא.'); return; }
+  if (!newP) { await showAlert('המשתתף לא נמצא.', { icon: '⚠️' }); return; }
 
   const result = engine.swapParticipant({ assignmentId, newParticipantId: newP.id });
   currentSchedule = engine.getSchedule();
 
   if (!result.valid) {
     const msgs = result.violations.map(v => `[${v.code}] ${v.message}`).join('\n');
-    alert(`⚠ ההחלפה יצרה הפרות בשבצ"ק של 7 ימים:\n\n${msgs}`);
+    await showAlert(`ההחלפה יצרה הפרות בשבצ"ק של 7 ימים:\n\n${msgs}`, { title: 'הפרות', icon: '⚠️' });
+  } else {
+    showToast('החלפה בוצעה בהצלחה', { type: 'success' });
   }
 
   // Full re-validation + refresh
   revalidateAndRefresh();
 }
 
-function handleLock(assignmentId: string): void {
+async function handleLock(assignmentId: string): Promise<void> {
   if (!currentSchedule || !engine) return;
   const a = currentSchedule.assignments.find(a => a.id === assignmentId);
   if (!a) return;
 
   if (a.status === AssignmentStatus.Frozen) {
-    alert('🧊 שיבוץ זה מוקפא (בעבר). לא ניתן לשנותו.');
+    await showAlert('שיבוץ זה מוקפא (בעבר). לא ניתן לשנותו.', { icon: '🧊' });
     return;
   }
 
@@ -1532,7 +1580,7 @@ function buildRescueParticipantTooltip(
   } else {
     for (let i = 0; i < nextTasks.length; i++) {
       const t = nextTasks[i];
-      const dayStr = t.start.toLocaleDateString('he-IL', { weekday: 'short', day: '2-digit', month: 'short' });
+      const dayStr = 'יום ' + hebrewDayName(t.start);
       const timeStr = fmt(t.start) + ' – ' + fmt(t.end);
       html += `<div class="rescue-hover-tt-task">${i + 1}. ${t.taskName}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
     }
@@ -1725,7 +1773,7 @@ function formatLiveClock(): string {
  * Scroll the schedule grid to the row closest to the current live-mode timestamp.
  * Highlights the target row briefly with an animation.
  */
-function scrollToNow(storeRef: typeof store): void {
+function scrollToNow(storeRef: typeof store, scroll = true): void {
   const liveState = storeRef.getLiveModeState();
   if (!liveState.enabled) return;
 
@@ -1761,8 +1809,10 @@ function scrollToNow(storeRef: typeof store): void {
     r.classList.add('now-row', 'now-row-animate');
   });
 
-  // Scroll the first matching row into view
-  bestRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Scroll the first matching row into view (only on initial live-mode activation)
+  if (scroll) {
+    bestRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
 
 function renderAll(): void {
@@ -1876,6 +1926,11 @@ function renderAll(): void {
   } else if (currentTab === 'algorithm') {
     wireAlgorithmEvents(content, renderAll);
   }
+
+  // Run KPI count-up animations when on schedule tab
+  if (currentTab === 'schedule' && currentSchedule) {
+    requestAnimationFrame(runKpiAnimations);
+  }
 }
 
 function wireTabNav(container: HTMLElement): void {
@@ -1906,6 +1961,62 @@ function wireUndoRedo(container: HTMLElement): void {
   if (redoBtn) redoBtn.addEventListener('click', () => doUndoRedo('redo'));
 }
 
+// ─── KPI Count-Up Animation ─────────────────────────────────────────────────
+
+const _prevKpiValues: Record<string, number> = {};
+
+function animateCountUp(el: HTMLElement, target: number, decimals: number, duration = 600): void {
+  const start = performance.now();
+  const from = 0;
+  const step = (now: number) => {
+    const elapsed = now - start;
+    const progress = Math.min(elapsed / duration, 1);
+    // ease-out cubic
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const current = from + (target - from) * eased;
+    el.textContent = decimals > 0 ? current.toFixed(decimals) : Math.round(current).toString();
+    if (progress < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function runKpiAnimations(): void {
+  const ids: Array<{ id: string; decimals: number }> = [
+    { id: 'kpi-score', decimals: 1 },
+    { id: 'kpi-violations', decimals: 0 },
+    { id: 'kpi-warnings', decimals: 0 },
+  ];
+  for (const { id, decimals } of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const target = parseFloat(el.dataset.target || '0');
+    const prev = _prevKpiValues[id];
+    // Animate on first render or when value changes
+    if (prev === undefined || prev !== target) {
+      animateCountUp(el, target, decimals);
+      // Flash green briefly if value improved (score up, violations/warnings down)
+      if (prev !== undefined) {
+        const improved = id === 'kpi-score' ? target > prev : target < prev;
+        if (improved) {
+          const kpiDiv = el.closest('.kpi');
+          if (kpiDiv) {
+            (kpiDiv as HTMLElement).classList.add('kpi-improved');
+            setTimeout(() => (kpiDiv as HTMLElement).classList.remove('kpi-improved'), 800);
+          }
+        }
+      }
+    }
+    _prevKpiValues[id] = target;
+  }
+  // Feasible KPI: just fade in
+  const feasEl = document.getElementById('kpi-feasible');
+  if (feasEl) {
+    feasEl.style.animation = 'none';
+    feasEl.offsetHeight; // trigger reflow
+    feasEl.style.animation = 'kpiFadeIn 0.3s ease';
+  }
+}
+
 // ─── Theme Toggle ────────────────────────────────────────────────────────────
 
 const THEME_STORAGE_KEY = 'gardenmanager_theme';
@@ -1931,7 +2042,9 @@ function toggleTheme(): void {
   const next = current === 'dark' ? 'light' : 'dark';
   applyTheme(next);
   localStorage.setItem(THEME_STORAGE_KEY, next);
-  renderAll();
+  // Update only the toggle button emoji — CSS transitions handle the visual crossfade
+  const btn = document.getElementById('btn-theme-toggle');
+  if (btn) btn.textContent = next === 'light' ? '🌙' : '☀️';
 }
 
 function wireThemeToggle(container: HTMLElement): void {
@@ -2040,7 +2153,7 @@ function wireSnapshotEvents(container: HTMLElement): void {
   }
 
   // Delegated click handler for snapshot item actions
-  container.addEventListener('click', (e) => {
+  container.addEventListener('click', async (e) => {
     const btn = (e.target as HTMLElement).closest('[data-snap-action]') as HTMLElement | null;
     if (!btn) return;
     const action = btn.dataset.snapAction;
@@ -2050,9 +2163,11 @@ function wireSnapshotEvents(container: HTMLElement): void {
     switch (action) {
       case 'load': {
         if (_snapshotDirty && currentSchedule) {
-          if (!confirm('השבצ"ק הנוכחי שונה. לטעון תמונת מצב ולאבד שינויים?')) return;
+          const ok = await showConfirm('השבצ"ק הנוכחי שונה. לטעון תמונת מצב ולאבד שינויים?', { title: 'טעינת תמונת מצב' });
+          if (!ok) return;
         }
         loadScheduleSnapshot(snapId);
+        showToast('תמונת מצב נטענה', { type: 'success' });
         break;
       }
       case 'update': {
@@ -2061,6 +2176,7 @@ function wireSnapshotEvents(container: HTMLElement): void {
         const ok = store.updateSnapshot(snapId, currentSchedule, algoSettings);
         if (ok) {
           _snapshotDirty = false;
+          showToast('תמונת מצב עודכנה', { type: 'success' });
           renderAll();
         }
         break;
@@ -2076,17 +2192,21 @@ function wireSnapshotEvents(container: HTMLElement): void {
         const dup = store.duplicateSnapshot(snapId);
         if (dup) {
           store.setActiveSnapshotId(dup.id);
+          showToast('תמונת מצב שוכפלה', { type: 'success' });
           renderAll();
         } else {
-          alert(`לא ניתן לשכפל — מגבלת ${store.getMaxSnapshots()} תמונות מצב.`);
+          await showAlert(`לא ניתן לשכפל — מגבלת ${store.getMaxSnapshots()} תמונות מצב.`, { icon: '⚠️' });
         }
         break;
       }
       case 'delete': {
         const snap = store.getSnapshotById(snapId);
-        if (snap && confirm(`למחוק את תמונת המצב "${snap.name}"?`)) {
+        if (!snap) break;
+        const ok = await showConfirm(`למחוק את תמונת המצב "${snap.name}"?`, { danger: true, title: 'מחיקת תמונת מצב' });
+        if (ok) {
           store.deleteSnapshot(snapId);
           _snapshotFormMode = 'none';
+          showToast('תמונת מצב נמחקה', { type: 'success' });
           renderAll();
         }
         break;
@@ -2141,6 +2261,16 @@ function wireScheduleEvents(container: HTMLElement): void {
     });
   }
 
+  // ── Sidebar collapse toggle ──
+  const sidebarToggle = container.querySelector('[data-action="sidebar-toggle"]');
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener('click', () => {
+      _sidebarCollapsed = !_sidebarCollapsed;
+      localStorage.setItem('gm-sidebar-collapsed', _sidebarCollapsed ? '1' : '0');
+      renderAll();
+    });
+  }
+
   // ── Live Mode toggle ──
   const liveModeChk = container.querySelector('#chk-live-mode') as HTMLInputElement | null;
   if (liveModeChk) {
@@ -2153,35 +2283,44 @@ function wireScheduleEvents(container: HTMLElement): void {
       }
       renderAll();
       if (liveModeChk.checked) {
-        requestAnimationFrame(() => scrollToNow(store));
+        requestAnimationFrame(() => scrollToNow(store, false));
       }
     });
   }
 
   // ── Live Mode day/hour pickers ──
-  const liveDay = container.querySelector('#sel-live-day') as HTMLSelectElement | null;
-  const liveHour = container.querySelector('#sel-live-hour') as HTMLSelectElement | null;
+  let _liveDayVal = '';
+  let _liveHourVal = '';
+  const liveDayEl = container.querySelector('#gm-live-day') as HTMLElement | null;
+  const liveHourEl = container.querySelector('#gm-live-hour') as HTMLElement | null;
+  if (liveDayEl) _liveDayVal = liveDayEl.dataset.value || '';
+  if (liveHourEl) _liveHourVal = liveHourEl.dataset.value || '';
   const updateLiveTimestamp = () => {
-    if (!liveDay || !liveHour) return;
-    const dayIdx = parseInt(liveDay.value, 10);
-    const hour = parseInt(liveHour.value, 10);
+    const dayIdx = parseInt(_liveDayVal, 10);
+    const hour = parseInt(_liveHourVal, 10);
+    if (isNaN(dayIdx) || isNaN(hour)) return;
     const base = store.getScheduleDate();
     const ts = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIdx - 1, hour, 0);
     store.setLiveModeTimestamp(ts);
     if (currentSchedule && store.getLiveModeState().enabled) {
       freezeAssignments(currentSchedule, ts);
     }
+    const savedScrollY = window.scrollY;
     renderAll();
-    requestAnimationFrame(() => scrollToNow(store));
+    requestAnimationFrame(() => {
+      scrollToNow(store, false);
+      window.scrollTo(0, savedScrollY);
+    });
   };
-  if (liveDay) liveDay.addEventListener('change', updateLiveTimestamp);
-  if (liveHour) liveHour.addEventListener('change', updateLiveTimestamp);
+  wireCustomSelect(container, 'gm-live-day', (v) => { _liveDayVal = v; updateLiveTimestamp(); });
+  wireCustomSelect(container, 'gm-live-hour', (v) => { _liveHourVal = v; updateLiveTimestamp(); });
 
   // ── Reset storage button ──
   const resetBtn = container.querySelector('#btn-reset-storage');
   if (resetBtn) {
-    resetBtn.addEventListener('click', () => {
-      if (confirm('למחוק את כל הנתונים השמורים ולטעון מחדש? לא ניתן לבטל פעולה זו.')) {
+    resetBtn.addEventListener('click', async () => {
+      const ok = await showConfirm('למחוק את כל הנתונים השמורים ולטעון מחדש? לא ניתן לבטל פעולה זו.', { danger: true, title: 'איפוס נתונים', confirmLabel: 'אפס הכל' });
+      if (ok) {
         store.clearStorage();
         location.reload();
       }
@@ -2202,14 +2341,10 @@ function openExportModal(): void {
   const baseDate = store.getScheduleDate();
 
   // Build day options for the daily picker
-  let dayOptions = '';
+  const exportDayOpts: { value: string; label: string; selected: boolean }[] = [];
   for (let d = 1; d <= numDays; d++) {
     const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-    const dayName = date.toLocaleDateString('he-IL', { weekday: 'short' });
-    const dayNum = date.getDate();
-    const monthName = date.toLocaleDateString('he-IL', { month: 'short' });
-    const selected = d === currentDay ? 'selected' : '';
-    dayOptions += `<option value="${d}" ${selected}>יום ${d} — ${dayName} ${dayNum} ${monthName}</option>`;
+    exportDayOpts.push({ value: String(d), label: `יום ${hebrewDayName(date)}`, selected: d === currentDay });
   }
 
   const html = `
@@ -2238,7 +2373,7 @@ function openExportModal(): void {
           </div>
           <div class="export-day-picker" id="export-day-picker" style="display:none">
             <label>בחר יום:</label>
-            <select id="export-day-select">${dayOptions}</select>
+            ${renderCustomSelect({ id: 'gm-export-day-select', options: exportDayOpts, className: 'export-day-select' })}
           </div>
         </div>
         <div class="export-footer">
@@ -2290,6 +2425,9 @@ function wireExportModalEvents(): void {
     });
   });
 
+  // Wire custom select for export day picker
+  wireCustomSelect(backdrop, 'gm-export-day-select', () => {});
+
   // Export action
   backdrop.querySelector('#export-do')?.addEventListener('click', () => {
     if (!currentSchedule) return;
@@ -2302,8 +2440,8 @@ function wireExportModalEvents(): void {
       if (selectedMode === 'weekly') {
         exportWeeklyOverview(currentSchedule);
       } else {
-        const daySelect = backdrop.querySelector('#export-day-select') as HTMLSelectElement;
-        const dayIdx = parseInt(daySelect.value, 10);
+        const daySelectEl = backdrop.querySelector('#gm-export-day-select') as HTMLElement | null;
+        const dayIdx = parseInt(daySelectEl?.dataset.value || '1', 10);
         exportDailyDetail(currentSchedule, dayIdx);
       }
       status.textContent = '✓ הייצוא הושלם';

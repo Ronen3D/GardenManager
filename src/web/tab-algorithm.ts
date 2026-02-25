@@ -17,6 +17,7 @@ import {
   AlgorithmPreset,
 } from '../models/types';
 import * as store from './config-store';
+import { showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
 
 // ─── Weight field metadata ───────────────────────────────────────────────────
 
@@ -173,9 +174,12 @@ export function renderAlgorithmTab(): string {
       <h2>הגדרות אלגוריתם</h2>
     </div>
     <div class="toolbar-right">
-      <select class="preset-select" data-action="algo-preset-select">
-        ${presets.map(p => `<option value="${p.id}"${p.id === activeId ? ' selected' : ''}>${_escHtml(p.name)}${p.id === activeId && dirty ? ' (שונה)' : ''}</option>`).join('')}
-      </select>
+      ${renderCustomSelect({
+        id: 'gm-preset-select',
+        options: presets.map(p => ({ value: p.id, label: `${_escHtml(p.name)}${p.id === activeId && dirty ? ' (שונה)' : ''}`, selected: p.id === activeId })),
+        searchable: presets.length > 5,
+        className: 'preset-select',
+      })}
       ${dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
       <button class="btn btn-sm ${_presetPanelOpen ? 'btn-primary' : 'btn-outline'}" data-action="algo-preset-panel-toggle" title="ניהול תבניות">💾${presetCount > 0 ? ` (${presetCount})` : ''}</button>
     </div>
@@ -430,6 +434,7 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         }
         _presetFormMode = 'none';
         _presetFormError = '';
+        showToast(`תבנית "${name}" נשמרה`, { type: 'success' });
         rerender();
         break;
       }
@@ -456,6 +461,7 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         _presetFormMode = 'none';
         _presetFormError = '';
         _presetRenameTargetId = null;
+        showToast('התבנית שונתה בהצלחה', { type: 'success' });
         rerender();
         break;
       }
@@ -471,18 +477,18 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
     }
   });
 
+  // ── Custom preset select wiring ──
+  wireCustomSelect(container, 'gm-preset-select', (id) => {
+    store.loadPreset(id);
+    rerender();
+  });
+
   container.addEventListener('change', (e) => {
     const el = e.target as HTMLInputElement | HTMLSelectElement;
     const action = el.dataset.action;
     if (!action) return;
 
     switch (action) {
-      case 'algo-preset-select': {
-        const id = (el as HTMLSelectElement).value;
-        store.loadPreset(id);
-        rerender();
-        break;
-      }
       case 'algo-toggle-hc': {
         const code = (el as HTMLInputElement).dataset.code as HardConstraintCode;
         const settings = store.getAlgorithmSettings();
@@ -543,7 +549,7 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
 
 // ─── Delegated preset-item actions ───────────────────────────────────────────
 
-function _handlePresetItemAction(btn: HTMLElement, rerender: () => void): void {
+async function _handlePresetItemAction(btn: HTMLElement, rerender: () => void): Promise<void> {
   const action = btn.dataset.presetAction;
   const id = btn.dataset.presetId;
   if (!action || !id) return;
@@ -551,11 +557,13 @@ function _handlePresetItemAction(btn: HTMLElement, rerender: () => void): void {
   switch (action) {
     case 'load': {
       store.loadPreset(id);
+      showToast('תבנית נטענה', { type: 'success' });
       rerender();
       break;
     }
     case 'update': {
       store.updatePreset(id);
+      showToast('תבנית עודכנה', { type: 'success' });
       rerender();
       break;
     }
@@ -568,17 +576,20 @@ function _handlePresetItemAction(btn: HTMLElement, rerender: () => void): void {
     }
     case 'duplicate': {
       store.duplicatePreset(id);
+      showToast('תבנית שוכפלה', { type: 'success' });
       rerender();
       break;
     }
     case 'delete': {
       const preset = store.getPresetById(id);
       if (!preset || preset.builtIn) return;
-      if (!confirm(`למחוק את התבנית "${preset.name}"? לא ניתן לבטל פעולה זו.`)) return;
+      const ok = await showConfirm(`למחוק את התבנית "${preset.name}"? לא ניתן לבטל פעולה זו.`, { danger: true, title: 'מחיקת תבנית', confirmLabel: 'מחק' });
+      if (!ok) return;
       store.deletePreset(id);
       _presetFormMode = 'none';
       _presetFormError = '';
       _presetRenameTargetId = null;
+      showToast('התבנית נמחקה', { type: 'success' });
       rerender();
       break;
     }

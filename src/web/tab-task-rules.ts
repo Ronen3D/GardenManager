@@ -17,6 +17,7 @@ import {
   LoadWindow,
 } from '../models/types';
 import * as store from './config-store';
+import { showPrompt, showConfirm } from './ui-modal';
 import { runPreflight } from './preflight';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -329,7 +330,7 @@ function renderAddTemplateForm(): string {
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
 export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void): void {
-  container.addEventListener('click', (e) => {
+  container.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
     const action = target.dataset.action;
     if (!action) return;
@@ -439,7 +440,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       }
       case 'add-subteam': {
         const tid = target.dataset.tid!;
-        const name = prompt('שם תת-צוות:');
+        const name = await showPrompt('שם תת-צוות:', { title: 'הוספת תת-צוות' });
         if (!name) return;
         store.addSubTeamToTemplate(tid, name.trim());
         rerender();
@@ -448,7 +449,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'remove-subteam': {
         const tid = target.dataset.tid!;
         const stid = target.dataset.stid!;
-        if (confirm('להסיר תת-צוות זה ואת כל המשבצות שלו?')) {
+        const okSub = await showConfirm('להסיר תת-צוות זה ואת כל המשבצות שלו?', { danger: true, title: 'הסרת תת-צוות', confirmLabel: 'הסר' });
+        if (okSub) {
           store.removeSubTeamFromTemplate(tid, stid);
           rerender();
         }
@@ -514,10 +516,13 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'remove-template': {
         const tid = target.dataset.tid!;
         const tpl = store.getTaskTemplate(tid);
-        if (tpl && confirm(`להסיר תבנית "${tpl.name}"?`)) {
-          store.removeTaskTemplate(tid);
-          if (expandedTemplateId === tid) expandedTemplateId = null;
-          rerender();
+        if (tpl) {
+          const okTpl = await showConfirm(`להסיר תבנית "${tpl.name}"?`, { danger: true, title: 'הסרת תבנית', confirmLabel: 'הסר' });
+          if (okTpl) {
+            store.removeTaskTemplate(tid);
+            if (expandedTemplateId === tid) expandedTemplateId = null;
+            rerender();
+          }
         }
         break;
       }

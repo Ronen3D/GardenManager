@@ -83,5 +83,10 @@ export function groupBadge(group: string, clickable = false): string {
 /** Task-type badge HTML. */
 export function taskTypeBadge(type: TaskType): string {
   const color = TASK_COLORS[type] || '#7f8c8d';
-  return `<span class="badge" style="background:${color}">${TASK_TYPE_LABELS[type] || type}</span>`;
+  const icons: Record<string, string> = {
+    Adanit: '🌱', Hamama: '🏠', Shemesh: '☀️',
+    Mamtera: '💧', Karov: '🥬', Karovit: '🥬', Aruga: '🌿',
+  };
+  const icon = icons[type] || '';
+  return `<span class="badge" style="background:${color}">${icon ? `<span aria-hidden="true" style="margin-inline-end:3px">${icon}</span>` : ''}${TASK_TYPE_LABELS[type] || type}</span>`;
 }

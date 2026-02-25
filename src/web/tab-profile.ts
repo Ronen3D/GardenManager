@@ -19,6 +19,7 @@ import {
   Assignment,
 } from '../models/types';
 import * as store from './config-store';
+import { hebrewDayName, hebrewDayNameFromISO } from '../utils/date-utils';
 import { computeTaskBreakdown } from './workload-utils';
 import {
   TASK_COLORS, LEVEL_COLORS,
@@ -27,12 +28,12 @@ import {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
 
 // ─── Local Formatting Helpers ────────────────────────────────────────────────
 
 function fmtDayLabel(d: Date): string {
-  return d.toLocaleDateString('he-IL', { weekday: 'short', day: '2-digit', month: 'short' });
+  return 'יום ' + hebrewDayName(d);
 }
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -167,7 +168,7 @@ function renderPersonalAgenda(
 
     html += `<div class="agenda-day ${isToday ? 'agenda-day-current' : ''}">
       <div class="agenda-day-header">
-        <span class="agenda-day-label">יום ${d} · ${dayLabel}</span>
+        <span class="agenda-day-label">${dayLabel}</span>
         <span class="agenda-day-count">${dayTasks.length} ${dayTasks.length !== 1 ? 'משימות' : 'משימה'}</span>
       </div>`;
 
@@ -235,9 +236,9 @@ function renderUnavailabilitySection(p: Participant): string {
       const isRecurring = r.dayOfWeek !== undefined;
       let label: string;
       if (r.specificDate) {
-        label = r.specificDate;
+        label = 'יום ' + hebrewDayNameFromISO(r.specificDate);
       } else if (r.dayOfWeek !== undefined) {
-        label = `כל ${DAY_NAMES[r.dayOfWeek]}`;
+        label = `כל ${hebrewDayName(new Date(2026, 0, 4 + r.dayOfWeek))}`;
       } else {
         label = 'לא ידוע';
       }
