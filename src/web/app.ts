@@ -2040,11 +2040,21 @@ function getStoredTheme(): 'dark' | 'light' {
 function toggleTheme(): void {
   const current = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
   const next = current === 'dark' ? 'light' : 'dark';
-  applyTheme(next);
-  localStorage.setItem(THEME_STORAGE_KEY, next);
-  // Update only the toggle button emoji — CSS transitions handle the visual crossfade
-  const btn = document.getElementById('btn-theme-toggle');
-  if (btn) btn.textContent = next === 'light' ? '🌙' : '☀️';
+
+  const commitSwitch = () => {
+    applyTheme(next);
+    localStorage.setItem(THEME_STORAGE_KEY, next);
+    const btn = document.getElementById('btn-theme-toggle');
+    if (btn) btn.textContent = next === 'light' ? '🌙' : '☀️';
+  };
+
+  // Use the View Transitions API when available for a seamless crossfade;
+  // otherwise fall back to the CSS transition path which is still smooth.
+  if (typeof document.startViewTransition === 'function') {
+    document.startViewTransition(commitSwitch);
+  } else {
+    commitSwitch();
+  }
 }
 
 function wireThemeToggle(container: HTMLElement): void {

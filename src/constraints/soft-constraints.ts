@@ -20,6 +20,8 @@ import {
 import {
   computeAllRestProfiles,
   computeRestFairness,
+  computeRestFromAssignments,
+  ParticipantRestProfile,
 } from '../web/utils/rest-calculator';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { computeSeniorHamamaPenalty } from './senior-policy';
@@ -435,4 +437,370 @@ export function computeScheduleScore(
     dailyPerParticipantStdDev: dailyBalance.dailyPerParticipantStdDev,
     dailyGlobalStdDev: dailyBalance.dailyGlobalStdDev,
   };
+}
+
+// ─── Incremental Scorer for SA Swaps ─────────────────────────────────────────
+
+/**
+ * Pre-computed per-participant data for incremental score updates.
+ */
+interface ParticipantScoreData {
+  effectiveHours: number;
+  minRest: number;  // min rest gap (Infinity if no blocking rest gaps)
+  dailyLoads: Map<string, number>; // dateKey → effective hours
+  dailyStdDev: number; // std-dev of this participant's daily loads
+  isL0: boolean;
+  capacity: number; // total available hours
+}
+
+/**
+ * IncrementalScorer: maintains running statistics to enable O(k) score
+ * recomputation on participant swaps instead of O(P×A) full rescoring.
+ *
+ * Usage:
+ *  1. Create via `IncrementalScorer.build(...)` before the SA loop
+ *  2. Call `recomputeForSwap(pidA, pidB)` after swapping two participants
+ *  3. Read `compositeScore` for the current score
+ *  4. Call `undoSwap(pidA, pidB, savedA, savedB)` if the swap is rejected
+ */
+export class IncrementalScorer {
+  private perParticipant: Map<string, ParticipantScoreData>;
+  private participants: Participant[];
+  private config: SchedulerConfig;
+  private taskMap: Map<string, Task>;
+  private assignmentsByParticipant: Map<string, Assignment[]>;
+  private capacities: Map<string, ParticipantCapacity>;
+  private dayList: string[];
+
+  // Running statistics for L0 pool
+  private l0Sum = 0;
+  private l0SumSq = 0;
+  private l0Count = 0;
+  // Running statistics for senior pool
+  private seniorSum = 0;
+  private seniorSumSq = 0;
+  private seniorCount = 0;
+  // Global min rest
+  private _globalMinRest = 0;
+  private _globalAvgRest = 0;
+  // Hamama penalty
+  private _hamamaPenalty = 0;
+  // Daily balance
+  private _dailyPerParticipantStdDevSum = 0;
+  private _participantCount = 0;
+  // Global daily totals
+  private globalDayTotals: Map<string, number>;
+
+  // Current composite score
+  compositeScore = 0;
+
+  private constructor() {
+    this.perParticipant = new Map();
+    this.participants = [];
+    this.config = {} as SchedulerConfig;
+    this.taskMap = new Map();
+    this.assignmentsByParticipant = new Map();
+    this.capacities = new Map();
+    this.dayList = [];
+    this.globalDayTotals = new Map();
+  }
+
+  /**
+   * Build incremental scorer from the full state.
+   */
+  static build(
+    tasks: Task[],
+    participants: Participant[],
+    assignments: Assignment[],
+    config: SchedulerConfig,
+    ctx: ScoreContext,
+  ): IncrementalScorer {
+    const scorer = new IncrementalScorer();
+    scorer.participants = participants;
+    scorer.config = config;
+    scorer.taskMap = ctx.taskMap;
+    scorer.assignmentsByParticipant = ctx.assignmentsByParticipant ?? new Map();
+    scorer.capacities = ctx.capacities ?? new Map();
+
+    // Collect all days
+    const allDays = new Set<string>();
+    for (const t of tasks) allDays.add(dateKey(t.timeBlock.start));
+    scorer.dayList = [...allDays].sort();
+
+    // Init global day totals
+    for (const d of scorer.dayList) scorer.globalDayTotals.set(d, 0);
+
+    scorer._participantCount = participants.length;
+
+    // Build per-participant data
+    for (const p of participants) {
+      const pAssignments = scorer.assignmentsByParticipant.get(p.id) || [];
+      const data = scorer.computeParticipantData(p, pAssignments);
+      scorer.perParticipant.set(p.id, data);
+
+      // Accumulate running statistics
+      if (data.isL0) {
+        scorer.l0Sum += data.effectiveHours;
+        scorer.l0SumSq += data.effectiveHours ** 2;
+        scorer.l0Count++;
+      } else {
+        scorer.seniorSum += data.effectiveHours;
+        scorer.seniorSumSq += data.effectiveHours ** 2;
+        scorer.seniorCount++;
+      }
+      scorer._dailyPerParticipantStdDevSum += data.dailyStdDev;
+      for (const [dk, load] of data.dailyLoads) {
+        scorer.globalDayTotals.set(dk, (scorer.globalDayTotals.get(dk) || 0) + load);
+      }
+    }
+
+    // Compute Hamama penalty
+    scorer._hamamaPenalty = computeSeniorHamamaPenalty(
+      participants, assignments, tasks, config, ctx.pMap, ctx.taskMap,
+    );
+
+    // Compute rest statistics
+    scorer.recomputeRestStats();
+
+    // Compute initial composite
+    scorer.compositeScore = scorer.deriveComposite();
+
+    return scorer;
+  }
+
+  private computeParticipantData(p: Participant, pAssignments: Assignment[]): ParticipantScoreData {
+    let effectiveHours = 0;
+    const dailyLoads = new Map<string, number>();
+
+    for (const a of pAssignments) {
+      const task = this.taskMap.get(a.taskId);
+      if (!task) continue;
+      const eff = computeTaskEffectiveHours(task);
+      effectiveHours += eff;
+      const dk = dateKey(task.timeBlock.start);
+      dailyLoads.set(dk, (dailyLoads.get(dk) || 0) + eff);
+    }
+
+    // Rest profile
+    const restProfile = computeRestFromAssignments(p.id, pAssignments, this.taskMap);
+
+    // Daily std-dev for this participant
+    const cap = this.capacities.get(p.id);
+    let dailyStdDev = 0;
+    if (this.dayList.length > 1) {
+      let sum = 0;
+      let availCount = 0;
+      for (const dk of this.dayList) {
+        const dayAvail = cap?.dailyAvailableHours.get(dk);
+        if (cap && (dayAvail === undefined || dayAvail <= 0)) continue;
+        sum += dailyLoads.get(dk) || 0;
+        availCount++;
+      }
+      if (availCount > 0) {
+        const avg = sum / availCount;
+        let variance = 0;
+        for (const dk of this.dayList) {
+          const dayAvail = cap?.dailyAvailableHours.get(dk);
+          if (cap && (dayAvail === undefined || dayAvail <= 0)) continue;
+          variance += ((dailyLoads.get(dk) || 0) - avg) ** 2;
+        }
+        dailyStdDev = Math.sqrt(variance / availCount);
+      }
+    }
+
+    return {
+      effectiveHours,
+      minRest: restProfile.minRestHours,
+      dailyLoads,
+      dailyStdDev,
+      isL0: p.level === Level.L0,
+      capacity: cap?.totalAvailableHours ?? 0,
+    };
+  }
+
+  private recomputeRestStats(): void {
+    const minRests: number[] = [];
+    for (const d of this.perParticipant.values()) {
+      if (isFinite(d.minRest) && d.minRest !== Infinity) {
+        minRests.push(d.minRest);
+      }
+    }
+    if (minRests.length === 0) {
+      this._globalMinRest = 0;
+      this._globalAvgRest = 0;
+    } else {
+      this._globalMinRest = Math.min(...minRests);
+      this._globalAvgRest = minRests.reduce((a, b) => a + b, 0) / minRests.length;
+    }
+  }
+
+  /**
+   * Compute workload std-dev using proportional targets when capacities exist.
+   */
+  private computePoolStdDev(sum: number, sumSq: number, count: number, isL0: boolean): number {
+    if (count === 0) return 0;
+
+    // Check if proportional targets are available
+    let totalCap = 0;
+    for (const [pid, data] of this.perParticipant) {
+      if (data.isL0 === isL0) totalCap += data.capacity;
+    }
+
+    if (totalCap > 0) {
+      // Proportional: target_i = totalLoad × (cap_i / totalCap)
+      let variance = 0;
+      for (const [pid, data] of this.perParticipant) {
+        if (data.isL0 !== isL0) continue;
+        const target = sum * (data.capacity / totalCap);
+        variance += (data.effectiveHours - target) ** 2;
+      }
+      return Math.sqrt(variance / count);
+    }
+
+    // Flat average
+    const avg = sum / count;
+    const variance = (sumSq - 2 * avg * sum + count * avg * avg) / count;
+    return Math.sqrt(Math.max(0, variance));
+  }
+
+  private computeGlobalDailyStdDev(): number {
+    if (this.dayList.length <= 1) return 0;
+    let gSum = 0;
+    for (const d of this.dayList) gSum += this.globalDayTotals.get(d) || 0;
+    const gAvg = gSum / this.dayList.length;
+    let gVar = 0;
+    for (const d of this.dayList) gVar += ((this.globalDayTotals.get(d) || 0) - gAvg) ** 2;
+    return Math.sqrt(gVar / this.dayList.length);
+  }
+
+  private deriveComposite(): number {
+    const minRest = this._globalMinRest;
+    const l0StdDev = this.computePoolStdDev(this.l0Sum, this.l0SumSq, this.l0Count, true);
+    const seniorStdDev = this.computePoolStdDev(this.seniorSum, this.seniorSumSq, this.seniorCount, false);
+
+    const dailyPP = this._participantCount > 0
+      ? this._dailyPerParticipantStdDevSum / this._participantCount : 0;
+    const dailyGlobal = this.computeGlobalDailyStdDev();
+
+    return (
+      this.config.minRestWeight * minRest -
+      this.config.l0FairnessWeight * l0StdDev -
+      this.config.seniorFairnessWeight * seniorStdDev -
+      this.config.dailyBalanceWeight * (dailyPP + dailyGlobal) -
+      this._hamamaPenalty
+    );
+  }
+
+  /**
+   * Save the current state for a participant (call before swap to enable undo).
+   */
+  saveParticipant(pid: string): ParticipantScoreData | undefined {
+    const data = this.perParticipant.get(pid);
+    if (!data) return undefined;
+    return {
+      ...data,
+      dailyLoads: new Map(data.dailyLoads),
+    };
+  }
+
+  /**
+   * Recompute score after swapping participants pidA and pidB.
+   * Only recomputes data for the two affected participants.
+   * Returns the new composite score.
+   */
+  recomputeForSwap(pidA: string, pidB: string): number {
+    const pA = this.participants.find(p => p.id === pidA);
+    const pB = this.participants.find(p => p.id === pidB);
+    if (!pA || !pB) return this.compositeScore;
+
+    // Remove old contributions
+    this.removeParticipantContribution(pidA);
+    this.removeParticipantContribution(pidB);
+
+    // Recompute with new assignments
+    const aAssigns = this.assignmentsByParticipant.get(pidA) || [];
+    const bAssigns = this.assignmentsByParticipant.get(pidB) || [];
+    const newDataA = this.computeParticipantData(pA, aAssigns);
+    const newDataB = this.computeParticipantData(pB, bAssigns);
+
+    // Add new contributions
+    this.perParticipant.set(pidA, newDataA);
+    this.perParticipant.set(pidB, newDataB);
+    this.addParticipantContribution(pidA);
+    this.addParticipantContribution(pidB);
+
+    // Recompute rest stats (global min might have changed)
+    this.recomputeRestStats();
+
+    // Recompute Hamama penalty delta (only if swap involves Hamama tasks)
+    const aInvolvesHamama = aAssigns.some(a => this.taskMap.get(a.taskId)?.type === TaskType.Hamama);
+    const bInvolvesHamama = bAssigns.some(a => this.taskMap.get(a.taskId)?.type === TaskType.Hamama);
+    if (aInvolvesHamama || bInvolvesHamama) {
+      // Recompute Hamama penalty for just these two participants
+      this._hamamaPenalty = 0;
+      for (const [pid, data] of this.perParticipant) {
+        const p = this.participants.find(pp => pp.id === pid);
+        if (!p || p.level === Level.L0) continue;
+        const pAs = this.assignmentsByParticipant.get(pid) || [];
+        for (const a of pAs) {
+          const task = this.taskMap.get(a.taskId);
+          if (task?.type === TaskType.Hamama && p.level === Level.L4) {
+            this._hamamaPenalty += this.config.seniorHamamaPenalty;
+          }
+        }
+      }
+    }
+
+    this.compositeScore = this.deriveComposite();
+    return this.compositeScore;
+  }
+
+  /**
+   * Restore a participant's cached data (call to undo a swap).
+   */
+  restoreParticipant(pid: string, saved: ParticipantScoreData): void {
+    this.removeParticipantContribution(pid);
+    this.perParticipant.set(pid, saved);
+    this.addParticipantContribution(pid);
+  }
+
+  /**
+   * After restoring both participants, call this to finalize the undo.
+   */
+  finalizeUndo(): void {
+    this.recomputeRestStats();
+    this.compositeScore = this.deriveComposite();
+  }
+
+  private removeParticipantContribution(pid: string): void {
+    const data = this.perParticipant.get(pid);
+    if (!data) return;
+    if (data.isL0) {
+      this.l0Sum -= data.effectiveHours;
+      this.l0SumSq -= data.effectiveHours ** 2;
+    } else {
+      this.seniorSum -= data.effectiveHours;
+      this.seniorSumSq -= data.effectiveHours ** 2;
+    }
+    this._dailyPerParticipantStdDevSum -= data.dailyStdDev;
+    for (const [dk, load] of data.dailyLoads) {
+      this.globalDayTotals.set(dk, (this.globalDayTotals.get(dk) || 0) - load);
+    }
+  }
+
+  private addParticipantContribution(pid: string): void {
+    const data = this.perParticipant.get(pid);
+    if (!data) return;
+    if (data.isL0) {
+      this.l0Sum += data.effectiveHours;
+      this.l0SumSq += data.effectiveHours ** 2;
+    } else {
+      this.seniorSum += data.effectiveHours;
+      this.seniorSumSq += data.effectiveHours ** 2;
+    }
+    this._dailyPerParticipantStdDevSum += data.dailyStdDev;
+    for (const [dk, load] of data.dailyLoads) {
+      this.globalDayTotals.set(dk, (this.globalDayTotals.get(dk) || 0) + load);
+    }
+  }
 }

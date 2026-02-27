@@ -25,7 +25,7 @@ import {
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 import { validateHardConstraints, isLevelSatisfied } from '../constraints/hard-constraints';
-import { computeScheduleScore, ScoreContext } from '../constraints/soft-constraints';
+import { computeScheduleScore, ScoreContext, IncrementalScorer } from '../constraints/soft-constraints';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
 import { isEligible, getRejectionReason } from './validator';
@@ -197,27 +197,42 @@ function getEligibleCandidates(
 
 /**
  * Sort tasks for assignment order. Constrained tasks first:
- * Adanit (same-group, complex), then Hamama, Mamtera, Aruga,
- * then Shemesh, Karov (can break HC-12 chains with cold-start),
- * and Karovit (light) last.
+ * Adanit (same-group, complex), then Hamama, then Mamtera (14h window
+ * makes it the hardest L0-only task — must be scheduled before Karov/Karovit
+ * to avoid L0 pool depletion), then Karov, Aruga, Karovit (light) and Shemesh.
  */
-function sortTasksByDifficulty(tasks: Task[]): Task[] {
+function sortTasksByDifficulty(tasks: Task[], jitter: number = 0): Task[] {
   const priority: Record<string, number> = {
     [TaskType.Adanit]: 0,
     [TaskType.Hamama]: 1,
-    [TaskType.Karov]: 2,
-    [TaskType.Karovit]: 3,
-    [TaskType.Mamtera]: 4,
-    [TaskType.Aruga]: 5,
+    [TaskType.Mamtera]: 2,
+    [TaskType.Karov]: 3,
+    [TaskType.Aruga]: 4,
+    [TaskType.Karovit]: 5,
     [TaskType.Shemesh]: 6,
   };
   // P3: Pre-compute random keys for transitive tiebreaker
   const taskRngKey = new Map<string, number>();
   for (const t of tasks) taskRngKey.set(t.id, Math.random());
 
+  // Task-order jitter: with probability `jitter`, apply a random ±1
+  // perturbation to each task's base priority (clamped to [0, 6]).
+  // Adanit (priority 0) is never perturbed — same-group constraint makes
+  // it structurally critical to schedule first.
+  const jitteredPriority = new Map<string, number>();
+  for (const t of tasks) {
+    const base = priority[t.type] ?? 99;
+    if (jitter > 0 && base > 0 && base < 99 && Math.random() < jitter) {
+      const delta = Math.random() < 0.5 ? -1 : 1;
+      jitteredPriority.set(t.id, Math.max(1, Math.min(6, base + delta)));
+    } else {
+      jitteredPriority.set(t.id, base);
+    }
+  }
+
   return [...tasks].sort((a, b) => {
-    const pa = priority[a.type] ?? 99;
-    const pb = priority[b.type] ?? 99;
+    const pa = jitteredPriority.get(a.id) ?? 99;
+    const pb = jitteredPriority.get(b.id) ?? 99;
     if (pa !== pb) return pa - pb;
     const ta = a.timeBlock.start.getTime();
     const tb = b.timeBlock.start.getTime();
@@ -236,6 +251,7 @@ export function greedyAssign(
   participants: Participant[],
   lockedAssignments: Assignment[] = [],
   disabledHC?: Set<string>,
+  taskOrderJitter: number = 0,
 ): { assignments: Assignment[]; unfilledSlots: { taskId: string; slotId: string; reason: string }[] } {
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
@@ -274,7 +290,7 @@ export function greedyAssign(
     }
   }
 
-  const sortedTasks = sortTasksByDifficulty(tasks);
+  const sortedTasks = sortTasksByDifficulty(tasks, taskOrderJitter);
 
   for (const task of sortedTasks) {
     // For same-group tasks (Adanit), we need special handling
@@ -343,36 +359,153 @@ export function greedyAssign(
         if (!pDaily) { pDaily = new Map(); dailyWorkload.set(chosen.id, pDaily); }
         pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
       } else {
-        // R8: Build specific reason with constraint codes for diagnostics
-        const levelStr = slot.acceptableLevels.map((l) => 'L' + l).join('/');
-        const certStr = slot.requiredCertifications.length > 0
-          ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
-
-        // Collect per-participant rejection codes to surface HC-12×HC-13 conflicts
-        const rejectionCounts = new Map<string, number>();
+        // ── Backtracking: try depth-1 swap chains to free a participant ──
+        // Find participants who pass level/cert/availability but are blocked by
+        // a current assignment (typically HC-5 double-booking). If we can
+        // reassign their blocking assignment to someone else, we free them.
+        let backtrackSuccess = false;
         for (const p of participants) {
+          // Quick filter: skip if participant can't possibly fill this slot
+          // (wrong level, missing cert, unavailable)
+          if (!isLevelSatisfied(p.level, slot)) continue;
+          if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
+          if (!isFullyCovered(task.timeBlock, p.availability)) continue;
+          if (checkSeniorHardBlock(p, task, slot)) continue;
+          if (p.certifications.includes(Certification.Horesh) && task.type === TaskType.Mamtera) continue;
+
+          // Already eligible (shouldn't happen since candidates was empty, but guard)
           const pAssigns = assignmentsByParticipant.get(p.id) || [];
-          const code = getRejectionReason(p, task, slot, pAssigns, taskMap, { disabledHC });
-          if (code) {
-            rejectionCounts.set(code, (rejectionCounts.get(code) || 0) + 1);
+          if (isEligibleForSlot(p, task, slot, pAssigns, taskMap, disabledHC)) continue;
+
+          // Find which of p's current assignments blocks them from this slot
+          // (must overlap in time — HC-5 conflict)
+          for (const blockingAssign of pAssigns) {
+            if (blockingAssign.status === AssignmentStatus.Locked ||
+                blockingAssign.status === AssignmentStatus.Manual ||
+                blockingAssign.status === AssignmentStatus.Frozen) continue;
+
+            const blockingTask = taskMap.get(blockingAssign.taskId);
+            if (!blockingTask) continue;
+            if (!blocksOverlap(blockingTask.timeBlock, task.timeBlock)) continue;
+            // Don't steal from same-group tasks (Adanit) — too complex
+            if (blockingTask.sameGroupRequired) continue;
+
+            const blockingSlot = blockingTask.slots.find(s => s.slotId === blockingAssign.slotId);
+            if (!blockingSlot) continue;
+
+            // Try to find a replacement for the blocking assignment
+            for (const replacement of participants) {
+              if (replacement.id === p.id) continue;
+              // Replacement must not already be assigned to the task being stolen from (HC-7)
+              const rAssigns = assignmentsByParticipant.get(replacement.id) || [];
+              if (rAssigns.some(a => a.taskId === blockingAssign.taskId)) continue;
+              if (!isEligibleForSlot(replacement, blockingTask, blockingSlot, rAssigns, taskMap, disabledHC)) continue;
+
+              // Would the replacement be eligible for the blocking slot AND
+              // would p then become eligible for the target slot once unblocked?
+              // Simulate: remove blockingAssign from p, check eligibility
+              const pAssignsWithout = pAssigns.filter(a => a.id !== blockingAssign.id);
+              if (!isEligibleForSlot(p, task, slot, pAssignsWithout, taskMap, disabledHC)) continue;
+
+              // ── Execute backtrack swap ──
+              // 1. Remove blocking assignment from p
+              const blockIdx = assignments.indexOf(blockingAssign);
+              if (blockIdx === -1) continue;
+              assignments.splice(blockIdx, 1);
+              const pList = assignmentsByParticipant.get(p.id);
+              if (pList) {
+                const pi = pList.indexOf(blockingAssign);
+                if (pi !== -1) pList.splice(pi, 1);
+              }
+              // Update workload for p (remove blocking task load)
+              const blockEff = computeTaskEffectiveHours(blockingTask);
+              const blockDailyEff = blockingTask.isLight ? Math.max(1, blockEff) : blockEff;
+              if (!blockingTask.isLight) {
+                workload.set(p.id, (workload.get(p.id) || 0) - blockEff);
+              }
+              const blockDk = dateKey(blockingTask.timeBlock.start);
+              const pDailyMap = dailyWorkload.get(p.id);
+              if (pDailyMap) pDailyMap.set(blockDk, (pDailyMap.get(blockDk) || 0) - blockDailyEff);
+
+              // 2. Assign replacement to the blocking slot
+              const replacementAssign: Assignment = {
+                id: nextAssignmentId(),
+                taskId: blockingAssign.taskId,
+                slotId: blockingAssign.slotId,
+                participantId: replacement.id,
+                status: AssignmentStatus.Scheduled,
+                updatedAt: new Date(),
+              };
+              assignments.push(replacementAssign);
+              addToAssignmentMap(assignmentsByParticipant, replacementAssign);
+              if (!blockingTask.isLight) {
+                workload.set(replacement.id, (workload.get(replacement.id) || 0) + blockEff);
+              }
+              let rDaily = dailyWorkload.get(replacement.id);
+              if (!rDaily) { rDaily = new Map(); dailyWorkload.set(replacement.id, rDaily); }
+              rDaily.set(blockDk, (rDaily.get(blockDk) || 0) + blockDailyEff);
+
+              // 3. Assign p to the target slot
+              const targetAssign: Assignment = {
+                id: nextAssignmentId(),
+                taskId: task.id,
+                slotId: slot.slotId,
+                participantId: p.id,
+                status: AssignmentStatus.Scheduled,
+                updatedAt: new Date(),
+              };
+              assignments.push(targetAssign);
+              addToAssignmentMap(assignmentsByParticipant, targetAssign);
+              const targetEff = computeTaskEffectiveHours(task);
+              const targetDailyEff = task.isLight ? Math.max(1, targetEff) : targetEff;
+              if (!task.isLight) {
+                workload.set(p.id, (workload.get(p.id) || 0) + targetEff);
+              }
+              const targetDk = dateKey(task.timeBlock.start);
+              let pDailyTarget = dailyWorkload.get(p.id);
+              if (!pDailyTarget) { pDailyTarget = new Map(); dailyWorkload.set(p.id, pDailyTarget); }
+              pDailyTarget.set(targetDk, (pDailyTarget.get(targetDk) || 0) + targetDailyEff);
+
+              backtrackSuccess = true;
+              break;
+            }
+            if (backtrackSuccess) break;
           }
+          if (backtrackSuccess) break;
         }
 
-        let reason: string;
-        // Detect HC-12 × HC-13 combo: some candidates blocked by senior policy,
-        // remaining blocked by consecutive high-load
-        const hc12Count = rejectionCounts.get('HC-12') || 0;
-        const hc13Count = rejectionCounts.get('HC-13') || 0;
-        if (hc12Count > 0 && hc13Count > 0) {
-          reason = `התנגשות HC-12×HC-13 ב${task.name}: ${hc13Count} נחסמו ע"י מדיניות בכירים, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
-        } else if (hc12Count > 0) {
-          reason = `חסימת HC-12 עומס רצוף: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות כבדות סמוכות`;
-        } else if (hc13Count > 0) {
-          reason = `חסימת HC-13 מדיניות בכירים: כל המועמדים ${levelStr}${certStr} ל${task.name} מוגבלים ע"י אילוצי תפקיד בכיר`;
-        } else {
-          reason = `חסר ${levelStr}${certStr} עבור ${task.name}`;
+        if (!backtrackSuccess) {
+          // R8: Build specific reason with constraint codes for diagnostics
+          const levelStr = slot.acceptableLevels.map((l) => 'L' + l).join('/');
+          const certStr = slot.requiredCertifications.length > 0
+            ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
+
+          // Collect per-participant rejection codes to surface HC-12×HC-13 conflicts
+          const rejectionCounts = new Map<string, number>();
+          for (const p of participants) {
+            const pAssigns = assignmentsByParticipant.get(p.id) || [];
+            const code = getRejectionReason(p, task, slot, pAssigns, taskMap, { disabledHC });
+            if (code) {
+              rejectionCounts.set(code, (rejectionCounts.get(code) || 0) + 1);
+            }
+          }
+
+          let reason: string;
+          // Detect HC-12 × HC-13 combo: some candidates blocked by senior policy,
+          // remaining blocked by consecutive high-load
+          const hc12Count = rejectionCounts.get('HC-12') || 0;
+          const hc13Count = rejectionCounts.get('HC-13') || 0;
+          if (hc12Count > 0 && hc13Count > 0) {
+            reason = `התנגשות HC-12×HC-13 ב${task.name}: ${hc13Count} נחסמו ע"י מדיניות בכירים, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
+          } else if (hc12Count > 0) {
+            reason = `חסימת HC-12 עומס רצוף: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות כבדות סמוכות`;
+          } else if (hc13Count > 0) {
+            reason = `חסימת HC-13 מדיניות בכירים: כל המועמדים ${levelStr}${certStr} ל${task.name} מוגבלים ע"י אילוצי תפקיד בכיר`;
+          } else {
+            reason = `חסר ${levelStr}${certStr} עבור ${task.name}`;
+          }
+          unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason });
         }
-        unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason });
       }
     }
   }
@@ -685,26 +818,39 @@ function isSwapFeasible(
 }
 
 /**
- * Try to improve the schedule by swapping participants between assignments.
+ * Try to improve the schedule by swapping participants between assignments
+ * and inserting participants into unfilled slots.
  *
  * Uses simulated-annealing style acceptance: at the start of the search
  * the "temperature" is high and the algorithm occasionally accepts swaps
  * that lower the score (escaping local minima). Temperature decays
  * linearly toward zero so the tail of the search is purely hill-climbing.
  *
+ * Insert moves: When unfilled slots exist, periodically tries to place
+ * an eligible participant into an unfilled slot. Accepted inserts get a
+ * large bonus (UNFILLED_SLOT_PENALTY per slot filled) to strongly prefer
+ * feasibility over score quality.
+ *
  * Performance: swaps are applied in-place on the `current` array and
  * undone if rejected, avoiding O(n) clones per attempt. A ScoreContext
  * is pre-built once and reused across all `computeScheduleScore` calls
  * to eliminate redundant map construction and O(P×A) scans.
  */
+const UNFILLED_SLOT_PENALTY = 500;
+
 export function localSearchOptimize(
   tasks: Task[],
   participants: Participant[],
   assignments: Assignment[],
   config: SchedulerConfig,
   disabledHC?: Set<string>,
-): Assignment[] {
+  unfilledSlots?: { taskId: string; slotId: string; reason: string }[],
+): { assignments: Assignment[]; filledSlots: string[] } {
   const current = [...assignments.map((a) => ({ ...a }))];
+
+  // Track unfilled slots that SA might fill via insert moves
+  const remainingUnfilled = unfilledSlots ? [...unfilledSlots] : [];
+  const filledSlots: string[] = [];
 
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
@@ -748,14 +894,25 @@ export function localSearchOptimize(
   let best = current.map(a => ({ ...a }));
   let bestScore = currentScore;
 
+  // Build incremental scorer for O(k) swap scoring
+  const incScorer = IncrementalScorer.build(tasks, participants, current, config, scoreCtx);
+  let currentComposite = incScorer.compositeScore;
+
   const startTime = Date.now();
   let iterations = 0;
 
   // Simulated-annealing parameters
-  // T0 is calibrated so that a swap losing ~50 score points has ~40% acceptance
-  // at the start (e^(-50/55) ≈ 0.40). Temperature decays linearly to 0.
+  // T0 calibrated so that a swap losing ~50 score points has ~40% acceptance
+  // at the start (e^(-50/55) ≈ 0.40). Uses geometric decay (α=0.997) instead
+  // of linear decay to maintain exploration longer in early phases.
   const T0 = 55;
+  const ALPHA = 0.997;  // geometric cooling rate
   const maxIter = config.maxIterations;
+  let temperature = T0;
+  // Reheating: if no improvement in REHEAT_THRESHOLD iterations, temporarily
+  // raise temperature to T0/3 to escape local minima.
+  const REHEAT_THRESHOLD = 500;
+  let itersSinceImprovement = 0;
 
   // Pre-allocate index order array once and shuffle in-place each pass
   // to avoid per-iteration allocation.
@@ -773,8 +930,12 @@ export function localSearchOptimize(
   while (iterations < maxIter) {
     if (Date.now() - startTime > config.maxSolverTimeMs) break;
 
-    // Linear temperature decay: goes from T0 down to 0
-    const temperature = T0 * (1 - iterations / maxIter);
+    // Geometric temperature decay with reheating
+    temperature *= ALPHA;
+    if (itersSinceImprovement >= REHEAT_THRESHOLD && temperature < 1) {
+      temperature = T0 / 3;
+      itersSinceImprovement = 0;
+    }
 
     // Shuffle in-place (Fisher-Yates) — reuses the pre-allocated array
     for (let k = idxOrder.length - 1; k > 0; k--) {
@@ -783,6 +944,85 @@ export function localSearchOptimize(
     }
 
     let accepted = false;
+
+    // ── Insert moves: try to fill unfilled slots ──
+    // With 20% probability per iteration (when unfilled slots exist),
+    // attempt to place an eligible participant into an unfilled slot.
+    if (remainingUnfilled.length > 0 && Math.random() < 0.2) {
+      // Pick a random unfilled slot
+      const ufIdx = Math.floor(Math.random() * remainingUnfilled.length);
+      const uf = remainingUnfilled[ufIdx];
+      const ufTask = taskMap.get(uf.taskId);
+      if (ufTask) {
+        const ufSlot = ufTask.slots.find(s => s.slotId === uf.slotId);
+        if (ufSlot) {
+          // Shuffle participant order for this attempt
+          const pOrder = [...participants];
+          for (let k = pOrder.length - 1; k > 0; k--) {
+            const m = Math.floor(Math.random() * (k + 1));
+            [pOrder[k], pOrder[m]] = [pOrder[m], pOrder[k]];
+          }
+          for (const p of pOrder) {
+            const pAssigns = byParticipant.get(p.id) || [];
+            if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC)) continue;
+            // Also check HC-7: no duplicate participant in the same task
+            const taskAssigns = byTask.get(uf.taskId) || [];
+            if (taskAssigns.some(a => a.participantId === p.id)) continue;
+
+            // Create new assignment and score
+            const newA: Assignment = {
+              id: nextAssignmentId(),
+              taskId: uf.taskId,
+              slotId: uf.slotId,
+              participantId: p.id,
+              status: AssignmentStatus.Scheduled,
+              updatedAt: new Date(),
+            };
+            // Temporarily add to current
+            current.push(newA);
+            addToAssignmentMap(byParticipant, newA);
+            const taskList = byTask.get(uf.taskId);
+            if (taskList) taskList.push(newA);
+            else byTask.set(uf.taskId, [newA]);
+
+            const score = computeScheduleScore(tasks, participants, current, config, scoreCtx);
+            // Insert moves get a large bonus per filled slot
+            const insertBonus = UNFILLED_SLOT_PENALTY;
+            const effectiveScore = score.compositeScore + insertBonus;
+
+            if (effectiveScore > currentComposite) {
+              // Accept insert — rebuild incremental scorer to include new assignment
+              currentComposite = effectiveScore;
+              // Update position map for the new assignment
+              const pList = byParticipant.get(p.id)!;
+              assignmentPos.set(newA.id, { pid: p.id, idx: pList.length - 1 });
+              // Update idxOrder to include the new index
+              idxOrder.push(current.length - 1);
+              // Remove from unfilled
+              remainingUnfilled.splice(ufIdx, 1);
+              filledSlots.push(uf.slotId);
+              accepted = true;
+
+              // Track global best
+              if (effectiveScore > bestScore.compositeScore) {
+                best = current.map(a => ({ ...a }));
+                bestScore = { ...score, compositeScore: effectiveScore };
+              }
+            } else {
+              // Undo insert
+              current.pop();
+              const pAssignList = byParticipant.get(p.id);
+              if (pAssignList) pAssignList.pop();
+              const tList = byTask.get(uf.taskId);
+              if (tList) tList.pop();
+            }
+            break; // Only try one candidate per iteration
+          }
+        }
+      }
+      iterations++;
+      if (accepted) continue;
+    }
 
     // Try swapping each pair of assignments
     for (let ii = 0; ii < idxOrder.length && !accepted; ii++) {
@@ -841,21 +1081,24 @@ export function localSearchOptimize(
           continue;
         }
 
-        // 4. Score the current (in-place mutated) state
-        const score = computeScheduleScore(tasks, participants, current, config, scoreCtx);
-        const delta = score.compositeScore - currentScore.compositeScore;
+        // 4. Incremental score: only recompute for the two swapped participants
+        //    Save state for undo
+        const savedA = incScorer.saveParticipant(oldPidJ)!; // ai now has oldPidJ
+        const savedB = incScorer.saveParticipant(oldPidI)!; // aj now has oldPidI
+        const newComposite = incScorer.recomputeForSwap(oldPidJ, oldPidI);
+        const delta = newComposite - currentComposite;
 
         // Accept if strictly better, or probabilistically if worse (SA)
         if (delta > 0 || (temperature > 0.01 && Math.random() < Math.exp(delta / temperature))) {
           ai.updatedAt = new Date();
           aj.updatedAt = new Date();
-          currentScore = score;
+          currentComposite = newComposite;
           accepted = true;
 
           // Track global best (snapshot since current is mutated in-place)
-          if (score.compositeScore > bestScore.compositeScore) {
+          if (newComposite > bestScore.compositeScore) {
             best = current.map(a => ({ ...a }));
-            bestScore = score;
+            bestScore = { ...bestScore, compositeScore: newComposite };
           }
         } else {
           // Undo in-place swap
@@ -865,18 +1108,27 @@ export function localSearchOptimize(
           listPidJ[posJ] = aj;
           assignmentPos.set(ai.id, { pid: oldPidI, idx: posI });
           assignmentPos.set(aj.id, { pid: oldPidJ, idx: posJ });
+          // Restore incremental scorer state
+          incScorer.restoreParticipant(oldPidJ, savedA);
+          incScorer.restoreParticipant(oldPidI, savedB);
+          incScorer.finalizeUndo();
         }
       }
     }
 
+    // Track stagnation for reheating
+    if (accepted) {
+      itersSinceImprovement = 0;
+    } else {
+      itersSinceImprovement++;
+    }
+
     // If nothing was accepted in this full pass AND temperature has decayed
-    // significantly, the search has converged — stop.  At higher temperatures
-    // we keep exploring: different shuffle orders surface different feasible
-    // swaps, and SA acceptance of worse moves can escape local optima.
-    if (!accepted && temperature < 1) break;
+    // significantly AND reheating can't help, the search has converged.
+    if (!accepted && temperature < 0.5 && itersSinceImprovement > REHEAT_THRESHOLD) break;
   }
 
-  return best;
+  return { assignments: best, filledSlots };
 }
 
 // ─── Main Optimize Function ──────────────────────────────────────────────────
@@ -899,23 +1151,30 @@ export function optimize(
   config: SchedulerConfig,
   lockedAssignments: Assignment[] = [],
   disabledHC?: Set<string>,
+  taskOrderJitter: number = 0,
 ): OptimizationResult {
   const startTime = Date.now();
 
   // Phase 1: Greedy construction
-  const greedy = greedyAssign(tasks, participants, lockedAssignments, disabledHC);
+  const greedy = greedyAssign(tasks, participants, lockedAssignments, disabledHC, taskOrderJitter);
 
-  // Phase 2: Local search improvement
-  const improved = localSearchOptimize(
+  // Phase 2: Local search improvement (also tries to fill unfilled slots)
+  const lsResult = localSearchOptimize(
     tasks,
     participants,
     greedy.assignments,
     config,
     disabledHC,
+    greedy.unfilledSlots,
+  );
+
+  // Remove slots that SA managed to fill
+  const remainingUnfilled = greedy.unfilledSlots.filter(
+    uf => !lsResult.filledSlots.includes(uf.slotId),
   );
 
   // Validate final result
-  const validation = validateHardConstraints(tasks, participants, improved, disabledHC);
+  const validation = validateHardConstraints(tasks, participants, lsResult.assignments, disabledHC);
 
   // Build capacities for final scoring
   let schedStart = tasks[0]?.timeBlock.start ?? new Date();
@@ -930,13 +1189,13 @@ export function optimize(
     pMap: new Map(participants.map(p => [p.id, p])),
     capacities: finalCapacities,
   };
-  const score = computeScheduleScore(tasks, participants, improved, config, finalCtx);
+  const score = computeScheduleScore(tasks, participants, lsResult.assignments, config, finalCtx);
 
   return {
-    assignments: improved,
+    assignments: lsResult.assignments,
     score,
-    feasible: validation.valid && greedy.unfilledSlots.length === 0,
-    unfilledSlots: greedy.unfilledSlots,
+    feasible: validation.valid && remainingUnfilled.length === 0,
+    unfilledSlots: remainingUnfilled,
     iterations: 0,
     durationMs: Date.now() - startTime,
   };
@@ -988,9 +1247,9 @@ function isBetterResult(candidate: OptimizationResult, current: OptimizationResu
 }
 
 /**
- * Run the optimizer multiple times with shuffled participant order,
- * keeping the best result. This introduces diversity in the greedy
- * construction without changing the core algorithm.
+ * Run the optimizer multiple times with shuffled participant order and
+ * task-order jitter, keeping the best result. This introduces diversity
+ * in both participant ordering and task scheduling priority.
  *
  * @param attempts Number of optimization attempts (default: 2000)
  * @param onProgress Optional callback fired after each attempt
@@ -1015,7 +1274,9 @@ export function optimizeMultiAttempt(
       ? [...participants]
       : shuffle([...participants]);
 
-    const result = optimize(tasks, shuffledParticipants, config, lockedAssignments, disabledHC);
+    // Task-order jitter: 0 for first attempt, 0.3 for subsequent
+    const jitter = i === 0 ? 0 : 0.3;
+    const result = optimize(tasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter);
 
     const improved = best === null || isBetterResult(result, best);
     if (improved) {
@@ -1094,7 +1355,9 @@ export function optimizeMultiAttemptAsync(
           ? [...participants]
           : shuffle([...participants]);
 
-        const result = optimize(tasks, shuffledParticipants, config, lockedAssignments, disabledHC);
+        // Task-order jitter: 0 for first attempt, 0.3 for subsequent
+        const jitter = i === 0 ? 0 : 0.3;
+        const result = optimize(tasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter);
 
         const improved = best === null || isBetterResult(result, best);
         if (improved) {

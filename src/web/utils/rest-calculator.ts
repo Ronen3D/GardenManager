@@ -149,7 +149,7 @@ export function computeParticipantRest(
  * Internal: compute rest profile from pre-filtered participant assignments.
  * Avoids re-building the task map and re-scanning all assignments.
  */
-function computeRestFromAssignments(
+export function computeRestFromAssignments(
   participantId: string,
   pAssignments: Assignment[],
   taskMap: Map<string, Task>,

@@ -268,7 +268,7 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   l0FairnessWeight: 40,
   seniorFairnessWeight: 6,
 
-  maxIterations: 10000,
+  maxIterations: 50000,
   maxSolverTimeMs: 30000,
   seniorHamamaPenalty: 10000,
   dailyBalanceWeight: 90,

@@ -30,6 +30,8 @@
   --card-hover-shadow: rgba(0,0,0,0.2);
   --rest-muted: #95a5a6;
   --dotted-border: rgba(255,255,255,0.25);
+  --bg-row: #252538;
+  --bg-main: #181825;
 }
 
 [data-theme="light"] {
@@ -60,6 +62,8 @@
   --card-hover-shadow: rgba(0,0,0,0.08);
   --rest-muted: #7f8c8d;
   --dotted-border: rgba(0,0,0,0.2);
+  --bg-row: #f0f2f8;
+  --bg-main: #e9ecf3;
 }
 
 body {
@@ -68,27 +72,58 @@ body {
   color: var(--text);
   line-height: 1.6;
   min-height: 100vh;
-  transition: background-color 0.35s ease, color 0.35s ease;
 }
 
-/* Theme crossfade transitions for key elements */
-#app,
-header,
-.score-card,
-.template-card,
-.optim-card,
-.tab-nav,
-.tab-btn,
-.weekly-dashboard,
-.assignment-card,
-.participant-sidebar,
-.algo-section,
-.preflight-panel,
-.btn-primary,
-.table,
-.table thead th,
-.table tbody td {
-  transition: background-color 0.35s ease, color 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+/* ─── Premium theme crossfade ─────────────────────────── */
+/* Universal colour transition — every element participates so
+   the entire UI shifts in one synchronised wave.             */
+*,
+*::before,
+*::after {
+  transition:
+    background-color 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    color             0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color      0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow        0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    fill              0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    stroke            0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Elements that already define their own transitions keep
+   colour props appended via the longhand below so nothing
+   is accidentally overridden (e.g. sidebar width, modal
+   opacity).  The wildcard rule above covers everything else. */
+
+/* View Transitions API crossfade (used when available) */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: theme-morph 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  animation-name: theme-fade-out;
+}
+::view-transition-new(root) {
+  animation-name: theme-fade-in;
+}
+@keyframes theme-fade-out {
+  from { opacity: 1; filter: brightness(1); }
+  to   { opacity: 0; filter: brightness(1.15); }
+}
+@keyframes theme-fade-in {
+  from { opacity: 0; filter: brightness(0.85); }
+  to   { opacity: 1; filter: brightness(1); }
+}
+
+/* Respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+  }
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.01ms !important;
+  }
 }
 
 #app {
@@ -2899,6 +2934,19 @@ tr.now-row-animate > td.time-cell {
   color: #6c3483;
 }
 
+/* ─── Light-mode overrides for Algorithm Settings tab ─── */
+[data-theme="light"] .algo-toggle-warning,
+[data-theme="light"] .algo-section-desc strong {
+  color: #b8860b;
+}
+[data-theme="light"] .preset-dirty-badge {
+  color: #96700a;
+  background: rgba(180, 134, 11, 0.12);
+}
+[data-theme="light"] .preset-validation-error {
+  color: #c0392b;
+}
+
 /* ─── Algorithm Settings Tab ──────────────────────────────────────────── */
 
 .algo-section {
@@ -4086,7 +4134,14 @@ tr.now-row-animate > td.time-cell {
 
 /* ─── Collapsible Sidebar ────────────────────────────── */
 .participant-sidebar {
-  transition: min-width 0.3s ease, max-width 0.3s ease, padding 0.3s ease;
+  transition:
+    min-width 0.3s ease,
+    max-width 0.3s ease,
+    padding   0.3s ease,
+    background-color 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    color            0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color     0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow       0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .sidebar-collapsed {
