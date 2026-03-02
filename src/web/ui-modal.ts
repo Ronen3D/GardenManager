@@ -314,7 +314,47 @@ export function wireCustomSelect(
     // Close all other open selects first
     document.querySelectorAll('.gm-select.open').forEach(el => el.classList.remove('open'));
     if (!wasOpen) {
+      // Measure trigger BEFORE opening (always accurate, no scroll offset issues)
+      const triggerRect = trigger.getBoundingClientRect();
+      // Reset any inline styles from a previous open cycle
+      dropdown.style.position = '';
+      dropdown.style.top = '';
+      dropdown.style.left = '';
+      dropdown.style.right = '';
+      dropdown.style.bottom = '';
+      dropdown.style.maxHeight = '';
+      dropdown.style.insetInlineStart = '';
+      dropdown.style.insetInlineEnd = '';
+      // Open so we can measure the dropdown's natural rendered size
       wrapper.classList.add('open');
+      const dropW = dropdown.offsetWidth;
+      const dropH = dropdown.offsetHeight;
+      const vpW = window.innerWidth;
+      const vpH = window.innerHeight;
+      const gap = 4;
+      // Vertical: prefer opening downward; flip up if clipped; clamp height as last resort
+      const spaceBelow = vpH - triggerRect.bottom - gap;
+      const spaceAbove = triggerRect.top - gap;
+      let top: number;
+      if (dropH <= spaceBelow) {
+        top = triggerRect.bottom + gap;
+      } else if (dropH <= spaceAbove) {
+        top = triggerRect.top - dropH - gap;
+      } else {
+        // Neither direction fits fully — open downward and cap the height
+        top = triggerRect.bottom + gap;
+        dropdown.style.maxHeight = `${spaceBelow}px`;
+      }
+      // Horizontal: align to trigger left edge, then clamp inside viewport
+      let left = triggerRect.left;
+      if (left + dropW > vpW) left = vpW - dropW - 4;
+      if (left < 4) left = 4;
+      // fixed positioning so parent overflow/scroll can never clip the dropdown
+      dropdown.style.position = 'fixed';
+      dropdown.style.top = `${top}px`;
+      dropdown.style.left = `${left}px`;
+      dropdown.style.insetInlineStart = 'unset';
+      dropdown.style.insetInlineEnd = 'unset';
       if (searchInput) { searchInput.value = ''; searchInput.focus(); filterOptions(''); }
     }
   });
