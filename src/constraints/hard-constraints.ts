@@ -209,55 +209,32 @@ export function checkNoDoubleBooking(
 
   if (allWithTasks.length < 2) return violations;
 
-  // Sort by start time for O(n log n) sweep-line overlap detection
-  allWithTasks.sort((a, b) => {
-    const tA = taskMap.get(a.taskId)!;
-    const tB = taskMap.get(b.taskId)!;
-    return tA.timeBlock.start.getTime() - tB.timeBlock.start.getTime();
-  });
+  // Simple zero-allocation nested loop checking for overlaps
+  for (let i = 0; i < allWithTasks.length; i++) {
+    const taskA = taskMap.get(allWithTasks[i].taskId)!;
+    const startA = taskA.timeBlock.start.getTime();
+    const endA = taskA.timeBlock.end.getTime();
 
-  // Build prefix-max of end times for correct backward-walk early termination.
-  // prefixMaxEnd[k] = max end-time among tasks 0..k. If prefixMaxEnd[j] <= startMs
-  // of task i, no task in 0..j can overlap i, so we can safely stop.
-  const prefixMaxEnd: number[] = new Array(allWithTasks.length);
-  prefixMaxEnd[0] = taskMap.get(allWithTasks[0].taskId)!.timeBlock.end.getTime();
-  for (let k = 1; k < allWithTasks.length; k++) {
-    const kEnd = taskMap.get(allWithTasks[k].taskId)!.timeBlock.end.getTime();
-    prefixMaxEnd[k] = kEnd > prefixMaxEnd[k - 1] ? kEnd : prefixMaxEnd[k - 1];
-  }
+    for (let j = i + 1; j < allWithTasks.length; j++) {
+      const taskB = taskMap.get(allWithTasks[j].taskId)!;
+      const startB = taskB.timeBlock.start.getTime();
+      const endB = taskB.timeBlock.end.getTime();
 
-  // Sweep-line: track the maximum end time seen so far
-  let maxEndMs = prefixMaxEnd[0];
-
-  for (let i = 1; i < allWithTasks.length; i++) {
-    const task = taskMap.get(allWithTasks[i].taskId)!;
-    const startMs = task.timeBlock.start.getTime();
-    const endMs = task.timeBlock.end.getTime();
-
-    if (startMs < maxEndMs) {
-      // Overlap detected — find the previous task(s) that overlap
-      // Walk backwards to report all overlapping pairs with this task
-      for (let j = i - 1; j >= 0; j--) {
-        // Safe early termination: if the max end of all tasks 0..j is <= startMs,
-        // none of them can overlap task i.
-        if (prefixMaxEnd[j] <= startMs) break;
-        const prevTask = taskMap.get(allWithTasks[j].taskId)!;
-        if (blocksOverlap(prevTask.timeBlock, task.timeBlock)) {
-          violations.push(
-            violation(
-              'DOUBLE_BOOKING',
-              `משתתף ${participantId} משובץ בכפל: "${prevTask.name}" ו-"${task.name}" חופפים`,
-              prevTask.id,
-              undefined,
-              participantId,
-            ),
-          );
-        }
+      // Check if one task starts before another ends and ends after it starts
+      if (startA < endB && endA > startB) {
+        violations.push(
+          violation(
+            'DOUBLE_BOOKING',
+            `משתתף ${participantId} משובץ בכפל: "${taskA.name}" ו-"${taskB.name}" חופפים`,
+            taskA.id,
+            undefined,
+            participantId,
+          ),
+        );
       }
     }
-
-    if (endMs > maxEndMs) maxEndMs = endMs;
   }
+
   return violations;
 }
 

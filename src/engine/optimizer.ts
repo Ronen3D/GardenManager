@@ -364,6 +364,8 @@ export function greedyAssign(
         // a current assignment (typically HC-5 double-booking). If we can
         // reassign their blocking assignment to someone else, we free them.
         let backtrackSuccess = false;
+        let swapPlan: { p: any, blockingAssign: Assignment, blockingTask: any, replacement: any } | null = null;
+
         for (const p of participants) {
           // Quick filter: skip if participant can't possibly fill this slot
           // (wrong level, missing cert, unavailable)
@@ -379,7 +381,8 @@ export function greedyAssign(
 
           // Find which of p's current assignments blocks them from this slot
           // (must overlap in time — HC-5 conflict)
-          for (const blockingAssign of pAssigns) {
+          const pAssignsCopy = [...pAssigns];
+          for (const blockingAssign of pAssignsCopy) {
             if (blockingAssign.status === AssignmentStatus.Locked ||
                 blockingAssign.status === AssignmentStatus.Manual ||
                 blockingAssign.status === AssignmentStatus.Frozen) continue;
@@ -407,71 +410,77 @@ export function greedyAssign(
               const pAssignsWithout = pAssigns.filter(a => a.id !== blockingAssign.id);
               if (!isEligibleForSlot(p, task, slot, pAssignsWithout, taskMap, disabledHC)) continue;
 
-              // ── Execute backtrack swap ──
-              // 1. Remove blocking assignment from p
-              const blockIdx = assignments.indexOf(blockingAssign);
-              if (blockIdx === -1) continue;
-              assignments.splice(blockIdx, 1);
-              const pList = assignmentsByParticipant.get(p.id);
-              if (pList) {
-                const pi = pList.indexOf(blockingAssign);
-                if (pi !== -1) pList.splice(pi, 1);
-              }
-              // Update workload for p (remove blocking task load)
-              const blockEff = computeTaskEffectiveHours(blockingTask);
-              const blockDailyEff = blockingTask.isLight ? Math.max(1, blockEff) : blockEff;
-              if (!blockingTask.isLight) {
-                workload.set(p.id, (workload.get(p.id) || 0) - blockEff);
-              }
-              const blockDk = dateKey(blockingTask.timeBlock.start);
-              const pDailyMap = dailyWorkload.get(p.id);
-              if (pDailyMap) pDailyMap.set(blockDk, (pDailyMap.get(blockDk) || 0) - blockDailyEff);
-
-              // 2. Assign replacement to the blocking slot
-              const replacementAssign: Assignment = {
-                id: nextAssignmentId(),
-                taskId: blockingAssign.taskId,
-                slotId: blockingAssign.slotId,
-                participantId: replacement.id,
-                status: AssignmentStatus.Scheduled,
-                updatedAt: new Date(),
-              };
-              assignments.push(replacementAssign);
-              addToAssignmentMap(assignmentsByParticipant, replacementAssign);
-              if (!blockingTask.isLight) {
-                workload.set(replacement.id, (workload.get(replacement.id) || 0) + blockEff);
-              }
-              let rDaily = dailyWorkload.get(replacement.id);
-              if (!rDaily) { rDaily = new Map(); dailyWorkload.set(replacement.id, rDaily); }
-              rDaily.set(blockDk, (rDaily.get(blockDk) || 0) + blockDailyEff);
-
-              // 3. Assign p to the target slot
-              const targetAssign: Assignment = {
-                id: nextAssignmentId(),
-                taskId: task.id,
-                slotId: slot.slotId,
-                participantId: p.id,
-                status: AssignmentStatus.Scheduled,
-                updatedAt: new Date(),
-              };
-              assignments.push(targetAssign);
-              addToAssignmentMap(assignmentsByParticipant, targetAssign);
-              const targetEff = computeTaskEffectiveHours(task);
-              const targetDailyEff = task.isLight ? Math.max(1, targetEff) : targetEff;
-              if (!task.isLight) {
-                workload.set(p.id, (workload.get(p.id) || 0) + targetEff);
-              }
-              const targetDk = dateKey(task.timeBlock.start);
-              let pDailyTarget = dailyWorkload.get(p.id);
-              if (!pDailyTarget) { pDailyTarget = new Map(); dailyWorkload.set(p.id, pDailyTarget); }
-              pDailyTarget.set(targetDk, (pDailyTarget.get(targetDk) || 0) + targetDailyEff);
-
-              backtrackSuccess = true;
+              swapPlan = { p, blockingAssign, blockingTask, replacement };
               break;
             }
-            if (backtrackSuccess) break;
+            if (swapPlan) break;
           }
-          if (backtrackSuccess) break;
+          if (swapPlan) break;
+        }
+
+        if (swapPlan) {
+          const { p, blockingAssign, blockingTask, replacement } = swapPlan;
+          // ── Execute backtrack swap ──
+          // 1. Remove blocking assignment from p
+          const blockIdx = assignments.indexOf(blockingAssign);
+          if (blockIdx !== -1) {
+            assignments.splice(blockIdx, 1);
+            const pList = assignmentsByParticipant.get(p.id);
+            if (pList) {
+              const pi = pList.indexOf(blockingAssign);
+              if (pi !== -1) pList.splice(pi, 1);
+            }
+            // Update workload for p (remove blocking task load)
+            const blockEff = computeTaskEffectiveHours(blockingTask);
+            const blockDailyEff = blockingTask.isLight ? Math.max(1, blockEff) : blockEff;
+            if (!blockingTask.isLight) {
+              workload.set(p.id, (workload.get(p.id) || 0) - blockEff);
+            }
+            const blockDk = dateKey(blockingTask.timeBlock.start);
+            const pDailyMap = dailyWorkload.get(p.id);
+            if (pDailyMap) pDailyMap.set(blockDk, (pDailyMap.get(blockDk) || 0) - blockDailyEff);
+
+            // 2. Assign replacement to the blocking slot
+            const replacementAssign: Assignment = {
+              id: nextAssignmentId(),
+              taskId: blockingAssign.taskId,
+              slotId: blockingAssign.slotId,
+              participantId: replacement.id,
+              status: AssignmentStatus.Scheduled,
+              updatedAt: new Date(),
+            };
+            assignments.push(replacementAssign);
+            addToAssignmentMap(assignmentsByParticipant, replacementAssign);
+            if (!blockingTask.isLight) {
+              workload.set(replacement.id, (workload.get(replacement.id) || 0) + blockEff);
+            }
+            let rDaily = dailyWorkload.get(replacement.id);
+            if (!rDaily) { rDaily = new Map(); dailyWorkload.set(replacement.id, rDaily); }
+            rDaily.set(blockDk, (rDaily.get(blockDk) || 0) + blockDailyEff);
+
+            // 3. Assign p to the target slot
+            const targetAssign: Assignment = {
+              id: nextAssignmentId(),
+              taskId: task.id,
+              slotId: slot.slotId,
+              participantId: p.id,
+              status: AssignmentStatus.Scheduled,
+              updatedAt: new Date(),
+            };
+            assignments.push(targetAssign);
+            addToAssignmentMap(assignmentsByParticipant, targetAssign);
+            const targetEff = computeTaskEffectiveHours(task);
+            const targetDailyEff = task.isLight ? Math.max(1, targetEff) : targetEff;
+            if (!task.isLight) {
+              workload.set(p.id, (workload.get(p.id) || 0) + targetEff);
+            }
+            const targetDk = dateKey(task.timeBlock.start);
+            let pDailyTarget = dailyWorkload.get(p.id);
+            if (!pDailyTarget) { pDailyTarget = new Map(); dailyWorkload.set(p.id, pDailyTarget); }
+            pDailyTarget.set(targetDk, (pDailyTarget.get(targetDk) || 0) + targetDailyEff);
+
+            backtrackSuccess = true;
+          }
         }
 
         if (!backtrackSuccess) {
@@ -1027,9 +1036,15 @@ export function localSearchOptimize(
               // Undo insert
               current.pop();
               const pAssignList = byParticipant.get(p.id);
-              if (pAssignList) pAssignList.pop();
+              if (pAssignList) {
+                pAssignList.pop();
+                if (pAssignList.length === 0) byParticipant.delete(p.id);
+              }
               const tList = byTask.get(uf.taskId);
-              if (tList) tList.pop();
+              if (tList) {
+                tList.pop();
+                if (tList.length === 0) byTask.delete(uf.taskId);
+              }
             }
             break; // Only try one candidate per iteration
           }
@@ -1357,14 +1372,15 @@ export function optimizeMultiAttemptAsync(
   onProgress?: MultiAttemptProgressCallback,
   disabledHC?: Set<string>,
 ): Promise<OptimizationResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let best: OptimizationResult | null = null;
     let i = 0;
     const totalStart = Date.now();
     const diagRows: Array<{ '#': number; score: string; unfilled: number; stdDev: string; penalty: string; improved: string }> = [];
 
     function runBatch(): void {
-      const batchEnd = Math.min(i + ASYNC_BATCH_SIZE, attempts);
+      try {
+        const batchEnd = Math.min(i + ASYNC_BATCH_SIZE, attempts);
 
       while (i < batchEnd) {
         // Shuffle participant order (first attempt uses original order)
@@ -1421,6 +1437,9 @@ export function optimizeMultiAttemptAsync(
           console.table(diagRows);
         }
         resolve(best!);
+      }
+      } catch (err) {
+        reject(err);
       }
     }
 

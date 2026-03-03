@@ -292,7 +292,7 @@ export class SchedulingEngine {
    * Get the scheduling window end date.
    */
   getWeekEnd(): Date {
-    return this.weekEnd;
+    return new Date(this.weekEnd.getTime());
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -376,12 +376,20 @@ export class SchedulingEngine {
     }
 
     // Perform the swap
+    const previousId = assignment.participantId;
+    const previousStatus = assignment.status;
+
     assignment.participantId = request.newParticipantId;
     assignment.status = AssignmentStatus.Manual;
     assignment.updatedAt = new Date();
 
     // Re-validate
     const validation = this.validate();
+
+    if (!validation.valid) {
+      assignment.participantId = previousId;
+      assignment.status = previousStatus;
+    }
 
     // Update score
     this.currentSchedule.score = computeScheduleScore(
