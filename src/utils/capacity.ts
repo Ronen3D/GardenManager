@@ -2,8 +2,11 @@
  * Participant Capacity Calculator
  *
  * Computes per-participant available hours within a schedule window,
- * accounting for both AvailabilityWindow ranges and DateUnavailability holes.
- * Used to scale workload targets proportionally to actual availability.
+ * based on the participant's AvailabilityWindow ranges.
+ *
+ * DateUnavailability rules are expected to be pre-materialized into the
+ * availability windows before reaching this module (see config-store's
+ * computeAvailability()). This avoids double-subtraction.
  */
 
 import { Participant, ParticipantCapacity } from '../models/types';
@@ -35,32 +38,12 @@ function computeDayAvailableHours(day: Date, participant: Participant): number {
 
   if (availableHours <= 0) return 0;
 
-  // 2. Subtract date-unavailability holes
-  const dk = dateKey(day);
-  const dayOfWeek = day.getDay(); // 0=Sun … 6=Sat
-
-  for (const rule of participant.dateUnavailability) {
-    // Check if rule applies to this day
-    let applies = false;
-    if (rule.specificDate && rule.specificDate === dk) {
-      applies = true;
-    } else if (rule.dayOfWeek !== undefined && rule.dayOfWeek === dayOfWeek && !rule.specificDate) {
-      applies = true;
-    }
-
-    if (!applies) continue;
-
-    if (rule.allDay) {
-      // Entire day unavailable
-      return 0;
-    }
-
-    // Partial-day unavailability: subtract startHour..endHour
-    const unavailHours = rule.endHour - rule.startHour;
-    if (unavailHours > 0) {
-      availableHours = Math.max(0, availableHours - unavailHours);
-    }
-  }
+  // NOTE: DateUnavailability rules are NOT re-applied here.
+  // In the web app, participant.availability already has unavailability
+  // holes carved out by config-store's computeAvailability(). Re-subtracting
+  // dateUnavailability would double-count, underestimating capacity.
+  // Library consumers constructing Participant objects manually should
+  // pre-process dateUnavailability into their availability windows.
 
   return availableHours;
 }

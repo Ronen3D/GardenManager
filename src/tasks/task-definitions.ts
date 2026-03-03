@@ -351,10 +351,16 @@ export function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוג�
  *  - 3 Karov blocks (05:00 cycle)
  *  - 3 Karovit blocks (05:00 cycle, 4 people each)
  *  - 2 Aruga (morning 05:00-06:30, evening 17:00-18:30)
+ *
+ * Counter behaviour: resets slot/task counters when called standalone.
+ * When called from `generateWeeklyTasks`, pass `resetCounters: false`
+ * so that IDs remain unique across days.
  */
-export function generateDailyTasks(baseDate: Date): Task[] {
-  resetSlotCounter();
-  resetTaskCounter();
+export function generateDailyTasks(baseDate: Date, resetCounters: boolean = true): Task[] {
+  if (resetCounters) {
+    resetSlotCounter();
+    resetTaskCounter();
+  }
   const tasks: Task[] = [];
   const d = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
 
@@ -435,7 +441,7 @@ export function generateWeeklyTasks(startDate: Date, numDays: number = 7): Task[
       startDate.getMonth(),
       startDate.getDate() + day,
     );
-    const dayTasks = generateDailyTasks(dayDate);
+    const dayTasks = generateDailyTasks(dayDate, false);
 
     // Prefix task names with day number for clarity
     for (const t of dayTasks) {

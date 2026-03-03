@@ -896,7 +896,7 @@ export function localSearchOptimize(
   let bestScore = currentScore;
 
   // Build incremental scorer for O(k) swap scoring
-  const incScorer = IncrementalScorer.build(tasks, participants, current, config, scoreCtx);
+  let incScorer = IncrementalScorer.build(tasks, participants, current, config, scoreCtx);
   let currentComposite = incScorer.compositeScore;
 
   const startTime = Date.now();
@@ -992,8 +992,7 @@ export function localSearchOptimize(
             const effectiveScore = score.compositeScore + insertBonus;
 
             if (effectiveScore > currentComposite) {
-              // Accept insert — rebuild incremental scorer to include new assignment
-              currentComposite = effectiveScore;
+              // Accept insert
               // Update position map for the new assignment
               const pList = byParticipant.get(p.id)!;
               assignmentPos.set(newA.id, { pid: p.id, idx: pList.length - 1 });
@@ -1004,10 +1003,25 @@ export function localSearchOptimize(
               filledSlots.push(uf.slotId);
               accepted = true;
 
+              // Rebuild incremental scorer — the insert changed the
+              // assignment set, so per-participant caches and running
+              // statistics must be recomputed to keep SA accurate.
+              incScorer = IncrementalScorer.build(tasks, participants, current, config, scoreCtx);
+              currentComposite = incScorer.compositeScore;
+
+              // Rebuild position map after scorer rebuild (scorer doesn't
+              // touch assignmentPos but indices may have shifted)
+              assignmentPos.clear();
+              for (const [pid, list] of byParticipant) {
+                for (let idx = 0; idx < list.length; idx++) {
+                  assignmentPos.set(list[idx].id, { pid, idx });
+                }
+              }
+
               // Track global best
-              if (effectiveScore > bestScore.compositeScore) {
+              if (currentComposite > bestScore.compositeScore) {
                 best = current.map(a => ({ ...a }));
-                bestScore = { ...score, compositeScore: effectiveScore };
+                bestScore = { ...score, compositeScore: currentComposite };
               }
             } else {
               // Undo insert
