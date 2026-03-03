@@ -158,27 +158,24 @@ export class SchedulingEngine {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Generate an optimized schedule from the current participants and tasks.
-   * This is the main entry point for schedule creation.
+   * Shared post-optimization logic: validates, collects violations,
+   * builds the Schedule object, and commits it to engine state.
+   * Eliminates duplication between generateSchedule / generateScheduleAsync.
    */
-  generateSchedule(): Schedule {
-    const tasks = this.getAllTasks();
-    const participants = this.getAllParticipants();
-
-    if (tasks.length === 0) {
-      throw new Error('לא נרשמו משימות. יש להוסיף משימות לפני יצירת שבצ\"ק.');
+  private _commitOptimizationResult(
+    tasks: Task[],
+    participants: Participant[],
+    result: OptimizationResult,
+  ): Schedule {
+    // Compute week end from latest task
+    let maxEnd = 0;
+    for (const t of tasks) {
+      const endMs = t.timeBlock.end.getTime();
+      if (endMs > maxEnd) maxEnd = endMs;
     }
-    if (participants.length === 0) {
-      throw new Error('לא נרשמו משתתפים. יש להוסיף משתתפים לפני יצירת שבצ\"ק.');
-    }
+    this.weekEnd = maxEnd > 0 ? new Date(maxEnd) : new Date();
 
-    const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC);
-    // Compute week end from tasks
-    const sortedByEnd = [...tasks].sort(
-      (a, b) => b.timeBlock.end.getTime() - a.timeBlock.end.getTime(),
-    );
-    this.weekEnd = sortedByEnd.length > 0 ? sortedByEnd[0].timeBlock.end : new Date();
-
+    // Collect all violations
     const hardValidation = validateHardConstraints(tasks, participants, result.assignments, this.disabledHC);
     const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.disabledSW);
 
@@ -218,6 +215,32 @@ export class SchedulingEngine {
   }
 
   /**
+   * Validate inputs shared by both sync and async generation paths.
+   * Throws with a Hebrew error message if tasks or participants are missing.
+   */
+  private _validateInputs(tasks: Task[], participants: Participant[]): void {
+    if (tasks.length === 0) {
+      throw new Error('לא נרשמו משימות. יש להוסיף משימות לפני יצירת שבצ\"ק.');
+    }
+    if (participants.length === 0) {
+      throw new Error('לא נרשמו משתתפים. יש להוסיף משתתפים לפני יצירת שבצ\"ק.');
+    }
+  }
+
+  /**
+   * Generate an optimized schedule from the current participants and tasks.
+   * This is the main entry point for schedule creation.
+   */
+  generateSchedule(): Schedule {
+    const tasks = this.getAllTasks();
+    const participants = this.getAllParticipants();
+    this._validateInputs(tasks, participants);
+
+    const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC);
+    return this._commitOptimizationResult(tasks, participants, result);
+  }
+
+  /**
    * Async multi-attempt schedule generation.
    * Runs `attempts` optimization passes with shuffled participant order,
    * yielding to the event loop between each so the UI can show progress.
@@ -232,13 +255,7 @@ export class SchedulingEngine {
   ): Promise<Schedule> {
     const tasks = this.getAllTasks();
     const participants = this.getAllParticipants();
-
-    if (tasks.length === 0) {
-      throw new Error('לא נרשמו משימות. יש להוסיף משימות לפני יצירת שבצ\"ק.');
-    }
-    if (participants.length === 0) {
-      throw new Error('לא נרשמו משתתפים. יש להוסיף משתתפים לפני יצירת שבצ\"ק.');
-    }
+    this._validateInputs(tasks, participants);
 
     const result = await optimizeMultiAttemptAsync(
       tasks,
@@ -250,47 +267,7 @@ export class SchedulingEngine {
       this.disabledHC,
     );
 
-    const sortedByEnd = [...tasks].sort(
-      (a, b) => b.timeBlock.end.getTime() - a.timeBlock.end.getTime(),
-    );
-    this.weekEnd = sortedByEnd.length > 0 ? sortedByEnd[0].timeBlock.end : new Date();
-
-    // Collect all violations
-    const hardValidation = validateHardConstraints(tasks, participants, result.assignments, this.disabledHC);
-    const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.disabledSW);
-
-    const allViolations: ConstraintViolation[] = [
-      ...hardValidation.violations,
-      ...softWarnings,
-    ];
-
-    for (const { taskId, slotId, reason } of result.unfilledSlots) {
-      const task = this.tasks.get(taskId);
-      const slot = task?.slots.find((s) => s.slotId === slotId);
-      allViolations.push({
-        severity: ViolationSeverity.Error,
-        code: 'INFEASIBLE_SLOT',
-        message: reason
-          ? `לא ניתן לשבץ: ${reason} (עמדה "${slot?.label ?? slotId}" במשימה "${task?.name ?? taskId}")`
-          : `שבצ"ק בלתי אפשרי: לא ניתן למלא עמדה "${slot?.label ?? slotId}" במשימה "${task?.name ?? taskId}". אין משתתפים זמינים.`,
-        taskId,
-        slotId,
-      });
-    }
-
-    const schedule: Schedule = {
-      id: `schedule-${Date.now()}`,
-      tasks,
-      participants,
-      assignments: result.assignments,
-      feasible: result.feasible,
-      score: result.score,
-      violations: allViolations,
-      generatedAt: new Date(),
-    };
-
-    this.currentSchedule = schedule;
-    return schedule;
+    return this._commitOptimizationResult(tasks, participants, result);
   }
 
   /**

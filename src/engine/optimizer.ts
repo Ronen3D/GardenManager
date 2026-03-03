@@ -510,25 +510,26 @@ export function greedyAssign(
     }
   }
 
-  // ─── Greedy summary log ─────────────────────────────────────────
-  const totalSlots = tasks.reduce((n, t) => n + t.slots.length, 0);
-  const filledCount = assignments.length - lockedAssignments.length;
-  const usedIds = new Set(assignments.map((a) => a.participantId));
-  const idleCount = participants.length - usedIds.size;
-  console.log(
-    `[Scheduler] Greedy done: ${filledCount}/${totalSlots} slots filled, ` +
-    `${unfilledSlots.length} unfilled, ${idleCount}/${participants.length} participants idle`,
-  );
-  if (unfilledSlots.length > 0) {
-    // Group unfilled by task for cleaner output
-    const byTask = new Map<string, number>();
-    for (const u of unfilledSlots) {
-      const t = taskMap.get(u.taskId);
-      const key = t ? t.name : u.taskId;
-      byTask.set(key, (byTask.get(key) || 0) + 1);
-    }
-    for (const [tName, count] of byTask) {
-      console.warn(`  ↳ ${tName}: ${count} unfilled slot(s)`);
+  // ─── Greedy summary log (gated by diagnostic flag) ──────────────
+  if (_diagnosticLogging) {
+    const totalSlots = tasks.reduce((n, t) => n + t.slots.length, 0);
+    const filledCount = assignments.length - lockedAssignments.length;
+    const usedIds = new Set(assignments.map((a) => a.participantId));
+    const idleCount = participants.length - usedIds.size;
+    console.log(
+      `[Scheduler] Greedy done: ${filledCount}/${totalSlots} slots filled, ` +
+      `${unfilledSlots.length} unfilled, ${idleCount}/${participants.length} participants idle`,
+    );
+    if (unfilledSlots.length > 0) {
+      const byTask = new Map<string, number>();
+      for (const u of unfilledSlots) {
+        const t = taskMap.get(u.taskId);
+        const key = t ? t.name : u.taskId;
+        byTask.set(key, (byTask.get(key) || 0) + 1);
+      }
+      for (const [tName, count] of byTask) {
+        console.warn(`  ↳ ${tName}: ${count} unfilled slot(s)`);
+      }
     }
   }
 
@@ -674,7 +675,7 @@ function assignSameGroupTask(
 
   // HC-4: No group could fill ALL slots. Cross-group fill is forbidden
   // (sameGroupRequired is a hard constraint). Report as infeasible.
-  if (bestFilledCount > 0) {
+  if (bestFilledCount > 0 && _diagnosticLogging) {
     console.warn(
       `[Scheduler] ${task.name}: no group could fill all ${slotsToFill.length} slots. ` +
       `Best group filled ${bestFilledCount}/${slotsToFill.length}. HC-4 forbids cross-group fill.`,
@@ -1309,13 +1310,15 @@ export function optimizeMultiAttempt(
   // Update total duration
   best!.durationMs = Date.now() - totalStart;
 
-  console.log(
-    `[Scheduler] Multi-attempt done: ${attempts} attempts in ${best!.durationMs}ms. ` +
-    `Best score: ${best!.score.compositeScore.toFixed(2)}, ` +
-    `unfilled: ${best!.unfilledSlots.length}, ` +
-    `restStdDev: ${best!.score.restStdDev.toFixed(2)}`,
-  );
-  console.table(diagRows);
+  if (_diagnosticLogging) {
+    console.log(
+      `[Scheduler] Multi-attempt done: ${attempts} attempts in ${best!.durationMs}ms. ` +
+      `Best score: ${best!.score.compositeScore.toFixed(2)}, ` +
+      `unfilled: ${best!.unfilledSlots.length}, ` +
+      `restStdDev: ${best!.score.restStdDev.toFixed(2)}`,
+    );
+    console.table(diagRows);
+  }
 
   return best!;
 }
@@ -1394,13 +1397,15 @@ export function optimizeMultiAttemptAsync(
         setTimeout(runBatch, 0);
       } else {
         best!.durationMs = Date.now() - totalStart;
-        console.log(
-          `[Scheduler] Multi-attempt async done: ${attempts} attempts in ${best!.durationMs}ms. ` +
-          `Best score: ${best!.score.compositeScore.toFixed(2)}, ` +
-          `unfilled: ${best!.unfilledSlots.length}, ` +
-          `restStdDev: ${best!.score.restStdDev.toFixed(2)}`,
-        );
-        console.table(diagRows);
+        if (_diagnosticLogging) {
+          console.log(
+            `[Scheduler] Multi-attempt async done: ${attempts} attempts in ${best!.durationMs}ms. ` +
+            `Best score: ${best!.score.compositeScore.toFixed(2)}, ` +
+            `unfilled: ${best!.unfilledSlots.length}, ` +
+            `restStdDev: ${best!.score.restStdDev.toFixed(2)}`,
+          );
+          console.table(diagRows);
+        }
         resolve(best!);
       }
     }

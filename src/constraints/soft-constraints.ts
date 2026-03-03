@@ -466,6 +466,8 @@ interface ParticipantScoreData {
 export class IncrementalScorer {
   private perParticipant: Map<string, ParticipantScoreData>;
   private participants: Participant[];
+  /** O(1) participant lookup — avoids O(n) find() in recomputeForSwap */
+  private pMap: Map<string, Participant>;
   private config: SchedulerConfig;
   private taskMap: Map<string, Task>;
   private assignmentsByParticipant: Map<string, Assignment[]>;
@@ -485,11 +487,17 @@ export class IncrementalScorer {
   private _globalAvgRest = 0;
   // Hamama penalty
   private _hamamaPenalty = 0;
+  /** Per-participant Hamama penalty for O(1) delta updates */
+  private _perParticipantHamamaPenalty: Map<string, number>;
   // Daily balance
   private _dailyPerParticipantStdDevSum = 0;
   private _participantCount = 0;
   // Global daily totals
   private globalDayTotals: Map<string, number>;
+
+  // Saved Hamama state for undo (set at start of recomputeForSwap)
+  private _savedHamamaTotal = 0;
+  private _savedHamamaEntries: [string, number][] = [];
 
   // Current composite score
   compositeScore = 0;
@@ -497,12 +505,14 @@ export class IncrementalScorer {
   private constructor() {
     this.perParticipant = new Map();
     this.participants = [];
+    this.pMap = new Map();
     this.config = {} as SchedulerConfig;
     this.taskMap = new Map();
     this.assignmentsByParticipant = new Map();
     this.capacities = new Map();
     this.dayList = [];
     this.globalDayTotals = new Map();
+    this._perParticipantHamamaPenalty = new Map();
   }
 
   /**
@@ -517,6 +527,7 @@ export class IncrementalScorer {
   ): IncrementalScorer {
     const scorer = new IncrementalScorer();
     scorer.participants = participants;
+    scorer.pMap = ctx.pMap;
     scorer.config = config;
     scorer.taskMap = ctx.taskMap;
     scorer.assignmentsByParticipant = ctx.assignmentsByParticipant ?? new Map();
@@ -554,10 +565,23 @@ export class IncrementalScorer {
       }
     }
 
-    // Compute Hamama penalty
-    scorer._hamamaPenalty = computeSeniorHamamaPenalty(
-      participants, assignments, tasks, config, ctx.pMap, ctx.taskMap,
-    );
+    // Compute per-participant Hamama penalty for O(1) delta updates
+    scorer._hamamaPenalty = 0;
+    for (const p of participants) {
+      if (p.level === Level.L0) continue;
+      let pPenalty = 0;
+      const pAs = scorer.assignmentsByParticipant.get(p.id) || [];
+      for (const a of pAs) {
+        const task = ctx.taskMap.get(a.taskId);
+        if (task?.type === TaskType.Hamama && p.level === Level.L4) {
+          pPenalty += config.seniorHamamaPenalty;
+        }
+      }
+      if (pPenalty > 0) {
+        scorer._perParticipantHamamaPenalty.set(p.id, pPenalty);
+        scorer._hamamaPenalty += pPenalty;
+      }
+    }
 
     // Compute rest statistics
     scorer.recomputeRestStats();
@@ -706,11 +730,12 @@ export class IncrementalScorer {
   /**
    * Recompute score after swapping participants pidA and pidB.
    * Only recomputes data for the two affected participants.
+   * Uses pMap for O(1) lookup (was O(n) find()).
    * Returns the new composite score.
    */
   recomputeForSwap(pidA: string, pidB: string): number {
-    const pA = this.participants.find(p => p.id === pidA);
-    const pB = this.participants.find(p => p.id === pidB);
+    const pA = this.pMap.get(pidA);
+    const pB = this.pMap.get(pidB);
     if (!pA || !pB) return this.compositeScore;
 
     // Remove old contributions
@@ -732,23 +757,43 @@ export class IncrementalScorer {
     // Recompute rest stats (global min might have changed)
     this.recomputeRestStats();
 
-    // Recompute Hamama penalty delta (only if swap involves Hamama tasks)
+    // Recompute Hamama penalty for only the two swapped participants
+    // using per-participant tracking for O(k) instead of O(P×A).
+    // Save state first so finalizeUndo() can revert on rejected swaps.
+    this._savedHamamaTotal = this._hamamaPenalty;
+    this._savedHamamaEntries = [
+      [pidA, this._perParticipantHamamaPenalty.get(pidA) || 0],
+      [pidB, this._perParticipantHamamaPenalty.get(pidB) || 0],
+    ];
+
     const aInvolvesHamama = aAssigns.some(a => this.taskMap.get(a.taskId)?.type === TaskType.Hamama);
     const bInvolvesHamama = bAssigns.some(a => this.taskMap.get(a.taskId)?.type === TaskType.Hamama);
     if (aInvolvesHamama || bInvolvesHamama) {
-      // Recompute Hamama penalty for just these two participants
-      this._hamamaPenalty = 0;
-      for (const [pid, data] of this.perParticipant) {
-        const p = this.participants.find(pp => pp.id === pid);
-        if (!p || p.level === Level.L0) continue;
+      // Remove old per-participant penalties
+      const oldPenaltyA = this._savedHamamaEntries[0][1];
+      const oldPenaltyB = this._savedHamamaEntries[1][1];
+      this._hamamaPenalty -= oldPenaltyA + oldPenaltyB;
+
+      // Compute new per-participant penalties
+      const computeHamamaPenalty = (pid: string): number => {
+        const p = this.pMap.get(pid);
+        if (!p || p.level === Level.L0) return 0;
+        let penalty = 0;
         const pAs = this.assignmentsByParticipant.get(pid) || [];
         for (const a of pAs) {
           const task = this.taskMap.get(a.taskId);
           if (task?.type === TaskType.Hamama && p.level === Level.L4) {
-            this._hamamaPenalty += this.config.seniorHamamaPenalty;
+            penalty += this.config.seniorHamamaPenalty;
           }
         }
-      }
+        return penalty;
+      };
+
+      const newPenaltyA = computeHamamaPenalty(pidA);
+      const newPenaltyB = computeHamamaPenalty(pidB);
+      this._perParticipantHamamaPenalty.set(pidA, newPenaltyA);
+      this._perParticipantHamamaPenalty.set(pidB, newPenaltyB);
+      this._hamamaPenalty += newPenaltyA + newPenaltyB;
     }
 
     this.compositeScore = this.deriveComposite();
@@ -768,6 +813,12 @@ export class IncrementalScorer {
    * After restoring both participants, call this to finalize the undo.
    */
   finalizeUndo(): void {
+    // Restore Hamama penalty state saved at the start of recomputeForSwap
+    this._hamamaPenalty = this._savedHamamaTotal;
+    for (const [pid, val] of this._savedHamamaEntries) {
+      if (val > 0) this._perParticipantHamamaPenalty.set(pid, val);
+      else this._perParticipantHamamaPenalty.delete(pid);
+    }
     this.recomputeRestStats();
     this.compositeScore = this.deriveComposite();
   }

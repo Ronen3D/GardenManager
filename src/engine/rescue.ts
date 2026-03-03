@@ -61,16 +61,28 @@ function computeDayLoadStdDev(
   participants: Participant[],
   assignments: Assignment[],
   taskMap: Map<string, Task>,
+  byParticipant?: Map<string, Assignment[]>,
 ): number {
+  // Build or reuse per-participant index — O(A) instead of O(P×A)
+  if (!byParticipant) {
+    byParticipant = new Map<string, Assignment[]>();
+    for (const a of assignments) {
+      const list = byParticipant.get(a.participantId);
+      if (list) list.push(a);
+      else byParticipant.set(a.participantId, [a]);
+    }
+  }
   const loads: number[] = [];
   for (const p of participants) {
     let hours = 0;
-    for (const a of assignments) {
-      if (a.participantId !== p.id) continue;
-      const task = taskMap.get(a.taskId);
-      if (!task) continue;
-      if (dateKey(task.timeBlock.start) !== dayKey) continue;
-      hours += computeTaskEffectiveHours(task);
+    const pAssignments = byParticipant.get(p.id);
+    if (pAssignments) {
+      for (const a of pAssignments) {
+        const task = taskMap.get(a.taskId);
+        if (!task) continue;
+        if (dateKey(task.timeBlock.start) !== dayKey) continue;
+        hours += computeTaskEffectiveHours(task);
+      }
     }
     loads.push(hours);
   }
@@ -89,15 +101,27 @@ function computeTotalLoadStdDev(
   participants: Participant[],
   assignments: Assignment[],
   taskMap: Map<string, Task>,
+  byParticipant?: Map<string, Assignment[]>,
 ): number {
+  // Build or reuse per-participant index — O(A) instead of O(P×A)
+  if (!byParticipant) {
+    byParticipant = new Map<string, Assignment[]>();
+    for (const a of assignments) {
+      const list = byParticipant.get(a.participantId);
+      if (list) list.push(a);
+      else byParticipant.set(a.participantId, [a]);
+    }
+  }
   const loads: number[] = [];
   for (const p of participants) {
     let hours = 0;
-    for (const a of assignments) {
-      if (a.participantId !== p.id) continue;
-      const task = taskMap.get(a.taskId);
-      if (!task) continue;
-      hours += computeTaskEffectiveHours(task);
+    const pAssignments = byParticipant.get(p.id);
+    if (pAssignments) {
+      for (const a of pAssignments) {
+        const task = taskMap.get(a.taskId);
+        if (!task) continue;
+        hours += computeTaskEffectiveHours(task);
+      }
     }
     loads.push(hours);
   }
@@ -119,19 +143,26 @@ function computeSwapImpact(
   baseDayStdDevs: Map<string, number>,
   baseWeeklyStdDev: number,
 ): { dailyLoadDelta: number; weeklyLoadDelta: number } {
-  // Apply swaps to a temporary assignment list
-  const tempAssignments = baseAssignments.map(a => {
-    const swap = swaps.find(s => s.assignmentId === a.id);
-    if (swap) {
-      return { ...a, participantId: swap.newParticipantId };
-    }
-    return a;
-  });
+  // Build swap lookup for O(1) instead of O(swaps) per assignment
+  const swapMap = new Map<string, string>();
+  for (const sw of swaps) swapMap.set(sw.assignmentId, sw.newParticipantId);
+
+  // Apply swaps to a temporary assignment list & build per-participant index
+  const tempByParticipant = new Map<string, Assignment[]>();
+  const tempAssignments: Assignment[] = [];
+  for (const a of baseAssignments) {
+    const newPid = swapMap.get(a.id);
+    const mapped = newPid ? { ...a, participantId: newPid } : a;
+    tempAssignments.push(mapped);
+    const list = tempByParticipant.get(mapped.participantId);
+    if (list) list.push(mapped);
+    else tempByParticipant.set(mapped.participantId, [mapped]);
+  }
 
   // Collect all days affected by the swaps
   const affectedDays = new Set<string>();
-  for (const sw of swaps) {
-    const assignment = baseAssignments.find(a => a.id === sw.assignmentId);
+  for (const [aId] of swapMap) {
+    const assignment = baseAssignments.find(a => a.id === aId);
     if (assignment) {
       const task = taskMap.get(assignment.taskId);
       if (task) affectedDays.add(dateKey(task.timeBlock.start));
@@ -147,11 +178,11 @@ function computeSwapImpact(
       // Cache for subsequent candidate evaluations at this depth
       baseDayStdDevs.set(day, baseDayStdDev);
     }
-    const newDayStdDev = computeDayLoadStdDev(day, participants, tempAssignments, taskMap);
+    const newDayStdDev = computeDayLoadStdDev(day, participants, tempAssignments, taskMap, tempByParticipant);
     totalDailyDelta += newDayStdDev - baseDayStdDev;
   }
 
-  const newWeeklyStdDev = computeTotalLoadStdDev(participants, tempAssignments, taskMap);
+  const newWeeklyStdDev = computeTotalLoadStdDev(participants, tempAssignments, taskMap, tempByParticipant);
 
   return {
     dailyLoadDelta: totalDailyDelta,

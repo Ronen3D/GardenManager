@@ -178,6 +178,35 @@ const result4 = validateHardConstraints(
 assert(result4.valid === false, 'Double-booking detected');
 assert(result4.violations.some((v) => v.code === 'DOUBLE_BOOKING'), 'Violation code = DOUBLE_BOOKING');
 
+// Test: HC-5 sweep-line regression — short task must not mask a long overlapping task
+// Counterexample: A(06-14), B(08-09), C(10-12). A↔C overlap must be caught
+// even though B (between A and C in start-sorted order) doesn't overlap C.
+{
+  const longTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 14));  // 06:00–14:00
+  const shortTask = createHamamaTask(createTimeBlockFromHours(baseDate, 8, 9));  // 08:00–09:00
+  const laterTask = createHamamaTask(createTimeBlockFromHours(baseDate, 10, 12)); // 10:00–12:00
+
+  const dbMask = [
+    { id: 'dbm1', taskId: longTask.id, slotId: longTask.slots[0].slotId, participantId: testP0.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'dbm2', taskId: shortTask.id, slotId: shortTask.slots[0].slotId, participantId: testP0.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'dbm3', taskId: laterTask.id, slotId: laterTask.slots[0].slotId, participantId: testP0.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+
+  const resultMask = validateHardConstraints(
+    [longTask, shortTask, laterTask],
+    [testP0, testP0b],
+    dbMask,
+  );
+  // Should find overlaps: A↔B, A↔C, (B doesn't overlap C)
+  const dbViolations = resultMask.violations.filter(v => v.code === 'DOUBLE_BOOKING');
+  assert(dbViolations.length >= 2, 'HC-5 sweep-line: detects at least 2 overlapping pairs (A↔B, A↔C)');
+  // Specifically verify the A↔C pair that the old break would miss
+  const foundAC = dbViolations.some(v =>
+    v.message.includes(longTask.name) && v.message.includes(laterTask.name),
+  );
+  assert(foundAC, 'HC-5 sweep-line: long↔later overlap not masked by intervening short task');
+}
+
 // ─── Soft Constraint Tests ───────────────────────────────────────────────────
 
 console.log('\n── Soft Constraints ────────────────────');

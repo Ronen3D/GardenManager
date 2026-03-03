@@ -216,8 +216,18 @@ export function checkNoDoubleBooking(
     return tA.timeBlock.start.getTime() - tB.timeBlock.start.getTime();
   });
 
+  // Build prefix-max of end times for correct backward-walk early termination.
+  // prefixMaxEnd[k] = max end-time among tasks 0..k. If prefixMaxEnd[j] <= startMs
+  // of task i, no task in 0..j can overlap i, so we can safely stop.
+  const prefixMaxEnd: number[] = new Array(allWithTasks.length);
+  prefixMaxEnd[0] = taskMap.get(allWithTasks[0].taskId)!.timeBlock.end.getTime();
+  for (let k = 1; k < allWithTasks.length; k++) {
+    const kEnd = taskMap.get(allWithTasks[k].taskId)!.timeBlock.end.getTime();
+    prefixMaxEnd[k] = kEnd > prefixMaxEnd[k - 1] ? kEnd : prefixMaxEnd[k - 1];
+  }
+
   // Sweep-line: track the maximum end time seen so far
-  let maxEndMs = taskMap.get(allWithTasks[0].taskId)!.timeBlock.end.getTime();
+  let maxEndMs = prefixMaxEnd[0];
 
   for (let i = 1; i < allWithTasks.length; i++) {
     const task = taskMap.get(allWithTasks[i].taskId)!;
@@ -228,6 +238,9 @@ export function checkNoDoubleBooking(
       // Overlap detected — find the previous task(s) that overlap
       // Walk backwards to report all overlapping pairs with this task
       for (let j = i - 1; j >= 0; j--) {
+        // Safe early termination: if the max end of all tasks 0..j is <= startMs,
+        // none of them can overlap task i.
+        if (prefixMaxEnd[j] <= startMs) break;
         const prevTask = taskMap.get(allWithTasks[j].taskId)!;
         if (blocksOverlap(prevTask.timeBlock, task.timeBlock)) {
           violations.push(
@@ -239,9 +252,6 @@ export function checkNoDoubleBooking(
               participantId,
             ),
           );
-        } else {
-          // Since sorted by start, earlier tasks that don't overlap won't overlap either
-          break;
         }
       }
     }
@@ -455,6 +465,9 @@ export function checkNoConsecutiveHighLoad(
 /**
  * Run ALL hard constraint checks against a complete schedule.
  * Returns aggregated violations — if any exist, the schedule is infeasible.
+ *
+ * Pre-builds per-task and per-participant assignment indexes to eliminate
+ * redundant O(A) scans per task/participant (previously O(T×A + P×A)).
  */
 export function validateHardConstraints(
   tasks: Task[],
@@ -466,17 +479,55 @@ export function validateHardConstraints(
   const pMap = buildParticipantMap(participants);
   const tMap = buildTaskMap(tasks);
 
-  for (const task of tasks) {
-    const taskAssignments = assignments.filter((a) => a.taskId === task.id);
+  // ── Pre-index assignments O(A) ──
+  const assignmentsByTask = new Map<string, Assignment[]>();
+  const assignmentsByParticipant = new Map<string, Assignment[]>();
+  for (const a of assignments) {
+    let tList = assignmentsByTask.get(a.taskId);
+    if (!tList) { tList = []; assignmentsByTask.set(a.taskId, tList); }
+    tList.push(a);
 
-    // HC-6: All slots filled
+    let pList = assignmentsByParticipant.get(a.participantId);
+    if (!pList) { pList = []; assignmentsByParticipant.set(a.participantId, pList); }
+    pList.push(a);
+  }
+
+  for (const task of tasks) {
+    const taskAssignments = assignmentsByTask.get(task.id) || [];
+
+    // HC-6: All slots filled — use pre-indexed task assignments
     if (!disabledHC?.has('HC-6')) {
-      allViolations.push(...checkSlotsFilled(task, assignments));
+      for (const slot of task.slots) {
+        const slotAssignments = taskAssignments.filter(a => a.slotId === slot.slotId);
+        if (slotAssignments.length === 0) {
+          allViolations.push(violation(
+            'SLOT_UNFILLED',
+            `למשבצת "${slot.label}" ב-${task.name} לא משובץ משתתף`,
+            task.id, slot.slotId,
+          ));
+        } else if (slotAssignments.length > 1) {
+          allViolations.push(violation(
+            'SLOT_OVERBOOKED',
+            `למשבצת "${slot.label}" ב-${task.name} יש ${slotAssignments.length} משתתפים (צפוי 1)`,
+            task.id, slot.slotId,
+          ));
+        }
+      }
     }
 
-    // HC-7: Unique participants per task
+    // HC-7: Unique participants per task — use pre-indexed task assignments
     if (!disabledHC?.has('HC-7')) {
-      allViolations.push(...checkUniqueParticipantsPerTask(task, assignments));
+      const seen = new Set<string>();
+      for (const a of taskAssignments) {
+        if (seen.has(a.participantId)) {
+          allViolations.push(violation(
+            'DUPLICATE_IN_TASK',
+            `משתתף ${a.participantId} משובץ מספר פעמים ב-${task.name}`,
+            task.id, a.slotId, a.participantId,
+          ));
+        }
+        seen.add(a.participantId);
+      }
     }
 
     // Per-assignment checks
@@ -516,7 +567,7 @@ export function validateHardConstraints(
 
     // HC-10 replaced by HC-13 (senior policy) — see below
 
-    // HC-11: Choresh forbidden from Mamtera
+    // HC-11: Choresh forbidden from Mamtera — use pre-indexed task assignments
     if (!disabledHC?.has('HC-11')) {
       const assignedParticipants = taskAssignments
         .map((a) => pMap.get(a.participantId))
@@ -524,7 +575,7 @@ export function validateHardConstraints(
       allViolations.push(...checkChoreshExclusion(task, assignedParticipants));
     }
 
-    // HC-4: Same group — mandatory for tasks with sameGroupRequired
+    // HC-4: Same group — use pre-indexed task assignments
     if (!disabledHC?.has('HC-4')) {
       const assignedParticipants = taskAssignments
         .map((a) => pMap.get(a.participantId))
@@ -533,17 +584,69 @@ export function validateHardConstraints(
     }
   }
 
-  // HC-5: Double booking (per participant)
+  // HC-5: Double booking — use pre-indexed participant assignments
   if (!disabledHC?.has('HC-5')) {
     for (const p of participants) {
-      allViolations.push(...checkNoDoubleBooking(p.id, assignments, tMap));
+      const pAssigns = assignmentsByParticipant.get(p.id) || [];
+      if (pAssigns.length < 2) continue; // Can't double-book with 0-1 assignments
+      // Sweep-line on pre-filtered, sorted assignments
+      const sorted = pAssigns
+        .filter(a => tMap.has(a.taskId))
+        .sort((a, b) => tMap.get(a.taskId)!.timeBlock.start.getTime() - tMap.get(b.taskId)!.timeBlock.start.getTime());
+      if (sorted.length < 2) continue;
+      // Prefix-max of end times for correct backward-walk early termination
+      const prefixMaxEnd: number[] = new Array(sorted.length);
+      prefixMaxEnd[0] = tMap.get(sorted[0].taskId)!.timeBlock.end.getTime();
+      for (let k = 1; k < sorted.length; k++) {
+        const kEnd = tMap.get(sorted[k].taskId)!.timeBlock.end.getTime();
+        prefixMaxEnd[k] = kEnd > prefixMaxEnd[k - 1] ? kEnd : prefixMaxEnd[k - 1];
+      }
+      let maxEndMs = prefixMaxEnd[0];
+      for (let i = 1; i < sorted.length; i++) {
+        const task = tMap.get(sorted[i].taskId)!;
+        const startMs = task.timeBlock.start.getTime();
+        const endMs = task.timeBlock.end.getTime();
+        if (startMs < maxEndMs) {
+          for (let j = i - 1; j >= 0; j--) {
+            if (prefixMaxEnd[j] <= startMs) break;
+            const prevTask = tMap.get(sorted[j].taskId)!;
+            if (blocksOverlap(prevTask.timeBlock, task.timeBlock)) {
+              allViolations.push(violation(
+                'DOUBLE_BOOKING',
+                `משתתף ${p.id} משובץ בכפל: "${prevTask.name}" ו-"${task.name}" חופפים`,
+                prevTask.id, undefined, p.id,
+              ));
+            }
+          }
+        }
+        if (endMs > maxEndMs) maxEndMs = endMs;
+      }
     }
   }
 
-  // HC-12: No consecutive high-load tasks (per participant)
+  // HC-12: No consecutive high-load tasks — use pre-indexed participant assignments
   if (!disabledHC?.has('HC-12')) {
     for (const p of participants) {
-      allViolations.push(...checkNoConsecutiveHighLoad(p.id, assignments, tMap));
+      const pAssigns = assignmentsByParticipant.get(p.id) || [];
+      if (pAssigns.length < 2) continue;
+      const sorted = pAssigns
+        .map(a => ({ assignment: a, task: tMap.get(a.taskId)! }))
+        .filter(x => x.task != null)
+        .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const cur = sorted[i];
+        const nxt = sorted[i + 1];
+        if (cur.task.id === nxt.task.id) continue;
+        const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
+        if (gap > 0) continue;
+        if (cur.task.blocksConsecutive && nxt.task.blocksConsecutive) {
+          allViolations.push(violation(
+            'CONSECUTIVE_HIGH_LOAD',
+            `למשתתף ${p.id} משימות חוסמות עוקבות: "${cur.task.name}" ו-"${nxt.task.name}" ללא הפסקה.`,
+            nxt.task.id, undefined, p.id,
+          ));
+        }
+      }
     }
   }
 
