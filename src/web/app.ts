@@ -49,7 +49,7 @@ import { generateRescuePlans } from '../engine/rescue';
 
 import * as store from './config-store';
 import { runPreflight } from './preflight';
-import { renderParticipantsTab, wireParticipantsEvents } from './tab-participants';
+import { renderParticipantsTab, wireParticipantsEvents, clearParticipantSelection } from './tab-participants';
 import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
 import { renderProfileView, wireProfileEvents, ProfileContext } from './tab-profile';
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
@@ -57,7 +57,7 @@ import { computeTaskBreakdown } from './workload-utils';
 import { exportWeeklyOverview, exportDailyDetail } from './pdf-export';
 import {
   TASK_COLORS, LEVEL_COLORS, CERT_COLORS, CERT_LABELS, TASK_TYPE_LABELS,
-  fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge,
+  fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge, SVG_ICONS,
 } from './ui-helpers';
 import { showAlert, showPrompt, showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
 
@@ -682,7 +682,7 @@ function renderScheduleTab(): string {
   if (!currentSchedule) {
     if (preflight.canGenerate) {
       html += `<div class="empty-state">
-        <div class="empty-icon">📋</div>
+        <div class="empty-icon">${SVG_ICONS.tasks}</div>
         <p>טרם נוצר שבצ"ק.</p>
         <p class="text-muted">הגדר משתתפים ופירוט משימות, ולאחר מכן לחץ "צור שבצ"ק".</p>
       </div>`;
@@ -708,7 +708,7 @@ function renderScheduleTab(): string {
   html += `<div class="schedule-layout">`;
   html += `<div class="schedule-main">`;
   html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState())}</section>`;
-  html += `<section><h2>מערכת שעות כללית</h2>${renderGanttChart(s)}</section>`;
+  html += `<section class="gantt-section"><h2>מערכת שעות כללית</h2>${renderGanttChart(s)}</section>`;
   html += `<section><h2>הפרות אילוצים <span class="count">${filterVisibleViolations(s.violations).length}</span></h2>${renderViolations(s)}</section>`;
   html += `</div>`;
   html += renderParticipantSidebar(s);
@@ -1863,7 +1863,7 @@ function renderAll(): void {
           title="שחזור (Ctrl+Y)">↩ שחזור${store.getUndoRedoState().redoDepth ? ' (' + store.getUndoRedoState().redoDepth + ')' : ''}</button>
       </div>
       <button class="theme-toggle" id="btn-theme-toggle" title="החלף מצב בהיר/כהה">
-        ${document.documentElement.dataset.theme === 'light' ? '🌙' : '☀️'}
+        ${document.documentElement.dataset.theme === 'light' ? SVG_ICONS.moon : SVG_ICONS.sun}
       </button>
     </div>
     <p class="subtitle">
@@ -1876,18 +1876,18 @@ function renderAll(): void {
 
   <nav class="tab-nav">
     <button class="tab-btn ${currentTab === 'participants' ? 'tab-active' : ''}" data-tab="participants">
-      👥 משתתפים <span class="count">${participants.length}</span>
+      ${SVG_ICONS.participants} משתתפים <span class="count">${participants.length}</span>
     </button>
     <button class="tab-btn ${currentTab === 'task-rules' ? 'tab-active' : ''}" data-tab="task-rules">
-      📋 פירוט משימות <span class="count">${templates.length}</span>
+      ${SVG_ICONS.tasks} פירוט משימות <span class="count">${templates.length}</span>
       ${!preflight.canGenerate ? '<span class="badge badge-sm" style="background:var(--danger);margin-inline-start:4px">!</span>' : ''}
     </button>
     <button class="tab-btn ${currentTab === 'schedule' ? 'tab-active' : ''}" data-tab="schedule">
-      📊 תצוגת שבצ"ק
+      ${SVG_ICONS.chart} תצוגת שבצ"ק
       ${currentSchedule ? '<span class="badge badge-sm" style="background:var(--success);margin-inline-start:4px">✓</span>' : ''}
     </button>
     <button class="tab-btn ${currentTab === 'algorithm' ? 'tab-active' : ''}" data-tab="algorithm">
-      ⚙️ אלגוריתם
+      ${SVG_ICONS.settings} אלגוריתם
     </button>
   </nav>
 
@@ -1938,6 +1938,10 @@ function wireTabNav(container: HTMLElement): void {
     btn.addEventListener('click', () => {
       const tab = (btn as HTMLElement).dataset.tab as typeof currentTab;
       if (tab && tab !== currentTab) {
+        // Issue 6: clear participant selection when leaving Participants tab
+        if (currentTab === 'participants') {
+          clearParticipantSelection();
+        }
         currentTab = tab;
         renderAll();
       }
@@ -2045,7 +2049,7 @@ function toggleTheme(): void {
     applyTheme(next);
     localStorage.setItem(THEME_STORAGE_KEY, next);
     const btn = document.getElementById('btn-theme-toggle');
-    if (btn) btn.textContent = next === 'light' ? '🌙' : '☀️';
+    if (btn) btn.innerHTML = next === 'light' ? SVG_ICONS.moon : SVG_ICONS.sun;
   };
 
   // Use the View Transitions API when available for a seamless crossfade;
@@ -2577,7 +2581,7 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
       ${lm.enabled ? `<button class="btn-rescue" data-assignment-id="${slotCtx.assignmentId}" title="החלפה">🆘</button>` : ''}
     </span>`;
   } else if (slotCtx && slotCtx.isFrozen) {
-    actionsHtml = '<span class="tt-actions"><span class="tt-dim">❄️</span></span>';
+    actionsHtml = `<span class="tt-actions"><span class="tt-dim">${SVG_ICONS.snowflake}</span></span>`;
   }
 
   return `

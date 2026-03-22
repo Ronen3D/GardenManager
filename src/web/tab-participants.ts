@@ -12,7 +12,7 @@ import {
 } from '../models/types';
 import * as store from './config-store';
 import { showConfirm, showToast } from './ui-modal';
-import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS } from './ui-helpers';
+import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, SVG_ICONS } from './ui-helpers';
 import { HEBREW_DAYS, hebrewDayName, hebrewDayNameFromISO } from '../utils/date-utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -87,7 +87,25 @@ let _bulkDialogOpen = false;
 /** When true the bulk delete confirmation dialog is open */
 let _bulkDeleteDialogOpen = false;
 
+// ─── Participant Sets Panel State ────────────────────────────────────────────
+
+let _setsPanelOpen = false;
+let _setsFormMode: 'none' | 'save-as' | 'rename' = 'none';
+let _setsFormError = '';
+let _setsRenameTargetId: string | null = null;
+
+/** Clear participant selection state (called on tab change) */
+export function clearParticipantSelection(): void {
+  selectedIds.clear();
+  _lastClickedId = null;
+  _bulkDialogOpen = false;
+  _bulkDeleteDialogOpen = false;
+}
 // ─── Sort Logic ──────────────────────────────────────────────────────────────
+
+function _escHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 function sortParticipants(list: Participant[]): Participant[] {
   if (!sortColumn) return list;
@@ -105,6 +123,83 @@ function sortParticipants(list: Participant[]): Participant[] {
 function sortIndicator(col: string): string {
   if (sortColumn !== col) return '';
   return sortDirection === 'asc' ? ' ▲' : ' ▼';
+}
+
+// ─── Participant Sets Panel ───────────────────────────────────────────────────
+
+function renderSetsPanel(): string {
+  const sets = store.getAllParticipantSets();
+  const activeId = store.getActiveParticipantSetId();
+  const dirty = store.isParticipantSetDirty();
+
+  let html = `<div class="preset-panel pset-panel">`;
+
+  // Header
+  html += `<div class="preset-panel-header">
+    <h3>📋 סטים של משתתפים <span class="count">${sets.length}</span></h3>
+    <button class="btn-xs btn-outline" data-action="pset-panel-close" title="סגור">✕</button>
+  </div>`;
+
+  // Form area
+  if (_setsFormMode === 'save-as') {
+    html += `<div class="preset-inline-form" id="pset-saveas-form">
+      <div class="preset-form-row">
+        <label>שם: <input type="text" class="preset-name-input" data-field="pset-saveas-name" maxlength="60" placeholder="הסט שלי" autofocus /></label>
+        <label>תיאור: <input type="text" class="preset-desc-input" data-field="pset-saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
+        <button class="btn btn-sm btn-primary" data-action="pset-saveas-confirm">שמור</button>
+        <button class="btn btn-sm btn-outline" data-action="pset-form-cancel">ביטול</button>
+      </div>
+      <div class="preset-validation-error" id="pset-form-error">${_setsFormError}</div>
+    </div>`;
+  } else if (_setsFormMode === 'rename') {
+    const targetId = _setsRenameTargetId ?? activeId;
+    const target = targetId ? store.getParticipantSetById(targetId) : undefined;
+    html += `<div class="preset-inline-form" id="pset-rename-form">
+      <div class="preset-form-row">
+        <label>שם: <input type="text" class="preset-name-input" data-field="pset-rename-name" maxlength="60" value="${_escHtml(target?.name ?? '')}" /></label>
+        <label>תיאור: <input type="text" class="preset-desc-input" data-field="pset-rename-desc" maxlength="200" value="${_escHtml(target?.description ?? '')}" /></label>
+        <button class="btn btn-sm btn-primary" data-action="pset-rename-confirm">שמור</button>
+        <button class="btn btn-sm btn-outline" data-action="pset-form-cancel">ביטול</button>
+      </div>
+      <div class="preset-validation-error" id="pset-form-error">${_setsFormError}</div>
+    </div>`;
+  } else {
+    html += `<div class="preset-actions-primary">
+      <button class="btn-sm btn-primary" data-action="pset-new">+ שמור סט חדש</button>
+    </div>`;
+  }
+
+  // Set list
+  if (sets.length === 0) {
+    html += `<div class="preset-empty"><span class="text-muted">אין סטים שמורים.</span></div>`;
+  } else {
+    html += `<div class="preset-list">`;
+    for (const s of sets) {
+      const isActive = s.id === activeId;
+      const isBuiltIn = s.builtIn ?? false;
+      const count = s.participants.length;
+      html += `<div class="preset-item ${isActive ? 'preset-item-active' : ''}" data-pset-id="${s.id}">
+        <div class="preset-item-main">
+          <span class="preset-item-name">${_escHtml(s.name)}</span>
+          <span class="pset-count-badge">${count} משתתפים</span>
+          ${isBuiltIn ? '<span class="preset-builtin-badge">מובנה</span>' : ''}
+          ${isActive && dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
+        </div>
+        ${s.description ? `<div class="preset-item-desc text-muted">${_escHtml(s.description)}</div>` : ''}
+        <div class="preset-item-actions">
+          ${!isActive ? `<button class="btn-xs btn-primary" data-pset-action="load" data-pset-id="${s.id}" title="טען סט זה">▶ טען</button>` : ''}
+          ${isActive && dirty && !isBuiltIn ? `<button class="btn-xs btn-outline" data-pset-action="update" data-pset-id="${s.id}" title="עדכן עם המשתתפים הנוכחיים">עדכן</button>` : ''}
+          ${!isBuiltIn ? `<button class="btn-xs btn-outline" data-pset-action="rename" data-pset-id="${s.id}" title="שנה שם">✎</button>` : ''}
+          <button class="btn-xs btn-outline" data-pset-action="duplicate" data-pset-id="${s.id}" title="שכפל">⧉</button>
+          ${!isBuiltIn ? `<button class="btn-xs btn-danger-outline" data-pset-action="delete" data-pset-id="${s.id}" title="מחק">✕</button>` : ''}
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
 }
 
 // ─── Render ──────────────────────────────────────────────────────────────────
@@ -129,9 +224,15 @@ export function renderParticipantsTab(): string {
       </div>
     </div>
     <div class="toolbar-right">
+      <button class="btn-sm btn-outline${_setsPanelOpen ? ' pill-active' : ''}" data-action="pset-panel-toggle" title="סטים של משתתפים">📋 סטים${store.isParticipantSetDirty() ? ' <span class="dirty-dot"></span>' : ''}</button>
       <button class="btn-primary btn-sm" data-action="add-participant">+ הוסף משתתף</button>
     </div>
   </div>`;
+
+  // Participant Sets panel
+  if (_setsPanelOpen) {
+    html += renderSetsPanel();
+  }
 
   // Table
   html += `<div class="table-responsive"><table class="table table-participants">
@@ -159,21 +260,21 @@ export function renderParticipantsTab(): string {
       html += `<tr data-participant-id="${p.id}" class="${isSelected ? 'row-selected' : ''}">
         <td class="col-select"><input type="checkbox" class="cb-select-participant" data-pid="${p.id}" ${isSelected ? 'checked' : ''} /></td>
         <td>${i + 1}</td>
-        <td><strong>${p.name}</strong></td>
+        <td title="${p.name}"><strong>${p.name}</strong></td>
         <td>${groupBadge(p.group, true)}</td>
         <td>${levelBadge(p.level)}</td>
         <td>${certBadges(p.certifications)}</td>
         <td class="avail-cell">
-          ${p.availability.map(w => `<small>${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
+          ${p.availability.map(w => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
         </td>
         <td>
-          <button class="btn-sm btn-outline" data-action="toggle-blackouts" data-pid="${p.id}">
-            ${totalRules > 0 ? `<span class="badge badge-sm" style="background:var(--warning)">${totalRules}</span>` : '—'}
+          <button class="btn-sm btn-outline btn-icon" data-action="toggle-blackouts" data-pid="${p.id}" title="הצג/ערוך חסימות">
+            ${totalRules > 0 ? `<span class="badge badge-sm" style="background:var(--warning)">${totalRules}</span>` : SVG_ICONS.block}
           </button>
         </td>
         <td class="col-actions">
-          <button class="btn-sm btn-outline" data-action="edit-participant" data-pid="${p.id}" title="עריכה">✏️</button>
-          <button class="btn-sm btn-outline btn-danger-outline" data-action="remove-participant" data-pid="${p.id}" title="הסרה">🗑️</button>
+          <button class="btn-sm btn-outline btn-icon" data-action="edit-participant" data-pid="${p.id}" title="עריכה">${SVG_ICONS.edit}</button>
+          <button class="btn-sm btn-outline btn-danger-outline btn-icon" data-action="remove-participant" data-pid="${p.id}" title="הסרה">${SVG_ICONS.trash}</button>
         </td>
       </tr>`;
 
@@ -193,8 +294,8 @@ export function renderParticipantsTab(): string {
   if (selectedIds.size > 0) {
     html += `<div class="bulk-toolbar">
       <span class="bulk-count">${selectedIds.size} משתתפים נבחרו</span>
-      <button class="btn-primary btn-sm" data-action="bulk-add-unavailability">📅 הוסף חוסר זמינות</button>
-      <button class="btn-danger btn-sm" data-action="bulk-delete-participants">🗑️ מחק משתתפים</button>
+      <button class="btn-primary btn-sm" data-action="bulk-add-unavailability">${SVG_ICONS.calendar} הוסף חוסר זמינות</button>
+      <button class="btn-danger btn-sm" data-action="bulk-delete-participants">${SVG_ICONS.trash} מחק משתתפים</button>
       <button class="btn-sm btn-outline" data-action="bulk-clear-selection">נקה בחירה</button>
     </div>`;
   }
@@ -268,7 +369,7 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
     for (const b of bouts) {
       html += `<li>
         <span class="constraint-type">משמרת נוכחית</span>
-        <strong>${fmtTime(b.start)} – ${fmtTime(b.end)}</strong>
+        <strong dir="ltr">${fmtTime(b.start)} – ${fmtTime(b.end)}</strong>
         ${b.reason ? `<span class="text-muted"> (${b.reason})</span>` : ''}
         <button class="btn-sm btn-danger-outline" data-action="remove-blackout" data-pid="${pid}" data-bid="${b.id}">✕</button>
       </li>`;
@@ -284,7 +385,7 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
       } else {
         label = 'כלל לא ידוע';
       }
-      const timeLabel = r.allDay ? 'כל היום' : `${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00`;
+      const timeLabel = r.allDay ? 'כל היום' : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00</span>`;
       html += `<li>
         <span class="constraint-type">${r.specificDate ? 'תאריך ספציפי' : 'יום קבוע'}</span>
         <strong>${label}</strong> — <span>${timeLabel}</span>
@@ -612,6 +713,16 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
 
   container.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
+
+    // ── Participant Set item actions (load/update/rename/duplicate/delete) ──
+    const psetAction = target.dataset.psetAction;
+    if (psetAction) {
+      const psetId = target.dataset.psetId;
+      if (!psetId) return;
+      await _handlePsetItemAction(psetAction, psetId, rerender);
+      return;
+    }
+
     const action = target.dataset.action;
     if (!action) return;
 
@@ -634,7 +745,15 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       }
       case 'add-participant': {
         const form = container.querySelector('#add-participant-form') as HTMLElement;
-        if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+        if (form) {
+          const wasHidden = form.style.display === 'none';
+          form.style.display = wasHidden ? 'block' : 'none';
+          if (wasHidden) {
+            form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const nameInput = form.querySelector('[data-field="new-name"]') as HTMLInputElement | null;
+            nameInput?.focus({ preventScroll: true });
+          }
+        }
         break;
       }
       case 'confirm-add-participant': {
@@ -780,6 +899,84 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
 
+      // ─── Participant Sets panel actions ────────────────────────────────────
+      case 'pset-panel-toggle': {
+        _setsPanelOpen = !_setsPanelOpen;
+        _setsFormMode = 'none';
+        _setsFormError = '';
+        _setsRenameTargetId = null;
+        rerender();
+        break;
+      }
+      case 'pset-panel-close': {
+        _setsPanelOpen = false;
+        _setsFormMode = 'none';
+        _setsFormError = '';
+        _setsRenameTargetId = null;
+        rerender();
+        break;
+      }
+      case 'pset-new': {
+        _setsFormMode = 'save-as';
+        _setsFormError = '';
+        rerender();
+        break;
+      }
+      case 'pset-saveas-confirm': {
+        const nameInput = container.querySelector<HTMLInputElement>('[data-field="pset-saveas-name"]');
+        const descInput = container.querySelector<HTMLInputElement>('[data-field="pset-saveas-desc"]');
+        const psetName = nameInput?.value.trim() ?? '';
+        const psetDesc = descInput?.value.trim() ?? '';
+        if (!psetName) {
+          _setsFormError = 'השם לא יכול להיות ריק';
+          rerender();
+          return;
+        }
+        const result = store.saveCurrentAsParticipantSet(psetName, psetDesc);
+        if (!result) {
+          _setsFormError = 'סט עם שם זה כבר קיים';
+          rerender();
+          return;
+        }
+        _setsFormMode = 'none';
+        _setsFormError = '';
+        showToast(`סט "${psetName}" נשמר`, { type: 'success' });
+        rerender();
+        break;
+      }
+      case 'pset-rename-confirm': {
+        const renameId = _setsRenameTargetId ?? store.getActiveParticipantSetId();
+        if (!renameId) return;
+        const rnInput = container.querySelector<HTMLInputElement>('[data-field="pset-rename-name"]');
+        const rdInput = container.querySelector<HTMLInputElement>('[data-field="pset-rename-desc"]');
+        const rnName = rnInput?.value.trim() ?? '';
+        const rnDesc = rdInput?.value.trim() ?? '';
+        if (!rnName) {
+          _setsFormError = 'השם לא יכול להיות ריק';
+          rerender();
+          return;
+        }
+        const rnErr = store.renameParticipantSet(renameId, rnName, rnDesc);
+        if (rnErr) {
+          _setsFormError = rnErr;
+          rerender();
+          return;
+        }
+        _setsFormMode = 'none';
+        _setsFormError = '';
+        _setsRenameTargetId = null;
+        showToast('הסט שונה בהצלחה', { type: 'success' });
+        rerender();
+        break;
+      }
+      case 'pset-form-cancel': {
+        _setsFormMode = 'none';
+        _setsFormError = '';
+        _setsRenameTargetId = null;
+        rerender();
+        break;
+      }
+
       // ─── Bulk toolbar & dialog actions ─────────────────────────────────────
       case 'bulk-add-unavailability': {
         _bulkDialogOpen = true;
@@ -854,4 +1051,64 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       }
     }
   });
+}
+
+// ─── Participant Set Item Actions ────────────────────────────────────────────
+
+async function _handlePsetItemAction(action: string, id: string, rerender: () => void): Promise<void> {
+  switch (action) {
+    case 'load': {
+      const ok = await showConfirm('טעינת סט תחליף את כל המשתתפים הנוכחיים. להמשיך?', {
+        danger: true,
+        title: 'טעינת סט משתתפים',
+        confirmLabel: 'טען',
+      });
+      if (!ok) return;
+      store.loadParticipantSet(id);
+      showToast('סט נטען בהצלחה', { type: 'success' });
+      rerender();
+      break;
+    }
+    case 'update': {
+      const ok = await showConfirm('לעדכן את הסט עם המשתתפים הנוכחיים?', {
+        title: 'עדכון סט',
+        confirmLabel: 'עדכן',
+      });
+      if (!ok) return;
+      store.updateParticipantSet(id);
+      showToast('הסט עודכן', { type: 'success' });
+      rerender();
+      break;
+    }
+    case 'rename': {
+      _setsRenameTargetId = id;
+      _setsFormMode = 'rename';
+      _setsFormError = '';
+      rerender();
+      break;
+    }
+    case 'duplicate': {
+      store.duplicateParticipantSet(id);
+      showToast('הסט שוכפל', { type: 'success' });
+      rerender();
+      break;
+    }
+    case 'delete': {
+      const pset = store.getParticipantSetById(id);
+      if (!pset || pset.builtIn) return;
+      const ok = await showConfirm(`למחוק את הסט "${pset.name}"? לא ניתן לבטל פעולה זו.`, {
+        danger: true,
+        title: 'מחיקת סט',
+        confirmLabel: 'מחק',
+      });
+      if (!ok) return;
+      store.deleteParticipantSet(id);
+      _setsFormMode = 'none';
+      _setsFormError = '';
+      _setsRenameTargetId = null;
+      showToast('הסט נמחק', { type: 'success' });
+      rerender();
+      break;
+    }
+  }
 }

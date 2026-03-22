@@ -2,5 +2,7 @@
 node_modules/*
 dist/*
 dist-web/*
+dist-electron/*
+release/*
 node_modules/.vite/deps/_metadata.json
 node_modules/.vite/deps/date-fns.js.map

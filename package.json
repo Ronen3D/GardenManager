@@ -1,19 +1,22 @@
 {
   "name": "gardenmanager",
   "version": "1.0.0",
-  "description": "",
-  "main": "dist/index.js",
+  "description": "Smart scheduling system for garden teams",
+  "main": "dist-electron/main.js",
   "scripts": {
-    "build": "tsc",
+    "build:node": "tsc",
     "build:web": "vite build",
     "dev": "vite",
     "preview": "vite build && vite preview",
     "start": "ts-node src/index.ts",
     "demo": "ts-node src/demo.ts",
-    "test": "ts-node src/test.ts"
+    "test": "ts-node src/test.ts",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && tsc -p tsconfig.electron.json && electron .\"",
+    "electron:compile": "tsc -p tsconfig.electron.json",
+    "electron:build": "vite build && tsc -p tsconfig.electron.json && electron-builder --win"
   },
   "keywords": [],
-  "author": "",
+  "author": "Garden Manager",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
@@ -22,9 +25,15 @@
     "jspdf-autotable": "^5.0.7"
   },
   "devDependencies": {
+    "@playwright/mcp": "^0.0.68",
+    "@playwright/test": "^1.58.2",
     "@types/node": "^25.2.3",
+    "concurrently": "^9.2.1",
+    "electron": "^40.7.0",
+    "electron-builder": "^26.8.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "wait-on": "^9.0.4"
   }
 }

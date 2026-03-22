@@ -384,6 +384,33 @@ export interface ScheduleSnapshot {
   createdAt: number;
 }
 
+// ─── Participant Sets ────────────────────────────────────────────────────────
+
+/** Serialisable snapshot of a single participant + associated constraint data */
+export interface ParticipantSnapshot {
+  name: string;
+  level: Level;
+  certifications: Certification[];
+  group: string;
+  /** Date-specific unavailability rules (IDs stripped for stable comparison) */
+  dateUnavailability: Omit<DateUnavailability, 'id'>[];
+  /** Shift-level blackout periods (ISO strings for serialisation) */
+  blackouts: { start: string; end: string; reason?: string }[];
+}
+
+/** A named, saveable collection of participants */
+export interface ParticipantSet {
+  id: string;
+  name: string;
+  description: string;
+  /** Full participant data at the time of the snapshot */
+  participants: ParticipantSnapshot[];
+  /** If true the set cannot be deleted or renamed */
+  builtIn?: boolean;
+  /** Epoch ms — used for ordering */
+  createdAt: number;
+}
+
 // ─── Gantt UI Bridge Types ───────────────────────────────────────────────────
 
 export interface GanttRow {

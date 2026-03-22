@@ -11,7 +11,7 @@ import {
   SlotRequirement,
   LiveModeState
 } from '../models/types';
-import { TASK_COLORS, groupColor, fmt, levelBadge, groupBadge } from './ui-helpers';
+import { TASK_COLORS, groupColor, fmt, levelBadge, groupBadge, SVG_ICONS } from './ui-helpers';
 import { isFutureTask } from '../engine/temporal';
 import { addDays } from 'date-fns';
 
@@ -86,7 +86,7 @@ function renderAssignmentCard(
             </div>
             <div class="card-details">
                  ${isLocked ? '<span title="נעל">🔒</span>' : ''}
-                 ${isFrozen ? '<span title="מוקפא">❄️</span>' : ''}
+                 ${isFrozen ? `<span title="מוקפא">${SVG_ICONS.snowflake}</span>` : ''}
             </div>
         `;
     } else {

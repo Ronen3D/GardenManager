@@ -28,6 +28,8 @@ import {
   AlgorithmPreset,
   DEFAULT_PRESET,
   ScheduleSnapshot,
+  ParticipantSet,
+  ParticipantSnapshot,
 } from '../models/types';
 
 // ─── ID Generation ───────────────────────────────────────────────────────────
@@ -882,15 +884,22 @@ export function initStore(): void {
     taskTemplates.clear();
     undoStack.length = 0;
     redoStack.length = 0;
+    // Reset lazy-loaded participant sets so they re-initialise
+    _participantSets = null;
+    _activeParticipantSetId = undefined;
     // Try to load from storage first
     if (loadFromStorage()) {
       console.log('[Store] Restored state from localStorage');
+      // Ensure participant sets are initialised (first-load seeding)
+      _initParticipantSets();
       return;
     }
     // Suppress snapshots during seed (initial state shouldn't be undoable)
     _suppressSnapshot = true;
     seedDefaultParticipants();
     seedDefaultTaskTemplates();
+    // Seed built-in participant set from demo data
+    _initParticipantSets();
   } finally {
     _suppressSnapshot = false;
     _initRunning = false;
@@ -1827,4 +1836,338 @@ export function deleteSnapshot(id: string): boolean {
 /** Get the maximum number of snapshots allowed */
 export function getMaxSnapshots(): number {
   return MAX_SNAPSHOTS;
+}
+
+// ─── Participant Sets ────────────────────────────────────────────────────────
+
+const STORAGE_KEY_PSETS = 'gardenmanager_participant_sets';
+const STORAGE_KEY_ACTIVE_PSET = 'gardenmanager_active_participant_set_id';
+const MAX_PARTICIPANT_SETS = 30;
+
+let _participantSets: ParticipantSet[] | null = null;
+let _activeParticipantSetId: string | null | undefined = undefined; // undefined = not yet loaded
+
+/** Deep-copy a ParticipantSet via JSON round-trip. */
+function _deepCopyPSet(s: ParticipantSet): ParticipantSet {
+  return JSON.parse(JSON.stringify(s)) as ParticipantSet;
+}
+
+/** Lazily initialise participant sets from localStorage. */
+function _initParticipantSets(): ParticipantSet[] {
+  if (_participantSets) return _participantSets;
+
+  const raw = localStorage.getItem(STORAGE_KEY_PSETS);
+  if (raw) {
+    try {
+      _participantSets = JSON.parse(raw) as ParticipantSet[];
+    } catch {
+      _participantSets = [];
+    }
+  } else {
+    // First load — create built-in set from current participants (demo data)
+    _participantSets = [];
+    _seedBuiltInParticipantSet();
+  }
+
+  // Load active set id
+  if (_activeParticipantSetId === undefined) {
+    _activeParticipantSetId = localStorage.getItem(STORAGE_KEY_ACTIVE_PSET) || null;
+  }
+
+  return _participantSets;
+}
+
+/** Snapshot the current in-memory participants into a ParticipantSnapshot array.
+ *  IDs are stripped from dateUnavailability rules so that save→load→dirty-check
+ *  comparisons work correctly (loaded rules get fresh IDs). */
+function _snapshotCurrentParticipants(): ParticipantSnapshot[] {
+  const all = getAllParticipants();
+  return all.map(p => {
+    const bouts = getBlackouts(p.id);
+    const dateRules = getDateUnavailabilities(p.id);
+    return {
+      name: p.name,
+      level: p.level,
+      certifications: [...p.certifications],
+      group: p.group,
+      dateUnavailability: dateRules.map(({ id: _, ...rest }) => rest),
+      blackouts: bouts.map(b => ({
+        start: b.start.toISOString(),
+        end: b.end.toISOString(),
+        reason: b.reason,
+      })),
+    };
+  });
+}
+
+/** Create the built-in default set from whatever participants are currently loaded. */
+function _seedBuiltInParticipantSet(): void {
+  const sets = _participantSets!;
+  if (sets.find(s => s.id === 'pset-default')) return;
+  const snap = _snapshotCurrentParticipants();
+  if (snap.length === 0) return; // don't seed empty
+  sets.unshift({
+    id: 'pset-default',
+    name: 'סט ברירת מחדל',
+    description: 'המשתתפים המקוריים',
+    participants: snap,
+    builtIn: true,
+    createdAt: 0,
+  });
+  _saveParticipantSets();
+}
+
+function _saveParticipantSets(): void {
+  if (!_participantSets) return;
+  try {
+    localStorage.setItem(STORAGE_KEY_PSETS, JSON.stringify(_participantSets));
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === 'QuotaExceededError') {
+      console.warn('[Store] localStorage quota exceeded for participant sets.');
+    } else {
+      console.warn('[Store] Failed to save participant sets:', err);
+    }
+  }
+}
+
+function _saveActiveParticipantSetId(): void {
+  try {
+    if (_activeParticipantSetId) {
+      localStorage.setItem(STORAGE_KEY_ACTIVE_PSET, _activeParticipantSetId);
+    } else {
+      localStorage.removeItem(STORAGE_KEY_ACTIVE_PSET);
+    }
+  } catch (err) {
+    console.warn('[Store] Failed to save active participant set id:', err);
+  }
+}
+
+/** Case-insensitive trimmed name duplicate check */
+function _isPSetNameTaken(name: string, excludeId?: string): boolean {
+  const norm = name.trim().toLowerCase();
+  const sets = _initParticipantSets();
+  return sets.some(s => s.name.trim().toLowerCase() === norm && s.id !== excludeId);
+}
+
+// ─── Participant Sets Public API ─────────────────────────────────────────────
+
+/** Get all participant sets (built-in first, then by createdAt) */
+export function getAllParticipantSets(): ParticipantSet[] {
+  const sets = _initParticipantSets();
+  return sets
+    .slice()
+    .sort((a, b) => {
+      if (a.builtIn && !b.builtIn) return -1;
+      if (!a.builtIn && b.builtIn) return 1;
+      return a.createdAt - b.createdAt;
+    })
+    .map(s => _deepCopyPSet(s));
+}
+
+/** Get a single participant set by id */
+export function getParticipantSetById(id: string): ParticipantSet | undefined {
+  const sets = _initParticipantSets();
+  const found = sets.find(s => s.id === id);
+  return found ? _deepCopyPSet(found) : undefined;
+}
+
+/** Get the active participant set id (may be null) */
+export function getActiveParticipantSetId(): string | null {
+  _initParticipantSets();
+  return _activeParticipantSetId ?? null;
+}
+
+/**
+ * Save the current participants as a new named set.
+ * Returns the new set, or null if the name is taken or limit reached.
+ */
+export function saveCurrentAsParticipantSet(name: string, description: string): ParticipantSet | null {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  if (_isPSetNameTaken(trimmed)) return null;
+
+  const sets = _initParticipantSets();
+  if (sets.length >= MAX_PARTICIPANT_SETS) {
+    console.warn(`[Store] Participant set limit reached (${MAX_PARTICIPANT_SETS}).`);
+    return null;
+  }
+
+  const pset: ParticipantSet = {
+    id: uid('pset'),
+    name: trimmed,
+    description: description.trim(),
+    participants: _snapshotCurrentParticipants(),
+    createdAt: Date.now(),
+  };
+
+  sets.push(pset);
+  _saveParticipantSets();
+
+  _activeParticipantSetId = pset.id;
+  _saveActiveParticipantSetId();
+
+  return _deepCopyPSet(pset);
+}
+
+/**
+ * Load a participant set — replaces ALL current participants.
+ * This is a single undoable action.
+ */
+export function loadParticipantSet(id: string): void {
+  const pset = getParticipantSetById(id);
+  if (!pset) return;
+
+  pushSnapshot();
+  _suppressSnapshot = true;
+  try {
+    // Clear all current participants
+    participants.clear();
+    blackouts.clear();
+    dateUnavailabilities.clear();
+
+    // Add participants from the set
+    for (const snap of pset.participants) {
+      const pid = uid('p');
+      const p: Participant = {
+        id: pid,
+        name: snap.name,
+        level: snap.level,
+        certifications: [...snap.certifications],
+        group: snap.group,
+        availability: getDefaultAvailability(),
+        dateUnavailability: [],
+      };
+      participants.set(pid, p);
+
+      // Restore blackouts
+      if (snap.blackouts && snap.blackouts.length > 0) {
+        const bouts: BlackoutPeriod[] = snap.blackouts.map(b => ({
+          id: uid('bo'),
+          start: new Date(b.start),
+          end: new Date(b.end),
+          reason: b.reason,
+        }));
+        blackouts.set(pid, bouts);
+      }
+
+      // Restore date unavailabilities
+      if (snap.dateUnavailability && snap.dateUnavailability.length > 0) {
+        const rules: DateUnavailability[] = snap.dateUnavailability.map(r => ({
+          ...r,
+          id: uid('du'),
+        }));
+        dateUnavailabilities.set(pid, rules);
+        p.dateUnavailability = rules;
+      }
+    }
+
+    recalcAllAvailability();
+  } finally {
+    _suppressSnapshot = false;
+  }
+
+  _activeParticipantSetId = id;
+  _saveActiveParticipantSetId();
+  notify();
+}
+
+/**
+ * Overwrite an existing set's participants with the current state.
+ * Returns false if set not found or is built-in.
+ */
+export function updateParticipantSet(id: string): boolean {
+  const sets = _initParticipantSets();
+  const idx = sets.findIndex(s => s.id === id);
+  if (idx === -1) return false;
+  if (sets[idx].builtIn) return false;
+
+  sets[idx].participants = _snapshotCurrentParticipants();
+  _saveParticipantSets();
+  return true;
+}
+
+/**
+ * Rename a participant set. Returns null on success, or an error string.
+ */
+export function renameParticipantSet(id: string, name: string, description: string): string | null {
+  const sets = _initParticipantSets();
+  const pset = sets.find(s => s.id === id);
+  if (!pset) return 'סט לא נמצא';
+  if (pset.builtIn) return 'לא ניתן לשנות שם של סט מובנה';
+
+  const trimmed = name.trim();
+  if (!trimmed) return 'השם לא יכול להיות ריק';
+  if (_isPSetNameTaken(trimmed, id)) return 'סט עם שם זה כבר קיים';
+
+  pset.name = trimmed;
+  pset.description = description.trim();
+  _saveParticipantSets();
+  return null;
+}
+
+/**
+ * Duplicate a participant set with a unique name.
+ */
+export function duplicateParticipantSet(id: string): ParticipantSet | null {
+  const source = getParticipantSetById(id);
+  if (!source) return null;
+
+  const sets = _initParticipantSets();
+  if (sets.length >= MAX_PARTICIPANT_SETS) return null;
+
+  let newName = source.name + ' (עותק)';
+  let attempt = 2;
+  while (_isPSetNameTaken(newName)) {
+    newName = `${source.name} (עותק ${attempt++})`;
+  }
+
+  const dup: ParticipantSet = {
+    id: uid('pset'),
+    name: newName,
+    description: source.description,
+    participants: source.participants, // already deep-copied by getParticipantSetById
+    builtIn: false,
+    createdAt: Date.now(),
+  };
+  sets.push(dup);
+  _saveParticipantSets();
+  return _deepCopyPSet(dup);
+}
+
+/**
+ * Delete a participant set. If it was active, clears the active id.
+ * Returns false if not found or is built-in.
+ */
+export function deleteParticipantSet(id: string): boolean {
+  const sets = _initParticipantSets();
+  const idx = sets.findIndex(s => s.id === id);
+  if (idx === -1) return false;
+  if (sets[idx].builtIn) return false;
+
+  sets.splice(idx, 1);
+  _saveParticipantSets();
+
+  if (_activeParticipantSetId === id) {
+    _activeParticipantSetId = null;
+    _saveActiveParticipantSetId();
+  }
+  return true;
+}
+
+/**
+ * Compare the current participants against the active set.
+ * Returns true if they differ (set is "dirty").
+ */
+export function isParticipantSetDirty(): boolean {
+  const activeId = getActiveParticipantSetId();
+  if (!activeId) return false;
+  const pset = getParticipantSetById(activeId);
+  if (!pset) return false;
+  const current = _snapshotCurrentParticipants();
+  return JSON.stringify(current) !== JSON.stringify(pset.participants);
+}
+
+/** Get the maximum number of participant sets allowed */
+export function getMaxParticipantSets(): number {
+  return MAX_PARTICIPANT_SETS;
 }

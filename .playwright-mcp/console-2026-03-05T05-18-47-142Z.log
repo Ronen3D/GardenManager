@@ -1,0 +1,4 @@
+[     248ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/favicon.ico:0
+[ 3770908ms] The requested module '/src/web/ui-helpers.ts' does not provide an export named 'SVG_ICONS'
+[ 3777033ms] The requested module '/src/web/ui-helpers.ts' does not provide an export named 'SVG_ICONS'
+[ 3832863ms] The requested module '/src/web/tab-participants.ts?t=1772691754193' does not provide an export named 'clearParticipantSelection'

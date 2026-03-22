@@ -1,0 +1,19 @@
+appId: com.gardenmanager.app
+productName: Garden Manager
+directories:
+  output: release
+files:
+  - dist-electron/**/*
+  - dist-web/**/*
+  - package.json
+  - "!node_modules"
+asar: true
+win:
+  target: nsis
+  icon: build/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  artifactName: "${productName}-Setup-${version}.${ext}"
