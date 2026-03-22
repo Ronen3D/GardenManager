@@ -19,22 +19,13 @@ import {
 import * as store from './config-store';
 import { showPrompt, showConfirm } from './ui-modal';
 import { runPreflight } from './preflight';
+import { TASK_COLORS, TASK_TYPE_LABELS } from './ui-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
 const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala, Certification.Horesh];
 const TASK_TYPE_OPTIONS = Object.values(TaskType);
-
-const TASK_COLORS: Record<string, string> = {
-  Adanit: '#4A90D9', Hamama: '#E74C3C', Shemesh: '#F39C12',
-  Mamtera: '#27AE60', Karov: '#8E44AD', Karovit: '#BDC3C7', Aruga: '#1ABC9C',
-};
-
-const TASK_TYPE_LABELS: Record<string, string> = {
-  Adanit: 'אדנית', Hamama: 'חממה', Shemesh: 'שמש',
-  Mamtera: 'ממטרה', Karov: 'כרוב', Karovit: 'כרובית', Aruga: 'ערוגה',
-};
 
 function taskTypeBadge(type: string): string {
   const color = TASK_COLORS[type] || '#7f8c8d';

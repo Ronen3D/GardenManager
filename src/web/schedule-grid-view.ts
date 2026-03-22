@@ -11,7 +11,7 @@ import {
   SlotRequirement,
   LiveModeState
 } from '../models/types';
-import { TASK_COLORS, groupColor, fmt, levelBadge, groupBadge, SVG_ICONS } from './ui-helpers';
+import { TASK_COLORS, groupColor, fmt, levelBadge, groupBadge, SVG_ICONS, escHtml } from './ui-helpers';
 import { isFutureTask } from '../engine/temporal';
 import { addDays } from 'date-fns';
 
@@ -81,7 +81,7 @@ function renderAssignmentCard(
         content = `
             <div class="card-header">
                 <span class="participant-name participant-hover" role="button" tabindex="0" ${hoverAttrs} style="color:${groupColor(participant.group)}">
-                    ${participant.name}
+                    ${escHtml(participant.name)}
                 </span>
             </div>
             <div class="card-details">
@@ -90,7 +90,7 @@ function renderAssignmentCard(
             </div>
         `;
     } else {
-        content = `<div class="empty-slot-label">${slot.label || 'ריק'}</div>`;
+        content = `<div class="empty-slot-label">${slot.label ? escHtml(slot.label) : 'ריק'}</div>`;
     }
 
     return `

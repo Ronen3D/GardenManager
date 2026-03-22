@@ -5,6 +5,9 @@
  * and provides a reusable toast notification utility.
  */
 
+/** Cleanup callbacks for custom selects, keyed by wrapper element. */
+const _selectCleanups = new WeakMap<HTMLElement, () => void>();
+
 // ─── Modal Dialogs ──────────────────────────────────────────────────────────
 
 export interface AlertOptions {
@@ -300,7 +303,7 @@ export function wireCustomSelect(
   if (!wrapper) return;
 
   // Clean up any previous outside-click listener stored on this wrapper
-  const prevCleanup = (wrapper as any).__gmSelectCleanup as (() => void) | undefined;
+  const prevCleanup = _selectCleanups.get(wrapper);
   if (prevCleanup) prevCleanup();
 
   const trigger = wrapper.querySelector('.gm-select-trigger') as HTMLElement;
@@ -395,9 +398,9 @@ export function wireCustomSelect(
     }
   };
   document.addEventListener('click', closeOnOutside);
-  (wrapper as any).__gmSelectCleanup = () => {
+  _selectCleanups.set(wrapper, () => {
     document.removeEventListener('click', closeOnOutside);
-  };
+  });
 }
 
 // ─── Utilities ──────────────────────────────────────────────────────────────

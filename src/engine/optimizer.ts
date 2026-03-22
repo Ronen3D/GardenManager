@@ -41,6 +41,22 @@ import { isEligible, getRejectionReason } from './validator';
 import { dateKey } from '../utils/date-utils';
 import { computeAllCapacities } from '../utils/capacity';
 
+// ─── Simulated Annealing Constants ──────────────────────────────────────────
+// Extracted from localSearch() for readability. Values are calibrated for the
+// Garden Manager scheduling problem; do not change without benchmarking.
+
+/** Initial temperature. e^(-50/55) ≈ 0.40 → ~40% acceptance of a -50 delta. */
+const SA_INITIAL_TEMPERATURE = 55;
+
+/** Geometric cooling rate per iteration. */
+const SA_COOLING_RATE = 0.997;
+
+/** Iterations without improvement before reheating to SA_INITIAL_TEMPERATURE/3. */
+const SA_REHEAT_THRESHOLD = 500;
+
+/** Probability of attempting an unfilled-slot insert move per iteration. */
+const SA_INSERT_PROBABILITY = 0.2;
+
 /** P4: Add an assignment into the per-participant index */
 function addToAssignmentMap(map: Map<string, Assignment[]>, a: Assignment): void {
   const arr = map.get(a.participantId);
@@ -390,7 +406,7 @@ export function greedyAssign(
         // a current assignment (typically HC-5 double-booking). If we can
         // reassign their blocking assignment to someone else, we free them.
         let backtrackSuccess = false;
-        let swapPlan: { p: any, blockingAssign: Assignment, blockingTask: any, replacement: any } | null = null;
+        let swapPlan: { p: Participant, blockingAssign: Assignment, blockingTask: Task, replacement: Participant } | null = null;
 
         for (const p of participants) {
           // Quick filter: skip if participant can't possibly fill this slot
@@ -834,8 +850,8 @@ function isSwapFeasible(
   if (!disabledHC?.has('HC-12')) {
     const checkConsecutiveHighLoad = (pid: string): boolean => {
       const pAssignments = (byParticipant.get(pid) || [])
-        .map(a => ({ assignment: a, task: taskMap.get(a.taskId)! }))
-        .filter(x => x.task != null)
+        .map(a => ({ assignment: a, task: taskMap.get(a.taskId) }))
+        .filter((x): x is { assignment: Assignment; task: Task } => x.task != null)
         .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
       for (let x = 0; x < pAssignments.length - 1; x++) {
         const cur = pAssignments[x];
@@ -937,17 +953,8 @@ export function localSearchOptimize(
   const startTime = Date.now();
   let iterations = 0;
 
-  // Simulated-annealing parameters
-  // T0 calibrated so that a swap losing ~50 score points has ~40% acceptance
-  // at the start (e^(-50/55) ≈ 0.40). Uses geometric decay (α=0.997) instead
-  // of linear decay to maintain exploration longer in early phases.
-  const T0 = 55;
-  const ALPHA = 0.997;  // geometric cooling rate
   const maxIter = config.maxIterations;
-  let temperature = T0;
-  // Reheating: if no improvement in REHEAT_THRESHOLD iterations, temporarily
-  // raise temperature to T0/3 to escape local minima.
-  const REHEAT_THRESHOLD = 500;
+  let temperature = SA_INITIAL_TEMPERATURE;
   let itersSinceImprovement = 0;
 
   // Pre-allocate index order array once and shuffle in-place each pass
@@ -967,9 +974,9 @@ export function localSearchOptimize(
     if (Date.now() - startTime > config.maxSolverTimeMs) break;
 
     // Geometric temperature decay with reheating
-    temperature *= ALPHA;
-    if (itersSinceImprovement >= REHEAT_THRESHOLD && temperature < 1) {
-      temperature = T0 / 3;
+    temperature *= SA_COOLING_RATE;
+    if (itersSinceImprovement >= SA_REHEAT_THRESHOLD && temperature < 1) {
+      temperature = SA_INITIAL_TEMPERATURE / 3;
       itersSinceImprovement = 0;
     }
 
@@ -984,7 +991,7 @@ export function localSearchOptimize(
     // ── Insert moves: try to fill unfilled slots ──
     // With 20% probability per iteration (when unfilled slots exist),
     // attempt to place an eligible participant into an unfilled slot.
-    if (remainingUnfilled.length > 0 && Math.random() < 0.2) {
+    if (remainingUnfilled.length > 0 && Math.random() < SA_INSERT_PROBABILITY) {
       // Pick a random unfilled slot
       const ufIdx = Math.floor(Math.random() * remainingUnfilled.length);
       const uf = remainingUnfilled[ufIdx];
@@ -1139,8 +1146,18 @@ export function localSearchOptimize(
 
         // 4. Incremental score: only recompute for the two swapped participants
         //    Save state for undo
-        const savedA = incScorer.saveParticipant(oldPidJ)!; // ai now has oldPidJ
-        const savedB = incScorer.saveParticipant(oldPidI)!; // aj now has oldPidI
+        const savedA = incScorer.saveParticipant(oldPidJ); // ai now has oldPidJ
+        const savedB = incScorer.saveParticipant(oldPidI); // aj now has oldPidI
+        if (!savedA || !savedB) {
+          // Defensive: scorer lacks data for a participant — undo in-place swap
+          ai.participantId = oldPidI;
+          aj.participantId = oldPidJ;
+          listPidI[posI] = ai;
+          listPidJ[posJ] = aj;
+          assignmentPos.set(ai.id, { pid: oldPidI, idx: posI });
+          assignmentPos.set(aj.id, { pid: oldPidJ, idx: posJ });
+          continue;
+        }
         const newComposite = incScorer.recomputeForSwap(oldPidJ, oldPidI);
         const delta = newComposite - currentComposite;
 
@@ -1181,7 +1198,7 @@ export function localSearchOptimize(
 
     // If nothing was accepted in this full pass AND temperature has decayed
     // significantly AND reheating can't help, the search has converged.
-    if (!accepted && temperature < 0.5 && itersSinceImprovement > REHEAT_THRESHOLD) break;
+    if (!accepted && temperature < 0.5 && itersSinceImprovement > SA_REHEAT_THRESHOLD) break;
   }
 
   return { assignments: best, filledSlots };
