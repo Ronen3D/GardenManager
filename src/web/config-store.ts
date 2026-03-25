@@ -41,6 +41,14 @@ function uid(prefix: string): string {
 
 export { uid };
 
+// ─── Save Error Handler ─────────────────────────────────────────────────────
+
+/** Optional callback for reporting persistence errors to the UI. */
+let _onSaveError: ((err: unknown) => void) | null = null;
+export function setSaveErrorHandler(handler: (err: unknown) => void): void {
+  _onSaveError = handler;
+}
+
 // ─── Listener System ─────────────────────────────────────────────────────────
 
 type Listener = () => void;
@@ -53,7 +61,7 @@ export function subscribe(fn: Listener): () => void {
 
 function notify(): void {
   for (const fn of listeners) {
-    try { fn(); } catch (_) { /* swallow */ }
+    try { fn(); } catch (err) { console.error('[Store] Listener threw:', err); }
   }
   // Auto-persist state to localStorage (debounced)
   debouncedSave();
@@ -79,10 +87,11 @@ let _suppressSnapshot = false;
  * Falls back to a manual clone only for environments that lack it.
  */
 function captureSnapshot(): StoreSnapshot {
+  const useStructured = typeof structuredClone === 'function';
   const ps: StoreSnapshot['participants'] = [];
   for (const [id, p] of participants) {
     // Date objects survive structuredClone; avoid per-field spreading
-    const clonedP = typeof structuredClone === 'function'
+    const clonedP = useStructured
       ? structuredClone(p)
       : {
           ...p,
@@ -94,15 +103,15 @@ function captureSnapshot(): StoreSnapshot {
     const rawDus = dateUnavailabilities.get(id) || [];
     ps.push({
       p: clonedP,
-      blackouts: typeof structuredClone === 'function'
+      blackouts: useStructured
         ? structuredClone(rawBouts)
         : rawBouts.map(b => ({ ...b, start: new Date(b.start.getTime()), end: new Date(b.end.getTime()) })),
-      dateUnavails: typeof structuredClone === 'function'
+      dateUnavails: useStructured
         ? structuredClone(rawDus)
         : rawDus.map(r => ({ ...r })),
     });
   }
-  const tpls: TaskTemplate[] = typeof structuredClone === 'function'
+  const tpls: TaskTemplate[] = useStructured
     ? structuredClone([...taskTemplates.values()])
     : [...taskTemplates.values()].map(tpl => ({
         ...tpl,
@@ -230,8 +239,14 @@ const participants: Map<string, Participant> = new Map();
 const blackouts: Map<string, BlackoutPeriod[]> = new Map(); // participantId -> blackouts
 const dateUnavailabilities: Map<string, DateUnavailability[]> = new Map(); // participantId -> rules
 
-/** Default scheduling window (7-day window starting from the configured date) */
-let scheduleDate: Date = new Date(2026, 1, 15);
+/** Default schedule date: next upcoming Sunday from today. */
+function defaultScheduleDate(): Date {
+  const now = new Date();
+  const day = now.getDay();
+  const daysUntilSunday = day === 0 ? 0 : 7 - day;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilSunday);
+}
+let scheduleDate: Date = defaultScheduleDate();
 let scheduleDays: number = 7;
 
 export function getScheduleDate(): Date { return scheduleDate; }
@@ -1031,6 +1046,7 @@ export function saveToStorage(): void {
     localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(state));
   } catch (err) {
     console.warn('[Store] Failed to save to localStorage:', err);
+    _onSaveError?.(err);
   }
 }
 

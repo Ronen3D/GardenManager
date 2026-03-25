@@ -18,6 +18,7 @@ import {
 } from '../models/types';
 import * as store from './config-store';
 import { showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
+import { escHtml } from './ui-helpers';
 
 // ─── Weight field metadata ───────────────────────────────────────────────────
 
@@ -176,7 +177,7 @@ export function renderAlgorithmTab(): string {
     <div class="toolbar-right">
       ${renderCustomSelect({
         id: 'gm-preset-select',
-        options: presets.map(p => ({ value: p.id, label: `${_escHtml(p.name)}${p.id === activeId && dirty ? ' (שונה)' : ''}`, selected: p.id === activeId })),
+        options: presets.map(p => ({ value: p.id, label: `${escHtml(p.name)}${p.id === activeId && dirty ? ' (שונה)' : ''}`, selected: p.id === activeId })),
         searchable: presets.length > 5,
         className: 'preset-select',
       })}
@@ -294,8 +295,8 @@ function renderPresetPanel(
     const target = targetId ? store.getPresetById(targetId) : undefined;
     html += `<div class="preset-inline-form" id="preset-rename-form">
       <div class="preset-form-row">
-        <label>שם: <input type="text" class="preset-name-input" data-field="rename-name" maxlength="60" value="${_escHtml(target?.name ?? '')}" /></label>
-        <label>תיאור: <input type="text" class="preset-desc-input" data-field="rename-desc" maxlength="200" value="${_escHtml(target?.description ?? '')}" /></label>
+        <label>שם: <input type="text" class="preset-name-input" data-field="rename-name" maxlength="60" value="${escHtml(target?.name ?? '')}" /></label>
+        <label>תיאור: <input type="text" class="preset-desc-input" data-field="rename-desc" maxlength="200" value="${escHtml(target?.description ?? '')}" /></label>
         <button class="btn btn-sm btn-primary" data-action="algo-preset-rename-confirm">שמור</button>
         <button class="btn btn-sm btn-outline" data-action="algo-preset-form-cancel">ביטול</button>
       </div>
@@ -317,11 +318,11 @@ function renderPresetPanel(
       const isBuiltIn = p.builtIn ?? false;
       html += `<div class="preset-item ${isActive ? 'preset-item-active' : ''}" data-preset-id="${p.id}">
         <div class="preset-item-main">
-          <span class="preset-item-name">${_escHtml(p.name)}</span>
+          <span class="preset-item-name">${escHtml(p.name)}</span>
           ${isBuiltIn ? '<span class="preset-builtin-badge">מובנית</span>' : ''}
           ${isActive && dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
         </div>
-        ${p.description ? `<div class="preset-item-desc text-muted">${_escHtml(p.description)}</div>` : ''}
+        ${p.description ? `<div class="preset-item-desc text-muted">${escHtml(p.description)}</div>` : ''}
         <div class="preset-item-actions">
           ${!isActive ? `<button class="btn-xs btn-primary" data-preset-action="load" data-preset-id="${p.id}" title="טען תבנית זו">▶ טען</button>` : ''}
           ${isActive && dirty && !isBuiltIn ? `<button class="btn-xs btn-outline" data-preset-action="update" data-preset-id="${p.id}" title="עדכן עם ההגדרות הנוכחיות">עדכן</button>` : ''}
@@ -596,8 +597,3 @@ async function _handlePresetItemAction(btn: HTMLElement, rerender: () => void): 
   }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function _escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}

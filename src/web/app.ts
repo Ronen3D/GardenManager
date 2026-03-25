@@ -107,6 +107,10 @@ let _optimProgress: {
 /** The 24h window boundary hour (05:00–05:00 by default) */
 const DAY_START_HOUR = 5;
 
+/** Sidebar workload bar thresholds (fraction of total period hours). */
+const WORKLOAD_OVER_THRESHOLD = 0.18;
+const WORKLOAD_UNDER_THRESHOLD = 0.08;
+
 // ─── Rescue Modal State ──────────────────────────────────────────────────────
 
 /** Currently displayed rescue result (null when modal is closed) */
@@ -547,7 +551,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
     html += `<div class="sidebar-mini">`;
     for (const entry of l0Entries) {
       const pct = entry.w.effectiveHours / totalPeriodHours;
-      const cls = pct > 0.18 ? 'mini-over' : pct < 0.08 ? 'mini-under' : 'mini-normal';
+      const cls = pct > WORKLOAD_OVER_THRESHOLD ? 'mini-over' : pct < WORKLOAD_UNDER_THRESHOLD ? 'mini-under' : 'mini-normal';
       html += `<div class="sidebar-mini-bar ${cls}" title="${entry.p.name}: ${entry.w.effectiveHours.toFixed(1)} שע' אפק'"></div>`;
     }
     html += `</div></div>`;
@@ -576,7 +580,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
         <span class="senior-toggle-arrow" id="senior-toggle-arrow">▶</span>
       </button>
     </div>
-    <div class="sidebar-senior-panel" id="sidebar-senior-panel" style="display:none">
+    <div class="sidebar-senior-panel hidden" id="sidebar-senior-panel">
       <div class="sidebar-header sidebar-header-senior">
         <h3>עומס בכירים (L2-L4)</h3>
         <div class="sidebar-avg">ממוצע: ${seniorAvg.toFixed(1)} שע' אפק' · σ ${seniorSigma.toFixed(2)} · ${seniorEntries.length} משתתפים</div>
@@ -2268,8 +2272,8 @@ function wireScheduleEvents(container: HTMLElement): void {
       const panel = document.getElementById('sidebar-senior-panel');
       const arrow = document.getElementById('senior-toggle-arrow');
       if (panel) {
-        const visible = panel.style.display !== 'none';
-        panel.style.display = visible ? 'none' : 'block';
+        const visible = !panel.classList.contains('hidden');
+        panel.classList.toggle('hidden', visible);
         if (arrow) arrow.textContent = visible ? '▶' : '▼';
       }
     });
@@ -2385,7 +2389,7 @@ function openExportModal(): void {
               </div>
             </label>
           </div>
-          <div class="export-day-picker" id="export-day-picker" style="display:none">
+          <div class="export-day-picker hidden" id="export-day-picker">
             <label>בחר יום:</label>
             ${renderCustomSelect({ id: 'gm-export-day-select', options: exportDayOpts, className: 'export-day-select' })}
           </div>
@@ -2435,7 +2439,13 @@ function wireExportModalEvents(): void {
       const mode = (r as HTMLInputElement).value;
       optWeekly.classList.toggle('selected', mode === 'weekly');
       optDaily.classList.toggle('selected', mode === 'daily');
-      dayPicker.style.display = mode === 'daily' ? 'flex' : 'none';
+      if (mode === 'daily') {
+        dayPicker.classList.remove('hidden');
+        dayPicker.style.display = 'flex';
+      } else {
+        dayPicker.classList.add('hidden');
+        dayPicker.style.display = '';
+      }
     });
   });
 
@@ -2861,6 +2871,9 @@ function init(): void {
 
   store.initStore();
   store.subscribe(onStoreChanged);
+  store.setSaveErrorHandler(() => {
+    showToast('שמירת נתונים נכשלה — ייתכן שהדפדפן חסם אחסון מקומי', { type: 'error', duration: 5000 });
+  });
 
   // Restore saved schedule from localStorage
   const savedSchedule = store.loadSchedule();

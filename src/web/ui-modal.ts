@@ -5,6 +5,8 @@
  * and provides a reusable toast notification utility.
  */
 
+import { escHtml, escAttr } from './ui-helpers';
+
 /** Cleanup callbacks for custom selects, keyed by wrapper element. */
 const _selectCleanups = new WeakMap<HTMLElement, () => void>();
 
@@ -403,12 +405,3 @@ export function wireCustomSelect(
   });
 }
 
-// ─── Utilities ──────────────────────────────────────────────────────────────
-
-function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function escAttr(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}

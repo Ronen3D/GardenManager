@@ -12,7 +12,7 @@ import {
 } from '../models/types';
 import * as store from './config-store';
 import { showConfirm, showToast } from './ui-modal';
-import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, SVG_ICONS } from './ui-helpers';
+import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, SVG_ICONS, escHtml } from './ui-helpers';
 import { HEBREW_DAYS, hebrewDayName, hebrewDayNameFromISO } from '../utils/date-utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -55,11 +55,11 @@ function resolveGroupInput(
   const raw = newGroupInput?.value ?? '';
   const result = validateGroupName(raw, store.getGroups());
   if (!result.valid) {
-    if (errorSpan) { errorSpan.textContent = result.error; errorSpan.style.display = 'block'; }
+    if (errorSpan) { errorSpan.textContent = result.error; errorSpan.classList.remove('hidden'); }
     newGroupInput?.focus();
     return null;
   }
-  if (errorSpan) errorSpan.style.display = 'none';
+  if (errorSpan) errorSpan.classList.add('hidden');
   // Normalize: if exact match exists already, use it
   const existing = store.getGroups().find(g => g.toLowerCase() === raw.trim().toLowerCase());
   return existing ?? raw.trim();
@@ -102,10 +102,6 @@ export function clearParticipantSelection(): void {
   _bulkDeleteDialogOpen = false;
 }
 // ─── Sort Logic ──────────────────────────────────────────────────────────────
-
-function _escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 function sortParticipants(list: Participant[]): Participant[] {
   if (!sortColumn) return list;
@@ -156,8 +152,8 @@ function renderSetsPanel(): string {
     const target = targetId ? store.getParticipantSetById(targetId) : undefined;
     html += `<div class="preset-inline-form" id="pset-rename-form">
       <div class="preset-form-row">
-        <label>שם: <input type="text" class="preset-name-input" data-field="pset-rename-name" maxlength="60" value="${_escHtml(target?.name ?? '')}" /></label>
-        <label>תיאור: <input type="text" class="preset-desc-input" data-field="pset-rename-desc" maxlength="200" value="${_escHtml(target?.description ?? '')}" /></label>
+        <label>שם: <input type="text" class="preset-name-input" data-field="pset-rename-name" maxlength="60" value="${escHtml(target?.name ?? '')}" /></label>
+        <label>תיאור: <input type="text" class="preset-desc-input" data-field="pset-rename-desc" maxlength="200" value="${escHtml(target?.description ?? '')}" /></label>
         <button class="btn btn-sm btn-primary" data-action="pset-rename-confirm">שמור</button>
         <button class="btn btn-sm btn-outline" data-action="pset-form-cancel">ביטול</button>
       </div>
@@ -180,12 +176,12 @@ function renderSetsPanel(): string {
       const count = s.participants.length;
       html += `<div class="preset-item ${isActive ? 'preset-item-active' : ''}" data-pset-id="${s.id}">
         <div class="preset-item-main">
-          <span class="preset-item-name">${_escHtml(s.name)}</span>
+          <span class="preset-item-name">${escHtml(s.name)}</span>
           <span class="pset-count-badge">${count} משתתפים</span>
           ${isBuiltIn ? '<span class="preset-builtin-badge">מובנה</span>' : ''}
           ${isActive && dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
         </div>
-        ${s.description ? `<div class="preset-item-desc text-muted">${_escHtml(s.description)}</div>` : ''}
+        ${s.description ? `<div class="preset-item-desc text-muted">${escHtml(s.description)}</div>` : ''}
         <div class="preset-item-actions">
           ${!isActive ? `<button class="btn-xs btn-primary" data-pset-action="load" data-pset-id="${s.id}" title="טען סט זה">▶ טען</button>` : ''}
           ${isActive && dirty && !isBuiltIn ? `<button class="btn-xs btn-outline" data-pset-action="update" data-pset-id="${s.id}" title="עדכן עם המשתתפים הנוכחיים">עדכן</button>` : ''}
@@ -324,8 +320,8 @@ function renderEditRow(p: Participant, idx: number): string {
         ${groups.map(g => `<option value="${g}" ${p.group === g ? 'selected' : ''}>${g}</option>`).join('')}
         <option value="__new__">+ קבוצה חדשה…</option>
       </select>
-      <input class="input-sm" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="display:none; margin-top:4px" />
-      <span class="group-error" style="display:none; color:var(--error); font-size:0.75rem;"></span>
+      <input class="input-sm" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" class="hidden" style="margin-top:4px" />
+      <span class="group-error" class="hidden" style="color:var(--error); font-size:0.75rem;"></span>
     </td>
     <td>
       <select class="input-sm" data-field="level">
@@ -405,14 +401,14 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
         <option value="specificDate">תאריך ספציפי</option>
       </select>
       
-      <select class="input-sm" data-field="du-dow" style="width:120px; display:none;">
+      <select class="input-sm" data-field="du-dow" class="hidden" style="width:120px;">
         ${HEBREW_DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
       </select>
       
-      <input type="date" class="input-sm" data-field="du-date" style="display:none;" />
+      <input type="date" class="input-sm" data-field="du-date" class="hidden" />
       
       <div class="time-inputs-group">
-        <label class="checkbox-label" style="white-space:nowrap; display:none;" data-field="du-allday-wrapper">
+        <label class="checkbox-label" class="hidden" style="white-space:nowrap;" data-field="du-allday-wrapper">
           <input type="checkbox" data-field="du-allday" /> כל היום
         </label>
         <input type="text" class="input-sm time-24h" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="bo-start" value="08:00" />
@@ -422,7 +418,7 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
       
       <input type="text" class="input-sm" data-field="bo-reason" placeholder="סיבה (אופציונלי)" />
       <button class="btn-sm btn-primary" data-action="add-unified-constraint" data-pid="${pid}">הוסף</button>
-      <span class="du-validation-error" style="display:none;color:#e74c3c;font-size:0.85em;margin-inline-start:6px"></span>
+      <span class="du-validation-error" class="hidden" style="color:#e74c3c;font-size:0.85em;margin-inline-start:6px"></span>
     </div>
   </div></td></tr>`;
   return html;
@@ -430,7 +426,7 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
 
 function renderAddForm(groups: string[]): string {
   return `
-  <div id="add-participant-form" class="add-form" style="display:none;">
+  <div id="add-participant-form" class="add-form hidden">
     <h4>הוסף משתתף</h4>
     <div class="form-row">
       <label>שם <input class="input-sm" type="text" data-field="new-name" placeholder="שם" /></label>
@@ -439,8 +435,8 @@ function renderAddForm(groups: string[]): string {
           ${groups.map(g => `<option value="${g}">${g}</option>`).join('')}
           <option value="__new__">+ קבוצה חדשה…</option>
         </select>
-        <input class="input-sm" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="display:none; margin-top:4px" />
-        <span class="group-error" style="display:none; color:var(--error); font-size:0.75rem;"></span>
+        <input class="input-sm" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" class="hidden" style="margin-top:4px" />
+        <span class="group-error" class="hidden" style="color:var(--error); font-size:0.75rem;"></span>
       </label>
       <label>דרגה
         <select class="input-sm" data-field="new-level">
@@ -482,7 +478,7 @@ function renderBulkUnavailDialog(): string {
           <label class="bulk-field-date">תאריך
             <input type="date" class="input-sm" data-field="bulk-date" />
           </label>
-          <label class="bulk-field-dow" style="display:none">יום
+          <label class="bulk-field-dow hidden">יום
             <select class="input-sm" data-field="bulk-dow">
               ${HEBREW_DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
             </select>
@@ -617,18 +613,18 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       const dateLabel = dialog.querySelector('.bulk-field-date') as HTMLElement;
       const dowLabel = dialog.querySelector('.bulk-field-dow') as HTMLElement;
       if (sel === 'dayOfWeek') {
-        dateLabel.style.display = 'none';
-        dowLabel.style.display = '';
+        dateLabel.classList.add('hidden');
+        dowLabel.classList.remove('hidden');
       } else {
-        dateLabel.style.display = '';
-        dowLabel.style.display = 'none';
+        dateLabel.classList.remove('hidden');
+        dowLabel.classList.add('hidden');
       }
     }
     if (field === 'bulk-allday') {
       const checked = (e.target as HTMLInputElement).checked;
       const dialog = (e.target as HTMLElement).closest('.bulk-dialog')!;
       const timeFields = dialog.querySelector('.bulk-time-fields') as HTMLElement;
-      if (timeFields) timeFields.style.display = checked ? 'none' : '';
+      if (timeFields) timeFields.classList.toggle('hidden', checked);
     }
   });
 
@@ -641,10 +637,10 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     const newGroupInput = parent.querySelector('[data-field="new-group-name"]') as HTMLInputElement | null;
     const errorSpan = parent.querySelector('.group-error') as HTMLElement | null;
     if (select.value === '__new__') {
-      if (newGroupInput) { newGroupInput.style.display = 'block'; newGroupInput.value = ''; newGroupInput.focus(); }
+      if (newGroupInput) { newGroupInput.classList.remove('hidden'); newGroupInput.value = ''; newGroupInput.focus(); }
     } else {
-      if (newGroupInput) { newGroupInput.style.display = 'none'; newGroupInput.value = ''; }
-      if (errorSpan) errorSpan.style.display = 'none';
+      if (newGroupInput) { newGroupInput.classList.add('hidden'); newGroupInput.value = ''; }
+      if (errorSpan) errorSpan.classList.add('hidden');
     }
   });
 
@@ -659,17 +655,17 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       const allDayWrapper = panel.querySelector('[data-field="du-allday-wrapper"]') as HTMLElement;
       
       if (sel.value === 'current_shift') {
-        if (dowSel) dowSel.style.display = 'none';
-        if (dateInp) dateInp.style.display = 'none';
-        if (allDayWrapper) allDayWrapper.style.display = 'none';
+        if (dowSel) dowSel.classList.add('hidden');
+        if (dateInp) dateInp.classList.add('hidden');
+        if (allDayWrapper) allDayWrapper.classList.add('hidden');
       } else if (sel.value === 'dayOfWeek') {
-        if (dowSel) dowSel.style.display = '';
-        if (dateInp) dateInp.style.display = 'none';
-        if (allDayWrapper) allDayWrapper.style.display = '';
+        if (dowSel) dowSel.classList.remove('hidden');
+        if (dateInp) dateInp.classList.add('hidden');
+        if (allDayWrapper) allDayWrapper.classList.remove('hidden');
       } else {
-        if (dowSel) dowSel.style.display = 'none';
-        if (dateInp) dateInp.style.display = '';
-        if (allDayWrapper) allDayWrapper.style.display = '';
+        if (dowSel) dowSel.classList.add('hidden');
+        if (dateInp) dateInp.classList.remove('hidden');
+        if (allDayWrapper) allDayWrapper.classList.remove('hidden');
       }
     }
     
@@ -682,13 +678,13 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       const separator = panel.querySelector('.time-separator') as HTMLElement;
       
       if (cb.checked) {
-        if (startInp) startInp.style.display = 'none';
-        if (endInp) endInp.style.display = 'none';
-        if (separator) separator.style.display = 'none';
+        if (startInp) startInp.classList.add('hidden');
+        if (endInp) endInp.classList.add('hidden');
+        if (separator) separator.classList.add('hidden');
       } else {
-        if (startInp) startInp.style.display = '';
-        if (endInp) endInp.style.display = '';
-        if (separator) separator.style.display = '';
+        if (startInp) startInp.classList.remove('hidden');
+        if (endInp) endInp.classList.remove('hidden');
+        if (separator) separator.classList.remove('hidden');
       }
     }
   });
@@ -701,13 +697,13 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     const errorSpan = parent.querySelector('.group-error') as HTMLElement | null;
     const raw = target.value;
     if (!raw.trim()) {
-      if (errorSpan) errorSpan.style.display = 'none';
+      if (errorSpan) errorSpan.classList.add('hidden');
       return;
     }
     const result = validateGroupName(raw, store.getGroups());
     if (errorSpan) {
       errorSpan.textContent = result.valid ? '' : result.error;
-      errorSpan.style.display = result.valid ? 'none' : 'block';
+      errorSpan.classList.toggle('hidden', result.valid);
     }
   });
 
@@ -746,8 +742,8 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       case 'add-participant': {
         const form = container.querySelector('#add-participant-form') as HTMLElement;
         if (form) {
-          const wasHidden = form.style.display === 'none';
-          form.style.display = wasHidden ? 'block' : 'none';
+          const wasHidden = form.classList.contains('hidden');
+          form.classList.toggle('hidden', !wasHidden);
           if (wasHidden) {
             form.scrollIntoView({ behavior: 'smooth', block: 'center' });
             const nameInput = form.querySelector('[data-field="new-name"]') as HTMLInputElement | null;
@@ -782,7 +778,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       }
       case 'cancel-add-participant': {
         const form = container.querySelector('#add-participant-form') as HTMLElement;
-        if (form) form.style.display = 'none';
+        if (form) form.classList.add('hidden');
         break;
       }
       case 'edit-participant': {
@@ -849,7 +845,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const type = (panel.querySelector('[data-field="constraint-type"]') as HTMLSelectElement)?.value;
         const reason = (panel.querySelector('[data-field="bo-reason"]') as HTMLInputElement)?.value || undefined;
         const errEl = panel.querySelector('.du-validation-error') as HTMLElement;
-        if (errEl) errEl.style.display = 'none';
+        if (errEl) errEl.classList.add('hidden');
 
         if (type === 'current_shift') {
           const startStr = (panel.querySelector('[data-field="bo-start"]') as HTMLInputElement)?.value;
@@ -874,7 +870,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
           if (!allDay && startHour === endHour) {
             if (errEl) {
               errEl.textContent = 'שעת התחלה ושעת סיום לא יכולות להיות זהות. השתמש ב"כל היום".';
-              errEl.style.display = 'block';
+              errEl.classList.remove('hidden');
             }
             return;
           }
