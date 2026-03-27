@@ -1328,6 +1328,7 @@ export interface OptimizationResult {
   unfilledSlots: { taskId: string; slotId: string; reason: string }[];
   iterations: number;
   durationMs: number;
+  actualAttempts: number;
 }
 
 /**
@@ -1394,6 +1395,7 @@ export function optimize(
     unfilledSlots: remainingUnfilled,
     iterations: 0,
     durationMs: Date.now() - startTime,
+    actualAttempts: 1,
   };
 }
 
@@ -1519,12 +1521,11 @@ export function optimizeMultiAttempt(
       });
     }
 
-    // Early termination: no point continuing when all slots are filled
-    if (best!.unfilledSlots.length === 0) break;
   }
 
-  // Update total duration
+  // Update total duration and actual attempts performed
   best!.durationMs = Date.now() - totalStart;
+  best!.actualAttempts = diagRows.length;
 
   if (_diagnosticLogging) {
     console.log(
@@ -1624,11 +1625,6 @@ export function optimizeMultiAttemptAsync(
           });
         }
 
-        // Early termination: no point continuing when all slots are filled
-        if (best!.unfilledSlots.length === 0) {
-          i = attempts; // Force loop exit and resolution
-          break;
-        }
       }
 
       if (i < attempts) {
@@ -1636,6 +1632,7 @@ export function optimizeMultiAttemptAsync(
         setTimeout(runBatch, 0);
       } else {
         best!.durationMs = Date.now() - totalStart;
+        best!.actualAttempts = diagRows.length;
         if (_diagnosticLogging) {
           console.log(
             `[Scheduler] Multi-attempt async done: ${attempts} attempts in ${best!.durationMs}ms. ` +

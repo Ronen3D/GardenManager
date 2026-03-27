@@ -215,6 +215,7 @@ export class SchedulingEngine {
       score: result.score,
       violations: allViolations,
       generatedAt: new Date(),
+      actualAttempts: result.actualAttempts,
     };
 
     this.currentSchedule = schedule;

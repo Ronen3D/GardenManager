@@ -67,6 +67,7 @@ let currentTab: 'participants' | 'task-rules' | 'schedule' | 'algorithm' = 'part
 let engine: SchedulingEngine | null = null;
 let currentSchedule: Schedule | null = null;
 let scheduleElapsed = 0;
+let scheduleActualAttempts = 0;
 /** Currently viewed day (1–7). Always a specific day when schedule is shown. */
 let currentDay = 1;
 /** True while multi-attempt optimization is running */
@@ -459,7 +460,7 @@ function renderWeeklyDashboard(schedule: Schedule): string {
       </div>
     </div>
     <div class="dashboard-meta">
-      התוצאה הטובה ביותר מתוך ${OPTIM_ATTEMPTS} ניסיונות, בזמן חישוב של ${(scheduleElapsed / 1000).toFixed(1)} שניות.
+      התוצאה הטובה ביותר מתוך ${scheduleActualAttempts} ניסיונות, בזמן חישוב של ${(scheduleElapsed / 1000).toFixed(1)} שניות.
     </div>
   </div>`;
 }
@@ -1228,6 +1229,7 @@ async function doGenerate(): Promise<void> {
     // ── Atomic commit: update state in one go, then render once ──
     currentSchedule = schedule;
     scheduleElapsed = Math.round(performance.now() - t0);
+    scheduleActualAttempts = schedule.actualAttempts ?? OPTIM_ATTEMPTS;
     currentDay = 1;
     _scheduleDirty = false;
     _snapshotDirty = true;
@@ -1890,6 +1892,10 @@ function renderAll(): void {
       · ${participants.length} משתתפים
       · ${templates.length} משימות
     </p>
+    <div class="header-credit">
+      <span class="credit-left">פותח על ידי אייל צמיר</span>
+      <span class="credit-right">כי עוד אאמין גם באדם גם ברוחו רוח עז</span>
+    </div>
   </header>
 
   <nav class="tab-nav">
@@ -2889,50 +2895,8 @@ function init(): void {
     showToast('שמירת נתונים נכשלה — ייתכן שהדפדפן חסם אחסון מקומי', { type: 'error', duration: 5000 });
   });
 
-  // Restore saved schedule from localStorage
-  const savedSchedule = store.loadSchedule();
-  if (savedSchedule) {
-    const algoInit = store.getAlgorithmSettings();
-    engine = new SchedulingEngine(
-      algoInit.config,
-      store.getDisabledHCSet(),
-      store.getDisabledSWSet(),
-    );
-
-    // Bug #10 fix: use current store participants instead of stale
-    // schedule snapshot — levels/certs/groups may have changed.
-    const currentParticipants = store.getAllParticipants();
-    const storeIds = new Set(currentParticipants.map(p => p.id));
-
-    // Prune assignments/tasks for deleted participants
-    const reconciledAssignments = savedSchedule.assignments.filter(
-      a => storeIds.has(a.participantId),
-    );
-    const reconciledParticipants = currentParticipants.filter(
-      p => savedSchedule.participants.some(sp => sp.id === p.id),
-    );
-
-    const reconciledSchedule: Schedule = {
-      ...savedSchedule,
-      participants: reconciledParticipants,
-      assignments: reconciledAssignments,
-    };
-
-    engine.addParticipants(reconciledParticipants);
-    engine.addTasks(savedSchedule.tasks);
-    engine.importSchedule(reconciledSchedule);
-
-    // Bug #11 fix: revalidate so violations/score reflect current state
-    engine.revalidateFull();
-    currentSchedule = engine.getSchedule()!;
-    currentDay = 1;
-
-    // Re-apply freeze if live mode was active
-    const liveMode = store.getLiveModeState();
-    if (liveMode.enabled) {
-      freezeAssignments(currentSchedule, liveMode.currentTimestamp);
-    }
-  }
+  // Clear any previously saved schedule so the app starts fresh
+  store.clearSchedule();
 
   renderAll();
 

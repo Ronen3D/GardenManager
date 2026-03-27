@@ -1294,6 +1294,14 @@ export function saveSchedule(schedule: Schedule): void {
   }
 }
 
+export function clearSchedule(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY_SCHEDULE);
+  } catch (err) {
+    console.warn('[Store] Failed to clear schedule from localStorage:', err);
+  }
+}
+
 /**
  * Load a saved Schedule from localStorage.
  * Returns null if no schedule is saved or deserialization fails.

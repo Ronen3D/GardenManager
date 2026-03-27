@@ -203,6 +203,8 @@ export interface Schedule {
   violations: ConstraintViolation[];
   /** Timestamp of generation */
   generatedAt: Date;
+  /** How many optimizer attempts actually ran (may be less than requested on early termination) */
+  actualAttempts?: number;
 }
 
 export interface ScheduleScore {
