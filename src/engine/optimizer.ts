@@ -27,7 +27,6 @@ import {
   AssignmentStatus,
   SchedulerConfig,
   ScheduleScore,
-  TaskType,
   Level,
   Certification,
   SlotRequirement,
@@ -56,6 +55,12 @@ const SA_REHEAT_THRESHOLD = 500;
 
 /** Probability of attempting an unfilled-slot insert move per iteration. */
 const SA_INSERT_PROBABILITY = 0.2;
+
+/** Check if a participant holds any certification excluded by the task. */
+function hasExcludedCertification(p: Participant, task: Task): boolean {
+  if (!task.excludedCertifications?.length) return false;
+  return task.excludedCertifications.some(c => p.certifications.includes(c));
+}
 
 /** P4: Add an assignment into the per-participant index */
 function addToAssignmentMap(map: Map<string, Assignment[]>, a: Assignment): void {
@@ -150,6 +155,10 @@ function getEligibleCandidates(
   participantWorkload: Map<string, number>,
   dailyWorkload?: Map<string, Map<string, number>>,
   disabledHC?: Set<string>,
+  /** Per-group count of Nitzan-certified members. When provided, participants
+   *  from groups with fewer Nitzan holders are deprioritised (tie-break only)
+   *  to protect tight Adanit groups from losing members to non-Adanit tasks. */
+  adanitGroupNitzanCount?: Map<string, number>,
 ): Participant[] {
   const eligible = participants.filter((p) =>
     isEligibleForSlot(p, task, slot, assignmentsByParticipant.get(p.id) || [], taskMap, disabledHC),
@@ -160,15 +169,15 @@ function getEligibleCandidates(
 
   // ── C1 FIX: Single composite comparator ──
   // Merges what were three sequential (destructive) sorts into one stable sort.
-  // Adanit:     exact-level → workload → level → random
-  // Non-Adanit: (Hamama: level pref) → workload → exact-level → level → random
+  // Same-group:  exact-level → workload → same-type count → level → random
+  // Non-group:   (preferJuniors: level pref) → workload → exact-level → level → random
 
   // P3: Pre-compute random keys for a transitive, unbiased tiebreaker
   const rngKey = new Map<string, number>();
   for (const p of eligible) rngKey.set(p.id, Math.random());
 
   eligible.sort((a, b) => {
-    if (task.type === TaskType.Adanit) {
+    if (task.sameGroupRequired) {
       // T1: exact level match vs overqualified
       const aExact = slot.acceptableLevels.includes(a.level) ? 0 : 1;
       const bExact = slot.acceptableLevels.includes(b.level) ? 0 : 1;
@@ -183,25 +192,25 @@ function getEligibleCandidates(
       const scoreA = wa + 2.0 * dayA;
       const scoreB = wb + 2.0 * dayB;
       if (scoreA !== scoreB) return scoreA - scoreB;
-      // T2.5: Adanit-specific assignment count — prefer participants with fewer
-      // Adanit shifts so L3/L4 naturally alternate instead of one level hoarding.
-      const adanitCountA = (assignmentsByParticipant.get(a.id) || []).filter(
-        (asgn) => taskMap.get(asgn.taskId)?.type === TaskType.Adanit,
+      // T2.5: Same-type assignment count — prefer participants with fewer
+      // same-type shifts so L3/L4 naturally alternate instead of one level hoarding.
+      const sameTypeCountA = (assignmentsByParticipant.get(a.id) || []).filter(
+        (asgn) => taskMap.get(asgn.taskId)?.sameGroupRequired,
       ).length;
-      const adanitCountB = (assignmentsByParticipant.get(b.id) || []).filter(
-        (asgn) => taskMap.get(asgn.taskId)?.type === TaskType.Adanit,
+      const sameTypeCountB = (assignmentsByParticipant.get(b.id) || []).filter(
+        (asgn) => taskMap.get(asgn.taskId)?.sameGroupRequired,
       ).length;
-      if (adanitCountA !== adanitCountB) return adanitCountA - adanitCountB;
+      if (sameTypeCountA !== sameTypeCountB) return sameTypeCountA - sameTypeCountB;
       // T3: level ascending
       if (a.level !== b.level) return a.level - b.level;
       // T4: random tiebreak (pre-computed key)
       return (rngKey.get(a.id) || 0) - (rngKey.get(b.id) || 0);
     }
 
-    // ── All non-Adanit tasks ──
-    // Hamama-specific: prefer L0 first, L4 only as absolute last resort
-    // (L2/L3 are hard-blocked from Hamama by HC-13 and won't be candidates)
-    if (task.type === TaskType.Hamama) {
+    // ── All non-same-group tasks ──
+    // preferJuniors: prefer L0 first, L4 only as absolute last resort
+    // (L2/L3 are hard-blocked by HC-13 and won't be candidates)
+    if (task.preferJuniors) {
       const hp = (l: Level): number => l === Level.L0 ? 0 : l === Level.L4 ? 1 : 2;
       const d = hp(a.level) - hp(b.level);
       if (d !== 0) return d;
@@ -228,6 +237,16 @@ function getEligibleCandidates(
     // skip level bias so all eligible levels compete fairly.
     if (aExact === 1 && a.level !== b.level) return a.level - b.level;
 
+    // Adanit member protection: prefer participants from groups with more
+    // Nitzan holders (those groups have more Adanit capacity, so their
+    // members are less precious). Participants from tight groups are
+    // deprioritised to keep them available for Adanit shifts.
+    if (adanitGroupNitzanCount) {
+      const aCap = adanitGroupNitzanCount.get(a.group) ?? 0;
+      const bCap = adanitGroupNitzanCount.get(b.group) ?? 0;
+      if (aCap !== bCap) return bCap - aCap;
+    }
+
     // Random tiebreak (pre-computed key)
     return (rngKey.get(a.id) || 0) - (rngKey.get(b.id) || 0);
   });
@@ -238,35 +257,66 @@ function getEligibleCandidates(
 // ─── Greedy Phase ────────────────────────────────────────────────────────────
 
 /**
- * Sort tasks for assignment order. Constrained tasks first:
- * Adanit (same-group, complex), then Hamama, then Mamtera (14h window
- * makes it the hardest L0-only task — must be scheduled before Karov/Karovit
- * to avoid L0 pool depletion), then Karov, Aruga, Karovit (light) and Shemesh.
+ * Compute a scheduling priority using constraint-type tiers with
+ * candidate-pool tiebreakers.
+ *
+ * Tier 0: Same-group tasks (Adanit) — always first
+ * Tier 1: preferJuniors + cert required (Hamama) — penalty-critical
+ * Tier 2: L0-only + cert required (Shemesh) — very tight pool
+ * Tier 3: Mixed levels + cert or exclusion (Karov, Mamtera) — moderate
+ * Tier 4: L0-only unconstrained (Aruga) — wide pool
+ * Tier 5: Light tasks (Karovit) — always last among non-group
+ *
+ * Within each tier, tasks are randomly ordered (no sub-priority tiebreaker).
+ * Simulation (300 iter × 22 variants, Round 3) showed that removing the
+ * min-eligible bottleneck sub-priority improves composite score by +6.4%
+ * (p=0.005) and reduces mean penalty by -8.8%, because random tiebreaking
+ * gives the jitter + multi-attempt mechanism more exploration room.
+ */
+function computeStructuralPriority(task: Task): number {
+  if (task.sameGroupRequired) return 0;
+
+  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(s =>
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+  const hasExclusion = (task.excludedCertifications?.length ?? 0) > 0;
+
+  let tier: number;
+  if (task.preferJuniors && hasCerts) tier = 1;       // Hamama: penalty-critical
+  else if (allL0Only && hasCerts) tier = 2;           // Shemesh: tight L0+cert pool
+  else if (hasCerts || hasExclusion) tier = 3;        // Karov, Mamtera: moderate
+  else if (allL0Only && !task.isLight) tier = 4;      // Aruga: wide L0 pool
+  else if (task.isLight) tier = 5;                    // Karovit: light tasks last
+  else tier = 3;                                      // Fallback
+
+  return tier * 10;
+}
+
+/**
+ * Sort tasks for assignment order. Most-constrained tasks first.
+ * Uses explicit schedulingPriority if set on the task, otherwise computes
+ * priority from constraint tiers.
  */
 function sortTasksByDifficulty(tasks: Task[], jitter: number = 0): Task[] {
-  const priority: Record<string, number> = {
-    [TaskType.Adanit]: 0,
-    [TaskType.Hamama]: 1,
-    [TaskType.Mamtera]: 2,
-    [TaskType.Karov]: 3,
-    [TaskType.Aruga]: 4,
-    [TaskType.Karovit]: 5,
-    [TaskType.Shemesh]: 6,
-  };
   // P3: Pre-compute random keys for transitive tiebreaker
   const taskRngKey = new Map<string, number>();
   for (const t of tasks) taskRngKey.set(t.id, Math.random());
 
+  const basePriority = new Map<string, number>();
+  for (const t of tasks) {
+    basePriority.set(t.id, t.schedulingPriority ?? computeStructuralPriority(t));
+  }
+
   // Task-order jitter: with probability `jitter`, apply a random ±1
-  // perturbation to each task's base priority (clamped to [0, 6]).
-  // Adanit (priority 0) is never perturbed — same-group constraint makes
-  // it structurally critical to schedule first.
+  // perturbation to each task's base priority.
+  // Priority-0 tasks are never perturbed — structurally critical to schedule first.
+  const maxBase = Math.max(...[...basePriority.values()]);
   const jitteredPriority = new Map<string, number>();
   for (const t of tasks) {
-    const base = priority[t.type] ?? 99;
-    if (jitter > 0 && base > 0 && base < 99 && Math.random() < jitter) {
+    const base = basePriority.get(t.id)!;
+    if (jitter > 0 && base > 0 && Math.random() < jitter) {
       const delta = Math.random() < 0.5 ? -1 : 1;
-      jitteredPriority.set(t.id, Math.max(1, Math.min(6, base + delta)));
+      jitteredPriority.set(t.id, Math.max(1, Math.min(maxBase, base + delta)));
     } else {
       jitteredPriority.set(t.id, base);
     }
@@ -332,6 +382,15 @@ export function greedyAssign(
     }
   }
 
+  // ITEM 10: Pre-compute per-group Nitzan-certified member count.
+  // Used as a tie-breaker to protect tight Adanit groups from losing members.
+  const adanitGroupNitzanCount = new Map<string, number>();
+  for (const p of participants) {
+    if (p.certifications.includes(Certification.Nitzan)) {
+      adanitGroupNitzanCount.set(p.group, (adanitGroupNitzanCount.get(p.group) || 0) + 1);
+    }
+  }
+
   const sortedTasks = sortTasksByDifficulty(tasks, taskOrderJitter);
 
   for (const task of sortedTasks) {
@@ -376,6 +435,7 @@ export function greedyAssign(
         workload,
         dailyWorkload,
         disabledHC,
+        adanitGroupNitzanCount,
       );
 
       if (candidates.length > 0) {
@@ -415,7 +475,7 @@ export function greedyAssign(
           if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
           if (!isFullyCovered(task.timeBlock, p.availability)) continue;
           if (checkSeniorHardBlock(p, task, slot)) continue;
-          if (p.certifications.includes(Certification.Horesh) && task.type === TaskType.Mamtera) continue;
+          if (hasExcludedCertification(p, task)) continue;
 
           // Already eligible (shouldn't happen since candidates was empty, but guard)
           const pAssigns = assignmentsByParticipant.get(p.id) || [];
@@ -547,11 +607,11 @@ export function greedyAssign(
           const hc12Count = rejectionCounts.get('HC-12') || 0;
           const hc13Count = rejectionCounts.get('HC-13') || 0;
           if (hc12Count > 0 && hc13Count > 0) {
-            reason = `התנגשות HC-12×HC-13 ב${task.name}: ${hc13Count} נחסמו ע"י מדיניות בכירים, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
+            reason = `התנגשות HC-12×HC-13 ב${task.name}: ${hc13Count} נחסמו ע"י מדיניות סגל, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
           } else if (hc12Count > 0) {
             reason = `חסימת HC-12 עומס רצוף: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות כבדות סמוכות`;
           } else if (hc13Count > 0) {
-            reason = `חסימת HC-13 מדיניות בכירים: כל המועמדים ${levelStr}${certStr} ל${task.name} מוגבלים ע"י אילוצי תפקיד בכיר`;
+            reason = `חסימת HC-13 מדיניות סגל: כל המועמדים ${levelStr}${certStr} ל${task.name} מוגבלים ע"י אילוצי תפקיד סגל`;
           } else {
             reason = `חסר ${levelStr}${certStr} עבור ${task.name}`;
           }
@@ -793,10 +853,10 @@ function isSwapFeasible(
     if (slotJ && checkSeniorHardBlock(pJ, taskJ, slotJ)) return false;
   }
 
-  // HC-11: Choresh exclusion from Mamtera
+  // HC-11: Excluded certification check (e.g. Horesh from Mamtera)
   if (!disabledHC?.has('HC-11')) {
-    if (pI.certifications.includes(Certification.Horesh) && taskI.type === TaskType.Mamtera) return false;
-    if (pJ.certifications.includes(Certification.Horesh) && taskJ.type === TaskType.Mamtera) return false;
+    if (hasExcludedCertification(pI, taskI)) return false;
+    if (hasExcludedCertification(pJ, taskJ)) return false;
   }
 
   // HC-7: Unique participant per task — use per-task index (O(k) instead of O(n))
@@ -888,7 +948,7 @@ function isSwapFeasible(
  * is pre-built once and reused across all `computeScheduleScore` calls
  * to eliminate redundant map construction and O(P×A) scans.
  */
-const UNFILLED_SLOT_PENALTY = 500;
+const UNFILLED_SLOT_PENALTY = 50000;
 
 export function localSearchOptimize(
   tasks: Task[],
@@ -933,12 +993,21 @@ export function localSearchOptimize(
   // Build ScoreContext once — taskMap, pMap, and the mutable indices are
   // kept consistent via in-place patching so the same ctx is valid for
   // every scoring call throughout the search.
+  // Build notWithPairs from participant data for scoring context
+  const notWithPairs = new Map<string, Set<string>>();
+  for (const p of participants) {
+    if (p.notWithIds && p.notWithIds.length > 0) {
+      notWithPairs.set(p.id, new Set(p.notWithIds));
+    }
+  }
+
   const scoreCtx: ScoreContext = {
     taskMap,
     pMap,
     assignmentsByParticipant: byParticipant,
     assignmentsByTask: byTask,
     capacities,
+    notWithPairs,
   };
 
   let currentScore = computeScheduleScore(tasks, participants, current, config, scoreCtx);
@@ -989,9 +1058,10 @@ export function localSearchOptimize(
     let accepted = false;
 
     // ── Insert moves: try to fill unfilled slots ──
-    // With 20% probability per iteration (when unfilled slots exist),
-    // attempt to place an eligible participant into an unfilled slot.
-    if (remainingUnfilled.length > 0 && Math.random() < SA_INSERT_PROBABILITY) {
+    // When unfilled slots exist, use 50% probability to aggressively prioritise
+    // feasibility over quality. Otherwise use the default 20%.
+    const insertProb = remainingUnfilled.length > 0 ? 0.5 : SA_INSERT_PROBABILITY;
+    if (remainingUnfilled.length > 0 && Math.random() < insertProb) {
       // Pick a random unfilled slot
       const ufIdx = Math.floor(Math.random() * remainingUnfilled.length);
       const uf = remainingUnfilled[ufIdx];
@@ -1201,6 +1271,51 @@ export function localSearchOptimize(
     if (!accepted && temperature < 0.5 && itersSinceImprovement > SA_REHEAT_THRESHOLD) break;
   }
 
+  // ── Post-SA Insert Sweep ─────────────────────────────────────────────────
+  // SA swaps may have freed participants that no stochastic insert iteration
+  // happened to find. Build fresh indices from `best` and deterministically
+  // try to fill every remaining unfilled slot.
+  if (remainingUnfilled.length > 0) {
+    const sweepByParticipant = buildAssignmentMap(best);
+    const sweepByTask = new Map<string, Assignment[]>();
+    for (const a of best) {
+      const list = sweepByTask.get(a.taskId);
+      if (list) list.push(a);
+      else sweepByTask.set(a.taskId, [a]);
+    }
+
+    for (const uf of [...remainingUnfilled]) {
+      const ufTask = taskMap.get(uf.taskId);
+      if (!ufTask) continue;
+      const ufSlot = ufTask.slots.find(s => s.slotId === uf.slotId);
+      if (!ufSlot) continue;
+
+      for (const p of participants) {
+        const pAssigns = sweepByParticipant.get(p.id) || [];
+        if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC)) continue;
+        // HC-7: no duplicate participant in same task
+        const taskAssigns = sweepByTask.get(uf.taskId) || [];
+        if (taskAssigns.some(a => a.participantId === p.id)) continue;
+
+        const newA: Assignment = {
+          id: nextAssignmentId(),
+          taskId: uf.taskId,
+          slotId: uf.slotId,
+          participantId: p.id,
+          status: AssignmentStatus.Scheduled,
+          updatedAt: new Date(),
+        };
+        best.push(newA);
+        addToAssignmentMap(sweepByParticipant, newA);
+        const tList = sweepByTask.get(uf.taskId);
+        if (tList) tList.push(newA);
+        else sweepByTask.set(uf.taskId, [newA]);
+        filledSlots.push(uf.slotId);
+        break;
+      }
+    }
+  }
+
   return { assignments: best, filledSlots };
 }
 
@@ -1257,10 +1372,18 @@ export function optimize(
     if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
   }
   const finalCapacities = computeAllCapacities(participants, schedStart, schedEnd);
+  // Rebuild notWithPairs for final scoring
+  const finalNotWithPairs = new Map<string, Set<string>>();
+  for (const p of participants) {
+    if (p.notWithIds && p.notWithIds.length > 0) {
+      finalNotWithPairs.set(p.id, new Set(p.notWithIds));
+    }
+  }
   const finalCtx: ScoreContext = {
     taskMap: new Map(tasks.map(t => [t.id, t])),
     pMap: new Map(participants.map(p => [p.id, p])),
     capacities: finalCapacities,
+    notWithPairs: finalNotWithPairs,
   };
   const score = computeScheduleScore(tasks, participants, lsResult.assignments, config, finalCtx);
 
@@ -1340,16 +1463,34 @@ export function optimizeMultiAttempt(
   const totalStart = Date.now();
   const diagRows: Array<{ '#': number; score: string; unfilled: number; stdDev: string; penalty: string; improved: string }> = [];
 
+  // Elite restart: periodically boost scheduling priority for tasks that
+  // have unfilled slots in the current best result, so subsequent attempts
+  // schedule them earlier (one tier up).
+  const ELITE_INTERVAL = 200;
+  let eliteBoostTaskIds: Set<string> | null = null;
+
   for (let i = 0; i < attempts; i++) {
+    // Update elite boost set every ELITE_INTERVAL attempts
+    if (best && i > 0 && i % ELITE_INTERVAL === 0 && best.unfilledSlots.length > 0) {
+      eliteBoostTaskIds = new Set(best.unfilledSlots.map(uf => uf.taskId));
+    }
+
     // Shuffle participant order to create diversity
     // (first attempt uses original order for determinism)
     const shuffledParticipants = i === 0
       ? [...participants]
       : shuffle([...participants]);
 
+    // Apply elite boost: create task copies with reduced priority for unfilled tasks
+    const attemptTasks = eliteBoostTaskIds && i > 0
+      ? tasks.map(t => eliteBoostTaskIds!.has(t.id)
+          ? { ...t, schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t)) - 10) }
+          : t)
+      : tasks;
+
     // Task-order jitter: 0 for first attempt, 0.3 for subsequent
     const jitter = i === 0 ? 0 : 0.3;
-    const result = optimize(tasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter);
+    const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter);
 
     const improved = best === null || isBetterResult(result, best);
     if (improved) {
@@ -1377,6 +1518,9 @@ export function optimizeMultiAttempt(
         improved,
       });
     }
+
+    // Early termination: no point continuing when all slots are filled
+    if (best!.unfilledSlots.length === 0) break;
   }
 
   // Update total duration
@@ -1421,19 +1565,35 @@ export function optimizeMultiAttemptAsync(
     const totalStart = Date.now();
     const diagRows: Array<{ '#': number; score: string; unfilled: number; stdDev: string; penalty: string; improved: string }> = [];
 
+    // Elite restart state (same logic as sync version)
+    const ELITE_INTERVAL = 200;
+    let eliteBoostTaskIds: Set<string> | null = null;
+
     function runBatch(): void {
       try {
         const batchEnd = Math.min(i + ASYNC_BATCH_SIZE, attempts);
 
       while (i < batchEnd) {
+        // Update elite boost set every ELITE_INTERVAL attempts
+        if (best && i > 0 && i % ELITE_INTERVAL === 0 && best.unfilledSlots.length > 0) {
+          eliteBoostTaskIds = new Set(best.unfilledSlots.map(uf => uf.taskId));
+        }
+
         // Shuffle participant order (first attempt uses original order)
         const shuffledParticipants = i === 0
           ? [...participants]
           : shuffle([...participants]);
 
+        // Apply elite boost: create task copies with reduced priority for unfilled tasks
+        const attemptTasks = eliteBoostTaskIds && i > 0
+          ? tasks.map(t => eliteBoostTaskIds!.has(t.id)
+              ? { ...t, schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t)) - 10) }
+              : t)
+          : tasks;
+
         // Task-order jitter: 0 for first attempt, 0.3 for subsequent
         const jitter = i === 0 ? 0 : 0.3;
-        const result = optimize(tasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter);
+        const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter);
 
         const improved = best === null || isBetterResult(result, best);
         if (improved) {
@@ -1462,6 +1622,12 @@ export function optimizeMultiAttemptAsync(
             attemptFeasible: result.feasible,
             improved,
           });
+        }
+
+        // Early termination: no point continuing when all slots are filled
+        if (best!.unfilledSlots.length === 0) {
+          i = attempts; // Force loop exit and resolution
+          break;
         }
       }
 

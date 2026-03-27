@@ -229,7 +229,7 @@ const score1 = computeScheduleScore(
   DEFAULT_CONFIG,
 );
 assert(score1.totalPenalty > 0, 'L4 Hamama assignment incurs penalty');
-assert(score1.totalPenalty >= DEFAULT_CONFIG.seniorHamamaPenalty, 'Penalty >= seniorHamamaPenalty config');
+assert(score1.totalPenalty >= DEFAULT_CONFIG.seniorJuniorPreferencePenalty, 'Penalty >= seniorJuniorPreferencePenalty config');
 
 // L0 Hamama — should have 0 hamama penalty (only workload-based penalty possible)
 const l0HamamaAssignment = [{
@@ -657,7 +657,7 @@ import {
   isNaturalRole,
   checkSeniorHardBlock,
   validateSeniorHardBlocks,
-  computeSeniorHamamaPenalty,
+  computeSeniorJuniorPreferencePenalty,
 } from './constraints/senior-policy';
 import { AdanitTeam } from './models/types';
 import type { SlotRequirement, Assignment } from './models/types';
@@ -686,7 +686,7 @@ const mamteraTask = createMamteraTask(baseDate);
   };
   const violations = checkChoreshExclusion(mamteraTask, [choreshP]);
   assert(violations.length === 1, 'HC-11: Choresh → Mamtera violation');
-  assert(violations[0].code === 'CHORESH_FORBIDDEN_MAMTERA', 'HC-11: violation code = CHORESH_FORBIDDEN_MAMTERA');
+  assert(violations[0].code === 'EXCLUDED_CERTIFICATION', 'HC-11: violation code = EXCLUDED_CERTIFICATION');
 }
 
 // Choresh participant on non-Mamtera task → no violation
@@ -713,7 +713,7 @@ const mamteraTask = createMamteraTask(baseDate);
   }];
   const result = validateHardConstraints([mamteraTask], [choreshP], badAssign);
   assert(result.valid === false, 'HC-11: Full validation rejects Choresh+Mamtera');
-  assert(result.violations.some(v => v.code === 'CHORESH_FORBIDDEN_MAMTERA'), 'HC-11: Full validation has correct code');
+  assert(result.violations.some(v => v.code === 'EXCLUDED_CERTIFICATION'), 'HC-11: Full validation has correct code');
 }
 
 // ─── No Consecutive High-Load (HC-12) Tests ──────────────────────────────────
@@ -934,6 +934,7 @@ const testMamTask: Task = {
   timeBlock: createTimeBlockFromHours(baseDate, 9, 23),
   requiredCount: 2, slots: [testMamSlot],
   isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  excludedCertifications: [Certification.Horesh],
 };
 
 const testHamSlot: SlotRequirement = {
@@ -945,6 +946,7 @@ const testHamTask: Task = {
   timeBlock: createTimeBlockFromHours(baseDate, 6, 18),
   requiredCount: 1, slots: [testHamSlot],
   isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  preferJuniors: true,
 };
 
 const testShSlot: SlotRequirement = {
@@ -1042,11 +1044,11 @@ assert(checkSeniorHardBlock(spL3, testMamTask, testMamSlot)?.code === 'SENIOR_HA
 assert(checkSeniorHardBlock(spL3, testAdanitTask, adMainSlot) === null, 'HC-13: L3 in Segol Main → no violation');
 assert(checkSeniorHardBlock(spL3, testAdanitTask, adSecSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Segol Secondary → VIOLATION');
 assert(checkSeniorHardBlock(spL3, testShTask, testShSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Shemesh → VIOLATION (strict isolation)');
-assert(checkSeniorHardBlock(spL3, testHamTask, testHamSlot) === null, 'HC-13: L3 in Hamama → no hard violation');
+assert(checkSeniorHardBlock(spL3, testHamTask, testHamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Hamama (preferJuniors) → VIOLATION');
 
 assert(checkSeniorHardBlock(spL2, testMamTask, testMamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Mamtera → VIOLATION (strict isolation)');
 assert(checkSeniorHardBlock(spL2, testShTask, testShSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Shemesh → VIOLATION (strict isolation)');
-assert(checkSeniorHardBlock(spL2, testHamTask, testHamSlot) === null, 'HC-13: L2 in Hamama → no hard violation');
+assert(checkSeniorHardBlock(spL2, testHamTask, testHamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Hamama (preferJuniors) → VIOLATION');
 assert(checkSeniorHardBlock(spL0, testMamTask, testMamSlot) === null, 'HC-13: L0 never blocked');
 assert(checkSeniorHardBlock(spL0, testShTask, testShSlot) === null, 'HC-13: L0 never blocked (Shemesh)');
 
@@ -1087,7 +1089,7 @@ assert(checkSeniorHardBlock(spL0, testShTask, testShSlot) === null, 'HC-13: L0 n
   assert(!r.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'HC-13: L4 in Hamama no hard violation in full validation');
 }
 
-// ── computeSeniorHamamaPenalty ────────────────────────────────────────────────────
+// ── computeSeniorJuniorPreferencePenalty ────────────────────────────────────────────────────
 
 const cfg = { ...DEFAULT_CONFIG };
 
@@ -1096,35 +1098,35 @@ const cfg = { ...DEFAULT_CONFIG };
   const assigns: Assignment[] = [
     { id: 'sr-p1', taskId: testKarovTask.id, slotId: testKarovSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorHamamaPenalty([spL3], assigns, [testKarovTask], cfg);
-  assert(pen === 0, 'Senior Hamama: natural assignment → 0 penalty');
+  const pen = computeSeniorJuniorPreferencePenalty([spL3], assigns, [testKarovTask], cfg);
+  assert(pen === 0, 'Senior junior-pref penalty: natural assignment → 0');
 }
 
-// L4 in Hamama → seniorHamamaPenalty (absolute last resort)
+// L4 in preferJuniors task → seniorJuniorPreferencePenalty (absolute last resort)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorHamamaPenalty([spL4], assigns, [testHamTask], cfg);
-  assert(pen === cfg.seniorHamamaPenalty, `Senior Hamama: L4 Hamama → penalty ${cfg.seniorHamamaPenalty}`);
+  const pen = computeSeniorJuniorPreferencePenalty([spL4], assigns, [testHamTask], cfg);
+  assert(pen === cfg.seniorJuniorPreferencePenalty, `Senior junior-pref penalty: L4 in preferJuniors → penalty ${cfg.seniorJuniorPreferencePenalty}`);
 }
 
-// L3 in Hamama → 0 (hard-blocked by HC-13, should never occur)
+// L3 in preferJuniors task → 0 (hard-blocked by HC-13, should never occur)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2b', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorHamamaPenalty([spL3], assigns, [testHamTask], cfg);
-  assert(pen === 0, 'Senior Hamama: L3 Hamama → 0 (hard-blocked)');
+  const pen = computeSeniorJuniorPreferencePenalty([spL3], assigns, [testHamTask], cfg);
+  assert(pen === 0, 'Senior junior-pref penalty: L3 in preferJuniors → 0 (hard-blocked)');
 }
 
-// L2 in Hamama → 0 (hard-blocked by HC-13, should never occur)
+// L2 in preferJuniors task → 0 (hard-blocked by HC-13, should never occur)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2c', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorHamamaPenalty([spL2], assigns, [testHamTask], cfg);
-  assert(pen === 0, 'Senior Hamama: L2 Hamama → 0 (hard-blocked)');
+  const pen = computeSeniorJuniorPreferencePenalty([spL2], assigns, [testHamTask], cfg);
+  assert(pen === 0, 'Senior junior-pref penalty: L2 in preferJuniors → 0 (hard-blocked)');
 }
 
 // L0 participants never penalised
@@ -1132,8 +1134,8 @@ const cfg = { ...DEFAULT_CONFIG };
   const assigns: Assignment[] = [
     { id: 'sr-p5', taskId: testMamTask.id, slotId: testMamSlot.slotId, participantId: spL0.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorHamamaPenalty([spL0], assigns, [testMamTask], cfg);
-  assert(pen === 0, 'Senior Hamama: L0 never penalised');
+  const pen = computeSeniorJuniorPreferencePenalty([spL0], assigns, [testMamTask], cfg);
+  assert(pen === 0, 'Senior junior-pref penalty: L0 never penalised');
 }
 // ─── Summary ─────────────────────────────────────────────────────────────────
 

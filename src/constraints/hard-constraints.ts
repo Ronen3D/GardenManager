@@ -165,22 +165,23 @@ export function checkSameGroup(
 }
 
 /**
- * HC-11: Choresh exclusion — participants marked as "choresh" are strictly
- * forbidden from being assigned to Mamtera tasks.
+ * HC-11: Excluded certification check — participants holding a certification
+ * listed in the task's excludedCertifications are forbidden from the task.
  */
 export function checkChoreshExclusion(
   task: Task,
   assignedParticipants: Participant[],
 ): ConstraintViolation[] {
-  if (task.type !== TaskType.Mamtera) return [];
+  if (!task.excludedCertifications?.length) return [];
 
   const violations: ConstraintViolation[] = [];
   for (const p of assignedParticipants) {
-    if (p.certifications.includes(Certification.Horesh)) {
+    if (task.excludedCertifications.some(c => p.certifications.includes(c))) {
+      const excludedCerts = task.excludedCertifications.filter(c => p.certifications.includes(c));
       violations.push(
         violation(
-          'CHORESH_FORBIDDEN_MAMTERA',
-          `${p.name} מסומן כחורש ואסור לחלוטין במשימת ממטרה "${task.name}"`,
+          'EXCLUDED_CERTIFICATION',
+          `${p.name} מחזיק/ה בהסמכה ${excludedCerts.join(', ')} ואסור/ה לחלוטין במשימת "${task.name}"`,
           task.id,
           undefined,
           p.id,

@@ -20,6 +20,23 @@ import { HEBREW_DAYS, hebrewDayName, hebrewDayNameFromISO } from '../utils/date-
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
 const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala, Certification.Horesh];
 
+function getNotWithNamesForEdit(pid: string): string {
+  const ids = store.getNotWithIds(pid);
+  return ids.map(id => {
+    const p = store.getParticipant(id);
+    return p ? p.name : '';
+  }).filter(Boolean).join(', ');
+}
+
+function renderNotWithBadges(pid: string): string {
+  const ids = store.getNotWithIds(pid);
+  if (ids.length === 0) return '<span class="text-muted">—</span>';
+  return ids.map(id => {
+    const p = store.getParticipant(id);
+    return p ? `<span class="badge badge-sm" style="background:#e74c3c">${escHtml(p.name)}</span>` : '';
+  }).filter(Boolean).join(' ');
+}
+
 // ─── Group Name Validation ───────────────────────────────────────────────────
 
 const FORBIDDEN_GROUP_PATTERNS = [
@@ -76,6 +93,7 @@ let expandedBlackoutId: string | null = null;
 let filterGroup: string = '';
 let sortColumn: 'name' | 'group' | 'level' | '' = '';
 let sortDirection: 'asc' | 'desc' = 'asc';
+let showNotWithColumn = false;
 
 // ─── Multi-Select State ──────────────────────────────────────────────────────
 
@@ -140,7 +158,7 @@ function renderSetsPanel(): string {
   if (_setsFormMode === 'save-as') {
     html += `<div class="preset-inline-form" id="pset-saveas-form">
       <div class="preset-form-row">
-        <label>שם: <input type="text" class="preset-name-input" data-field="pset-saveas-name" maxlength="60" placeholder="הסט שלי" autofocus /></label>
+        <label>שם: <input type="text" class="preset-name-input" data-field="pset-saveas-name" maxlength="60" placeholder="סט המשתתפים שלי" autofocus /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="pset-saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
         <button class="btn btn-sm btn-primary" data-action="pset-saveas-confirm">שמור</button>
         <button class="btn btn-sm btn-outline" data-action="pset-form-cancel">ביטול</button>
@@ -231,7 +249,7 @@ export function renderParticipantsTab(): string {
   }
 
   // Table
-  html += `<div class="table-responsive"><table class="table table-participants">
+  html += `<div class="table-responsive"><table class="table table-participants${showNotWithColumn ? ' notwith-visible' : ''}">
     <thead><tr>
       <th class="col-select"><input type="checkbox" id="cb-select-all" title="בחר הכל" ${selectedIds.size > 0 && selectedIds.size === sorted.length ? 'checked' : ''} /></th>
       <th>#</th>
@@ -239,6 +257,7 @@ export function renderParticipantsTab(): string {
       <th class="sortable-th" data-action="sort-column" data-sort-col="group">קבוצה${sortIndicator('group')}</th>
       <th class="sortable-th" data-action="sort-column" data-sort-col="level">דרגה${sortIndicator('level')}</th>
       <th>הסמכות</th>
+      ${showNotWithColumn ? '<th>אי התאמה</th>' : ''}
       <th>זמינות</th><th>חסימות</th><th class="col-actions">פעולות</th>
     </tr></thead><tbody>`;
 
@@ -260,11 +279,12 @@ export function renderParticipantsTab(): string {
         <td>${groupBadge(p.group, true)}</td>
         <td>${levelBadge(p.level)}</td>
         <td>${certBadges(p.certifications)}</td>
+        ${showNotWithColumn ? `<td class="notwith-cell">${renderNotWithBadges(p.id)}</td>` : ''}
         <td class="avail-cell">
           ${p.availability.map(w => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
         </td>
         <td>
-          <button class="btn-sm btn-outline btn-icon" data-action="toggle-blackouts" data-pid="${p.id}" title="הצג/ערוך חסימות">
+          <button class="btn-sm btn-outline btn-icon" data-action="toggle-blackouts" data-pid="${p.id}" title="ניהול חסימות">
             ${totalRules > 0 ? `<span class="badge badge-sm" style="background:var(--warning)">${totalRules}</span>` : SVG_ICONS.block}
           </button>
         </td>
@@ -337,6 +357,9 @@ function renderEditRow(p: Participant, idx: number): string {
         ).join('')}
       </div>
     </td>
+    ${showNotWithColumn ? `<td>
+      <input class="input-sm" type="text" data-field="notWith" value="${getNotWithNamesForEdit(p.id)}" placeholder="הקלד שמות, מופרדים בפסיקים" title="שמות משתתפים מופרדים בפסיק" />
+    </td>` : ''}
     <td colspan="2"></td>
     <td class="col-actions">
       <button class="btn-sm btn-primary" data-action="save-participant" data-pid="${p.id}">שמור</button>
@@ -351,9 +374,9 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
   const dateRules = store.getDateUnavailabilities(pid);
 
   let html = `<tr class="row-blackout-expansion">
-    <td colspan="9">
+    <td colspan="${showNotWithColumn ? 10 : 9}">
       <div class="blackout-panel">
-        <h4>חסימות מוגדרות</h4>
+        <h4>חסימות קיימות</h4>
         <div class="blackout-list">`;
 
   if (bouts.length === 0 && dateRules.length === 0) {
@@ -393,7 +416,7 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
   }
 
   html += `</div>
-    <h4 style="margin-top:16px">הוספת חסימה חדשה</h4>
+    <h4 style="margin-top:16px">הוסף חסימה חדשה</h4>
     <div class="blackout-add unified-constraint-form">
       <select class="input-sm" data-field="constraint-type">
         <option value="current_shift">למשמרת הנוכחית</option>
@@ -510,7 +533,7 @@ function renderBulkUnavailDialog(): string {
 
       <div class="bulk-dialog-footer">
         <button class="btn-sm btn-outline" data-action="bulk-dialog-cancel">ביטול</button>
-        <button class="btn-primary btn-sm" data-action="bulk-dialog-save">שמור עבור ${selectedIds.size}</button>
+        <button class="btn-primary btn-sm" data-action="bulk-dialog-save">שמור ל-${selectedIds.size} משתתפים</button>
       </div>
     </div>
   </div>`;
@@ -522,7 +545,7 @@ function renderBulkDeleteDialog(): string {
   const n = selectedIds.size;
   return `<div class="bulk-dialog-backdrop" data-action="bulk-delete-dismiss">
     <div class="bulk-dialog bulk-delete-dialog">
-      <h3>⚠️ מחק ${n} משתתפים?</h3>
+      <h3>⚠️ למחוק ${n} משתתפים?</h3>
       <p class="bulk-delete-warning">
         האם למחוק <strong>${n}</strong> משתתפים?
         פעולה זו תסיר גם את כל השיבוצים וכללי חוסר הזמינות המשויכים.
@@ -539,6 +562,17 @@ function renderBulkDeleteDialog(): string {
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
 export function wireParticipantsEvents(container: HTMLElement, rerender: () => void): void {
+
+  // ─── Easter egg: triple-click on count badge toggles "אי התאמה" column ──
+  const countBadge = container.querySelector('.tab-toolbar h2 .count') as HTMLElement | null;
+  if (countBadge) {
+    countBadge.addEventListener('click', (e) => {
+      if (e.detail === 3) {
+        showNotWithColumn = !showNotWithColumn;
+        rerender();
+      }
+    });
+  }
 
   // ─── Bulk: Select-All checkbox ─────────────────────────────────────────────
   const selectAllCb = container.querySelector('#cb-select-all') as HTMLInputElement | null;
@@ -707,6 +741,20 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     }
   });
 
+  // Live validation for "not with" input — red-highlight invalid names
+  container.addEventListener('input', (e) => {
+    const target = e.target as HTMLInputElement;
+    if (target.dataset.field !== 'notWith') return;
+    const row = target.closest('tr')!;
+    const pid = row.dataset.participantId || '';
+    const allParticipants = store.getAllParticipants();
+    const validNames = new Set(allParticipants.filter(p => p.id !== pid).map(p => p.name));
+    const names = target.value.split(',').map(n => n.trim());
+    const hasInvalid = names.some(n => n !== '' && !validNames.has(n));
+    target.style.color = hasInvalid ? 'var(--error, #e74c3c)' : '';
+    target.title = hasInvalid ? 'שמות לא תקינים יסומנו באדום ויתעלמו בשמירה' : 'שמות משתתפים מופרדים בפסיק';
+  });
+
   container.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
 
@@ -804,6 +852,32 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         });
 
         store.updateParticipant(pid, { name, group, level, certifications: certs });
+
+        // Process "not with" input — only when column is visible
+        if (showNotWithColumn) {
+          const notWithRaw = (row.querySelector('[data-field="notWith"]') as HTMLInputElement)?.value || '';
+          const notWithNames = notWithRaw.split(',').map(n => n.trim()).filter(Boolean);
+          const allParticipants = store.getAllParticipants();
+          const nameToId = new Map<string, string>();
+          for (const ap of allParticipants) {
+            if (ap.id !== pid) nameToId.set(ap.name, ap.id);
+          }
+          // Determine desired set of partner IDs
+          const desiredIds = new Set<string>();
+          for (const n of notWithNames) {
+            const id = nameToId.get(n);
+            if (id) desiredIds.add(id);
+          }
+          // Sync: remove pairs no longer listed, add new ones
+          const currentIds = new Set(store.getNotWithIds(pid));
+          for (const id of currentIds) {
+            if (!desiredIds.has(id)) store.removeNotWith(pid, id);
+          }
+          for (const id of desiredIds) {
+            if (!currentIds.has(id)) store.addNotWith(pid, id);
+          }
+        }
+
         editingId = null;
         rerender();
         break;
@@ -961,7 +1035,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         _setsFormMode = 'none';
         _setsFormError = '';
         _setsRenameTargetId = null;
-        showToast('הסט שונה בהצלחה', { type: 'success' });
+        showToast('הסט עודכן בהצלחה', { type: 'success' });
         rerender();
         break;
       }
@@ -1054,7 +1128,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
 async function _handlePsetItemAction(action: string, id: string, rerender: () => void): Promise<void> {
   switch (action) {
     case 'load': {
-      const ok = await showConfirm('טעינת סט תחליף את כל המשתתפים הנוכחיים. להמשיך?', {
+      const ok = await showConfirm('טעינת הסט תחליף את רשימת המשתתפים הנוכחית. להמשיך?', {
         danger: true,
         title: 'טעינת סט משתתפים',
         confirmLabel: 'טען',
@@ -1066,7 +1140,7 @@ async function _handlePsetItemAction(action: string, id: string, rerender: () =>
       break;
     }
     case 'update': {
-      const ok = await showConfirm('לעדכן את הסט עם המשתתפים הנוכחיים?', {
+      const ok = await showConfirm('לעדכן את הסט לפי רשימת המשתתפים הנוכחית?', {
         title: 'עדכון סט',
         confirmLabel: 'עדכן',
       });

@@ -99,6 +99,8 @@ export interface Participant {
   availability: AvailabilityWindow[];
   /** Date-specific unavailability rules (recurring or one-off) */
   dateUnavailability: DateUnavailability[];
+  /** IDs of participants this person prefers NOT to be paired with (soft constraint) */
+  notWithIds?: string[];
 }
 
 // ─── Capacity ────────────────────────────────────────────────────────────────
@@ -128,11 +130,13 @@ export interface SlotRequirement {
   adanitTeam?: AdanitTeam;
   /** Optional: label for display purposes */
   label?: string;
+  /** Generic sub-team identifier for togetherness grouping */
+  subTeamId?: string;
 }
 
 export interface Task {
   id: string;
-  type: TaskType;
+  type: TaskType | string;
   /** Human-readable name */
   name: string;
   /** Time block for this task instance */
@@ -156,6 +160,14 @@ export interface Task {
    * All tasks except Karov and Karovit default to true.
    */
   blocksConsecutive: boolean;
+  /** Scheduling priority (0 = first). Lower = scheduled earlier in greedy phase. */
+  schedulingPriority?: number;
+  /** Certifications that DISQUALIFY a participant from this task. */
+  excludedCertifications?: Certification[];
+  /** When true, prefer L0 participants. L4 allowed with penalty; L2/L3 hard-blocked. */
+  preferJuniors?: boolean;
+  /** Whether "not with" togetherness preferences apply to this task */
+  togethernessRelevant?: boolean;
 }
 
 // ─── Assignment ──────────────────────────────────────────────────────────────
@@ -257,10 +269,12 @@ export interface SchedulerConfig {
   maxIterations: number;
   /** Max time for solver in ms */
   maxSolverTimeMs: number;
-  /** Penalty for ANY senior (L2/L3/L4) assigned to Hamama — absolute last resort */
-  seniorHamamaPenalty: number;
+  /** Penalty for L4 assigned to a preferJuniors task — absolute last resort */
+  seniorJuniorPreferencePenalty: number;
   /** Weight for daily workload balance (penalises busy-day / light-day spread) */
   dailyBalanceWeight: number;
+  /** Penalty per "not with" pair violation in a togethernessRelevant task */
+  notWithPenalty: number;
 }
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
@@ -270,8 +284,9 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
 
   maxIterations: 50000,
   maxSolverTimeMs: 30000,
-  seniorHamamaPenalty: 10000,
+  seniorJuniorPreferencePenalty: 10000,
   dailyBalanceWeight: 90,
+  notWithPenalty: 500,
 };
 
 // ─── Algorithm Settings (user-configurable control panel) ────────────────────
@@ -292,8 +307,9 @@ export type HardConstraintCode =
 
 /** All soft warning codes that can be toggled */
 export type SoftWarningCode =
-  | 'HAMAMA_SENIOR'
-  | 'GROUP_MISMATCH';
+  | 'SENIOR_IN_JUNIOR_PREFERRED'
+  | 'GROUP_MISMATCH'
+  | 'NOT_WITH_VIOLATION';
 
 /** Full algorithm settings: weights + constraint toggles */
 export interface AlgorithmSettings {
@@ -310,20 +326,21 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-1': 'דרישת דרגה',
   'HC-2': 'דרישת הסמכה',
   'HC-3': 'בדיקת זמינות',
-  'HC-4': 'אותה קבוצה (אדנית)',
+  'HC-4': 'משימה משותפת (אדנית)',
   'HC-5': 'ללא שיבוץ כפול',
   'HC-6': 'משבצות מלאות',
   'HC-7': 'משתתף ייחודי למשימה',
-  'HC-8': 'היתכנות קבוצת אדנית',
-  'HC-11': 'הרחקת חורש מממטרה',
+  'HC-8': 'כשירות קבוצת אדנית',
+  'HC-11': 'הרחקת הסמכה אסורה ממשימה',
   'HC-12': 'ללא עומס רצוף',
-  'HC-13': 'חסימות בכירים',
+  'HC-13': 'מגבלות שיבוץ סגל',
 };
 
 /** Human-readable labels for soft warnings */
 export const SW_LABELS: Record<SoftWarningCode, string> = {
-  'HAMAMA_SENIOR': 'אזהרת בכירים בחממה',
+  'SENIOR_IN_JUNIOR_PREFERRED': 'אזהרת סגל במשימה מועדפת לצעירים',
   'GROUP_MISMATCH': 'אזהרת אי-התאמת קבוצה',
+  'NOT_WITH_VIOLATION': 'אי התאמה',
 };
 
 /** All hard constraint codes in display order */
@@ -333,7 +350,7 @@ export const ALL_HC_CODES: HardConstraintCode[] = [
 
 /** All soft warning codes in display order */
 export const ALL_SW_CODES: SoftWarningCode[] = [
-  'HAMAMA_SENIOR', 'GROUP_MISMATCH',
+  'SENIOR_IN_JUNIOR_PREFERRED', 'GROUP_MISMATCH', 'NOT_WITH_VIOLATION',
 ];
 
 /** Factory default algorithm settings */
@@ -361,7 +378,7 @@ export interface AlgorithmPreset {
 export const DEFAULT_PRESET: AlgorithmPreset = {
   id: 'preset-default',
   name: 'ברירת מחדל',
-  description: 'הגדרות מקוריות',
+  description: 'הגדרות ברירת המחדל',
   settings: { ...DEFAULT_ALGORITHM_SETTINGS, config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], disabledSoftWarnings: [] },
   builtIn: true,
   createdAt: 0,
@@ -396,6 +413,8 @@ export interface ParticipantSnapshot {
   dateUnavailability: Omit<DateUnavailability, 'id'>[];
   /** Shift-level blackout periods (ISO strings for serialisation) */
   blackouts: { start: string; end: string; reason?: string }[];
+  /** IDs of participants this person prefers NOT to be paired with */
+  notWithIds?: string[];
 }
 
 /** A named, saveable collection of participants */
@@ -405,6 +424,19 @@ export interface ParticipantSet {
   description: string;
   /** Full participant data at the time of the snapshot */
   participants: ParticipantSnapshot[];
+  /** If true the set cannot be deleted or renamed */
+  builtIn?: boolean;
+  /** Epoch ms — used for ordering */
+  createdAt: number;
+}
+
+/** A named, saveable collection of task templates */
+export interface TaskSet {
+  id: string;
+  name: string;
+  description: string;
+  /** Full task template data at the time of the snapshot */
+  templates: TaskTemplate[];
   /** If true the set cannot be deleted or renamed */
   builtIn?: boolean;
   /** Epoch ms — used for ordering */
@@ -424,7 +456,7 @@ export interface GanttRow {
 export interface GanttBlock {
   assignmentId: string;
   taskId: string;
-  taskType: TaskType;
+  taskType: TaskType | string;
   taskName: string;
   startMs: number;
   endMs: number;
@@ -491,6 +523,8 @@ export interface SubTeamTemplate {
   id: string;
   name: string;
   slots: SlotTemplate[];
+  /** Explicit Adanit team assignment. Overrides name-based inference. */
+  adanitTeam?: AdanitTeam;
 }
 
 /** A reusable task rule/template defining how a task type is configured */
@@ -526,6 +560,14 @@ export interface TaskTemplate {
   slots: SlotTemplate[];
   /** Custom notes / description */
   description?: string;
+  /** Scheduling priority (0 = first). If unset, computed from task constraints. */
+  schedulingPriority?: number;
+  /** Certifications that DISQUALIFY a participant from this task (e.g., Horesh from Mamtera). */
+  excludedCertifications?: Certification[];
+  /** When true, prefer L0 participants. L4 allowed with penalty; L2/L3 hard-blocked by HC-13. */
+  preferJuniors?: boolean;
+  /** Whether "not with" togetherness preferences apply to this task template */
+  togethernessRelevant?: boolean;
 }
 
 // ─── Multi-Day Schedule Types ────────────────────────────────────────────────

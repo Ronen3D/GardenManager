@@ -10,7 +10,6 @@ import {
   Assignment,
   Participant,
   ParticipantCapacity,
-  TaskType,
   Level,
   SchedulerConfig,
   ScheduleScore,
@@ -24,7 +23,7 @@ import {
   ParticipantRestProfile,
 } from '../web/utils/rest-calculator';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
-import { computeSeniorHamamaPenalty } from './senior-policy';
+import { computeSeniorJuniorPreferencePenalty } from './senior-policy';
 import { dateKey } from '../utils/date-utils';
 
 /**
@@ -282,15 +281,15 @@ export function collectSoftWarnings(
       .map((a) => pMap.get(a.participantId))
       .filter((p): p is Participant => !!p);
 
-    // Hamama: warn for L4 in Hamama — absolute last resort
-    // (L2/L3 are hard-blocked from Hamama by HC-13 and should never appear here)
-    if (!disabledSW?.has('HAMAMA_SENIOR') && task.type === TaskType.Hamama) {
+    // preferJuniors tasks: warn for L4 — absolute last resort
+    // (L2/L3 are hard-blocked by HC-13 and should never appear here)
+    if (!disabledSW?.has('SENIOR_IN_JUNIOR_PREFERRED') && task.preferJuniors) {
       for (const p of assignedPs) {
         if (p.level === Level.L4) {
           warnings.push({
             severity: ViolationSeverity.Warning,
-            code: 'HAMAMA_SENIOR',
-            message: `${p.name} (דרגה 4) משובץ לחממה — מוצא אחרון. רק דרגה 0 צריכים להיות כאן; דרגה 4 הוא חלופה כשאין דרגה 0 זמינים.`,
+            code: 'SENIOR_IN_JUNIOR_PREFERRED',
+            message: `${p.name} (דרגה 4) משובץ ל-${task.name} — מוצא אחרון. רק דרגה 0 צריכים להיות כאן; דרגה 4 הוא חלופה כשאין דרגה 0 זמינים.`,
             taskId: task.id,
             participantId: p.id,
           });
@@ -316,6 +315,61 @@ export function collectSoftWarnings(
   return warnings;
 }
 
+// ─── SC-9: "Not With" Togetherness Penalty ──────────────────────────────────
+
+/**
+ * Given a togethernessRelevant task and its assignments, return groups of
+ * participant IDs that are considered "together" for the not-with constraint.
+ * Groups are determined by sub-team: slots sharing the same subTeamId form
+ * one group; slots with no subTeamId are all in one group.
+ */
+function getTogetherGroups(task: Task, taskAssignments: Assignment[]): string[][] {
+  if (!task.togethernessRelevant) return [];
+  const groups = new Map<string, string[]>();
+  for (const a of taskAssignments) {
+    const slot = task.slots.find(s => s.slotId === a.slotId);
+    const key = slot?.subTeamId ?? '__all__';
+    let arr = groups.get(key);
+    if (!arr) { arr = []; groups.set(key, arr); }
+    arr.push(a.participantId);
+  }
+  return [...groups.values()];
+}
+
+/**
+ * SC-9: Compute penalty for "not with" pair violations across all
+ * togethernessRelevant tasks. Each co-assignment of a not-with pair
+ * within the same sub-team group incurs config.notWithPenalty once.
+ */
+export function computeNotWithPenalty(
+  assignments: Assignment[],
+  config: SchedulerConfig,
+  taskMap: Map<string, Task>,
+  assignmentsByTask: Map<string, Assignment[]>,
+  notWithPairs: Map<string, Set<string>>,
+): number {
+  if (config.notWithPenalty <= 0 || notWithPairs.size === 0) return 0;
+  let penalty = 0;
+  for (const [taskId, taskAssigns] of assignmentsByTask) {
+    const task = taskMap.get(taskId);
+    if (!task?.togethernessRelevant) continue;
+    const groups = getTogetherGroups(task, taskAssigns);
+    for (const group of groups) {
+      // Check all pairs in this sub-team group
+      for (let i = 0; i < group.length; i++) {
+        const set = notWithPairs.get(group[i]);
+        if (!set) continue;
+        for (let j = i + 1; j < group.length; j++) {
+          if (set.has(group[j])) {
+            penalty += config.notWithPenalty;
+          }
+        }
+      }
+    }
+  }
+  return penalty;
+}
+
 // ─── Composite Score Calculation ─────────────────────────────────────────────
 
 /**
@@ -332,6 +386,8 @@ export interface ScoreContext {
   assignmentsByTask?: Map<string, Assignment[]>;
   /** Optional: pre-computed per-participant capacities for proportional workload */
   capacities?: Map<string, ParticipantCapacity>;
+  /** Optional: "not with" pair preferences for togetherness penalty */
+  notWithPairs?: Map<string, Set<string>>;
 }
 
 /**
@@ -402,13 +458,18 @@ export function computeScheduleScore(
 
   // SC-5 (back-to-back penalty) removed — redundant with minRestWeight and HC-12.
 
-  // SC-6: Senior Hamama penalty — pass pre-built maps
-  // When HAMAMA_SENIOR is disabled, zero out seniorHamamaPenalty so L4-in-Hamama
-  // assignments are not penalised in the composite score.
-  const effectiveConfig = disabledSW?.has('HAMAMA_SENIOR')
-    ? { ...config, seniorHamamaPenalty: 0 }
+  // SC-6: Senior junior-preference penalty — pass pre-built maps
+  // When SENIOR_IN_JUNIOR_PREFERRED is disabled, zero out the junior-preference
+  // penalty so L4 assignments to preferJuniors tasks are not penalised.
+  const effectiveConfig = disabledSW?.has('SENIOR_IN_JUNIOR_PREFERRED')
+    ? { ...config, seniorJuniorPreferencePenalty: 0 }
     : config;
-  totalPenalty += computeSeniorHamamaPenalty(participants, assignments, tasks, effectiveConfig, pMap, taskMap);
+  totalPenalty += computeSeniorJuniorPreferencePenalty(participants, assignments, tasks, effectiveConfig, pMap, taskMap);
+
+  // SC-9: "Not with" togetherness penalty
+  if (!disabledSW?.has('NOT_WITH_VIOLATION') && ctx?.notWithPairs && ctx.notWithPairs.size > 0) {
+    totalPenalty += computeNotWithPenalty(assignments, config, taskMap, assignmentsByTask, ctx.notWithPairs);
+  }
 
   // SC-8: Daily workload balance — pass pre-built data + capacities
   const dailyBalance = dailyWorkloadImbalance(participants, assignments, tasks, taskMap, byParticipant, ctx?.capacities);
@@ -486,9 +547,9 @@ export class IncrementalScorer {
   private _globalMinRest = 0;
   private _globalAvgRest = 0;
   // Hamama penalty
-  private _hamamaPenalty = 0;
+  private _juniorPrefPenalty = 0;
   /** Per-participant Hamama penalty for O(1) delta updates */
-  private _perParticipantHamamaPenalty: Map<string, number>;
+  private _perParticipantJuniorPrefPenalty: Map<string, number>;
   // Daily balance
   private _dailyPerParticipantStdDevSum = 0;
   private _participantCount = 0;
@@ -496,8 +557,17 @@ export class IncrementalScorer {
   private globalDayTotals: Map<string, number>;
 
   // Saved Hamama state for undo (set at start of recomputeForSwap)
-  private _savedHamamaTotal = 0;
+  private _savedJuniorPrefTotal = 0;
   private _savedHamamaEntries: [string, number][] = [];
+
+  // "Not with" penalty
+  private _notWithPenalty = 0;
+  /** Per-participant not-with penalty (attributed to lower-ID participant in each pair) */
+  private _perParticipantNotWithPenalty: Map<string, number> = new Map();
+  private _notWithPairs: Map<string, Set<string>> = new Map();
+  // Saved not-with state for undo
+  private _savedNotWithTotal = 0;
+  private _savedNotWithEntries: [string, number][] = [];
 
   // Current composite score
   compositeScore = 0;
@@ -512,7 +582,9 @@ export class IncrementalScorer {
     this.capacities = new Map();
     this.dayList = [];
     this.globalDayTotals = new Map();
-    this._perParticipantHamamaPenalty = new Map();
+    this._perParticipantJuniorPrefPenalty = new Map();
+    this._perParticipantNotWithPenalty = new Map();
+    this._notWithPairs = new Map();
   }
 
   /**
@@ -566,20 +638,42 @@ export class IncrementalScorer {
     }
 
     // Compute per-participant Hamama penalty for O(1) delta updates
-    scorer._hamamaPenalty = 0;
+    scorer._juniorPrefPenalty = 0;
     for (const p of participants) {
       if (p.level === Level.L0) continue;
       let pPenalty = 0;
       const pAs = scorer.assignmentsByParticipant.get(p.id) || [];
       for (const a of pAs) {
         const task = ctx.taskMap.get(a.taskId);
-        if (task?.type === TaskType.Hamama && p.level === Level.L4) {
-          pPenalty += config.seniorHamamaPenalty;
+        if (task?.preferJuniors && p.level === Level.L4) {
+          pPenalty += config.seniorJuniorPreferencePenalty;
         }
       }
       if (pPenalty > 0) {
-        scorer._perParticipantHamamaPenalty.set(p.id, pPenalty);
-        scorer._hamamaPenalty += pPenalty;
+        scorer._perParticipantJuniorPrefPenalty.set(p.id, pPenalty);
+        scorer._juniorPrefPenalty += pPenalty;
+      }
+    }
+
+    // Compute per-participant "not with" penalty for O(1) delta updates.
+    // Attribute each pair's penalty to the participant with the lower ID.
+    scorer._notWithPairs = ctx.notWithPairs ?? new Map();
+    scorer._notWithPenalty = 0;
+    if (scorer._notWithPairs.size > 0 && config.notWithPenalty > 0) {
+      // Build per-task assignment index
+      const byTask = new Map<string, Assignment[]>();
+      for (const a of assignments) {
+        let arr = byTask.get(a.taskId);
+        if (!arr) { arr = []; byTask.set(a.taskId, arr); }
+        arr.push(a);
+      }
+      // For each participant, compute their not-with penalty
+      for (const p of participants) {
+        const pPenalty = scorer.computeParticipantNotWithPenalty(p.id, byTask);
+        if (pPenalty > 0) {
+          scorer._perParticipantNotWithPenalty.set(p.id, pPenalty);
+          scorer._notWithPenalty += pPenalty;
+        }
       }
     }
 
@@ -590,6 +684,38 @@ export class IncrementalScorer {
     scorer.compositeScore = scorer.deriveComposite();
 
     return scorer;
+  }
+
+  /**
+   * Compute not-with penalty attributed to a specific participant.
+   * For each togethernessRelevant task they're in, check if any co-member
+   * in the same sub-team group is in their notWith set.
+   * To avoid double-counting, only count pairs where this pid < partnerId.
+   */
+  private computeParticipantNotWithPenalty(pid: string, byTask: Map<string, Assignment[]>): number {
+    const myNotWith = this._notWithPairs.get(pid);
+    if (!myNotWith || myNotWith.size === 0) return 0;
+    let penalty = 0;
+    const pAssigns = this.assignmentsByParticipant.get(pid) || [];
+    for (const a of pAssigns) {
+      const task = this.taskMap.get(a.taskId);
+      if (!task?.togethernessRelevant) continue;
+      // Find my sub-team group
+      const mySlot = task.slots.find(s => s.slotId === a.slotId);
+      const myTeam = mySlot?.subTeamId ?? '__all__';
+      // Check co-members in the same sub-team
+      const taskAssigns = byTask.get(a.taskId) || [];
+      for (const other of taskAssigns) {
+        if (other.participantId <= pid) continue; // only count pid < partner to avoid double-counting
+        if (!myNotWith.has(other.participantId)) continue;
+        const otherSlot = task.slots.find(s => s.slotId === other.slotId);
+        const otherTeam = otherSlot?.subTeamId ?? '__all__';
+        if (myTeam === otherTeam) {
+          penalty += this.config.notWithPenalty;
+        }
+      }
+    }
+    return penalty;
   }
 
   private computeParticipantData(p: Participant, pAssignments: Assignment[]): ParticipantScoreData {
@@ -711,7 +837,8 @@ export class IncrementalScorer {
       this.config.l0FairnessWeight * l0StdDev -
       this.config.seniorFairnessWeight * seniorStdDev -
       this.config.dailyBalanceWeight * (dailyPP + dailyGlobal) -
-      this._hamamaPenalty
+      this._juniorPrefPenalty -
+      this._notWithPenalty
     );
   }
 
@@ -760,19 +887,19 @@ export class IncrementalScorer {
     // Recompute Hamama penalty for only the two swapped participants
     // using per-participant tracking for O(k) instead of O(P×A).
     // Save state first so finalizeUndo() can revert on rejected swaps.
-    this._savedHamamaTotal = this._hamamaPenalty;
+    this._savedJuniorPrefTotal = this._juniorPrefPenalty;
     this._savedHamamaEntries = [
-      [pidA, this._perParticipantHamamaPenalty.get(pidA) || 0],
-      [pidB, this._perParticipantHamamaPenalty.get(pidB) || 0],
+      [pidA, this._perParticipantJuniorPrefPenalty.get(pidA) || 0],
+      [pidB, this._perParticipantJuniorPrefPenalty.get(pidB) || 0],
     ];
 
-    const aInvolvesHamama = aAssigns.some(a => this.taskMap.get(a.taskId)?.type === TaskType.Hamama);
-    const bInvolvesHamama = bAssigns.some(a => this.taskMap.get(a.taskId)?.type === TaskType.Hamama);
+    const aInvolvesHamama = aAssigns.some(a => this.taskMap.get(a.taskId)?.preferJuniors);
+    const bInvolvesHamama = bAssigns.some(a => this.taskMap.get(a.taskId)?.preferJuniors);
     if (aInvolvesHamama || bInvolvesHamama) {
       // Remove old per-participant penalties
       const oldPenaltyA = this._savedHamamaEntries[0][1];
       const oldPenaltyB = this._savedHamamaEntries[1][1];
-      this._hamamaPenalty -= oldPenaltyA + oldPenaltyB;
+      this._juniorPrefPenalty -= oldPenaltyA + oldPenaltyB;
 
       // Compute new per-participant penalties
       const computeHamamaPenalty = (pid: string): number => {
@@ -782,8 +909,8 @@ export class IncrementalScorer {
         const pAs = this.assignmentsByParticipant.get(pid) || [];
         for (const a of pAs) {
           const task = this.taskMap.get(a.taskId);
-          if (task?.type === TaskType.Hamama && p.level === Level.L4) {
-            penalty += this.config.seniorHamamaPenalty;
+          if (task?.preferJuniors && p.level === Level.L4) {
+            penalty += this.config.seniorJuniorPreferencePenalty;
           }
         }
         return penalty;
@@ -791,9 +918,45 @@ export class IncrementalScorer {
 
       const newPenaltyA = computeHamamaPenalty(pidA);
       const newPenaltyB = computeHamamaPenalty(pidB);
-      this._perParticipantHamamaPenalty.set(pidA, newPenaltyA);
-      this._perParticipantHamamaPenalty.set(pidB, newPenaltyB);
-      this._hamamaPenalty += newPenaltyA + newPenaltyB;
+      this._perParticipantJuniorPrefPenalty.set(pidA, newPenaltyA);
+      this._perParticipantJuniorPrefPenalty.set(pidB, newPenaltyB);
+      this._juniorPrefPenalty += newPenaltyA + newPenaltyB;
+    }
+
+    // Recompute "not with" penalty for the two swapped participants
+    this._savedNotWithTotal = this._notWithPenalty;
+    this._savedNotWithEntries = [
+      [pidA, this._perParticipantNotWithPenalty.get(pidA) || 0],
+      [pidB, this._perParticipantNotWithPenalty.get(pidB) || 0],
+    ];
+    if (this._notWithPairs.size > 0 && this.config.notWithPenalty > 0) {
+      const aInvolvesTogetherness = aAssigns.some(a => this.taskMap.get(a.taskId)?.togethernessRelevant);
+      const bInvolvesTogetherness = bAssigns.some(a => this.taskMap.get(a.taskId)?.togethernessRelevant);
+      if (aInvolvesTogetherness || bInvolvesTogetherness ||
+          this._savedNotWithEntries[0][1] > 0 || this._savedNotWithEntries[1][1] > 0) {
+        // Remove old contributions
+        this._notWithPenalty -= this._savedNotWithEntries[0][1] + this._savedNotWithEntries[1][1];
+        // Build per-task index for the two participants' tasks
+        const byTask = new Map<string, Assignment[]>();
+        for (const a of [...aAssigns, ...bAssigns]) {
+          let arr = byTask.get(a.taskId);
+          if (!arr) {
+            // Get all assignments for this task (not just these two participants)
+            const allTaskAssigns: Assignment[] = [];
+            for (const [, pAssigns] of this.assignmentsByParticipant) {
+              for (const pa of pAssigns) {
+                if (pa.taskId === a.taskId) allTaskAssigns.push(pa);
+              }
+            }
+            byTask.set(a.taskId, allTaskAssigns);
+          }
+        }
+        const newPenaltyA = this.computeParticipantNotWithPenalty(pidA, byTask);
+        const newPenaltyB = this.computeParticipantNotWithPenalty(pidB, byTask);
+        this._perParticipantNotWithPenalty.set(pidA, newPenaltyA);
+        this._perParticipantNotWithPenalty.set(pidB, newPenaltyB);
+        this._notWithPenalty += newPenaltyA + newPenaltyB;
+      }
     }
 
     this.compositeScore = this.deriveComposite();
@@ -814,10 +977,16 @@ export class IncrementalScorer {
    */
   finalizeUndo(): void {
     // Restore Hamama penalty state saved at the start of recomputeForSwap
-    this._hamamaPenalty = this._savedHamamaTotal;
+    this._juniorPrefPenalty = this._savedJuniorPrefTotal;
     for (const [pid, val] of this._savedHamamaEntries) {
-      if (val > 0) this._perParticipantHamamaPenalty.set(pid, val);
-      else this._perParticipantHamamaPenalty.delete(pid);
+      if (val > 0) this._perParticipantJuniorPrefPenalty.set(pid, val);
+      else this._perParticipantJuniorPrefPenalty.delete(pid);
+    }
+    // Restore "not with" penalty state
+    this._notWithPenalty = this._savedNotWithTotal;
+    for (const [pid, val] of this._savedNotWithEntries) {
+      if (val > 0) this._perParticipantNotWithPenalty.set(pid, val);
+      else this._perParticipantNotWithPenalty.delete(pid);
     }
     this.recomputeRestStats();
     this.compositeScore = this.deriveComposite();

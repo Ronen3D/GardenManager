@@ -69,7 +69,7 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[]):
         findings.push({
           severity: PreflightSeverity.Critical,
           code: 'SKILL_GAP',
-          message: `אין משתתפים העומדים בדרישת ${levelStr}${certStr} עבור משימה "${tpl.name}" משבצת "${slot.label}".`,
+          message: `אין משתתפים שמתאימים לדרישה ${levelStr}${certStr} עבור המשימה "${tpl.name}" במשבצת "${slot.label}".`,
           templateId: tpl.id,
           slotId: slot.id,
         });
@@ -77,7 +77,7 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[]):
         findings.push({
           severity: PreflightSeverity.Warning,
           code: 'SKILL_SCARCITY',
-          message: `רק משתתף אחד יכול למלא משבצת "${slot.label}" במשימה "${tpl.name}" (${eligible[0].name}). אין חלופה זמינה.`,
+          message: `רק משתתף אחד יכול לאייש את המשבצת "${slot.label}" במשימה "${tpl.name}" (${eligible[0].name}). אין כרגע חלופה זמינה.`,
           templateId: tpl.id,
           slotId: slot.id,
         });
@@ -130,13 +130,13 @@ function checkCapacity(participants: Participant[], templates: TaskTemplate[]): 
     findings.push({
       severity: PreflightSeverity.Critical,
       code: 'CAPACITY_EXCEEDED',
-      message: `שעות נדרשות (${totalRequiredHours.toFixed(0)} שע') חורגות משעות זמינות (${totalAvailableParticipantHours.toFixed(0)} שע'). השבצ"ק בלתי אפשרי.`,
+      message: `שעות נדרשות (${totalRequiredHours.toFixed(0)} שע') חורגות מהשעות הזמינות (${totalAvailableParticipantHours.toFixed(0)} שע'). אי אפשר ליצור שיבוץ תקין.`,
     });
   } else if (utilizationPercent > 90) {
     findings.push({
       severity: PreflightSeverity.Warning,
       code: 'HIGH_DENSITY',
-      message: `סיכון צפיפות גבוהה: ${utilizationPercent.toFixed(1)}% ניצולת (${totalRequiredHours.toFixed(0)} שע' נדרשות / ${totalAvailableParticipantHours.toFixed(0)} שע' זמינות). ייתכן שלא יישאר מנוחה מספקת בין משימות.`,
+      message: `סיכון לצפיפות גבוהה: ${utilizationPercent.toFixed(1)}% ניצולת (${totalRequiredHours.toFixed(0)} שע' נדרשות / ${totalAvailableParticipantHours.toFixed(0)} שע' זמינות). ייתכן שלא תהיה מנוחה מספקת בין משימות.`,
     });
   }
 
@@ -184,7 +184,7 @@ function checkGroupIntegrity(participants: Participant[], templates: TaskTemplat
       findings.push({
         severity: PreflightSeverity.Critical,
         code: 'GROUP_INTEGRITY',
-        message: `אף קבוצה לא יכולה למלא את כל ${allSlots.length} המשבצות עבור "${tpl.name}" (נדרשת אותה קבוצה). נדרשת לפחות קבוצה אחת עם משתתפים מתאימים.`,
+        message: `אף קבוצה לא יכולה למלא את כל ${allSlots.length} המשבצות עבור "${tpl.name}" (נדרשת אותה קבוצה). יש צורך בלפחות קבוצה אחת עם משתתפים מתאימים.`,
         templateId: tpl.id,
       });
     } else {

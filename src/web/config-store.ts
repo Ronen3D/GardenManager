@@ -30,6 +30,7 @@ import {
   ScheduleSnapshot,
   ParticipantSet,
   ParticipantSnapshot,
+  TaskSet,
 } from '../models/types';
 
 // ─── ID Generation ───────────────────────────────────────────────────────────
@@ -72,6 +73,7 @@ function notify(): void {
 interface StoreSnapshot {
   participants: Array<{ p: Participant; blackouts: BlackoutPeriod[]; dateUnavails: DateUnavailability[] }>;
   taskTemplates: TaskTemplate[];
+  notWithPairs: Array<[string, string[]]>;
 }
 
 const MAX_HISTORY = 80;
@@ -122,7 +124,11 @@ function captureSnapshot(): StoreSnapshot {
           slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
         })),
       }));
-  return { participants: ps, taskTemplates: tpls };
+  const nwPairs: Array<[string, string[]]> = [];
+  for (const [pid, set] of notWithPairs) {
+    nwPairs.push([pid, [...set]]);
+  }
+  return { participants: ps, taskTemplates: tpls, notWithPairs: nwPairs };
 }
 
 /** Replace live state with a snapshot (restoring original IDs). */
@@ -130,6 +136,7 @@ function restoreSnapshot(snap: StoreSnapshot): void {
   participants.clear();
   blackouts.clear();
   dateUnavailabilities.clear();
+  notWithPairs.clear();
 
   const useStructured = typeof structuredClone === 'function';
 
@@ -163,6 +170,14 @@ function restoreSnapshot(snap: StoreSnapshot): void {
   for (const [id, p] of participants) {
     p.dateUnavailability = dateUnavailabilities.get(id) || [];
   }
+
+  // Restore notWithPairs and sync to participant objects
+  if (snap.notWithPairs) {
+    for (const [pid, targets] of snap.notWithPairs) {
+      notWithPairs.set(pid, new Set(targets));
+    }
+  }
+  syncNotWithToParticipants();
 
   // Recompute availability from canonical data — the snapshot does not
   // capture scheduleDate/scheduleDays, so restored availability windows
@@ -238,6 +253,7 @@ export function getUndoRedoState(): { canUndo: boolean; canRedo: boolean; undoDe
 const participants: Map<string, Participant> = new Map();
 const blackouts: Map<string, BlackoutPeriod[]> = new Map(); // participantId -> blackouts
 const dateUnavailabilities: Map<string, DateUnavailability[]> = new Map(); // participantId -> rules
+const notWithPairs: Map<string, Set<string>> = new Map(); // participantId -> set of partner IDs
 
 /** Default schedule date: next upcoming Sunday from today. */
 function defaultScheduleDate(): Date {
@@ -380,6 +396,8 @@ export function removeParticipant(id: string): void {
   participants.delete(id);
   blackouts.delete(id);
   dateUnavailabilities.delete(id);
+  cleanupNotWith(id);
+  syncNotWithToParticipants();
   notify();
 }
 
@@ -401,7 +419,9 @@ export function removeParticipantsBulk(ids: string[]): number {
     participants.delete(id);
     blackouts.delete(id);
     dateUnavailabilities.delete(id);
+    cleanupNotWith(id);
   }
+  syncNotWithToParticipants();
   notify();
   return validIds.length;
 }
@@ -518,6 +538,67 @@ export function addDateUnavailabilityBulk(
   }
   notify();
   return count;
+}
+
+// ─── Not-With Preference Management ─────────────────────────────────────────
+
+/** Sync the notWithPairs map to each participant's notWithIds field. */
+function syncNotWithToParticipants(): void {
+  for (const p of participants.values()) {
+    const set = notWithPairs.get(p.id);
+    p.notWithIds = set && set.size > 0 ? [...set] : undefined;
+  }
+}
+
+export function addNotWith(pidA: string, pidB: string): void {
+  if (pidA === pidB) return;
+  if (!participants.has(pidA) || !participants.has(pidB)) return;
+  // Check if already exists
+  const setA = notWithPairs.get(pidA);
+  if (setA?.has(pidB)) return;
+  pushSnapshot();
+  // Symmetric add
+  if (!notWithPairs.has(pidA)) notWithPairs.set(pidA, new Set());
+  if (!notWithPairs.has(pidB)) notWithPairs.set(pidB, new Set());
+  notWithPairs.get(pidA)!.add(pidB);
+  notWithPairs.get(pidB)!.add(pidA);
+  syncNotWithToParticipants();
+  notify();
+}
+
+export function removeNotWith(pidA: string, pidB: string): void {
+  const setA = notWithPairs.get(pidA);
+  const setB = notWithPairs.get(pidB);
+  if (!setA?.has(pidB)) return;
+  pushSnapshot();
+  setA.delete(pidB);
+  if (setA.size === 0) notWithPairs.delete(pidA);
+  if (setB) {
+    setB.delete(pidA);
+    if (setB.size === 0) notWithPairs.delete(pidB);
+  }
+  syncNotWithToParticipants();
+  notify();
+}
+
+export function getNotWithIds(pid: string): string[] {
+  const set = notWithPairs.get(pid);
+  return set ? [...set] : [];
+}
+
+/** Remove a participant from all notWithPairs entries. */
+function cleanupNotWith(pid: string): void {
+  const set = notWithPairs.get(pid);
+  if (set) {
+    for (const partnerId of set) {
+      const partnerSet = notWithPairs.get(partnerId);
+      if (partnerSet) {
+        partnerSet.delete(pid);
+        if (partnerSet.size === 0) notWithPairs.delete(partnerId);
+      }
+    }
+    notWithPairs.delete(pid);
+  }
 }
 
 // ─── Task Template Store ─────────────────────────────────────────────────────
@@ -721,16 +802,17 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
+    schedulingPriority: 0,
     subTeams: [
       {
-        id: uid('st'), name: 'סגול ראשי', slots: [
+        id: uid('st'), name: 'סגול ראשי', adanitTeam: AdanitTeam.SegolMain, slots: [
           { id: uid('slot'), label: 'סגול ראשי #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'סגול ראשי #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'סגול ראשי #3', acceptableLevels: [Level.L3, Level.L4], requiredCertifications: [Certification.Nitzan] },
         ],
       },
       {
-        id: uid('st'), name: 'סגול משני', slots: [
+        id: uid('st'), name: 'סגול משני', adanitTeam: AdanitTeam.SegolSecondary, slots: [
           { id: uid('slot'), label: 'סגול משני #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'סגול משני #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'סגול משני #3', acceptableLevels: [Level.L2], requiredCertifications: [Certification.Nitzan] },
@@ -753,6 +835,8 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 5 / 6,
     loadWindows: [],
     blocksConsecutive: true,
+    schedulingPriority: 1,
+    preferJuniors: true,
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [Level.L0, Level.L4], requiredCertifications: [Certification.Hamama] },
@@ -772,6 +856,7 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
+    schedulingPriority: 6,
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'שמש #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
@@ -792,6 +877,8 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 4 / 9,
     loadWindows: [],
     blocksConsecutive: true,
+    schedulingPriority: 2,
+    excludedCertifications: [Certification.Horesh],
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'ממטרה #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
@@ -811,6 +898,7 @@ export function seedDefaultTaskTemplates(): void {
     isLight: false,
     baseLoadWeight: 1 / 3,
     blocksConsecutive: false,
+    schedulingPriority: 3,
     loadWindows: [
       {
         id: uid('lw'),
@@ -851,6 +939,7 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 0,
     loadWindows: [],
     blocksConsecutive: false,
+    schedulingPriority: 5,
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'כרובית מפקד', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
@@ -873,6 +962,7 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
+    schedulingPriority: 4,
     subTeams: [],
     slots: [
       { id: uid('slot'), label: 'ערוגה #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
@@ -902,11 +992,15 @@ export function initStore(): void {
     // Reset lazy-loaded participant sets so they re-initialise
     _participantSets = null;
     _activeParticipantSetId = undefined;
+    // Reset lazy-loaded task sets so they re-initialise
+    _taskSets = null;
+    _activeTaskSetId = undefined;
     // Try to load from storage first
     if (loadFromStorage()) {
       console.log('[Store] Restored state from localStorage');
       // Ensure participant sets are initialised (first-load seeding)
       _initParticipantSets();
+      _initTaskSets();
       return;
     }
     // Suppress snapshots during seed (initial state shouldn't be undoable)
@@ -915,6 +1009,7 @@ export function initStore(): void {
     seedDefaultTaskTemplates();
     // Seed built-in participant set from demo data
     _initParticipantSets();
+    _initTaskSets();
   } finally {
     _suppressSnapshot = false;
     _initRunning = false;
@@ -1042,6 +1137,10 @@ export function saveToStorage(): void {
         rules,
       })),
       taskTemplates: Array.from(taskTemplates.values()),
+      notWithPairs: Array.from(notWithPairs.entries()).map(([pid, set]) => ({
+        pid,
+        targets: [...set],
+      })),
     };
     localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(state));
   } catch (err) {
@@ -1079,6 +1178,24 @@ export function loadFromStorage(): boolean {
         }
       }
       state.version = 2;
+    }
+
+    // ── Migration: backfill new data-driven fields for existing templates ──
+    if (Array.isArray(state.taskTemplates)) {
+      for (const tpl of state.taskTemplates) {
+        // Mamtera: backfill excludedCertifications if missing
+        if (tpl.taskType === TaskType.Mamtera && !tpl.excludedCertifications) {
+          tpl.excludedCertifications = [Certification.Horesh];
+        }
+        // Hamama: backfill preferJuniors if missing
+        if (tpl.taskType === TaskType.Hamama && tpl.preferJuniors === undefined) {
+          tpl.preferJuniors = true;
+        }
+        // Backfill togethernessRelevant: Adanit and Shemesh default to true
+        if (tpl.togethernessRelevant === undefined) {
+          tpl.togethernessRelevant = (tpl.taskType === TaskType.Adanit || tpl.taskType === TaskType.Shemesh);
+        }
+      }
     }
 
     // Restore schedule date/days
@@ -1139,6 +1256,15 @@ export function loadFromStorage(): boolean {
     for (const tpl of (state.taskTemplates || [])) {
       taskTemplates.set(tpl.id, tpl);
     }
+
+    // Restore notWithPairs
+    notWithPairs.clear();
+    for (const entry of (state.notWithPairs || [])) {
+      if (entry.pid && Array.isArray(entry.targets) && entry.targets.length > 0) {
+        notWithPairs.set(entry.pid, new Set(entry.targets));
+      }
+    }
+    syncNotWithToParticipants();
 
     // Bug #5 fix: recompute availability from canonical inputs instead of
     // using the stale windows that were serialised at save time.
@@ -1912,6 +2038,9 @@ function _snapshotCurrentParticipants(): ParticipantSnapshot[] {
         end: b.end.toISOString(),
         reason: b.reason,
       })),
+      notWithIds: getNotWithIds(p.id).length > 0
+        ? getNotWithIds(p.id).map(id => participants.get(id)?.name).filter((n): n is string => !!n)
+        : undefined,
     };
   });
 }
@@ -2077,6 +2206,26 @@ export function loadParticipantSet(id: string): void {
       }
     }
 
+    // Rebuild notWithPairs from snapshot notWithIds (stored as names, resolved to new IDs)
+    notWithPairs.clear();
+    // Build name→newId lookup from the participants we just created
+    const nameToId = new Map<string, string>();
+    for (const p of participants.values()) nameToId.set(p.name, p.id);
+    for (const snap of pset.participants) {
+      if (!snap.notWithIds || snap.notWithIds.length === 0) continue;
+      const pid = nameToId.get(snap.name);
+      if (!pid) continue;
+      for (const targetName of snap.notWithIds) {
+        const targetId = nameToId.get(targetName);
+        if (!targetId || targetId === pid) continue;
+        if (!notWithPairs.has(pid)) notWithPairs.set(pid, new Set());
+        if (!notWithPairs.has(targetId)) notWithPairs.set(targetId, new Set());
+        notWithPairs.get(pid)!.add(targetId);
+        notWithPairs.get(targetId)!.add(pid);
+      }
+    }
+    syncNotWithToParticipants();
+
     recalcAllAvailability();
   } finally {
     _suppressSnapshot = false;
@@ -2186,4 +2335,282 @@ export function isParticipantSetDirty(): boolean {
 /** Get the maximum number of participant sets allowed */
 export function getMaxParticipantSets(): number {
   return MAX_PARTICIPANT_SETS;
+}
+
+// ─── Task Sets ───────────────────────────────────────────────────────────────
+
+const STORAGE_KEY_TASK_SETS = 'gardenmanager_task_sets';
+const STORAGE_KEY_ACTIVE_TASK_SET = 'gardenmanager_active_task_set_id';
+const MAX_TASK_SETS = 30;
+
+let _taskSets: TaskSet[] | null = null;
+let _activeTaskSetId: string | null | undefined = undefined; // undefined = not yet loaded
+
+/** Deep-copy a TaskSet via JSON round-trip. */
+function _deepCopyTaskSet(s: TaskSet): TaskSet {
+  return JSON.parse(JSON.stringify(s)) as TaskSet;
+}
+
+/** Lazily initialise task sets from localStorage. */
+function _initTaskSets(): TaskSet[] {
+  if (_taskSets) return _taskSets;
+
+  const raw = localStorage.getItem(STORAGE_KEY_TASK_SETS);
+  if (raw) {
+    try {
+      _taskSets = JSON.parse(raw) as TaskSet[];
+    } catch {
+      _taskSets = [];
+    }
+  } else {
+    // First load — create built-in set from current templates
+    _taskSets = [];
+    _seedBuiltInTaskSet();
+  }
+
+  // Load active set id
+  if (_activeTaskSetId === undefined) {
+    _activeTaskSetId = localStorage.getItem(STORAGE_KEY_ACTIVE_TASK_SET) || null;
+  }
+
+  return _taskSets;
+}
+
+/** Snapshot the current in-memory task templates. */
+function _snapshotCurrentTaskTemplates(): TaskTemplate[] {
+  const all = getAllTaskTemplates();
+  return JSON.parse(JSON.stringify(all)) as TaskTemplate[];
+}
+
+/** Create the built-in default task set from whatever templates are currently loaded. */
+function _seedBuiltInTaskSet(): void {
+  const sets = _taskSets!;
+  if (sets.find(s => s.id === 'tset-default')) return;
+  const snap = _snapshotCurrentTaskTemplates();
+  if (snap.length === 0) return; // don't seed empty
+  sets.unshift({
+    id: 'tset-default',
+    name: 'סט ברירת מחדל',
+    description: 'תבניות המשימות המקוריות',
+    templates: snap,
+    builtIn: true,
+    createdAt: 0,
+  });
+  _saveTaskSets();
+}
+
+function _saveTaskSets(): void {
+  if (!_taskSets) return;
+  try {
+    localStorage.setItem(STORAGE_KEY_TASK_SETS, JSON.stringify(_taskSets));
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === 'QuotaExceededError') {
+      console.warn('[Store] localStorage quota exceeded for task sets.');
+    } else {
+      console.warn('[Store] Failed to save task sets:', err);
+    }
+  }
+}
+
+function _saveActiveTaskSetId(): void {
+  try {
+    if (_activeTaskSetId) {
+      localStorage.setItem(STORAGE_KEY_ACTIVE_TASK_SET, _activeTaskSetId);
+    } else {
+      localStorage.removeItem(STORAGE_KEY_ACTIVE_TASK_SET);
+    }
+  } catch (err) {
+    console.warn('[Store] Failed to save active task set id:', err);
+  }
+}
+
+/** Case-insensitive trimmed name duplicate check */
+function _isTaskSetNameTaken(name: string, excludeId?: string): boolean {
+  const norm = name.trim().toLowerCase();
+  const sets = _initTaskSets();
+  return sets.some(s => s.name.trim().toLowerCase() === norm && s.id !== excludeId);
+}
+
+// ─── Task Set Public API ─────────────────────────────────────────────────────
+
+/** Get all task sets (built-in first, then by createdAt) */
+export function getAllTaskSets(): TaskSet[] {
+  const sets = _initTaskSets();
+  return sets
+    .slice()
+    .sort((a, b) => {
+      if (a.builtIn && !b.builtIn) return -1;
+      if (!a.builtIn && b.builtIn) return 1;
+      return a.createdAt - b.createdAt;
+    })
+    .map(s => _deepCopyTaskSet(s));
+}
+
+/** Get a single task set by id */
+export function getTaskSetById(id: string): TaskSet | undefined {
+  const sets = _initTaskSets();
+  const found = sets.find(s => s.id === id);
+  return found ? _deepCopyTaskSet(found) : undefined;
+}
+
+/** Get the active task set id (may be null) */
+export function getActiveTaskSetId(): string | null {
+  _initTaskSets();
+  return _activeTaskSetId ?? null;
+}
+
+/**
+ * Save the current task templates as a new named set.
+ * Returns the new set, or null if the name is taken or limit reached.
+ */
+export function saveCurrentAsTaskSet(name: string, description: string): TaskSet | null {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  if (_isTaskSetNameTaken(trimmed)) return null;
+
+  const sets = _initTaskSets();
+  if (sets.length >= MAX_TASK_SETS) {
+    console.warn(`[Store] Task set limit reached (${MAX_TASK_SETS}).`);
+    return null;
+  }
+
+  const tset: TaskSet = {
+    id: uid('tset'),
+    name: trimmed,
+    description: description.trim(),
+    templates: _snapshotCurrentTaskTemplates(),
+    createdAt: Date.now(),
+  };
+
+  sets.push(tset);
+  _saveTaskSets();
+
+  _activeTaskSetId = tset.id;
+  _saveActiveTaskSetId();
+
+  return _deepCopyTaskSet(tset);
+}
+
+/**
+ * Load a task set — replaces ALL current task templates.
+ * This is a single undoable action.
+ */
+export function loadTaskSet(id: string): void {
+  const tset = getTaskSetById(id);
+  if (!tset) return;
+
+  pushSnapshot();
+  _suppressSnapshot = true;
+  try {
+    // Clear all current templates
+    taskTemplates.clear();
+
+    // Add templates from the set
+    for (const tpl of tset.templates) {
+      const restored: TaskTemplate = JSON.parse(JSON.stringify(tpl));
+      taskTemplates.set(restored.id, restored);
+    }
+  } finally {
+    _suppressSnapshot = false;
+  }
+
+  _activeTaskSetId = id;
+  _saveActiveTaskSetId();
+  notify();
+}
+
+/**
+ * Overwrite an existing set's templates with the current state.
+ * Returns false if set not found or is built-in.
+ */
+export function updateTaskSet(id: string): boolean {
+  const sets = _initTaskSets();
+  const idx = sets.findIndex(s => s.id === id);
+  if (idx === -1) return false;
+  if (sets[idx].builtIn) return false;
+
+  sets[idx].templates = _snapshotCurrentTaskTemplates();
+  _saveTaskSets();
+  return true;
+}
+
+/**
+ * Rename a task set. Returns null on success, or an error string.
+ */
+export function renameTaskSet(id: string, name: string, description: string): string | null {
+  const sets = _initTaskSets();
+  const tset = sets.find(s => s.id === id);
+  if (!tset) return 'סט לא נמצא';
+  if (tset.builtIn) return 'לא ניתן לשנות שם של סט מובנה';
+
+  const trimmed = name.trim();
+  if (!trimmed) return 'השם לא יכול להיות ריק';
+  if (_isTaskSetNameTaken(trimmed, id)) return 'סט עם שם זה כבר קיים';
+
+  tset.name = trimmed;
+  tset.description = description.trim();
+  _saveTaskSets();
+  return null;
+}
+
+/**
+ * Duplicate a task set with a unique name.
+ */
+export function duplicateTaskSet(id: string): TaskSet | null {
+  const source = getTaskSetById(id);
+  if (!source) return null;
+
+  const sets = _initTaskSets();
+  if (sets.length >= MAX_TASK_SETS) return null;
+
+  let newName = source.name + ' (עותק)';
+  let attempt = 2;
+  while (_isTaskSetNameTaken(newName)) {
+    newName = `${source.name} (עותק ${attempt++})`;
+  }
+
+  const dup: TaskSet = {
+    id: uid('tset'),
+    name: newName,
+    description: source.description,
+    templates: source.templates, // already deep-copied by getTaskSetById
+    builtIn: false,
+    createdAt: Date.now(),
+  };
+  sets.push(dup);
+  _saveTaskSets();
+  return _deepCopyTaskSet(dup);
+}
+
+/**
+ * Delete a task set. If it was active, clears the active id.
+ * Returns false if not found or is built-in.
+ */
+export function deleteTaskSet(id: string): boolean {
+  const sets = _initTaskSets();
+  const idx = sets.findIndex(s => s.id === id);
+  if (idx === -1) return false;
+  if (sets[idx].builtIn) return false;
+
+  sets.splice(idx, 1);
+  _saveTaskSets();
+
+  if (_activeTaskSetId === id) {
+    _activeTaskSetId = null;
+    _saveActiveTaskSetId();
+  }
+  return true;
+}
+
+/**
+ * Compare the current task templates against the active set.
+ * Returns true if they differ (set is "dirty").
+ */
+export function isTaskSetDirty(): boolean {
+  const activeId = getActiveTaskSetId();
+  if (!activeId) return false;
+  const tset = getTaskSetById(activeId);
+  if (!tset) return false;
+  const current = _snapshotCurrentTaskTemplates();
+  return JSON.stringify(current) !== JSON.stringify(tset.templates);
 }

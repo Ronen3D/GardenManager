@@ -140,6 +140,7 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
     baseLoadWeight: 5 / 6,
     sameGroupRequired: false,
     blocksConsecutive: true,
+    preferJuniors: true,
   };
 }
 
@@ -202,6 +203,7 @@ export function createMamteraTask(baseDate: Date): Task {
     baseLoadWeight: 4 / 9,
     sameGroupRequired: false,
     blocksConsecutive: true,
+    excludedCertifications: [Certification.Horesh],
   };
 }
 

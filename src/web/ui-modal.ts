@@ -34,7 +34,7 @@ export interface ConfirmOptions {
 /** Show an informational modal with a single OK button. */
 export function showAlert(message: string, opts?: AlertOptions): Promise<void> {
   return new Promise((resolve) => {
-    const title = opts?.title || 'הודעה';
+    const title = opts?.title || 'התראה';
     const icon = opts?.icon || 'ℹ️';
 
     const backdrop = document.createElement('div');
@@ -67,7 +67,7 @@ export function showAlert(message: string, opts?: AlertOptions): Promise<void> {
 /** Show a prompt modal with a text input and optional suggestion list. */
 export function showPrompt(message: string, opts?: PromptOptions): Promise<string | null> {
   return new Promise((resolve) => {
-    const title = opts?.title || 'קלט';
+    const title = opts?.title || 'הזן ערך';
     const placeholder = opts?.placeholder || '';
     const defaultValue = opts?.defaultValue || '';
     const suggestions = opts?.suggestions || [];
@@ -78,7 +78,7 @@ export function showPrompt(message: string, opts?: PromptOptions): Promise<strin
     let suggestionsHtml = '';
     if (suggestions.length > 0) {
       suggestionsHtml = `
-        <input type="text" class="gm-modal-input gm-modal-search" placeholder="🔍 חפש…" />
+        <input type="text" class="gm-modal-input gm-modal-search" placeholder="🔍 חפש ברשימה…" />
         <div class="gm-modal-suggestions">
           ${suggestions.map(s => `<button class="gm-modal-suggestion" data-value="${escAttr(s)}">${escHtml(s)}</button>`).join('')}
         </div>`;

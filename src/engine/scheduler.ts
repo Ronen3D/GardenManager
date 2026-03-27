@@ -60,10 +60,17 @@ export class SchedulingEngine {
       if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
       if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
     }
+    const notWithPairs = new Map<string, Set<string>>();
+    for (const p of participants) {
+      if (p.notWithIds && p.notWithIds.length > 0) {
+        notWithPairs.set(p.id, new Set(p.notWithIds));
+      }
+    }
     return {
       taskMap: new Map(tasks.map(t => [t.id, t])),
       pMap: new Map(participants.map(p => [p.id, p])),
       capacities: computeAllCapacities(participants, schedStart, schedEnd),
+      notWithPairs,
     };
   }
 

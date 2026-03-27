@@ -214,7 +214,7 @@ function generateTasksFromTemplates(): Task[] {
       const startDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tpl.startHour, 0);
 
       let shifts: { start: Date; end: Date }[];
-      if (tpl.taskType === TaskType.Aruga) {
+      if (tpl.eveningStartHour !== undefined && tpl.shiftsPerDay === 2) {
         const morningStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tpl.startHour, 0);
         const morningEnd = new Date(morningStart.getTime() + tpl.durationHours * 3600000);
         const eveHour = tpl.eveningStartHour ?? 17;
@@ -235,24 +235,34 @@ function generateTasksFromTemplates(): Task[] {
         const slots: SlotRequirement[] = [];
 
         for (const st of tpl.subTeams) {
-          const adanitTeam = (st.name.includes('ראשי') || /main/i.test(st.name))
-            ? AdanitTeam.SegolMain
-            : (st.name.includes('משני') || /secondary/i.test(st.name))
-              ? AdanitTeam.SegolSecondary
-              : undefined;
+          const adanitTeam = st.adanitTeam
+            ?? ((st.name.includes('ראשי') || /main/i.test(st.name))
+              ? AdanitTeam.SegolMain
+              : (st.name.includes('משני') || /secondary/i.test(st.name))
+                ? AdanitTeam.SegolSecondary
+                : undefined);
 
           for (const s of st.slots) {
+            if (s.acceptableLevels.length === 0) {
+              console.warn(`Slot "${s.label}" in template "${tpl.name}" has no acceptable levels — skipping`);
+              continue;
+            }
             slots.push({
               slotId: `${tpl.name.toLowerCase()}-slot-${++_tSlotCounter}`,
               acceptableLevels: [...s.acceptableLevels],
               requiredCertifications: [...s.requiredCertifications],
               adanitTeam,
               label: s.label,
+              subTeamId: st.id,
             });
           }
         }
 
         for (const s of tpl.slots) {
+          if (s.acceptableLevels.length === 0) {
+            console.warn(`Slot "${s.label}" in template "${tpl.name}" has no acceptable levels — skipping`);
+            continue;
+          }
           slots.push({
             slotId: `${tpl.name.toLowerCase()}-slot-${++_tSlotCounter}`,
             acceptableLevels: [...s.acceptableLevels],
@@ -264,7 +274,7 @@ function generateTasksFromTemplates(): Task[] {
         const shiftLabel = tpl.shiftsPerDay > 1 ? ` משמרת ${si + 1}` : '';
         allTasks.push({
           id: `${tpl.name.toLowerCase()}-d${dayIdx + 1}-${++_tTaskCounter}`,
-          type: (tpl.taskType as TaskType) || TaskType.Adanit,
+          type: tpl.taskType || TaskType.Adanit,
           name: `${dayLabel} ${tpl.name}${shiftLabel}`,
           timeBlock: block,
           requiredCount: slots.length,
@@ -274,6 +284,10 @@ function generateTasksFromTemplates(): Task[] {
           loadWindows: (tpl.loadWindows ?? []).map((w) => ({ ...w })),
           sameGroupRequired: tpl.sameGroupRequired,
           blocksConsecutive: tpl.blocksConsecutive ?? !tpl.isLight,
+          schedulingPriority: tpl.schedulingPriority,
+          excludedCertifications: tpl.excludedCertifications,
+          preferJuniors: tpl.preferJuniors,
+          togethernessRelevant: tpl.togethernessRelevant,
         });
       }
     }
@@ -373,10 +387,10 @@ function renderDayNavigator(): string {
     let frozenClass = '';
     if (liveMode.enabled) {
       if (isDayFrozen(d, baseDate, liveMode.currentTimestamp, DAY_START_HOUR)) {
-        frozenTag = `<span class="day-frozen-badge" title="יום זה מוקפא (עבר)">🧊</span>`;
+        frozenTag = `<span class="day-frozen-badge" title="היום הזה מוקפא כי הוא בעבר">🧊</span>`;
         frozenClass = ' day-tab-frozen';
       } else if (isDayPartiallyFrozen(d, baseDate, liveMode.currentTimestamp, DAY_START_HOUR)) {
-        frozenTag = `<span class="day-frozen-badge day-frozen-partial" title="מוקפא חלקית">⏳</span>`;
+        frozenTag = `<span class="day-frozen-badge day-frozen-partial" title="מוקפא חלקית לפי שעה נוכחית">⏳</span>`;
         frozenClass = ' day-tab-partial-frozen';
       }
     }
@@ -445,7 +459,7 @@ function renderWeeklyDashboard(schedule: Schedule): string {
       </div>
     </div>
     <div class="dashboard-meta">
-      הטוב מתוך ${OPTIM_ATTEMPTS} ניסיונות ב${(scheduleElapsed / 1000).toFixed(1)} שניות ביצוע.
+      התוצאה הטובה ביותר מתוך ${OPTIM_ATTEMPTS} ניסיונות, בזמן חישוב של ${(scheduleElapsed / 1000).toFixed(1)} שניות.
     </div>
   </div>`;
 }
@@ -489,7 +503,7 @@ function renderSidebarEntry(
       <div class="sidebar-bar-bg" title="${diagTooltip}">
         <div class="sidebar-bar-fill ${barClass}" style="width:${barWidth}%"></div>
         <div class="sidebar-bar-today" style="width:${todayBarWidth}%"></div>
-        <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שע' אפק' (${entry.pctOfPeriod.toFixed(1)}%)</span>
+        <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שע' אפקטיביות (${entry.pctOfPeriod.toFixed(1)}%)</span>
       </div>
       <span class="sidebar-today-tag" title="היום (יום ${currentDay}): ${todayHrs.toFixed(1)} שע' גולמיות">
         גולמי ${hebrewDayName(new Date(store.getScheduleDate().getFullYear(), store.getScheduleDate().getMonth(), store.getScheduleDate().getDate() + currentDay - 1))}: ${todayHrs.toFixed(1)} שע'
@@ -552,7 +566,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
     for (const entry of l0Entries) {
       const pct = entry.w.effectiveHours / totalPeriodHours;
       const cls = pct > WORKLOAD_OVER_THRESHOLD ? 'mini-over' : pct < WORKLOAD_UNDER_THRESHOLD ? 'mini-under' : 'mini-normal';
-      html += `<div class="sidebar-mini-bar ${cls}" title="${entry.p.name}: ${entry.w.effectiveHours.toFixed(1)} שע' אפק'"></div>`;
+      html += `<div class="sidebar-mini-bar ${cls}" title="${entry.p.name}: ${entry.w.effectiveHours.toFixed(1)} שע' אפקטיביות"></div>`;
     }
     html += `</div></div>`;
     return html;
@@ -562,7 +576,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
       <div class="sidebar-header-row">
         <h3>השוואת עומס</h3>
       </div>
-      <div class="sidebar-avg">ממוצע: ${l0Avg.toFixed(1)} שע' אפק' · ${l0Entries.length} משתתפים · ${numDays} ימים</div>
+      <div class="sidebar-avg">ממוצע: ${l0Avg.toFixed(1)} שע' אפקטיביות · ${l0Entries.length} משתתפים · ${numDays} ימים</div>
     </div>
     <div class="sidebar-entries">`;
 
@@ -575,15 +589,15 @@ function renderParticipantSidebar(schedule: Schedule): string {
   // ── Senior Section (hidden by default) ──
   html += `
     <div class="sidebar-senior-divider">
-      <button class="btn-senior-toggle" id="btn-senior-toggle" title="הצג / הסתר עומס בכירים (L2-L4)">
-        👤 תצוגת בכירים (${seniorEntries.length})
+      <button class="btn-senior-toggle" id="btn-senior-toggle" title="הצג / הסתר עומס סגל (L2-L4)">
+        👤 עומס סגל (${seniorEntries.length})
         <span class="senior-toggle-arrow" id="senior-toggle-arrow">▶</span>
       </button>
     </div>
     <div class="sidebar-senior-panel hidden" id="sidebar-senior-panel">
       <div class="sidebar-header sidebar-header-senior">
-        <h3>עומס בכירים (L2-L4)</h3>
-        <div class="sidebar-avg">ממוצע: ${seniorAvg.toFixed(1)} שע' אפק' · σ ${seniorSigma.toFixed(2)} · ${seniorEntries.length} משתתפים</div>
+        <h3>עומס סגל (L2-L4)</h3>
+        <div class="sidebar-avg">ממוצע: ${seniorAvg.toFixed(1)} שע' אפקטיביות · σ ${seniorSigma.toFixed(2)} · ${seniorEntries.length} משתתפים</div>
       </div>
       <div class="sidebar-entries">`;
 
@@ -638,7 +652,7 @@ function renderScheduleTab(): string {
         </label>
         ${liveMode.enabled ? `
           <div class="live-mode-picker">
-            <span class="live-picker-label">עכשיו ב:</span>
+            <span class="live-picker-label">זמן נוכחי:</span>
             ${renderCustomSelect({ id: 'gm-live-day', options: daySelectOpts, className: 'input-sm' })}
             ${renderCustomSelect({ id: 'gm-live-hour', options: hourSelectOpts, className: 'input-sm' })}
           </div>
@@ -652,7 +666,7 @@ function renderScheduleTab(): string {
     </div>
     <div class="toolbar-right">
       ${liveModeControls}
-      <label class="scenarios-label" for="input-scenarios" title="מספר תרחישי אופטימיזציה לבדיקה">תרחישים
+      <label class="scenarios-label" for="input-scenarios" title="מספר ניסיונות אופטימיזציה לבדיקה">ניסיונות
         <input type="number" id="input-scenarios" class="input-scenarios" min="1" max="50000" step="100" value="${OPTIM_ATTEMPTS}" ${_isOptimizing ? 'disabled' : ''} />
       </label>
       <button class="btn-primary ${_scheduleDirty && currentSchedule ? 'btn-generate-dirty' : ''}" id="btn-generate" ${!preflight.canGenerate || _isOptimizing ? 'disabled' : ''}
@@ -671,15 +685,15 @@ function renderScheduleTab(): string {
   }
 
   if (_scheduleDirty && currentSchedule) {
-    html += `<div class="dirty-notice">⚠ השבצ"ק לא מעודכן — מומלץ ליצור מחדש</div>`;
+    html += `<div class="dirty-notice">⚠ השיבוץ לא מעודכן. מומלץ ליצור אותו מחדש.</div>`;
   }
 
   if (!preflight.canGenerate) {
     const crits = preflight.findings.filter(f => f.severity === 'Critical');
     html += `<div class="alert alert-error">
-      <strong>לא ניתן ליצור — ${crits.length} בעיות קריטיות:</strong>
+      <strong>לא ניתן ליצור שיבוץ - נמצאו ${crits.length} בעיות קריטיות:</strong>
       <ul>${crits.map(f => `<li>${f.message}</li>`).join('')}</ul>
-      <p>עבור ל<strong>פירוט משימות</strong> כדי לתקן.</p>
+      <p>עבור ל<strong>מסך פירוט משימות</strong> כדי לתקן אותן.</p>
     </div>`;
   }
 
@@ -688,7 +702,7 @@ function renderScheduleTab(): string {
       html += `<div class="empty-state">
         <div class="empty-icon">${SVG_ICONS.tasks}</div>
         <p>טרם נוצר שבצ"ק.</p>
-        <p class="text-muted">הגדר משתתפים ופירוט משימות, ולאחר מכן לחץ "צור שבצ"ק".</p>
+        <p class="text-muted">הגדר משתתפים ומשימות, ואז לחץ "צור שיבוץ".</p>
       </div>`;
     }
     return html;
@@ -736,7 +750,7 @@ function renderSnapshotPanel(): string {
 
   // ── Header row ──
   html += `<div class="snapshot-panel-header">
-    <h3>💾 תמונות מצב <span class="count">${snapshots.length}/${maxSnaps}</span></h3>
+    <h3>💾 תמונות מצב שמורות <span class="count">${snapshots.length}/${maxSnaps}</span></h3>
     <button class="btn-sm btn-outline" id="btn-snap-close" title="סגור">✕</button>
   </div>`;
 
@@ -772,7 +786,7 @@ function renderSnapshotPanel(): string {
   // ── Snapshot list ──
   if (snapshots.length === 0) {
     html += `<div class="snapshot-empty">
-      <span class="text-muted">אין תמונות מצב שמורות. צור שבצ"ק ושמור תמונת מצב.</span>
+      <span class="text-muted">אין תמונות מצב שמורות. צור שיבוץ ואז שמור תמונת מצב.</span>
     </div>`;
   } else {
     html += `<div class="snapshot-list">`;
@@ -1088,7 +1102,7 @@ function renderOptimOverlay(): string {
           <div class="cube-cell" style="--cell-color:#2ecc71"></div>
         </div>
       </div>
-      <h3>מעריך ${totalAttempts} תרחישים לשיוויוניות מרבית…</h3>
+      <h3>מעריך ${totalAttempts} ניסיונות לשיוויוניות מרבית…</h3>
       <div class="optim-progress-bar">
         <div class="optim-progress-fill" style="width:${pct}%"></div>
       </div>
@@ -1295,7 +1309,7 @@ async function handleSwap(assignmentId: string): Promise<void> {
   const assignment = currentSchedule.assignments.find(a => a.id === assignmentId);
   if (!assignment) return;
   if (assignment.status === AssignmentStatus.Frozen) {
-    await showAlert('שיבוץ זה מוקפא (בעבר). לא ניתן לשנותו.', { icon: '🧊' });
+    await showAlert('השיבוץ הזה מוקפא כי הוא בעבר. אי אפשר לשנות אותו.', { icon: '🧊' });
     return;
   }
   const task = currentSchedule.tasks.find(t => t.id === assignment.taskId);
@@ -1315,14 +1329,14 @@ async function handleSwap(assignmentId: string): Promise<void> {
   const newP = currentSchedule.participants.find(
     p => choice.includes(p.name) || choice === p.id
   );
-  if (!newP) { await showAlert('המשתתף לא נמצא.', { icon: '⚠️' }); return; }
+  if (!newP) { await showAlert('לא נמצא משתתף בשם הזה.', { icon: '⚠️' }); return; }
 
   const result = engine.swapParticipant({ assignmentId, newParticipantId: newP.id });
   currentSchedule = engine.getSchedule();
 
   if (!result.valid) {
     const msgs = result.violations.map(v => `[${v.code}] ${v.message}`).join('\n');
-    await showAlert(`ההחלפה יצרה הפרות בשבצ"ק של 7 ימים:\n\n${msgs}`, { title: 'הפרות', icon: '⚠️' });
+    await showAlert(`ההחלפה יוצרת הפרות בשיבוץ השבועי:\n\n${msgs}`, { title: 'הפרות', icon: '⚠️' });
   } else {
     showToast('החלפה בוצעה בהצלחה', { type: 'success' });
   }
@@ -1337,7 +1351,7 @@ async function handleLock(assignmentId: string): Promise<void> {
   if (!a) return;
 
   if (a.status === AssignmentStatus.Frozen) {
-    await showAlert('שיבוץ זה מוקפא (בעבר). לא ניתן לשנותו.', { icon: '🧊' });
+    await showAlert('השיבוץ הזה מוקפא כי הוא בעבר. אי אפשר לשנות אותו.', { icon: '🧊' });
     return;
   }
 
@@ -1859,7 +1873,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">beta</span></h1>
+      <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">v1.1</span></h1>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול (Ctrl+Z)">↪ ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</button>
@@ -1874,7 +1888,7 @@ function renderAll(): void {
       <span id="live-clock">${formatLiveClock()}</span>
       · שבצ"ק ל-${store.getScheduleDays()} ימים
       · ${participants.length} משתתפים
-      · ${templates.length} תבניות משימות
+      · ${templates.length} משימות
     </p>
   </header>
 
@@ -2181,7 +2195,7 @@ function wireSnapshotEvents(container: HTMLElement): void {
     switch (action) {
       case 'load': {
         if (_snapshotDirty && currentSchedule) {
-          const ok = await showConfirm('השבצ"ק הנוכחי שונה. לטעון תמונת מצב ולאבד שינויים?', { title: 'טעינת תמונת מצב' });
+          const ok = await showConfirm('השיבוץ הנוכחי השתנה. לטעון את תמונת המצב ולאבד את השינויים?', { title: 'טעינת תמונת מצב' });
           if (!ok) return;
         }
         loadScheduleSnapshot(snapId);
@@ -2213,7 +2227,7 @@ function wireSnapshotEvents(container: HTMLElement): void {
           showToast('תמונת מצב שוכפלה', { type: 'success' });
           renderAll();
         } else {
-          await showAlert(`לא ניתן לשכפל — מגבלת ${store.getMaxSnapshots()} תמונות מצב.`, { icon: '⚠️' });
+          await showAlert(`אי אפשר לשכפל: הגעת למגבלה של ${store.getMaxSnapshots()} תמונות מצב.`, { icon: '⚠️' });
         }
         break;
       }
@@ -2577,7 +2591,7 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
       const color = taskTypeColors[tt] || '#7f8c8d';
       return `<div class="tt-row">
         <span class="tt-label"><span style="color:${color};font-weight:600">${TASK_TYPE_LABELS[tt] || tt}</span></span>
-        <span class="tt-value">${typeCounts[tt]}× · ${typeEffectiveHours[tt].toFixed(1)} שע' אפק'</span>
+        <span class="tt-value">${typeCounts[tt]}× · ${typeEffectiveHours[tt].toFixed(1)} שע' אפקטיביות</span>
       </div>`;
     }).join('');
 
@@ -2607,7 +2621,7 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
     <div class="tt-divider"></div>
     <div class="tt-row"><span class="tt-label">משימות כבדות</span><span class="tt-value">${heavyCount}</span></div>
     <div class="tt-row"><span class="tt-label">משימות קלות</span><span class="tt-value">${lightCount}</span></div>
-    <div class="tt-row"><span class="tt-label">שעות שבועיות</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)} שע' אפק'</span></div>
+    <div class="tt-row"><span class="tt-label">שעות שבועיות</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)} שע' אפקטיביות</span></div>
     <div class="tt-row"><span class="tt-label">% עומס</span><span class="tt-value">${pctOfPeriod.toFixed(1)}% מתוך ${totalPeriodHours} שע'</span></div>
   `;
 }

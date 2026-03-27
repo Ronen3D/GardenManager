@@ -8,8 +8,6 @@ import {
   Task,
   Assignment,
   Participant,
-  TaskType,
-  Certification,
   SlotRequirement,
   ValidationResult,
   ConstraintViolation,
@@ -48,9 +46,9 @@ export function fullValidate(
   if (hardCount === 0 && warnCount === 0) {
     summary = 'השבצ"ק תקין ללא בעיות.';
   } else if (hardCount === 0) {
-    summary = `השבצ"ק תקין אך יש ${warnCount} אזהרה/ות.`;
+    summary = `השיבוץ תקין, אבל יש בו ${warnCount} אזהרות.`;
   } else {
-    summary = `שבצ"ק לא תקין: ${hardCount} הפרת אילוץ קשיח, ${warnCount} אזהרה/ות.`;
+    summary = `השיבוץ לא תקין: ${hardCount} הפרות של אילוצים קשיחים ו-${warnCount} אזהרות.`;
   }
 
   return {
@@ -135,8 +133,8 @@ function checkEligibility(
   // HC-13: Senior hard blocks (L4 non-natural/non-Hamama, L3 Mamtera)
   if (!disabled?.has('HC-13') && checkSeniorHardBlock(participant, task, slot)) return 'HC-13';
 
-  // HC-11: Choresh exclusion from Mamtera
-  if (!disabled?.has('HC-11') && participant.certifications.includes(Certification.Horesh) && task.type === TaskType.Mamtera) return 'HC-11';
+  // HC-11: Excluded certification check
+  if (!disabled?.has('HC-11') && task.excludedCertifications?.some(c => participant.certifications.includes(c))) return 'HC-11';
 
   // HC-1: Level check — single source of truth in isLevelSatisfied()
   if (!disabled?.has('HC-1') && !isLevelSatisfied(participant.level, slot)) return 'HC-1';

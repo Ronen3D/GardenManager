@@ -296,17 +296,16 @@ header h1 {
 
 .beta-badge {
   font-size: 0.55rem;
-  font-weight: 600;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+  font-weight: 400;
+  letter-spacing: 0.3px;
   vertical-align: super;
-  margin-inline-start: 4px;
-  padding: 1px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  -webkit-text-fill-color: var(--accent);
+  margin-inline-start: 6px;
+  padding: 0;
+  border: none;
+  color: var(--text-muted);
+  -webkit-text-fill-color: var(--text-muted);
   background: transparent;
+  opacity: 0.7;
 }
 
 .subtitle {
@@ -381,6 +380,10 @@ section h2 {
   padding: 2px 10px;
   border-radius: 12px;
   font-weight: 600;
+}
+
+.tab-toolbar h2 .count {
+  user-select: none;
 }
 
 /* ─── Tables ─────────────────────────────────────────── */
@@ -1128,11 +1131,18 @@ select.input-sm {
   .kpi { min-width: 60px; }
   .kpi-value { font-size: 0.9rem; }
 
-  /* Issue 3 — Hide certifications (col 6) and availability (col 7) columns */
+  /* Issue 3 — Hide certifications (col 6) and availability on mobile.
+     Availability is col 7 normally, but col 8 when the notWith column is visible. */
   .table-participants thead th:nth-child(6),
-  .table-participants tbody td:nth-child(6),
-  .table-participants thead th:nth-child(7),
-  .table-participants tbody td:nth-child(7) {
+  .table-participants tbody td:nth-child(6) {
+    display: none;
+  }
+  .table-participants:not(.notwith-visible) thead th:nth-child(7),
+  .table-participants:not(.notwith-visible) tbody td:nth-child(7) {
+    display: none;
+  }
+  .table-participants.notwith-visible thead th:nth-child(8),
+  .table-participants.notwith-visible tbody td:nth-child(8) {
     display: none;
   }
 
@@ -1177,7 +1187,7 @@ select.input-sm {
     padding: 4px 8px;
   }
   .beta-badge {
-    font-size: 0.5rem;
+    font-size: 0.45rem;
   }
 
   /* Issue 2 — Tab navigation scrollable */

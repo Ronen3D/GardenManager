@@ -39,8 +39,8 @@ const STATUS_OPACITY: Record<AssignmentStatus, number> = {
 /**
  * Generate a CSS color with opacity for a task block.
  */
-function getBlockColor(taskType: TaskType, status: AssignmentStatus): string {
-  const baseColor = TASK_COLORS[taskType] || '#95A5A6';
+function getBlockColor(taskType: TaskType | string, status: AssignmentStatus): string {
+  const baseColor = TASK_COLORS[taskType as TaskType] || '#95A5A6';
   const opacity = STATUS_OPACITY[status] || 1.0;
   if (opacity === 1.0) return baseColor;
   // Convert hex to rgba
@@ -201,7 +201,7 @@ export function ganttToAscii(data: GanttData, widthChars: number = 120): string 
   return lines.join('\n');
 }
 
-function getTaskSymbol(type: TaskType): string {
+function getTaskSymbol(type: TaskType | string): string {
   switch (type) {
     case TaskType.Adanit: return 'A';
     case TaskType.Hamama: return 'H';

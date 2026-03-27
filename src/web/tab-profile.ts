@@ -93,7 +93,7 @@ function renderTopBar(
 
   const adanitTasks = myTasks.filter(x => x.task.type === TaskType.Adanit);
   if (adanitTasks.length > 0) {
-    statusText = 'משובץ לאדנית';
+    statusText = 'משובץ באדנית';
     statusClass = 'status-active';
   }
 
@@ -214,7 +214,7 @@ function renderUnavailabilitySection(p: Participant): string {
   const dateRules = store.getDateUnavailabilities(p.id);
 
   let html = `<div class="profile-card">
-    <h3 class="profile-card-title">🚫 חוסר זמינות</h3>`;
+    <h3 class="profile-card-title">🚫 אי זמינות</h3>`;
 
   // Blackout periods
   if (blackouts.length > 0) {
@@ -253,7 +253,7 @@ function renderUnavailabilitySection(p: Participant): string {
   }
 
   if (blackouts.length === 0 && dateRules.length === 0) {
-    html += '<p class="text-muted profile-empty-note">אין כללי זמינות מוגדרים. המשתתף זמין 24/7.</p>';
+    html += '<p class="text-muted profile-empty-note">לא הוגדרו מגבלות זמינות. המשתתף זמין בכל שעות היממה.</p>';
   }
 
   html += '</div>';
@@ -279,15 +279,15 @@ function renderMetrics(
     <h3 class="profile-card-title">📊 מדדי עומס</h3>
     <div class="metrics-summary">
       <div class="metric-row">
-        <span class="metric-label">זמן חם (100% עומס)</span>
+        <span class="metric-label">שעות חמות (100% עומס)</span>
         <span class="metric-value">${hotHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">זמן קר (עומס מופחת)</span>
+        <span class="metric-label">שעות קרות (עומס מופחת)</span>
         <span class="metric-value">${coldHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">קל (כרובית)</span>
+        <span class="metric-label">משימות קלות (כרובית)</span>
         <span class="metric-value">${lightHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
@@ -299,7 +299,7 @@ function renderMetrics(
         <span class="metric-value">${heavyHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">% עומס (אפקטיבי מתוך ${totalPeriodHours}h)</span>
+        <span class="metric-label">% עומס אפקטיבי מתוך ${totalPeriodHours} שעות</span>
         <span class="metric-value ${workloadClass}">${pctOfPeriod.toFixed(1)}%</span>
       </div>
     </div>
@@ -318,7 +318,7 @@ function renderMetrics(
       <div class="breakdown-bar-bg">
         <div class="breakdown-bar-fill" style="width:${barPct}%;background:${color}"></div>
       </div>
-      <span class="breakdown-value">${typeCounts[tt]}× · ${typeEffectiveHours[tt].toFixed(1)}h eff (${typeHours[tt].toFixed(1)}h raw)</span>
+      <span class="breakdown-value">${typeCounts[tt]}× · ${typeEffectiveHours[tt].toFixed(1)} שעות אפקטיביות (${typeHours[tt].toFixed(1)} שעות גולמיות)</span>
     </div>`;
   }
 

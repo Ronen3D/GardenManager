@@ -15,11 +15,12 @@ import {
   PreflightSeverity,
   PreflightResult,
   LoadWindow,
+  TaskSet,
 } from '../models/types';
 import * as store from './config-store';
-import { showPrompt, showConfirm } from './ui-modal';
+import { showPrompt, showConfirm, showToast } from './ui-modal';
 import { runPreflight } from './preflight';
-import { TASK_COLORS, TASK_TYPE_LABELS } from './ui-helpers';
+import { TASK_COLORS, TASK_TYPE_LABELS, escHtml } from './ui-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -57,6 +58,13 @@ let expandedTemplateId: string | null = null;
 let addingSlotTo: { templateId: string; subTeamId?: string } | null = null;
 let showAddTemplate = false;
 
+// ─── Task Sets Panel State ───────────────────────────────────────────────────
+
+let _taskSetPanelOpen = false;
+let _taskSetFormMode: 'none' | 'save-as' | 'rename' = 'none';
+let _taskSetFormError = '';
+let _taskSetRenameTargetId: string | null = null;
+
 // ─── Render ──────────────────────────────────────────────────────────────────
 
 export function renderTaskRulesTab(): string {
@@ -71,13 +79,19 @@ export function renderTaskRulesTab(): string {
       <h2>פירוט משימות <span class="count">${templates.length}</span></h2>
       <div class="score-card inline-badge ${criticals.length > 0 ? 'status-error' : 'status-ok'}">
         <span class="score-value">${criticals.length > 0 ? '✗ חסום' : '✓ מוכן'}</span>
-        <span class="score-label">סטטוס יצירה</span>
+        <span class="score-label">מוכנות לשיבוץ</span>
       </div>
     </div>
     <div class="toolbar-right">
+      <button class="btn-sm btn-outline${_taskSetPanelOpen ? ' pill-active' : ''}" data-action="tset-panel-toggle" title="סטים של משימות">📋 סטים${store.isTaskSetDirty() ? ' <span class="dirty-dot"></span>' : ''}</button>
       <button class="btn-primary btn-sm" data-action="toggle-add-template">+ תבנית משימה חדשה</button>
     </div>
   </div>`;
+
+  // Task Sets panel
+  if (_taskSetPanelOpen) {
+    html += renderTaskSetPanel();
+  }
 
   // Template cards
   html += '<div class="template-list">';
@@ -94,6 +108,82 @@ export function renderTaskRulesTab(): string {
   return html;
 }
 
+// ─── Task Set Panel ──────────────────────────────────────────────────────────
+
+function renderTaskSetPanel(): string {
+  const sets = store.getAllTaskSets();
+  const activeId = store.getActiveTaskSetId();
+  const dirty = store.isTaskSetDirty();
+
+  let html = `<div class="preset-panel pset-panel">`;
+
+  // Header
+  html += `<div class="preset-panel-header">
+    <h3>📋 סטים של משימות <span class="count">${sets.length}</span></h3>
+    <button class="btn-xs btn-outline" data-action="tset-panel-close" title="סגור">✕</button>
+  </div>`;
+
+  // Form area
+  if (_taskSetFormMode === 'save-as') {
+    html += `<div class="preset-inline-form" id="tset-saveas-form">
+      <div class="preset-form-row">
+        <label>שם: <input type="text" class="preset-name-input" data-field="tset-saveas-name" maxlength="60" placeholder="הסט שלי" autofocus /></label>
+        <label>תיאור: <input type="text" class="preset-desc-input" data-field="tset-saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
+        <button class="btn btn-sm btn-primary" data-action="tset-saveas-confirm">שמור</button>
+        <button class="btn btn-sm btn-outline" data-action="tset-form-cancel">ביטול</button>
+      </div>
+      <div class="preset-validation-error" id="tset-form-error">${_taskSetFormError}</div>
+    </div>`;
+  } else if (_taskSetFormMode === 'rename') {
+    const targetId = _taskSetRenameTargetId ?? activeId;
+    const target = targetId ? store.getTaskSetById(targetId) : undefined;
+    html += `<div class="preset-inline-form" id="tset-rename-form">
+      <div class="preset-form-row">
+        <label>שם: <input type="text" class="preset-name-input" data-field="tset-rename-name" maxlength="60" value="${escHtml(target?.name ?? '')}" /></label>
+        <label>תיאור: <input type="text" class="preset-desc-input" data-field="tset-rename-desc" maxlength="200" value="${escHtml(target?.description ?? '')}" /></label>
+        <button class="btn btn-sm btn-primary" data-action="tset-rename-confirm">שמור</button>
+        <button class="btn btn-sm btn-outline" data-action="tset-form-cancel">ביטול</button>
+      </div>
+      <div class="preset-validation-error" id="tset-form-error">${_taskSetFormError}</div>
+    </div>`;
+  } else {
+    html += `<div class="preset-actions-primary">
+      <button class="btn-sm btn-primary" data-action="tset-new">+ שמור סט חדש</button>
+    </div>`;
+  }
+
+  // Set list
+  if (sets.length === 0) {
+    html += `<div class="preset-empty"><span class="text-muted">אין סטים שמורים.</span></div>`;
+  } else {
+    html += `<div class="preset-list">`;
+    for (const s of sets) {
+      const isActive = s.id === activeId;
+      const isBuiltIn = s.builtIn ?? false;
+      const count = s.templates.length;
+      html += `<div class="preset-item ${isActive ? 'preset-item-active' : ''}" data-tset-id="${s.id}">
+        <div class="preset-item-main">
+          <span class="preset-item-name">${escHtml(s.name)}</span>
+          <span class="pset-count-badge">${count} תבניות</span>
+          ${isBuiltIn ? '<span class="preset-builtin-badge">מובנה</span>' : ''}
+          ${isActive && dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
+        </div>
+        ${s.description ? `<div class="preset-item-desc text-muted">${escHtml(s.description)}</div>` : ''}
+        <div class="preset-item-actions">
+          ${!isActive ? `<button class="btn-xs btn-primary" data-tset-action="load" data-tset-id="${s.id}" title="טען סט זה">▶ טען</button>` : ''}
+          ${isActive && dirty && !isBuiltIn ? `<button class="btn-xs btn-outline" data-tset-action="update" data-tset-id="${s.id}" title="עדכן עם התבניות הנוכחיות">עדכן</button>` : ''}
+          ${!isBuiltIn ? `<button class="btn-xs btn-outline" data-tset-action="rename" data-tset-id="${s.id}" title="שנה שם">✎</button>` : ''}
+          <button class="btn-xs btn-outline" data-tset-action="duplicate" data-tset-id="${s.id}" title="שכפל">⧉</button>
+          ${!isBuiltIn ? `<button class="btn-xs btn-danger-outline" data-tset-action="delete" data-tset-id="${s.id}" title="מחק">✕</button>` : ''}
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
 
 
 function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
@@ -114,14 +204,15 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <div class="template-title">
         ${taskTypeBadge(tpl.taskType)}
         <strong>${tpl.name}</strong>
-        <span class="text-muted"> · ${tpl.durationHours}h × ${tpl.shiftsPerDay} משמרות · ${totalSlots} משבצות/משמרת · ${totalPeople} אנשים/יום</span>
+        <span class="text-muted"> · ${tpl.shiftsPerDay} משמרות × ${tpl.durationHours} שע׳ — ${totalPeople} איש/יום</span>
         ${hasCritical ? '<span class="badge badge-sm" style="background:var(--danger)">!</span>' : ''}
         ${hasWarning && !hasCritical ? '<span class="badge badge-sm" style="background:var(--warning)">⚠</span>' : ''}
       </div>
       <div class="template-toggles">
-        ${tpl.sameGroupRequired ? '<span class="badge badge-sm badge-outline">אותה קבוצה</span>' : ''}
-        ${tpl.isLight ? '<span class="badge badge-sm badge-outline">קל</span>' : ''}
-        ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">ללא HC-12</span>'}
+        ${tpl.sameGroupRequired ? '<span class="badge badge-sm badge-outline">משימה משותפת</span>' : ''}
+        ${tpl.isLight ? '<span class="badge badge-sm badge-outline">קלה</span>' : ''}
+        ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">ללא חסימה עוקבת</span>'}
+        ${tpl.togethernessRelevant ? '<span class="badge badge-sm badge-outline">אי התאמה</span>' : ''}
         <span class="expand-arrow">${isExpanded ? '▼' : '▶'}</span>
       </div>
     </div>`;
@@ -137,10 +228,11 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" data-tpl-field="durationHours" value="${tpl.durationHours}" data-tid="${tpl.id}" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" /></label>
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" data-tpl-field="startHour" value="${tpl.startHour}" data-tid="${tpl.id}" /></label>
-      <label>יחס חישוב עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> אותה קבוצה</label>
+      <label>משקל עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> משימה משותפת</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חסימה עוקבת (HC-12)</label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
       <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
     </div>`;
 
@@ -184,7 +276,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
   let html = `<h4 style="margin:12px 0 8px;">חלונות עומס (אזורים חמים)</h4>`;
 
   if (windows.length === 0) {
-    html += '<p class="text-muted" style="padding:4px 0;">אין חלונות חמים. יחס חישוב עומס חל על כל המשימה.</p>';
+    html += '<p class="text-muted" style="padding:4px 0;">לא הוגדרו חלונות עומס. משקל העומס חל על כל המשימה.</p>';
   } else {
     html += `<table class="table table-slots" style="margin-bottom:8px;">
       <thead><tr><th>חלון</th><th>משקל</th><th></th></tr></thead>
@@ -238,7 +330,7 @@ function renderSubTeam(templateId: string, st: SubTeamTemplate, pf: PreflightRes
 }
 
 function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: string | undefined, pf: PreflightResult): string {
-  if (slots.length === 0) return '<p class="text-muted" style="padding:4px 0;">לא הוגדרו משבצות.</p>';
+  if (slots.length === 0) return '<p class="text-muted" style="padding:4px 0;">אין משבצות מוגדרות.</p>';
 
   let html = `<table class="table table-slots">
     <thead><tr><th>תווית</th><th>דרגות</th><th>הסמכות</th><th>סטטוס</th><th></th></tr></thead>
@@ -302,10 +394,10 @@ function renderAddTemplateForm(): string {
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="tpl-start" /></label>
-      <label>יחס חישוב עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="tpl-base-load" /></label>
+      <label>משקל עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="tpl-base-load" /></label>
     </div>
     <div class="form-row">
-      <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> אותה קבוצה</label>
+      <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> משימה משותפת</label>
       <label class="checkbox-label"><input type="checkbox" data-field="tpl-light" /> משימה קלה</label>
     </div>
     <div class="form-row">
@@ -323,10 +415,98 @@ function renderAddTemplateForm(): string {
 export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void): void {
   container.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
+
+    // ── Task Set item actions (load/update/rename/duplicate/delete) ──
+    const tsetAction = target.dataset.tsetAction;
+    if (tsetAction) {
+      const tsetId = target.dataset.tsetId;
+      if (!tsetId) return;
+      await _handleTaskSetItemAction(tsetAction, tsetId, rerender);
+      return;
+    }
+
     const action = target.dataset.action;
     if (!action) return;
 
     switch (action) {
+      // ─── Task Sets panel actions ───────────────────────────────────────
+      case 'tset-panel-toggle': {
+        _taskSetPanelOpen = !_taskSetPanelOpen;
+        _taskSetFormMode = 'none';
+        _taskSetFormError = '';
+        _taskSetRenameTargetId = null;
+        rerender();
+        break;
+      }
+      case 'tset-panel-close': {
+        _taskSetPanelOpen = false;
+        _taskSetFormMode = 'none';
+        _taskSetFormError = '';
+        _taskSetRenameTargetId = null;
+        rerender();
+        break;
+      }
+      case 'tset-new': {
+        _taskSetFormMode = 'save-as';
+        _taskSetFormError = '';
+        rerender();
+        break;
+      }
+      case 'tset-saveas-confirm': {
+        const nameInput = container.querySelector<HTMLInputElement>('[data-field="tset-saveas-name"]');
+        const descInput = container.querySelector<HTMLInputElement>('[data-field="tset-saveas-desc"]');
+        const tsetName = nameInput?.value.trim() ?? '';
+        const tsetDesc = descInput?.value.trim() ?? '';
+        if (!tsetName) {
+          _taskSetFormError = 'השם לא יכול להיות ריק';
+          rerender();
+          return;
+        }
+        const result = store.saveCurrentAsTaskSet(tsetName, tsetDesc);
+        if (!result) {
+          _taskSetFormError = 'סט עם שם זה כבר קיים';
+          rerender();
+          return;
+        }
+        _taskSetFormMode = 'none';
+        _taskSetFormError = '';
+        showToast(`סט "${tsetName}" נשמר`, { type: 'success' });
+        rerender();
+        break;
+      }
+      case 'tset-rename-confirm': {
+        const renameId = _taskSetRenameTargetId ?? store.getActiveTaskSetId();
+        if (!renameId) return;
+        const rnInput = container.querySelector<HTMLInputElement>('[data-field="tset-rename-name"]');
+        const rdInput = container.querySelector<HTMLInputElement>('[data-field="tset-rename-desc"]');
+        const rnName = rnInput?.value.trim() ?? '';
+        const rnDesc = rdInput?.value.trim() ?? '';
+        if (!rnName) {
+          _taskSetFormError = 'השם לא יכול להיות ריק';
+          rerender();
+          return;
+        }
+        const rnErr = store.renameTaskSet(renameId, rnName, rnDesc);
+        if (rnErr) {
+          _taskSetFormError = rnErr;
+          rerender();
+          return;
+        }
+        _taskSetFormMode = 'none';
+        _taskSetFormError = '';
+        _taskSetRenameTargetId = null;
+        showToast('הסט עודכן בהצלחה', { type: 'success' });
+        rerender();
+        break;
+      }
+      case 'tset-form-cancel': {
+        _taskSetFormMode = 'none';
+        _taskSetFormError = '';
+        _taskSetRenameTargetId = null;
+        rerender();
+        break;
+      }
+
       case 'toggle-template': {
         const tid = target.closest('[data-tid]')?.getAttribute('data-tid') || target.dataset.tid!;
         expandedTemplateId = expandedTemplateId === tid ? null : tid;
@@ -344,11 +524,12 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const sameGroup = (body.querySelector('[data-tpl-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
         const isLight = (body.querySelector('[data-tpl-field="isLight"]') as HTMLInputElement)?.checked || false;
         const blocksConsecutive = (body.querySelector('[data-tpl-field="blocksConsecutive"]') as HTMLInputElement)?.checked || false;
+        const togethernessRelevant = (body.querySelector('[data-tpl-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
 
         store.updateTaskTemplate(tid, {
           durationHours: dur, shiftsPerDay: shifts, startHour: startH,
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
-          sameGroupRequired: sameGroup, isLight, blocksConsecutive,
+          sameGroupRequired: sameGroup, isLight, blocksConsecutive, togethernessRelevant,
         });
         rerender();
         break;
@@ -431,7 +612,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       }
       case 'add-subteam': {
         const tid = target.dataset.tid!;
-        const name = await showPrompt('שם תת-צוות:', { title: 'הוספת תת-צוות' });
+        const name = await showPrompt('הזן שם לתת-צוות:', { title: 'הוספת תת-צוות' });
         if (!name) return;
         store.addSubTeamToTemplate(tid, name.trim());
         rerender();
@@ -440,7 +621,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'remove-subteam': {
         const tid = target.dataset.tid!;
         const stid = target.dataset.stid!;
-        const okSub = await showConfirm('להסיר תת-צוות זה ואת כל המשבצות שלו?', { danger: true, title: 'הסרת תת-צוות', confirmLabel: 'הסר' });
+        const okSub = await showConfirm('למחוק את תת-הצוות הזה ואת כל המשבצות שלו?', { danger: true, title: 'מחיקת תת-צוות', confirmLabel: 'מחק' });
         if (okSub) {
           store.removeSubTeamFromTemplate(tid, stid);
           rerender();
@@ -508,7 +689,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const tid = target.dataset.tid!;
         const tpl = store.getTaskTemplate(tid);
         if (tpl) {
-          const okTpl = await showConfirm(`להסיר תבנית "${tpl.name}"?`, { danger: true, title: 'הסרת תבנית', confirmLabel: 'הסר' });
+          const okTpl = await showConfirm(`למחוק את התבנית "${tpl.name}"?`, { danger: true, title: 'מחיקת תבנית', confirmLabel: 'מחק' });
           if (okTpl) {
             store.removeTaskTemplate(tid);
             if (expandedTemplateId === tid) expandedTemplateId = null;
@@ -546,6 +727,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
           loadWindows: [],
           blocksConsecutive: !isLight,
+          togethernessRelevant: (type === TaskType.Adanit || type === TaskType.Shemesh),
           subTeams: [],
           slots: [],
           description: desc || undefined,
@@ -561,4 +743,64 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       }
     }
   });
+}
+
+// ─── Task Set Item Actions ───────────────────────────────────────────────────
+
+async function _handleTaskSetItemAction(action: string, id: string, rerender: () => void): Promise<void> {
+  switch (action) {
+    case 'load': {
+      const ok = await showConfirm('טעינת הסט תחליף את כל תבניות המשימות הנוכחיות. להמשיך?', {
+        danger: true,
+        title: 'טעינת סט משימות',
+        confirmLabel: 'טען',
+      });
+      if (!ok) return;
+      store.loadTaskSet(id);
+      showToast('הסט נטען בהצלחה', { type: 'success' });
+      rerender();
+      break;
+    }
+    case 'update': {
+      const ok = await showConfirm('לעדכן את הסט לפי תבניות המשימות הנוכחיות?', {
+        title: 'עדכון סט',
+        confirmLabel: 'עדכן',
+      });
+      if (!ok) return;
+      store.updateTaskSet(id);
+      showToast('הסט עודכן', { type: 'success' });
+      rerender();
+      break;
+    }
+    case 'rename': {
+      _taskSetRenameTargetId = id;
+      _taskSetFormMode = 'rename';
+      _taskSetFormError = '';
+      rerender();
+      break;
+    }
+    case 'duplicate': {
+      store.duplicateTaskSet(id);
+      showToast('הסט שוכפל', { type: 'success' });
+      rerender();
+      break;
+    }
+    case 'delete': {
+      const tset = store.getTaskSetById(id);
+      if (!tset || tset.builtIn) return;
+      const ok = await showConfirm(`למחוק את הסט "${tset.name}"? לא ניתן לבטל פעולה זו.`, {
+        danger: true,
+        title: 'מחיקת סט',
+        confirmLabel: 'מחק',
+      });
+      if (!ok) return;
+      store.deleteTaskSet(id);
+      _taskSetFormMode = 'none';
+      _taskSetFormError = '';
+      _taskSetRenameTargetId = null;
+      showToast('הסט נמחק', { type: 'success' });
+      rerender();
+      break;
+    }
+  }
 }
