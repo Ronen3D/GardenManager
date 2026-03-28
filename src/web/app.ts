@@ -57,7 +57,7 @@ import { computeTaskBreakdown } from './workload-utils';
 import { exportWeeklyOverview, exportDailyDetail } from './pdf-export';
 import {
   TASK_COLORS, LEVEL_COLORS, CERT_COLORS, CERT_LABELS, TASK_TYPE_LABELS,
-  fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge, SVG_ICONS,
+  fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge, SVG_ICONS, escHtml,
 } from './ui-helpers';
 import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
 import { showAlert, showPrompt, showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
@@ -811,6 +811,7 @@ function renderSnapshotPanel(): string {
   const activeId = store.getActiveSnapshotId();
   const hasSchedule = !!currentSchedule;
   const maxSnaps = store.getMaxSnapshots();
+  const nameFieldInvalid = _snapshotFormError ? ' aria-invalid="true" aria-describedby="snap-error"' : '';
 
   let html = `<div class="snapshot-panel">`;
 
@@ -824,7 +825,7 @@ function renderSnapshotPanel(): string {
   if (_snapshotFormMode === 'save-as') {
     html += `<div class="snapshot-inline-form" id="snap-form">
       <div class="snapshot-form-row">
-        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" placeholder="לדוגמה: טיוטה 1" autofocus /></label>
+        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" placeholder="לדוגמה: טיוטה 1" autofocus${nameFieldInvalid} /></label>
         <label>תיאור: <input class="snapshot-desc-input" type="text" id="snap-desc" placeholder="אופציונלי" /></label>
         <button class="btn-sm btn-primary" id="btn-snap-confirm-save">שמור</button>
         <button class="btn-sm btn-outline" id="btn-snap-cancel">ביטול</button>
@@ -835,7 +836,7 @@ function renderSnapshotPanel(): string {
     const active = snapshots.find(s => s.id === activeId);
     html += `<div class="snapshot-inline-form" id="snap-form">
       <div class="snapshot-form-row">
-        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" value="${active?.name || ''}" /></label>
+        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" value="${active?.name || ''}"${nameFieldInvalid} /></label>
         <label>תיאור: <input class="snapshot-desc-input" type="text" id="snap-desc" value="${active?.description || ''}" /></label>
         <button class="btn-sm btn-primary" id="btn-snap-confirm-rename">שמור</button>
         <button class="btn-sm btn-outline" id="btn-snap-cancel">ביטול</button>
@@ -2185,6 +2186,16 @@ function wireFactoryReset(container: HTMLElement): void {
 // ─── Snapshot Event Wiring ───────────────────────────────────────────────────
 
 function wireSnapshotEvents(container: HTMLElement): void {
+  container.addEventListener('input', (e) => {
+    const target = e.target as HTMLInputElement;
+    if (target.id !== 'snap-name') return;
+    if (!_snapshotFormError) return;
+    _snapshotFormError = '';
+    target.removeAttribute('aria-invalid');
+    const errorEl = container.querySelector('#snap-error') as HTMLElement | null;
+    if (errorEl) errorEl.textContent = '';
+  });
+
   // Toggle panel open/close
   const toggleBtn = container.querySelector('#btn-snap-toggle');
   if (toggleBtn) {
@@ -2809,53 +2820,103 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
   const selectedTime = new Date(timeMs);
   const definitions = store.getPakalDefinitions();
   const available = getAvailableParticipantsAtTime(currentSchedule, timeMs);
+  const pakalimByParticipantId = new Map(
+    available.map(participant => [participant.id, getEffectivePakalDefinitions(participant, definitions)])
+  );
+
+  const summarizeParticipants = (participants: Participant[]): string => {
+    if (participants.length === 0) return 'אין פנויים כרגע';
+    const leadingNames = participants.slice(0, 2).map(participant => participant.name);
+    const remaining = participants.length - leadingNames.length;
+    return remaining > 0 ? `${leadingNames.join(', ')} +${remaining}` : leadingNames.join(', ');
+  };
 
   const buckets = definitions.map(def => {
     const participants = available.filter(participant =>
-      getEffectivePakalDefinitions(participant, definitions).some(item => item.id === def.id)
+      (pakalimByParticipantId.get(participant.id) || []).some(item => item.id === def.id)
     );
-    return { label: def.label, participants };
+    return {
+      label: def.label,
+      participants,
+      count: participants.length,
+      preview: summarizeParticipants(participants),
+      className: 'availability-bucket',
+    };
   });
 
-  const noPakalParticipants = available.filter(participant => getEffectivePakalDefinitions(participant, definitions).length === 0);
-  const multiPakalParticipants = available.filter(participant => getEffectivePakalDefinitions(participant, definitions).length > 1);
+  const noPakalParticipants = available.filter(participant => (pakalimByParticipantId.get(participant.id)?.length ?? 0) === 0);
+  const multiPakalParticipants = available.filter(participant => (pakalimByParticipantId.get(participant.id)?.length ?? 0) > 1);
+  const totalWithPakal = available.length - noPakalParticipants.length;
+  const noPakalBucket = {
+    label: 'ללא שיוך לפק"ל',
+    participants: noPakalParticipants,
+    count: noPakalParticipants.length,
+    preview: summarizeParticipants(noPakalParticipants),
+    className: 'availability-bucket availability-bucket-none',
+  };
+  const visibleBuckets = buckets
+    .filter(bucket => bucket.count > 0)
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, 'he'));
+  const emptyBuckets = buckets.filter(bucket => bucket.count === 0);
+  const displayBuckets = [...visibleBuckets, noPakalBucket, ...emptyBuckets];
 
   const renderParticipantList = (participants: Participant[]): string => {
-    if (participants.length === 0) return '<div class="availability-empty">אין משתתפים חופשיים בקבוצה זו.</div>';
+    if (participants.length === 0) return '<div class="availability-empty">כרגע אין פנויים בקבוצה הזאת.</div>';
     return `<div class="availability-name-list">${participants.map(participant => {
-      const pakalCount = getEffectivePakalDefinitions(participant, definitions).length;
-      return `<div class="availability-name-row"><span class="participant-hover" data-pid="${participant.id}">${participant.name}</span>${pakalCount > 1 ? `<span class="badge badge-sm availability-multi-tag">${pakalCount} פק"לים</span>` : ''}</div>`;
+      const pakalCount = pakalimByParticipantId.get(participant.id)?.length ?? 0;
+      return `<div class="availability-name-row"><span class="participant-hover" data-pid="${participant.id}">${escHtml(participant.name)}</span>${pakalCount > 1 ? `<span class="badge badge-sm availability-multi-tag">${pakalCount} פק"לים</span>` : ''}</div>`;
     }).join('')}</div>`;
   };
+
+  const renderBucket = (
+    bucket: { label: string; participants: Participant[]; count: number; preview: string; className: string },
+  ): string => {
+    const bucketLabel = escHtml(bucket.label);
+    const preview = escHtml(bucket.preview);
+    if (bucket.count === 0) {
+      return `<div class="${bucket.className} availability-bucket-empty availability-bucket-zero"><span class="availability-bucket-main"><span class="availability-bucket-label">${bucketLabel}</span><span class="availability-bucket-preview">אין פנויים כרגע</span></span><span class="availability-bucket-count">0</span></div>`;
+    }
+    return `<details class="${bucket.className}">
+      <summary><span class="availability-bucket-main"><span class="availability-bucket-label">${bucketLabel}</span><span class="availability-bucket-preview">${preview}</span></span><span class="availability-bucket-count">${bucket.count}</span></summary>
+      ${renderParticipantList(bucket.participants)}
+    </details>`;
+  };
+
+  const quickStats = [
+    { label: 'עם פק"ל', value: totalWithPakal },
+    { label: 'ללא פק"ל', value: noPakalParticipants.length },
+    { label: 'בכמה פק"לים', value: multiPakalParticipants.length },
+  ];
 
   return `
     <div class="availability-popover-header">
       <div>
-        <h3>זמינים לפי פק"ל</h3>
-        <div class="availability-popover-subtitle">${fmtDate(selectedTime)} · ${available.length} פנויים ייחודיים</div>
+        <h3>פנויים לפי פק"ל</h3>
+        <div class="availability-popover-subtitle">נכון ל${fmtDate(selectedTime)}</div>
       </div>
       <button class="btn-sm btn-outline availability-close" data-action="close-availability-popover">סגור</button>
     </div>
     <div class="availability-popover-body">
-      <div class="availability-summary-note">הספירה לפי זמן מדויק. מי שמשובץ לכל משימה באותו רגע אינו נחשב פנוי.</div>
+      <div class="availability-overview">
+        <div class="availability-total-card">
+          <span class="availability-total-count">${available.length}</span>
+          <div class="availability-total-copy">
+            <strong>${available.length === 0 ? 'אין כרגע פנויים' : 'פנויים כרגע'}</strong>
+            <span>זה המספר הכולל של מי שפנוי בשעה הזאת.</span>
+          </div>
+        </div>
+        <div class="availability-quick-stats">
+          ${quickStats.map(stat => `<div class="availability-quick-stat"><span class="availability-quick-stat-value">${stat.value}</span><span class="availability-quick-stat-label">${stat.label}</span></div>`).join('')}
+        </div>
+      </div>
+      <div class="availability-summary-note">למטה מופיע פירוט לפי פק"ל. משתתף עם יותר מפק"ל אחד יכול להופיע ביותר מקבוצה אחת.</div>
+      <div class="availability-section-title">פירוט מהיר לפי פק"ל</div>
       <div class="availability-bucket-list">
-        ${buckets.map(bucket => bucket.participants.length > 0
-          ? `<details class="availability-bucket">
-              <summary><span>${bucket.label}</span><span class="availability-bucket-count">${bucket.participants.length}</span></summary>
-              ${renderParticipantList(bucket.participants)}
-            </details>`
-          : `<div class="availability-bucket availability-bucket-empty"><span>${bucket.label}</span><span class="availability-bucket-count">0</span></div>`
-        ).join('')}
-        ${noPakalParticipants.length > 0
-          ? `<details class="availability-bucket availability-bucket-none">
-              <summary><span>ללא פק"ל</span><span class="availability-bucket-count">${noPakalParticipants.length}</span></summary>
-              ${renderParticipantList(noPakalParticipants)}
-            </details>`
-          : `<div class="availability-bucket availability-bucket-empty availability-bucket-none"><span>ללא פק"ל</span><span class="availability-bucket-count">0</span></div>`}
+        ${displayBuckets.map(renderBucket).join('')}
       </div>
       ${multiPakalParticipants.length > 0 ? `<details class="availability-overlap">
-        <summary>רב-פק"ל <span class="availability-bucket-count">${multiPakalParticipants.length}</span></summary>
-        <div class="availability-overlap-note">המשתתפים כאן נספרים ביותר מקבוצת פק"ל אחת.</div>
+        <summary><span class="availability-bucket-main"><span class="availability-bucket-label">מופיעים בכמה פק"לים</span><span class="availability-bucket-preview">כדאי לבדוק אותם קודם</span></span><span class="availability-bucket-count">${multiPakalParticipants.length}</span></summary>
+        <div class="availability-overlap-note">המשתתפים כאן כבר נספרו בפירוט שלמעלה. הרשימה הזאת רק עוזרת לזהות במהירות חפיפות בין פק"לים.</div>
         ${renderParticipantList(multiPakalParticipants)}
       </details>` : ''}
     </div>
@@ -2875,17 +2936,21 @@ function openAvailabilityPopover(anchor: HTMLElement, timeMs: number): void {
   popover.innerHTML = buildAvailabilityPopoverContent(timeMs);
 
   const rect = anchor.getBoundingClientRect();
-  const width = 360;
-  const height = Math.min(window.innerHeight - 32, 520);
-  let left = rect.right + 12;
-  let top = rect.top - 8;
-  if (left + width > window.innerWidth - 12) {
-    left = rect.left - width - 12;
+  const viewportPadding = 8;
+  const gap = 10;
+  const { width, height } = popover.getBoundingClientRect();
+  let left = rect.right + gap;
+  let top = rect.top - 6;
+  if (left + width > window.innerWidth - viewportPadding) {
+    left = rect.left - width - gap;
   }
-  if (left < 12) left = Math.max(12, (window.innerWidth - width) / 2);
-  if (top + height > window.innerHeight - 12) {
-    top = Math.max(12, window.innerHeight - height - 12);
+  if (left < viewportPadding) {
+    left = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
   }
+  if (top + height > window.innerHeight - viewportPadding) {
+    top = Math.max(viewportPadding, Math.min(rect.bottom - height, window.innerHeight - height - viewportPadding));
+  }
+  if (top < viewportPadding) top = viewportPadding;
   popover.style.left = `${left}px`;
   popover.style.top = `${top}px`;
 

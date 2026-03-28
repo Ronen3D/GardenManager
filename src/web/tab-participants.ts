@@ -171,6 +171,26 @@ const FORBIDDEN_GROUP_PATTERNS = [
 
 interface GroupValidation { valid: boolean; error: string }
 
+function setAriaInvalid(field: HTMLElement | null, invalid: boolean): void {
+  if (!field) return;
+  if (invalid) {
+    field.setAttribute('aria-invalid', 'true');
+    return;
+  }
+  field.removeAttribute('aria-invalid');
+}
+
+function syncGroupValidationState(
+  newGroupInput: HTMLInputElement | null,
+  errorSpan: HTMLElement | null,
+  result: GroupValidation,
+): void {
+  setAriaInvalid(newGroupInput, !result.valid);
+  if (!errorSpan) return;
+  errorSpan.textContent = result.error;
+  errorSpan.classList.toggle('hidden', result.valid);
+}
+
 function validateGroupName(raw: string, existingGroups: string[]): GroupValidation {
   const name = raw.trim();
   if (!name) return { valid: false, error: 'קבוצה לא יכולה להיות ריקה.' };
@@ -191,15 +211,18 @@ function resolveGroupInput(
   newGroupInput: HTMLInputElement | null,
   errorSpan: HTMLElement | null,
 ): string | null {
-  if (groupValue !== '__new__') return groupValue;
+  if (groupValue !== '__new__') {
+    syncGroupValidationState(newGroupInput, errorSpan, { valid: true, error: '' });
+    return groupValue;
+  }
   const raw = newGroupInput?.value ?? '';
   const result = validateGroupName(raw, store.getGroups());
   if (!result.valid) {
-    if (errorSpan) { errorSpan.textContent = result.error; errorSpan.classList.remove('hidden'); }
+    syncGroupValidationState(newGroupInput, errorSpan, result);
     newGroupInput?.focus();
     return null;
   }
-  if (errorSpan) errorSpan.classList.add('hidden');
+  syncGroupValidationState(newGroupInput, errorSpan, result);
   // Normalize: if exact match exists already, use it
   const existing = store.getGroups().find(g => g.toLowerCase() === raw.trim().toLowerCase());
   return existing ?? raw.trim();
@@ -475,8 +498,8 @@ function renderEditRow(p: Participant, idx: number): string {
         ${groups.map(g => `<option value="${g}" ${p.group === g ? 'selected' : ''}>${g}</option>`).join('')}
         <option value="__new__">+ קבוצה חדשה…</option>
       </select>
-      <input class="input-sm" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" class="hidden" style="margin-top:4px" />
-      <span class="group-error" class="hidden" style="color:var(--error); font-size:0.75rem;"></span>
+      <input class="input-sm hidden" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
+      <span class="group-error hidden" style="color:var(--danger); font-size:0.75rem;"></span>
     </td>
     <td>
       <select class="input-sm" data-field="level">
@@ -578,8 +601,8 @@ function renderAddForm(groups: string[]): string {
           ${groups.map(g => `<option value="${g}">${g}</option>`).join('')}
           <option value="__new__">+ קבוצה חדשה…</option>
         </select>
-        <input class="input-sm" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" class="hidden" style="margin-top:4px" />
-        <span class="group-error" class="hidden" style="color:var(--error); font-size:0.75rem;"></span>
+        <input class="input-sm hidden" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
+        <span class="group-error hidden" style="color:var(--danger); font-size:0.75rem;"></span>
       </label>
       <label>דרגה
         <select class="input-sm" data-field="new-level">
@@ -791,10 +814,18 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     const newGroupInput = parent.querySelector('[data-field="new-group-name"]') as HTMLInputElement | null;
     const errorSpan = parent.querySelector('.group-error') as HTMLElement | null;
     if (select.value === '__new__') {
-      if (newGroupInput) { newGroupInput.classList.remove('hidden'); newGroupInput.value = ''; newGroupInput.focus(); }
+      if (newGroupInput) {
+        newGroupInput.classList.remove('hidden');
+        newGroupInput.value = '';
+        setAriaInvalid(newGroupInput, false);
+        newGroupInput.focus();
+      }
     } else {
-      if (newGroupInput) { newGroupInput.classList.add('hidden'); newGroupInput.value = ''; }
-      if (errorSpan) errorSpan.classList.add('hidden');
+      if (newGroupInput) {
+        newGroupInput.classList.add('hidden');
+        newGroupInput.value = '';
+      }
+      syncGroupValidationState(newGroupInput, errorSpan, { valid: true, error: '' });
     }
   });
 
@@ -829,14 +860,11 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     const errorSpan = parent.querySelector('.group-error') as HTMLElement | null;
     const raw = target.value;
     if (!raw.trim()) {
-      if (errorSpan) errorSpan.classList.add('hidden');
+      syncGroupValidationState(target, errorSpan, { valid: true, error: '' });
       return;
     }
     const result = validateGroupName(raw, store.getGroups());
-    if (errorSpan) {
-      errorSpan.textContent = result.valid ? '' : result.error;
-      errorSpan.classList.toggle('hidden', result.valid);
-    }
+    syncGroupValidationState(target, errorSpan, result);
   });
 
   // Live validation for "not with" input — red-highlight invalid names
@@ -849,6 +877,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     const validNames = new Set(allParticipants.filter(p => p.id !== pid).map(p => p.name));
     const names = target.value.split(',').map(n => n.trim());
     const hasInvalid = names.some(n => n !== '' && !validNames.has(n));
+    setAriaInvalid(target, hasInvalid);
     target.style.color = hasInvalid ? 'var(--error, #e74c3c)' : '';
     target.title = hasInvalid ? 'שמות לא תקינים יסומנו באדום ויתעלמו בשמירה' : 'שמות משתתפים מופרדים בפסיק';
   });
@@ -857,20 +886,22 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     const target = e.target as HTMLElement;
 
     // ── Participant Set item actions (load/update/rename/duplicate/delete) ──
-    const psetAction = target.dataset.psetAction;
+    const psetButton = target.closest<HTMLElement>('[data-pset-action]');
+    const psetAction = psetButton?.dataset.psetAction;
     if (psetAction) {
-      const psetId = target.dataset.psetId;
+      const psetId = psetButton?.dataset.psetId;
       if (!psetId) return;
       await _handlePsetItemAction(psetAction, psetId, rerender);
       return;
     }
 
-    const action = target.dataset.action;
+    const actionButton = target.closest<HTMLElement>('[data-action]');
+    const action = actionButton?.dataset.action;
     if (!action) return;
 
     switch (action) {
       case 'sort-column': {
-        const col = target.dataset.sortCol as typeof sortColumn;
+        const col = actionButton?.dataset.sortCol as typeof sortColumn;
         if (col === sortColumn) {
           sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
         } else {
@@ -881,7 +912,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
       case 'filter-group': {
-        filterGroup = target.dataset.group || '';
+        filterGroup = actionButton?.dataset.group || '';
         rerender();
         break;
       }
@@ -914,7 +945,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
       case 'pakal-edit': {
-        _pakalEditingId = target.dataset.pakalId || null;
+        _pakalEditingId = actionButton?.dataset.pakalId || null;
         _pakalError = '';
         rerender();
         break;
@@ -926,7 +957,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
       case 'pakal-save': {
-        const pakalId = target.dataset.pakalId || '';
+        const pakalId = actionButton?.dataset.pakalId || '';
         const input = container.querySelector<HTMLInputElement>(`[data-field="pakal-edit-label"][data-pakal-id="${pakalId}"]`);
         const error = store.renameCustomPakal(pakalId, input?.value || '');
         if (error) {
@@ -941,7 +972,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
       case 'pakal-delete': {
-        const pakalId = target.dataset.pakalId || '';
+        const pakalId = actionButton?.dataset.pakalId || '';
         const pakal = store.getPakalDefinitions().find(def => def.id === pakalId);
         if (!pakal) return;
         const confirmed = await showConfirm(`למחוק את הפק"ל "${pakal.label}"?`, { danger: true, title: 'מחיקת פק"ל', confirmLabel: 'מחק' });
@@ -1015,12 +1046,12 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
       case 'edit-participant': {
-        editingId = target.dataset.pid || null;
+        editingId = actionButton?.dataset.pid || null;
         rerender();
         break;
       }
       case 'save-participant': {
-        const pid = target.dataset.pid!;
+        const pid = actionButton?.dataset.pid!;
         const row = container.querySelector(`tr[data-participant-id="${pid}"]`)!;
         const name = (row.querySelector('[data-field="name"]') as HTMLInputElement)?.value.trim();
         const groupSel = row.querySelector('[data-field="group"]') as HTMLSelectElement;
@@ -1085,7 +1116,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
       case 'remove-participant': {
-        const pid = target.dataset.pid!;
+        const pid = actionButton?.dataset.pid!;
         const p = store.getParticipant(pid);
         if (p) {
           const okRm = await showConfirm(`להסיר את ${p.name}?`, { danger: true, title: 'הסרת משתתף', confirmLabel: 'הסר' });
@@ -1098,14 +1129,14 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
       case 'toggle-blackouts': {
-        const pid = target.closest('[data-pid]')?.getAttribute('data-pid') || target.dataset.pid!;
+        const pid = actionButton?.closest('[data-pid]')?.getAttribute('data-pid') || actionButton?.dataset.pid!;
         expandedBlackoutId = expandedBlackoutId === pid ? null : pid;
         rerender();
         break;
       }
       case 'add-unified-constraint': {
-        const pid = target.dataset.pid!;
-        const panel = target.closest('.blackout-panel')!;
+        const pid = actionButton?.dataset.pid!;
+        const panel = actionButton?.closest('.blackout-panel')!;
         const reason = (panel.querySelector('[data-field="bo-reason"]') as HTMLInputElement)?.value || undefined;
         const errEl = panel.querySelector('.du-validation-error') as HTMLElement;
         if (errEl) errEl.classList.add('hidden');

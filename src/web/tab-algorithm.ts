@@ -119,7 +119,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         key: 'taskAvoidancePenalty',
         label: 'עונש שיבוץ לא-מועדף',
         min: 0, max: 2000, step: 10,
-        description: 'עונש לכל שיבוץ לסוג משימה שהמשתתף מעדיף להימנע ממנו. ברירת מחדל 150.',
+        description: 'עונש לכל שיבוץ לסוג משימה שהמשתתף מעדיף להימנע ממנו. ברירת מחדל 80.',
         detail: 'עונש מצטבר — כל שיבוץ לסוג הלא-מועדף מוסיף עונש. חזק יותר מהעדפה חיובית כי הימנעות ממשהו לא רצוי חשובה יותר. הגדר 0 כדי לבטל.',
       },
     ],
@@ -265,6 +265,7 @@ function renderPresetPanel(
   dirty: boolean,
   _activeIsBuiltIn: boolean,
 ): string {
+  const nameFieldInvalid = _presetFormError ? ' aria-invalid="true" aria-describedby="preset-form-error"' : '';
   let html = `<div class="preset-panel">`;
 
   // Header
@@ -277,7 +278,7 @@ function renderPresetPanel(
   if (_presetFormMode === 'save-as') {
     html += `<div class="preset-inline-form" id="preset-saveas-form">
       <div class="preset-form-row">
-        <label>שם: <input type="text" class="preset-name-input" data-field="saveas-name" maxlength="60" placeholder="התבנית שלי" autofocus /></label>
+        <label>שם: <input type="text" class="preset-name-input" data-field="saveas-name" maxlength="60" placeholder="התבנית שלי" autofocus${nameFieldInvalid} /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
         <button class="btn btn-sm btn-primary" data-action="algo-preset-saveas-confirm">שמור</button>
         <button class="btn btn-sm btn-outline" data-action="algo-preset-form-cancel">ביטול</button>
@@ -289,7 +290,7 @@ function renderPresetPanel(
     const target = targetId ? store.getPresetById(targetId) : undefined;
     html += `<div class="preset-inline-form" id="preset-rename-form">
       <div class="preset-form-row">
-        <label>שם: <input type="text" class="preset-name-input" data-field="rename-name" maxlength="60" value="${escHtml(target?.name ?? '')}" /></label>
+        <label>שם: <input type="text" class="preset-name-input" data-field="rename-name" maxlength="60" value="${escHtml(target?.name ?? '')}"${nameFieldInvalid} /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="rename-desc" maxlength="200" value="${escHtml(target?.description ?? '')}" /></label>
         <button class="btn btn-sm btn-primary" data-action="algo-preset-rename-confirm">שמור</button>
         <button class="btn btn-sm btn-outline" data-action="algo-preset-form-cancel">ביטול</button>
@@ -370,6 +371,16 @@ function renderWeightInput(f: WeightField, value: number, defaultVal: number, is
 export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void): void {
   // Store rerender for debounce flush
   _pendingRerender = rerender;
+
+  container.addEventListener('input', (e) => {
+    const target = e.target as HTMLInputElement;
+    if (target.dataset.field !== 'saveas-name' && target.dataset.field !== 'rename-name') return;
+    if (!_presetFormError) return;
+    _presetFormError = '';
+    target.removeAttribute('aria-invalid');
+    const errorEl = container.querySelector('#preset-form-error') as HTMLElement | null;
+    if (errorEl) errorEl.textContent = '';
+  });
 
   container.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');

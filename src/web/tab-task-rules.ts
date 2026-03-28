@@ -114,6 +114,7 @@ function renderTaskSetPanel(): string {
   const sets = store.getAllTaskSets();
   const activeId = store.getActiveTaskSetId();
   const dirty = store.isTaskSetDirty();
+  const nameFieldInvalid = _taskSetFormError ? ' aria-invalid="true" aria-describedby="tset-form-error"' : '';
 
   let html = `<div class="preset-panel pset-panel">`;
 
@@ -127,7 +128,7 @@ function renderTaskSetPanel(): string {
   if (_taskSetFormMode === 'save-as') {
     html += `<div class="preset-inline-form" id="tset-saveas-form">
       <div class="preset-form-row">
-        <label>שם: <input type="text" class="preset-name-input" data-field="tset-saveas-name" maxlength="60" placeholder="הסט שלי" autofocus /></label>
+        <label>שם: <input type="text" class="preset-name-input" data-field="tset-saveas-name" maxlength="60" placeholder="הסט שלי" autofocus${nameFieldInvalid} /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="tset-saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
         <button class="btn btn-sm btn-primary" data-action="tset-saveas-confirm">שמור</button>
         <button class="btn btn-sm btn-outline" data-action="tset-form-cancel">ביטול</button>
@@ -139,7 +140,7 @@ function renderTaskSetPanel(): string {
     const target = targetId ? store.getTaskSetById(targetId) : undefined;
     html += `<div class="preset-inline-form" id="tset-rename-form">
       <div class="preset-form-row">
-        <label>שם: <input type="text" class="preset-name-input" data-field="tset-rename-name" maxlength="60" value="${escHtml(target?.name ?? '')}" /></label>
+        <label>שם: <input type="text" class="preset-name-input" data-field="tset-rename-name" maxlength="60" value="${escHtml(target?.name ?? '')}"${nameFieldInvalid} /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="tset-rename-desc" maxlength="200" value="${escHtml(target?.description ?? '')}" /></label>
         <button class="btn btn-sm btn-primary" data-action="tset-rename-confirm">שמור</button>
         <button class="btn btn-sm btn-outline" data-action="tset-form-cancel">ביטול</button>
@@ -413,19 +414,31 @@ function renderAddTemplateForm(): string {
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
 export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void): void {
+  container.addEventListener('input', (e) => {
+    const target = e.target as HTMLInputElement;
+    if (target.dataset.field !== 'tset-saveas-name' && target.dataset.field !== 'tset-rename-name') return;
+    if (!_taskSetFormError) return;
+    _taskSetFormError = '';
+    target.removeAttribute('aria-invalid');
+    const errorEl = container.querySelector('#tset-form-error') as HTMLElement | null;
+    if (errorEl) errorEl.textContent = '';
+  });
+
   container.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
 
     // ── Task Set item actions (load/update/rename/duplicate/delete) ──
-    const tsetAction = target.dataset.tsetAction;
+    const tsetButton = target.closest<HTMLElement>('[data-tset-action]');
+    const tsetAction = tsetButton?.dataset.tsetAction;
     if (tsetAction) {
-      const tsetId = target.dataset.tsetId;
+      const tsetId = tsetButton?.dataset.tsetId;
       if (!tsetId) return;
       await _handleTaskSetItemAction(tsetAction, tsetId, rerender);
       return;
     }
 
-    const action = target.dataset.action;
+    const actionButton = target.closest<HTMLElement>('[data-action]');
+    const action = actionButton?.dataset.action;
     if (!action) return;
 
     switch (action) {
@@ -508,15 +521,15 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       }
 
       case 'toggle-template': {
-        const tid = target.closest('[data-tid]')?.getAttribute('data-tid') || target.dataset.tid!;
+        const tid = actionButton?.closest('[data-tid]')?.getAttribute('data-tid') || actionButton?.dataset.tid!;
         expandedTemplateId = expandedTemplateId === tid ? null : tid;
         addingSlotTo = null;
         rerender();
         break;
       }
       case 'save-template-props': {
-        const tid = target.dataset.tid!;
-        const body = target.closest('.template-body')!;
+        const tid = actionButton?.dataset.tid!;
+        const body = actionButton?.closest('.template-body')!;
         const dur = parseFloat((body.querySelector('[data-tpl-field="durationHours"]') as HTMLInputElement)?.value || '8');
         const shifts = parseInt((body.querySelector('[data-tpl-field="shiftsPerDay"]') as HTMLInputElement)?.value || '1');
         const startH = parseInt((body.querySelector('[data-tpl-field="startHour"]') as HTMLInputElement)?.value || '6');
@@ -535,10 +548,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'add-load-window': {
-        const tid = target.dataset.tid!;
+        const tid = actionButton?.dataset.tid!;
         const tpl = store.getTaskTemplate(tid);
         if (!tpl) break;
-        const block = target.closest('.add-slot-form');
+        const block = actionButton?.closest('.add-slot-form');
         if (!block) break;
 
         const start = (block.querySelector('[data-field="lw-start"]') as HTMLInputElement | null)?.value || '05:00';
@@ -565,12 +578,12 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'update-load-window': {
-        const tid = target.dataset.tid!;
-        const lwid = target.dataset.lwid!;
+        const tid = actionButton?.dataset.tid!;
+        const lwid = actionButton?.dataset.lwid!;
         const tpl = store.getTaskTemplate(tid);
         if (!tpl) break;
 
-        const body = target.closest('.template-body') as HTMLElement | null;
+        const body = actionButton?.closest('.template-body') as HTMLElement | null;
         if (!body) break;
         const startInput = body.querySelector(`[data-field="lw-edit-start"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
         const endInput = body.querySelector(`[data-field="lw-edit-end"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
@@ -600,8 +613,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'remove-load-window': {
-        const tid = target.dataset.tid!;
-        const lwid = target.dataset.lwid!;
+        const tid = actionButton?.dataset.tid!;
+        const lwid = actionButton?.dataset.lwid!;
         const tpl = store.getTaskTemplate(tid);
         if (!tpl) break;
         store.updateTaskTemplate(tid, {
@@ -611,7 +624,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'add-subteam': {
-        const tid = target.dataset.tid!;
+        const tid = actionButton?.dataset.tid!;
         const name = await showPrompt('הזן שם לתת-צוות:', { title: 'הוספת תת-צוות' });
         if (!name) return;
         store.addSubTeamToTemplate(tid, name.trim());
@@ -619,8 +632,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'remove-subteam': {
-        const tid = target.dataset.tid!;
-        const stid = target.dataset.stid!;
+        const tid = actionButton?.dataset.tid!;
+        const stid = actionButton?.dataset.stid!;
         const okSub = await showConfirm('למחוק את תת-הצוות הזה ואת כל המשבצות שלו?', { danger: true, title: 'מחיקת תת-צוות', confirmLabel: 'מחק' });
         if (okSub) {
           store.removeSubTeamFromTemplate(tid, stid);
@@ -629,22 +642,22 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'add-slot': {
-        const tid = target.dataset.tid!;
+        const tid = actionButton?.dataset.tid!;
         addingSlotTo = { templateId: tid };
         rerender();
         break;
       }
       case 'add-slot-subteam': {
-        const tid = target.dataset.tid!;
-        const stid = target.dataset.stid!;
+        const tid = actionButton?.dataset.tid!;
+        const stid = actionButton?.dataset.stid!;
         addingSlotTo = { templateId: tid, subTeamId: stid };
         rerender();
         break;
       }
       case 'confirm-add-slot': {
-        const tid = target.dataset.tid!;
-        const stid = target.dataset.stid;
-        const form = target.closest('.add-slot-form')!;
+        const tid = actionButton?.dataset.tid!;
+        const stid = actionButton?.dataset.stid;
+        const form = actionButton?.closest('.add-slot-form')!;
         const label = (form.querySelector('[data-field="slot-label"]') as HTMLInputElement)?.value.trim() || 'משבצת';
         const levels: Level[] = [];
         form.querySelectorAll<HTMLInputElement>('[data-slot-level]').forEach(cb => {
@@ -674,9 +687,9 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'remove-slot': {
-        const tid = target.dataset.tid!;
-        const stid = target.dataset.stid;
-        const slotId = target.dataset.slotid!;
+        const tid = actionButton?.dataset.tid!;
+        const stid = actionButton?.dataset.stid;
+        const slotId = actionButton?.dataset.slotid!;
         if (stid) {
           store.removeSlotFromSubTeam(tid, stid, slotId);
         } else {
@@ -686,7 +699,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'remove-template': {
-        const tid = target.dataset.tid!;
+        const tid = actionButton?.dataset.tid!;
         const tpl = store.getTaskTemplate(tid);
         if (tpl) {
           const okTpl = await showConfirm(`למחוק את התבנית "${tpl.name}"?`, { danger: true, title: 'מחיקת תבנית', confirmLabel: 'מחק' });

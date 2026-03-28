@@ -808,6 +808,56 @@ const defaultNames: string[] = [
   'אוהד שטרן', 'רותם גנות', 'ברק אוריון', 'נעמה שקד',
 ];
 
+const DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP: Record<string, string[]> = {
+  'קבוצה 1': ['pakal-matol', 'pakal-negev', 'pakal-kala', 'pakal-rahpan', 'pakal-til-lao', HORESH_PAKAL_ID, 'pakal-matol', 'pakal-negev'],
+  'קבוצה 2': ['pakal-matol', 'pakal-negev', 'pakal-kala', 'pakal-rahpan', 'pakal-mag', 'pakal-matol', 'pakal-kala', 'pakal-til-lao'],
+  'קבוצה 3': ['pakal-matol', 'pakal-negev', 'pakal-kala', 'pakal-mag', 'pakal-matol', 'pakal-negev', HORESH_PAKAL_ID, 'pakal-matol'],
+  'קבוצה 4': ['pakal-matol', 'pakal-negev', 'pakal-kala', 'pakal-rahpan', 'pakal-til-lao', 'pakal-matol', 'pakal-kala', 'pakal-matol'],
+};
+
+function isDefaultParticipantRoster(entries: Array<{ name: string }>): boolean {
+  return entries.length === defaultNames.length && entries.every((entry, index) => entry.name === defaultNames[index]);
+}
+
+function hasDesiredDefaultL0PakalSeed(entries: Array<{ name: string; level: Level; group: string; pakalIds?: string[] }>): boolean {
+  if (!isDefaultParticipantRoster(entries)) return false;
+
+  const groupIndices = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.level !== Level.L0) {
+      if ((entry.pakalIds?.length ?? 0) > 0) return false;
+      continue;
+    }
+
+    const nextIndex = groupIndices.get(entry.group) ?? 0;
+    const expectedPakalId = DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP[entry.group]?.[nextIndex];
+    const actualPakalIds = entry.pakalIds || [];
+    if (!expectedPakalId || actualPakalIds.length !== 1 || actualPakalIds[0] !== expectedPakalId) return false;
+    groupIndices.set(entry.group, nextIndex + 1);
+  }
+
+  return true;
+}
+
+function needsDefaultL0PakalSeed(entries: Array<{ name: string; level: Level; group: string; pakalIds?: string[] }>): boolean {
+  return isDefaultParticipantRoster(entries) && !hasDesiredDefaultL0PakalSeed(entries);
+}
+
+function applyDefaultL0PakalSeed<T extends { name: string; level: Level; group: string; pakalIds?: string[] }>(entries: T[]): T[] {
+  const groupIndices = new Map<string, number>();
+
+  return entries.map(entry => {
+    if (entry.level !== Level.L0) return entry;
+    const nextIndex = groupIndices.get(entry.group) ?? 0;
+    const pakalId = DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP[entry.group]?.[nextIndex];
+    groupIndices.set(entry.group, nextIndex + 1);
+    return {
+      ...entry,
+      pakalIds: pakalId ? [pakalId] : [],
+    };
+  });
+}
+
 export function seedDefaultParticipants(): void {
   // 4 Departments × 12 participants = 48 total
   // Per department:
@@ -851,18 +901,24 @@ export function seedDefaultParticipants(): void {
   };
 
   let nameIdx = 0;
+  const l0PakalIndexByDept = new Map<string, number>();
   for (const dept of deptNames) {
     const horeshIndices = horeshByDept[dept];
     template.forEach((spec, i) => {
       const id = uid('p');
       const certs = [...spec.certs];
       if (horeshIndices?.has(i)) certs.push(Certification.Horesh);
+      const nextL0Index = l0PakalIndexByDept.get(dept) ?? 0;
+      const pakalId = spec.level === Level.L0
+        ? DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP[dept]?.[nextL0Index]
+        : undefined;
+      if (spec.level === Level.L0) l0PakalIndexByDept.set(dept, nextL0Index + 1);
       const p: Participant = {
         id,
         name: defaultNames[nameIdx++],
         level: spec.level,
         certifications: certs,
-        pakalIds: [],
+        pakalIds: pakalId ? [pakalId] : [],
         group: dept,
         availability: getDefaultAvailability(),
         dateUnavailability: [],
@@ -1237,6 +1293,7 @@ export function loadFromStorage(): boolean {
 
     const state = JSON.parse(raw);
     if (!state || (state.version !== 1 && state.version !== 2 && state.version !== 3 && state.version !== 4 && state.version !== 5)) return false;
+    let migratedDefaultL0Pakals = false;
 
     // ── Migration v1 → v2: update baseLoadWeight for Hamama/Mamtera/Karov ──
     if (state.version === 1 && Array.isArray(state.taskTemplates)) {
@@ -1273,6 +1330,11 @@ export function loadFromStorage(): boolean {
           tpl.togethernessRelevant = (tpl.taskType === TaskType.Adanit || tpl.taskType === TaskType.Shemesh);
         }
       }
+    }
+
+    if (Array.isArray(state.participants) && needsDefaultL0PakalSeed(state.participants)) {
+      state.participants = applyDefaultL0PakalSeed(state.participants);
+      migratedDefaultL0Pakals = true;
     }
 
     // Restore schedule date/days
@@ -1341,7 +1403,7 @@ export function loadFromStorage(): boolean {
     recalcAllAvailability();
 
     // Re-persist after migration so updated version/values are saved
-    if (state.version !== 5) {
+    if (state.version !== 5 || migratedDefaultL0Pakals) {
       try { saveToStorage(); } catch (_) { /* best-effort */ }
     }
 
@@ -2096,13 +2158,17 @@ function _deepCopyPSet(s: ParticipantSet): ParticipantSet {
 
 function _normalizeParticipantSet(pset: ParticipantSet): ParticipantSet {
   const pakalCatalog = normalizePakalDefinitions(pset.pakalCatalog);
+  const participants = (pset.participants || []).map(snap => ({
+    ...snap,
+    pakalIds: sanitizePakalIds(snap.pakalIds, pakalCatalog),
+  }));
+
   return {
     ...pset,
     pakalCatalog,
-    participants: (pset.participants || []).map(snap => ({
-      ...snap,
-      pakalIds: sanitizePakalIds(snap.pakalIds, pakalCatalog),
-    })),
+    participants: pset.id === 'pset-default' && needsDefaultL0PakalSeed(participants)
+      ? applyDefaultL0PakalSeed(participants)
+      : participants,
   };
 }
 
@@ -2115,6 +2181,8 @@ function _initParticipantSets(): ParticipantSet[] {
     try {
       const parsed = JSON.parse(raw) as ParticipantSet[];
       _participantSets = Array.isArray(parsed) ? parsed.map(_normalizeParticipantSet) : [];
+      const shouldPersistMigration = Array.isArray(parsed) && parsed.some(pset => pset.id === 'pset-default' && needsDefaultL0PakalSeed(pset.participants || []));
+      if (shouldPersistMigration) _saveParticipantSets();
     } catch {
       _participantSets = [];
     }
@@ -2148,6 +2216,7 @@ function _snapshotCurrentParticipants(): ParticipantSnapshot[] {
       notWithIds: getNotWithIds(p.id).length > 0
         ? getNotWithIds(p.id).map(id => participants.get(id)?.name).filter((n): n is string => !!n)
         : undefined,
+      pakalIds: sanitizePakalIds(p.pakalIds, pakalDefinitions),
       preferredTaskType: p.preferredTaskType,
       lessPreferredTaskType: p.lessPreferredTaskType,
     };

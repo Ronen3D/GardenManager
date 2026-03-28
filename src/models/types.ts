@@ -305,7 +305,7 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   dailyBalanceWeight: 90,
   notWithPenalty: 500,
   taskPreferencePenalty: 50,
-  taskAvoidancePenalty: 150,
+  taskAvoidancePenalty: 80,
 };
 
 // ─── Algorithm Settings (user-configurable control panel) ────────────────────

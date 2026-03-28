@@ -16,6 +16,7 @@
   --success: #1d9050;
   --warning: #f39c12;
   --danger: #e74c3c;
+  --danger-glow: rgba(231, 76, 60, 0.18);
   --radius: 8px;
   --tooltip-bg: #1e2130;
   --tooltip-shadow: rgba(0,0,0,0.5);
@@ -63,6 +64,7 @@
   --success: #167a3e;
   --warning: #d4860e;
   --danger: #c9302c;
+  --danger-glow: rgba(201, 48, 44, 0.14);
   --radius: 8px;
   --tooltip-bg: #ffffff;
   --tooltip-shadow: rgba(0,0,0,0.15);
@@ -866,12 +868,40 @@ section h2 {
   border-radius: 4px;
   font-size: 0.85rem;
   outline: none;
-  transition: border-color var(--transition-normal);
+  transition:
+    border-color var(--transition-normal),
+    box-shadow var(--transition-normal),
+    background-color var(--transition-normal);
 }
-.input-sm:focus { border-color: var(--accent); }
 
 select.input-sm {
   appearance: auto;
+}
+
+.input-sm:focus,
+.input-sm:focus-visible,
+.preset-name-input:focus,
+.preset-desc-input:focus,
+.snapshot-name-input:focus,
+.snapshot-desc-input:focus,
+.gm-modal-input:focus,
+.gm-select-search:focus,
+.gm-select-trigger:focus-visible,
+.gm-select.open .gm-select-trigger {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.input-sm[aria-invalid="true"],
+.preset-name-input[aria-invalid="true"],
+.preset-desc-input[aria-invalid="true"],
+.snapshot-name-input[aria-invalid="true"],
+.snapshot-desc-input[aria-invalid="true"],
+.gm-modal-input[aria-invalid="true"],
+.gm-select-search[aria-invalid="true"],
+.gm-select-trigger[aria-invalid="true"] {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-glow);
 }
 
 .time-24h {
@@ -3197,52 +3227,140 @@ tr.row-selected:hover {
   position: fixed;
   inset: 0;
   z-index: 100001;
-  background: transparent;
+  background: rgba(3, 8, 20, 0.26);
+  backdrop-filter: blur(2px);
 }
 .availability-popover {
   position: fixed;
-  width: min(360px, calc(100vw - 24px));
-  max-height: min(520px, calc(100vh - 24px));
+  width: min(320px, calc(100vw - 16px));
+  max-height: min(460px, calc(100vh - 16px));
   overflow: auto;
-  background: var(--card-bg, var(--panel));
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) + 2px);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
-  padding: 14px;
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.34);
+  padding: 12px;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 .availability-popover-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
 }
 .availability-popover-header h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.92rem;
+  line-height: 1.3;
 }
 .availability-popover-subtitle {
-  margin-top: 4px;
+  margin-top: 3px;
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: 0.76rem;
+}
+.availability-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.availability-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.availability-total-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--accent-glow), rgba(0, 0, 0, 0));
+}
+.availability-total-count {
+  min-width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  padding: 0 10px;
+  border-radius: 14px;
+  background: var(--accent);
+  color: var(--text-inverse);
+  font-size: 1.3rem;
+  font-weight: 800;
+  line-height: 1;
+}
+.availability-total-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.availability-total-copy strong {
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+.availability-total-copy span {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+.availability-quick-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.availability-quick-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-hover);
+}
+.availability-quick-stat-value {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.availability-quick-stat-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.25;
+}
+.availability-section-title {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
 }
 .availability-summary-note,
 .availability-overlap-note,
 .availability-empty {
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: 0.76rem;
+  line-height: 1.4;
 }
 .availability-bucket-list,
 .availability-name-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .availability-bucket,
 .availability-overlap {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--bg-soft);
+  background: var(--bg-hover);
+  overflow: hidden;
 }
 .availability-bucket summary,
 .availability-overlap summary,
@@ -3251,36 +3369,87 @@ tr.row-selected:hover {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   cursor: pointer;
   font-weight: 600;
+  font-size: 0.86rem;
+  line-height: 1.3;
+}
+.availability-bucket-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.availability-bucket-label {
+  color: var(--text);
+}
+.availability-bucket-preview {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.availability-bucket[open] > summary,
+.availability-overlap[open] > summary {
+  border-bottom: 1px solid var(--border);
 }
 .availability-bucket-empty {
   cursor: default;
 }
+.availability-bucket-zero {
+  opacity: 0.82;
+}
 .availability-bucket-count {
-  min-width: 28px;
+  min-width: 24px;
   text-align: center;
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: 999px;
-  background: rgba(31, 111, 235, 0.12);
+  background: var(--accent-glow);
   color: var(--accent);
+  font-size: 0.74rem;
+  font-weight: 700;
 }
 .availability-bucket > .availability-name-list,
 .availability-overlap > .availability-name-list,
 .availability-bucket > .availability-empty,
 .availability-overlap > .availability-overlap-note {
-  padding: 0 12px 12px;
+  padding: 0 10px 10px;
 }
 .availability-name-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+  padding: 1px 0;
+  font-size: 0.84rem;
+}
+.availability-name-row .participant-hover {
+  color: var(--text);
+  font-weight: 500;
 }
 .availability-multi-tag {
-  background: rgba(137, 87, 229, 0.18);
-  color: #8250df;
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+.availability-close {
+  flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .availability-quick-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .availability-bucket-preview {
+    max-width: 180px;
+  }
+}
+
+[data-theme="light"] .availability-popover-backdrop {
+  background: rgba(15, 23, 42, 0.08);
 }
 
 /* ─── Now Row Highlight ─── */
@@ -3901,11 +4070,6 @@ tr.now-row-animate > td.time-cell {
 }
 .preset-name-input { width: 180px; }
 .preset-desc-input { width: 260px; }
-.preset-name-input:focus,
-.preset-desc-input:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
-}
 
 .preset-validation-error {
   color: #f38ba8;
@@ -4092,11 +4256,6 @@ tr.now-row-animate > td.time-cell {
 }
 .snapshot-name-input { width: 180px; }
 .snapshot-desc-input { width: 260px; }
-.snapshot-name-input:focus,
-.snapshot-desc-input:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
-}
 
 .snapshot-validation-error {
   color: #f38ba8;
