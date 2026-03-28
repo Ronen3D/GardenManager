@@ -19,7 +19,7 @@ import {
   Assignment,
 } from '../models/types';
 import * as store from './config-store';
-import { hebrewDayName, hebrewDayNameFromISO } from '../utils/date-utils';
+import { hebrewDayName } from '../utils/date-utils';
 import { computeTaskBreakdown } from './workload-utils';
 import {
   TASK_COLORS, LEVEL_COLORS,
@@ -210,49 +210,26 @@ function renderPersonalAgenda(
 // ─── Unavailability Section ──────────────────────────────────────────────────
 
 function renderUnavailabilitySection(p: Participant): string {
-  const blackouts = store.getBlackouts(p.id);
   const dateRules = store.getDateUnavailabilities(p.id);
 
   let html = `<div class="profile-card">
     <h3 class="profile-card-title">🚫 אי זמינות</h3>`;
 
-  // Blackout periods
-  if (blackouts.length > 0) {
-    html += '<h4 class="profile-sub-title">תקופות חסימה</h4><ul class="profile-list">';
-    for (const b of blackouts) {
-      html += `<li>
-        <strong>${fmt(b.start)} – ${fmt(b.end)}</strong>
-        ${b.reason ? `<span class="text-muted"> · ${b.reason}</span>` : ''}
-        <span class="badge badge-sm" style="background:#e74c3c;margin-inline-start:6px">חד-פעמי</span>
-      </li>`;
-    }
-    html += '</ul>';
-  }
-
-  // Date-specific rules
   if (dateRules.length > 0) {
-    html += '<h4 class="profile-sub-title">כללים לפי תאריך</h4><ul class="profile-list">';
+    html += '<h4 class="profile-sub-title">כללים לפי יום בשבוע</h4><ul class="profile-list">';
     for (const r of dateRules) {
-      const isRecurring = r.dayOfWeek !== undefined;
-      let label: string;
-      if (r.specificDate) {
-        label = 'יום ' + hebrewDayNameFromISO(r.specificDate);
-      } else if (r.dayOfWeek !== undefined) {
-        label = `כל ${hebrewDayName(new Date(2026, 0, 4 + r.dayOfWeek))}`;
-      } else {
-        label = 'לא ידוע';
-      }
+      const label = `כל ${hebrewDayName(new Date(2026, 0, 4 + r.dayOfWeek))}`;
       const timeLabel = r.allDay ? 'כל היום' : `${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00`;
       html += `<li>
         <strong>${label}</strong> — ${timeLabel}
         ${r.reason ? `<span class="text-muted"> · ${r.reason}</span>` : ''}
-        <span class="badge badge-sm" style="background:${isRecurring ? '#8e44ad' : '#e74c3c'};margin-inline-start:6px">${isRecurring ? 'חוזר' : 'תאריך ספציפי'}</span>
+        <span class="badge badge-sm" style="background:#8e44ad;margin-inline-start:6px">חוזר</span>
       </li>`;
     }
     html += '</ul>';
   }
 
-  if (blackouts.length === 0 && dateRules.length === 0) {
+  if (dateRules.length === 0) {
     html += '<p class="text-muted profile-empty-note">לא הוגדרו מגבלות זמינות. המשתתף זמין בכל שעות היממה.</p>';
   }
 

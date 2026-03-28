@@ -53,7 +53,6 @@ export type {
   GanttData,
   SwapRequest,
   ReScheduleRequest,
-  BlackoutPeriod,
   SlotTemplate,
   SubTeamTemplate,
   TaskTemplate,

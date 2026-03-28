@@ -1,7 +1,7 @@
 /**
  * Stress Test — Bulk Delete Performance Profiling
  *
- * Creates 50 participants with blackouts and date unavailability rules,
+ * Creates 50 participants with recurring weekday unavailability rules,
  * then measures the time taken for `removeParticipantsBulk(20)`.
  *
  * Breaks down timing into:
@@ -45,29 +45,22 @@ store.initStore();
 const allParticipants = store.getAllParticipants();
 console.log(`Participants after seed: ${allParticipants.length}`);
 
-// Add some blackouts and date-unavailability rules to stress the clone
-console.log('Adding blackouts and date-unavailability rules...');
-let blackoutCount = 0;
+// Add recurring weekday rules to stress the clone
+console.log('Adding recurring weekday unavailability rules...');
 let dateRuleCount = 0;
 for (const p of allParticipants) {
-  // Add 2 blackouts per participant
-  for (let i = 0; i < 2; i++) {
-    const start = new Date(2026, 1, 16, 8 + i * 4, 0);
-    const end = new Date(2026, 1, 16, 12 + i * 4, 0);
-    store.addBlackout(p.id, start, end, `Blackout ${i + 1}`);
-    blackoutCount++;
+  for (let i = 0; i < 3; i++) {
+    store.addDateUnavailability(p.id, {
+      dayOfWeek: (5 + i) % 7,
+      allDay: i === 2,
+      startHour: i === 2 ? 0 : 8 + i * 2,
+      endHour: i === 2 ? 24 : 12 + i * 2,
+      reason: `Weekly rule ${i + 1}`,
+    });
+    dateRuleCount++;
   }
-  // Add 1 date-unavailability rule per participant
-  store.addDateUnavailability(p.id, {
-    dayOfWeek: 5, // Friday
-    allDay: false,
-    startHour: 8,
-    endHour: 16,
-    reason: 'Weekly off',
-  });
-  dateRuleCount++;
 }
-console.log(`Added ${blackoutCount} blackouts, ${dateRuleCount} date rules`);
+console.log(`Added ${dateRuleCount} recurring weekday rules`);
 
 // Build a fake schedule with 200 assignments spread across participants
 console.log('Building synthetic schedule with 200 assignments...\n');

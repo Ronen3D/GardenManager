@@ -70,13 +70,11 @@ export interface AvailabilityWindow {
   end: Date;
 }
 
-/** A recurring or one-off unavailability rule for a participant */
+/** A recurring weekly unavailability rule for a participant */
 export interface DateUnavailability {
   id: string;
-  /** Day of week (0=Sunday … 6=Saturday). If set, recurring weekly. */
-  dayOfWeek?: number;
-  /** Specific calendar date 'YYYY-MM-DD'. If set, applies to that date only. */
-  specificDate?: string;
+  /** Day of week (0=Sunday … 6=Saturday). */
+  dayOfWeek: number;
   /** Start hour (0-23). Ignored when allDay is true. */
   startHour: number;
   /** End hour (0-23). Ignored when allDay is true. */
@@ -97,7 +95,7 @@ export interface Participant {
   group: string;
   /** Time windows when participant is available */
   availability: AvailabilityWindow[];
-  /** Date-specific unavailability rules (recurring or one-off) */
+  /** Recurring weekday unavailability rules */
   dateUnavailability: DateUnavailability[];
   /** IDs of participants this person prefers NOT to be paired with (soft constraint) */
   notWithIds?: string[];
@@ -411,10 +409,8 @@ export interface ParticipantSnapshot {
   level: Level;
   certifications: Certification[];
   group: string;
-  /** Date-specific unavailability rules (IDs stripped for stable comparison) */
+  /** Recurring weekday unavailability rules (IDs stripped for stable comparison) */
   dateUnavailability: Omit<DateUnavailability, 'id'>[];
-  /** Shift-level blackout periods (ISO strings for serialisation) */
-  blackouts: { start: string; end: string; reason?: string }[];
   /** IDs of participants this person prefers NOT to be paired with */
   notWithIds?: string[];
 }
@@ -492,14 +488,6 @@ export interface ReScheduleRequest {
 }
 
 // ─── Stage 0: Configuration Types ───────────────────────────────────────────
-
-/** A blackout window when a participant is NOT available */
-export interface BlackoutPeriod {
-  id: string;
-  start: Date;
-  end: Date;
-  reason?: string;
-}
 
 /** A single slot template inside a TaskTemplate */
 export interface SlotTemplate {

@@ -490,10 +490,9 @@ function renderSidebarEntry(
   const todayRatio = totalPeriodHours > 0 ? todayHrs / totalPeriodHours : 0;
   const todayBarWidth = Math.min(todayRatio * 100 * (100 / 30), barWidth);
 
-  const diagTooltip = `${entry.w.effectiveHours.toFixed(1)} שע' אפקטיביות / ${totalPeriodHours} שע' תקופה = ${entry.pctOfPeriod.toFixed(1)}%\n` +
-    `חם: ${entry.w.hotHours.toFixed(1)} שע' · קר: ${entry.w.coldHours.toFixed(1)} שע' · גולמי: ${entry.w.totalHours.toFixed(1)} שע'\n` +
-    `שיבוצים: ${entry.w.nonLightCount} משימות כבדות\n` +
-    tooltipParts.join(' | ');
+  const diagTooltip = `שעות עומס: ${entry.w.effectiveHours.toFixed(1)} (${entry.pctOfPeriod.toFixed(1)}%)\n` +
+    `משימות כבדות: ${entry.w.nonLightCount}\n` +
+    tooltipParts.join('\n');
 
   return `<div class="sidebar-entry">
     <div class="sidebar-name">
@@ -504,10 +503,10 @@ function renderSidebarEntry(
       <div class="sidebar-bar-bg" title="${diagTooltip}">
         <div class="sidebar-bar-fill ${barClass}" style="width:${barWidth}%"></div>
         <div class="sidebar-bar-today" style="width:${todayBarWidth}%"></div>
-        <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שע' אפקטיביות (${entry.pctOfPeriod.toFixed(1)}%)</span>
+        <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfPeriod.toFixed(1)}%)</span>
       </div>
-      <span class="sidebar-today-tag" title="היום (יום ${currentDay}): ${todayHrs.toFixed(1)} שע' גולמיות">
-        גולמי ${hebrewDayName(new Date(store.getScheduleDate().getFullYear(), store.getScheduleDate().getMonth(), store.getScheduleDate().getDate() + currentDay - 1))}: ${todayHrs.toFixed(1)} שע'
+      <span class="sidebar-today-tag" title="היום (יום ${currentDay}): ${todayHrs.toFixed(1)} שע'">
+        ${hebrewDayName(new Date(store.getScheduleDate().getFullYear(), store.getScheduleDate().getMonth(), store.getScheduleDate().getDate() + currentDay - 1))}: ${todayHrs.toFixed(1)} שע'
       </span>
     </div>
   </div>`;
@@ -567,7 +566,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
     for (const entry of l0Entries) {
       const pct = entry.w.effectiveHours / totalPeriodHours;
       const cls = pct > WORKLOAD_OVER_THRESHOLD ? 'mini-over' : pct < WORKLOAD_UNDER_THRESHOLD ? 'mini-under' : 'mini-normal';
-      html += `<div class="sidebar-mini-bar ${cls}" title="${entry.p.name}: ${entry.w.effectiveHours.toFixed(1)} שע' אפקטיביות"></div>`;
+      html += `<div class="sidebar-mini-bar ${cls}" title="${entry.p.name}: ${entry.w.effectiveHours.toFixed(1)} שעות עומס"></div>`;
     }
     html += `</div></div>`;
     return html;
@@ -577,7 +576,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
       <div class="sidebar-header-row">
         <h3>השוואת עומס</h3>
       </div>
-      <div class="sidebar-avg">ממוצע: ${l0Avg.toFixed(1)} שע' אפקטיביות · ${l0Entries.length} משתתפים · ${numDays} ימים</div>
+      <div class="sidebar-avg">ממוצע: ${l0Avg.toFixed(1)} שעות עומס · ${l0Entries.length} משתתפים · ${numDays} ימים</div>
     </div>
     <div class="sidebar-entries">`;
 
@@ -598,7 +597,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
     <div class="sidebar-senior-panel hidden" id="sidebar-senior-panel">
       <div class="sidebar-header sidebar-header-senior">
         <h3>עומס סגל (L2-L4)</h3>
-        <div class="sidebar-avg">ממוצע: ${seniorAvg.toFixed(1)} שע' אפקטיביות · σ ${seniorSigma.toFixed(2)} · ${seniorEntries.length} משתתפים</div>
+        <div class="sidebar-avg">ממוצע: ${seniorAvg.toFixed(1)} שעות עומס · σ ${seniorSigma.toFixed(2)} · ${seniorEntries.length} משתתפים</div>
       </div>
       <div class="sidebar-entries">`;
 

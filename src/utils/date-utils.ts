@@ -10,11 +10,6 @@ export function hebrewDayName(d: Date): string {
   return HEBREW_DAYS[d.getDay()];
 }
 
-/** Hebrew weekday name from a YYYY-MM-DD string (e.g. "שלישי"). */
-export function hebrewDayNameFromISO(iso: string): string {
-  return HEBREW_DAYS[new Date(iso).getDay()];
-}
-
 /** Calendar-date key from a Date (YYYY-MM-DD in local time) */
 export function dateKey(d: Date): string {
   const y = d.getFullYear();

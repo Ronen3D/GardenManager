@@ -13,7 +13,7 @@ import {
 import * as store from './config-store';
 import { showConfirm, showToast } from './ui-modal';
 import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, SVG_ICONS, escHtml } from './ui-helpers';
-import { HEBREW_DAYS, hebrewDayName, hebrewDayNameFromISO } from '../utils/date-utils';
+import { HEBREW_DAYS } from '../utils/date-utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -258,15 +258,14 @@ export function renderParticipantsTab(): string {
       <th class="sortable-th" data-action="sort-column" data-sort-col="level">דרגה${sortIndicator('level')}</th>
       <th>הסמכות</th>
       ${showNotWithColumn ? '<th>אי התאמה</th>' : ''}
-      <th>זמינות</th><th>חסימות</th><th class="col-actions">פעולות</th>
+      <th>זמינות</th><th>אי-זמינות</th><th class="col-actions">פעולות</th>
     </tr></thead><tbody>`;
 
   sorted.forEach((p, i) => {
     const isEditing = editingId === p.id;
-    const bouts = store.getBlackouts(p.id);
     const dateRules = store.getDateUnavailabilities(p.id);
     const isExpanded = expandedBlackoutId === p.id;
-    const totalRules = bouts.length + dateRules.length;
+    const totalRules = dateRules.length;
     const isSelected = selectedIds.has(p.id);
 
     if (isEditing) {
@@ -284,7 +283,7 @@ export function renderParticipantsTab(): string {
           ${p.availability.map(w => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
         </td>
         <td>
-          <button class="btn-sm btn-outline btn-icon" data-action="toggle-blackouts" data-pid="${p.id}" title="ניהול חסימות">
+          <button class="btn-sm btn-outline btn-icon" data-action="toggle-blackouts" data-pid="${p.id}" title="ניהול אי-זמינות">
             ${totalRules > 0 ? `<span class="badge badge-sm" style="background:var(--warning)">${totalRules}</span>` : SVG_ICONS.block}
           </button>
         </td>
@@ -296,7 +295,7 @@ export function renderParticipantsTab(): string {
 
       // Blackout expansion row
       if (isExpanded) {
-        html += renderBlackoutRow(p.id, bouts);
+        html += renderBlackoutRow(p.id);
       }
     }
   });
@@ -370,43 +369,24 @@ function renderEditRow(p: Participant, idx: number): string {
 
 
 
-function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlackouts>): string {
+function renderBlackoutRow(pid: string): string {
   const dateRules = store.getDateUnavailabilities(pid);
 
   let html = `<tr class="row-blackout-expansion">
     <td colspan="${showNotWithColumn ? 10 : 9}">
       <div class="blackout-panel">
-        <h4>חסימות קיימות</h4>
+        <h4>כללי אי-זמינות</h4>
         <div class="blackout-list">`;
 
-  if (bouts.length === 0 && dateRules.length === 0) {
-    html += '<p class="text-muted">אין חסימות מוגדרות.</p>';
+  if (dateRules.length === 0) {
+    html += '<p class="text-muted">אין כללי אי-זמינות מוגדרים.</p>';
   } else {
     html += '<ul>';
-    
-    // Render current shift blackouts
-    for (const b of bouts) {
-      html += `<li>
-        <span class="constraint-type">משמרת נוכחית</span>
-        <strong dir="ltr">${fmtTime(b.start)} – ${fmtTime(b.end)}</strong>
-        ${b.reason ? `<span class="text-muted"> (${b.reason})</span>` : ''}
-        <button class="btn-sm btn-danger-outline" data-action="remove-blackout" data-pid="${pid}" data-bid="${b.id}">✕</button>
-      </li>`;
-    }
-
-    // Render date/day unavailabilities
     for (const r of dateRules) {
-      let label: string;
-      if (r.specificDate) {
-        label = 'יום ' + hebrewDayNameFromISO(r.specificDate);
-      } else if (r.dayOfWeek !== undefined) {
-        label = `כל ${HEBREW_DAYS[r.dayOfWeek]}`;
-      } else {
-        label = 'כלל לא ידוע';
-      }
+      const label = `כל ${HEBREW_DAYS[r.dayOfWeek]}`;
       const timeLabel = r.allDay ? 'כל היום' : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00</span>`;
       html += `<li>
-        <span class="constraint-type">${r.specificDate ? 'תאריך ספציפי' : 'יום קבוע'}</span>
+        <span class="constraint-type">יום קבוע</span>
         <strong>${label}</strong> — <span>${timeLabel}</span>
         ${r.reason ? `<span class="text-muted"> (${r.reason})</span>` : ''}
         <button class="btn-sm btn-danger-outline" data-action="remove-date-unavail" data-pid="${pid}" data-rid="${r.id}">✕</button>
@@ -416,22 +396,14 @@ function renderBlackoutRow(pid: string, bouts: ReturnType<typeof store.getBlacko
   }
 
   html += `</div>
-    <h4 style="margin-top:16px">הוסף חסימה חדשה</h4>
+    <h4 style="margin-top:16px">הוסף כלל אי-זמינות</h4>
     <div class="blackout-add unified-constraint-form">
-      <select class="input-sm" data-field="constraint-type">
-        <option value="current_shift">למשמרת הנוכחית</option>
-        <option value="dayOfWeek">יום קבוע בשבוע</option>
-        <option value="specificDate">תאריך ספציפי</option>
-      </select>
-      
-      <select class="input-sm" data-field="du-dow" class="hidden" style="width:120px;">
+      <select class="input-sm" data-field="du-dow" style="width:120px;">
         ${HEBREW_DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
       </select>
-      
-      <input type="date" class="input-sm" data-field="du-date" class="hidden" />
-      
+
       <div class="time-inputs-group">
-        <label class="checkbox-label" class="hidden" style="white-space:nowrap;" data-field="du-allday-wrapper">
+        <label class="checkbox-label" style="white-space:nowrap;" data-field="du-allday-wrapper">
           <input type="checkbox" data-field="du-allday" /> כל היום
         </label>
         <input type="text" class="input-sm time-24h" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="bo-start" value="08:00" />
@@ -492,16 +464,7 @@ function renderBulkUnavailDialog(): string {
 
       <div class="bulk-dialog-body">
         <div class="form-row">
-          <label>סוג
-            <select class="input-sm" data-field="bulk-type">
-              <option value="specificDate">תאריך ספציפי</option>
-              <option value="dayOfWeek">יום בשבוע</option>
-            </select>
-          </label>
-          <label class="bulk-field-date">תאריך
-            <input type="date" class="input-sm" data-field="bulk-date" />
-          </label>
-          <label class="bulk-field-dow hidden">יום
+          <label>יום
             <select class="input-sm" data-field="bulk-dow">
               ${HEBREW_DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
             </select>
@@ -638,22 +601,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     });
   });
 
-  // ─── Bulk: Dialog live toggles (type, allDay) ───────────────────────────────
+  // ─── Bulk: Dialog live toggles (allDay) ─────────────────────────────────────
   container.addEventListener('change', (e) => {
     const field = (e.target as HTMLElement).getAttribute('data-field');
-    if (field === 'bulk-type') {
-      const sel = (e.target as HTMLSelectElement).value;
-      const dialog = (e.target as HTMLElement).closest('.bulk-dialog')!;
-      const dateLabel = dialog.querySelector('.bulk-field-date') as HTMLElement;
-      const dowLabel = dialog.querySelector('.bulk-field-dow') as HTMLElement;
-      if (sel === 'dayOfWeek') {
-        dateLabel.classList.add('hidden');
-        dowLabel.classList.remove('hidden');
-      } else {
-        dateLabel.classList.remove('hidden');
-        dowLabel.classList.add('hidden');
-      }
-    }
     if (field === 'bulk-allday') {
       const checked = (e.target as HTMLInputElement).checked;
       const dialog = (e.target as HTMLElement).closest('.bulk-dialog')!;
@@ -678,31 +628,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     }
   });
 
-  // Constraint type toggle (current shift vs day-of-week vs specific date)
+  // Recurring-rule controls
   container.addEventListener('change', (e) => {
     const target = e.target as HTMLElement;
-    if ((target as HTMLSelectElement).dataset?.field === 'constraint-type') {
-      const sel = target as HTMLSelectElement;
-      const panel = sel.closest('.blackout-panel')!;
-      const dowSel = panel.querySelector('[data-field="du-dow"]') as HTMLElement;
-      const dateInp = panel.querySelector('[data-field="du-date"]') as HTMLElement;
-      const allDayWrapper = panel.querySelector('[data-field="du-allday-wrapper"]') as HTMLElement;
-      
-      if (sel.value === 'current_shift') {
-        if (dowSel) dowSel.classList.add('hidden');
-        if (dateInp) dateInp.classList.add('hidden');
-        if (allDayWrapper) allDayWrapper.classList.add('hidden');
-      } else if (sel.value === 'dayOfWeek') {
-        if (dowSel) dowSel.classList.remove('hidden');
-        if (dateInp) dateInp.classList.add('hidden');
-        if (allDayWrapper) allDayWrapper.classList.remove('hidden');
-      } else {
-        if (dowSel) dowSel.classList.add('hidden');
-        if (dateInp) dateInp.classList.remove('hidden');
-        if (allDayWrapper) allDayWrapper.classList.remove('hidden');
-      }
-    }
-    
     // Handle "All Day" checkbox toggle
     if ((target as HTMLInputElement).dataset?.field === 'du-allday') {
       const cb = target as HTMLInputElement;
@@ -906,58 +834,29 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         rerender();
         break;
       }
-      case 'remove-blackout': {
-        const pid = target.dataset.pid!;
-        const bid = target.dataset.bid!;
-        store.removeBlackout(pid, bid);
-        rerender();
-        break;
-      }
       case 'add-unified-constraint': {
         const pid = target.dataset.pid!;
         const panel = target.closest('.blackout-panel')!;
-        const type = (panel.querySelector('[data-field="constraint-type"]') as HTMLSelectElement)?.value;
         const reason = (panel.querySelector('[data-field="bo-reason"]') as HTMLInputElement)?.value || undefined;
         const errEl = panel.querySelector('.du-validation-error') as HTMLElement;
         if (errEl) errEl.classList.add('hidden');
 
-        if (type === 'current_shift') {
-          const startStr = (panel.querySelector('[data-field="bo-start"]') as HTMLInputElement)?.value;
-          const endStr = (panel.querySelector('[data-field="bo-end"]') as HTMLInputElement)?.value;
-          if (!startStr || !endStr) return;
+        const allDay = (panel.querySelector('[data-field="du-allday"]') as HTMLInputElement)?.checked ?? false;
+        const startStr = (panel.querySelector('[data-field="bo-start"]') as HTMLInputElement)?.value || '00:00';
+        const endStr = (panel.querySelector('[data-field="bo-end"]') as HTMLInputElement)?.value || '00:00';
+        const startHour = parseInt(startStr.split(':')[0]);
+        const endHour = parseInt(endStr.split(':')[0]);
 
-          const d = store.getScheduleDate();
-          const [sh, sm] = startStr.split(':').map(Number);
-          const [eh, em] = endStr.split(':').map(Number);
-          const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), sh, sm);
-          let end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), eh, em);
-          if (end <= start) end = new Date(end.getTime() + 24 * 3600000);
-
-          store.addBlackout(pid, start, end, reason);
-        } else {
-          const allDay = (panel.querySelector('[data-field="du-allday"]') as HTMLInputElement)?.checked ?? false;
-          const startStr = (panel.querySelector('[data-field="bo-start"]') as HTMLInputElement)?.value || '00:00';
-          const endStr = (panel.querySelector('[data-field="bo-end"]') as HTMLInputElement)?.value || '00:00';
-          const startHour = parseInt(startStr.split(':')[0]);
-          const endHour = parseInt(endStr.split(':')[0]);
-
-          if (!allDay && startHour === endHour) {
-            if (errEl) {
-              errEl.textContent = 'שעת התחלה ושעת סיום לא יכולות להיות זהות. השתמש ב"כל היום".';
-              errEl.classList.remove('hidden');
-            }
-            return;
+        if (!allDay && startHour === endHour) {
+          if (errEl) {
+            errEl.textContent = 'שעת התחלה ושעת סיום לא יכולות להיות זהות. השתמש ב"כל היום".';
+            errEl.classList.remove('hidden');
           }
-
-          if (type === 'dayOfWeek') {
-            const dow = parseInt((panel.querySelector('[data-field="du-dow"]') as HTMLSelectElement)?.value || '0');
-            store.addDateUnavailability(pid, { dayOfWeek: dow, allDay, startHour, endHour, reason });
-          } else if (type === 'specificDate') {
-            const dateStr = (panel.querySelector('[data-field="du-date"]') as HTMLInputElement)?.value;
-            if (!dateStr) return;
-            store.addDateUnavailability(pid, { specificDate: dateStr, allDay, startHour, endHour, reason });
-          }
+          return;
         }
+
+        const dow = parseInt((panel.querySelector('[data-field="du-dow"]') as HTMLSelectElement)?.value || '0');
+        store.addDateUnavailability(pid, { dayOfWeek: dow, allDay, startHour, endHour, reason });
         rerender();
         break;
       }
@@ -1089,26 +988,18 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       }
       case 'bulk-dialog-save': {
         const dialog = container.querySelector('.bulk-dialog')!;
-        const typeVal = (dialog.querySelector('[data-field="bulk-type"]') as HTMLSelectElement).value;
         const allDay = (dialog.querySelector('[data-field="bulk-allday"]') as HTMLInputElement).checked;
         const startHour = parseInt((dialog.querySelector('[data-field="bulk-start"]') as HTMLInputElement).value || '0');
         const endHour = parseInt((dialog.querySelector('[data-field="bulk-end"]') as HTMLInputElement).value || '0');
         const reason = (dialog.querySelector('[data-field="bulk-reason"]') as HTMLInputElement).value || undefined;
 
         const rule: Omit<import('../models/types').DateUnavailability, 'id'> = {
+          dayOfWeek: parseInt((dialog.querySelector('[data-field="bulk-dow"]') as HTMLSelectElement).value),
           allDay,
           startHour: allDay ? 0 : startHour,
           endHour: allDay ? 24 : endHour,
           reason,
         };
-
-        if (typeVal === 'dayOfWeek') {
-          rule.dayOfWeek = parseInt((dialog.querySelector('[data-field="bulk-dow"]') as HTMLSelectElement).value);
-        } else {
-          const dateStr = (dialog.querySelector('[data-field="bulk-date"]') as HTMLInputElement).value;
-          if (!dateStr) { (dialog.querySelector('[data-field="bulk-date"]') as HTMLInputElement).focus(); break; }
-          rule.specificDate = dateStr;
-        }
 
         const count = store.addDateUnavailabilityBulk(Array.from(selectedIds), rule);
         _bulkDialogOpen = false;

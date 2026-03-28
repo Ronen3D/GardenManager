@@ -2,7 +2,7 @@
  * Stage 0 Configuration Store
  *
  * In-memory reactive store for participants, task templates,
- * and blackout periods. Provides CRUD operations and change
+ * and availability rules. Provides CRUD operations and change
  * notifications so UI can re-render on mutations.
  */
 
@@ -12,7 +12,6 @@ import {
   Certification,
   TaskType,
   AdanitTeam,
-  BlackoutPeriod,
   TaskTemplate,
   SlotTemplate,
   SubTeamTemplate,
@@ -71,7 +70,7 @@ function notify(): void {
 // ─── Undo / Redo System ──────────────────────────────────────────────────────
 
 interface StoreSnapshot {
-  participants: Array<{ p: Participant; blackouts: BlackoutPeriod[]; dateUnavails: DateUnavailability[] }>;
+  participants: Array<{ p: Participant; dateUnavails: DateUnavailability[] }>;
   taskTemplates: TaskTemplate[];
   notWithPairs: Array<[string, string[]]>;
 }
@@ -101,13 +100,9 @@ function captureSnapshot(): StoreSnapshot {
           availability: p.availability.map(w => ({ start: new Date(w.start.getTime()), end: new Date(w.end.getTime()) })),
           dateUnavailability: [...(p.dateUnavailability || [])].map(r => ({ ...r })),
         };
-    const rawBouts = blackouts.get(id) || [];
     const rawDus = dateUnavailabilities.get(id) || [];
     ps.push({
       p: clonedP,
-      blackouts: useStructured
-        ? structuredClone(rawBouts)
-        : rawBouts.map(b => ({ ...b, start: new Date(b.start.getTime()), end: new Date(b.end.getTime()) })),
       dateUnavails: useStructured
         ? structuredClone(rawDus)
         : rawDus.map(r => ({ ...r })),
@@ -134,7 +129,6 @@ function captureSnapshot(): StoreSnapshot {
 /** Replace live state with a snapshot (restoring original IDs). */
 function restoreSnapshot(snap: StoreSnapshot): void {
   participants.clear();
-  blackouts.clear();
   dateUnavailabilities.clear();
   notWithPairs.clear();
 
@@ -153,11 +147,6 @@ function restoreSnapshot(snap: StoreSnapshot): void {
       p.dateUnavailability = (entry.dateUnavails || []).map(r => ({ ...r }));
     }
     participants.set(p.id, p);
-    if (entry.blackouts.length > 0) {
-      blackouts.set(p.id, useStructured
-        ? structuredClone(entry.blackouts)
-        : entry.blackouts.map(b => ({ ...b, start: new Date(b.start.getTime()), end: new Date(b.end.getTime()) })));
-    }
     if (entry.dateUnavails && entry.dateUnavails.length > 0) {
       dateUnavailabilities.set(p.id, useStructured
         ? structuredClone(entry.dateUnavails)
@@ -251,9 +240,29 @@ export function getUndoRedoState(): { canUndo: boolean; canRedo: boolean; undoDe
 // ─── Participant Store ───────────────────────────────────────────────────────
 
 const participants: Map<string, Participant> = new Map();
-const blackouts: Map<string, BlackoutPeriod[]> = new Map(); // participantId -> blackouts
 const dateUnavailabilities: Map<string, DateUnavailability[]> = new Map(); // participantId -> rules
 const notWithPairs: Map<string, Set<string>> = new Map(); // participantId -> set of partner IDs
+
+function normalizeDateUnavailabilityRule(
+  rule: Partial<Omit<DateUnavailability, 'id'>> | null | undefined,
+): Omit<DateUnavailability, 'id'> | null {
+  if (!rule) return null;
+  const dayOfWeek = typeof rule.dayOfWeek === 'number' ? Math.trunc(rule.dayOfWeek) : NaN;
+  if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) return null;
+
+  const allDay = !!rule.allDay;
+  const startHour = allDay ? 0 : Math.trunc(rule.startHour ?? 0);
+  const endHour = allDay ? 24 : Math.trunc(rule.endHour ?? 0);
+  if (!allDay && (startHour < 0 || startHour > 23 || endHour < 0 || endHour > 23)) return null;
+
+  return {
+    dayOfWeek,
+    allDay,
+    startHour,
+    endHour,
+    reason: rule.reason?.trim() || undefined,
+  };
+}
 
 /** Default schedule date: next upcoming Sunday from today. */
 function defaultScheduleDate(): Date {
@@ -291,27 +300,16 @@ function getDefaultAvailability(): AvailabilityWindow[] {
 
 function computeAvailability(participantId: string): AvailabilityWindow[] {
   const full = getDefaultAvailability();
-  const bouts = blackouts.get(participantId) || [];
   const dateRules = dateUnavailabilities.get(participantId) || [];
 
-  // Expand date-unavailability rules into concrete blackout-style windows
-  const expandedBlackouts: Array<{ start: Date; end: Date }> = bouts.map(b => ({ start: b.start, end: b.end }));
+  // Expand recurring weekday rules into concrete blackout-style windows.
+  const expandedBlackouts: Array<{ start: Date; end: Date }> = [];
 
   const schedStart = scheduleDate;
   for (const rule of dateRules) {
     for (let dayOff = 0; dayOff < scheduleDays; dayOff++) {
       const dayDate = new Date(schedStart.getFullYear(), schedStart.getMonth(), schedStart.getDate() + dayOff);
-      let matches = false;
-
-      if (rule.specificDate) {
-        // Match by YYYY-MM-DD
-        const iso = `${dayDate.getFullYear()}-${String(dayDate.getMonth() + 1).padStart(2, '0')}-${String(dayDate.getDate()).padStart(2, '0')}`;
-        if (iso === rule.specificDate) matches = true;
-      } else if (rule.dayOfWeek !== undefined) {
-        if (dayDate.getDay() === rule.dayOfWeek) matches = true;
-      }
-
-      if (matches) {
+      if (dayDate.getDay() === rule.dayOfWeek) {
         if (rule.allDay) {
           expandedBlackouts.push({
             start: new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0),
@@ -394,7 +392,6 @@ export function removeParticipant(id: string): void {
   if (!participants.has(id)) return;
   pushSnapshot();
   participants.delete(id);
-  blackouts.delete(id);
   dateUnavailabilities.delete(id);
   cleanupNotWith(id);
   syncNotWithToParticipants();
@@ -404,7 +401,7 @@ export function removeParticipant(id: string): void {
 /**
  * Remove multiple participants and all their associated data in one
  * undo-able action.  Uses a Set for O(1) membership checks and deletes
- * participants, blackouts, and unavailability entries in a single pass.
+ * participants and unavailability entries in a single pass.
  * Returns the number of participants actually removed.
  */
 export function removeParticipantsBulk(ids: string[]): number {
@@ -417,7 +414,6 @@ export function removeParticipantsBulk(ids: string[]): number {
   pushSnapshot();
   for (const id of validIds) {
     participants.delete(id);
-    blackouts.delete(id);
     dateUnavailabilities.delete(id);
     cleanupNotWith(id);
   }
@@ -440,37 +436,6 @@ export function getGroups(): string[] {
   return [...groups].sort();
 }
 
-// ─── Blackout Management ─────────────────────────────────────────────────────
-
-export function addBlackout(participantId: string, start: Date, end: Date, reason?: string): BlackoutPeriod | null {
-  if (!participants.has(participantId)) return null;
-  pushSnapshot();
-  const bout: BlackoutPeriod = { id: uid('bo'), start, end, reason };
-  const arr = blackouts.get(participantId) || [];
-  arr.push(bout);
-  blackouts.set(participantId, arr);
-  const p = participants.get(participantId)!;
-  p.availability = computeAvailability(participantId);
-  notify();
-  return bout;
-}
-
-export function removeBlackout(participantId: string, blackoutId: string): void {
-  const arr = blackouts.get(participantId);
-  if (!arr) return;
-  const idx = arr.findIndex(b => b.id === blackoutId);
-  if (idx < 0) return;
-  pushSnapshot();
-  arr.splice(idx, 1);
-  const p = participants.get(participantId);
-  if (p) p.availability = computeAvailability(participantId);
-  notify();
-}
-
-export function getBlackouts(participantId: string): BlackoutPeriod[] {
-  return blackouts.get(participantId) || [];
-}
-
 // ─── Date Unavailability Management ──────────────────────────────────────────
 
 export function addDateUnavailability(
@@ -478,8 +443,10 @@ export function addDateUnavailability(
   rule: Omit<DateUnavailability, 'id'>,
 ): DateUnavailability | null {
   if (!participants.has(participantId)) return null;
+  const normalized = normalizeDateUnavailabilityRule(rule);
+  if (!normalized) return null;
   pushSnapshot();
-  const du: DateUnavailability = { ...rule, id: uid('du') };
+  const du: DateUnavailability = { ...normalized, id: uid('du') };
   const arr = dateUnavailabilities.get(participantId) || [];
   arr.push(du);
   dateUnavailabilities.set(participantId, arr);
@@ -517,6 +484,8 @@ export function addDateUnavailabilityBulk(
   participantIds: string[],
   rule: Omit<DateUnavailability, 'id'>,
 ): number {
+  const normalized = normalizeDateUnavailabilityRule(rule);
+  if (!normalized) return 0;
   const validIds = participantIds.filter(id => participants.has(id));
   if (validIds.length === 0) return 0;
   pushSnapshot();
@@ -524,7 +493,7 @@ export function addDateUnavailabilityBulk(
   let count = 0;
   try {
     for (const pid of validIds) {
-      const du: DateUnavailability = { ...rule, id: uid('du') };
+      const du: DateUnavailability = { ...normalized, id: uid('du') };
       const arr = dateUnavailabilities.get(pid) || [];
       arr.push(du);
       dateUnavailabilities.set(pid, arr);
@@ -984,7 +953,6 @@ export function initStore(): void {
   _initRunning = true;
   try {
     participants.clear();
-    blackouts.clear();
     dateUnavailabilities.clear();
     taskTemplates.clear();
     undoStack.length = 0;
@@ -1104,7 +1072,7 @@ function jsonDeserialize<T>(json: string): T {
 export function saveToStorage(): void {
   try {
     const state = {
-      version: 2,
+      version: 3,
       scheduleDate: scheduleDate.toISOString(),
       scheduleDays,
       liveMode: {
@@ -1124,17 +1092,9 @@ export function saveToStorage(): void {
           })),
         };
       }),
-      blackouts: Array.from(blackouts.entries()).map(([pid, bouts]) => ({
-        pid,
-        bouts: bouts.map(b => ({
-          ...b,
-          start: b.start.toISOString(),
-          end: b.end.toISOString(),
-        })),
-      })),
       dateUnavailabilities: Array.from(dateUnavailabilities.entries()).map(([pid, rules]) => ({
         pid,
-        rules,
+        rules: rules.map(({ id: _, ...rest }) => rest),
       })),
       taskTemplates: Array.from(taskTemplates.values()),
       notWithPairs: Array.from(notWithPairs.entries()).map(([pid, set]) => ({
@@ -1159,7 +1119,7 @@ export function loadFromStorage(): boolean {
     if (!raw) return false;
 
     const state = JSON.parse(raw);
-    if (!state || (state.version !== 1 && state.version !== 2)) return false;
+    if (!state || (state.version !== 1 && state.version !== 2 && state.version !== 3)) return false;
 
     // ── Migration v1 → v2: update baseLoadWeight for Hamama/Mamtera/Karov ──
     if (state.version === 1 && Array.isArray(state.taskTemplates)) {
@@ -1212,7 +1172,6 @@ export function loadFromStorage(): boolean {
 
     // Restore participants
     participants.clear();
-    blackouts.clear();
     dateUnavailabilities.clear();
 
     for (const pData of (state.participants || [])) {
@@ -1222,27 +1181,19 @@ export function loadFromStorage(): boolean {
           start: new Date(w.start),
           end: new Date(w.end),
         })),
-        dateUnavailability: pData.dateUnavailability || [],
+        dateUnavailability: [],
       };
       participants.set(p.id, p);
     }
 
-    // Restore blackouts
-    for (const entry of (state.blackouts || [])) {
-      const bouts: BlackoutPeriod[] = (entry.bouts || []).map((b: { id: string; start: string; end: string; reason?: string }) => ({
-        ...b,
-        start: new Date(b.start),
-        end: new Date(b.end),
-      }));
-      if (bouts.length > 0) {
-        blackouts.set(entry.pid, bouts);
-      }
-    }
-
     // Restore date unavailabilities
     for (const entry of (state.dateUnavailabilities || [])) {
-      if (entry.rules && entry.rules.length > 0) {
-        dateUnavailabilities.set(entry.pid, entry.rules);
+      const rules: DateUnavailability[] = (entry.rules || [])
+        .map((rule: Partial<Omit<DateUnavailability, 'id'>>) => normalizeDateUnavailabilityRule(rule))
+        .filter((rule: Omit<DateUnavailability, 'id'> | null): rule is Omit<DateUnavailability, 'id'> => !!rule)
+        .map((rule: Omit<DateUnavailability, 'id'>) => ({ ...rule, id: uid('du') }));
+      if (rules.length > 0) {
+        dateUnavailabilities.set(entry.pid, rules);
       }
     }
 
@@ -1271,7 +1222,7 @@ export function loadFromStorage(): boolean {
     recalcAllAvailability();
 
     // Re-persist after migration so updated version/values are saved
-    if (state.version === 2) {
+    if (state.version !== 3) {
       try { saveToStorage(); } catch (_) { /* best-effort */ }
     }
 
@@ -1334,7 +1285,6 @@ export function clearStorage(): void {
   }
   // Also clear in-memory state so the app is consistent
   participants.clear();
-  blackouts.clear();
   dateUnavailabilities.clear();
   taskTemplates.clear();
   undoStack.length = 0;
@@ -2033,7 +1983,6 @@ function _initParticipantSets(): ParticipantSet[] {
 function _snapshotCurrentParticipants(): ParticipantSnapshot[] {
   const all = getAllParticipants();
   return all.map(p => {
-    const bouts = getBlackouts(p.id);
     const dateRules = getDateUnavailabilities(p.id);
     return {
       name: p.name,
@@ -2041,11 +1990,6 @@ function _snapshotCurrentParticipants(): ParticipantSnapshot[] {
       certifications: [...p.certifications],
       group: p.group,
       dateUnavailability: dateRules.map(({ id: _, ...rest }) => rest),
-      blackouts: bouts.map(b => ({
-        start: b.start.toISOString(),
-        end: b.end.toISOString(),
-        reason: b.reason,
-      })),
       notWithIds: getNotWithIds(p.id).length > 0
         ? getNotWithIds(p.id).map(id => participants.get(id)?.name).filter((n): n is string => !!n)
         : undefined,
@@ -2175,7 +2119,6 @@ export function loadParticipantSet(id: string): void {
   try {
     // Clear all current participants
     participants.clear();
-    blackouts.clear();
     dateUnavailabilities.clear();
 
     // Add participants from the set
@@ -2192,25 +2135,19 @@ export function loadParticipantSet(id: string): void {
       };
       participants.set(pid, p);
 
-      // Restore blackouts
-      if (snap.blackouts && snap.blackouts.length > 0) {
-        const bouts: BlackoutPeriod[] = snap.blackouts.map(b => ({
-          id: uid('bo'),
-          start: new Date(b.start),
-          end: new Date(b.end),
-          reason: b.reason,
-        }));
-        blackouts.set(pid, bouts);
-      }
-
       // Restore date unavailabilities
       if (snap.dateUnavailability && snap.dateUnavailability.length > 0) {
-        const rules: DateUnavailability[] = snap.dateUnavailability.map(r => ({
-          ...r,
-          id: uid('du'),
-        }));
-        dateUnavailabilities.set(pid, rules);
-        p.dateUnavailability = rules;
+        const rules: DateUnavailability[] = snap.dateUnavailability
+          .map(r => normalizeDateUnavailabilityRule(r))
+          .filter((rule): rule is Omit<DateUnavailability, 'id'> => !!rule)
+          .map(rule => ({
+            ...rule,
+            id: uid('du'),
+          }));
+        if (rules.length > 0) {
+          dateUnavailabilities.set(pid, rules);
+          p.dateUnavailability = rules;
+        }
       }
     }
 

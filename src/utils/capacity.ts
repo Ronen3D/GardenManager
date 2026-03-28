@@ -4,9 +4,9 @@
  * Computes per-participant available hours within a schedule window,
  * based on the participant's AvailabilityWindow ranges.
  *
- * DateUnavailability rules are expected to be pre-materialized into the
- * availability windows before reaching this module (see config-store's
- * computeAvailability()). This avoids double-subtraction.
+ * Recurring weekday unavailability rules are expected to be pre-materialized
+ * into the availability windows before reaching this module (see
+ * config-store's computeAvailability()). This avoids double-subtraction.
  */
 
 import { Participant, ParticipantCapacity } from '../models/types';
@@ -14,10 +14,10 @@ import { dateKey } from './date-utils';
 
 /**
  * Compute available hours for a single calendar day, given a participant's
- * availability windows and date-unavailability rules.
+ * availability windows.
  *
  * @param day       The calendar date to evaluate (time portion ignored)
- * @param participant The participant with availability + dateUnavailability
+ * @param participant The participant with materialized availability windows
  * @returns Available hours on that day (0–24)
  */
 function computeDayAvailableHours(day: Date, participant: Participant): number {
@@ -38,7 +38,7 @@ function computeDayAvailableHours(day: Date, participant: Participant): number {
 
   if (availableHours <= 0) return 0;
 
-  // NOTE: DateUnavailability rules are NOT re-applied here.
+  // NOTE: Recurring weekday unavailability rules are NOT re-applied here.
   // In the web app, participant.availability already has unavailability
   // holes carved out by config-store's computeAvailability(). Re-subtracting
   // dateUnavailability would double-count, underestimating capacity.
