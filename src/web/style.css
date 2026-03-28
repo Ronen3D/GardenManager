@@ -4469,6 +4469,8 @@ tr.now-row-animate > td.time-cell {
 }
 
 .gm-select-option {
+  display: block;
+  width: 100%;
   text-align: start;
   padding: 6px 10px;
   border: none;

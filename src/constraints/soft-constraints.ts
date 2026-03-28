@@ -267,7 +267,7 @@ export function collectSoftWarnings(
   tasks: Task[],
   participants: Participant[],
   assignments: Assignment[],
-  disabledSW?: Set<string>,
+  config?: SchedulerConfig,
 ): ConstraintViolation[] {
   const warnings: ConstraintViolation[] = [];
   const pMap = new Map<string, Participant>();
@@ -283,7 +283,9 @@ export function collectSoftWarnings(
 
     // preferJuniors tasks: warn for L4 — absolute last resort
     // (L2/L3 are hard-blocked by HC-13 and should never appear here)
-    if (!disabledSW?.has('SENIOR_IN_JUNIOR_PREFERRED') && task.preferJuniors) {
+    // Only warn when penalty is active (> 0); if penalty is 0 the user
+    // explicitly chose to allow L4 in these tasks.
+    if ((!config || config.seniorJuniorPreferencePenalty > 0) && task.preferJuniors) {
       for (const p of assignedPs) {
         if (p.level === Level.L4) {
           warnings.push({
@@ -297,9 +299,9 @@ export function collectSoftWarnings(
       }
     }
 
-    // SC-7: Group mismatch — safety-net warning (HC-4 hard constraint should
-    // prevent this; if it appears, something bypassed the constraint).
-    if (!disabledSW?.has('GROUP_MISMATCH') && task.sameGroupRequired && assignedPs.length > 0) {
+    // SC-7: Group mismatch — always-on safety-net warning (HC-4 hard
+    // constraint should prevent this; if it appears, something bypassed it).
+    if (task.sameGroupRequired && assignedPs.length > 0) {
       const groups = new Set(assignedPs.map((p) => p.group));
       if (groups.size > 1) {
         warnings.push({
@@ -405,7 +407,6 @@ export function computeScheduleScore(
   assignments: Assignment[],
   config: SchedulerConfig,
   ctx?: ScoreContext,
-  disabledSW?: Set<string>,
 ): ScheduleScore {
   // Reuse or build lookup maps
   const taskMap = ctx?.taskMap ?? new Map(tasks.map(t => [t.id, t]));
@@ -459,15 +460,10 @@ export function computeScheduleScore(
   // SC-5 (back-to-back penalty) removed — redundant with minRestWeight and HC-12.
 
   // SC-6: Senior junior-preference penalty — pass pre-built maps
-  // When SENIOR_IN_JUNIOR_PREFERRED is disabled, zero out the junior-preference
-  // penalty so L4 assignments to preferJuniors tasks are not penalised.
-  const effectiveConfig = disabledSW?.has('SENIOR_IN_JUNIOR_PREFERRED')
-    ? { ...config, seniorJuniorPreferencePenalty: 0 }
-    : config;
-  totalPenalty += computeSeniorJuniorPreferencePenalty(participants, assignments, tasks, effectiveConfig, pMap, taskMap);
+  totalPenalty += computeSeniorJuniorPreferencePenalty(participants, assignments, tasks, config, pMap, taskMap);
 
   // SC-9: "Not with" togetherness penalty
-  if (!disabledSW?.has('NOT_WITH_VIOLATION') && ctx?.notWithPairs && ctx.notWithPairs.size > 0) {
+  if (ctx?.notWithPairs && ctx.notWithPairs.size > 0) {
     totalPenalty += computeNotWithPenalty(assignments, config, taskMap, assignmentsByTask, ctx.notWithPairs);
   }
 

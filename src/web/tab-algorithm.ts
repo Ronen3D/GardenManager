@@ -9,11 +9,8 @@ import {
   SchedulerConfig,
   DEFAULT_CONFIG,
   HardConstraintCode,
-  SoftWarningCode,
   ALL_HC_CODES,
-  ALL_SW_CODES,
   HC_LABELS,
-  SW_LABELS,
   AlgorithmPreset,
 } from '../models/types';
 import * as store from './config-store';
@@ -47,10 +44,10 @@ const WEIGHT_GROUPS: WeightGroup[] = [
     fields: [
       {
         key: 'l0FairnessWeight',
-        label: 'משקל שיוויוניות L0',
+        label: 'משקל שיוויוניות כללי',
         min: 0, max: 200, step: 1,
-        description: 'עד כמה חשוב לחלק את שעות העבודה באופן שווה בין משתתפי L0. ערך גבוה = חלוקה שוויונית יותר.',
-        detail: 'אם משתתף א\' עובד 12 שעות אפקטיביות ומשתתף ב\' עובד 6, האופטימייזר מעניש פער זה. במשקל 40 (ברירת מחדל), שיוויון עומס L0 חשוב יותר מכמעט כל גורם אחר. הגדר 0 כדי להתעלם משיוויוניות L0 לחלוטין.',
+        description: 'עד כמה חשוב לחלק את שעות העבודה באופן שווה בין משתתפים שאינם סגל. ערך גבוה = חלוקה שוויונית יותר.',
+        detail: 'אם משתתף א\' עובד 12 שעות אפקטיביות ומשתתף ב\' עובד 6, האופטימייזר מעניש פער זה. במשקל 40 (ברירת מחדל), שיוויון העומס של משתתפים שאינם סגל חשוב יותר מכמעט כל גורם אחר. הגדר 0 כדי להתעלם משיוויוניות זו לחלוטין.',
       },
       {
         key: 'seniorFairnessWeight',
@@ -125,19 +122,6 @@ const HC_DESCRIPTIONS: Record<HardConstraintCode, string> = {
   'HC-13': 'סגל (L2/L3/L4) משובצים רק לתחום הטבעי שלהם; L2/L3 חסומים ממשימות מועדפות לצעירים.',
 };
 
-const SW_DESCRIPTIONS: Record<SoftWarningCode, string> = {
-  'SENIOR_IN_JUNIOR_PREFERRED': 'כשמופעל: אזהרה + עונש ניקוד אם L4 משובץ למשימה מועדפת לצעירים. בטל כדי לאפשר שיבוץ ללא עונש.',
-  'GROUP_MISMATCH': 'רשת ביטחון: אזהרה אם משימת קבוצה אחידה כוללת משתתפים מקבוצות שונות (אמור להיתפס ע״י HC-4).',
-  'NOT_WITH_VIOLATION': 'כשמופעל: עונש כששני משתתפים עם "אי התאמה" משובצים יחד באותו צוות משנה. בטל כדי להתעלם מהעדפות אלו.',
-};
-
-// Improved SW labels for clarity
-const SW_LABELS_EXTENDED: Record<SoftWarningCode, string> = {
-  'SENIOR_IN_JUNIOR_PREFERRED': 'סגל במשימה מועדפת לצעירים — אזהרה + עונש',
-  'GROUP_MISMATCH': 'אי-התאמת קבוצה — אזהרת בטיחות',
-  'NOT_WITH_VIOLATION': 'אי התאמה — עונש ניקוד',
-};
-
 // ─── Panel state (mirrors snapshot panel pattern) ────────────────────────────
 
 let _presetPanelOpen = false;
@@ -174,7 +158,6 @@ export function renderAlgorithmTab(): string {
   const settings = store.getAlgorithmSettings();
   const cfg = settings.config;
   const disabledHC = new Set(settings.disabledHardConstraints);
-  const disabledSW = new Set(settings.disabledSoftWarnings);
 
   const presets = store.getAllPresets();
   const activeId = store.getActivePresetId();
@@ -243,30 +226,6 @@ export function renderAlgorithmTab(): string {
           <span class="algo-toggle-label">${HC_LABELS[code]}</span>
           <span class="algo-toggle-desc">${HC_DESCRIPTIONS[code]}</span>
           ${!enabled ? '<span class="algo-toggle-warning">⚠ מושבת — המערכת תדלג על בדיקה זו</span>' : ''}
-        </div>
-      </label>`;
-  }
-
-  html += `
-    </div>
-  </div>`;
-
-  // ── Soft Warning Toggles ──
-  html += `
-  <div class="algo-section">
-    <h3 class="algo-section-title">עקרונות מנחים</h3>
-    <p class="algo-section-desc">אזהרות ועונשי ניקוד שמנחים את האופטימייזר לעבר לוחות טובים יותר, בלי לפסול אותם. ביטול סימון משבית את האזהרה ואת עונש הניקוד.</p>
-    <div class="algo-toggle-list">`;
-
-  for (const code of ALL_SW_CODES) {
-    const enabled = !disabledSW.has(code);
-    html += `
-      <label class="algo-toggle-item${enabled ? '' : ' disabled'}">
-        <input type="checkbox" data-action="algo-toggle-sw" data-code="${code}" ${enabled ? 'checked' : ''} />
-        <div class="algo-toggle-content">
-          <span class="algo-toggle-label">${SW_LABELS_EXTENDED[code]}</span>
-          <span class="algo-toggle-desc">${SW_DESCRIPTIONS[code]}</span>
-          ${!enabled ? '<span class="algo-toggle-warning">⚠ מושבת — האזהרה מושתקת ועונש הניקוד הוסר</span>' : ''}
         </div>
       </label>`;
   }
@@ -511,15 +470,6 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         const set = new Set(settings.disabledHardConstraints);
         if ((el as HTMLInputElement).checked) set.delete(code); else set.add(code);
         store.setAlgorithmSettings({ disabledHardConstraints: [...set] });
-        rerender();
-        break;
-      }
-      case 'algo-toggle-sw': {
-        const code = (el as HTMLInputElement).dataset.code as SoftWarningCode;
-        const settings = store.getAlgorithmSettings();
-        const set = new Set(settings.disabledSoftWarnings);
-        if ((el as HTMLInputElement).checked) set.delete(code); else set.add(code);
-        store.setAlgorithmSettings({ disabledSoftWarnings: [...set] });
         rerender();
         break;
       }

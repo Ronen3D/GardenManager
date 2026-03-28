@@ -152,9 +152,8 @@ function statusBadge(status: AssignmentStatus): string {
  */
 function filterVisibleViolations(violations: ConstraintViolation[]): ConstraintViolation[] {
   const disabledHC = store.getDisabledHCSet();
-  const disabledSW = store.getDisabledSWSet();
-  if (disabledHC.size === 0 && disabledSW.size === 0) return violations;
-  return violations.filter(v => !disabledHC.has(v.code) && !disabledSW.has(v.code));
+  if (disabledHC.size === 0) return violations;
+  return violations.filter(v => !disabledHC.has(v.code));
 }
 
 /**
@@ -827,7 +826,6 @@ function loadScheduleSnapshot(snapshotId: string): void {
   store.setAlgorithmSettings({
     config: snapshot.algorithmSettings.config,
     disabledHardConstraints: snapshot.algorithmSettings.disabledHardConstraints,
-    disabledSoftWarnings: snapshot.algorithmSettings.disabledSoftWarnings,
   });
 
   // 2. Reconcile with current participants
@@ -853,7 +851,6 @@ function loadScheduleSnapshot(snapshotId: string): void {
   engine = new SchedulingEngine(
     algoSettings.config,
     store.getDisabledHCSet(),
-    store.getDisabledSWSet(),
   );
 
   // 4. Load data into engine
@@ -1180,7 +1177,6 @@ async function doGenerate(): Promise<void> {
   engine = new SchedulingEngine(
     algoSettings.config,
     store.getDisabledHCSet(),
-    store.getDisabledSWSet(),
   );
   engine.addParticipants(participants);
   engine.addTasks(tasks);
@@ -1884,6 +1880,7 @@ function renderAll(): void {
       <button class="theme-toggle" id="btn-theme-toggle" title="החלף מצב בהיר/כהה">
         ${document.documentElement.dataset.theme === 'light' ? SVG_ICONS.moon : SVG_ICONS.sun}
       </button>
+      <button class="btn-sm btn-danger-outline" id="btn-factory-reset" title="איפוס מלא של המערכת למצב התחלתי">⚠ איפוס מערכת</button>
     </div>
     <p class="subtitle">
       <span id="live-clock">${formatLiveClock()}</span>
@@ -1938,6 +1935,7 @@ function renderAll(): void {
   wireTabNav(app);
   wireUndoRedo(app);
   wireThemeToggle(app);
+  wireFactoryReset(app);
 
   const content = document.getElementById('tab-content')!;
   if (currentTab === 'participants') {
@@ -2087,6 +2085,34 @@ function toggleTheme(): void {
 function wireThemeToggle(container: HTMLElement): void {
   const btn = container.querySelector('#btn-theme-toggle');
   if (btn) btn.addEventListener('click', toggleTheme);
+}
+
+function wireFactoryReset(container: HTMLElement): void {
+  const btn = container.querySelector('#btn-factory-reset');
+  if (btn) {
+    btn.addEventListener('click', async () => {
+      const ok = await showConfirm(
+        'פעולה זו תמחק את כל הנתונים במערכת:\n' +
+        '• כל המשתתפים והגדרותיהם\n' +
+        '• כל המשימות והשיבוצים\n' +
+        '• כל הגדרות האלגוריתם והפריסטים\n' +
+        '• כל תמונות המצב השמורות\n' +
+        '• כל סטי המשתתפים וסטי המשימות\n\n' +
+        'המערכת תחזור למצב ההתחלתי כאילו הותקנה מחדש.\n' +
+        'לא ניתן לבטל פעולה זו!',
+        {
+          danger: true,
+          title: '⚠ איפוס מערכת מלא',
+          confirmLabel: 'כן, אפס הכל',
+          cancelLabel: 'ביטול',
+        }
+      );
+      if (ok) {
+        store.factoryReset();
+        location.reload();
+      }
+    });
+  }
 }
 
 // ─── Snapshot Event Wiring ───────────────────────────────────────────────────

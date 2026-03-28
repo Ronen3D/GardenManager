@@ -34,10 +34,9 @@ export function fullValidate(
   participants: Participant[],
   assignments: Assignment[],
   disabledHC?: Set<string>,
-  disabledSW?: Set<string>,
 ): FullValidationResult {
   const hard = validateHardConstraints(tasks, participants, assignments, disabledHC);
-  const warnings = collectSoftWarnings(tasks, participants, assignments, disabledSW);
+  const warnings = collectSoftWarnings(tasks, participants, assignments);
 
   const hardCount = hard.violations.length;
   const warnCount = warnings.length;

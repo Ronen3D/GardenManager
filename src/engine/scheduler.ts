@@ -39,12 +39,10 @@ export class SchedulingEngine {
   private config: SchedulerConfig;
   private weekEnd: Date = new Date();
   private disabledHC?: Set<string>;
-  private disabledSW?: Set<string>;
 
-  constructor(config: Partial<SchedulerConfig> = {}, disabledHC?: Set<string>, disabledSW?: Set<string>) {
+  constructor(config: Partial<SchedulerConfig> = {}, disabledHC?: Set<string>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.disabledHC = disabledHC;
-    this.disabledSW = disabledSW;
     // Bug #12 fix: reset module-level counters so IDs start fresh
     // for each new engine instance.
     resetAssignmentCounter();
@@ -184,7 +182,7 @@ export class SchedulingEngine {
 
     // Collect all violations
     const hardValidation = validateHardConstraints(tasks, participants, result.assignments, this.disabledHC);
-    const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.disabledSW);
+    const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.config);
 
     const allViolations: ConstraintViolation[] = [
       ...hardValidation.violations,
@@ -335,8 +333,8 @@ export class SchedulingEngine {
     const { tasks, participants, assignments } = this.currentSchedule;
 
     const hard = validateHardConstraints(tasks, participants, assignments, this.disabledHC);
-    const soft = collectSoftWarnings(tasks, participants, assignments, this.disabledSW);
-    const score = computeScheduleScore(tasks, participants, assignments, this.config, this._buildScoreCtx(tasks, participants), this.disabledSW);
+    const soft = collectSoftWarnings(tasks, participants, assignments, this.config);
+    const score = computeScheduleScore(tasks, participants, assignments, this.config, this._buildScoreCtx(tasks, participants));
 
     this.currentSchedule = {
       ...this.currentSchedule,
@@ -406,7 +404,6 @@ export class SchedulingEngine {
       this.currentSchedule.assignments,
       this.config,
       this._buildScoreCtx(this.currentSchedule.tasks, this.currentSchedule.participants),
-      this.disabledSW,
     );
     this.currentSchedule.feasible = validation.valid;
     this.currentSchedule.violations = [
@@ -415,7 +412,7 @@ export class SchedulingEngine {
         this.currentSchedule.tasks,
         this.currentSchedule.participants,
         this.currentSchedule.assignments,
-        this.disabledSW,
+        this.config,
       ),
     ];
 
@@ -478,7 +475,7 @@ export class SchedulingEngine {
       this.currentSchedule.tasks,
       this.getAllParticipants(),
       result.assignments,
-      this.disabledSW,
+      this.config,
     );
 
     const schedule: Schedule = {

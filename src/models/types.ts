@@ -305,20 +305,12 @@ export type HardConstraintCode =
   | 'HC-12'  // No consecutive high-load
   | 'HC-13'; // Senior hard blocks
 
-/** All soft warning codes that can be toggled */
-export type SoftWarningCode =
-  | 'SENIOR_IN_JUNIOR_PREFERRED'
-  | 'GROUP_MISMATCH'
-  | 'NOT_WITH_VIOLATION';
-
 /** Full algorithm settings: weights + constraint toggles */
 export interface AlgorithmSettings {
   /** All SchedulerConfig weight fields */
   config: SchedulerConfig;
   /** Hard constraints that are DISABLED (unchecked by user) */
   disabledHardConstraints: HardConstraintCode[];
-  /** Soft warnings that are DISABLED (unchecked by user) */
-  disabledSoftWarnings: SoftWarningCode[];
 }
 
 /** Human-readable labels for hard constraints */
@@ -336,28 +328,15 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-13': 'מגבלות שיבוץ סגל',
 };
 
-/** Human-readable labels for soft warnings */
-export const SW_LABELS: Record<SoftWarningCode, string> = {
-  'SENIOR_IN_JUNIOR_PREFERRED': 'אזהרת סגל במשימה מועדפת לצעירים',
-  'GROUP_MISMATCH': 'אזהרת אי-התאמת קבוצה',
-  'NOT_WITH_VIOLATION': 'אי התאמה',
-};
-
 /** All hard constraint codes in display order */
 export const ALL_HC_CODES: HardConstraintCode[] = [
   'HC-1', 'HC-2', 'HC-3', 'HC-4', 'HC-5', 'HC-6', 'HC-7', 'HC-8', 'HC-11', 'HC-12', 'HC-13',
-];
-
-/** All soft warning codes in display order */
-export const ALL_SW_CODES: SoftWarningCode[] = [
-  'SENIOR_IN_JUNIOR_PREFERRED', 'GROUP_MISMATCH', 'NOT_WITH_VIOLATION',
 ];
 
 /** Factory default algorithm settings */
 export const DEFAULT_ALGORITHM_SETTINGS: AlgorithmSettings = {
   config: { ...DEFAULT_CONFIG },
   disabledHardConstraints: [],
-  disabledSoftWarnings: [],
 };
 
 // ─── Algorithm Presets ───────────────────────────────────────────────────────
@@ -379,7 +358,7 @@ export const DEFAULT_PRESET: AlgorithmPreset = {
   id: 'preset-default',
   name: 'ברירת מחדל',
   description: 'הגדרות ברירת המחדל',
-  settings: { ...DEFAULT_ALGORITHM_SETTINGS, config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], disabledSoftWarnings: [] },
+  settings: { ...DEFAULT_ALGORITHM_SETTINGS, config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [] },
   builtIn: true,
   createdAt: 0,
 };

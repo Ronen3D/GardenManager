@@ -22,7 +22,6 @@ import {
   AlgorithmSettings,
   DEFAULT_ALGORITHM_SETTINGS,
   HardConstraintCode,
-  SoftWarningCode,
   SchedulerConfig,
   AlgorithmPreset,
   DEFAULT_PRESET,
@@ -1292,6 +1291,48 @@ export function clearStorage(): void {
 }
 
 /**
+ * Full factory reset: clear ALL persisted data and in-memory caches.
+ * After calling this, a page reload will re-seed default data via initStore().
+ * UI preferences (theme, sidebar) are intentionally preserved.
+ */
+export function factoryReset(): void {
+  if (_saveDebounceTimer) {
+    clearTimeout(_saveDebounceTimer);
+    _saveDebounceTimer = null;
+  }
+  try {
+    localStorage.removeItem(STORAGE_KEY_STATE);
+    localStorage.removeItem(STORAGE_KEY_SCHEDULE);
+    localStorage.removeItem(STORAGE_KEY_ALGORITHM);
+    localStorage.removeItem(STORAGE_KEY_PRESETS);
+    localStorage.removeItem(STORAGE_KEY_ACTIVE_PRESET);
+    localStorage.removeItem(STORAGE_KEY_SNAPSHOTS);
+    localStorage.removeItem(STORAGE_KEY_ACTIVE_SNAPSHOT);
+    localStorage.removeItem(STORAGE_KEY_PSETS);
+    localStorage.removeItem(STORAGE_KEY_ACTIVE_PSET);
+    localStorage.removeItem(STORAGE_KEY_TASK_SETS);
+    localStorage.removeItem(STORAGE_KEY_ACTIVE_TASK_SET);
+  } catch (err) {
+    console.warn('[Store] Failed to clear localStorage:', err);
+  }
+  participants.clear();
+  dateUnavailabilities.clear();
+  notWithPairs.clear();
+  taskTemplates.clear();
+  undoStack.length = 0;
+  redoStack.length = 0;
+  _algorithmSettings = null;
+  _presets = null;
+  _activePresetId = undefined;
+  _snapshots = null;
+  _activeSnapshotId = undefined;
+  _participantSets = null;
+  _activeParticipantSetId = undefined;
+  _taskSets = null;
+  _activeTaskSetId = undefined;
+}
+
+/**
  * Schedule a debounced save to localStorage.
  * Called from notify() so every store mutation triggers persistence.
  */
@@ -1336,29 +1377,23 @@ export function getAlgorithmSettings(): AlgorithmSettings {
           disabledHardConstraints: Array.isArray(parsed.disabledHardConstraints)
             ? parsed.disabledHardConstraints as HardConstraintCode[]
             : [],
-          disabledSoftWarnings: Array.isArray(parsed.disabledSoftWarnings)
-            ? parsed.disabledSoftWarnings as SoftWarningCode[]
-            : [],
         };
       } else {
         _algorithmSettings = {
           config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
           disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
-          disabledSoftWarnings: [...DEFAULT_ALGORITHM_SETTINGS.disabledSoftWarnings],
         };
       }
     } catch {
       _algorithmSettings = {
         config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
         disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
-        disabledSoftWarnings: [...DEFAULT_ALGORITHM_SETTINGS.disabledSoftWarnings],
       };
     }
   }
   return {
     config: { ..._algorithmSettings.config },
     disabledHardConstraints: [..._algorithmSettings.disabledHardConstraints],
-    disabledSoftWarnings: [..._algorithmSettings.disabledSoftWarnings],
   };
 }
 
@@ -1373,9 +1408,6 @@ export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
     disabledHardConstraints: patch.disabledHardConstraints !== undefined
       ? [...patch.disabledHardConstraints]
       : current.disabledHardConstraints,
-    disabledSoftWarnings: patch.disabledSoftWarnings !== undefined
-      ? [...patch.disabledSoftWarnings]
-      : current.disabledSoftWarnings,
   };
   _saveAlgorithmSettings();
 }
@@ -1388,7 +1420,6 @@ export function resetAlgorithmSettings(): void {
   _algorithmSettings = {
     config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
     disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
-    disabledSoftWarnings: [...DEFAULT_ALGORITHM_SETTINGS.disabledSoftWarnings],
   };
   _saveAlgorithmSettings();
   // Also switch active preset to Default
@@ -1405,13 +1436,6 @@ export function getDisabledHCSet(): Set<string> {
   return new Set(settings.disabledHardConstraints);
 }
 
-/**
- * Build a Set of disabled soft warning codes for efficient lookup.
- */
-export function getDisabledSWSet(): Set<string> {
-  const settings = getAlgorithmSettings();
-  return new Set(settings.disabledSoftWarnings);
-}
 
 function _saveAlgorithmSettings(): void {
   if (!_algorithmSettings) return;
@@ -1498,7 +1522,6 @@ function _deepCopyPreset(p: AlgorithmPreset): AlgorithmPreset {
     settings: {
       config: { ...p.settings.config },
       disabledHardConstraints: [...p.settings.disabledHardConstraints],
-      disabledSoftWarnings: [...p.settings.disabledSoftWarnings],
     },
   };
 }
@@ -1570,7 +1593,6 @@ export function loadPreset(id: string): void {
   _algorithmSettings = {
     config: { ...preset.settings.config },
     disabledHardConstraints: [...preset.settings.disabledHardConstraints],
-    disabledSoftWarnings: [...preset.settings.disabledSoftWarnings],
   };
   _saveAlgorithmSettings();
   _activePresetId = id;
@@ -1829,7 +1851,6 @@ export function saveScheduleAsSnapshot(
     algorithmSettings: {
       config: { ...algorithmSettings.config },
       disabledHardConstraints: [...algorithmSettings.disabledHardConstraints],
-      disabledSoftWarnings: [...algorithmSettings.disabledSoftWarnings],
     },
     createdAt: Date.now(),
   };
@@ -1857,7 +1878,6 @@ export function updateSnapshot(id: string, schedule: Schedule, algorithmSettings
   snapshots[idx].algorithmSettings = {
     config: { ...algorithmSettings.config },
     disabledHardConstraints: [...algorithmSettings.disabledHardConstraints],
-    disabledSoftWarnings: [...algorithmSettings.disabledSoftWarnings],
   };
   _saveSnapshots();
   return true;
