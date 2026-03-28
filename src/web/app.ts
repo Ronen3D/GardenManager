@@ -1870,12 +1870,12 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">v1.1</span></h1>
+      <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">v1.1.2</span></h1>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
-          title="ביטול (Ctrl+Z)">↪ ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</button>
+          title="ביטול">↪ ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</button>
         <button class="btn-sm btn-outline" id="btn-redo" ${!store.getUndoRedoState().canRedo ? 'disabled' : ''}
-          title="שחזור (Ctrl+Y)">↩ שחזור${store.getUndoRedoState().redoDepth ? ' (' + store.getUndoRedoState().redoDepth + ')' : ''}</button>
+          title="שחזור">↩ שחזור${store.getUndoRedoState().redoDepth ? ' (' + store.getUndoRedoState().redoDepth + ')' : ''}</button>
       </div>
       <button class="theme-toggle" id="btn-theme-toggle" title="החלף מצב בהיר/כהה">
         ${document.documentElement.dataset.theme === 'light' ? SVG_ICONS.moon : SVG_ICONS.sun}
@@ -2940,25 +2940,6 @@ function init(): void {
     }
   });
 
-  document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
-      e.preventDefault();
-      doUndoRedo('undo');
-    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z') || (e.shiftKey && e.key === 'Z'))) {
-      e.preventDefault();
-      doUndoRedo('redo');
-    }
-    // Arrow keys for day navigation when in schedule tab
-    if (currentTab === 'schedule' && currentSchedule) {
-      if (e.key === 'ArrowLeft' && currentDay < store.getScheduleDays()) {
-        currentDay++;
-        renderAll();
-      } else if (e.key === 'ArrowRight' && currentDay > 1) {
-        currentDay--;
-        renderAll();
-      }
-    }
-  });
 }
 
 document.addEventListener('DOMContentLoaded', init);
