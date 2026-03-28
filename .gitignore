@@ -1,8 +1,15 @@
-# Ignore node_modules
-node_modules/*
-dist/*
-dist-web/*
-dist-electron/*
-release/*
-node_modules/.vite/deps/_metadata.json
-node_modules/.vite/deps/date-fns.js.map
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-web/
+dist-electron/
+
+# Electron release builds
+release/
+release2/
+
+# Large binary files
+*.exe
+*.blockmap
