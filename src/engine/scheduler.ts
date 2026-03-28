@@ -384,6 +384,7 @@ export class SchedulingEngine {
     // Perform the swap
     const previousId = assignment.participantId;
     const previousStatus = assignment.status;
+    const previousUpdatedAt = assignment.updatedAt;
 
     assignment.participantId = request.newParticipantId;
     assignment.status = AssignmentStatus.Manual;
@@ -395,6 +396,7 @@ export class SchedulingEngine {
     if (!validation.valid) {
       assignment.participantId = previousId;
       assignment.status = previousStatus;
+      assignment.updatedAt = previousUpdatedAt;
     }
 
     // Update score

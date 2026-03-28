@@ -1168,12 +1168,12 @@ select.input-sm {
   .table-participants tbody td:nth-child(6) {
     display: none;
   }
-  .table-participants:not(.notwith-visible) thead th:nth-child(7),
-  .table-participants:not(.notwith-visible) tbody td:nth-child(7) {
+  .table-participants:not(.notwith-visible) thead th:nth-child(9),
+  .table-participants:not(.notwith-visible) tbody td:nth-child(9) {
     display: none;
   }
-  .table-participants.notwith-visible thead th:nth-child(8),
-  .table-participants.notwith-visible tbody td:nth-child(8) {
+  .table-participants.notwith-visible thead th:nth-child(10),
+  .table-participants.notwith-visible tbody td:nth-child(10) {
     display: none;
   }
 
@@ -1480,6 +1480,50 @@ select.input-sm {
   background: var(--bg-card);
   border-radius: var(--radius);
   border: 1px solid var(--border);
+}
+
+.availability-inspector-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.availability-inspector-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.availability-inspector-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+}
+
+.availability-time-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.availability-time-input {
+  min-width: 118px;
+}
+
+.availability-inspector-note {
+  width: 100%;
+  font-size: 0.76rem;
 }
 
 /* ─── Schedule Layout ────────────────────────────────── */
@@ -1930,6 +1974,12 @@ tr.row-rest td {
   align-items: center;
   padding: 2px 0;
 }
+.tt-row-wrap {
+  align-items: flex-start;
+}
+.tt-row-wrap .tt-value {
+  text-align: end;
+}
 .tt-label {
   color: var(--text-muted);
   font-size: 0.78rem;
@@ -2180,6 +2230,10 @@ tr.row-rest td {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.profile-pakalim {
+  margin-top: 4px;
+  flex-wrap: wrap;
 }
 
 .profile-summary-kpis {
@@ -3068,6 +3122,165 @@ tr.row-selected:hover {
   font-size: 0.85rem;
   color: var(--text-muted);
   vertical-align: middle;
+}
+.time-cell-inspectable {
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.time-cell-inspectable:hover,
+.time-cell-inspectable:focus-visible {
+  color: var(--accent);
+  background: rgba(0, 188, 212, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(0, 188, 212, 0.35);
+  outline: none;
+}
+
+.pakal-badge {
+  margin-inline-end: 4px;
+}
+.pakal-panel {
+  margin-bottom: 16px;
+}
+.pakal-panel-note {
+  margin-bottom: 10px;
+}
+.pakal-inline-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.pakal-name-input,
+.pakal-edit-input {
+  min-width: 180px;
+}
+.pakal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pakal-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+.pakal-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pakal-item-label {
+  font-weight: 600;
+}
+.pakal-item-actions {
+  display: flex;
+  gap: 6px;
+}
+.pakal-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.pakal-auto {
+  opacity: 0.9;
+}
+.form-row-pakalim {
+  align-items: flex-start;
+}
+
+.availability-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100001;
+  background: transparent;
+}
+.availability-popover {
+  position: fixed;
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 24px));
+  overflow: auto;
+  background: var(--card-bg, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  padding: 14px;
+}
+.availability-popover-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.availability-popover-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.availability-popover-subtitle {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+.availability-summary-note,
+.availability-overlap-note,
+.availability-empty {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+.availability-bucket-list,
+.availability-name-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.availability-bucket,
+.availability-overlap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+.availability-bucket summary,
+.availability-overlap summary,
+.availability-bucket-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.availability-bucket-empty {
+  cursor: default;
+}
+.availability-bucket-count {
+  min-width: 28px;
+  text-align: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(31, 111, 235, 0.12);
+  color: var(--accent);
+}
+.availability-bucket > .availability-name-list,
+.availability-overlap > .availability-name-list,
+.availability-bucket > .availability-empty,
+.availability-overlap > .availability-overlap-note {
+  padding: 0 12px 12px;
+}
+.availability-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.availability-multi-tag {
+  background: rgba(137, 87, 229, 0.18);
+  color: #8250df;
 }
 
 /* ─── Now Row Highlight ─── */

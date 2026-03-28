@@ -45,6 +45,10 @@ export function getTaskAssignments(task: Task, schedule: Schedule): AssignedSlot
     });
 }
 
+function renderTimeCell(time: Date, timeNum: number): string {
+    return `<td class="time-cell time-cell-inspectable" data-time-ms="${timeNum}" role="button" tabindex="0" title="הצג זמינות לפי פק\"ל">${fmt(time)}</td>`;
+}
+
 // ─── Card Renderer ───────────────────────────────────────────────────────────
 
 function renderAssignmentCard(
@@ -117,7 +121,7 @@ function renderHamamaTable(tasks: Task[], schedule: Schedule, liveMode: LiveMode
 
         return `
             <tr data-time="${timeNum}">
-                <td class="time-cell">${fmt(time)}</td>
+                ${renderTimeCell(time, timeNum)}
                 <td class="task-cell">${cellContent}</td>
             </tr>
         `;
@@ -162,7 +166,7 @@ function renderArogaTable(tasks: Task[], schedule: Schedule, liveMode: LiveModeS
 
         return `
             <tr data-time="${timeNum}">
-                <td class="time-cell">${fmt(time)}</td>
+                ${renderTimeCell(time, timeNum)}
                 <td class="task-cell">${slot2Html}</td>
                 <td class="task-cell">${slot1Html}</td>
             </tr>
@@ -227,7 +231,7 @@ function renderPatrolTable(
 
         return `
             <tr data-time="${timeNum}">
-                <td class="time-cell">${fmt(time)}</td>
+                ${renderTimeCell(time, timeNum)}
                 <td class="task-cell">${sagolMainHtml}</td>
                 <td class="task-cell">${sagolSecHtml}</td>
                 <td class="task-cell">${karovHtml}</td>
@@ -270,7 +274,7 @@ function renderMamteraTable(tasks: Task[], schedule: Schedule, liveMode: LiveMod
 
         return `
             <tr data-time="${timeNum}">
-                <td class="time-cell">${fmt(time)}</td>
+                ${renderTimeCell(time, timeNum)}
                 <td class="task-cell">${cellContent}</td>
             </tr>
         `;
@@ -316,7 +320,7 @@ function renderShemeshTable(tasks: Task[], schedule: Schedule, liveMode: LiveMod
 
         return `
             <tr data-time="${timeNum}">
-                <td class="time-cell">${fmt(time)}</td>
+                ${renderTimeCell(time, timeNum)}
                 <td class="task-cell">${slot2Html}</td>
                 <td class="task-cell">${slot1Html}</td>
             </tr>

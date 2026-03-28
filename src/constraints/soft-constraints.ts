@@ -11,6 +11,7 @@ import {
   Participant,
   ParticipantCapacity,
   Level,
+  TaskType,
   SchedulerConfig,
   ScheduleScore,
   ConstraintViolation,
@@ -312,6 +313,57 @@ export function collectSoftWarnings(
         });
       }
     }
+
+    // SC-10: Less-preferred task assignment warning
+    for (const p of assignedPs) {
+      if (p.lessPreferredTaskType && task.type === p.lessPreferredTaskType) {
+        warnings.push({
+          severity: ViolationSeverity.Warning,
+          code: 'LESS_PREFERRED_ASSIGNMENT',
+          message: `${p.name} משובץ/ת ל-${task.name} — סוג משימה שהוא/היא מעדיף/ה להימנע ממנו`,
+          taskId: task.id,
+          participantId: p.id,
+        });
+      }
+    }
+  }
+
+  // SC-10: Preferred task type not satisfied — participant has a preference
+  // but none of their assignments match it.
+  const assignmentsByPid = new Map<string, Assignment[]>();
+  for (const a of assignments) {
+    let arr = assignmentsByPid.get(a.participantId);
+    if (!arr) { arr = []; assignmentsByPid.set(a.participantId, arr); }
+    arr.push(a);
+  }
+  const taskTypeSet = new Set(tasks.map(t => t.type));
+  for (const p of participants) {
+    if (!p.preferredTaskType) continue;
+    // Warn if the preferred type doesn't exist in the schedule at all
+    if (!taskTypeSet.has(p.preferredTaskType)) {
+      warnings.push({
+        severity: ViolationSeverity.Warning,
+        code: 'PREFERRED_TYPE_UNAVAILABLE',
+        message: `${p.name} מעדיף/ה ${p.preferredTaskType} אך אין משימות מסוג זה בלוח — העדפה זו לא ניתנת למימוש`,
+        taskId: '',
+        participantId: p.id,
+      });
+      continue;
+    }
+    const pAssigns = assignmentsByPid.get(p.id) || [];
+    const hasPreferred = pAssigns.some(a => {
+      const task = tMap.get(a.taskId);
+      return task != null && task.type === p.preferredTaskType;
+    });
+    if (!hasPreferred && pAssigns.length > 0) {
+      warnings.push({
+        severity: ViolationSeverity.Warning,
+        code: 'PREFERRED_NOT_SATISFIED',
+        message: `${p.name} מעדיף/ה ${p.preferredTaskType} אך לא שובץ/ה למשימה מסוג זה`,
+        taskId: pAssigns[0].taskId,
+        participantId: p.id,
+      });
+    }
   }
 
   return warnings;
@@ -366,6 +418,57 @@ export function computeNotWithPenalty(
             penalty += config.notWithPenalty;
           }
         }
+      }
+    }
+  }
+  return penalty;
+}
+
+// ─── SC-10: Task Preference Penalty ─────────────────────────────────────────
+
+/**
+ * SC-10: Compute penalty for task-type preferences.
+ *
+ * Two independent components:
+ *  - **Avoidance** (per-assignment): each assignment to a participant's
+ *    lessPreferredTaskType incurs `config.taskAvoidancePenalty`. Stacking
+ *    gives SA a gradient — removing one disliked assignment still helps.
+ *  - **Preference** (per-participant, binary): if a participant has a
+ *    preferredTaskType but none of their assignments match it, incur
+ *    `config.taskPreferencePenalty` once. Binary penalty avoids creating
+ *    incentives to over-assign preferred tasks at the cost of fairness.
+ */
+export function computeTaskPreferencePenalty(
+  participants: Participant[],
+  config: SchedulerConfig,
+  taskMap: Map<string, Task>,
+  assignmentsByParticipant: Map<string, Assignment[]>,
+): number {
+  if (config.taskPreferencePenalty <= 0 && config.taskAvoidancePenalty <= 0) return 0;
+
+  let penalty = 0;
+  for (const p of participants) {
+    const pAssigns = assignmentsByParticipant.get(p.id) || [];
+    if (pAssigns.length === 0) continue;
+
+    // Avoidance: per-assignment penalty for less-preferred task type
+    if (p.lessPreferredTaskType && config.taskAvoidancePenalty > 0) {
+      for (const a of pAssigns) {
+        const task = taskMap.get(a.taskId);
+        if (task && task.type === p.lessPreferredTaskType) {
+          penalty += config.taskAvoidancePenalty;
+        }
+      }
+    }
+
+    // Preference: binary penalty if no assignment to preferred type
+    if (p.preferredTaskType && config.taskPreferencePenalty > 0) {
+      const hasPreferred = pAssigns.some(a => {
+        const task = taskMap.get(a.taskId);
+        return task != null && task.type === p.preferredTaskType;
+      });
+      if (!hasPreferred) {
+        penalty += config.taskPreferencePenalty;
       }
     }
   }
@@ -467,6 +570,9 @@ export function computeScheduleScore(
     totalPenalty += computeNotWithPenalty(assignments, config, taskMap, assignmentsByTask, ctx.notWithPairs);
   }
 
+  // SC-10: Task preference penalty
+  totalPenalty += computeTaskPreferencePenalty(participants, config, taskMap, byParticipant);
+
   // SC-8: Daily workload balance — pass pre-built data + capacities
   const dailyBalance = dailyWorkloadImbalance(participants, assignments, tasks, taskMap, byParticipant, ctx?.capacities);
 
@@ -565,6 +671,13 @@ export class IncrementalScorer {
   private _savedNotWithTotal = 0;
   private _savedNotWithEntries: [string, number][] = [];
 
+  // Task preference penalty (SC-10)
+  private _taskPrefPenalty = 0;
+  private _perParticipantTaskPrefPenalty: Map<string, number> = new Map();
+  // Saved task preference state for undo
+  private _savedTaskPrefTotal = 0;
+  private _savedTaskPrefEntries: [string, number][] = [];
+
   // Current composite score
   compositeScore = 0;
 
@@ -581,6 +694,7 @@ export class IncrementalScorer {
     this._perParticipantJuniorPrefPenalty = new Map();
     this._perParticipantNotWithPenalty = new Map();
     this._notWithPairs = new Map();
+    this._perParticipantTaskPrefPenalty = new Map();
   }
 
   /**
@@ -673,6 +787,18 @@ export class IncrementalScorer {
       }
     }
 
+    // Compute per-participant task preference penalty for O(1) delta updates.
+    scorer._taskPrefPenalty = 0;
+    if (config.taskPreferencePenalty > 0 || config.taskAvoidancePenalty > 0) {
+      for (const p of participants) {
+        const pPenalty = scorer.computeParticipantTaskPrefPenalty(p.id);
+        if (pPenalty > 0) {
+          scorer._perParticipantTaskPrefPenalty.set(p.id, pPenalty);
+          scorer._taskPrefPenalty += pPenalty;
+        }
+      }
+    }
+
     // Compute rest statistics
     scorer.recomputeRestStats();
 
@@ -711,6 +837,43 @@ export class IncrementalScorer {
         }
       }
     }
+    return penalty;
+  }
+
+  /**
+   * Compute task preference penalty for a specific participant.
+   * Avoidance: per-assignment penalty for lessPreferredTaskType.
+   * Preference: binary penalty if no assignment to preferredTaskType.
+   */
+  private computeParticipantTaskPrefPenalty(pid: string): number {
+    const p = this.pMap.get(pid);
+    if (!p) return 0;
+    const pAssigns = this.assignmentsByParticipant.get(pid) || [];
+    if (pAssigns.length === 0) return 0;
+
+    let penalty = 0;
+
+    // Avoidance: per-assignment penalty
+    if (p.lessPreferredTaskType && this.config.taskAvoidancePenalty > 0) {
+      for (const a of pAssigns) {
+        const task = this.taskMap.get(a.taskId);
+        if (task && task.type === p.lessPreferredTaskType) {
+          penalty += this.config.taskAvoidancePenalty;
+        }
+      }
+    }
+
+    // Preference: binary penalty
+    if (p.preferredTaskType && this.config.taskPreferencePenalty > 0) {
+      const hasPreferred = pAssigns.some(a => {
+        const task = this.taskMap.get(a.taskId);
+        return task != null && task.type === p.preferredTaskType;
+      });
+      if (!hasPreferred) {
+        penalty += this.config.taskPreferencePenalty;
+      }
+    }
+
     return penalty;
   }
 
@@ -834,7 +997,8 @@ export class IncrementalScorer {
       this.config.seniorFairnessWeight * seniorStdDev -
       this.config.dailyBalanceWeight * (dailyPP + dailyGlobal) -
       this._juniorPrefPenalty -
-      this._notWithPenalty
+      this._notWithPenalty -
+      this._taskPrefPenalty
     );
   }
 
@@ -919,7 +1083,11 @@ export class IncrementalScorer {
       this._juniorPrefPenalty += newPenaltyA + newPenaltyB;
     }
 
-    // Recompute "not with" penalty for the two swapped participants
+    // Recompute "not with" penalty for the two swapped participants AND any
+    // co-participants whose penalty attribution depends on the swapped pair.
+    // The attribution rule (pid < partnerId) means a co-participant pidC with
+    // pidC < pidA whose penalty covers the (pidC, pidA) pair must also be
+    // recomputed when pidA moves between tasks.
     this._savedNotWithTotal = this._notWithPenalty;
     this._savedNotWithEntries = [
       [pidA, this._perParticipantNotWithPenalty.get(pidA) || 0],
@@ -930,29 +1098,97 @@ export class IncrementalScorer {
       const bInvolvesTogetherness = bAssigns.some(a => this.taskMap.get(a.taskId)?.togethernessRelevant);
       if (aInvolvesTogetherness || bInvolvesTogetherness ||
           this._savedNotWithEntries[0][1] > 0 || this._savedNotWithEntries[1][1] > 0) {
-        // Remove old contributions
-        this._notWithPenalty -= this._savedNotWithEntries[0][1] + this._savedNotWithEntries[1][1];
         // Build per-task index for the two participants' tasks
         const byTask = new Map<string, Assignment[]>();
         for (const a of [...aAssigns, ...bAssigns]) {
-          let arr = byTask.get(a.taskId);
-          if (!arr) {
-            // Get all assignments for this task (not just these two participants)
+          if (byTask.has(a.taskId)) continue;
+          const allTaskAssigns: Assignment[] = [];
+          for (const [, pAssigns] of this.assignmentsByParticipant) {
+            for (const pa of pAssigns) {
+              if (pa.taskId === a.taskId) allTaskAssigns.push(pa);
+            }
+          }
+          byTask.set(a.taskId, allTaskAssigns);
+        }
+
+        // Find co-participants in these tasks who have notWith relationships
+        // with pidA or pidB and whose penalty attribution could be affected.
+        const aNotWith = this._notWithPairs.get(pidA);
+        const bNotWith = this._notWithPairs.get(pidB);
+        const affectedCoParticipants = new Set<string>();
+        for (const [, taskAssigns] of byTask) {
+          for (const ta of taskAssigns) {
+            const coPid = ta.participantId;
+            if (coPid === pidA || coPid === pidB) continue;
+            // pidC is affected if it has a notWith relationship with pidA or pidB
+            if ((aNotWith?.has(coPid)) || (bNotWith?.has(coPid))) {
+              affectedCoParticipants.add(coPid);
+            }
+          }
+        }
+
+        // Save and recompute co-participant penalties
+        for (const coPid of affectedCoParticipants) {
+          this._savedNotWithEntries.push([coPid, this._perParticipantNotWithPenalty.get(coPid) || 0]);
+        }
+
+        // Remove old contributions for all affected participants
+        let oldTotal = 0;
+        for (const [, oldVal] of this._savedNotWithEntries) {
+          oldTotal += oldVal;
+        }
+        this._notWithPenalty -= oldTotal;
+
+        // Build extended byTask for co-participants (they may have tasks not in the swapped pair's set)
+        for (const coPid of affectedCoParticipants) {
+          const coAssigns = this.assignmentsByParticipant.get(coPid) || [];
+          for (const a of coAssigns) {
+            if (byTask.has(a.taskId)) continue;
             const allTaskAssigns: Assignment[] = [];
-            for (const [, pAssigns] of this.assignmentsByParticipant) {
-              for (const pa of pAssigns) {
+            for (const [, pAs] of this.assignmentsByParticipant) {
+              for (const pa of pAs) {
                 if (pa.taskId === a.taskId) allTaskAssigns.push(pa);
               }
             }
             byTask.set(a.taskId, allTaskAssigns);
           }
         }
+
+        // Recompute penalties for all affected participants
         const newPenaltyA = this.computeParticipantNotWithPenalty(pidA, byTask);
         const newPenaltyB = this.computeParticipantNotWithPenalty(pidB, byTask);
         this._perParticipantNotWithPenalty.set(pidA, newPenaltyA);
         this._perParticipantNotWithPenalty.set(pidB, newPenaltyB);
-        this._notWithPenalty += newPenaltyA + newPenaltyB;
+        let newTotal = newPenaltyA + newPenaltyB;
+        for (const coPid of affectedCoParticipants) {
+          const newCoPenalty = this.computeParticipantNotWithPenalty(coPid, byTask);
+          this._perParticipantNotWithPenalty.set(coPid, newCoPenalty);
+          newTotal += newCoPenalty;
+        }
+        this._notWithPenalty += newTotal;
       }
+    }
+
+    // Recompute task preference penalty for the two swapped participants
+    this._savedTaskPrefTotal = this._taskPrefPenalty;
+    this._savedTaskPrefEntries = [
+      [pidA, this._perParticipantTaskPrefPenalty.get(pidA) || 0],
+      [pidB, this._perParticipantTaskPrefPenalty.get(pidB) || 0],
+    ];
+    const pAObj = this.pMap.get(pidA);
+    const pBObj = this.pMap.get(pidB);
+    const aHasPrefs = !!(pAObj?.preferredTaskType || pAObj?.lessPreferredTaskType);
+    const bHasPrefs = !!(pBObj?.preferredTaskType || pBObj?.lessPreferredTaskType);
+    if (aHasPrefs || bHasPrefs ||
+        this._savedTaskPrefEntries[0][1] > 0 || this._savedTaskPrefEntries[1][1] > 0) {
+      // Remove old contributions
+      this._taskPrefPenalty -= this._savedTaskPrefEntries[0][1] + this._savedTaskPrefEntries[1][1];
+      // Recompute for both
+      const newTPrefA = this.computeParticipantTaskPrefPenalty(pidA);
+      const newTPrefB = this.computeParticipantTaskPrefPenalty(pidB);
+      this._perParticipantTaskPrefPenalty.set(pidA, newTPrefA);
+      this._perParticipantTaskPrefPenalty.set(pidB, newTPrefB);
+      this._taskPrefPenalty += newTPrefA + newTPrefB;
     }
 
     this.compositeScore = this.deriveComposite();
@@ -983,6 +1219,12 @@ export class IncrementalScorer {
     for (const [pid, val] of this._savedNotWithEntries) {
       if (val > 0) this._perParticipantNotWithPenalty.set(pid, val);
       else this._perParticipantNotWithPenalty.delete(pid);
+    }
+    // Restore task preference penalty state
+    this._taskPrefPenalty = this._savedTaskPrefTotal;
+    for (const [pid, val] of this._savedTaskPrefEntries) {
+      if (val > 0) this._perParticipantTaskPrefPenalty.set(pid, val);
+      else this._perParticipantTaskPrefPenalty.delete(pid);
     }
     this.recomputeRestStats();
     this.compositeScore = this.deriveComposite();

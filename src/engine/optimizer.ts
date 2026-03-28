@@ -32,7 +32,7 @@ import {
   SlotRequirement,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
-import { validateHardConstraints, isLevelSatisfied } from '../constraints/hard-constraints';
+import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt } from '../constraints/hard-constraints';
 import { computeScheduleScore, ScoreContext, IncrementalScorer } from '../constraints/soft-constraints';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
@@ -60,6 +60,18 @@ const SA_INSERT_PROBABILITY = 0.2;
 function hasExcludedCertification(p: Participant, task: Task): boolean {
   if (!task.excludedCertifications?.length) return false;
   return task.excludedCertifications.some(c => p.certifications.includes(c));
+}
+
+/**
+ * Greedy preference score for sorting: lower is better.
+ *  -1: participant prefers this task type
+ *   0: neutral (no preference for this task type)
+ *  +1: participant dislikes this task type
+ */
+function computeGreedyPreferenceScore(p: Participant, task: Task): number {
+  if (p.preferredTaskType === task.type) return -1;
+  if (p.lessPreferredTaskType === task.type) return +1;
+  return 0;
 }
 
 /** P4: Add an assignment into the per-participant index */
@@ -201,8 +213,12 @@ function getEligibleCandidates(
         (asgn) => taskMap.get(asgn.taskId)?.sameGroupRequired,
       ).length;
       if (sameTypeCountA !== sameTypeCountB) return sameTypeCountA - sameTypeCountB;
-      // T3: level ascending
+      // T3: level ascending — resource conservation before personal preference
       if (a.level !== b.level) return a.level - b.level;
+      // T3.5: Task preference tiebreaker (gentle nudge)
+      const prefA = computeGreedyPreferenceScore(a, task);
+      const prefB = computeGreedyPreferenceScore(b, task);
+      if (prefA !== prefB) return prefA - prefB;
       // T4: random tiebreak (pre-computed key)
       return (rngKey.get(a.id) || 0) - (rngKey.get(b.id) || 0);
     }
@@ -246,6 +262,11 @@ function getEligibleCandidates(
       const bCap = adanitGroupNitzanCount.get(b.group) ?? 0;
       if (aCap !== bCap) return bCap - aCap;
     }
+
+    // Task preference tiebreaker (gentle nudge)
+    const prefA = computeGreedyPreferenceScore(a, task);
+    const prefB = computeGreedyPreferenceScore(b, task);
+    if (prefA !== prefB) return prefA - prefB;
 
     // Random tiebreak (pre-computed key)
     return (rngKey.get(a.id) || 0) - (rngKey.get(b.id) || 0);
@@ -919,7 +940,7 @@ function isSwapFeasible(
         if (cur.task.id === nxt.task.id) continue;
         const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
         if (gap > 0) continue;
-        if (cur.task.blocksConsecutive && nxt.task.blocksConsecutive) return false;
+        if (effectivelyBlocksAt(cur.task, 'end') && effectivelyBlocksAt(nxt.task, 'start')) return false;
       }
       return true;
     };

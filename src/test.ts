@@ -275,7 +275,7 @@ const fullResult = fullValidate(
   validAssignment,
 );
 assert(fullResult.valid === true, 'fullValidate: valid schedule');
-assert(fullResult.summary.includes('valid'), 'Summary mentions valid');
+assert(fullResult.summary.includes('תקין'), 'Summary mentions valid');
 
 // Preview swap
 const swapPreview = previewSwap(
@@ -733,14 +733,14 @@ console.log('\n── Consecutive High-Load Constraint (HC-12) ──');
   assert(getLoadWeightAtTime(heavyTask, heavyTask.timeBlock.end) === 0, 'HC-12 util: heavy task → weight 0 at end (half-open)');
 }
 
-// T-HC12-2: getLoadWeightAtTime for Karov returns 1.0 inside hot window, 0.2 outside
+// T-HC12-2: getLoadWeightAtTime for Karov returns 1.0 inside hot window, 1/3 outside
 {
   const karovBlock = createTimeBlockFromHours(baseDate, 5, 13);
   const karovTask = createKarovTask(karovBlock);
   const hotTime = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 5, 30);
   const coldTime = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 10, 0);
   assert(getLoadWeightAtTime(karovTask, hotTime) === 1, 'HC-12 util: Karov hot window → weight 1.0');
-  assert(Math.abs(getLoadWeightAtTime(karovTask, coldTime) - 0.2) < 0.01, 'HC-12 util: Karov cold zone → weight 0.2');
+  assert(Math.abs(getLoadWeightAtTime(karovTask, coldTime) - 1 / 3) < 0.01, 'HC-12 util: Karov cold zone → weight 1/3');
 }
 
 // T-HC12-3: getLoadWeightAtTime for light task always returns 0

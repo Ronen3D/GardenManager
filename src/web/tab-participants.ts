@@ -8,11 +8,14 @@
 import {
   Level,
   Certification,
+  PakalDefinition,
+  TaskType,
   Participant,
 } from '../models/types';
 import * as store from './config-store';
 import { showConfirm, showToast } from './ui-modal';
-import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, SVG_ICONS, escHtml } from './ui-helpers';
+import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, TASK_TYPE_LABELS, SVG_ICONS, escHtml } from './ui-helpers';
+import { HORESH_PAKAL_ID, getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
 import { HEBREW_DAYS } from '../utils/date-utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -35,6 +38,126 @@ function renderNotWithBadges(pid: string): string {
     const p = store.getParticipant(id);
     return p ? `<span class="badge badge-sm" style="background:#e74c3c">${escHtml(p.name)}</span>` : '';
   }).filter(Boolean).join(' ');
+}
+
+const TASK_TYPE_OPTIONS = Object.values(TaskType) as TaskType[];
+
+function renderPakalCheckboxes(
+  definitions: PakalDefinition[],
+  explicitIds: string[],
+  certifications: Certification[],
+  attrName: string,
+): string {
+  const effectiveIds = new Set(getEffectivePakalIds({
+    id: '',
+    name: '',
+    level: Level.L0,
+    certifications,
+    group: '',
+    availability: [],
+    dateUnavailability: [],
+    pakalIds: explicitIds,
+  }, definitions));
+  const explicitSet = new Set(explicitIds);
+  const horeshAuto = certifications.includes(Certification.Horesh);
+
+  return `<div class="pakal-checkboxes">
+    ${definitions.map(def => {
+      const autoManaged = horeshAuto && def.id === HORESH_PAKAL_ID;
+      const checked = effectiveIds.has(def.id);
+      return `<label class="checkbox-label${autoManaged ? ' pakal-auto' : ''}" title="${autoManaged ? 'נוסף אוטומטית כשיש הסמכת חורש' : escHtml(def.label)}">
+        <input type="checkbox" ${attrName}="${def.id}" ${checked ? 'checked' : ''}${autoManaged ? ' disabled data-auto-managed="1"' : ''} data-manual-checked="${explicitSet.has(def.id) ? '1' : '0'}" /> ${escHtml(def.label)}${autoManaged ? ' <span class="text-muted">(אוטומטי)</span>' : ''}
+      </label>`;
+    }).join('')}
+  </div>`;
+}
+
+function syncAutoHoreshPakal(scope: ParentNode, certSelector: string, pakalSelector: string): void {
+  const horeshCert = scope.querySelector<HTMLInputElement>(certSelector);
+  const horeshPakal = scope.querySelector<HTMLInputElement>(pakalSelector);
+  if (!horeshCert || !horeshPakal) return;
+
+  const label = horeshPakal.closest('label');
+  if (horeshCert.checked) {
+    horeshPakal.dataset.manualChecked = horeshPakal.dataset.manualChecked || (horeshPakal.checked ? '1' : '0');
+    horeshPakal.checked = true;
+    horeshPakal.disabled = true;
+    horeshPakal.dataset.autoManaged = '1';
+    label?.classList.add('pakal-auto');
+  } else {
+    horeshPakal.disabled = false;
+    horeshPakal.checked = horeshPakal.dataset.manualChecked === '1';
+    delete horeshPakal.dataset.autoManaged;
+    label?.classList.remove('pakal-auto');
+  }
+}
+
+function collectPakalIds(scope: ParentNode, selector: string): string[] {
+  const ids: string[] = [];
+  scope.querySelectorAll<HTMLInputElement>(selector).forEach(cb => {
+    const pakalId = cb.getAttribute(selector.includes('new-pakal') ? 'data-new-pakal' : 'data-pakal');
+    if (!pakalId || !cb.checked) return;
+    if (cb.dataset.autoManaged === '1' && cb.dataset.manualChecked !== '1') return;
+    ids.push(pakalId);
+  });
+  return ids;
+}
+
+function renderPakalManager(): string {
+  const definitions = store.getPakalDefinitions();
+  return `<div class="preset-panel pakal-panel">
+    <div class="preset-panel-header">
+      <h3>🎒 פק"לים <span class="count">${definitions.length}</span></h3>
+      <button class="btn-xs btn-outline" data-action="pakal-panel-close" title="סגור">✕</button>
+    </div>
+    <div class="pakal-panel-note text-muted">הערך חורש נוסף אוטומטית למשתתף שיש לו הסמכת חורש.</div>
+    <div class="pakal-inline-form">
+      <input type="text" class="input-sm pakal-name-input" data-field="pakal-new-label" maxlength="40" placeholder="פק"ל מותאם אישית" />
+      <button class="btn-sm btn-primary" data-action="pakal-add">הוסף</button>
+    </div>
+    ${_pakalError ? `<div class="preset-validation-error">${escHtml(_pakalError)}</div>` : ''}
+    <div class="pakal-list">
+      ${definitions.map(def => {
+        const usageCount = store.getPakalUsageCount(def.id);
+        const editing = _pakalEditingId === def.id;
+        return `<div class="pakal-item">
+          <div class="pakal-item-main">
+            ${editing
+              ? `<input type="text" class="input-sm pakal-edit-input" data-field="pakal-edit-label" data-pakal-id="${def.id}" value="${escHtml(def.label)}" maxlength="40" />`
+              : `<span class="pakal-item-label">${escHtml(def.label)}</span>`}
+            <span class="pset-count-badge">${usageCount} בשימוש</span>
+            ${def.builtIn ? '<span class="preset-builtin-badge">מובנה</span>' : ''}
+          </div>
+          <div class="pakal-item-actions">
+            ${!def.builtIn && !editing ? `<button class="btn-xs btn-outline" data-action="pakal-edit" data-pakal-id="${def.id}" title="ערוך">✎</button>` : ''}
+            ${!def.builtIn && editing ? `<button class="btn-xs btn-primary" data-action="pakal-save" data-pakal-id="${def.id}" title="שמור">שמור</button>` : ''}
+            ${!def.builtIn && editing ? `<button class="btn-xs btn-outline" data-action="pakal-cancel" title="ביטול">ביטול</button>` : ''}
+            ${!def.builtIn && !editing ? `<button class="btn-xs btn-danger-outline" data-action="pakal-delete" data-pakal-id="${def.id}" title="מחק">✕</button>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function renderPreferenceBadges(p: Participant): string {
+  const parts: string[] = [];
+  if (p.preferredTaskType) {
+    parts.push(`<span class="badge badge-sm" style="background:#27ae60">מעדיף: ${TASK_TYPE_LABELS[p.preferredTaskType] || p.preferredTaskType}</span>`);
+  }
+  if (p.lessPreferredTaskType) {
+    parts.push(`<span class="badge badge-sm" style="background:#e67e22">פחות: ${TASK_TYPE_LABELS[p.lessPreferredTaskType] || p.lessPreferredTaskType}</span>`);
+  }
+  return parts.length > 0 ? parts.join(' ') : '<span class="text-muted">—</span>';
+}
+
+function renderTaskTypeSelect(fieldName: string, value?: TaskType): string {
+  return `<select class="input-sm" data-field="${fieldName}">
+    <option value="">— ללא —</option>
+    ${TASK_TYPE_OPTIONS.map(t =>
+      `<option value="${t}" ${value === t ? 'selected' : ''}>${TASK_TYPE_LABELS[t] || t}</option>`
+    ).join('')}
+  </select>`;
 }
 
 // ─── Group Name Validation ───────────────────────────────────────────────────
@@ -111,6 +234,9 @@ let _setsPanelOpen = false;
 let _setsFormMode: 'none' | 'save-as' | 'rename' = 'none';
 let _setsFormError = '';
 let _setsRenameTargetId: string | null = null;
+let _pakalPanelOpen = false;
+let _pakalEditingId: string | null = null;
+let _pakalError = '';
 
 /** Clear participant selection state (called on tab change) */
 export function clearParticipantSelection(): void {
@@ -239,6 +365,7 @@ export function renderParticipantsTab(): string {
     </div>
     <div class="toolbar-right">
       <button class="btn-sm btn-outline${_setsPanelOpen ? ' pill-active' : ''}" data-action="pset-panel-toggle" title="סטים של משתתפים">📋 סטים${store.isParticipantSetDirty() ? ' <span class="dirty-dot"></span>' : ''}</button>
+      <button class="btn-sm btn-outline${_pakalPanelOpen ? ' pill-active' : ''}" data-action="pakal-panel-toggle" title="ניהול פק"לים">🎒 פק"לים</button>
       <button class="btn-primary btn-sm" data-action="add-participant">+ הוסף משתתף</button>
     </div>
   </div>`;
@@ -246,6 +373,9 @@ export function renderParticipantsTab(): string {
   // Participant Sets panel
   if (_setsPanelOpen) {
     html += renderSetsPanel();
+  }
+  if (_pakalPanelOpen) {
+    html += renderPakalManager();
   }
 
   // Table
@@ -257,7 +387,9 @@ export function renderParticipantsTab(): string {
       <th class="sortable-th" data-action="sort-column" data-sort-col="group">קבוצה${sortIndicator('group')}</th>
       <th class="sortable-th" data-action="sort-column" data-sort-col="level">דרגה${sortIndicator('level')}</th>
       <th>הסמכות</th>
+      <th>פק"לים</th>
       ${showNotWithColumn ? '<th>אי התאמה</th>' : ''}
+      <th>העדפות</th>
       <th>זמינות</th><th>אי-זמינות</th><th class="col-actions">פעולות</th>
     </tr></thead><tbody>`;
 
@@ -267,6 +399,7 @@ export function renderParticipantsTab(): string {
     const isExpanded = expandedBlackoutId === p.id;
     const totalRules = dateRules.length;
     const isSelected = selectedIds.has(p.id);
+    const pakalDefs = store.getPakalDefinitions();
 
     if (isEditing) {
       html += renderEditRow(p, i + 1);
@@ -278,7 +411,9 @@ export function renderParticipantsTab(): string {
         <td>${groupBadge(p.group, true)}</td>
         <td>${levelBadge(p.level)}</td>
         <td>${certBadges(p.certifications)}</td>
+        <td>${renderPakalBadges(p, pakalDefs)}</td>
         ${showNotWithColumn ? `<td class="notwith-cell">${renderNotWithBadges(p.id)}</td>` : ''}
+        <td>${renderPreferenceBadges(p)}</td>
         <td class="avail-cell">
           ${p.availability.map(w => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
         </td>
@@ -330,6 +465,7 @@ export function renderParticipantsTab(): string {
 
 function renderEditRow(p: Participant, idx: number): string {
   const groups = store.getGroups();
+  const pakalDefs = store.getPakalDefinitions();
   return `<tr class="row-editing" data-participant-id="${p.id}">
     <td class="col-select"></td>
     <td>${idx}</td>
@@ -356,9 +492,20 @@ function renderEditRow(p: Participant, idx: number): string {
         ).join('')}
       </div>
     </td>
+    <td>
+      ${renderPakalCheckboxes(pakalDefs, p.pakalIds || [], p.certifications, 'data-pakal')}
+    </td>
     ${showNotWithColumn ? `<td>
       <input class="input-sm" type="text" data-field="notWith" value="${getNotWithNamesForEdit(p.id)}" placeholder="הקלד שמות, מופרדים בפסיקים" title="שמות משתתפים מופרדים בפסיק" />
     </td>` : ''}
+    <td>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:0.75rem;margin:0">משימה מועדפת</label>
+        ${renderTaskTypeSelect('preferredTask', p.preferredTaskType)}
+        <label style="font-size:0.75rem;margin:0">עדיף שלא</label>
+        ${renderTaskTypeSelect('lessPreferredTask', p.lessPreferredTaskType)}
+      </div>
+    </td>
     <td colspan="2"></td>
     <td class="col-actions">
       <button class="btn-sm btn-primary" data-action="save-participant" data-pid="${p.id}">שמור</button>
@@ -373,7 +520,7 @@ function renderBlackoutRow(pid: string): string {
   const dateRules = store.getDateUnavailabilities(pid);
 
   let html = `<tr class="row-blackout-expansion">
-    <td colspan="${showNotWithColumn ? 10 : 9}">
+    <td colspan="${showNotWithColumn ? 12 : 11}">
       <div class="blackout-panel">
         <h4>כללי אי-זמינות</h4>
         <div class="blackout-list">`;
@@ -420,6 +567,7 @@ function renderBlackoutRow(pid: string): string {
 }
 
 function renderAddForm(groups: string[]): string {
+  const pakalDefs = store.getPakalDefinitions();
   return `
   <div id="add-participant-form" class="add-form hidden">
     <h4>הוסף משתתף</h4>
@@ -446,6 +594,17 @@ function renderAddForm(groups: string[]): string {
           <input type="checkbox" data-new-cert="${c}" ${c === Certification.Nitzan ? 'checked' : ''} /> ${CERT_LABELS[c] || c}
         </label>`
       ).join('')}
+    </div>
+    <div class="form-row form-row-pakalim">
+      <span>פק"לים:</span>
+      <div>
+        ${renderPakalCheckboxes(pakalDefs, [], [Certification.Nitzan], 'data-new-pakal')}
+        <small class="text-muted">חורש נוסף אוטומטית כשמסמנים הסמכת חורש.</small>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>מעדיף ${renderTaskTypeSelect('new-preferredTask')}</label>
+      <label>פחות מועדף ${renderTaskTypeSelect('new-lessPreferredTask')}</label>
     </div>
     <div class="form-row">
       <button class="btn-primary btn-sm" data-action="confirm-add-participant">הוסף</button>
@@ -525,6 +684,9 @@ function renderBulkDeleteDialog(): string {
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
 export function wireParticipantsEvents(container: HTMLElement, rerender: () => void): void {
+  container.querySelectorAll<HTMLElement>('tr.row-editing, #add-participant-form').forEach(scope => {
+    syncAutoHoreshPakal(scope, '[data-cert="Horesh"], [data-new-cert="Horesh"]', '[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]');
+  });
 
   // ─── Easter egg: triple-click on count badge toggles "אי התאמה" column ──
   const countBadge = container.querySelector('.tab-toolbar h2 .count') as HTMLElement | null;
@@ -609,6 +771,14 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       const dialog = (e.target as HTMLElement).closest('.bulk-dialog')!;
       const timeFields = dialog.querySelector('.bulk-time-fields') as HTMLElement;
       if (timeFields) timeFields.classList.toggle('hidden', checked);
+    }
+
+    const changeTarget = e.target as HTMLInputElement;
+    if (changeTarget.matches('[data-cert="Horesh"], [data-new-cert="Horesh"]')) {
+      const scope = changeTarget.closest('tr.row-editing, #add-participant-form');
+      if (scope) {
+        syncAutoHoreshPakal(scope, '[data-cert="Horesh"], [data-new-cert="Horesh"]', '[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]');
+      }
     }
   });
 
@@ -715,6 +885,78 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         rerender();
         break;
       }
+      case 'pakal-panel-toggle': {
+        _pakalPanelOpen = !_pakalPanelOpen;
+        _pakalEditingId = null;
+        _pakalError = '';
+        rerender();
+        break;
+      }
+      case 'pakal-panel-close': {
+        _pakalPanelOpen = false;
+        _pakalEditingId = null;
+        _pakalError = '';
+        rerender();
+        break;
+      }
+      case 'pakal-add': {
+        const labelInput = container.querySelector<HTMLInputElement>('[data-field="pakal-new-label"]');
+        const result = store.addCustomPakal(labelInput?.value || '');
+        if (result.error) {
+          _pakalError = result.error;
+          rerender();
+          return;
+        }
+        _pakalError = '';
+        _pakalEditingId = null;
+        showToast('פק"ל נוסף', { type: 'success' });
+        rerender();
+        break;
+      }
+      case 'pakal-edit': {
+        _pakalEditingId = target.dataset.pakalId || null;
+        _pakalError = '';
+        rerender();
+        break;
+      }
+      case 'pakal-cancel': {
+        _pakalEditingId = null;
+        _pakalError = '';
+        rerender();
+        break;
+      }
+      case 'pakal-save': {
+        const pakalId = target.dataset.pakalId || '';
+        const input = container.querySelector<HTMLInputElement>(`[data-field="pakal-edit-label"][data-pakal-id="${pakalId}"]`);
+        const error = store.renameCustomPakal(pakalId, input?.value || '');
+        if (error) {
+          _pakalError = error;
+          rerender();
+          return;
+        }
+        _pakalEditingId = null;
+        _pakalError = '';
+        showToast('פק"ל עודכן', { type: 'success' });
+        rerender();
+        break;
+      }
+      case 'pakal-delete': {
+        const pakalId = target.dataset.pakalId || '';
+        const pakal = store.getPakalDefinitions().find(def => def.id === pakalId);
+        if (!pakal) return;
+        const confirmed = await showConfirm(`למחוק את הפק"ל "${pakal.label}"?`, { danger: true, title: 'מחיקת פק"ל', confirmLabel: 'מחק' });
+        if (!confirmed) return;
+        const error = store.removeCustomPakal(pakalId);
+        if (error) {
+          _pakalError = error;
+          rerender();
+          return;
+        }
+        _pakalError = '';
+        showToast('פק"ל נמחק', { type: 'success' });
+        rerender();
+        break;
+      }
       case 'add-participant': {
         const form = container.querySelector('#add-participant-form') as HTMLElement;
         if (form) {
@@ -747,8 +989,23 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         container.querySelectorAll<HTMLInputElement>('[data-new-cert]').forEach(cb => {
           if (cb.checked) certs.push(cb.dataset.newCert as Certification);
         });
+        const pakalIds = collectPakalIds(container, '[data-new-pakal]');
 
-        store.addParticipant({ name, level, certifications: certs, group });
+        const newPref = (container.querySelector('[data-field="new-preferredTask"]') as HTMLSelectElement)?.value || '';
+        const newLess = (container.querySelector('[data-field="new-lessPreferredTask"]') as HTMLSelectElement)?.value || '';
+        if (newPref && newLess && newPref === newLess) {
+          showToast('סוג מועדף וסוג פחות מועדף לא יכולים להיות זהים', { type: 'error' });
+          return;
+        }
+
+        const newP = store.addParticipant({ name, level, certifications: certs, pakalIds, group });
+        if (newPref || newLess) {
+          store.setTaskPreference(
+            newP.id,
+            newPref ? (newPref as TaskType) : undefined,
+            newLess ? (newLess as TaskType) : undefined,
+          );
+        }
         rerender();
         break;
       }
@@ -778,8 +1035,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         row.querySelectorAll<HTMLInputElement>('[data-cert]').forEach(cb => {
           if (cb.checked) certs.push(cb.dataset.cert as Certification);
         });
+        const pakalIds = collectPakalIds(row, '[data-pakal]');
 
-        store.updateParticipant(pid, { name, group, level, certifications: certs });
+        store.updateParticipant(pid, { name, group, level, certifications: certs, pakalIds });
 
         // Process "not with" input — only when column is visible
         if (showNotWithColumn) {
@@ -805,6 +1063,17 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
             if (!currentIds.has(id)) store.addNotWith(pid, id);
           }
         }
+
+        // Process task preferences
+        const prefSelect = row.querySelector('[data-field="preferredTask"]') as HTMLSelectElement | null;
+        const lessSelect = row.querySelector('[data-field="lessPreferredTask"]') as HTMLSelectElement | null;
+        const preferred = prefSelect?.value ? (prefSelect.value as TaskType) : undefined;
+        const lessPreferred = lessSelect?.value ? (lessSelect.value as TaskType) : undefined;
+        if (preferred && lessPreferred && preferred === lessPreferred) {
+          showToast('סוג מועדף וסוג פחות מועדף לא יכולים להיות זהים', { type: 'error' });
+          return;
+        }
+        store.setTaskPreference(pid, preferred, lessPreferred);
 
         editingId = null;
         rerender();

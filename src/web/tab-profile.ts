@@ -25,6 +25,7 @@ import {
   TASK_COLORS, LEVEL_COLORS,
   fmt, levelBadge, certBadge, groupBadge, taskTypeBadge,
 } from './ui-helpers';
+import { renderPakalBadges } from './pakal-utils';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -100,6 +101,7 @@ function renderTopBar(
   const certHtml = p.certifications.length > 0
     ? p.certifications.map(c => certBadge(c)).join(' ')
     : '<span class="text-muted">אין</span>';
+  const pakalHtml = renderPakalBadges(p, store.getPakalDefinitions(), 'אין');
 
   return `
   <div class="profile-topbar">
@@ -115,6 +117,7 @@ function renderTopBar(
         <span class="profile-status ${statusClass}">${statusText}</span>
       </div>
       <div class="profile-certs">הסמכות: ${certHtml}</div>
+      <div class="profile-certs profile-pakalim">פק"לים: ${pakalHtml}</div>
     </div>
     <div class="profile-summary-kpis">
       <div class="profile-kpi">

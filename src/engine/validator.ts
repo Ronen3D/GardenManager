@@ -14,7 +14,7 @@ import {
   ViolationSeverity,
   SwapRequest,
 } from '../models/types';
-import { validateHardConstraints, isLevelSatisfied } from '../constraints/hard-constraints';
+import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
@@ -174,10 +174,10 @@ function checkEligibility(
       const otherTask = taskMap.get(a.taskId);
       if (!otherTask) continue;
       if (otherTask.timeBlock.end.getTime() === task.timeBlock.start.getTime()) {
-        if (otherTask.blocksConsecutive && task.blocksConsecutive) return 'HC-12';
+        if (effectivelyBlocksAt(otherTask, 'end') && effectivelyBlocksAt(task, 'start')) return 'HC-12';
       }
       if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
-        if (task.blocksConsecutive && otherTask.blocksConsecutive) return 'HC-12';
+        if (effectivelyBlocksAt(task, 'end') && effectivelyBlocksAt(otherTask, 'start')) return 'HC-12';
       }
     }
   }

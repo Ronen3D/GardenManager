@@ -85,6 +85,13 @@ export interface DateUnavailability {
   reason?: string;
 }
 
+/** Managed participant פק"ל definition. */
+export interface PakalDefinition {
+  id: string;
+  label: string;
+  builtIn?: boolean;
+}
+
 // ─── Participant ─────────────────────────────────────────────────────────────
 
 export interface Participant {
@@ -99,6 +106,12 @@ export interface Participant {
   dateUnavailability: DateUnavailability[];
   /** IDs of participants this person prefers NOT to be paired with (soft constraint) */
   notWithIds?: string[];
+  /** Explicit participant-selected פק"לים (effective חורש is derived separately). */
+  pakalIds?: string[];
+  /** Task type the participant prefers to be assigned to (soft preference) */
+  preferredTaskType?: TaskType;
+  /** Task type the participant prefers NOT to be assigned to (soft preference) */
+  lessPreferredTaskType?: TaskType;
 }
 
 // ─── Capacity ────────────────────────────────────────────────────────────────
@@ -275,6 +288,10 @@ export interface SchedulerConfig {
   dailyBalanceWeight: number;
   /** Penalty per "not with" pair violation in a togethernessRelevant task */
   notWithPenalty: number;
+  /** Penalty when participant is NOT assigned to their preferred task type (per participant, once) */
+  taskPreferencePenalty: number;
+  /** Penalty when participant IS assigned to their less-preferred task type (per assignment) */
+  taskAvoidancePenalty: number;
 }
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
@@ -287,6 +304,8 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   seniorJuniorPreferencePenalty: 10000,
   dailyBalanceWeight: 90,
   notWithPenalty: 500,
+  taskPreferencePenalty: 50,
+  taskAvoidancePenalty: 150,
 };
 
 // ─── Algorithm Settings (user-configurable control panel) ────────────────────
@@ -392,6 +411,12 @@ export interface ParticipantSnapshot {
   dateUnavailability: Omit<DateUnavailability, 'id'>[];
   /** IDs of participants this person prefers NOT to be paired with */
   notWithIds?: string[];
+  /** Explicit participant-selected פק"לים (effective חורש is derived separately). */
+  pakalIds?: string[];
+  /** Task type the participant prefers to be assigned to (soft preference) */
+  preferredTaskType?: TaskType;
+  /** Task type the participant prefers NOT to be assigned to (soft preference) */
+  lessPreferredTaskType?: TaskType;
 }
 
 /** A named, saveable collection of participants */
@@ -401,6 +426,8 @@ export interface ParticipantSet {
   description: string;
   /** Full participant data at the time of the snapshot */
   participants: ParticipantSnapshot[];
+  /** פק"ל catalog required to render the snapshot correctly. */
+  pakalCatalog?: PakalDefinition[];
   /** If true the set cannot be deleted or renamed */
   builtIn?: boolean;
   /** Epoch ms — used for ordering */

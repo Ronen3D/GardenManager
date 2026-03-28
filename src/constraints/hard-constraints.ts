@@ -18,6 +18,7 @@ import {
   ValidationResult,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
+import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
 import { validateSeniorHardBlocks } from './senior-policy';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -387,13 +388,28 @@ export function checkAdanitGroupFeasibility(
 // ─── HC-12: No Consecutive High-Load Tasks ──────────────────────────────────
 
 /**
- * HC-12: A participant must NOT have two back-to-back assignments where
- * both tasks have blocksConsecutive=true. This replaces the old
- * high-load boundary check with an explicit per-task flag.
+ * Determine whether a task effectively blocks consecutive placement at a
+ * given edge ('start' or 'end').
  *
- * Tasks with blocksConsecutive=true (Adanit, Hamama, Shemesh, Mamtera,
- * Aruga) require a buffer between them. Tasks with blocksConsecutive=false
- * (Karov, Karovit) can be placed adjacent to any task.
+ * For tasks with loadWindows (e.g. Karov), the boundary is blocking only
+ * when the task is at high load at that edge — a Karov ending in a hot
+ * window blocks, but one ending in a cold zone does not.
+ *
+ * For tasks without loadWindows, the static `blocksConsecutive` flag is used.
+ */
+export function effectivelyBlocksAt(task: Task, edge: 'start' | 'end'): boolean {
+  if (task.loadWindows && task.loadWindows.length > 0) {
+    return isHighLoadAtBoundary(task, edge);
+  }
+  return task.blocksConsecutive;
+}
+
+/**
+ * HC-12: A participant must NOT have two back-to-back assignments where
+ * the first task ends at high load and the next starts at high load.
+ *
+ * For tasks with loadWindows, load is evaluated at the boundary instant.
+ * For tasks without loadWindows, the blocksConsecutive flag is used.
  */
 export function checkNoConsecutiveHighLoad(
   participantId: string,
@@ -422,7 +438,7 @@ export function checkNoConsecutiveHighLoad(
     // Same task → internal transition, not a violation
     if (current.task.id === next.task.id) continue;
 
-    if (current.task.blocksConsecutive && next.task.blocksConsecutive) {
+    if (effectivelyBlocksAt(current.task, 'end') && effectivelyBlocksAt(next.task, 'start')) {
       violations.push(
         violation(
           'CONSECUTIVE_HIGH_LOAD',
@@ -617,7 +633,7 @@ export function validateHardConstraints(
         if (cur.task.id === nxt.task.id) continue;
         const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
         if (gap > 0) continue;
-        if (cur.task.blocksConsecutive && nxt.task.blocksConsecutive) {
+        if (effectivelyBlocksAt(cur.task, 'end') && effectivelyBlocksAt(nxt.task, 'start')) {
           allViolations.push(violation(
             'CONSECUTIVE_HIGH_LOAD',
             `למשתתף ${p.id} משימות חוסמות עוקבות: "${cur.task.name}" ו-"${nxt.task.name}" ללא הפסקה.`,

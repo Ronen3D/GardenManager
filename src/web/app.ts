@@ -59,6 +59,7 @@ import {
   TASK_COLORS, LEVEL_COLORS, CERT_COLORS, CERT_LABELS, TASK_TYPE_LABELS,
   fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge, SVG_ICONS,
 } from './ui-helpers';
+import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
 import { showAlert, showPrompt, showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
@@ -88,6 +89,10 @@ let _snapshotFormError = '';
 let _snapshotPanelOpen = false;
 /** Whether the workload sidebar is collapsed */
 let _sidebarCollapsed = localStorage.getItem('gm-sidebar-collapsed') === '1';
+let _availabilityPopoverEl: HTMLElement | null = null;
+let _availabilityPopoverKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+let _availabilityInspectorDay: number | null = null;
+let _availabilityInspectorTime = '05:00';
 
 // ─── View Router ─────────────────────────────────────────────────────────────
 
@@ -131,6 +136,67 @@ function fmtDate(d: Date): string {
 
 function fmtDayShort(d: Date): string {
   return 'יום ' + hebrewDayName(d);
+}
+
+function parseTimeInput(timeValue: string): { hours: number; minutes: number } | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(timeValue.trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return { hours, minutes };
+}
+
+function resolveLogicalDayTimestamp(dayIndex: number, timeValue: string): Date | null {
+  const parsed = parseTimeInput(timeValue);
+  if (!parsed) return null;
+  const base = store.getScheduleDate();
+  const dayOffset = parsed.hours < DAY_START_HOUR ? dayIndex : dayIndex - 1;
+  return new Date(
+    base.getFullYear(),
+    base.getMonth(),
+    base.getDate() + dayOffset,
+    parsed.hours,
+    parsed.minutes,
+    0,
+    0,
+  );
+}
+
+function renderAvailabilityInspector(): string {
+  const numDays = store.getScheduleDays();
+  const baseDate = store.getScheduleDate();
+  const selectedDay = _availabilityInspectorDay && _availabilityInspectorDay >= 1 && _availabilityInspectorDay <= numDays
+    ? _availabilityInspectorDay
+    : currentDay;
+  _availabilityInspectorDay = selectedDay;
+
+  const dayOptions: { value: string; label: string; selected: boolean }[] = [];
+  for (let d = 1; d <= numDays; d++) {
+    const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
+    dayOptions.push({
+      value: String(d),
+      label: `יום ${d} · ${hebrewDayName(date)}`,
+      selected: d === selectedDay,
+    });
+  }
+
+  return `<div class="availability-inspector-bar">
+    <div class="availability-inspector-copy">
+      <strong>בדיקת זמינות לפי זמן</strong>
+      <span class="text-muted">אפשר להזין שעה מדויקת גם אם היא לא מופיעה כשורה בשבצ"ק.</span>
+    </div>
+    <div class="availability-inspector-controls">
+      ${renderCustomSelect({ id: 'gm-availability-day', options: dayOptions, className: 'input-sm availability-day-select' })}
+      <label class="availability-time-input-wrap" for="gm-availability-time">
+        <span>שעה</span>
+        <input type="time" id="gm-availability-time" class="input-sm availability-time-input" value="${_availabilityInspectorTime}" step="60" />
+      </label>
+      <button class="btn-sm btn-primary" id="btn-open-availability-inspector">הצג זמינות</button>
+    </div>
+    <div class="availability-inspector-note text-muted">שעות 00:00–04:59 נספרות לסוף היום הנבחר.</div>
+  </div>`;
 }
 
 function statusBadge(status: AssignmentStatus): string {
@@ -720,6 +786,7 @@ function renderScheduleTab(): string {
   html += `<div class="day-window-label">
     מציג <strong>יום ${currentDay}</strong>: ${fmtDayShort(dayStart)} ${fmt(dayStart)} – ${fmtDayShort(dayEnd)} ${fmt(dayEnd)}
   </div>`;
+  html += renderAvailabilityInspector();
 
   // Main layout: content + sidebar
   html += `<div class="schedule-layout">`;
@@ -1336,10 +1403,9 @@ async function handleSwap(assignmentId: string): Promise<void> {
     await showAlert(`ההחלפה יוצרת הפרות בשיבוץ השבועי:\n\n${msgs}`, { title: 'הפרות', icon: '⚠️' });
   } else {
     showToast('החלפה בוצעה בהצלחה', { type: 'success' });
+    // Full re-validation + refresh only on successful swap
+    revalidateAndRefresh();
   }
-
-  // Full re-validation + refresh
-  revalidateAndRefresh();
 }
 
 async function handleLock(assignmentId: string): Promise<void> {
@@ -1836,6 +1902,7 @@ function renderAll(): void {
   // Always hide tooltips on re-render to avoid stale state
   hideTooltip();
   hideTaskTooltip();
+  hideAvailabilityPopover();
 
   // ── Profile View: completely different layout, no re-optimization ──
   if (_viewMode === 'PROFILE_VIEW' && _profileParticipantId && currentSchedule) {
@@ -1870,7 +1937,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">v1.1.2</span></h1>
+      <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">v1.2</span></h1>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪ ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</button>
@@ -2310,6 +2377,58 @@ function wireScheduleEvents(container: HTMLElement): void {
     if (pid) navigateToProfile(pid);
   });
 
+  container.addEventListener('click', (e) => {
+    const target = (e.target as HTMLElement).closest('.time-cell-inspectable[data-time-ms]') as HTMLElement | null;
+    if (!target) return;
+    const timeMs = Number(target.dataset.timeMs || target.closest('tr[data-time]')?.getAttribute('data-time'));
+    if (!Number.isFinite(timeMs)) return;
+    openAvailabilityPopover(target, timeMs);
+  });
+
+  container.addEventListener('keydown', (e) => {
+    const target = (e.target as HTMLElement).closest('.time-cell-inspectable[data-time-ms]') as HTMLElement | null;
+    if (!target) return;
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    const timeMs = Number(target.dataset.timeMs || target.closest('tr[data-time]')?.getAttribute('data-time'));
+    if (!Number.isFinite(timeMs)) return;
+    openAvailabilityPopover(target, timeMs);
+  });
+
+  wireCustomSelect(container, 'gm-availability-day', (value) => {
+    const day = parseInt(value, 10);
+    if (!Number.isNaN(day)) _availabilityInspectorDay = day;
+  });
+
+  const availabilityTimeInput = container.querySelector('#gm-availability-time') as HTMLInputElement | null;
+  if (availabilityTimeInput) {
+    availabilityTimeInput.addEventListener('input', () => {
+      _availabilityInspectorTime = availabilityTimeInput.value || '05:00';
+    });
+    availabilityTimeInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const triggerBtn = container.querySelector('#btn-open-availability-inspector') as HTMLElement | null;
+      triggerBtn?.click();
+    });
+  }
+
+  const availabilityBtn = container.querySelector('#btn-open-availability-inspector') as HTMLElement | null;
+  if (availabilityBtn) {
+    availabilityBtn.addEventListener('click', () => {
+      const selectedDay = _availabilityInspectorDay ?? currentDay;
+      const timeValue = availabilityTimeInput?.value || _availabilityInspectorTime;
+      const timestamp = resolveLogicalDayTimestamp(selectedDay, timeValue);
+      if (!timestamp) {
+        showToast('יש להזין שעה תקינה בפורמט HH:MM', { type: 'error' });
+        availabilityTimeInput?.focus();
+        return;
+      }
+      _availabilityInspectorTime = timeValue;
+      openAvailabilityPopover(availabilityBtn, timestamp.getTime());
+    });
+  }
+
   // ── Senior toggle button ──
   const seniorToggle = container.querySelector('#btn-senior-toggle');
   if (seniorToggle) {
@@ -2610,6 +2729,7 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
         return `<span class="tt-cert" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${CERT_LABELS[c] || c}</span>`;
       }).join(' ')
     : '<span class="tt-dim">אין</span>';
+  const pakalHtml = renderPakalBadges(p, store.getPakalDefinitions(), 'אין');
 
   // Build per-task breakdown rows (only show types with hours > 0)
   const taskTypeColors: Record<string, string> = {
@@ -2647,6 +2767,7 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
     </div>
     <div class="tt-row"><span class="tt-label">קבוצה</span><span class="tt-value" style="color:${groupColor(p.group)}">${p.group}</span></div>
     <div class="tt-row"><span class="tt-label">הסמכות</span><span class="tt-value">${certsHtml}</span></div>
+    <div class="tt-row tt-row-wrap"><span class="tt-label">פק"לים</span><span class="tt-value">${pakalHtml}</span></div>
     <div class="tt-divider"></div>
     ${breakdownRows}
     <div class="tt-divider"></div>
@@ -2655,6 +2776,139 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
     <div class="tt-row"><span class="tt-label">שעות שבועיות</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)} שע' אפקטיביות</span></div>
     <div class="tt-row"><span class="tt-label">% עומס</span><span class="tt-value">${pctOfPeriod.toFixed(1)}% מתוך ${totalPeriodHours} שע'</span></div>
   `;
+}
+
+function hideAvailabilityPopover(): void {
+  if (_availabilityPopoverKeyHandler) {
+    document.removeEventListener('keydown', _availabilityPopoverKeyHandler);
+    _availabilityPopoverKeyHandler = null;
+  }
+  if (_availabilityPopoverEl) {
+    _availabilityPopoverEl.remove();
+    _availabilityPopoverEl = null;
+  }
+}
+
+function getAvailableParticipantsAtTime(schedule: Schedule, timeMs: number): Participant[] {
+  const taskMap = new Map(schedule.tasks.map(task => [task.id, task]));
+  const occupied = new Set<string>();
+  for (const assignment of schedule.assignments) {
+    const task = taskMap.get(assignment.taskId);
+    if (!task) continue;
+    const startMs = task.timeBlock.start.getTime();
+    const endMs = task.timeBlock.end.getTime();
+    if (startMs <= timeMs && timeMs < endMs) {
+      occupied.add(assignment.participantId);
+    }
+  }
+  return schedule.participants.filter(participant => !occupied.has(participant.id));
+}
+
+function buildAvailabilityPopoverContent(timeMs: number): string {
+  if (!currentSchedule) return '';
+  const selectedTime = new Date(timeMs);
+  const definitions = store.getPakalDefinitions();
+  const available = getAvailableParticipantsAtTime(currentSchedule, timeMs);
+
+  const buckets = definitions.map(def => {
+    const participants = available.filter(participant =>
+      getEffectivePakalDefinitions(participant, definitions).some(item => item.id === def.id)
+    );
+    return { label: def.label, participants };
+  });
+
+  const noPakalParticipants = available.filter(participant => getEffectivePakalDefinitions(participant, definitions).length === 0);
+  const multiPakalParticipants = available.filter(participant => getEffectivePakalDefinitions(participant, definitions).length > 1);
+
+  const renderParticipantList = (participants: Participant[]): string => {
+    if (participants.length === 0) return '<div class="availability-empty">אין משתתפים חופשיים בקבוצה זו.</div>';
+    return `<div class="availability-name-list">${participants.map(participant => {
+      const pakalCount = getEffectivePakalDefinitions(participant, definitions).length;
+      return `<div class="availability-name-row"><span class="participant-hover" data-pid="${participant.id}">${participant.name}</span>${pakalCount > 1 ? `<span class="badge badge-sm availability-multi-tag">${pakalCount} פק"לים</span>` : ''}</div>`;
+    }).join('')}</div>`;
+  };
+
+  return `
+    <div class="availability-popover-header">
+      <div>
+        <h3>זמינים לפי פק"ל</h3>
+        <div class="availability-popover-subtitle">${fmtDate(selectedTime)} · ${available.length} פנויים ייחודיים</div>
+      </div>
+      <button class="btn-sm btn-outline availability-close" data-action="close-availability-popover">סגור</button>
+    </div>
+    <div class="availability-popover-body">
+      <div class="availability-summary-note">הספירה לפי זמן מדויק. מי שמשובץ לכל משימה באותו רגע אינו נחשב פנוי.</div>
+      <div class="availability-bucket-list">
+        ${buckets.map(bucket => bucket.participants.length > 0
+          ? `<details class="availability-bucket">
+              <summary><span>${bucket.label}</span><span class="availability-bucket-count">${bucket.participants.length}</span></summary>
+              ${renderParticipantList(bucket.participants)}
+            </details>`
+          : `<div class="availability-bucket availability-bucket-empty"><span>${bucket.label}</span><span class="availability-bucket-count">0</span></div>`
+        ).join('')}
+        ${noPakalParticipants.length > 0
+          ? `<details class="availability-bucket availability-bucket-none">
+              <summary><span>ללא פק"ל</span><span class="availability-bucket-count">${noPakalParticipants.length}</span></summary>
+              ${renderParticipantList(noPakalParticipants)}
+            </details>`
+          : `<div class="availability-bucket availability-bucket-empty availability-bucket-none"><span>ללא פק"ל</span><span class="availability-bucket-count">0</span></div>`}
+      </div>
+      ${multiPakalParticipants.length > 0 ? `<details class="availability-overlap">
+        <summary>רב-פק"ל <span class="availability-bucket-count">${multiPakalParticipants.length}</span></summary>
+        <div class="availability-overlap-note">המשתתפים כאן נספרים ביותר מקבוצת פק"ל אחת.</div>
+        ${renderParticipantList(multiPakalParticipants)}
+      </details>` : ''}
+    </div>
+  `;
+}
+
+function openAvailabilityPopover(anchor: HTMLElement, timeMs: number): void {
+  if (!currentSchedule) return;
+  hideAvailabilityPopover();
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'availability-popover-backdrop';
+  backdrop.innerHTML = `<div class="availability-popover" role="dialog" aria-modal="true"></div>`;
+  document.body.appendChild(backdrop);
+
+  const popover = backdrop.querySelector('.availability-popover') as HTMLElement;
+  popover.innerHTML = buildAvailabilityPopoverContent(timeMs);
+
+  const rect = anchor.getBoundingClientRect();
+  const width = 360;
+  const height = Math.min(window.innerHeight - 32, 520);
+  let left = rect.right + 12;
+  let top = rect.top - 8;
+  if (left + width > window.innerWidth - 12) {
+    left = rect.left - width - 12;
+  }
+  if (left < 12) left = Math.max(12, (window.innerWidth - width) / 2);
+  if (top + height > window.innerHeight - 12) {
+    top = Math.max(12, window.innerHeight - height - 12);
+  }
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+
+  backdrop.addEventListener('click', (e) => {
+    const closeTarget = (e.target as HTMLElement).closest('[data-action="close-availability-popover"]');
+    if (closeTarget || e.target === backdrop) {
+      hideAvailabilityPopover();
+      return;
+    }
+    const participantTarget = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
+    if (participantTarget?.dataset.pid) {
+      hideAvailabilityPopover();
+      navigateToProfile(participantTarget.dataset.pid);
+    }
+  });
+
+  wireParticipantTooltip(backdrop);
+
+  _availabilityPopoverKeyHandler = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') hideAvailabilityPopover();
+  };
+  document.addEventListener('keydown', _availabilityPopoverKeyHandler);
+  _availabilityPopoverEl = backdrop;
 }
 
 /** Wire event-delegated tooltip for .participant-hover elements. */
