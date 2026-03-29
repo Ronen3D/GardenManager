@@ -147,12 +147,15 @@ function isEligibleForSlot(
   taskMap: Map<string, Task>,
   disabledHC?: Set<string>,
 ): boolean {
-  const result = isEligible(participant, task, slot, participantAssignments, taskMap, { disabledHC });
-  if (!result && _diagnosticLogging) {
-    const _tag = `${participant.name} → ${task.name} [${slot.label || slot.slotId}]`;
-    console.log(`[Elig] REJECT: ${_tag}`);
+  if (_diagnosticLogging) {
+    const code = getRejectionReason(participant, task, slot, participantAssignments, taskMap, { disabledHC });
+    if (code) {
+      const _tag = `${participant.name} → ${task.name} [${slot.label || slot.slotId}]`;
+      console.log(`[Elig] REJECT: ${_tag} — ${code}`);
+    }
+    return code === null;
   }
-  return result;
+  return isEligible(participant, task, slot, participantAssignments, taskMap, { disabledHC });
 }
 
 /**

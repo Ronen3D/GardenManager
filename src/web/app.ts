@@ -164,7 +164,7 @@ function resolveLogicalDayTimestamp(dayIndex: number, timeValue: string): Date |
   );
 }
 
-function renderAvailabilityInspector(): string {
+function renderAvailabilityInspectorInline(): string {
   const numDays = store.getScheduleDays();
   const baseDate = store.getScheduleDate();
   const selectedDay = _availabilityInspectorDay && _availabilityInspectorDay >= 1 && _availabilityInspectorDay <= numDays
@@ -182,21 +182,11 @@ function renderAvailabilityInspector(): string {
     });
   }
 
-  return `<div class="availability-inspector-bar">
-    <div class="availability-inspector-copy">
-      <strong>בדיקת זמינות לפי זמן</strong>
-      <span class="text-muted">אפשר להזין שעה מדויקת גם אם היא לא מופיעה כשורה בשבצ"ק.</span>
-    </div>
-    <div class="availability-inspector-controls">
-      ${renderCustomSelect({ id: 'gm-availability-day', options: dayOptions, className: 'input-sm availability-day-select' })}
-      <label class="availability-time-input-wrap" for="gm-availability-time">
-        <span>שעה</span>
-        <input type="time" id="gm-availability-time" class="input-sm availability-time-input" value="${_availabilityInspectorTime}" step="60" />
-      </label>
-      <button class="btn-sm btn-primary" id="btn-open-availability-inspector">הצג זמינות</button>
-    </div>
-    <div class="availability-inspector-note text-muted">שעות 00:00–04:59 נספרות לסוף היום הנבחר.</div>
-  </div>`;
+  return `
+    ${renderCustomSelect({ id: 'gm-availability-day', options: dayOptions, className: 'input-sm availability-day-select' })}
+    <input type="time" id="gm-availability-time" class="input-sm availability-time-input" value="${_availabilityInspectorTime}" step="60" title="שעה לבדיקת זמינות (00:00–04:59 נספרות לסוף היום)" />
+    <button class="btn-sm btn-primary" id="btn-open-availability-inspector" title="בדיקת זמינות לפי זמן">הצג זמינות</button>
+  `;
 }
 
 function statusBadge(status: AssignmentStatus): string {
@@ -781,12 +771,12 @@ function renderScheduleTab(): string {
   // Day Navigator tabs
   html += renderDayNavigator();
 
-  // Day window label
+  // Day window label + inline availability inspector
   const { start: dayStart, end: dayEnd } = getDayWindow(currentDay);
   html += `<div class="day-window-label">
-    מציג <strong>יום ${currentDay}</strong>: ${fmtDayShort(dayStart)} ${fmt(dayStart)} – ${fmtDayShort(dayEnd)} ${fmt(dayEnd)}
+    <span class="day-window-text">מציג <strong>יום ${currentDay}</strong>: ${fmtDayShort(dayStart)} ${fmt(dayStart)} – ${fmtDayShort(dayEnd)} ${fmt(dayEnd)}</span>
+    <span class="availability-inline">${renderAvailabilityInspectorInline()}</span>
   </div>`;
-  html += renderAvailabilityInspector();
 
   // Main layout: content + sidebar
   html += `<div class="schedule-layout">`;
@@ -1768,64 +1758,54 @@ function wireRescueModalEvents(): void {
   });
 }
 
+function showRescueError(message: string): void {
+  const errorBanner = document.createElement('div');
+  errorBanner.className = 'rescue-error-banner';
+  errorBanner.innerHTML = `<span>${message}</span>
+    <button class="rescue-error-dismiss">✕</button>`;
+  errorBanner.querySelector('.rescue-error-dismiss')?.addEventListener('click', () => errorBanner.remove());
+  const modal = document.querySelector('.rescue-modal');
+  if (modal) {
+    modal.insertBefore(errorBanner, modal.firstChild);
+  }
+}
+
 function applyRescuePlan(plan: RescuePlan): void {
   if (!currentSchedule || !engine) return;
 
-  // Snapshot the schedule before applying any swaps for atomic rollback.
-  // Deep-clone assignments (the mutable parts) so we can restore on failure.
-  // NOTE: This snapshot relies on swapParticipant only mutating assignment fields
-  // that are captured by the spread clone (participantId, status, updatedAt).
-  // If swapParticipant ever mutates preFreezeStatus, tasks, or nested objects,
-  // this snapshot must be updated accordingly.
-  const snapshotAssignments = currentSchedule.assignments.map(a => ({
-    ...a,
-    updatedAt: new Date(a.updatedAt.getTime()),
-  }));
-  const snapshotFeasible = currentSchedule.feasible;
-  const snapshotViolations = [...currentSchedule.violations];
-  const snapshotScore = { ...currentSchedule.score };
-
-  // Each swap has the exact assignment ID to change and the new participant
-  let failed = false;
+  // Staleness check: verify all assignments still match the expected state
   for (const sw of plan.swaps) {
-    const result = engine.swapParticipant({ assignmentId: sw.assignmentId, newParticipantId: sw.toParticipantId });
-    const updated = engine.getSchedule();
-    if (!updated) {
-      console.error('[Rescue] Engine returned null schedule after swap', sw);
-      failed = true;
-      break;
+    const a = currentSchedule.assignments.find(a => a.id === sw.assignmentId);
+    if (!a) {
+      showRescueError('תוכנית ההחלפה מיושנת — השיבוץ לא נמצא. נסו שוב.');
+      return;
     }
-    currentSchedule = updated;
-    if (!result.valid) {
-      console.warn('[Rescue] Swap created violations:', result.violations);
-      failed = true;
-      break;
+    if (a.participantId !== sw.fromParticipantId) {
+      showRescueError('תוכנית ההחלפה מיושנת — המשתתף השתנה. נסו שוב.');
+      return;
+    }
+    if (a.status === AssignmentStatus.Frozen) {
+      showRescueError('תוכנית ההחלפה מיושנת — השיבוץ קפוא. נסו שוב.');
+      return;
     }
   }
 
-  if (failed) {
-    // Rollback: restore the snapshot
-    if (currentSchedule) {
-      currentSchedule.assignments = snapshotAssignments;
-      currentSchedule.feasible = snapshotFeasible;
-      currentSchedule.violations = snapshotViolations;
-      currentSchedule.score = snapshotScore;
-      engine.importSchedule(currentSchedule);
-    }
-    // Show inline error banner instead of native alert
-    const errorBanner = document.createElement('div');
-    errorBanner.className = 'rescue-error-banner';
-    errorBanner.innerHTML = `<span>תוכנית ההחלפה לא יושמה בהצלחה — בוצע שחזור למצב הקודם.</span>
-      <button class="rescue-error-dismiss">✕</button>`;
-    errorBanner.querySelector('.rescue-error-dismiss')?.addEventListener('click', () => errorBanner.remove());
-    const modal = document.querySelector('.rescue-modal');
-    if (modal) {
-      modal.insertBefore(errorBanner, modal.firstChild);
-    }
+  // Apply all swaps atomically via the chain method
+  const requests = plan.swaps.map(sw => ({
+    assignmentId: sw.assignmentId,
+    newParticipantId: sw.toParticipantId,
+  }));
+  const result = engine.swapParticipantChain(requests);
+  const updated = engine.getSchedule();
+
+  if (!updated || !result.valid) {
+    console.warn('[Rescue] Chain swap failed:', result.violations);
+    showRescueError('תוכנית ההחלפה לא יושמה בהצלחה — בוצע שחזור למצב הקודם.');
     revalidateAndRefresh();
     return;
   }
 
+  currentSchedule = updated;
   closeRescueModal();
   revalidateAndRefresh();
 }
@@ -1938,7 +1918,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">v1.2</span></h1>
+      <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">v1.2.1</span></h1>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪ ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</button>
@@ -2901,8 +2881,8 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
         <div class="availability-total-card">
           <span class="availability-total-count">${available.length}</span>
           <div class="availability-total-copy">
-            <strong>${available.length === 0 ? 'אין כרגע פנויים' : 'פנויים כרגע'}</strong>
-            <span>זה המספר הכולל של מי שפנוי בשעה הזאת.</span>
+            <strong>${available.length === 0 ? 'אין עתודה פנויה' : 'עתודה פנויה'}</strong>
+            <span>מספר המשתתפים שלא נמצאים כרגע במשימה.</span>
           </div>
         </div>
         <div class="availability-quick-stats">

@@ -381,6 +381,19 @@ export class SchedulingEngine {
       };
     }
 
+    // Frozen assignments cannot be modified
+    if (assignment.status === AssignmentStatus.Frozen) {
+      return {
+        valid: false,
+        violations: [{
+          severity: ViolationSeverity.Error,
+          code: 'ASSIGNMENT_FROZEN',
+          message: `שיבוץ ${request.assignmentId} קפוא ולא ניתן לשינוי.`,
+          taskId: assignment.taskId,
+        }],
+      };
+    }
+
     // Perform the swap
     const previousId = assignment.participantId;
     const previousStatus = assignment.status;
@@ -394,12 +407,14 @@ export class SchedulingEngine {
     const validation = this.validate();
 
     if (!validation.valid) {
+      // Rollback — don't touch schedule metadata since state is restored
       assignment.participantId = previousId;
       assignment.status = previousStatus;
       assignment.updatedAt = previousUpdatedAt;
+      return validation;
     }
 
-    // Update score
+    // Success: update score and metadata
     this.currentSchedule.score = computeScheduleScore(
       this.currentSchedule.tasks,
       this.currentSchedule.participants,
@@ -407,7 +422,96 @@ export class SchedulingEngine {
       this.config,
       this._buildScoreCtx(this.currentSchedule.tasks, this.currentSchedule.participants),
     );
-    this.currentSchedule.feasible = validation.valid;
+    this.currentSchedule.feasible = true;
+    this.currentSchedule.violations = [
+      ...validation.violations,
+      ...collectSoftWarnings(
+        this.currentSchedule.tasks,
+        this.currentSchedule.participants,
+        this.currentSchedule.assignments,
+        this.config,
+      ),
+    ];
+
+    return validation;
+  }
+
+  /**
+   * Atomically apply a chain of swaps (used by rescue plans).
+   *
+   * Unlike calling swapParticipant() sequentially, this method applies ALL
+   * mutations before validating, avoiding false HC-5/HC-7 violations in
+   * intermediate states (e.g., when a participant is temporarily in two
+   * overlapping slots mid-chain).
+   */
+  swapParticipantChain(requests: SwapRequest[]): ValidationResult {
+    if (!this.currentSchedule) {
+      return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'אין שבצ"ק לעריכה.', taskId: '' }] };
+    }
+
+    if (requests.length === 0) {
+      return { valid: true, violations: [] };
+    }
+
+    // Resolve all assignments and save their previous state upfront
+    const targets: Array<{
+      assignment: Assignment;
+      prevParticipantId: string;
+      prevStatus: AssignmentStatus;
+      prevUpdatedAt: Date;
+      newParticipantId: string;
+    }> = [];
+
+    for (const req of requests) {
+      const assignment = this.currentSchedule.assignments.find(a => a.id === req.assignmentId);
+      if (!assignment) {
+        return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'ASSIGNMENT_NOT_FOUND', message: `שיבוץ ${req.assignmentId} לא נמצא.`, taskId: '' }] };
+      }
+      if (assignment.status === AssignmentStatus.Frozen) {
+        return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'ASSIGNMENT_FROZEN', message: `שיבוץ ${req.assignmentId} קפוא ולא ניתן לשינוי.`, taskId: assignment.taskId }] };
+      }
+      if (!this.participants.has(req.newParticipantId)) {
+        return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'PARTICIPANT_NOT_FOUND', message: `משתתף ${req.newParticipantId} לא נמצא.`, taskId: assignment.taskId }] };
+      }
+      targets.push({
+        assignment,
+        prevParticipantId: assignment.participantId,
+        prevStatus: assignment.status,
+        prevUpdatedAt: assignment.updatedAt,
+        newParticipantId: req.newParticipantId,
+      });
+    }
+
+    // Apply all mutations
+    const now = new Date();
+    for (const t of targets) {
+      t.assignment.participantId = t.newParticipantId;
+      t.assignment.status = AssignmentStatus.Manual;
+      t.assignment.updatedAt = now;
+    }
+
+    // Validate once on the final state
+    const validation = this.validate();
+
+    if (!validation.valid) {
+      // Rollback all mutations
+      for (const t of targets) {
+        t.assignment.participantId = t.prevParticipantId;
+        t.assignment.status = t.prevStatus;
+        t.assignment.updatedAt = t.prevUpdatedAt;
+      }
+      return validation;
+    }
+
+    // Success: update score and metadata
+    this.currentSchedule.score = computeScheduleScore(
+      this.currentSchedule.tasks,
+      this.currentSchedule.participants,
+      this.currentSchedule.assignments,
+      this.config,
+      this._buildScoreCtx(this.currentSchedule.tasks, this.currentSchedule.participants),
+    );
+    this.currentSchedule.feasible = true;
     this.currentSchedule.violations = [
       ...validation.violations,
       ...collectSoftWarnings(

@@ -1038,6 +1038,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
           );
         }
         rerender();
+        showToast(`${name} נוסף/ה`, { type: 'success' });
         break;
       }
       case 'cancel-add-participant': {

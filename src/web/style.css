@@ -1503,6 +1503,11 @@ select.input-sm {
 }
 
 .day-window-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
   font-size: 0.82rem;
   color: var(--text-muted);
   margin-bottom: 12px;
@@ -1512,31 +1517,33 @@ select.input-sm {
   border: 1px solid var(--border);
 }
 
-.availability-inspector-bar {
+.day-window-text {
+  white-space: nowrap;
+}
+
+.availability-inline {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px 16px;
-  margin-bottom: 16px;
-  padding: 12px 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  gap: 8px;
+}
+
+.availability-inline .availability-time-input {
+  min-width: 96px;
+  width: auto;
+}
+
+/* legacy – keep selector but hide */
+.availability-inspector-bar {
+  display: none;
 }
 
 .availability-inspector-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 220px;
+  display: none;
 }
 
 .availability-inspector-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 10px;
+  display: none;
 }
 
 .availability-time-input-wrap {
@@ -1552,8 +1559,7 @@ select.input-sm {
 }
 
 .availability-inspector-note {
-  width: 100%;
-  font-size: 0.76rem;
+  display: none;
 }
 
 /* ─── Schedule Layout ────────────────────────────────── */

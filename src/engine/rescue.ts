@@ -159,10 +159,14 @@ function computeSwapImpact(
     else tempByParticipant.set(mapped.participantId, [mapped]);
   }
 
+  // Build ID→Assignment lookup for O(1) access
+  const assignmentById = new Map<string, Assignment>();
+  for (const a of baseAssignments) assignmentById.set(a.id, a);
+
   // Collect all days affected by the swaps
   const affectedDays = new Set<string>();
   for (const [aId] of swapMap) {
-    const assignment = baseAssignments.find(a => a.id === aId);
+    const assignment = assignmentById.get(aId);
     if (assignment) {
       const task = taskMap.get(assignment.taskId);
       if (task) affectedDays.add(dateKey(task.timeBlock.start));
@@ -356,8 +360,34 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
   const MAX_Q_DONORS = 3;
   const MAX_DEPTH3 = 200;
 
-  outer:
+  // Pre-sort participants by daily load proximity to average on the affected day.
+  // Participants closest to average workload produce lower-impact swaps, so
+  // exploring them first makes the MAX_DEPTH3 cap more likely to include the best plans.
+  const affectedDay = dateKey(ctx.vacatedTask.timeBlock.start);
+  const participantLoads = new Map<string, number>();
+  let totalLoad = 0;
   for (const p of ctx.schedule.participants) {
+    let hours = 0;
+    const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
+    for (const a of pAssignments) {
+      const task = ctx.taskMap.get(a.taskId);
+      if (task && dateKey(task.timeBlock.start) === affectedDay) {
+        hours += computeTaskEffectiveHours(task);
+      }
+    }
+    participantLoads.set(p.id, hours);
+    totalLoad += hours;
+  }
+  const avgLoad = ctx.schedule.participants.length > 0
+    ? totalLoad / ctx.schedule.participants.length
+    : 0;
+  const sortedParticipants = [...ctx.schedule.participants].sort((a, b) =>
+    Math.abs((participantLoads.get(a.id) || 0) - avgLoad) -
+    Math.abs((participantLoads.get(b.id) || 0) - avgLoad),
+  );
+
+  outer:
+  for (const p of sortedParticipants) {
     if (p.id === ctx.vacatedAssignment.participantId) continue;
     const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
 
@@ -518,13 +548,21 @@ export function generateRescuePlans(
 
   const participantMap = new Map<string, Participant>(schedule.participants.map(p => [p.id, p]));
 
+  // Pre-index assignments by task for O(slots_per_task) lookups instead of O(A)
+  const assignmentsByTaskIndex = new Map<string, Assignment[]>();
+  for (const a of schedule.assignments) {
+    const list = assignmentsByTaskIndex.get(a.taskId);
+    if (list) list.push(a);
+    else assignmentsByTaskIndex.set(a.taskId, [a]);
+  }
+
   function taskAssignmentsFor(
     taskId: string,
     excludeIds: Set<string>,
     extraAssignments?: Array<{ slotId: string; participantId: string }>,
   ): Assignment[] {
-    const base = schedule.assignments.filter(
-      a => a.taskId === taskId && !excludeIds.has(a.id),
+    const base = (assignmentsByTaskIndex.get(taskId) || []).filter(
+      a => !excludeIds.has(a.id),
     );
     if (extraAssignments) {
       for (const ea of extraAssignments) {
@@ -582,51 +620,58 @@ export function generateRescuePlans(
     disabledHC,
   };
 
-  // Generate plans at each depth, expanding only when needed
+  // Generate plans at each depth, expanding only when needed.
+  // Request extra candidates to compensate for filtering out invalid plans.
   const needed = maxPlans ?? (page + 1) * PAGE_SIZE;
   const depth1Plans = generateDepth1Plans(ctx);
 
-  const depth2Plans = depth1Plans.length < needed
+  const depth2Plans = depth1Plans.length < needed * 2
     ? generateDepth2Plans(ctx)
     : [];
 
   const totalSoFar = depth1Plans.length + depth2Plans.length;
-  const depth3Plans = totalSoFar < needed
+  const depth3Plans = totalSoFar < needed * 2
     ? generateDepth3Plans(ctx)
     : [];
 
   // Assemble all plans in priority order: depth 1 → depth 2 → depth 3
-  const allPlans = [...depth1Plans, ...depth2Plans, ...depth3Plans];
+  const allCandidates = [...depth1Plans, ...depth2Plans, ...depth3Plans];
 
-  // When maxPlans is specified, return the top N plans (no page slicing)
-  const startIdx = maxPlans !== undefined ? 0 : page * PAGE_SIZE;
-  const endIdx = maxPlans !== undefined ? maxPlans : startIdx + PAGE_SIZE;
-  const pagePlans = allPlans.slice(startIdx, endIdx);
-
-  // Convert to RescuePlan format with pre-computed violations
-  const plans: RescuePlan[] = pagePlans.map((cp, i) => {
+  // Validate each plan and filter out those with hard-constraint violations.
+  // Plans that fail validation will always fail during application, so showing
+  // them to the user is misleading.
+  const validPlans: Array<CandidatePlan & { violations: import('../models/types').ConstraintViolation[] }> = [];
+  for (const cp of allCandidates) {
     const tempAssignments = schedule.assignments.map(a => {
       const sw = cp.swaps.find(s => s.assignmentId === a.id);
       if (sw) return { ...a, participantId: sw.toParticipantId };
       return a;
     });
     const validation = validateHardConstraints(schedule.tasks, schedule.participants, tempAssignments, disabledHC);
+    if (validation.valid) {
+      validPlans.push({ ...cp, violations: [] });
+    }
+  }
 
-    return {
-      id: `rescue-${Date.now()}-${page}-${i}`,
-      rank: i + 1,
-      swaps: cp.swaps,
-      impactScore: cp.impactScore,
-      dailyLoadDelta: cp.dailyLoadDelta,
-      weeklyLoadDelta: cp.weeklyLoadDelta,
-      violations: validation.violations,
-    };
-  });
+  // When maxPlans is specified, return the top N plans (no page slicing)
+  const startIdx = maxPlans !== undefined ? 0 : page * PAGE_SIZE;
+  const endIdx = maxPlans !== undefined ? maxPlans : startIdx + PAGE_SIZE;
+  const pagePlans = validPlans.slice(startIdx, endIdx);
+
+  const plans: RescuePlan[] = pagePlans.map((cp, i) => ({
+    id: `rescue-${Date.now()}-${page}-${i}`,
+    rank: i + 1,
+    swaps: cp.swaps,
+    impactScore: cp.impactScore,
+    dailyLoadDelta: cp.dailyLoadDelta,
+    weeklyLoadDelta: cp.weeklyLoadDelta,
+    violations: cp.violations,
+  }));
 
   return {
     request,
     plans,
-    hasMore: allPlans.length > endIdx,
+    hasMore: validPlans.length > endIdx,
     page,
   };
 }
