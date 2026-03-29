@@ -757,7 +757,7 @@ function renderScheduleTab(): string {
       html += `<div class="empty-state">
         <div class="empty-icon">${SVG_ICONS.tasks}</div>
         <p>טרם נוצר שבצ"ק.</p>
-        <p class="text-muted">הגדר משתתפים ומשימות, ואז לחץ "צור שיבוץ".</p>
+        <p class="text-muted">הגדר משתתפים ומשימות, ואז תלחץ על "צור שבצ"ק".</p>
       </div>`;
     }
     return html;
@@ -2566,7 +2566,15 @@ function wireExportModalEvents(): void {
   const backdrop = document.getElementById('export-modal-backdrop');
   if (!backdrop) return;
 
-  const closeModal = () => backdrop.remove();
+  // Escape key handler — must be declared before closeModal so it can be cleaned up
+  const onEscape = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') closeModal();
+  };
+
+  const closeModal = () => {
+    document.removeEventListener('keydown', onEscape);
+    backdrop.remove();
+  };
 
   // Close buttons
   backdrop.querySelector('#export-close')?.addEventListener('click', closeModal);
@@ -2577,10 +2585,6 @@ function wireExportModalEvents(): void {
     if (e.target === backdrop) closeModal();
   });
 
-  // Escape key closes
-  const onEscape = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { closeModal(); document.removeEventListener('keydown', onEscape); }
-  };
   document.addEventListener('keydown', onEscape);
 
   // Mode radio toggle

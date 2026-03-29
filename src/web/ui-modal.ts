@@ -7,8 +7,8 @@
 
 import { escHtml, escAttr } from './ui-helpers';
 
-/** Cleanup callbacks for custom selects, keyed by wrapper element. */
-const _selectCleanups = new WeakMap<HTMLElement, () => void>();
+/** Cleanup callbacks for custom selects, keyed by select ID (stable across re-renders). */
+const _selectCleanups = new Map<string, () => void>();
 
 // ─── Modal Dialogs ──────────────────────────────────────────────────────────
 
@@ -304,8 +304,8 @@ export function wireCustomSelect(
   const wrapper = container.querySelector(`#${selectId}`) as HTMLElement | null;
   if (!wrapper) return;
 
-  // Clean up any previous outside-click listener stored on this wrapper
-  const prevCleanup = _selectCleanups.get(wrapper);
+  // Clean up any previous outside-click listener stored for this select ID
+  const prevCleanup = _selectCleanups.get(selectId);
   if (prevCleanup) prevCleanup();
 
   const trigger = wrapper.querySelector('.gm-select-trigger') as HTMLElement;
@@ -400,7 +400,7 @@ export function wireCustomSelect(
     }
   };
   document.addEventListener('click', closeOnOutside);
-  _selectCleanups.set(wrapper, () => {
+  _selectCleanups.set(selectId, () => {
     document.removeEventListener('click', closeOnOutside);
   });
 }

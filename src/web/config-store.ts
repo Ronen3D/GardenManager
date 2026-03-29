@@ -37,6 +37,7 @@ import {
   clonePakalDefinitions,
   normalizePakalDefinitions,
   sanitizePakalIds,
+  enforceHoreshConsistency,
 } from './pakal-utils';
 
 // ─── ID Generation ───────────────────────────────────────────────────────────
@@ -454,12 +455,15 @@ export function addParticipant(data: {
 }): Participant {
   pushSnapshot();
   const id = uid('p');
+  const rawCerts = data.certifications ?? [Certification.Nitzan];
+  const rawPakalIds = sanitizePakalIds(data.pakalIds, pakalDefinitions);
+  const { certifications: certs, pakalIds: pIds } = enforceHoreshConsistency(rawCerts, rawPakalIds);
   const p: Participant = {
     id,
     name: data.name,
     level: data.level ?? Level.L0,
-    certifications: data.certifications ?? [Certification.Nitzan],
-    pakalIds: sanitizePakalIds(data.pakalIds, pakalDefinitions),
+    certifications: certs,
+    pakalIds: pIds,
     group: data.group,
     availability: getDefaultAvailability(),
     dateUnavailability: [],
@@ -477,6 +481,12 @@ export function updateParticipant(id: string, patch: Partial<Omit<Participant, '
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'pakalIds')) {
     nextPatch.pakalIds = sanitizePakalIds(nextPatch.pakalIds, pakalDefinitions);
   }
+  // Enforce Horesh pakal ↔ certification consistency
+  const mergedCerts = nextPatch.certifications ?? p.certifications;
+  const mergedPakalIds = nextPatch.pakalIds ?? p.pakalIds;
+  const { certifications: certs, pakalIds: pIds } = enforceHoreshConsistency(mergedCerts, mergedPakalIds);
+  nextPatch.certifications = certs;
+  nextPatch.pakalIds = pIds;
   Object.assign(p, nextPatch);
   p.availability = computeAvailability(id);
   notify();
@@ -809,9 +819,14 @@ const defaultNames: string[] = [
 ];
 
 const DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP: Record<string, string[]> = {
-  'קבוצה 1': ['pakal-matol', 'pakal-negev', 'pakal-kala', 'pakal-rahpan', 'pakal-til-lao', HORESH_PAKAL_ID, 'pakal-matol', 'pakal-negev'],
-  'קבוצה 2': ['pakal-matol', 'pakal-negev', 'pakal-kala', 'pakal-rahpan', 'pakal-mag', 'pakal-matol', 'pakal-kala', 'pakal-til-lao'],
-  'קבוצה 3': ['pakal-matol', 'pakal-negev', 'pakal-kala', 'pakal-mag', 'pakal-matol', 'pakal-negev', HORESH_PAKAL_ID, 'pakal-matol'],
+  //                    L0idx: 0             1              2             3                4                5               6              7(unused)
+  // Horesh cert at L0 indices 3,4 (template 8,9) — must align with HORESH_PAKAL_ID positions
+  'קבוצה 1': ['pakal-matol', 'pakal-negev', 'pakal-kala', HORESH_PAKAL_ID, HORESH_PAKAL_ID, 'pakal-rahpan', 'pakal-matol', 'pakal-negev'],
+  // Horesh cert at L0 index 3 (template 8)
+  'קבוצה 2': ['pakal-matol', 'pakal-negev', 'pakal-kala', HORESH_PAKAL_ID, 'pakal-mag', 'pakal-matol', 'pakal-kala', 'pakal-til-lao'],
+  // Horesh cert at L0 index 3 (template 8)
+  'קבוצה 3': ['pakal-matol', 'pakal-negev', 'pakal-kala', HORESH_PAKAL_ID, 'pakal-matol', 'pakal-negev', 'pakal-mag', 'pakal-matol'],
+  // No Horesh cert
   'קבוצה 4': ['pakal-matol', 'pakal-negev', 'pakal-kala', 'pakal-rahpan', 'pakal-til-lao', 'pakal-matol', 'pakal-kala', 'pakal-matol'],
 };
 
@@ -2365,12 +2380,15 @@ export function loadParticipantSet(id: string): void {
     // Add participants from the set
     for (const snap of pset.participants) {
       const pid = uid('p');
+      const rawCerts = [...snap.certifications];
+      const rawPakalIds = sanitizePakalIds(snap.pakalIds, pakalDefinitions);
+      const { certifications: certs, pakalIds: pIds } = enforceHoreshConsistency(rawCerts, rawPakalIds);
       const p: Participant = {
         id: pid,
         name: snap.name,
         level: snap.level,
-        certifications: [...snap.certifications],
-        pakalIds: sanitizePakalIds(snap.pakalIds, pakalDefinitions),
+        certifications: certs,
+        pakalIds: pIds,
         group: snap.group,
         availability: getDefaultAvailability(),
         dateUnavailability: [],

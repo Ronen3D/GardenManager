@@ -95,3 +95,31 @@ export function renderPakalBadges(
 export function getPakalLabels(participant: Participant, definitions: PakalDefinition[]): string[] {
   return getEffectivePakalDefinitions(participant, definitions).map(def => def.label);
 }
+
+/**
+ * Enforce bidirectional coupling between Horesh certification and Horesh pakal.
+ * Rule: a participant may have Horesh pakal if and only if they have Horesh certification.
+ * - If pakal-horesh is present but Certification.Horesh is missing → add the certification.
+ * - If Certification.Horesh is present → pakal-horesh is always derived by getEffectivePakalIds,
+ *   so no explicit pakalId change is needed (but we keep it if present).
+ * Returns corrected copies; does NOT mutate the originals.
+ */
+export function enforceHoreshConsistency(
+  certifications: Certification[],
+  pakalIds: string[] | undefined,
+): { certifications: Certification[]; pakalIds: string[] } {
+  const certs = [...certifications];
+  const ids = [...(pakalIds || [])];
+  const hasCert = certs.includes(Certification.Horesh);
+  const hasPakal = ids.includes(HORESH_PAKAL_ID);
+
+  if (hasPakal && !hasCert) {
+    certs.push(Certification.Horesh);
+  } else if (hasCert && !hasPakal) {
+    // getEffectivePakalIds will derive it; no stored change needed
+  } else if (!hasCert && !hasPakal) {
+    // Nothing to do
+  }
+
+  return { certifications: certs, pakalIds: ids };
+}

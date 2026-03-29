@@ -21,10 +21,12 @@ import {
   getAllParticipants,
   getAllTaskTemplates,
   getGroups,
+  getPakalDefinitions,
   getScheduleDate,
   getScheduleDays,
 } from './config-store';
 import { computeAllCapacities } from '../utils/capacity';
+import { HORESH_PAKAL_ID, getEffectivePakalIds } from './pakal-utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -218,6 +220,35 @@ function checkGroupIntegrity(participants: Participant[], templates: TaskTemplat
   return findings;
 }
 
+// ─── Horesh Consistency Check ───────────────────────────────────────────────
+
+function checkHoreshConsistency(participants: Participant[]): PreflightFinding[] {
+  const findings: PreflightFinding[] = [];
+  const pakalDefs = getPakalDefinitions();
+
+  for (const p of participants) {
+    const hasCert = p.certifications.includes(Certification.Horesh);
+    const effectivePakalIds = getEffectivePakalIds(p, pakalDefs);
+    const hasPakal = effectivePakalIds.includes(HORESH_PAKAL_ID);
+
+    if (hasPakal && !hasCert) {
+      findings.push({
+        severity: PreflightSeverity.Warning,
+        code: 'HORESH_PAKAL_WITHOUT_CERT',
+        message: `למשתתף "${p.name}" מוגדר פק"ל חורש אבל חסרה הסמכת חורש. שניהם צריכים להיות יחד.`,
+      });
+    } else if (hasCert && !hasPakal) {
+      findings.push({
+        severity: PreflightSeverity.Warning,
+        code: 'HORESH_CERT_WITHOUT_PAKAL',
+        message: `למשתתף "${p.name}" יש הסמכת חורש אבל חסר פק"ל חורש. שניהם צריכים להיות יחד.`,
+      });
+    }
+  }
+
+  return findings;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export function runPreflight(): PreflightResult {
@@ -227,11 +258,13 @@ export function runPreflight(): PreflightResult {
   const skillGapFindings = checkSkillGaps(participants, templates);
   const capacityResult = checkCapacity(participants, templates);
   const groupFindings = checkGroupIntegrity(participants, templates);
+  const horeshFindings = checkHoreshConsistency(participants);
 
   const allFindings = [
     ...skillGapFindings,
     ...capacityResult.findings,
     ...groupFindings,
+    ...horeshFindings,
   ];
 
   const hasCritical = allFindings.some(f => f.severity === PreflightSeverity.Critical);

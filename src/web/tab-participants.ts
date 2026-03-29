@@ -86,7 +86,8 @@ function syncAutoHoreshPakal(scope: ParentNode, certSelector: string, pakalSelec
     label?.classList.add('pakal-auto');
   } else {
     horeshPakal.disabled = false;
-    horeshPakal.checked = horeshPakal.dataset.manualChecked === '1';
+    horeshPakal.checked = false;
+    horeshPakal.dataset.manualChecked = '0';
     delete horeshPakal.dataset.autoManaged;
     label?.classList.remove('pakal-auto');
   }
@@ -801,6 +802,18 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       const scope = changeTarget.closest('tr.row-editing, #add-participant-form');
       if (scope) {
         syncAutoHoreshPakal(scope, '[data-cert="Horesh"], [data-new-cert="Horesh"]', '[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]');
+      }
+    }
+
+    // Reverse sync: checking pakal-horesh auto-checks Horesh certification
+    if (changeTarget.matches('[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]')) {
+      const scope = changeTarget.closest('tr.row-editing, #add-participant-form');
+      if (scope && changeTarget.checked) {
+        const certCb = scope.querySelector<HTMLInputElement>('[data-cert="Horesh"], [data-new-cert="Horesh"]');
+        if (certCb && !certCb.checked) {
+          certCb.checked = true;
+          syncAutoHoreshPakal(scope, '[data-cert="Horesh"], [data-new-cert="Horesh"]', '[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]');
+        }
       }
     }
   });
