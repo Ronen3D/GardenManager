@@ -429,14 +429,18 @@ export function computeNotWithPenalty(
 /**
  * SC-10: Compute penalty for task-type preferences.
  *
- * Two independent components:
+ * Three independent components:
  *  - **Avoidance** (per-assignment): each assignment to a participant's
  *    lessPreferredTaskType incurs `config.taskAvoidancePenalty`. Stacking
  *    gives SA a gradient — removing one disliked assignment still helps.
  *  - **Preference** (per-participant, binary): if a participant has a
  *    preferredTaskType but none of their assignments match it, incur
- *    `config.taskPreferencePenalty` once. Binary penalty avoids creating
- *    incentives to over-assign preferred tasks at the cost of fairness.
+ *    `config.taskPreferencePenalty` once. Ensures at least one preferred
+ *    assignment.
+ *  - **Preference bonus** (per-assignment): each assignment to a
+ *    participant's preferredTaskType reduces penalty by
+ *    `config.taskPreferenceBonus`. Provides a continuous gradient so the
+ *    optimizer keeps assigning preferred tasks beyond the first one.
  */
 export function computeTaskPreferencePenalty(
   participants: Participant[],
@@ -444,7 +448,7 @@ export function computeTaskPreferencePenalty(
   taskMap: Map<string, Task>,
   assignmentsByParticipant: Map<string, Assignment[]>,
 ): number {
-  if (config.taskPreferencePenalty <= 0 && config.taskAvoidancePenalty <= 0) return 0;
+  if (config.taskPreferencePenalty <= 0 && config.taskAvoidancePenalty <= 0 && config.taskPreferenceBonus <= 0) return 0;
 
   let penalty = 0;
   for (const p of participants) {
@@ -469,6 +473,16 @@ export function computeTaskPreferencePenalty(
       });
       if (!hasPreferred) {
         penalty += config.taskPreferencePenalty;
+      }
+    }
+
+    // Preference bonus: per-assignment reward for preferred task type
+    if (p.preferredTaskType && config.taskPreferenceBonus > 0) {
+      for (const a of pAssigns) {
+        const task = taskMap.get(a.taskId);
+        if (task && task.type === p.preferredTaskType) {
+          penalty -= config.taskPreferenceBonus;
+        }
       }
     }
   }
@@ -789,10 +803,10 @@ export class IncrementalScorer {
 
     // Compute per-participant task preference penalty for O(1) delta updates.
     scorer._taskPrefPenalty = 0;
-    if (config.taskPreferencePenalty > 0 || config.taskAvoidancePenalty > 0) {
+    if (config.taskPreferencePenalty > 0 || config.taskAvoidancePenalty > 0 || config.taskPreferenceBonus > 0) {
       for (const p of participants) {
         const pPenalty = scorer.computeParticipantTaskPrefPenalty(p.id);
-        if (pPenalty > 0) {
+        if (pPenalty !== 0) {
           scorer._perParticipantTaskPrefPenalty.set(p.id, pPenalty);
           scorer._taskPrefPenalty += pPenalty;
         }
@@ -871,6 +885,16 @@ export class IncrementalScorer {
       });
       if (!hasPreferred) {
         penalty += this.config.taskPreferencePenalty;
+      }
+    }
+
+    // Preference bonus: per-assignment reward for preferred task type
+    if (p.preferredTaskType && this.config.taskPreferenceBonus > 0) {
+      for (const a of pAssigns) {
+        const task = this.taskMap.get(a.taskId);
+        if (task && task.type === p.preferredTaskType) {
+          penalty -= this.config.taskPreferenceBonus;
+        }
       }
     }
 
@@ -1180,7 +1204,7 @@ export class IncrementalScorer {
     const aHasPrefs = !!(pAObj?.preferredTaskType || pAObj?.lessPreferredTaskType);
     const bHasPrefs = !!(pBObj?.preferredTaskType || pBObj?.lessPreferredTaskType);
     if (aHasPrefs || bHasPrefs ||
-        this._savedTaskPrefEntries[0][1] > 0 || this._savedTaskPrefEntries[1][1] > 0) {
+        this._savedTaskPrefEntries[0][1] !== 0 || this._savedTaskPrefEntries[1][1] !== 0) {
       // Remove old contributions
       this._taskPrefPenalty -= this._savedTaskPrefEntries[0][1] + this._savedTaskPrefEntries[1][1];
       // Recompute for both
@@ -1223,7 +1247,7 @@ export class IncrementalScorer {
     // Restore task preference penalty state
     this._taskPrefPenalty = this._savedTaskPrefTotal;
     for (const [pid, val] of this._savedTaskPrefEntries) {
-      if (val > 0) this._perParticipantTaskPrefPenalty.set(pid, val);
+      if (val !== 0) this._perParticipantTaskPrefPenalty.set(pid, val);
       else this._perParticipantTaskPrefPenalty.delete(pid);
     }
     this.recomputeRestStats();

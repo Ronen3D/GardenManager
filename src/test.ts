@@ -1137,6 +1137,97 @@ const cfg = { ...DEFAULT_CONFIG };
   const pen = computeSeniorJuniorPreferencePenalty([spL0], assigns, [testMamTask], cfg);
   assert(pen === 0, 'Senior junior-pref penalty: L0 never penalised');
 }
+// ── SC-10: Task Preference Penalty (with bonus) ─────────────────────────────
+
+import { computeTaskPreferencePenalty } from './constraints/soft-constraints';
+
+console.log('\n── SC-10: Task Preference Penalty ──────');
+
+{
+  // Setup: two task types — Mamtera (preferred) and Karov (neutral)
+  const prefBase = new Date(2026, 1, 15);
+  const prefMamtera = createMamteraTask(prefBase);
+  const prefKarov = createKarovTask(createTimeBlockFromHours(prefBase, 6, 14));
+  const prefKarov2 = createKarovTask(createTimeBlockFromHours(prefBase, 14, 22));
+  const prefKarov3 = createKarovTask(createTimeBlockFromHours(new Date(2026, 1, 16), 6, 14));
+  const taskMap = new Map([prefMamtera, prefKarov, prefKarov2, prefKarov3].map(t => [t.id, t]));
+
+  const pWithPref: Participant = {
+    id: 'sc10-p1', name: 'PrefPerson', level: Level.L0,
+    certifications: [Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+    preferredTaskType: TaskType.Mamtera,
+  };
+
+  const cfgPref = { ...DEFAULT_CONFIG, taskPreferencePenalty: 50, taskAvoidancePenalty: 80, taskPreferenceBonus: 25 };
+
+  // No preferred assignments → binary penalty only (no bonus)
+  {
+    const assigns = new Map<string, Assignment[]>([
+      ['sc10-p1', [
+        { id: 'sc10-a1', taskId: prefKarov.id, slotId: prefKarov.slots[0].slotId, participantId: 'sc10-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      ]],
+    ]);
+    const pen = computeTaskPreferencePenalty([pWithPref], cfgPref, taskMap, assigns);
+    assert(pen === 50, 'SC-10 bonus: 0 preferred assignments → binary penalty 50');
+  }
+
+  // 1 preferred assignment → binary removed + 1× bonus = -25
+  {
+    const assigns = new Map<string, Assignment[]>([
+      ['sc10-p1', [
+        { id: 'sc10-a2', taskId: prefMamtera.id, slotId: prefMamtera.slots[0].slotId, participantId: 'sc10-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      ]],
+    ]);
+    const pen = computeTaskPreferencePenalty([pWithPref], cfgPref, taskMap, assigns);
+    assert(pen === -25, 'SC-10 bonus: 1 preferred assignment → -25 (no binary, 1× bonus)');
+  }
+
+  // 3 preferred assignments → binary removed + 3× bonus = -75
+  {
+    const assigns = new Map<string, Assignment[]>([
+      ['sc10-p1', [
+        { id: 'sc10-a3', taskId: prefMamtera.id, slotId: prefMamtera.slots[0].slotId, participantId: 'sc10-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+        { id: 'sc10-a4', taskId: prefMamtera.id, slotId: prefMamtera.slots[0].slotId, participantId: 'sc10-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+        { id: 'sc10-a5', taskId: prefMamtera.id, slotId: prefMamtera.slots[0].slotId, participantId: 'sc10-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      ]],
+    ]);
+    const pen = computeTaskPreferencePenalty([pWithPref], cfgPref, taskMap, assigns);
+    assert(pen === -75, 'SC-10 bonus: 3 preferred assignments → -75 (stacks)');
+  }
+
+  // Bonus disabled → only binary penalty applies
+  {
+    const cfgNoBonus = { ...cfgPref, taskPreferenceBonus: 0 };
+    const assigns = new Map<string, Assignment[]>([
+      ['sc10-p1', [
+        { id: 'sc10-a6', taskId: prefKarov.id, slotId: prefKarov.slots[0].slotId, participantId: 'sc10-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      ]],
+    ]);
+    const pen = computeTaskPreferencePenalty([pWithPref], cfgNoBonus, taskMap, assigns);
+    assert(pen === 50, 'SC-10 bonus: bonus=0 → only binary penalty');
+  }
+
+  // Avoidance and bonus are independent
+  {
+    const pBoth: Participant = {
+      ...pWithPref,
+      id: 'sc10-p2',
+      preferredTaskType: TaskType.Mamtera,
+      lessPreferredTaskType: TaskType.Karov,
+    };
+    const assigns = new Map<string, Assignment[]>([
+      ['sc10-p2', [
+        { id: 'sc10-a7', taskId: prefMamtera.id, slotId: prefMamtera.slots[0].slotId, participantId: 'sc10-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+        { id: 'sc10-a8', taskId: prefKarov.id, slotId: prefKarov.slots[0].slotId, participantId: 'sc10-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      ]],
+    ]);
+    const pen = computeTaskPreferencePenalty([pBoth], cfgPref, taskMap, assigns);
+    // avoidance: 1× 80 = 80, binary: 0 (has preferred), bonus: -25
+    assert(pen === 55, 'SC-10 bonus: avoidance (80) + bonus (-25) = 55, independent');
+  }
+}
+
 // ─── Summary ─────────────────────────────────────────────────────────────────
 
 console.log('\n══════════════════════════════════════════');

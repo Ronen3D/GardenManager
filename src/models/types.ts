@@ -292,6 +292,8 @@ export interface SchedulerConfig {
   taskPreferencePenalty: number;
   /** Penalty when participant IS assigned to their less-preferred task type (per assignment) */
   taskAvoidancePenalty: number;
+  /** Bonus (penalty reduction) per assignment to participant's preferred task type */
+  taskPreferenceBonus: number;
 }
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
@@ -306,6 +308,7 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   notWithPenalty: 500,
   taskPreferencePenalty: 50,
   taskAvoidancePenalty: 80,
+  taskPreferenceBonus: 25,
 };
 
 // ─── Algorithm Settings (user-configurable control panel) ────────────────────
