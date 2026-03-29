@@ -210,9 +210,9 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         ${hasWarning && !hasCritical ? '<span class="badge badge-sm" style="background:var(--warning)">⚠</span>' : ''}
       </div>
       <div class="template-toggles">
-        ${tpl.sameGroupRequired ? '<span class="badge badge-sm badge-outline">משימה משותפת</span>' : ''}
+        ${tpl.sameGroupRequired ? '<span class="badge badge-sm badge-outline">נדרשת אותה קבוצה</span>' : ''}
         ${tpl.isLight ? '<span class="badge badge-sm badge-outline">קלה</span>' : ''}
-        ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">ללא חסימה עוקבת</span>'}
+        ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">ניתן לשבץ ברצף</span>'}
         ${tpl.togethernessRelevant ? '<span class="badge badge-sm badge-outline">אי התאמה</span>' : ''}
         <span class="expand-arrow">${isExpanded ? '▼' : '▶'}</span>
       </div>
@@ -229,10 +229,10 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" data-tpl-field="durationHours" value="${tpl.durationHours}" data-tid="${tpl.id}" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" /></label>
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" data-tpl-field="startHour" value="${tpl.startHour}" data-tid="${tpl.id}" /></label>
-      <label>משקל עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> משימה משותפת</label>
+      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חסימה עוקבת (HC-12)</label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חוסם רצף משימות</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
       <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
     </div>`;
@@ -274,7 +274,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
 
 function renderLoadWindowsEditor(tpl: TaskTemplate): string {
   const windows = tpl.loadWindows ?? [];
-  let html = `<h4 style="margin:12px 0 8px;">חלונות עומס (אזורים חמים)</h4>`;
+  let html = `<h4 style="margin:12px 0 8px;">חלונות עומס מוגבר</h4>`;
 
   if (windows.length === 0) {
     html += '<p class="text-muted" style="padding:4px 0;">לא הוגדרו חלונות עומס. משקל העומס חל על כל המשימה.</p>';
@@ -304,7 +304,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
       <label>התחלה <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-start" value="05:00" /></label>
       <label>סיום <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-end" value="06:30" /></label>
       <label>משקל (0-1) <input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" /></label>
-      <button class="btn-sm btn-primary" data-action="add-load-window" data-tid="${tpl.id}">הוסף חלון חם</button>
+      <button class="btn-sm btn-primary" data-action="add-load-window" data-tid="${tpl.id}">הוסף חלון עומס מוגבר</button>
     </div>
   </div>`;
 
@@ -395,10 +395,10 @@ function renderAddTemplateForm(): string {
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="tpl-start" /></label>
-      <label>משקל עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="tpl-base-load" /></label>
+      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="tpl-base-load" /></label>
     </div>
     <div class="form-row">
-      <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> משימה משותפת</label>
+      <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> נדרשת אותה קבוצה</label>
       <label class="checkbox-label"><input type="checkbox" data-field="tpl-light" /> משימה קלה</label>
     </div>
     <div class="form-row">
