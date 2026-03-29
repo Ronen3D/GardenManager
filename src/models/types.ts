@@ -299,18 +299,18 @@ export interface SchedulerConfig {
 }
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
-  minRestWeight: 10,
-  l0FairnessWeight: 40,
-  seniorFairnessWeight: 6,
+  minRestWeight: 8,
+  l0FairnessWeight: 111,
+  seniorFairnessWeight: 1,
 
   maxIterations: 50000,
   maxSolverTimeMs: 30000,
-  seniorJuniorPreferencePenalty: 10000,
-  dailyBalanceWeight: 90,
-  notWithPenalty: 500,
-  taskPreferencePenalty: 50,
-  taskAvoidancePenalty: 80,
-  taskPreferenceBonus: 25,
+  seniorJuniorPreferencePenalty: 1166,
+  dailyBalanceWeight: 144,
+  notWithPenalty: 1929,
+  taskPreferencePenalty: 140,
+  taskAvoidancePenalty: 27,
+  taskPreferenceBonus: 7,
 };
 
 // ─── Algorithm Settings (user-configurable control panel) ────────────────────

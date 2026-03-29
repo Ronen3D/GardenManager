@@ -1,0 +1,13 @@
+{
+  "minRestWeight": 8,
+  "l0FairnessWeight": 111,
+  "seniorFairnessWeight": 1,
+  "maxIterations": 5000,
+  "maxSolverTimeMs": 3000,
+  "seniorJuniorPreferencePenalty": 1166,
+  "dailyBalanceWeight": 144,
+  "notWithPenalty": 1929,
+  "taskPreferencePenalty": 140,
+  "taskAvoidancePenalty": 27,
+  "taskPreferenceBonus": 7
+}
