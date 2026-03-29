@@ -14,7 +14,7 @@ import {
   ViolationSeverity,
   SwapRequest,
 } from '../models/types';
-import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt } from '../constraints/hard-constraints';
+import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt, CATEGORY_BREAK_MS } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
@@ -90,7 +90,8 @@ export type RejectionCode =
   | 'HC-7'   // Already assigned to this task
   | 'HC-11'  // Choresh exclusion from Mamtera
   | 'HC-12'  // Consecutive high-load tasks
-  | 'HC-13'; // Senior hard block
+  | 'HC-13'  // Senior hard block
+  | 'HC-14'; // Category break (5h minimum)
 
 /** Optional context for eligibility / rejection checks. */
 export interface EligibilityOpts {
@@ -179,6 +180,23 @@ function checkEligibility(
       if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
         if (effectivelyBlocksAt(task, 'end') && effectivelyBlocksAt(otherTask, 'start')) return 'HC-12';
       }
+    }
+  }
+
+  // HC-14: Category break — minimum 5h between category-flagged tasks
+  // Note: for overlapping tasks, gap is negative (< 5h) so HC-14 fires,
+  // but HC-5 (double-booking) is checked first and rejects before reaching here.
+  if (!disabled?.has('HC-14') && task.requiresCategoryBreak) {
+    const taskStart = task.timeBlock.start.getTime();
+    const taskEnd = task.timeBlock.end.getTime();
+    for (const a of participantAssignments) {
+      const otherTask = taskMap.get(a.taskId);
+      if (!otherTask?.requiresCategoryBreak) continue;
+      const gap = Math.max(
+        taskStart - otherTask.timeBlock.end.getTime(),
+        otherTask.timeBlock.start.getTime() - taskEnd,
+      );
+      if (gap < CATEGORY_BREAK_MS) return 'HC-14';
     }
   }
 

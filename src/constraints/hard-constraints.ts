@@ -454,6 +454,54 @@ export function checkNoConsecutiveHighLoad(
   return violations;
 }
 
+// ─── HC-14: Category Break ──────────────────────────────────────────────────
+
+/** Minimum gap (ms) required between two category-break tasks for the same participant. */
+export const CATEGORY_BREAK_MS = 5 * 60 * 60 * 1000; // 5 hours
+
+/**
+ * HC-14: A participant must have at least 5 hours between any two tasks
+ * where both have requiresCategoryBreak=true.
+ *
+ * Because tasks are sorted by start time, checking only adjacent pairs
+ * of category-flagged tasks is sufficient: if A→B gap >= 5h, then
+ * A→C gap is necessarily >= 5h as well.
+ */
+export function checkCategoryBreak(
+  participantId: string,
+  assignments: Assignment[],
+  taskMap: Map<string, Task>,
+): ConstraintViolation[] {
+  const violations: ConstraintViolation[] = [];
+
+  const categoryAssignments = assignments
+    .filter(a => a.participantId === participantId)
+    .map(a => ({ assignment: a, task: taskMap.get(a.taskId)! }))
+    .filter(x => x.task != null && x.task.requiresCategoryBreak)
+    .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+
+  for (let i = 0; i < categoryAssignments.length - 1; i++) {
+    const cur = categoryAssignments[i];
+    const nxt = categoryAssignments[i + 1];
+    if (cur.task.id === nxt.task.id) continue;
+
+    const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
+    if (gap < CATEGORY_BREAK_MS) {
+      violations.push(
+        violation(
+          'CATEGORY_BREAK_VIOLATION',
+          `למשתתף ${participantId} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות 5 שעות לפחות)`,
+          nxt.task.id,
+          undefined,
+          participantId,
+        ),
+      );
+    }
+  }
+
+  return violations;
+}
+
 // ─── Aggregate Validation ────────────────────────────────────────────────────
 
 /**
@@ -641,6 +689,15 @@ export function validateHardConstraints(
           ));
         }
       }
+    }
+  }
+
+  // HC-14: Category break — minimum 5h between category-flagged tasks
+  if (!disabledHC?.has('HC-14')) {
+    for (const p of participants) {
+      const pAssigns = assignmentsByParticipant.get(p.id) || [];
+      if (pAssigns.length < 2) continue;
+      allViolations.push(...checkCategoryBreak(p.id, pAssigns, tMap));
     }
   }
 

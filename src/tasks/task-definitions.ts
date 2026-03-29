@@ -113,6 +113,7 @@ export function createAdanitTasks(baseDate: Date): Task[] {
       isLight: false,
       sameGroupRequired: true,
       blocksConsecutive: true,
+      requiresCategoryBreak: true,
     };
   });
 }
@@ -171,6 +172,7 @@ export function createShemeshTask(timeBlock: TimeBlock): Task {
     isLight: false,
     sameGroupRequired: false, // soft preference, not hard
     blocksConsecutive: true,
+    requiresCategoryBreak: true,
   };
 }
 

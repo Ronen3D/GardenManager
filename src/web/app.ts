@@ -344,6 +344,7 @@ function generateTasksFromTemplates(): Task[] {
           excludedCertifications: tpl.excludedCertifications,
           preferJuniors: tpl.preferJuniors,
           togethernessRelevant: tpl.togethernessRelevant,
+          requiresCategoryBreak: tpl.requiresCategoryBreak,
         });
       }
     }

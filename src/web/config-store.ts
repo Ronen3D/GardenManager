@@ -975,6 +975,7 @@ export function seedDefaultTaskTemplates(): void {
       },
     ],
     slots: [],
+    requiresCategoryBreak: true,
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. שתי תת-קבוצות. כל 6 חייבים ניצן. אותה קבוצה.',
   });
 
@@ -1017,6 +1018,7 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'שמש #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
       { id: uid('slot'), label: 'שמש #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
     ],
+    requiresCategoryBreak: true,
     description: 'משמרות 4 שעות (מחזור 05:00), 6 ביום. דורש ניצן.',
   });
 
@@ -1343,6 +1345,10 @@ export function loadFromStorage(): boolean {
         // Backfill togethernessRelevant: Adanit and Shemesh default to true
         if (tpl.togethernessRelevant === undefined) {
           tpl.togethernessRelevant = (tpl.taskType === TaskType.Adanit || tpl.taskType === TaskType.Shemesh);
+        }
+        // Backfill requiresCategoryBreak: Adanit and Shemesh default to true
+        if (tpl.requiresCategoryBreak === undefined) {
+          tpl.requiresCategoryBreak = (tpl.taskType === TaskType.Adanit || tpl.taskType === TaskType.Shemesh);
         }
       }
     }

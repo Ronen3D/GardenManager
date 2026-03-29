@@ -179,6 +179,8 @@ export interface Task {
   preferJuniors?: boolean;
   /** Whether "not with" togetherness preferences apply to this task */
   togethernessRelevant?: boolean;
+  /** HC-14: Enforces minimum 5h gap between this and other category-break tasks for the same participant. */
+  requiresCategoryBreak?: boolean;
 }
 
 // ─── Assignment ──────────────────────────────────────────────────────────────
@@ -325,7 +327,8 @@ export type HardConstraintCode =
   | 'HC-8'   // Adanit feasibility
   | 'HC-11'  // Choresh exclusion
   | 'HC-12'  // No consecutive high-load
-  | 'HC-13'; // Senior hard blocks
+  | 'HC-13'  // Senior hard blocks
+  | 'HC-14'; // Minimum category break (5h)
 
 /** Full algorithm settings: weights + constraint toggles */
 export interface AlgorithmSettings {
@@ -348,11 +351,12 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-11': 'הרחקת הסמכה אסורה ממשימה',
   'HC-12': 'ללא עומס רצוף',
   'HC-13': 'מגבלות שיבוץ סגל',
+  'HC-14': 'הפסקה מינימלית בין משימות קטגוריה (5 שעות)',
 };
 
 /** All hard constraint codes in display order */
 export const ALL_HC_CODES: HardConstraintCode[] = [
-  'HC-1', 'HC-2', 'HC-3', 'HC-4', 'HC-5', 'HC-6', 'HC-7', 'HC-8', 'HC-11', 'HC-12', 'HC-13',
+  'HC-1', 'HC-2', 'HC-3', 'HC-4', 'HC-5', 'HC-6', 'HC-7', 'HC-8', 'HC-11', 'HC-12', 'HC-13', 'HC-14',
 ];
 
 /** Factory default algorithm settings */
@@ -567,6 +571,8 @@ export interface TaskTemplate {
   preferJuniors?: boolean;
   /** Whether "not with" togetherness preferences apply to this task template */
   togethernessRelevant?: boolean;
+  /** HC-14: Enforces minimum 5h gap between category-break tasks for same participant. */
+  requiresCategoryBreak?: boolean;
 }
 
 // ─── Multi-Day Schedule Types ────────────────────────────────────────────────

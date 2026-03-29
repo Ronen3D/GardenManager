@@ -214,6 +214,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         ${tpl.isLight ? '<span class="badge badge-sm badge-outline">קלה</span>' : ''}
         ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">ניתן לשבץ ברצף</span>'}
         ${tpl.togethernessRelevant ? '<span class="badge badge-sm badge-outline">אי התאמה</span>' : ''}
+        ${tpl.requiresCategoryBreak ? '<span class="badge badge-sm badge-outline">הפסקת קטגוריה</span>' : ''}
         <span class="expand-arrow">${isExpanded ? '▼' : '▶'}</span>
       </div>
     </div>`;
@@ -234,6 +235,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חוסם רצף משימות</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="requiresCategoryBreak" data-tid="${tpl.id}" ${tpl.requiresCategoryBreak ? 'checked' : ''} /> הפסקת קטגוריה (5 שעות)</label>
       <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
     </div>`;
 
@@ -538,11 +540,12 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const isLight = (body.querySelector('[data-tpl-field="isLight"]') as HTMLInputElement)?.checked || false;
         const blocksConsecutive = (body.querySelector('[data-tpl-field="blocksConsecutive"]') as HTMLInputElement)?.checked || false;
         const togethernessRelevant = (body.querySelector('[data-tpl-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
+        const requiresCategoryBreak = (body.querySelector('[data-tpl-field="requiresCategoryBreak"]') as HTMLInputElement)?.checked || false;
 
         store.updateTaskTemplate(tid, {
           durationHours: dur, shiftsPerDay: shifts, startHour: startH,
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
-          sameGroupRequired: sameGroup, isLight, blocksConsecutive, togethernessRelevant,
+          sameGroupRequired: sameGroup, isLight, blocksConsecutive, togethernessRelevant, requiresCategoryBreak,
         });
         rerender();
         break;
@@ -741,6 +744,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           loadWindows: [],
           blocksConsecutive: !isLight,
           togethernessRelevant: (type === TaskType.Adanit || type === TaskType.Shemesh),
+          requiresCategoryBreak: (type === TaskType.Adanit || type === TaskType.Shemesh),
           subTeams: [],
           slots: [],
           description: desc || undefined,

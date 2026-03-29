@@ -32,7 +32,7 @@ import {
   SlotRequirement,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
-import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt } from '../constraints/hard-constraints';
+import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt, CATEGORY_BREAK_MS } from '../constraints/hard-constraints';
 import { computeScheduleScore, ScoreContext, IncrementalScorer } from '../constraints/soft-constraints';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
@@ -630,7 +630,15 @@ export function greedyAssign(
           // remaining blocked by consecutive high-load
           const hc12Count = rejectionCounts.get('HC-12') || 0;
           const hc13Count = rejectionCounts.get('HC-13') || 0;
-          if (hc12Count > 0 && hc13Count > 0) {
+          const hc14Count = rejectionCounts.get('HC-14') || 0;
+          if (hc14Count > 0 && (hc12Count > 0 || hc13Count > 0)) {
+            const parts = [`${hc14Count} ע"י הפסקת קטגוריה`];
+            if (hc12Count > 0) parts.push(`${hc12Count} ע"י עומס רצוף`);
+            if (hc13Count > 0) parts.push(`${hc13Count} ע"י מדיניות סגל`);
+            reason = `התנגשות אילוצים ב${task.name}: ${parts.join(', ')}. ${levelStr}${certStr}`;
+          } else if (hc14Count > 0) {
+            reason = `חסימת HC-14 הפסקת קטגוריה: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות קטגוריה קרובות (נדרשות 5 שעות הפסקה)`;
+          } else if (hc12Count > 0 && hc13Count > 0) {
             reason = `התנגשות HC-12×HC-13 ב${task.name}: ${hc13Count} נחסמו ע"י מדיניות סגל, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
           } else if (hc12Count > 0) {
             reason = `חסימת HC-12 עומס רצוף: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות כבדות סמוכות`;
@@ -948,6 +956,25 @@ function isSwapFeasible(
       return true;
     };
     if (!checkConsecutiveHighLoad(pI.id) || !checkConsecutiveHighLoad(pJ.id)) return false;
+  }
+
+  // HC-14: Category break — minimum 5h between category-flagged tasks
+  if (!disabledHC?.has('HC-14')) {
+    const checkCategoryBreak = (pid: string): boolean => {
+      const pAssignments = (byParticipant.get(pid) || [])
+        .map(a => ({ assignment: a, task: taskMap.get(a.taskId) }))
+        .filter((x): x is { assignment: Assignment; task: Task } => x.task != null && !!x.task.requiresCategoryBreak)
+        .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+      for (let x = 0; x < pAssignments.length - 1; x++) {
+        const cur = pAssignments[x];
+        const nxt = pAssignments[x + 1];
+        if (cur.task.id === nxt.task.id) continue;
+        const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
+        if (gap < CATEGORY_BREAK_MS) return false;
+      }
+      return true;
+    };
+    if (!checkCategoryBreak(pI.id) || !checkCategoryBreak(pJ.id)) return false;
   }
 
   return true;
