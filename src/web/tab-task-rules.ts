@@ -214,7 +214,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         ${tpl.isLight ? '<span class="badge badge-sm badge-outline">קלה</span>' : ''}
         ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">ניתן לשבץ ברצף</span>'}
         ${tpl.togethernessRelevant ? '<span class="badge badge-sm badge-outline">אי התאמה</span>' : ''}
-        ${tpl.requiresCategoryBreak ? '<span class="badge badge-sm badge-outline">הפסקת קטגוריה</span>' : ''}
+        ${tpl.requiresCategoryBreak ? '<span class="badge badge-sm badge-outline">מינימום 5 שעות הפסקה</span>' : ''}
         <span class="expand-arrow">${isExpanded ? '▼' : '▶'}</span>
       </div>
     </div>`;
@@ -235,7 +235,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חוסם רצף משימות</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="requiresCategoryBreak" data-tid="${tpl.id}" ${tpl.requiresCategoryBreak ? 'checked' : ''} /> הפסקת קטגוריה (5 שעות)</label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="requiresCategoryBreak" data-tid="${tpl.id}" ${tpl.requiresCategoryBreak ? 'checked' : ''} /> מינימום 5 שעות הפסקה</label>
       <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
     </div>`;
 

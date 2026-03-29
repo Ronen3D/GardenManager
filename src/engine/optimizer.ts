@@ -632,12 +632,12 @@ export function greedyAssign(
           const hc13Count = rejectionCounts.get('HC-13') || 0;
           const hc14Count = rejectionCounts.get('HC-14') || 0;
           if (hc14Count > 0 && (hc12Count > 0 || hc13Count > 0)) {
-            const parts = [`${hc14Count} ע"י הפסקת קטגוריה`];
+            const parts = [`${hc14Count} ע"י מינימום 5 שעות הפסקה`];
             if (hc12Count > 0) parts.push(`${hc12Count} ע"י עומס רצוף`);
             if (hc13Count > 0) parts.push(`${hc13Count} ע"י מדיניות סגל`);
             reason = `התנגשות אילוצים ב${task.name}: ${parts.join(', ')}. ${levelStr}${certStr}`;
           } else if (hc14Count > 0) {
-            reason = `חסימת HC-14 הפסקת קטגוריה: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות קטגוריה קרובות (נדרשות 5 שעות הפסקה)`;
+            reason = `חסימת HC-14 מינימום 5 שעות הפסקה: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות קטגוריה קרובות (נדרשות 5 שעות הפסקה)`;
           } else if (hc12Count > 0 && hc13Count > 0) {
             reason = `התנגשות HC-12×HC-13 ב${task.name}: ${hc13Count} נחסמו ע"י מדיניות סגל, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
           } else if (hc12Count > 0) {
