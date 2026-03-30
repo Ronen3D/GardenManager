@@ -1,0 +1,27 @@
+{
+  "name": "מערכת שיבוץ חכמה",
+  "short_name": "שיבוץ גן",
+  "description": "מערכת שיבוץ חכמה לצוותי גינה",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#27ae60",
+  "background_color": "#1a1a2e",
+  "dir": "rtl",
+  "lang": "he",
+  "icons": [
+    {
+      "src": "./icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
