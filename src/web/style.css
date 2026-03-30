@@ -3073,15 +3073,39 @@ tr.row-selected:hover {
 
 .schedule-grid-container {
   display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  align-items: start;
+}
+
+/* Default wide patrol (3-4 columns) */
+.schedule-grid-container.grid-patrol-wide {
   grid-template-columns: 2fr 1fr;
   grid-template-areas:
     "patrol hamama"
     "patrol aruga"
     "patrol mamtera"
     "shemesh shemesh";
-  gap: 12px;
-  margin-top: 12px;
-  align-items: start;
+}
+
+/* Narrow patrol (1-2 columns) — equal split */
+.schedule-grid-container.grid-patrol-narrow {
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "patrol hamama"
+    "patrol aruga"
+    "patrol mamtera"
+    "shemesh shemesh";
+}
+
+/* No patrol tasks — single column */
+.schedule-grid-container.grid-no-patrol {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "hamama"
+    "aruga"
+    "mamtera"
+    "shemesh";
 }
 
 .area-patrol  { grid-area: patrol; }
@@ -3092,13 +3116,13 @@ tr.row-selected:hover {
 
 @media (max-width: 767px) {
   .schedule-grid-container {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
     grid-template-areas:
       "patrol"
       "hamama"
       "aruga"
       "mamtera"
-      "shemesh";
+      "shemesh" !important;
   }
 }
 

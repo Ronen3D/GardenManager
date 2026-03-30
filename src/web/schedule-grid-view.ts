@@ -45,6 +45,16 @@ export function getTaskAssignments(task: Task, schedule: Schedule): AssignedSlot
     });
 }
 
+/** Count how many columns the patrol table would render (for grid sizing). */
+function countPatrolColumns(patrolTasks: Task[]): number {
+    let count = 0;
+    if (patrolTasks.some(t => t.type === TaskType.Karovit)) count++;
+    if (patrolTasks.some(t => t.type === TaskType.Karov)) count++;
+    if (patrolTasks.some(t => t.slots.some(s => s.adanitTeam === AdanitTeam.SegolMain))) count++;
+    if (patrolTasks.some(t => t.slots.some(s => s.adanitTeam === AdanitTeam.SegolSecondary))) count++;
+    return count;
+}
+
 function renderTimeCell(time: Date, timeNum: number): string {
     return `<td class="time-cell time-cell-inspectable" data-time-ms="${timeNum}" role="button" tabindex="0" title="הצג זמינות לפי פק\"ל">${fmt(time)}</td>`;
 }
@@ -140,44 +150,54 @@ function renderHamamaTable(tasks: Task[], schedule: Schedule, liveMode: LiveMode
 
 function renderArogaTable(tasks: Task[], schedule: Schedule, liveMode: LiveModeState): string {
     if (tasks.length === 0) return '';
+
+    // Discover sub-teams dynamically from slots
+    const subTeamIds = new Set<string>();
+    for (const t of tasks) {
+        for (const s of t.slots) {
+            subTeamIds.add(s.subTeamId ?? '');
+        }
+    }
+    const subTeams = Array.from(subTeamIds);
+
     const uniqueTimes = getUniqueStartTimes(tasks);
 
-    let rows = uniqueTimes.map(timeNum => {
+    const rows = uniqueTimes.map(timeNum => {
         const time = new Date(timeNum);
         const dayTasks = tasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
-        
-        let slot1Html = '';
-        let slot2Html = '';
+
+        const colHtml: string[] = subTeams.map(() => '');
 
         dayTasks.forEach(task => {
             const slots = getTaskAssignments(task, schedule);
-            // Reverse slots to match desired visual order (#2 then #1) if defined as such
-            // Assuming 2 slots. Slot index 0 -> Col #1 (Right?), Slot index 1 -> Col #2 (Left?)
-            // The request says "Aroga #2", "Aroga #1". 
-            // Let's assume Slot 0 is #1 and Slot 1 is #2.
-            // So Col 1 (Aroga #2) gets Slot 1. Col 2 (Aroga #1) gets Slot 0.
-            
-            slots.forEach((s, idx) => {
+            slots.forEach(s => {
                 const card = renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode);
-                if (idx === 1) slot2Html += card; // Slot #2
-                else slot1Html += card; // Slot #1
+                const idx = subTeams.indexOf(s.slot.subTeamId ?? '');
+                if (idx >= 0) colHtml[idx] += card;
             });
         });
 
         return `
             <tr data-time="${timeNum}">
                 ${renderTimeCell(time, timeNum)}
-                <td class="task-cell">${slot2Html}</td>
-                <td class="task-cell">${slot1Html}</td>
+                ${colHtml.map(h => `<td class="task-cell">${h}</td>`).join('')}
             </tr>
         `;
     }).join('');
+
+    // Build headers: use slot labels grouped by sub-team, fallback to "ערוגה #N"
+    const headers = subTeams.map((stId, i) => {
+        // Try to find a human-readable name from the first task's slots
+        const sample = tasks[0]?.slots.find(s => (s.subTeamId ?? '') === stId);
+        if (sample?.label) return sample.label;
+        return subTeams.length === 1 ? 'ערוגה' : `ערוגה #${subTeams.length - i}`;
+    });
 
     return `
         <div class="schedule-table-wrapper aroga-wrapper">
             <h3 class="table-title">ערוגה</h3>
             <table class="table schedule-grid-table">
-                <thead><tr><th class="col-time">זמן</th><th>ערוגה #2</th><th>ערוגה #1</th></tr></thead>
+                <thead><tr><th class="col-time">זמן</th>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -186,71 +206,86 @@ function renderArogaTable(tasks: Task[], schedule: Schedule, liveMode: LiveModeS
 
 function renderPatrolTable(
     allPatrolTasks: Task[],
-    schedule: Schedule, 
+    schedule: Schedule,
     liveMode: LiveModeState
 ): string {
+    if (allPatrolTasks.length === 0) return '';
+
     const karovitTasks = allPatrolTasks.filter(t => t.type === TaskType.Karovit);
     const karovTasks = allPatrolTasks.filter(t => t.type === TaskType.Karov);
     const adanitTasks = allPatrolTasks.filter(t => t.type === TaskType.Adanit);
-    
-    if (allPatrolTasks.length === 0) return '';
+
+    // Detect which Adanit teams actually exist in the current tasks
+    const hasMain = adanitTasks.some(t => t.slots.some(s => s.adanitTeam === AdanitTeam.SegolMain));
+    const hasSec  = adanitTasks.some(t => t.slots.some(s => s.adanitTeam === AdanitTeam.SegolSecondary));
+    const hasKarov = karovTasks.length > 0;
+    const hasKarovit = karovitTasks.length > 0;
+
+    // Build dynamic column definitions
+    type Col = { key: string; label: string };
+    const cols: Col[] = [];
+    if (hasMain)    cols.push({ key: 'main', label: 'סגול ראשי' });
+    if (hasSec)     cols.push({ key: 'sec',  label: 'סגול משני' });
+    if (hasKarov)   cols.push({ key: 'karov', label: 'כרוב' });
+    if (hasKarovit) cols.push({ key: 'karovit', label: 'כרובית' });
+
+    if (cols.length === 0) return '';
+
     const uniqueTimes = getUniqueStartTimes(allPatrolTasks);
 
-    let rows = uniqueTimes.map(timeNum => {
+    const rows = uniqueTimes.map(timeNum => {
         const time = new Date(timeNum);
+        const cells: Record<string, string> = { main: '', sec: '', karov: '', karovit: '' };
 
         // Helper to render tasks of a certain type at this time
         const renderType = (typeTasks: Task[]) => {
             const current = typeTasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
-            return current.map(t => 
+            return current.map(t =>
                 getTaskAssignments(t, schedule).map(s => renderAssignmentCard(s.slot, s.assignment, s.participant, t, liveMode)).join('')
             ).join('');
         };
 
-        const karovitHtml = renderType(karovitTasks);
-        const karovHtml = renderType(karovTasks);
+        if (hasKarovit) cells.karovit = renderType(karovitTasks);
+        if (hasKarov)   cells.karov = renderType(karovTasks);
 
         // Adanit logic: Split by team
         const currentAdanit = adanitTasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
-        let sagolSecHtml = '';
-        let sagolMainHtml = '';
-
         currentAdanit.forEach(task => {
             const slots = getTaskAssignments(task, schedule);
-            
-            const secSlots = slots.filter(s => s.slot.adanitTeam === AdanitTeam.SegolSecondary);
-            sagolSecHtml += secSlots.map(s => renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode)).join('');
-            
-            const mainSlots = slots.filter(s => s.slot.adanitTeam === AdanitTeam.SegolMain);
-            sagolMainHtml += mainSlots.map(s => renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode)).join('');
+            if (hasSec) {
+                cells.sec += slots.filter(s => s.slot.adanitTeam === AdanitTeam.SegolSecondary)
+                    .map(s => renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode)).join('');
+            }
+            if (hasMain) {
+                cells.main += slots.filter(s => s.slot.adanitTeam === AdanitTeam.SegolMain)
+                    .map(s => renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode)).join('');
+            }
         });
 
-        // Hide row if empty? Or show partial? 
-        // Showing all rows where ANY of these exist ensures alignment if they share times.
-        if (!karovitHtml && !karovHtml && !sagolSecHtml && !sagolMainHtml) return '';
+        if (cols.every(c => !cells[c.key])) return '';
 
         return `
             <tr data-time="${timeNum}">
                 ${renderTimeCell(time, timeNum)}
-                <td class="task-cell">${sagolMainHtml}</td>
-                <td class="task-cell">${sagolSecHtml}</td>
-                <td class="task-cell">${karovHtml}</td>
-                <td class="task-cell">${karovitHtml}</td>
+                ${cols.map(c => `<td class="task-cell">${cells[c.key]}</td>`).join('')}
             </tr>
         `;
     }).join('');
 
+    // Build dynamic title from present task types
+    const titleParts: string[] = [];
+    if (hasKarov || hasKarovit) titleParts.push(hasKarov && hasKarovit ? 'כרוב, כרובית' : hasKarov ? 'כרוב' : 'כרובית');
+    if (hasMain || hasSec) titleParts.push('אדנית');
+    const title = titleParts.join(' ו');
+
     return `
         <div class="schedule-table-wrapper patrol-wrapper">
-            <h3 class="table-title">כרוב, כרובית ואדנית</h3>
+            <h3 class="table-title">${title}</h3>
             <table class="table schedule-grid-table">
                 <thead>
                     <tr>
                         <th class="col-time">זמן</th>
-                        <th>סגול ראשי</th>
-                        <th>סגול משני</th>
-                        <th>כרוב</th>
-                        <th>כרובית</th>
+                        ${cols.map(c => `<th>${c.label}</th>`).join('')}
                     </tr>
                 </thead>
                 <tbody>${rows}</tbody>
@@ -293,45 +328,52 @@ function renderMamteraTable(tasks: Task[], schedule: Schedule, liveMode: LiveMod
 
 function renderShemeshTable(tasks: Task[], schedule: Schedule, liveMode: LiveModeState): string {
     if (tasks.length === 0) return '';
+
+    // Discover sub-teams dynamically from slots
+    const subTeamIds = new Set<string>();
+    for (const t of tasks) {
+        for (const s of t.slots) {
+            subTeamIds.add(s.subTeamId ?? '');
+        }
+    }
+    const subTeams = Array.from(subTeamIds);
+
     const uniqueTimes = getUniqueStartTimes(tasks);
 
-    let rows = uniqueTimes.map(timeNum => {
+    const rows = uniqueTimes.map(timeNum => {
         const time = new Date(timeNum);
         const dayTasks = tasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
-        
-        let slot1Html = '';
-        let slot2Html = '';
+
+        const colHtml: string[] = subTeams.map(() => '');
 
         dayTasks.forEach(task => {
             const slots = getTaskAssignments(task, schedule);
-            // Splitting slots: Slot 0 -> #1, Slot 1 -> #2.
-            // Request wants columns: "Shemesh 2#", "Shemesh #1"
-            // So we put Slot 1 in Col 1, Slot 0 in Col 2.
-            
-            slots.forEach((s, idx) => {
+            slots.forEach(s => {
                 const card = renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode);
-                if (idx === 1) slot2Html += card; // Slot #2
-                else slot1Html += card; // Slot #1
+                const idx = subTeams.indexOf(s.slot.subTeamId ?? '');
+                if (idx >= 0) colHtml[idx] += card;
             });
-            
-             // Handle if >2 slots by just appending to last col or first? 
-             // Shemesh is usually 2.
         });
 
         return `
             <tr data-time="${timeNum}">
                 ${renderTimeCell(time, timeNum)}
-                <td class="task-cell">${slot2Html}</td>
-                <td class="task-cell">${slot1Html}</td>
+                ${colHtml.map(h => `<td class="task-cell">${h}</td>`).join('')}
             </tr>
         `;
     }).join('');
+
+    const headers = subTeams.map((stId, i) => {
+        const sample = tasks[0]?.slots.find(s => (s.subTeamId ?? '') === stId);
+        if (sample?.label) return sample.label;
+        return subTeams.length === 1 ? 'שמש' : `שמש #${subTeams.length - i}`;
+    });
 
     return `
         <div class="schedule-table-wrapper shemesh-wrapper">
             <h3 class="table-title">שמש</h3>
             <table class="table schedule-grid-table">
-                <thead><tr><th class="col-time">זמן</th><th>שמש #2</th><th>שמש #1</th></tr></thead>
+                <thead><tr><th class="col-time">זמן</th>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -388,15 +430,17 @@ export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveM
     const mamtera = dayTasks.filter(t => t.type === TaskType.Mamtera);
     const shemesh = dayTasks.filter(t => t.type === TaskType.Shemesh);
 
-    // 3. Render Grid Layout
-    // CSS Grid layout:
-    //  [ Patrol (wide) ]  [ Hamama  ]
-    //                     [ Aruga   ]
-    //                     [ Mamtera ]
-    //  [        Shemesh (full width)        ]
-    
+    // 3. Determine patrol column count for responsive grid sizing
+    const patrolColCount = countPatrolColumns(patrol);
+    const hasPatrol = patrol.length > 0;
+    const hasRight = hamama.length > 0 || aruga.length > 0 || mamtera.length > 0;
+    // Patrol gets wide column only when it has 3+ columns AND there's content beside it
+    const gridClass = !hasPatrol ? 'grid-no-patrol'
+        : patrolColCount <= 2 && hasRight ? 'grid-patrol-narrow'
+        : 'grid-patrol-wide';
+
     return `
-        <div class="schedule-grid-container">
+        <div class="schedule-grid-container ${gridClass}">
             <div class="area-patrol">${renderPatrolTable(patrol, schedule, liveMode)}</div>
             <div class="area-hamama">${renderHamamaTable(hamama, schedule, liveMode)}</div>
             <div class="area-aruga">${renderArogaTable(aruga, schedule, liveMode)}</div>

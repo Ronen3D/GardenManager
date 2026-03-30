@@ -955,15 +955,18 @@
     overflow: hidden;
   }
 
-  /* Bulk toolbar above bottom nav */
+  /* Bulk toolbar fixed above bottom nav — no layout shift */
   .bulk-toolbar {
-    position: sticky;
-    bottom: 72px;
-    z-index: 20;
+    position: fixed;
+    bottom: 68px;
+    left: 12px;
+    right: 12px;
+    z-index: 48;
     flex-wrap: nowrap;
     justify-content: center;
     gap: 8px;
     padding: 8px 10px;
+    margin: 0;
     border-radius: 6px;
   }
   .bulk-toolbar .bulk-count {

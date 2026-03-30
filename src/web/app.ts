@@ -725,7 +725,7 @@ function renderScheduleTab(): string {
     <div class="toolbar-right">
       ${liveModeControls}
       <label class="scenarios-label" for="input-scenarios" title="מספר ניסיונות אופטימיזציה לבדיקה">ניסיונות
-        <input type="number" id="input-scenarios" class="input-scenarios" min="1" max="50000" step="100" value="${OPTIM_ATTEMPTS}" ${_isOptimizing ? 'disabled' : ''} />
+        <input type="number" id="input-scenarios" class="input-scenarios" min="50" max="50000" step="50" value="${OPTIM_ATTEMPTS}" ${_isOptimizing ? 'disabled' : ''} />
       </label>
       <button class="btn-primary ${_scheduleDirty && currentSchedule ? 'btn-generate-dirty' : ''}" id="btn-generate" ${!preflight.canGenerate || _isOptimizing ? 'disabled' : ''}
         ${!preflight.canGenerate ? 'title="תקן בעיות קריטיות בכללי המשימות תחילה"' : ''}>
@@ -1139,7 +1139,7 @@ function renderGanttChart(schedule: Schedule): string {
 // ─── Schedule Generation ─────────────────────────────────────────────────────
 
 /** Number of optimization attempts per generation (user-configurable) */
-let OPTIM_ATTEMPTS = 150;
+let OPTIM_ATTEMPTS = 100;
 
 /**
  * Render the optimization overlay that covers the schedule board
@@ -3388,40 +3388,84 @@ function onStoreChanged(): void {
 
   _scheduleDirty = true;
 
-  // Refresh participant metadata from the store (Bug #10 fix)
+  // ── 1. Refresh participants ──────────────────────────────────────────────
   const currentParticipants = store.getAllParticipants();
   const storeIds = new Set(currentParticipants.map(p => p.id));
   const storeMap = new Map(currentParticipants.map(p => [p.id, p]));
 
-  // Strip assignments for participants that no longer exist
-  const before = currentSchedule.assignments.length;
-  const cleanedAssignments = currentSchedule.assignments.filter(
+  let cleanedAssignments = currentSchedule.assignments.filter(
     a => storeIds.has(a.participantId),
   );
 
-  // Rebuild participants from current store state so levels/certs/groups
-  // stay in sync (Bug #10 fix). Only include participants that still exist.
   const refreshedParticipants = currentSchedule.participants
     .filter(p => storeIds.has(p.id))
     .map(p => storeMap.get(p.id)!);
 
-  const changed = cleanedAssignments.length !== before
-    || refreshedParticipants.some((sp, i) => sp !== currentSchedule!.participants[i]);
+  // ── 2. Sync tasks with current templates ─────────────────────────────────
+  // Regenerate tasks from current template definitions so added/removed
+  // sub-teams are reflected immediately in the schedule grid.
+  const freshTasks = generateTasksFromTemplates();
 
-  if (changed) {
-    currentSchedule = {
-      ...currentSchedule,
-      assignments: cleanedAssignments,
-      participants: refreshedParticipants,
-    };
+  // Build a lookup: old task name → old task (names are stable across edits)
+  const oldTaskByName = new Map(currentSchedule.tasks.map(t => [t.name, t]));
 
-    // Revalidate violations/score after reconciliation (Bug #11 fix)
-    if (engine) {
-      engine.importSchedule(currentSchedule);
-      engine.addParticipants(refreshedParticipants);
-      engine.revalidateFull();
-      currentSchedule = engine.getSchedule()!;
+  // Build a lookup: old slotId → assignment  (for remapping)
+  const assignBySlot = new Map(cleanedAssignments.map(a => [a.slotId, a]));
+
+  const remappedAssignments: typeof cleanedAssignments = [];
+  const newTasks: Task[] = freshTasks.map(freshTask => {
+    const oldTask = oldTaskByName.get(freshTask.name);
+    if (!oldTask) return freshTask; // brand-new task, no assignments to carry
+
+    // Map old slots by subTeamId+label for stable matching
+    const oldSlotKey = (s: SlotRequirement) => `${s.subTeamId ?? ''}::${s.label ?? ''}`;
+    // Track which old slots have been consumed (to handle duplicates)
+    const oldSlotsByKey = new Map<string, SlotRequirement[]>();
+    for (const s of oldTask.slots) {
+      const key = oldSlotKey(s);
+      if (!oldSlotsByKey.has(key)) oldSlotsByKey.set(key, []);
+      oldSlotsByKey.get(key)!.push(s);
     }
+
+    // For each new slot, try to find a matching old slot and carry its assignment
+    const mappedSlots = freshTask.slots.map(newSlot => {
+      const key = oldSlotKey(newSlot);
+      const candidates = oldSlotsByKey.get(key);
+      if (candidates && candidates.length > 0) {
+        const oldSlot = candidates.shift()!;
+        const oldAssign = assignBySlot.get(oldSlot.slotId);
+        if (oldAssign) {
+          remappedAssignments.push({
+            ...oldAssign,
+            taskId: freshTask.id,
+            slotId: newSlot.slotId,
+          });
+        }
+      }
+      return newSlot;
+    });
+
+    return { ...freshTask, slots: mappedSlots };
+  });
+
+  // Also carry over assignments that were already remapped above
+  // (drop old assignments — they've been remapped or belong to deleted slots)
+  cleanedAssignments = remappedAssignments;
+
+  // ── 3. Rebuild schedule ──────────────────────────────────────────────────
+  currentSchedule = {
+    ...currentSchedule,
+    tasks: newTasks,
+    assignments: cleanedAssignments,
+    participants: refreshedParticipants,
+  };
+
+  // Revalidate violations/score after reconciliation
+  if (engine) {
+    engine.importSchedule(currentSchedule);
+    engine.addParticipants(refreshedParticipants);
+    engine.revalidateFull();
+    currentSchedule = engine.getSchedule()!;
   }
 }
 
