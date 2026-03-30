@@ -19,7 +19,19 @@ npm run electron:dev     # Dev mode: Vite + Electron concurrently
 npm run electron:build   # Production: Vite + tsc + electron-builder (Windows NSIS)
 ```
 
-There is no external test framework — tests use a custom `assert()` function in `src/test.ts` with console pass/fail output. No linter or formatter is configured.
+There is no external test framework — unit tests use a custom `assert()` function in `src/test.ts` with console pass/fail output. No linter or formatter is configured.
+
+### E2E Tests (Playwright)
+
+```bash
+npm run test:e2e              # All viewports
+npm run test:e2e:desktop      # Desktop only (1280×800)
+npm run test:e2e:phone        # Phone only (375×812)
+npx playwright test --project=tablet   # Tablet (768×1024)
+npx playwright test tests/navigation.spec.ts  # Single spec file
+```
+
+E2E specs are in `tests/` and cover desktop regression, navigation, mobile schedule/modals, and touch interactions. The dev server must be running (`npm run dev`) before E2E tests.
 
 ## Dual-Build Architecture
 

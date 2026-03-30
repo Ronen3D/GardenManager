@@ -51,7 +51,8 @@ export function showAlert(message: string, opts?: AlertOptions): Promise<void> {
         </div>
       </div>`;
 
-    const close = () => { backdrop.remove(); resolve(); };
+    lockBodyScroll();
+    const close = () => { backdrop.remove(); unlockBodyScroll(); resolve(); };
 
     backdrop.querySelector('.gm-modal-btn-ok')!.addEventListener('click', close);
     backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
@@ -102,8 +103,9 @@ export function showPrompt(message: string, opts?: PromptOptions): Promise<strin
         </div>
       </div>`;
 
+    lockBodyScroll();
     const mainInput = backdrop.querySelector('.gm-modal-main-input') as HTMLInputElement;
-    const close = (val: string | null) => { backdrop.remove(); resolve(val); };
+    const close = (val: string | null) => { backdrop.remove(); unlockBodyScroll(); resolve(val); };
 
     // OK / Cancel
     backdrop.querySelector('.gm-modal-btn-ok')!.addEventListener('click', () => {
@@ -176,7 +178,8 @@ export function showConfirm(message: string, opts?: ConfirmOptions): Promise<boo
         </div>
       </div>`;
 
-    const close = (val: boolean) => { backdrop.remove(); resolve(val); };
+    lockBodyScroll();
+    const close = (val: boolean) => { backdrop.remove(); unlockBodyScroll(); resolve(val); };
 
     backdrop.querySelector('.gm-modal-btn-ok')!.addEventListener('click', () => close(true));
     backdrop.querySelector('.gm-modal-btn-cancel')!.addEventListener('click', () => close(false));
@@ -403,5 +406,136 @@ export function wireCustomSelect(
   _selectCleanups.set(selectId, () => {
     document.removeEventListener('click', closeOnOutside);
   });
+}
+
+// ─── Body Scroll Lock ───────────────────────────────────────────────────────
+
+let _scrollLockCount = 0;
+let _savedScrollY = 0;
+
+/** Lock body scroll (nestable — only the first lock applies). */
+export function lockBodyScroll(): void {
+  if (_scrollLockCount === 0) {
+    _savedScrollY = window.scrollY;
+    document.body.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.width = '100%';
+    document.body.style.top = `-${_savedScrollY}px`;
+  }
+  _scrollLockCount++;
+}
+
+/** Unlock body scroll (only the last unlock restores). */
+export function unlockBodyScroll(): void {
+  _scrollLockCount = Math.max(0, _scrollLockCount - 1);
+  if (_scrollLockCount === 0) {
+    document.body.style.overflow = '';
+    document.body.style.position = '';
+    document.body.style.width = '';
+    document.body.style.top = '';
+    window.scrollTo(0, _savedScrollY);
+  }
+}
+
+// ─── Bottom Sheet ───────────────────────────────────────────────────────────
+
+export interface BottomSheetOptions {
+  title?: string;
+  /** Extra HTML rendered as a fixed action row at the bottom of the sheet. */
+  actions?: string;
+  onClose?: () => void;
+}
+
+/**
+ * Show a bottom sheet (mobile-friendly overlay that slides up from the bottom).
+ * Returns a handle with a `close()` function for programmatic dismissal.
+ */
+export function showBottomSheet(
+  content: string,
+  opts?: BottomSheetOptions,
+): { close: () => void } {
+  const title = opts?.title || '';
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'gm-bottom-sheet-backdrop';
+
+  const actionsHtml = opts?.actions
+    ? `<div class="gm-bs-actions">${opts.actions}</div>`
+    : '';
+
+  backdrop.innerHTML = `
+    <div class="gm-bottom-sheet" role="dialog" aria-modal="true">
+      <div class="gm-bs-drag-handle"><span></span></div>
+      ${title ? `<div class="gm-bs-header"><span class="gm-bs-title">${escHtml(title)}</span><button class="gm-bs-close" aria-label="סגור">✕</button></div>` : '<div class="gm-bs-header-minimal"><button class="gm-bs-close" aria-label="סגור">✕</button></div>'}
+      <div class="gm-bs-body">${content}</div>
+      ${actionsHtml}
+    </div>`;
+
+  lockBodyScroll();
+
+  const sheet = backdrop.querySelector('.gm-bottom-sheet') as HTMLElement;
+
+  const close = () => {
+    sheet.classList.add('gm-bs-closing');
+    sheet.addEventListener('animationend', () => {
+      backdrop.remove();
+      unlockBodyScroll();
+      opts?.onClose?.();
+    }, { once: true });
+  };
+
+  // Close on backdrop tap
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) close();
+  });
+
+  // Close button
+  backdrop.querySelector('.gm-bs-close')!.addEventListener('click', close);
+
+  // Escape key
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(); }
+  };
+  document.addEventListener('keydown', onKey);
+
+  // Swipe-down-to-dismiss
+  let startY = 0;
+  let currentY = 0;
+  let dragging = false;
+
+  const dragHandle = backdrop.querySelector('.gm-bs-drag-handle') as HTMLElement;
+
+  dragHandle.addEventListener('touchstart', (e) => {
+    startY = e.touches[0].clientY;
+    currentY = startY;
+    dragging = true;
+    sheet.style.transition = 'none';
+  }, { passive: true });
+
+  dragHandle.addEventListener('touchmove', (e) => {
+    if (!dragging) return;
+    currentY = e.touches[0].clientY;
+    const dy = Math.max(0, currentY - startY);
+    sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+
+  dragHandle.addEventListener('touchend', () => {
+    if (!dragging) return;
+    dragging = false;
+    sheet.style.transition = '';
+    const dy = currentY - startY;
+    if (dy > 80) {
+      close();
+    } else {
+      sheet.style.transform = '';
+    }
+  });
+
+  document.body.appendChild(backdrop);
+
+  // Focus the close button for accessibility
+  (backdrop.querySelector('.gm-bs-close') as HTMLElement).focus();
+
+  return { close };
 }
 

@@ -1175,7 +1175,7 @@ select.input-sm {
 }
 
 /* ─── Responsive ─────────────────────────────────────── */
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   #app { padding: 12px; }
   header h1 { font-size: 1.5rem; }
   .score-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1271,7 +1271,6 @@ select.input-sm {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 120px;
   }
 
   /* Issue 6 — Profile view adjustments */
@@ -1359,6 +1358,8 @@ select.input-sm {
   font-size: 1.1rem;
   font-weight: 700;
   color: var(--text);
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .kpi-label {
@@ -2516,10 +2517,10 @@ tr.row-selected:hover {
   gap: 12px;
   padding: 10px 16px;
   margin-top: 8px;
-  background: var(--card-bg, #fff);
-  border: 1px solid var(--border, #ddd);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.15);
   z-index: 50;
 }
 
@@ -3089,7 +3090,7 @@ tr.row-selected:hover {
 .area-mamtera { grid-area: mamtera; }
 .area-shemesh { grid-area: shemesh; }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .schedule-grid-container {
     grid-template-columns: 1fr;
     grid-template-areas:

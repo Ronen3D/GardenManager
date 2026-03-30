@@ -11,6 +11,8 @@
  */
 
 import './style.css';
+import './style-mobile.css';
+import { initResponsive, isTouchDevice, isSmallScreen } from './responsive';
 
 import {
   SchedulingEngine,
@@ -60,7 +62,7 @@ import {
   fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge, SVG_ICONS, escHtml,
 } from './ui-helpers';
 import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
-import { showAlert, showPrompt, showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
+import { showAlert, showPrompt, showConfirm, showToast, showBottomSheet, renderCustomSelect, wireCustomSelect } from './ui-modal';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
@@ -783,10 +785,16 @@ function renderScheduleTab(): string {
   html += `<div class="schedule-layout">`;
   html += `<div class="schedule-main">`;
   html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState())}</section>`;
-  html += `<section class="gantt-section"><h2>מערכת שעות כללית</h2>${renderGanttChart(s)}</section>`;
+  // Gantt chart: wrapped in mobile-toggleable accordion
+  html += `<section class="gantt-section">`;
+  html += `<button class="gantt-mobile-toggle" aria-expanded="true" data-action="toggle-gantt">${SVG_ICONS.chart} מערכת שעות כללית</button>`;
+  html += `<div class="gantt-section-content"><h2 class="gantt-desktop-title">מערכת שעות כללית</h2>${renderGanttChart(s)}</div>`;
+  html += `</section>`;
   html += `<section><h2>הפרות אילוצים <span class="count">${filterVisibleViolations(s.violations).length}</span></h2>${renderViolations(s)}</section>`;
   html += `</div>`;
   html += renderParticipantSidebar(s);
+  // Mobile-only FAB to toggle sidebar drawer
+  html += `<button class="sidebar-fab" title="עומס עבודה" aria-label="הצג סרגל עומס">${SVG_ICONS.chart}</button>`;
   html += `</div>`;
 
   // Optimization overlay (rendered inside tab so it covers the schedule board)
@@ -1711,52 +1719,84 @@ function wireRescueModalEvents(): void {
     for (const p of currentSchedule.participants) pMap.set(p.id, p);
   }
 
-  backdrop.addEventListener('mouseover', (e) => {
-    const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
-    if (!target) return;
-    const pid = target.dataset.pid;
-    const planId = target.dataset.planId;
-    if (!pid || !planId || !_rescueResult || !currentSchedule) return;
+  if (isTouchDevice) {
+    // ── Touch: tap toggles inline task preview ──
+    let _expandedRescuePid: string | null = null;
 
-    const plan = _rescueResult.plans.find(p => p.id === planId);
-    if (!plan) return;
-    const participant = pMap.get(pid);
-    if (!participant) return;
+    backdrop.addEventListener('click', (e) => {
+      const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
+      if (!target) return;
+      const pid = target.dataset.pid;
+      const planId = target.dataset.planId;
+      if (!pid || !planId || !_rescueResult || !currentSchedule) return;
 
-    if (_rescueTooltipHideTimer) { clearTimeout(_rescueTooltipHideTimer); _rescueTooltipHideTimer = null; }
+      // Remove any existing inline preview
+      const existing = backdrop.querySelector('.rescue-inline-preview');
+      if (existing) existing.remove();
 
-    const nextTasks = computePostSwapTasks(pid, plan, currentSchedule);
-    const tooltip = getRescueTooltipEl();
-    tooltip.innerHTML = buildRescueParticipantTooltip(participant.name, nextTasks);
-    tooltip.style.display = 'block';
+      if (_expandedRescuePid === pid) { _expandedRescuePid = null; return; }
 
-    // Position near the target element
-    const rect = target.getBoundingClientRect();
-    let left = rect.right + 8;
-    let top = rect.top - 4;
+      const plan = _rescueResult.plans.find(p => p.id === planId);
+      if (!plan) return;
+      const participant = pMap.get(pid);
+      if (!participant) return;
 
-    const ttWidth = 260;
-    const ttHeight = tooltip.offsetHeight || 140;
-    if (left + ttWidth > window.innerWidth) {
-      left = rect.left - ttWidth - 8;
-    }
-    if (top + ttHeight > window.innerHeight) {
-      top = window.innerHeight - ttHeight - 8;
-    }
-    if (top < 4) top = 4;
+      _expandedRescuePid = pid;
+      const nextTasks = computePostSwapTasks(pid, plan, currentSchedule);
+      const detail = document.createElement('div');
+      detail.className = 'rescue-inline-preview task-inline-detail';
+      detail.innerHTML = buildRescueParticipantTooltip(participant.name, nextTasks);
+      target.insertAdjacentElement('afterend', detail);
+    });
+  } else {
+    // ── Desktop: hover shows fixed tooltip ──
+    backdrop.addEventListener('mouseover', (e) => {
+      const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
+      if (!target) return;
+      const pid = target.dataset.pid;
+      const planId = target.dataset.planId;
+      if (!pid || !planId || !_rescueResult || !currentSchedule) return;
 
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${top}px`;
-  });
+      const plan = _rescueResult.plans.find(p => p.id === planId);
+      if (!plan) return;
+      const participant = pMap.get(pid);
+      if (!participant) return;
 
-  backdrop.addEventListener('mouseout', (e) => {
-    const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
-    if (!target) return;
-    _rescueTooltipHideTimer = setTimeout(() => {
+      if (_rescueTooltipHideTimer) { clearTimeout(_rescueTooltipHideTimer); _rescueTooltipHideTimer = null; }
+
+      const nextTasks = computePostSwapTasks(pid, plan, currentSchedule);
       const tooltip = getRescueTooltipEl();
-      tooltip.style.display = 'none';
-    }, 120);
-  });
+      tooltip.innerHTML = buildRescueParticipantTooltip(participant.name, nextTasks);
+      tooltip.style.display = 'block';
+
+      // Position near the target element
+      const rect = target.getBoundingClientRect();
+      let left = rect.right + 8;
+      let top = rect.top - 4;
+
+      const ttWidth = 260;
+      const ttHeight = tooltip.offsetHeight || 140;
+      if (left + ttWidth > window.innerWidth) {
+        left = rect.left - ttWidth - 8;
+      }
+      if (top + ttHeight > window.innerHeight) {
+        top = window.innerHeight - ttHeight - 8;
+      }
+      if (top < 4) top = 4;
+
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    });
+
+    backdrop.addEventListener('mouseout', (e) => {
+      const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
+      if (!target) return;
+      _rescueTooltipHideTimer = setTimeout(() => {
+        const tooltip = getRescueTooltipEl();
+        tooltip.style.display = 'none';
+      }, 120);
+    });
+  }
 }
 
 function showRescueError(message: string): void {
@@ -1922,9 +1962,9 @@ function renderAll(): void {
       <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">v1.2.2</span></h1>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
-          title="ביטול">↪ ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</button>
+          title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
         <button class="btn-sm btn-outline" id="btn-redo" ${!store.getUndoRedoState().canRedo ? 'disabled' : ''}
-          title="שחזור">↩ שחזור${store.getUndoRedoState().redoDepth ? ' (' + store.getUndoRedoState().redoDepth + ')' : ''}</button>
+          title="שחזור">↩<span class="btn-label"> שחזור${store.getUndoRedoState().redoDepth ? ' (' + store.getUndoRedoState().redoDepth + ')' : ''}</span></button>
       </div>
       <button class="theme-toggle" id="btn-theme-toggle" title="החלף מצב בהיר/כהה">
         ${document.documentElement.dataset.theme === 'light' ? SVG_ICONS.moon : SVG_ICONS.sun}
@@ -1944,19 +1984,23 @@ function renderAll(): void {
   </header>
 
   <nav class="tab-nav">
-    <button class="tab-btn ${currentTab === 'participants' ? 'tab-active' : ''}" data-tab="participants">
-      ${SVG_ICONS.participants} משתתפים <span class="count">${participants.length}</span>
+    <button class="tab-btn ${currentTab === 'participants' ? 'tab-active' : ''}" data-tab="participants" aria-label="משתתפים">
+      <span class="tab-icon">${SVG_ICONS.participants}</span>
+      <span class="tab-label">משתתפים <span class="count">${participants.length}</span></span>
     </button>
-    <button class="tab-btn ${currentTab === 'task-rules' ? 'tab-active' : ''}" data-tab="task-rules">
-      ${SVG_ICONS.tasks} פירוט משימות <span class="count">${templates.length}</span>
-      ${!preflight.canGenerate ? '<span class="badge badge-sm" style="background:var(--danger);margin-inline-start:4px">!</span>' : ''}
+    <button class="tab-btn ${currentTab === 'task-rules' ? 'tab-active' : ''}" data-tab="task-rules" aria-label="משימות">
+      <span class="tab-icon">${SVG_ICONS.tasks}</span>
+      <span class="tab-label">משימות <span class="count">${templates.length}</span>
+      ${!preflight.canGenerate ? '<span class="badge badge-sm" style="background:var(--danger);margin-inline-start:4px">!</span>' : ''}</span>
     </button>
-    <button class="tab-btn ${currentTab === 'schedule' ? 'tab-active' : ''}" data-tab="schedule">
-      ${SVG_ICONS.chart} תצוגת שבצ"ק
-      ${currentSchedule ? '<span class="badge badge-sm" style="background:var(--success);margin-inline-start:4px">✓</span>' : ''}
+    <button class="tab-btn ${currentTab === 'schedule' ? 'tab-active' : ''}" data-tab="schedule" aria-label="שבצ&quot;ק">
+      <span class="tab-icon">${SVG_ICONS.chart}</span>
+      <span class="tab-label">שבצ"ק
+      ${currentSchedule ? '<span class="badge badge-sm" style="background:var(--success);margin-inline-start:4px">✓</span>' : ''}</span>
     </button>
-    <button class="tab-btn ${currentTab === 'algorithm' ? 'tab-active' : ''}" data-tab="algorithm">
-      ${SVG_ICONS.settings} אלגוריתם
+    <button class="tab-btn ${currentTab === 'algorithm' ? 'tab-active' : ''}" data-tab="algorithm" aria-label="אלגוריתם">
+      <span class="tab-icon">${SVG_ICONS.settings}</span>
+      <span class="tab-label">אלגוריתם</span>
     </button>
   </nav>
 
@@ -2355,19 +2399,38 @@ function wireScheduleEvents(container: HTMLElement): void {
     });
   });
 
+  // ── Gantt mobile accordion toggle ──
+  const ganttToggle = container.querySelector('[data-action="toggle-gantt"]');
+  if (ganttToggle) {
+    const ganttContent = container.querySelector('.gantt-section-content') as HTMLElement | null;
+    // Default: collapsed on mobile, expanded on desktop
+    if (isSmallScreen && ganttContent) {
+      ganttContent.style.display = 'none';
+      ganttToggle.setAttribute('aria-expanded', 'false');
+    }
+    ganttToggle.addEventListener('click', () => {
+      if (!ganttContent) return;
+      const expanded = ganttToggle.getAttribute('aria-expanded') === 'true';
+      ganttToggle.setAttribute('aria-expanded', String(!expanded));
+      ganttContent.style.display = expanded ? 'none' : '';
+    });
+  }
+
   // ── Participant Tooltip (event delegation) ──
   wireParticipantTooltip(container);
 
   // ── Task Tooltip (event delegation) ──
   wireTaskTooltip(container);
 
-  // ── Participant click → Profile View ──
-  container.addEventListener('click', (e) => {
-    const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
-    if (!target) return;
-    const pid = target.dataset.pid;
-    if (pid) navigateToProfile(pid);
-  });
+  // ── Participant click → Profile View (desktop only; touch uses bottom sheet / long-press) ──
+  if (!isTouchDevice) {
+    container.addEventListener('click', (e) => {
+      const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
+      if (!target) return;
+      const pid = target.dataset.pid;
+      if (pid) navigateToProfile(pid);
+    });
+  }
 
   container.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest('.time-cell-inspectable[data-time-ms]') as HTMLElement | null;
@@ -2442,6 +2505,38 @@ function wireScheduleEvents(container: HTMLElement): void {
       _sidebarCollapsed = !_sidebarCollapsed;
       localStorage.setItem('gm-sidebar-collapsed', _sidebarCollapsed ? '1' : '0');
       renderAll();
+    });
+  }
+
+  // ── Mobile sidebar drawer (FAB toggle) ──
+  if (isSmallScreen) {
+    const fab = container.querySelector('.sidebar-fab');
+    if (fab) {
+      fab.addEventListener('click', () => {
+        const sidebar = container.querySelector('.participant-sidebar');
+        const existingBackdrop = document.querySelector('.sidebar-drawer-backdrop');
+        if (sidebar?.classList.contains('sidebar-mobile-open')) {
+          sidebar.classList.remove('sidebar-mobile-open');
+          existingBackdrop?.remove();
+        } else if (sidebar) {
+          sidebar.classList.add('sidebar-mobile-open');
+          const bd = document.createElement('div');
+          bd.className = 'sidebar-drawer-backdrop';
+          bd.addEventListener('click', () => {
+            sidebar.classList.remove('sidebar-mobile-open');
+            bd.remove();
+          });
+          document.body.appendChild(bd);
+        }
+      });
+    }
+
+    // ── Workload bar tap → toast on mobile ──
+    container.addEventListener('click', (e) => {
+      const bar = (e.target as HTMLElement).closest('.sidebar-bar-bg[title]') as HTMLElement | null;
+      if (!bar) return;
+      const details = bar.getAttribute('title');
+      if (details) showToast(details, { type: 'info', duration: 5000 });
     });
   }
 
@@ -2771,6 +2866,7 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
     <div class="tt-row"><span class="tt-label">משימות קלות</span><span class="tt-value">${lightCount}</span></div>
     <div class="tt-row"><span class="tt-label">שעות שבועיות</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)} שע' אפקטיביות</span></div>
     <div class="tt-row"><span class="tt-label">% עומס</span><span class="tt-value">${pctOfPeriod.toFixed(1)}% מתוך ${totalPeriodHours} שע'</span></div>
+    ${isTouchDevice ? `<div class="tt-divider"></div><div class="tt-row"><button class="btn-sm btn-outline" data-action="goto-profile" data-pid="${p.id}" style="width:100%">📋 צפה בפרופיל</button></div>` : ''}
   `;
 }
 
@@ -2968,6 +3064,84 @@ function wireParticipantTooltip(container: HTMLElement): void {
   const pMap = new Map<string, Participant>();
   for (const p of currentSchedule.participants) pMap.set(p.id, p);
 
+  if (isTouchDevice) {
+    // ── Touch: tap opens bottom sheet with participant info ──
+    let _longPressTimer: ReturnType<typeof setTimeout> | null = null;
+    let _longPressFired = false;
+
+    container.addEventListener('touchstart', (e) => {
+      const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
+      if (!target) return;
+      _longPressFired = false;
+      _longPressTimer = setTimeout(() => {
+        _longPressFired = true;
+        const pid = target.dataset.pid;
+        if (pid) navigateToProfile(pid);
+      }, 500);
+    }, { passive: true });
+
+    container.addEventListener('touchend', () => {
+      if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+    });
+
+    container.addEventListener('touchmove', () => {
+      if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+    }, { passive: true });
+
+    container.addEventListener('click', (e) => {
+      if (_longPressFired) { _longPressFired = false; return; }
+      const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
+      if (!target) return;
+      const pid = target.dataset.pid;
+      if (!pid) return;
+      const p = pMap.get(pid);
+      if (!p) return;
+
+      e.stopPropagation(); // prevent navigateToProfile click handler
+
+      const slotCtx = target.dataset.assignmentId
+        ? {
+            assignmentId: target.dataset.assignmentId,
+            taskId: target.dataset.taskId || '',
+            isFrozen: target.dataset.frozen === '1',
+            isLocked: target.dataset.locked === '1',
+          }
+        : null;
+
+      const content = buildParticipantTooltipContent(p, slotCtx);
+      const handle = showBottomSheet(content, {
+        title: p.name,
+        onClose: () => {},
+      });
+
+      // Wire action buttons inside the bottom sheet
+      const sheetBody = document.querySelector('.gm-bs-body');
+      if (sheetBody) {
+        sheetBody.addEventListener('click', (ev) => {
+          const btn = (ev.target as HTMLElement).closest('button') as HTMLElement | null;
+          if (!btn) return;
+          const assignmentId = btn.dataset.assignmentId;
+          if (!assignmentId) return;
+          handle.close();
+          if (btn.classList.contains('btn-swap')) handleSwap(assignmentId);
+          else if (btn.classList.contains('btn-lock')) handleLock(assignmentId);
+          else if (btn.classList.contains('btn-rescue')) openRescueModal(assignmentId);
+        });
+
+        // Wire "view profile" link if participant name is tapped inside sheet
+        sheetBody.addEventListener('click', (ev) => {
+          const profileLink = (ev.target as HTMLElement).closest('[data-action="goto-profile"]') as HTMLElement | null;
+          if (profileLink?.dataset.pid) {
+            handle.close();
+            navigateToProfile(profileLink.dataset.pid);
+          }
+        });
+      }
+    });
+    return;
+  }
+
+  // ── Desktop: hover shows fixed tooltip ──
   container.addEventListener('mouseover', (e) => {
     const target = (e.target as HTMLElement).closest('.participant-hover') as HTMLElement | null;
     if (!target) return;
@@ -3118,6 +3292,44 @@ function buildTaskTooltipContent(taskId: string): string {
 function wireTaskTooltip(container: HTMLElement): void {
   if (!currentSchedule) return;
 
+  if (isTouchDevice) {
+    // ── Touch: tap toggles inline detail panel ──
+    let _expandedTaskId: string | null = null;
+
+    container.addEventListener('click', (e) => {
+      const target = (e.target as HTMLElement).closest('.task-tooltip-hover[data-task-id]') as HTMLElement | null;
+      if (!target) return;
+      const taskId = target.dataset.taskId;
+      if (!taskId) return;
+
+      // Remove any existing inline detail
+      const existing = container.querySelector('.task-inline-detail');
+      if (existing) existing.remove();
+
+      // If same task tapped again, just collapse
+      if (_expandedTaskId === taskId) { _expandedTaskId = null; return; }
+
+      const content = buildTaskTooltipContent(taskId);
+      if (!content) return;
+
+      _expandedTaskId = taskId;
+      const detail = document.createElement('div');
+      detail.className = 'task-inline-detail';
+      detail.innerHTML = content;
+      target.insertAdjacentElement('afterend', detail);
+    });
+
+    // Dismiss when tapping outside a task-tooltip-hover
+    container.addEventListener('click', (e) => {
+      const target = (e.target as HTMLElement).closest('.task-tooltip-hover[data-task-id]');
+      if (target) return; // handled above
+      const existing = container.querySelector('.task-inline-detail');
+      if (existing) { existing.remove(); _expandedTaskId = null; }
+    });
+    return;
+  }
+
+  // ── Desktop: hover shows fixed tooltip ──
   container.addEventListener('mouseover', (e) => {
     const target = (e.target as HTMLElement).closest('.task-tooltip-hover[data-task-id]') as HTMLElement | null;
     if (!target) return;
@@ -3215,6 +3427,9 @@ function onStoreChanged(): void {
 }
 
 function init(): void {
+  // Set .touch-device / .pointer-device on <html> before first render
+  initResponsive();
+
   // Apply saved theme before first render to prevent flash
   applyTheme(getStoredTheme());
 

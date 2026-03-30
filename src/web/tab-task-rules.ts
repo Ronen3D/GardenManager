@@ -84,7 +84,7 @@ export function renderTaskRulesTab(): string {
     </div>
     <div class="toolbar-right">
       <button class="btn-sm btn-outline${_taskSetPanelOpen ? ' pill-active' : ''}" data-action="tset-panel-toggle" title="סטים של משימות">📋 סטים${store.isTaskSetDirty() ? ' <span class="dirty-dot"></span>' : ''}</button>
-      <button class="btn-primary btn-sm" data-action="toggle-add-template">+ תבנית משימה חדשה</button>
+      <button class="btn-primary btn-sm" data-action="toggle-add-template">+ משימה חדשה</button>
     </div>
   </div>`;
 
@@ -385,7 +385,7 @@ function renderAddSlotForm(templateId: string, subTeamId?: string): string {
 
 function renderAddTemplateForm(): string {
   return `<div class="add-form" id="add-template-form">
-    <h4>תבנית משימה חדשה</h4>
+    <h4>משימה חדשה</h4>
     <div class="form-row">
       <label>שם: <input class="input-sm" type="text" data-field="tpl-name" placeholder="שם משימה" /></label>
       <label>סוג:

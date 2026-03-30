@@ -468,8 +468,8 @@ export function renderParticipantsTab(): string {
   if (selectedIds.size > 0) {
     html += `<div class="bulk-toolbar">
       <span class="bulk-count">${selectedIds.size} משתתפים נבחרו</span>
-      <button class="btn-primary btn-sm" data-action="bulk-add-unavailability">${SVG_ICONS.calendar} הוסף חוסר זמינות</button>
-      <button class="btn-danger btn-sm" data-action="bulk-delete-participants">${SVG_ICONS.trash} מחק משתתפים</button>
+      <button class="btn-sm btn-outline" data-action="bulk-add-unavailability">${SVG_ICONS.calendar} הוסף חוסר זמינות</button>
+      <button class="btn-sm btn-danger-outline" data-action="bulk-delete-participants">${SVG_ICONS.trash} מחק משתתפים</button>
       <button class="btn-sm btn-outline" data-action="bulk-clear-selection">נקה בחירה</button>
     </div>`;
   }
@@ -712,13 +712,20 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     syncAutoHoreshPakal(scope, '[data-cert="Horesh"], [data-new-cert="Horesh"]', '[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]');
   });
 
-  // ─── Easter egg: triple-click on count badge toggles "אי התאמה" column ──
+  // ─── Easter egg: triple-tap on count badge toggles "אי התאמה" column ──
   const countBadge = container.querySelector('.tab-toolbar h2 .count') as HTMLElement | null;
   if (countBadge) {
-    countBadge.addEventListener('click', (e) => {
-      if (e.detail === 3) {
+    let tapCount = 0;
+    let tapTimer: ReturnType<typeof setTimeout> | undefined;
+    countBadge.addEventListener('click', () => {
+      tapCount++;
+      clearTimeout(tapTimer);
+      if (tapCount >= 3) {
+        tapCount = 0;
         showNotWithColumn = !showNotWithColumn;
         rerender();
+      } else {
+        tapTimer = setTimeout(() => { tapCount = 0; }, 600);
       }
     });
   }
