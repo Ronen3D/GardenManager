@@ -1,6 +1,6 @@
 {
   "name": "מערכת שיבוץ חכמה",
-  "short_name": "שיבוץ גן",
+  "short_name": "מערכת שיבוץ חכמה",
   "description": "מערכת שיבוץ חכמה לצוותי גינה",
   "start_url": "./index.html",
   "scope": "./",
