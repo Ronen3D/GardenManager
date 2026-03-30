@@ -379,6 +379,7 @@
     left: 0;
     right: 0;
     z-index: 50;
+    margin: 0;
     background: var(--bg-card);
     border-top: 1px solid var(--border);
     border-bottom: none;
@@ -387,6 +388,7 @@
     padding-bottom: calc(4px + env(safe-area-inset-bottom));
     justify-content: space-around;
     flex-wrap: nowrap;
+    overflow: visible;
     gap: 0;
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
   }
@@ -413,7 +415,10 @@
 
   /* Offset body so content isn't hidden behind bottom nav */
   body {
-    padding-bottom: 72px;
+    padding-bottom: 80px;
+  }
+  .tab-content {
+    padding-bottom: 12px;
   }
 
   /* ── Header compact mode — single-row toolbar ─────────────────────────── */
@@ -469,18 +474,12 @@
     flex-shrink: 0;
   }
 
-  .header-top > .btn-danger-outline {
-    font-size: 0.6rem;
-    padding: 2px 6px;
-    white-space: nowrap;
-    flex-shrink: 0;
-    margin-inline-end: 4px;
-    border-left: 1px solid rgba(128,128,128,0.25);
-    padding-left: 10px;
-  }
 
   .beta-badge {
-    display: none;
+    font-size: 0.5rem;
+    padding: 1px 4px;
+    flex-shrink: 0;
+    align-self: center;
   }
 
   /* Status line — hidden on mobile */
@@ -506,8 +505,8 @@
     gap: 4px 6px;
   }
 
-  /* Title is redundant with the tab bar */
-  .toolbar-left {
+  /* Schedule title is redundant with the tab bar */
+  .schedule-toolbar .toolbar-left {
     display: none;
   }
 
@@ -734,18 +733,24 @@
     bottom: 80px; /* above bottom nav */
     right: 16px;
     z-index: 46;
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
+    height: 40px;
+    padding: 0 14px;
+    gap: 6px;
+    border-radius: 20px;
     background: var(--accent);
     color: #fff;
     border: none;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-    font-size: 1.1rem;
+    font-size: 1rem;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
+  }
+  .sidebar-fab-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
   }
   .sidebar-fab:active {
     transform: scale(0.93);

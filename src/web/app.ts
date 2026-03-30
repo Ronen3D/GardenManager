@@ -718,7 +718,7 @@ function renderScheduleTab(): string {
       </div>`;
   }
 
-  let html = `<div class="tab-toolbar">
+  let html = `<div class="tab-toolbar schedule-toolbar">
     <div class="toolbar-left"><h2>תצוגת שבצ"ק</h2>
       <span class="text-muted" style="margin-inline-start:12px">שבצ"ק ל-${numDays} ימים</span>
     </div>
@@ -794,7 +794,7 @@ function renderScheduleTab(): string {
   html += `</div>`;
   html += renderParticipantSidebar(s);
   // Mobile-only FAB to toggle sidebar drawer
-  html += `<button class="sidebar-fab" title="עומס עבודה" aria-label="הצג סרגל עומס">${SVG_ICONS.chart}</button>`;
+  html += `<button class="sidebar-fab" title="עומס עבודה" aria-label="הצג סרגל עומס">${SVG_ICONS.chart}<span class="sidebar-fab-label">עומסים</span></button>`;
   html += `</div>`;
 
   // Optimization overlay (rendered inside tab so it covers the schedule board)
@@ -1959,7 +1959,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה <span class="beta-badge">v1.2.2</span></h1>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -1969,7 +1969,6 @@ function renderAll(): void {
       <button class="theme-toggle" id="btn-theme-toggle" title="החלף מצב בהיר/כהה">
         ${document.documentElement.dataset.theme === 'light' ? SVG_ICONS.moon : SVG_ICONS.sun}
       </button>
-      <button class="btn-sm btn-danger-outline" id="btn-factory-reset" title="איפוס מלא של המערכת למצב התחלתי">⚠ איפוס מערכת</button>
     </div>
     <p class="subtitle">
       <span id="live-clock">${formatLiveClock()}</span>

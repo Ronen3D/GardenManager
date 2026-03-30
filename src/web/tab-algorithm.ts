@@ -261,6 +261,14 @@ export function renderAlgorithmTab(): string {
     </div>
   </div>`;
 
+  // ── Factory Reset (danger zone) ──
+  html += `
+  <div class="algo-section algo-danger-zone">
+    <h3 class="algo-section-title">אזור סכנה</h3>
+    <p class="algo-section-desc">איפוס מלא של כל נתוני המערכת — משתתפים, משימות, שיבוצים, והגדרות.</p>
+    <button class="btn-sm btn-danger-outline" id="btn-factory-reset" title="איפוס מלא של המערכת למצב התחלתי">⚠ איפוס מערכת</button>
+  </div>`;
+
   return html;
 }
 
