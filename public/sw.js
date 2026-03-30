@@ -1,7 +1,7 @@
 // Garden Manager Service Worker
 // Caches all app assets for full offline support
 
-const CACHE_NAME = 'garden-manager-v1';
+const CACHE_NAME = 'garden-manager-v2';
 
 // Install: cache the app shell
 self.addEventListener('install', (event) => {
