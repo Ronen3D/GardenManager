@@ -548,13 +548,50 @@ function renderEditRow(p: Participant, idx: number): string {
         ${renderTaskNameSelect('lessPreferredTask', p.lessPreferredTaskName)}
       </div>
     </td>
-    <td class="col-unavail" colspan="2"></td>
+    <td class="col-avail avail-cell">
+      <span class="mobile-label">זמינות: </span>${p.availability.map(w => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
+    </td>
+    <td class="col-unavail unavail-cell">
+      ${renderInlineUnavailEditor(p.id)}
+    </td>
     <td class="col-actions">
       <button class="btn-sm btn-primary" data-action="save-participant" data-pid="${p.id}">שמור</button>
       <button class="btn-sm btn-outline" data-action="cancel-edit">ביטול</button>
     </td>
     <td class="col-expand"></td>
   </tr>`;
+}
+
+function renderInlineUnavailEditor(pid: string): string {
+  const dateRules = store.getDateUnavailabilities(pid);
+  let html = '<div class="inline-unavail-editor">';
+
+  if (dateRules.length > 0) {
+    html += '<ul class="inline-unavail-list">';
+    for (const r of dateRules) {
+      const label = HEBREW_DAYS[r.dayOfWeek];
+      const timeLabel = r.allDay ? 'כל היום' : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00</span>`;
+      html += `<li>${label} ${timeLabel}${r.reason ? ` (${r.reason})` : ''} <button class="btn-inline-remove" data-action="remove-date-unavail" data-pid="${pid}" data-rid="${r.id}">✕</button></li>`;
+    }
+    html += '</ul>';
+  }
+
+  html += `<div class="inline-unavail-add">
+    <select class="input-sm" data-field="du-dow" style="width:auto">
+      ${HEBREW_DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
+    </select>
+    <label class="checkbox-label" style="white-space:nowrap">
+      <input type="checkbox" data-field="du-allday" /> כל היום
+    </label>
+    <input type="text" class="input-sm time-24h" maxlength="5" placeholder="HH:mm" data-field="bo-start" value="08:00" style="width:60px" />
+    <span class="time-separator">–</span>
+    <input type="text" class="input-sm time-24h" maxlength="5" placeholder="HH:mm" data-field="bo-end" value="12:00" style="width:60px" />
+    <input type="text" class="input-sm" data-field="bo-reason" placeholder="סיבה" style="width:80px" />
+    <button class="btn-sm btn-primary" data-action="add-unified-constraint" data-pid="${pid}">+</button>
+  </div>`;
+
+  html += '</div>';
+  return html;
 }
 
 
@@ -1192,7 +1229,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       }
       case 'add-unified-constraint': {
         const pid = actionButton?.dataset.pid!;
-        const panel = actionButton?.closest('.blackout-panel')!;
+        const panel = (actionButton?.closest('.blackout-panel') || actionButton?.closest('.inline-unavail-editor'))!;
         const reason = (panel.querySelector('[data-field="bo-reason"]') as HTMLInputElement)?.value || undefined;
         const errEl = panel.querySelector('.du-validation-error') as HTMLElement;
         if (errEl) errEl.classList.add('hidden');

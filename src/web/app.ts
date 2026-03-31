@@ -852,11 +852,13 @@ function renderScheduleTab(): string {
       </span>
       <span class="toolbar-group toolbar-group--state">
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
-        <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
+        <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾 שמירת שבצקים${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
         ${renderContinuityChip()}
         ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="ייבוא נתוני המשכיות מהשבצ\"ק הקודם">📋 ייבוא המשכיות</button>` : ''}
       </span>
-      <span class="toolbar-group toolbar-group--export">
+      <span class="toolbar-group toolbar-group--day-actions">
+        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
+        ${currentSchedule && currentDay < store.getScheduleDays() ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ\"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא PDF">📤 ייצוא</button>` : ''}
       </span>
     </div>
@@ -901,13 +903,9 @@ function renderScheduleTab(): string {
 
   // Day window label + inline availability inspector
   const { start: dayStart, end: dayEnd } = getDayWindow(currentDay);
-  const numDaysForDayLabel = store.getScheduleDays();
-  const isLastDayForDayLabel = currentDay >= numDaysForDayLabel;
   html += `<div class="day-window-label">
     <span class="day-window-text">מציג <strong>יום ${currentDay}</strong>: ${fmtDayShort(dayStart)} ${fmt(dayStart)} – ${fmtDayShort(dayEnd)} ${fmt(dayEnd)}</span>
     <span class="day-window-actions">
-      <button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>
-      ${!isLastDayForDayLabel ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ\"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
       <button class="btn-sm btn-outline availability-mobile-toggle" id="btn-availability-mobile-toggle" title="בדיקת זמינות פק\"לים">${_availabilityMobileOpen ? '🕐 ✕' : '🕐'}</button>
       <span class="availability-inline${_availabilityMobileOpen ? ' mobile-open' : ''}">${renderAvailabilityInspectorInline()}</span>
     </span>
@@ -2166,7 +2164,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.4.5</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.4.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

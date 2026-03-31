@@ -531,6 +531,29 @@
   }
   .toolbar-group--generate {
     padding: 4px 6px;
+    width: 100%;
+    order: 1;
+  }
+  .toolbar-group--state {
+    width: 100%;
+    order: 2;
+  }
+  .toolbar-group--day-actions {
+    width: 100%;
+    order: 3;
+    gap: 4px;
+  }
+  .toolbar-group--day-actions:has(*) {
+    border-top: 1px solid var(--border);
+    padding-top: 4px;
+    margin-top: 2px;
+  }
+
+  #btn-snap-toggle {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
   }
 
   .toolbar-right .btn-primary,
@@ -661,9 +684,9 @@
     font-size: 0.5rem;
   }
 
-  /* ── Day window label — compact on mobile: only action buttons ────── */
+  /* ── Day window label — compact on mobile: only availability toggle ── */
   .day-window-label {
-    justify-content: center;
+    justify-content: flex-end;
     padding: 2px 6px;
     margin-bottom: 4px;
     gap: 4px;
@@ -683,8 +706,7 @@
     gap: 6px;
   }
   .day-window-actions {
-    gap: 6px;
-    flex-wrap: wrap;
+    gap: 4px;
   }
   .day-window-actions .btn-sm {
     font-size: 0.6rem;
@@ -1102,7 +1124,9 @@
   .table-participants tbody tr.row-editing .col-certs,
   .table-participants tbody tr.row-editing .col-pakals,
   .table-participants tbody tr.row-editing .col-prefs,
-  .table-participants tbody tr.row-editing .col-notwith {
+  .table-participants tbody tr.row-editing .col-notwith,
+  .table-participants tbody tr.row-editing .col-avail,
+  .table-participants tbody tr.row-editing .col-unavail {
     display: block !important;
   }
   .table-participants tbody tr.row-editing td:not(.col-select):not(.col-index):not(.col-expand) {
@@ -1115,6 +1139,45 @@
   }
   .table-participants tbody tr.row-editing .checkbox-label {
     font-size: 0.75rem;
+  }
+
+  /* Inline unavailability editor — mobile compact */
+  .table-participants tbody tr.row-editing .col-avail::before {
+    content: 'זמינות';
+    display: block;
+    font-weight: 700;
+    font-size: 0.75rem;
+    margin-bottom: 2px;
+  }
+  .table-participants tbody tr.row-editing .col-unavail::before {
+    content: 'אי-זמינות';
+    display: block;
+    font-weight: 700;
+    font-size: 0.75rem;
+    margin-bottom: 2px;
+  }
+  .inline-unavail-add {
+    gap: 4px;
+  }
+  .inline-unavail-add .input-sm {
+    min-height: 34px !important;
+    padding: 4px 6px !important;
+    font-size: 0.75rem;
+  }
+  .inline-unavail-add .btn-sm {
+    min-height: 34px !important;
+    padding: 4px 10px !important;
+    font-size: 0.8rem !important;
+  }
+  .inline-unavail-list {
+    font-size: 0.75rem;
+  }
+  .btn-inline-remove {
+    min-height: 30px;
+    min-width: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   /* ── Safe tap targets ────────────────────────────────────────────────── */
@@ -1198,13 +1261,13 @@
     height: 44px;
   }
 
-  .cb-select-participant {
-    width: 18px;
-    height: 18px;
-    min-width: 32px;
-    min-height: 32px;
-    padding: 7px;
-    cursor: pointer;
+  .cb-select-participant,
+  #cb-select-all {
+    width: 20px !important;
+    height: 20px !important;
+    min-width: 20px !important;
+    min-height: 20px !important;
+    padding: 0 !important;
   }
 
   /* ── Modals slide up from bottom on phones ───────────────────────────── */

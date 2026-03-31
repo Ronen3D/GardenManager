@@ -806,11 +806,13 @@ section h2 {
 }
 
 .toolbar-group--state .btn-sm.btn-outline,
-.toolbar-group--export .btn-sm.btn-outline {
+.toolbar-group--export .btn-sm.btn-outline,
+.toolbar-group--day-actions .btn-sm.btn-outline {
   border-color: transparent;
 }
 .toolbar-group--state .btn-sm.btn-outline:hover,
-.toolbar-group--export .btn-sm.btn-outline:hover {
+.toolbar-group--export .btn-sm.btn-outline:hover,
+.toolbar-group--day-actions .btn-sm.btn-outline:hover {
   border-color: var(--border);
   background: var(--bg-hover);
 }
@@ -2542,10 +2544,40 @@ tr.row-rest td {
   padding: 4px 6px !important;
 }
 
-.col-select input[type="checkbox"] {
+.col-select input[type="checkbox"],
+.cb-select-participant,
+#cb-select-all {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
   cursor: pointer;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border, #555);
+  border-radius: 4px;
+  background: var(--bg-card, #1e1e2e);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+.col-select input[type="checkbox"]:checked,
+.cb-select-participant:checked,
+#cb-select-all:checked {
+  background: var(--primary, #3b82f6);
+  border-color: var(--primary, #3b82f6);
+}
+.col-select input[type="checkbox"]:checked::after,
+.cb-select-participant:checked::after,
+#cb-select-all:checked::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
 
 tr.row-selected {
@@ -2574,6 +2606,44 @@ tr.row-selected:hover {
 .bulk-toolbar .bulk-count {
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* ── Inline Unavailability Editor (inside editing row) ────────────────── */
+
+.inline-unavail-editor {
+  font-size: 0.8rem;
+}
+.inline-unavail-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 6px;
+}
+.inline-unavail-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border, #333);
+  flex-wrap: wrap;
+}
+.btn-inline-remove {
+  background: none;
+  border: none;
+  color: var(--danger, #e74c3c);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 2px 6px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.btn-inline-remove:hover {
+  background: rgba(231, 76, 60, 0.15);
+}
+.inline-unavail-add {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 
 /* ── Bulk Dialog (Modal) ─────────────────────────────────────────────────── */
