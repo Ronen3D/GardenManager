@@ -88,7 +88,7 @@ export type RejectionCode =
   | 'HC-4'   // Same-group conflict
   | 'HC-5'   // Double-booking
   | 'HC-7'   // Already assigned to this task
-  | 'HC-11'  // Choresh exclusion from Mamtera
+  | 'HC-11'  // Forbidden certification (per-slot)
   | 'HC-12'  // Consecutive high-load tasks
   | 'HC-13'  // Senior hard block
   | 'HC-14'; // Category break (5h minimum)
@@ -133,8 +133,8 @@ function checkEligibility(
   // HC-13: Senior hard blocks (L4 non-natural/non-Hamama, L3 Mamtera)
   if (!disabled?.has('HC-13') && checkSeniorHardBlock(participant, task, slot)) return 'HC-13';
 
-  // HC-11: Excluded certification check
-  if (!disabled?.has('HC-11') && task.excludedCertifications?.some(c => participant.certifications.includes(c))) return 'HC-11';
+  // HC-11: Forbidden certification check (per-slot)
+  if (!disabled?.has('HC-11') && slot.forbiddenCertifications?.some(c => participant.certifications.includes(c))) return 'HC-11';
 
   // HC-1: Level check — single source of truth in isLevelSatisfied()
   if (!disabled?.has('HC-1') && !isLevelSatisfied(participant.level, slot)) return 'HC-1';

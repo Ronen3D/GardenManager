@@ -309,6 +309,7 @@ function generateTasksFromTemplates(): Task[] {
               slotId: `${tpl.name.toLowerCase()}-slot-${++_tSlotCounter}`,
               acceptableLevels: [...s.acceptableLevels],
               requiredCertifications: [...s.requiredCertifications],
+              forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
               adanitTeam,
               label: s.label,
               subTeamId: st.id,
@@ -325,6 +326,7 @@ function generateTasksFromTemplates(): Task[] {
             slotId: `${tpl.name.toLowerCase()}-slot-${++_tSlotCounter}`,
             acceptableLevels: [...s.acceptableLevels],
             requiredCertifications: [...s.requiredCertifications],
+            forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
             label: s.label,
           });
         }
@@ -343,7 +345,6 @@ function generateTasksFromTemplates(): Task[] {
           sameGroupRequired: tpl.sameGroupRequired,
           blocksConsecutive: tpl.blocksConsecutive ?? !tpl.isLight,
           schedulingPriority: tpl.schedulingPriority,
-          excludedCertifications: tpl.excludedCertifications,
           preferJuniors: tpl.preferJuniors,
           togethernessRelevant: tpl.togethernessRelevant,
           requiresCategoryBreak: tpl.requiresCategoryBreak,
@@ -391,6 +392,7 @@ function generateTasksFromTemplates(): Task[] {
           slotId: `ot-slot-${++_tSlotCounter}`,
           acceptableLevels: [...s.acceptableLevels],
           requiredCertifications: [...s.requiredCertifications],
+          forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
           adanitTeam,
           label: s.label,
           subTeamId: st.id,
@@ -403,6 +405,7 @@ function generateTasksFromTemplates(): Task[] {
         slotId: `ot-slot-${++_tSlotCounter}`,
         acceptableLevels: [...s.acceptableLevels],
         requiredCertifications: [...s.requiredCertifications],
+        forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
         label: s.label,
       });
     }
@@ -420,7 +423,6 @@ function generateTasksFromTemplates(): Task[] {
       sameGroupRequired: ot.sameGroupRequired,
       blocksConsecutive: ot.blocksConsecutive ?? !ot.isLight,
       schedulingPriority: ot.schedulingPriority,
-      excludedCertifications: ot.excludedCertifications,
       preferJuniors: ot.preferJuniors,
       togethernessRelevant: ot.togethernessRelevant,
       requiresCategoryBreak: ot.requiresCategoryBreak,

@@ -175,7 +175,7 @@ function v5_candidatePoolBased(task: Task): number {
       // Certification check
       if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
       // Excluded cert check
-      if (task.excludedCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
       eligible++;
     }
     totalEligible += eligible;
@@ -212,7 +212,7 @@ function v6_hybrid(task: Task): number {
     for (const p of allParticipants) {
       if (!slot.acceptableLevels.includes(p.level)) continue;
       if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
-      if (task.excludedCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
       eligible++;
     }
     totalEligible += eligible;
@@ -258,7 +258,7 @@ function v8_minSlotBottleneck(task: Task): number {
     for (const p of allParticipants) {
       if (!slot.acceptableLevels.includes(p.level)) continue;
       if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
-      if (task.excludedCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
       eligible++;
     }
     minEligible = Math.min(minEligible, eligible);
@@ -299,7 +299,7 @@ function v9_optimizedBlend(task: Task): number {
     for (const p of allParticipants) {
       if (!slot.acceptableLevels.includes(p.level)) continue;
       if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
-      if (task.excludedCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
       eligible++;
     }
     minEligible = Math.min(minEligible, eligible);

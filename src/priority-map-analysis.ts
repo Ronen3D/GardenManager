@@ -85,7 +85,7 @@ function countEligiblePerSlot(task: Task): { avg: number; min: number; max: numb
     for (const p of allParticipants) {
       if (!slot.acceptableLevels.includes(p.level)) continue;
       if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
-      if (task.excludedCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
       eligible++;
     }
     total += eligible;
@@ -336,7 +336,7 @@ function vF_tieredPool(task: Task): number {
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
     s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
-  const hasExclusion = (task.excludedCertifications?.length ?? 0) > 0;
+  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (task.preferJuniors && hasCerts) tier = 1;       // Hamama

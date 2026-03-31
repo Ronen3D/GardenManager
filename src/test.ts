@@ -652,7 +652,7 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // ─── Choresh (HC-11) Tests ───────────────────────────────────────────────────
 
 import { createMamteraTask } from './index';
-import { checkChoreshExclusion, checkNoConsecutiveHighLoad } from './constraints/hard-constraints';
+import { checkForbiddenCertifications, checkNoConsecutiveHighLoad } from './constraints/hard-constraints';
 import { getLoadWeightAtTime, isHighLoadAtBoundary } from './web/utils/load-weighting';
 import {
   isNaturalRole,
@@ -663,7 +663,7 @@ import {
 import { AdanitTeam } from './models/types';
 import type { SlotRequirement, Assignment } from './models/types';
 
-console.log('\n── Choresh Constraint (HC-11) ───────────');
+console.log('\n── Forbidden Certification Constraint (HC-11) ───────────');
 
 const mamteraTask = createMamteraTask(baseDate);
 
@@ -674,7 +674,12 @@ const mamteraTask = createMamteraTask(baseDate);
     certifications: [Certification.Nitzan], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
-  const violations = checkChoreshExclusion(mamteraTask, [normalP]);
+  const pMap = new Map([['tc-normal', normalP]]);
+  const assigns: Assignment[] = [{
+    id: 'ca-n1', taskId: mamteraTask.id, slotId: mamteraTask.slots[0].slotId,
+    participantId: normalP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  }];
+  const violations = checkForbiddenCertifications(mamteraTask, assigns, pMap);
   assert(violations.length === 0, 'HC-11: Non-choresh → no Mamtera violation');
 }
 
@@ -685,20 +690,68 @@ const mamteraTask = createMamteraTask(baseDate);
     certifications: [Certification.Nitzan, Certification.Horesh], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
-  const violations = checkChoreshExclusion(mamteraTask, [choreshP]);
+  const pMap = new Map([['tc-chor', choreshP]]);
+  const assigns: Assignment[] = [{
+    id: 'ca-c1', taskId: mamteraTask.id, slotId: mamteraTask.slots[0].slotId,
+    participantId: choreshP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  }];
+  const violations = checkForbiddenCertifications(mamteraTask, assigns, pMap);
   assert(violations.length === 1, 'HC-11: Choresh → Mamtera violation');
   assert(violations[0].code === 'EXCLUDED_CERTIFICATION', 'HC-11: violation code = EXCLUDED_CERTIFICATION');
 }
 
-// Choresh participant on non-Mamtera task → no violation
+// Choresh participant on non-Mamtera task (no forbidden certs on slots) → no violation
 {
   const choreshP: Participant = {
     id: 'tc-chor2', name: 'ChoreshPerson2', level: Level.L0,
     certifications: [Certification.Nitzan, Certification.Hamama, Certification.Horesh], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
-  const violations = checkChoreshExclusion(hamamaTask, [choreshP]);
-  assert(violations.length === 0, 'HC-11: Choresh on Hamama → no violation (only Mamtera forbidden)');
+  const pMap = new Map([['tc-chor2', choreshP]]);
+  const assigns: Assignment[] = [{
+    id: 'ca-c2', taskId: hamamaTask.id, slotId: hamamaTask.slots[0].slotId,
+    participantId: choreshP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  }];
+  const violations = checkForbiddenCertifications(hamamaTask, assigns, pMap);
+  assert(violations.length === 0, 'HC-11: Choresh on Hamama → no violation (only Mamtera slots forbid it)');
+}
+
+// Per-slot granularity: forbidden on slot A, allowed on slot B
+{
+  const slotA: SlotRequirement = {
+    slotId: 'fc-slot-a', acceptableLevels: [Level.L0],
+    requiredCertifications: [], forbiddenCertifications: [Certification.Horesh], label: 'Slot A (forbids Horesh)',
+  };
+  const slotB: SlotRequirement = {
+    slotId: 'fc-slot-b', acceptableLevels: [Level.L0],
+    requiredCertifications: [], label: 'Slot B (no forbidden)',
+  };
+  const mixedTask: Task = {
+    id: 'fc-mixed', type: TaskType.Mamtera, name: 'Mixed Forbidden',
+    timeBlock: createTimeBlockFromHours(baseDate, 9, 23),
+    requiredCount: 2, slots: [slotA, slotB],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const choreshP: Participant = {
+    id: 'fc-chor', name: 'ChoreshMixed', level: Level.L0,
+    certifications: [Certification.Horesh], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const pMap = new Map([['fc-chor', choreshP]]);
+  // Assigned to slot A (forbidden) → violation
+  const assignsA: Assignment[] = [{
+    id: 'fca1', taskId: mixedTask.id, slotId: 'fc-slot-a',
+    participantId: choreshP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  }];
+  assert(checkForbiddenCertifications(mixedTask, assignsA, pMap).length === 1,
+    'HC-11: Forbidden cert on slot A → violation');
+  // Assigned to slot B (not forbidden) → no violation
+  const assignsB: Assignment[] = [{
+    id: 'fca2', taskId: mixedTask.id, slotId: 'fc-slot-b',
+    participantId: choreshP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  }];
+  assert(checkForbiddenCertifications(mixedTask, assignsB, pMap).length === 0,
+    'HC-11: No forbidden cert on slot B → no violation');
 }
 
 // Full validateHardConstraints catches Choresh+Mamtera
@@ -928,14 +981,14 @@ const testKarovitTask: Task = {
 
 const testMamSlot: SlotRequirement = {
   slotId: 'test-mam-l0', acceptableLevels: [Level.L0],
-  requiredCertifications: [], label: 'Mamtera L0',
+  requiredCertifications: [], forbiddenCertifications: [Certification.Horesh],
+  label: 'Mamtera L0',
 };
 const testMamTask: Task = {
   id: 'sr-mam-t', type: TaskType.Mamtera, name: 'Test Mamtera',
   timeBlock: createTimeBlockFromHours(baseDate, 9, 23),
   requiredCount: 2, slots: [testMamSlot],
   isLight: false, sameGroupRequired: false, blocksConsecutive: true,
-  excludedCertifications: [Certification.Horesh],
 };
 
 const testHamSlot: SlotRequirement = {
@@ -1283,7 +1336,6 @@ console.log('\n── One-Time Task Integration ──────────�
     preferJuniors: true,
     isLight: false,
     sameGroupRequired: true,
-    excludedCertifications: [Certification.Horesh],
     schedulingPriority: 5,
     displayCategory: 'patrol',
     togethernessRelevant: true,
@@ -1293,7 +1345,6 @@ console.log('\n── One-Time Task Integration ──────────�
   assert(heavyOt.requiresCategoryBreak === true, 'Constraint: requiresCategoryBreak');
   assert(heavyOt.preferJuniors === true, 'Constraint: preferJuniors');
   assert(heavyOt.sameGroupRequired === true, 'Constraint: sameGroupRequired');
-  assert(heavyOt.excludedCertifications?.[0] === Certification.Horesh, 'Constraint: excludedCertifications');
   assert(heavyOt.schedulingPriority === 5, 'Constraint: schedulingPriority');
   assert(heavyOt.displayCategory === 'patrol', 'Constraint: displayCategory');
   assert(heavyOt.baseLoadWeight === 0.5, 'Constraint: baseLoadWeight');

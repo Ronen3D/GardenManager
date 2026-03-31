@@ -164,25 +164,28 @@ export function checkSameGroup(
 }
 
 /**
- * HC-11: Excluded certification check — participants holding a certification
- * listed in the task's excludedCertifications are forbidden from the task.
+ * HC-11: Forbidden certification check — participants holding a certification
+ * listed in a slot's forbiddenCertifications are forbidden from that slot.
  */
-export function checkChoreshExclusion(
+export function checkForbiddenCertifications(
   task: Task,
-  assignedParticipants: Participant[],
+  taskAssignments: Assignment[],
+  pMap: Map<string, Participant>,
 ): ConstraintViolation[] {
-  if (!task.excludedCertifications?.length) return [];
-
   const violations: ConstraintViolation[] = [];
-  for (const p of assignedParticipants) {
-    if (task.excludedCertifications.some(c => p.certifications.includes(c))) {
-      const excludedCerts = task.excludedCertifications.filter(c => p.certifications.includes(c));
+  for (const a of taskAssignments) {
+    const slot = task.slots.find(s => s.slotId === a.slotId);
+    if (!slot?.forbiddenCertifications?.length) continue;
+    const p = pMap.get(a.participantId);
+    if (!p) continue;
+    const forbidden = slot.forbiddenCertifications.filter(c => p.certifications.includes(c));
+    if (forbidden.length > 0) {
       violations.push(
         violation(
           'EXCLUDED_CERTIFICATION',
-          `${p.name} מחזיק/ה בהסמכה ${excludedCerts.join(', ')} ואסור/ה לחלוטין במשימת "${task.name}"`,
+          `${p.name} מחזיק/ה בהסמכה ${forbidden.join(', ')} ואסור/ה במשבצת "${slot.label}" במשימת "${task.name}"`,
           task.id,
-          undefined,
+          slot.slotId,
           p.id,
         ),
       );
@@ -574,12 +577,9 @@ export function validateHardConstraints(
 
     // HC-10 replaced by HC-13 (senior policy) — see below
 
-    // HC-11: Choresh forbidden from Mamtera — use pre-indexed task assignments
+    // HC-11: Forbidden certification — per-slot check
     if (!disabledHC?.has('HC-11')) {
-      const assignedParticipants = taskAssignments
-        .map((a) => pMap.get(a.participantId))
-        .filter((p): p is Participant => p !== undefined);
-      allViolations.push(...checkChoreshExclusion(task, assignedParticipants));
+      allViolations.push(...checkForbiddenCertifications(task, taskAssignments, pMap));
     }
 
     // HC-4: Same group — use pre-indexed task assignments

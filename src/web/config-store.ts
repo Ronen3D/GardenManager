@@ -1123,11 +1123,10 @@ export function seedDefaultTaskTemplates(): void {
     loadWindows: [],
     blocksConsecutive: true,
     schedulingPriority: 2,
-    excludedCertifications: [Certification.Horesh],
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'ממטרה #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'ממטרה #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ממטרה #1', acceptableLevels: [Level.L0], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
+      { id: uid('slot'), label: 'ממטרה #2', acceptableLevels: [Level.L0], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
     ],
     displayCategory: 'mamtera',
     description: '09:00-23:00. 2× L0.',
@@ -1431,10 +1430,6 @@ export function loadFromStorage(): boolean {
     // ── Migration: backfill new data-driven fields for existing templates ──
     if (Array.isArray(state.taskTemplates)) {
       for (const tpl of state.taskTemplates) {
-        // Mamtera: backfill excludedCertifications if missing
-        if (tpl.taskType === TaskType.Mamtera && !tpl.excludedCertifications) {
-          tpl.excludedCertifications = [Certification.Horesh];
-        }
         // Hamama: backfill preferJuniors if missing
         if (tpl.taskType === TaskType.Hamama && tpl.preferJuniors === undefined) {
           tpl.preferJuniors = true;

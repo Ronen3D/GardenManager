@@ -44,6 +44,10 @@ function certBadge(cert: Certification): string {
   return `<span class="badge badge-sm" style="background:${colors[cert] || '#7f8c8d'}">${cert}</span>`;
 }
 
+function forbiddenCertBadge(cert: Certification): string {
+  return `<span class="badge badge-sm" style="background:#c0392b;text-decoration:line-through">${cert}</span>`;
+}
+
 /** Strip English level references (L0, L3/L4, (L2+), etc.) from a slot label. */
 function stripLevelText(label: string): string {
   return label.replace(/\s*\(?L\d[\d/+L]*\)?\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
@@ -307,7 +311,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
   if (windows.length === 0) {
     html += '<p class="text-muted" style="padding:4px 0;">לא הוגדרו חלונות עומס. משקל העומס חל על כל המשימה.</p>';
   } else {
-    html += `<table class="table table-slots" style="margin-bottom:8px;">
+    html += `<div class="table-responsive"><table class="table table-slots" style="margin-bottom:8px;">
       <thead><tr><th>חלון</th><th>משקל</th><th></th></tr></thead>
       <tbody>`;
     for (const w of windows) {
@@ -324,7 +328,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
         </td>
       </tr>`;
     }
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
   }
 
   html += `<div class="add-slot-form" style="margin-top:8px;">
@@ -361,8 +365,8 @@ function renderSubTeam(templateId: string, st: SubTeamTemplate, pf: PreflightRes
 function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: string | undefined, pf: PreflightResult): string {
   if (slots.length === 0) return '<p class="text-muted" style="padding:4px 0;">אין משבצות מוגדרות.</p>';
 
-  let html = `<table class="table table-slots">
-    <thead><tr><th>תווית</th><th>דרגות</th><th>הסמכות</th><th>סטטוס</th><th></th></tr></thead>
+  let html = `<div class="table-responsive"><table class="table table-slots">
+    <thead><tr><th>תווית</th><th>דרגות</th><th>הסמכות נדרשות</th><th>הסמכות אסורות</th><th>סטטוס</th><th></th></tr></thead>
     <tbody>`;
 
   for (const slot of slots) {
@@ -371,16 +375,19 @@ function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: s
       ? `<span class="${finding.severity === PreflightSeverity.Critical ? 'text-danger' : 'text-warn'}">${finding.severity === PreflightSeverity.Critical ? '✗' : '⚠'} ${finding.code}</span>`
       : '<span style="color:var(--success)">✓</span>';
 
+    const forbiddenCerts = slot.forbiddenCertifications ?? [];
+
     html += `<tr>
       <td>${stripLevelText(slot.label)}</td>
       <td>${slot.acceptableLevels.map(l => levelBadge(l)).join(' ')}</td>
       <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map(c => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
+      <td>${forbiddenCerts.length > 0 ? forbiddenCerts.map(c => forbiddenCertBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${statusHtml}</td>
       <td><button class="btn-sm btn-danger-outline" data-action="remove-slot" data-tid="${templateId}" ${subTeamId ? `data-stid="${subTeamId}"` : ''} data-slotid="${slot.id}">✕</button></td>
     </tr>`;
   }
 
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   return html;
 }
 
@@ -397,9 +404,15 @@ function renderAddSlotForm(templateId: string, subTeamId?: string): string {
       ).join('')}
     </div>
     <div class="form-row">
-      <span>הסמכות:</span>
+      <span>הסמכות נדרשות:</span>
       ${CERT_OPTIONS.map(c =>
         `<label class="checkbox-label"><input type="checkbox" data-slot-cert="${c}" /> ${c}</label>`
+      ).join('')}
+    </div>
+    <div class="form-row">
+      <span>הסמכות אסורות:</span>
+      ${CERT_OPTIONS.map(c =>
+        `<label class="checkbox-label"><input type="checkbox" data-slot-forbidden-cert="${c}" /> ${c}</label>`
       ).join('')}
     </div>
     <div class="form-row">
@@ -815,9 +828,21 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         form.querySelectorAll<HTMLInputElement>('[data-slot-cert]').forEach(cb => {
           if (cb.checked) certs.push(cb.dataset.slotCert as Certification);
         });
+        const forbiddenCerts: Certification[] = [];
+        form.querySelectorAll<HTMLInputElement>('[data-slot-forbidden-cert]').forEach(cb => {
+          if (cb.checked) forbiddenCerts.push(cb.dataset.slotForbiddenCert as Certification);
+        });
+
+        // Validate: same cert cannot be both required and forbidden
+        const overlap = certs.filter(c => forbiddenCerts.includes(c));
+        if (overlap.length > 0) {
+          showToast(`הסמכה לא יכולה להיות גם נדרשת וגם אסורה: ${overlap.join(', ')}`, { type: 'error' });
+          break;
+        }
 
         const slot: Omit<SlotTemplate, 'id'> = {
           label, acceptableLevels: levels, requiredCertifications: certs,
+          forbiddenCertifications: forbiddenCerts.length > 0 ? forbiddenCerts : undefined,
         };
 
         if (stid) {

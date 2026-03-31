@@ -56,10 +56,10 @@ const SA_REHEAT_THRESHOLD = 500;
 /** Probability of attempting an unfilled-slot insert move per iteration. */
 const SA_INSERT_PROBABILITY = 0.2;
 
-/** Check if a participant holds any certification excluded by the task. */
-function hasExcludedCertification(p: Participant, task: Task): boolean {
-  if (!task.excludedCertifications?.length) return false;
-  return task.excludedCertifications.some(c => p.certifications.includes(c));
+/** Check if a participant holds any certification forbidden by the slot. */
+function hasForbiddenCertification(p: Participant, slot: SlotRequirement): boolean {
+  if (!slot.forbiddenCertifications?.length) return false;
+  return slot.forbiddenCertifications.some(c => p.certifications.includes(c));
 }
 
 /**
@@ -303,7 +303,7 @@ function computeStructuralPriority(task: Task): number {
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
     s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
-  const hasExclusion = (task.excludedCertifications?.length ?? 0) > 0;
+  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (task.preferJuniors && hasCerts) tier = 1;       // Hamama: penalty-critical
@@ -499,7 +499,7 @@ export function greedyAssign(
           if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
           if (!isFullyCovered(task.timeBlock, p.availability)) continue;
           if (checkSeniorHardBlock(p, task, slot)) continue;
-          if (hasExcludedCertification(p, task)) continue;
+          if (hasForbiddenCertification(p, slot)) continue;
 
           // Already eligible (shouldn't happen since candidates was empty, but guard)
           const pAssigns = assignmentsByParticipant.get(p.id) || [];
@@ -885,10 +885,10 @@ function isSwapFeasible(
     if (slotJ && checkSeniorHardBlock(pJ, taskJ, slotJ)) return false;
   }
 
-  // HC-11: Excluded certification check (e.g. Horesh from Mamtera)
+  // HC-11: Forbidden certification check (per-slot)
   if (!disabledHC?.has('HC-11')) {
-    if (hasExcludedCertification(pI, taskI)) return false;
-    if (hasExcludedCertification(pJ, taskJ)) return false;
+    if (hasForbiddenCertification(pI, slotI)) return false;
+    if (hasForbiddenCertification(pJ, slotJ)) return false;
   }
 
   // HC-7: Unique participant per task — use per-task index (O(k) instead of O(n))

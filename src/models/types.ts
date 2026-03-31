@@ -137,6 +137,8 @@ export interface SlotRequirement {
   acceptableLevels: Level[];
   /** Required certifications for this slot */
   requiredCertifications: Certification[];
+  /** Certifications that DISQUALIFY a participant from this slot */
+  forbiddenCertifications?: Certification[];
   /** Optional: Adanit team designation */
   adanitTeam?: AdanitTeam;
   /** Optional: label for display purposes */
@@ -173,8 +175,6 @@ export interface Task {
   blocksConsecutive: boolean;
   /** Scheduling priority (0 = first). Lower = scheduled earlier in greedy phase. */
   schedulingPriority?: number;
-  /** Certifications that DISQUALIFY a participant from this task. */
-  excludedCertifications?: Certification[];
   /** When true, prefer L0 participants. L4 allowed with penalty; L2/L3 hard-blocked. */
   preferJuniors?: boolean;
   /** Whether "not with" togetherness preferences apply to this task */
@@ -327,7 +327,7 @@ export type HardConstraintCode =
   | 'HC-6'   // Slots filled
   | 'HC-7'   // Unique participant per task
   | 'HC-8'   // Adanit feasibility
-  | 'HC-11'  // Choresh exclusion
+  | 'HC-11'  // Forbidden certification (per-slot)
   | 'HC-12'  // No consecutive high-load
   | 'HC-13'  // Senior hard blocks
   | 'HC-14'; // Minimum category break (5h)
@@ -350,7 +350,7 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-6': 'משבצות מלאות',
   'HC-7': 'משתתף ייחודי למשימה',
   'HC-8': 'כשירות קבוצה למשימות משותפות',
-  'HC-11': 'הרחקת הסמכה אסורה ממשימה',
+  'HC-11': 'הסמכה אסורה במשבצת',
   'HC-12': 'ללא עומס רצוף',
   'HC-13': 'מגבלות שיבוץ סגל',
   'HC-14': 'הפסקה מינימלית בין משימות קטגוריה (5 שעות)',
@@ -512,6 +512,8 @@ export interface SlotTemplate {
   label: string;
   acceptableLevels: Level[];
   requiredCertifications: Certification[];
+  /** Certifications that DISQUALIFY a participant from this slot */
+  forbiddenCertifications?: Certification[];
   adanitTeam?: AdanitTeam;
 }
 
@@ -569,8 +571,6 @@ export interface TaskTemplate {
   description?: string;
   /** Scheduling priority (0 = first). If unset, computed from task constraints. */
   schedulingPriority?: number;
-  /** Certifications that DISQUALIFY a participant from this task (e.g., Horesh from Mamtera). */
-  excludedCertifications?: Certification[];
   /** When true, prefer L0 participants. L4 allowed with penalty; L2/L3 hard-blocked by HC-13. */
   preferJuniors?: boolean;
   /** Whether "not with" togetherness preferences apply to this task template */
@@ -612,8 +612,6 @@ export interface OneTimeTask {
   blocksConsecutive?: boolean;
   /** Scheduling priority (0 = first). */
   schedulingPriority?: number;
-  /** Certifications that DISQUALIFY a participant from this task. */
-  excludedCertifications?: Certification[];
   /** When true, prefer L0 participants. */
   preferJuniors?: boolean;
   /** Whether "not with" togetherness preferences apply. */

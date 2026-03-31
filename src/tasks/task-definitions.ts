@@ -192,12 +192,14 @@ export function createMamteraTask(baseDate: Date): Task {
         slotId: nextSlotId('mamtera'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
+        forbiddenCertifications: [Certification.Horesh],
         label: 'ממטרה דרגה 0 #1',
       },
       {
         slotId: nextSlotId('mamtera'),
         acceptableLevels: [Level.L0],
         requiredCertifications: [],
+        forbiddenCertifications: [Certification.Horesh],
         label: 'ממטרה דרגה 0 #2',
       },
     ],
@@ -205,7 +207,6 @@ export function createMamteraTask(baseDate: Date): Task {
     baseLoadWeight: 4 / 9,
     sameGroupRequired: false,
     blocksConsecutive: true,
-    excludedCertifications: [Certification.Horesh],
   };
 }
 
