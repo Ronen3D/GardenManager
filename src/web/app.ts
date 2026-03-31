@@ -62,7 +62,7 @@ import {
   fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge, SVG_ICONS, escHtml,
 } from './ui-helpers';
 import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
-import { showAlert, showPrompt, showConfirm, showToast, showBottomSheet, showContinuityImport, renderCustomSelect, wireCustomSelect } from './ui-modal';
+import { showAlert, showPrompt, showConfirm, showToast, showBottomSheet, showContinuityImport, showTimePicker, renderCustomSelect, wireCustomSelect } from './ui-modal';
 import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
 import { buildPhantomContext } from '../engine/phantom';
@@ -1616,6 +1616,54 @@ async function handleLock(assignmentId: string): Promise<void> {
 
 // ─── Rescue Modal ────────────────────────────────────────────────────────────
 
+async function handleProfileSos(assignmentId: string): Promise<void> {
+  if (!currentSchedule) return;
+  const assignment = currentSchedule.assignments.find(a => a.id === assignmentId);
+  if (!assignment) return;
+  const task = currentSchedule.tasks.find(t => t.id === assignment.taskId);
+  if (!task) return;
+
+  const lm = store.getLiveModeState();
+  if (lm.enabled) {
+    openRescueModal(assignmentId);
+    return;
+  }
+
+  // Live mode is OFF — prompt for day + time
+  const numDays = store.getScheduleDays();
+  const baseDate = store.getScheduleDate();
+  const days: Array<{ value: string; label: string }> = [];
+  for (let d = 1; d <= numDays; d++) {
+    const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
+    days.push({ value: String(d), label: `יום ${hebrewDayName(date)}` });
+  }
+  const hours: Array<{ value: string; label: string }> = [];
+  for (let h = 0; h < 24; h++) {
+    hours.push({ value: String(h), label: `${String(h).padStart(2, '0')}:00` });
+  }
+
+  const result = await showTimePicker(
+    'כדי להפעיל חילוץ, יש להגדיר את הזמן הנוכחי במצב חי.',
+    { title: 'הפעלת מצב חי', days, hours, defaultDay: '1', defaultHour: '5' },
+  );
+  if (!result) return;
+
+  const dayIdx = parseInt(result.day, 10);
+  const hour = parseInt(result.hour, 10);
+  const ts = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dayIdx - 1, hour, 0);
+
+  if (!isFutureTask(task, ts)) {
+    await showAlert('הזמן שנבחר הופך את המשימה למוקפאת (בעבר). לא ניתן להפעיל חילוץ על משימה שכבר חלפה.', { title: 'לא ניתן להמשיך', icon: '⚠️' });
+    return;
+  }
+
+  store.setLiveModeEnabled(true);
+  store.setLiveModeTimestamp(ts);
+  freezeAssignments(currentSchedule, ts);
+
+  openRescueModal(assignmentId);
+}
+
 function openRescueModal(assignmentId: string): void {
   if (!currentSchedule) return;
   const assignment = currentSchedule.assignments.find(a => a.id === assignmentId);
@@ -2137,9 +2185,21 @@ function renderAll(): void {
     const p = currentSchedule.participants.find(pp => pp.id === _profileParticipantId);
     if (!p) { _viewMode = 'SCHEDULE_VIEW'; _profileParticipantId = null; /* fall through */ }
     else {
+      const lmProfile = store.getLiveModeState();
+      const frozenIds = new Set<string>();
+      if (lmProfile.enabled) {
+        const tMap = new Map(currentSchedule.tasks.map(t => [t.id, t]));
+        for (const a of currentSchedule.assignments) {
+          const t = tMap.get(a.taskId);
+          if (t && !isFutureTask(t, lmProfile.currentTimestamp)) frozenIds.add(a.id);
+        }
+      }
+
       const ctx: ProfileContext = {
         participant: p,
         schedule: currentSchedule,
+        frozenAssignmentIds: frozenIds,
+        showSosButtons: true,
       };
 
       app.innerHTML = `<div class="profile-view-root">${renderProfileView(ctx)}</div>`;
@@ -2150,7 +2210,7 @@ function renderAll(): void {
         _profileParticipantId = null;
         renderAll();
         requestAnimationFrame(() => window.scrollTo(0, _scheduleScrollY));
-      });
+      }, handleProfileSos);
       // Wire task tooltip in profile view too
       wireTaskTooltip(root);
       return;

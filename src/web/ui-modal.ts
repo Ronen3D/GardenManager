@@ -195,6 +195,76 @@ export function showConfirm(message: string, opts?: ConfirmOptions): Promise<boo
   });
 }
 
+// ─── Time Picker Modal ─────────────────────────────────────────────────────
+
+export interface TimePickerOptions {
+  title?: string;
+  days: Array<{ value: string; label: string }>;
+  hours: Array<{ value: string; label: string }>;
+  defaultDay?: string;
+  defaultHour?: string;
+}
+
+/** Show a modal with day + hour selectors. Returns { day, hour } or null on cancel. */
+export function showTimePicker(
+  message: string,
+  opts: TimePickerOptions,
+): Promise<{ day: string; hour: string } | null> {
+  return new Promise((resolve) => {
+    const title = opts.title || 'בחר זמן';
+
+    const dayOptions = opts.days.map(d =>
+      `<option value="${escAttr(d.value)}"${d.value === opts.defaultDay ? ' selected' : ''}>${escHtml(d.label)}</option>`
+    ).join('');
+    const hourOptions = opts.hours.map(h =>
+      `<option value="${escAttr(h.value)}"${h.value === opts.defaultHour ? ' selected' : ''}>${escHtml(h.label)}</option>`
+    ).join('');
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'gm-modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="gm-modal-dialog" role="dialog" aria-modal="true">
+        <div class="gm-modal-header">
+          <span class="gm-modal-icon">🔴</span>
+          <span class="gm-modal-title">${escHtml(title)}</span>
+        </div>
+        <div class="gm-modal-body">${escHtml(message)}</div>
+        <div class="gm-timepicker-row">
+          <label class="gm-timepicker-label">יום: <select id="gm-tp-day" class="gm-timepicker-select">${dayOptions}</select></label>
+          <label class="gm-timepicker-label">שעה: <select id="gm-tp-hour" class="gm-timepicker-select">${hourOptions}</select></label>
+        </div>
+        <div class="gm-modal-actions">
+          <button class="btn-primary gm-modal-btn-ok">🔴 הפעל מצב חי</button>
+          <button class="btn-sm btn-outline gm-modal-btn-cancel">ביטול</button>
+        </div>
+      </div>`;
+
+    lockBodyScroll();
+    const close = (val: { day: string; hour: string } | null) => {
+      backdrop.remove();
+      unlockBodyScroll();
+      resolve(val);
+    };
+
+    const daySelect = backdrop.querySelector('#gm-tp-day') as HTMLSelectElement;
+    const hourSelect = backdrop.querySelector('#gm-tp-hour') as HTMLSelectElement;
+
+    backdrop.querySelector('.gm-modal-btn-ok')!.addEventListener('click', () => {
+      close({ day: daySelect.value, hour: hourSelect.value });
+    });
+    backdrop.querySelector('.gm-modal-btn-cancel')!.addEventListener('click', () => close(null));
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(null); });
+
+    document.addEventListener('keydown', function onKey(e) {
+      if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(null); }
+      if (e.key === 'Enter') { document.removeEventListener('keydown', onKey); close({ day: daySelect.value, hour: hourSelect.value }); }
+    });
+
+    document.body.appendChild(backdrop);
+    (backdrop.querySelector('.gm-modal-btn-ok') as HTMLElement).focus();
+  });
+}
+
 // ─── Toast / Snackbar Notifications ─────────────────────────────────────────
 
 export interface ToastOptions {

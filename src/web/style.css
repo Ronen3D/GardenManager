@@ -2471,6 +2471,12 @@ tr.row-rest td {
   gap: 6px;
   flex-wrap: wrap;
 }
+.btn-rescue-profile {
+  margin-inline-start: auto;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 2px 6px;
+}
 .agenda-task-name {
   font-weight: 600;
   color: var(--text);
@@ -4896,6 +4902,28 @@ tr.now-row-animate > td.time-cell {
 }
 .gm-modal-btn-danger:hover {
   background: var(--danger-hover) !important;
+}
+
+.gm-timepicker-row {
+  display: flex;
+  gap: 16px;
+  padding: 8px 20px 12px;
+  align-items: center;
+}
+.gm-timepicker-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+.gm-timepicker-select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
 }
 
 /* Light mode overrides */

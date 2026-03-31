@@ -42,6 +42,8 @@ function fmtDayLabel(d: Date): string {
 export interface ProfileContext {
   participant: Participant;
   schedule: Schedule;
+  frozenAssignmentIds?: Set<string>;
+  showSosButtons?: boolean;
 }
 
 export function renderProfileView(ctx: ProfileContext): string {
@@ -67,7 +69,7 @@ export function renderProfileView(ctx: ProfileContext): string {
 
   // Left column: Agenda
   html += '<div class="profile-left">';
-  html += renderPersonalAgenda(p, myTasks, numDays, baseDate);
+  html += renderPersonalAgenda(p, myTasks, numDays, baseDate, ctx.frozenAssignmentIds, ctx.showSosButtons);
   html += '</div>';
 
   // Right column: Unavailability + Metrics
@@ -147,6 +149,8 @@ function renderPersonalAgenda(
   myTasks: Array<{ assignment: Assignment; task: Task }>,
   numDays: number,
   baseDate: Date,
+  frozenAssignmentIds?: Set<string>,
+  showSosButtons?: boolean,
 ): string {
   const DAY_START_HOUR = 5;
 
@@ -179,7 +183,7 @@ function renderPersonalAgenda(
       html += '<div class="agenda-empty">אין שיבוצים</div>';
     } else {
       html += '<div class="agenda-tasks">';
-      for (const { task } of dayTasks) {
+      for (const { assignment, task } of dayTasks) {
         const color = TASK_COLORS[task.type] || '#7f8c8d';
         const hrs = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
         // Detect cross-day tasks (end time extends past this day's boundary)
@@ -190,7 +194,14 @@ function renderPersonalAgenda(
         const crossDayBadge = crossDay
           ? `<span class="badge badge-sm" style="background:#555;color:#ffc107" title="ממשיך ליום ${endDayIdx}">← יום ${endDayIdx}</span>`
           : '';
-        html += `<div class="agenda-task task-tooltip-hover${crossDay ? ' agenda-task-crossday' : ''}" data-task-id="${task.id}" style="border-inline-start:3px solid ${color}">
+        const isFrozen = frozenAssignmentIds?.has(assignment.id) ?? false;
+        let sosHtml = '';
+        if (showSosButtons) {
+          sosHtml = isFrozen
+            ? '<span class="frozen-action-icon" title="מוקפא">&#x1F9CA;</span>'
+            : `<button class="btn-rescue btn-rescue-profile" data-assignment-id="${assignment.id}" title="חילוץ">&#x1F198;</button>`;
+        }
+        html += `<div class="agenda-task task-tooltip-hover${crossDay ? ' agenda-task-crossday' : ''}" data-task-id="${task.id}" data-assignment-id="${assignment.id}" style="border-inline-start:3px solid ${color}">
           <div class="agenda-task-time" dir="ltr">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</div>
           <div class="agenda-task-info">
             <span class="agenda-task-name">${task.name}</span>
@@ -198,6 +209,7 @@ function renderPersonalAgenda(
             <span class="agenda-task-dur">${hrs.toFixed(1)}h</span>
             ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
             ${crossDayBadge}
+            ${sosHtml}
           </div>
         </div>`;
       }
@@ -311,8 +323,14 @@ function renderMetrics(
 export function wireProfileEvents(
   container: HTMLElement,
   onBackToSchedule: () => void,
+  onSosClick?: (assignmentId: string) => void,
 ): void {
   container.addEventListener('click', (e) => {
+    const rescueBtn = (e.target as HTMLElement).closest('.btn-rescue') as HTMLElement | null;
+    if (rescueBtn?.dataset.assignmentId && onSosClick) {
+      onSosClick(rescueBtn.dataset.assignmentId);
+      return;
+    }
     const target = (e.target as HTMLElement).closest('[data-action]') as HTMLElement | null;
     if (!target) return;
     if (target.dataset.action === 'back-to-schedule') {
