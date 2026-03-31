@@ -6,21 +6,22 @@
  * Natural roles (data-driven — no task-type branching):
  *   Slots with adanitTeam: L3/L4 → SegolMain, L2 → SegolSecondary
  *   All other slots: trust acceptableLevels (if the slot lists the
- *   senior's level, the assignment is natural).
+ *   senior's level as normal-priority, the assignment is natural).
  *
  * Hard blocks (apply to ALL seniors L2/L3/L4):
- *   Forbidden from ANY task that is not their natural domain.
- *   The ONLY exception is preferJuniors tasks (see below).
+ *   Forbidden from ANY task that is not their natural domain,
+ *   UNLESS their level appears as lowPriority in the slot's
+ *   acceptableLevels (allowed with soft penalty).
  *
- * preferJuniors exception (absolute last resort):
- *   Tasks flagged with preferJuniors (e.g., Hamama) allow ONLY L4 as
- *   a last resort. L2 and L3 are completely forbidden.
- *   L4 carries the maximum possible penalty — the system should only
- *   place L4 there when the alternative is a complete failure.
+ * Low-priority exception:
+ *   Slots that list a senior level with lowPriority=true allow that
+ *   senior as an absolute last resort, with the maximum possible
+ *   penalty. The system should only place them there when the
+ *   alternative is a complete failure.
  *
  * Zero exceptions:
  *   Seniors can no longer be used for general tasks even if L0 is under
- *   extreme load.  The L0 Overload Escape Valve has been removed.
+ *   extreme load.
  */
 
 import {
@@ -34,6 +35,7 @@ import {
   ViolationSeverity,
   SchedulerConfig,
 } from '../models/types';
+import { isAcceptedLevel, isLowPriority } from '../models/level-utils';
 
 // ─── Natural-role detection ──────────────────────────────────────────────────
 
@@ -42,19 +44,16 @@ import {
  * for the participant's level.
  *
  *  L0 → always natural (no restrictions from this policy)
- *  preferJuniors → never natural (L4 tolerated via separate exception)
  *  Slots with adanitTeam → team-based rules (L3/L4 = SegolMain, L2 = SegolSecondary)
- *  All other slots → trust acceptableLevels
+ *  lowPriority levels → NOT natural (tolerated as last resort via soft penalty)
+ *  All other slots → trust acceptableLevels at normal priority
  */
 export function isNaturalRole(
   level: Level,
-  task: Task,
+  _task: Task,
   slot: SlotRequirement,
 ): boolean {
   if (level === Level.L0) return true;
-
-  // preferJuniors tasks: no senior is "natural" here — L4 is only tolerated as last resort
-  if (task.preferJuniors) return false;
 
   // Slots with adanitTeam designation have team-based natural-role rules
   if (slot.adanitTeam != null) {
@@ -63,8 +62,11 @@ export function isNaturalRole(
     return false;
   }
 
-  // All other slots (including custom task types): trust acceptableLevels
-  return slot.acceptableLevels.includes(level);
+  // A level listed as lowPriority is NOT a natural role — it's a last resort
+  if (isLowPriority(slot.acceptableLevels, level)) return false;
+
+  // All other slots: trust acceptableLevels (normal-priority entries)
+  return isAcceptedLevel(slot.acceptableLevels, level);
 }
 
 // ─── Hard constraint: absolute blocks ────────────────────────────────────────
@@ -73,10 +75,11 @@ export function isNaturalRole(
  * HC-13 · Senior hard blocks (strict isolation)
  *
  * Returns a violation if any senior (L2, L3, L4) is assigned to a task
- * that is NOT their natural domain and NOT a preferJuniors task.
+ * that is NOT their natural domain and NOT listed (even as lowPriority)
+ * in the slot's acceptableLevels.
  *
- * preferJuniors exception: ONLY L4 may be assigned as an absolute
- * last resort (with maximum soft penalty). L2 and L3 are hard-blocked.
+ * Low-priority exception: if the senior's level appears in acceptableLevels
+ * with lowPriority=true, the assignment is allowed (with maximum soft penalty).
  */
 export function checkSeniorHardBlock(
   participant: Participant,
@@ -88,18 +91,8 @@ export function checkSeniorHardBlock(
   // Only applies to seniors (L2/L3/L4)
   if (lvl === Level.L0) return null;
 
-  // preferJuniors tasks: only L4 is allowed (soft-penalised). L2 and L3 are hard-blocked.
-  if (task.preferJuniors) {
-    if (lvl === Level.L4) return null; // L4 allowed (penalised via soft constraint)
-    return {
-      code: 'SENIOR_HARD_BLOCK',
-      message: `${participant.name} (דרגה ${lvl}) אינו/ה ניתן/ת לשיבוץ ב-${task.name} — משימה זו מיועדת לדרגה 0 בלבד (דרגה 4 כמוצא אחרון)`,
-      severity: ViolationSeverity.Error,
-      participantId: participant.id,
-      taskId: task.id,
-      slotId: slot.slotId,
-    };
-  }
+  // Low-priority level: allowed (soft-penalised via lowPriorityLevelPenalty)
+  if (isLowPriority(slot.acceptableLevels, lvl)) return null;
 
   // Natural role → allowed
   if (isNaturalRole(lvl, task, slot)) return null;
@@ -144,17 +137,18 @@ export function validateSeniorHardBlocks(
   return violations;
 }
 
-// ─── Soft penalty: L4 in preferJuniors tasks ────────────────────────────────
+// ─── Soft penalty: low-priority level assignments ──────────────────────────
 
 /**
- * Compute the total soft penalty for L4 participants assigned to preferJuniors tasks.
+ * Compute the total soft penalty for participants assigned to slots where
+ * their level is marked as lowPriority.
  *
- * This is the sole remaining soft-penalised senior exception. L2 and L3
- * are hard-blocked from preferJuniors tasks by HC-13. All other non-natural
- * assignments are also hard-blocked. L4 in a preferJuniors task carries
- * the maximum penalty (`seniorJuniorPreferencePenalty`) — it is an absolute last resort.
+ * This is a general mechanism: any level can be marked lowPriority in any slot.
+ * For example, Hamama marking L4 as lowPriority means L4 is an absolute last
+ * resort for that slot. The penalty (`lowPriorityLevelPenalty`) is maximum —
+ * the system should only place them there when the alternative is a complete failure.
  */
-export function computeSeniorJuniorPreferencePenalty(
+export function computeLowPriorityLevelPenalty(
   participants: Participant[],
   assignments: Assignment[],
   tasks: Task[],
@@ -171,12 +165,12 @@ export function computeSeniorJuniorPreferencePenalty(
     const p = pMap.get(a.participantId);
     const task = tMap.get(a.taskId);
     if (!p || !task) continue;
-    if (p.level === Level.L0) continue;
 
-    // L4 in preferJuniors task — absolute last resort, maximum penalty
-    // (L2/L3 are hard-blocked by HC-13 and should never reach here)
-    if (task.preferJuniors && p.level === Level.L4) {
-      totalPenalty += config.seniorJuniorPreferencePenalty;
+    const slot = task.slots.find(s => s.slotId === a.slotId);
+    if (!slot) continue;
+
+    if (isLowPriority(slot.acceptableLevels, p.level)) {
+      totalPenalty += config.lowPriorityLevelPenalty;
     }
   }
 

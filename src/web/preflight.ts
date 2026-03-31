@@ -34,7 +34,7 @@ import { HORESH_PAKAL_ID, getEffectivePakalIds } from './pakal-utils';
 
 function participantMatchesSlot(p: Participant, slot: SlotTemplate): boolean {
   // Level check
-  if (!slot.acceptableLevels.includes(p.level)) return false;
+  if (!slot.acceptableLevels.some(e => e.level === p.level)) return false;
   // Cert check
   for (const cert of slot.requiredCertifications) {
     if (!p.certifications.includes(cert)) return false;

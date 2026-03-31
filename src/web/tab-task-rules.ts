@@ -379,7 +379,7 @@ function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: s
 
     html += `<tr>
       <td>${stripLevelText(slot.label)}</td>
-      <td>${slot.acceptableLevels.map(l => levelBadge(l)).join(' ')}</td>
+      <td>${slot.acceptableLevels.map(e => levelBadge(e.level) + (e.lowPriority ? '<sup style="color:#e67e22;font-size:0.6rem">LP</sup>' : '')).join(' ')}</td>
       <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map(c => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${forbiddenCerts.length > 0 ? forbiddenCerts.map(c => forbiddenCertBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${statusHtml}</td>
@@ -841,7 +841,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         }
 
         const slot: Omit<SlotTemplate, 'id'> = {
-          label, acceptableLevels: levels, requiredCertifications: certs,
+          label, acceptableLevels: levels.map(l => ({ level: l })), requiredCertifications: certs,
           forbiddenCertifications: forbiddenCerts.length > 0 ? forbiddenCerts : undefined,
         };
 

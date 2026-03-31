@@ -8,6 +8,7 @@ import {
   TaskType,
   SlotRequirement,
   Level,
+  LevelEntry,
   Certification,
   AdanitTeam,
   TimeBlock,
@@ -52,7 +53,7 @@ function buildAdanitSlots(): SlotRequirement[] {
   for (let i = 0; i < 2; i++) {
     slots.push({
       slotId: nextSlotId(prefix),
-      acceptableLevels: [Level.L0],
+      acceptableLevels: [{ level: Level.L0 }],
       requiredCertifications: [Certification.Nitzan],
       adanitTeam: AdanitTeam.SegolMain,
       label: `סגול ראשי דרגה 0 #${i + 1}`,
@@ -61,7 +62,7 @@ function buildAdanitSlots(): SlotRequirement[] {
   // Segol Main: 1× L3/L4
   slots.push({
     slotId: nextSlotId(prefix),
-    acceptableLevels: [Level.L3, Level.L4],
+    acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }],
     requiredCertifications: [Certification.Nitzan],
     adanitTeam: AdanitTeam.SegolMain,
     label: 'סגול ראשי דרגה 3/4',
@@ -71,7 +72,7 @@ function buildAdanitSlots(): SlotRequirement[] {
   for (let i = 0; i < 2; i++) {
     slots.push({
       slotId: nextSlotId(prefix),
-      acceptableLevels: [Level.L0],
+      acceptableLevels: [{ level: Level.L0 }],
       requiredCertifications: [Certification.Nitzan],
       adanitTeam: AdanitTeam.SegolSecondary,
       label: `סגול משני דרגה 0 #${i + 1}`,
@@ -80,7 +81,7 @@ function buildAdanitSlots(): SlotRequirement[] {
   // Segol Secondary: 1× L2
   slots.push({
     slotId: nextSlotId(prefix),
-    acceptableLevels: [Level.L2],
+    acceptableLevels: [{ level: Level.L2 }],
     requiredCertifications: [Certification.Nitzan],
     adanitTeam: AdanitTeam.SegolSecondary,
     label: 'סגול משני דרגה 2',
@@ -107,6 +108,7 @@ export function createAdanitTasks(baseDate: Date): Task[] {
       id: nextTaskId('adanit'),
       type: TaskType.Adanit,
       name: `משמרת אדנית ${i + 1}`,
+      sourceName: 'אדנית',
       timeBlock: block,
       requiredCount: 6,
       slots,
@@ -127,12 +129,13 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
     id: nextTaskId('hamama'),
     type: TaskType.Hamama,
     name: 'חממה',
+    sourceName: 'חממה',
     timeBlock,
     requiredCount: 1,
     slots: [
       {
         slotId: nextSlotId('hamama'),
-        acceptableLevels: [Level.L0, Level.L2, Level.L3, Level.L4],
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
         requiredCertifications: [Certification.Hamama],
         label: 'מפעיל חממה',
       },
@@ -141,7 +144,6 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
     baseLoadWeight: 5 / 6,
     sameGroupRequired: false,
     blocksConsecutive: true,
-    preferJuniors: true,
   };
 }
 
@@ -153,18 +155,19 @@ export function createShemeshTask(timeBlock: TimeBlock): Task {
     id: nextTaskId('shemesh'),
     type: TaskType.Shemesh,
     name: 'שמש',
+    sourceName: 'שמש',
     timeBlock,
     requiredCount: 2,
     slots: [
       {
         slotId: nextSlotId('shemesh'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [Certification.Nitzan],
         label: 'שמש #1',
       },
       {
         slotId: nextSlotId('shemesh'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [Certification.Nitzan],
         label: 'שמש #2',
       },
@@ -185,19 +188,20 @@ export function createMamteraTask(baseDate: Date): Task {
     id: nextTaskId('mamtera'),
     type: TaskType.Mamtera,
     name: 'ממטרה',
+    sourceName: 'ממטרה',
     timeBlock: block,
     requiredCount: 2,
     slots: [
       {
         slotId: nextSlotId('mamtera'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
         forbiddenCertifications: [Certification.Horesh],
         label: 'ממטרה דרגה 0 #1',
       },
       {
         slotId: nextSlotId('mamtera'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
         forbiddenCertifications: [Certification.Horesh],
         label: 'ממטרה דרגה 0 #2',
@@ -220,30 +224,31 @@ export function createKarovTask(timeBlock: TimeBlock): Task {
     id: nextTaskId('karov'),
     type: TaskType.Karov,
     name: 'כרוב',
+    sourceName: 'כרוב',
     timeBlock,
     requiredCount: 4,
     slots: [
       {
         slotId: nextSlotId('karov'),
-        acceptableLevels: [Level.L2, Level.L3, Level.L4],
+        acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
         requiredCertifications: [],
         label: 'מפקד כרוב (דרגה 2/3/4)',
       },
       {
         slotId: nextSlotId('karov'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [Certification.Salsala],
         label: 'כרוב דרגה 0 + סלסלה',
       },
       {
         slotId: nextSlotId('karov'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
         label: 'כרוב דרגה 0 #2',
       },
       {
         slotId: nextSlotId('karov'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
         label: 'כרוב דרגה 0 #3',
       },
@@ -282,30 +287,31 @@ export function createKarovitTask(timeBlock: TimeBlock): Task {
     id: nextTaskId('karovit'),
     type: TaskType.Karovit,
     name: 'כרובית',
+    sourceName: 'כרובית',
     timeBlock,
     requiredCount: 4,
     slots: [
       {
         slotId: nextSlotId('karovit'),
-        acceptableLevels: [Level.L2, Level.L3, Level.L4],
+        acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
         requiredCertifications: [],
         label: 'מפקד כרובית (דרגה 2+)',
       },
       {
         slotId: nextSlotId('karovit'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
         label: 'כרובית דרגה 0 #1',
       },
       {
         slotId: nextSlotId('karovit'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
         label: 'כרובית דרגה 0 #2',
       },
       {
         slotId: nextSlotId('karovit'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
         label: 'כרובית דרגה 0 #3',
       },
@@ -324,18 +330,19 @@ export function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוג�
     id: nextTaskId('aruga'),
     type: TaskType.Aruga,
     name: label,
+    sourceName: 'ערוגה',
     timeBlock,
     requiredCount: 2,
     slots: [
       {
         slotId: nextSlotId('aruga'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
         label: `${label} דרגה 0 #1`,
       },
       {
         slotId: nextSlotId('aruga'),
-        acceptableLevels: [Level.L0],
+        acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
         label: `${label} דרגה 0 #2`,
       },

@@ -65,13 +65,13 @@ function hasForbiddenCertification(p: Participant, slot: SlotRequirement): boole
 
 /**
  * Greedy preference score for sorting: lower is better.
- *  -1: participant prefers this task type
- *   0: neutral (no preference for this task type)
- *  +1: participant dislikes this task type
+ *  -1: participant prefers this task name
+ *   0: neutral (no preference for this task name)
+ *  +1: participant dislikes this task name
  */
 function computeGreedyPreferenceScore(p: Participant, task: Task): number {
-  if (p.preferredTaskType === task.type) return -1;
-  if (p.lessPreferredTaskType === task.type) return +1;
+  if (p.preferredTaskName && p.preferredTaskName === task.sourceName) return -1;
+  if (p.lessPreferredTaskName && p.lessPreferredTaskName === task.sourceName) return +1;
   return 0;
 }
 
@@ -186,7 +186,7 @@ function getEligibleCandidates(
   // ── C1 FIX: Single composite comparator ──
   // Merges what were three sequential (destructive) sorts into one stable sort.
   // Same-group:  exact-level → workload → same-type count → level → random
-  // Non-group:   (preferJuniors: level pref) → workload → exact-level → level → random
+  // Non-group:   (lowPriority level sort) → workload → exact-level → level → random
 
   // P3: Pre-compute random keys for a transitive, unbiased tiebreaker
   const rngKey = new Map<string, number>();
@@ -195,8 +195,8 @@ function getEligibleCandidates(
   eligible.sort((a, b) => {
     if (task.sameGroupRequired) {
       // T1: exact level match vs overqualified
-      const aExact = slot.acceptableLevels.includes(a.level) ? 0 : 1;
-      const bExact = slot.acceptableLevels.includes(b.level) ? 0 : 1;
+      const aExact = slot.acceptableLevels.some(e => e.level === a.level) ? 0 : 1;
+      const bExact = slot.acceptableLevels.some(e => e.level === b.level) ? 0 : 1;
       if (aExact !== bExact) return aExact - bExact;
       // T2: blended workload score — flat (absolute hours).
       // Proportional fairness is handled by SC-3/SC-8 in the scoring phase;
@@ -228,12 +228,12 @@ function getEligibleCandidates(
     }
 
     // ── All non-same-group tasks ──
-    // preferJuniors: prefer L0 first, L4 only as absolute last resort
-    // (L2/L3 are hard-blocked by HC-13 and won't be candidates)
-    if (task.preferJuniors) {
-      const hp = (l: Level): number => l === Level.L0 ? 0 : l === Level.L4 ? 1 : 2;
-      const d = hp(a.level) - hp(b.level);
-      if (d !== 0) return d;
+    // Low-priority level sort: prefer normal-priority participants over
+    // lowPriority ones for this slot. lowPriority participants are last resort.
+    {
+      const aLow = slot.acceptableLevels.find(e => e.level === a.level)?.lowPriority ? 1 : 0;
+      const bLow = slot.acceptableLevels.find(e => e.level === b.level)?.lowPriority ? 1 : 0;
+      if (aLow !== bLow) return aLow - bLow;
     }
 
     // Primary fairness driver: flat blended workload score.
@@ -248,8 +248,8 @@ function getEligibleCandidates(
     if (scoreA !== scoreB) return scoreA - scoreB;
 
     // Prefer exact level match
-    const aExact = slot.acceptableLevels.includes(a.level) ? 0 : 1;
-    const bExact = slot.acceptableLevels.includes(b.level) ? 0 : 1;
+    const aExact = slot.acceptableLevels.some(e => e.level === a.level) ? 0 : 1;
+    const bExact = slot.acceptableLevels.some(e => e.level === b.level) ? 0 : 1;
     if (aExact !== bExact) return aExact - bExact;
 
     // Level ascending — only for overqualified participants.
@@ -286,7 +286,7 @@ function getEligibleCandidates(
  * candidate-pool tiebreakers.
  *
  * Tier 0: Same-group tasks (Adanit) — always first
- * Tier 1: preferJuniors + cert required (Hamama) — penalty-critical
+ * Tier 1: Has lowPriority levels + cert required — penalty-critical
  * Tier 2: L0-only + cert required (Shemesh) — very tight pool
  * Tier 3: Mixed levels + cert or exclusion (Karov, Mamtera) — moderate
  * Tier 4: L0-only unconstrained (Aruga) — wide pool
@@ -303,11 +303,12 @@ function computeStructuralPriority(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasLowPriority = task.slots.some(s => s.acceptableLevels.some(e => e.lowPriority));
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;       // Hamama: penalty-critical
+  if (hasLowPriority && hasCerts) tier = 1;           // Penalty-critical (e.g. Hamama)
   else if (allL0Only && hasCerts) tier = 2;           // Shemesh: tight L0+cert pool
   else if (hasCerts || hasExclusion) tier = 3;        // Karov, Mamtera: moderate
   else if (allL0Only && !task.isLight) tier = 4;      // Aruga: wide L0 pool
@@ -442,7 +443,7 @@ export function greedyAssign(
             (a) => a.taskId === task.id && a.slotId === slot.slotId,
           );
           if (!alreadyFilled) {
-            const levelStr = slot.acceptableLevels.map((l) => 'L' + l).join('/');
+            const levelStr = slot.acceptableLevels.map((e) => 'L' + e.level).join('/');
             const certStr = slot.requiredCertifications.length > 0
               ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
             const reason = `אף קבוצה לא יכולה למלא את כל העמדות ב${task.name}. חסר ${levelStr}${certStr} עבור ${task.name}`;
@@ -455,7 +456,7 @@ export function greedyAssign(
 
     // Standard slot-by-slot assignment — fill most-constrained slots first
     const orderedSlots = [...task.slots].sort(
-      (a, b) => Math.min(...b.acceptableLevels) - Math.min(...a.acceptableLevels),
+      (a, b) => Math.min(...b.acceptableLevels.map(e => e.level)) - Math.min(...a.acceptableLevels.map(e => e.level)),
     );
     for (const slot of orderedSlots) {
       // Skip if already assigned (locked)
@@ -625,7 +626,7 @@ export function greedyAssign(
 
         if (!backtrackSuccess) {
           // R8: Build specific reason with constraint codes for diagnostics
-          const levelStr = slot.acceptableLevels.map((l) => 'L' + l).join('/');
+          const levelStr = slot.acceptableLevels.map((e) => 'L' + e.level).join('/');
           const certStr = slot.requiredCertifications.length > 0
             ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
 
@@ -754,7 +755,7 @@ function assignSameGroupTask(
   // Sort slots: fill most-constrained first (highest min-level → fewest candidates)
   const slotsToFill = task.slots
     .filter((s) => !lockedSlotIds.has(s.slotId))
-    .sort((a, b) => Math.min(...b.acceptableLevels) - Math.min(...a.acceptableLevels));
+    .sort((a, b) => Math.min(...b.acceptableLevels.map(e => e.level)) - Math.min(...a.acceptableLevels.map(e => e.level)));
 
   // Track best partial result across groups
   let bestGroupAssignments: Assignment[] = [];

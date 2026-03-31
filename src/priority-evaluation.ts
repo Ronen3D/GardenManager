@@ -77,6 +77,11 @@ const allParticipants: Participant[] = [
   createP('g8', 'Gamma-08', Level.L4, [Certification.Hamama], 'Gamma'),
 ];
 
+/** Check if any slot in the task has a low-priority level entry (replaces preferJuniors). */
+function hasLowPriority(task: Task): boolean {
+  return task.slots.some(s => s.acceptableLevels.some(e => e.lowPriority));
+}
+
 // ─── Pool Analysis Helper ───────────────────────────────────────────────────
 
 function countEligiblePerSlot(task: Task): { avg: number; min: number; max: number; total: number } {
@@ -86,7 +91,7 @@ function countEligiblePerSlot(task: Task): { avg: number; min: number; max: numb
   for (const slot of task.slots) {
     let eligible = 0;
     for (const p of allParticipants) {
-      if (!slot.acceptableLevels.includes(p.level)) continue;
+      if (!slot.acceptableLevels.some(e => e.level === p.level)) continue;
       if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
       if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
       eligible++;
@@ -114,11 +119,11 @@ function prod_current(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;
+  if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
   else if (allL0Only && !task.isLight) tier = 4;
@@ -145,11 +150,11 @@ function a1_compressedTiers(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors || (allL0Only && hasCerts)) tier = 1; // Merge Hamama+Shemesh
+  if (hasLowPriority(task) || (allL0Only && hasCerts)) tier = 1; // Merge Hamama+Shemesh
   else if (hasCerts || hasExclusion || (allL0Only && !task.isLight)) tier = 2; // Merge Karov+Mamtera+Aruga
   else tier = 3; // Light + fallback
 
@@ -168,13 +173,13 @@ function a2_expandedTiers(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
   const hasMixedLevels = task.slots.some(s => s.acceptableLevels.length > 1) &&
     task.slots.some(s => s.acceptableLevels.length === 1);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;       // Hamama
+  if (hasLowPriority(task) && hasCerts) tier = 1;       // Hamama
   else if (allL0Only && hasCerts) tier = 2;           // Shemesh
   else if (hasMixedLevels && hasCerts) tier = 3;      // Karov (mixed levels + certs)
   else if (hasExclusion) tier = 4;                    // Mamtera (exclusion)
@@ -197,11 +202,11 @@ function a3_tieredAvgPool(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;
+  if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
   else if (allL0Only && !task.isLight) tier = 4;
@@ -223,11 +228,11 @@ function a4_pureTiers(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;
+  if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
   else if (allL0Only && !task.isLight) tier = 4;
@@ -265,7 +270,7 @@ function b2_harmonicMean(task: Task): number {
   for (const slot of task.slots) {
     let eligible = 0;
     for (const p of allParticipants) {
-      if (!slot.acceptableLevels.includes(p.level)) continue;
+      if (!slot.acceptableLevels.some(e => e.level === p.level)) continue;
       if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
       if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
       eligible++;
@@ -275,7 +280,7 @@ function b2_harmonicMean(task: Task): number {
   const harmonicMean = task.slots.length / reciprocalSum;
   let score = Math.min(50, harmonicMean * 2.5);
   if (task.isLight) score += 15;
-  if (task.preferJuniors) score = Math.max(1, score - 8);
+  if (hasLowPriority(task)) score = Math.max(1, score - 8);
   return Math.max(1, score);
 }
 
@@ -292,7 +297,7 @@ function b3_constraintDensity(task: Task): number {
     constraintFeatures += slot.requiredCertifications.length * 2;
     constraintFeatures += (slot.forbiddenCertifications?.length ?? 0) * 2;
   }
-  if (task.preferJuniors) constraintFeatures += 5;
+  if (hasLowPriority(task)) constraintFeatures += 5;
 
   const { avg } = countEligiblePerSlot(task);
   const density = constraintFeatures / Math.max(1, avg);
@@ -316,7 +321,7 @@ function b4_slotWeightedBottleneck(task: Task): number {
   const difficulty = task.slots.length * scarcity;
   let score = Math.max(1, 50 - difficulty * 12);
   if (task.isLight) score += 15;
-  if (task.preferJuniors) score = Math.max(1, score - 5);
+  if (hasLowPriority(task)) score = Math.max(1, score - 5);
   return Math.max(1, score);
 }
 
@@ -334,11 +339,11 @@ function c1_tierBoostedPenalty(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;
+  if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
   else if (allL0Only && !task.isLight) tier = 4;
@@ -349,7 +354,7 @@ function c1_tierBoostedPenalty(task: Task): number {
   const subPriority = Math.min(9, min);
 
   // Extra: preferJuniors tasks get sub-priority 0 always (highest within tier)
-  if (task.preferJuniors) return tier * 10;
+  if (hasLowPriority(task)) return tier * 10;
   return tier * 10 + subPriority;
 }
 
@@ -362,11 +367,11 @@ function c2_tierContinuousBlend(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;
+  if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
   else if (allL0Only && !task.isLight) tier = 4;
@@ -397,7 +402,7 @@ function c3_v0PenaltyBoosted(task: Task): number {
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
   score -= task.slots.length * 2;
-  if (task.preferJuniors) score -= 25; // Aggressive Hamama boost
+  if (hasLowPriority(task)) score -= 25; // Aggressive Hamama boost
   if (task.isLight) score += 20;
   return Math.max(1, score);
 }
@@ -411,11 +416,11 @@ function c4_tierDuration(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;
+  if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
   else if (allL0Only && !task.isLight) tier = 4;
@@ -446,12 +451,12 @@ function d1_lightFirst(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (task.isLight) tier = 1;                          // Light FIRST
-  else if (task.preferJuniors && hasCerts) tier = 2;
+  else if (hasLowPriority(task) && hasCerts) tier = 2;
   else if (allL0Only && hasCerts) tier = 3;
   else if (hasCerts || hasExclusion) tier = 4;
   else if (allL0Only) tier = 5;
@@ -482,7 +487,7 @@ function d3_easyFirst(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   // Reverse tier ordering
@@ -491,7 +496,7 @@ function d3_easyFirst(task: Task): number {
   else if (allL0Only && !hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
   else if (allL0Only && hasCerts) tier = 4;
-  else if (task.preferJuniors && hasCerts) tier = 5;
+  else if (hasLowPriority(task) && hasCerts) tier = 5;
   else tier = 3;
 
   const { min } = countEligiblePerSlot(task);
@@ -507,7 +512,7 @@ function d3_easyFirst(task: Task): number {
  */
 function d4_penaltyOnly(task: Task): number {
   if (task.sameGroupRequired) return 0;
-  if (task.preferJuniors) return 5; // Hamama: top priority
+  if (hasLowPriority(task)) return 5; // Hamama: top priority
   if (task.isLight) return 40;      // Light: low priority
   return 25;                         // Everything else: equal
 }
@@ -522,11 +527,11 @@ function d4_penaltyOnly(task: Task): number {
  */
 function e1_hamamaTier0(task: Task): number {
   if (task.sameGroupRequired) return 0;
-  if (task.preferJuniors) return 1; // Hamama: just after group tasks
+  if (hasLowPriority(task)) return 1; // Hamama: just after group tasks
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
@@ -550,11 +555,11 @@ function e2_widerTierSpacing(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;
+  if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
   else if (allL0Only && !task.isLight) tier = 4;
@@ -576,11 +581,11 @@ function e3_arugaPromoted(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;
+  if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion || (allL0Only && !task.isLight)) tier = 3; // Aruga promoted
   else if (task.isLight) tier = 5;
@@ -600,11 +605,11 @@ function e4_geometricTiebreak(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;
+  if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
   else if (allL0Only && !task.isLight) tier = 4;
@@ -627,12 +632,12 @@ function e5_mergedTier1(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   // Merge: both preferJuniors+cert AND L0-only+cert go to tier 1
-  if ((task.preferJuniors && hasCerts) || (allL0Only && hasCerts)) tier = 1;
+  if ((hasLowPriority(task) && hasCerts) || (allL0Only && hasCerts)) tier = 1;
   else if (hasCerts || hasExclusion) tier = 2;
   else if (allL0Only && !task.isLight) tier = 3;
   else if (task.isLight) tier = 4;

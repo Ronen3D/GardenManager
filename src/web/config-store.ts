@@ -9,6 +9,7 @@
 import {
   Participant,
   Level,
+  LevelEntry,
   Certification,
   PakalDefinition,
   TaskType,
@@ -711,21 +712,21 @@ function cleanupNotWith(pid: string): void {
 
 // ─── Task Preference Accessors ──────────────────────────────────────────────
 
-/** Get a participant's task type preferences. */
-export function getTaskPreference(pid: string): { preferred?: TaskType; lessPreferred?: TaskType } {
+/** Get a participant's task name preferences. */
+export function getTaskNamePreference(pid: string): { preferred?: string; lessPreferred?: string } {
   const p = participants.get(pid);
   if (!p) return {};
-  return { preferred: p.preferredTaskType, lessPreferred: p.lessPreferredTaskType };
+  return { preferred: p.preferredTaskName, lessPreferred: p.lessPreferredTaskName };
 }
 
-/** Set a participant's task type preferences. Pass undefined to clear. */
-export function setTaskPreference(pid: string, preferred?: TaskType, lessPreferred?: TaskType): void {
+/** Set a participant's task name preferences. Pass undefined to clear. */
+export function setTaskNamePreference(pid: string, preferred?: string, lessPreferred?: string): void {
   const p = participants.get(pid);
   if (!p) return;
-  if (p.preferredTaskType === preferred && p.lessPreferredTaskType === lessPreferred) return;
+  if (p.preferredTaskName === preferred && p.lessPreferredTaskName === lessPreferred) return;
   pushSnapshot();
-  p.preferredTaskType = preferred;
-  p.lessPreferredTaskType = lessPreferred;
+  p.preferredTaskName = preferred;
+  p.lessPreferredTaskName = lessPreferred;
   notify();
 }
 
@@ -1046,16 +1047,16 @@ export function seedDefaultTaskTemplates(): void {
     subTeams: [
       {
         id: uid('st'), name: 'סגול ראשי', adanitTeam: AdanitTeam.SegolMain, slots: [
-          { id: uid('slot'), label: 'סגול ראשי #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול ראשי #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול ראשי #3', acceptableLevels: [Level.L3, Level.L4], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול ראשי #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול ראשי #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול ראשי #3', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan] },
         ],
       },
       {
         id: uid('st'), name: 'סגול משני', adanitTeam: AdanitTeam.SegolSecondary, slots: [
-          { id: uid('slot'), label: 'סגול משני #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול משני #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול משני #3', acceptableLevels: [Level.L2], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול משני #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול משני #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגול משני #3', acceptableLevels: [{ level: Level.L2 }], requiredCertifications: [Certification.Nitzan] },
         ],
       },
     ],
@@ -1078,10 +1079,9 @@ export function seedDefaultTaskTemplates(): void {
     loadWindows: [],
     blocksConsecutive: true,
     schedulingPriority: 1,
-    preferJuniors: true,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [Level.L0, Level.L4], requiredCertifications: [Certification.Hamama] },
+      { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }], requiredCertifications: [Certification.Hamama] },
     ],
     displayCategory: 'hamama',
     description: 'משמרות 12 שעות (06:00-18:00, 18:00-06:00). דורש הסמכת חממה. L2/L4 אסור. ללא דרישת ניצן.',
@@ -1102,8 +1102,8 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 6,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'שמש #1', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'שמש #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'שמש #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'שמש #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
     ],
     requiresCategoryBreak: true,
     displayCategory: 'shemesh',
@@ -1125,8 +1125,8 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 2,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'ממטרה #1', acceptableLevels: [Level.L0], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
-      { id: uid('slot'), label: 'ממטרה #2', acceptableLevels: [Level.L0], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
+      { id: uid('slot'), label: 'ממטרה #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
+      { id: uid('slot'), label: 'ממטרה #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
     ],
     displayCategory: 'mamtera',
     description: '09:00-23:00. 2× L0.',
@@ -1164,10 +1164,10 @@ export function seedDefaultTaskTemplates(): void {
     ],
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'כרוב מפקד', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרוב + סלסלה', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Salsala] },
-      { id: uid('slot'), label: 'כרוב #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרוב #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרוב מפקד', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרוב + סלסלה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Salsala] },
+      { id: uid('slot'), label: 'כרוב #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרוב #3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
     ],
     displayCategory: 'patrol',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
@@ -1188,10 +1188,10 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 5,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'כרובית מפקד', acceptableLevels: [Level.L2, Level.L3, Level.L4], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרובית #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרובית #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרובית #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית מפקד', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'כרובית #3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
     ],
     displayCategory: 'patrol',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 3× L0. קל — ללא השפעה על מנוחה.',
@@ -1212,8 +1212,8 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 4,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'ערוגה #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
-      { id: uid('slot'), label: 'ערוגה #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ערוגה #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'ערוגה #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
     ],
     displayCategory: 'aruga',
     description: '1.5 שעות, 2 ביום (בוקר 05:00-06:30, ערב 17:00-18:30). 2× L0.',
@@ -1430,28 +1430,60 @@ export function loadFromStorage(): boolean {
     // ── Migration: backfill new data-driven fields for existing templates ──
     if (Array.isArray(state.taskTemplates)) {
       for (const tpl of state.taskTemplates) {
-        // Hamama: backfill preferJuniors if missing
-        if (tpl.taskType === TaskType.Hamama && tpl.preferJuniors === undefined) {
-          tpl.preferJuniors = true;
+        // Migration: convert old preferJuniors flag to lowPriority entries
+        if ((tpl as any).preferJuniors) {
+          for (const slot of [...tpl.slots, ...tpl.subTeams.flatMap((st: any) => st.slots)]) {
+            slot.acceptableLevels = slot.acceptableLevels.map((e: any) => {
+              const lvl = typeof e === 'number' ? e : e.level;
+              if (lvl !== Level.L0 && !((typeof e === 'object') && e.lowPriority)) {
+                return { level: lvl, lowPriority: true };
+              }
+              return typeof e === 'number' ? { level: e } : e;
+            });
+          }
+          delete (tpl as any).preferJuniors;
+        }
+        // Migration: convert old flat Level[] to LevelEntry[]
+        for (const slot of [...tpl.slots, ...tpl.subTeams.flatMap((st: any) => st.slots)]) {
+          if (slot.acceptableLevels.length > 0 && typeof slot.acceptableLevels[0] === 'number') {
+            slot.acceptableLevels = slot.acceptableLevels.map((lvl: any) => ({ level: lvl }));
+          }
         }
         // Backfill togethernessRelevant: Adanit and Shemesh default to true
         if (tpl.togethernessRelevant === undefined) {
           tpl.togethernessRelevant = (tpl.taskType === TaskType.Adanit || tpl.taskType === TaskType.Shemesh);
         }
-        // Backfill requiresCategoryBreak: Adanit and Shemesh default to true
+        // Backfill requiresCategoryBreak: default to false
         if (tpl.requiresCategoryBreak === undefined) {
-          tpl.requiresCategoryBreak = (tpl.taskType === TaskType.Adanit || tpl.taskType === TaskType.Shemesh);
+          tpl.requiresCategoryBreak = false;
         }
         // Backfill displayCategory from taskType
         if (tpl.displayCategory === undefined) {
-          switch (tpl.taskType) {
-            case 'Karov': case 'Karovit': case 'Adanit':
-              tpl.displayCategory = 'patrol'; break;
-            case 'Hamama': tpl.displayCategory = 'hamama'; break;
-            case 'Aruga':  tpl.displayCategory = 'aruga'; break;
-            case 'Mamtera': tpl.displayCategory = 'mamtera'; break;
-            case 'Shemesh': tpl.displayCategory = 'shemesh'; break;
-            default: tpl.displayCategory = (tpl.taskType || 'custom').toLowerCase(); break;
+          tpl.displayCategory = (tpl.taskType || 'custom').toLowerCase();
+        }
+      }
+    }
+
+    // Migration: rename old participant preference fields
+    if (Array.isArray(state.participants)) {
+      for (const p of state.participants) {
+        if ((p as any).preferredTaskType !== undefined && (p as any).preferredTaskName === undefined) {
+          (p as any).preferredTaskName = (p as any).preferredTaskType;
+          delete (p as any).preferredTaskType;
+        }
+        if ((p as any).lessPreferredTaskType !== undefined && (p as any).lessPreferredTaskName === undefined) {
+          (p as any).lessPreferredTaskName = (p as any).lessPreferredTaskType;
+          delete (p as any).lessPreferredTaskType;
+        }
+      }
+    }
+
+    // Migration: convert old flat Level[] in one-time tasks
+    if (Array.isArray(state.oneTimeTasks)) {
+      for (const ot of state.oneTimeTasks) {
+        for (const slot of [...(ot.slots || []), ...(ot.subTeams || []).flatMap((st: any) => st.slots || [])]) {
+          if (slot.acceptableLevels?.length > 0 && typeof slot.acceptableLevels[0] === 'number') {
+            slot.acceptableLevels = slot.acceptableLevels.map((lvl: any) => ({ level: lvl }));
           }
         }
       }
@@ -2387,8 +2419,8 @@ function _snapshotCurrentParticipants(): ParticipantSnapshot[] {
         ? getNotWithIds(p.id).map(id => participants.get(id)?.name).filter((n): n is string => !!n)
         : undefined,
       pakalIds: sanitizePakalIds(p.pakalIds, pakalDefinitions),
-      preferredTaskType: p.preferredTaskType,
-      lessPreferredTaskType: p.lessPreferredTaskType,
+      preferredTaskName: p.preferredTaskName,
+      lessPreferredTaskName: p.lessPreferredTaskName,
     };
   });
 }
@@ -2547,8 +2579,8 @@ export function loadParticipantSet(id: string): void {
         group: snap.group,
         availability: getDefaultAvailability(),
         dateUnavailability: [],
-        preferredTaskType: snap.preferredTaskType,
-        lessPreferredTaskType: snap.lessPreferredTaskType,
+        preferredTaskName: snap.preferredTaskName,
+        lessPreferredTaskName: snap.lessPreferredTaskName,
       };
       participants.set(pid, p);
 

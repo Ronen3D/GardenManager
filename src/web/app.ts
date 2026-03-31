@@ -101,6 +101,7 @@ let _availabilityPopoverKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 let _continuityJson = '';
 let _availabilityInspectorDay: number | null = null;
 let _availabilityInspectorTime = '05:00';
+let _availabilityMobileOpen = false;
 
 // ─── View Router ─────────────────────────────────────────────────────────────
 
@@ -371,6 +372,7 @@ function generateTasksFromTemplates(): Task[] {
           id: `${tpl.name.toLowerCase()}-d${dayIdx + 1}-${++_tTaskCounter}`,
           type: tpl.taskType || 'Custom',
           name: `${dayLabel} ${tpl.name}${shiftLabel}`,
+          sourceName: tpl.name,
           timeBlock: block,
           requiredCount: slots.length,
           slots,
@@ -380,7 +382,6 @@ function generateTasksFromTemplates(): Task[] {
           sameGroupRequired: tpl.sameGroupRequired,
           blocksConsecutive: tpl.blocksConsecutive ?? !tpl.isLight,
           schedulingPriority: tpl.schedulingPriority,
-          preferJuniors: tpl.preferJuniors,
           togethernessRelevant: tpl.togethernessRelevant,
           requiresCategoryBreak: tpl.requiresCategoryBreak,
           displayCategory: tpl.displayCategory,
@@ -449,6 +450,7 @@ function generateTasksFromTemplates(): Task[] {
       id: `ot-${ot.id}-d${dayIdx + 1}-${++_tTaskCounter}`,
       type: ot.taskType || 'Custom',
       name: `${dayLabel} ${ot.name}`,
+      sourceName: ot.name,
       timeBlock: { start, end },
       requiredCount: slots.length,
       slots,
@@ -458,7 +460,6 @@ function generateTasksFromTemplates(): Task[] {
       sameGroupRequired: ot.sameGroupRequired,
       blocksConsecutive: ot.blocksConsecutive ?? !ot.isLight,
       schedulingPriority: ot.schedulingPriority,
-      preferJuniors: ot.preferJuniors,
       togethernessRelevant: ot.togethernessRelevant,
       requiresCategoryBreak: ot.requiresCategoryBreak,
       displayCategory: ot.displayCategory,
@@ -901,7 +902,8 @@ function renderScheduleTab(): string {
     <span class="day-window-actions">
       <button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>
       ${!isLastDayForDayLabel ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ\"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
-      <span class="availability-inline">${renderAvailabilityInspectorInline()}</span>
+      <button class="btn-sm btn-outline availability-mobile-toggle" id="btn-availability-mobile-toggle" title="בדיקת זמינות פק\"לים">${_availabilityMobileOpen ? '🕐 ✕' : '🕐'}</button>
+      <span class="availability-inline${_availabilityMobileOpen ? ' mobile-open' : ''}">${renderAvailabilityInspectorInline()}</span>
     </span>
   </div>`;
 
@@ -2140,7 +2142,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.3.3</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.4.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2614,6 +2616,15 @@ function wireScheduleEvents(container: HTMLElement): void {
       }
     });
   });
+
+  // ── Availability inspector mobile toggle ──
+  const availMobileToggle = container.querySelector('#btn-availability-mobile-toggle');
+  if (availMobileToggle) {
+    availMobileToggle.addEventListener('click', () => {
+      _availabilityMobileOpen = !_availabilityMobileOpen;
+      renderAll();
+    });
+  }
 
   // ── Continuity: Export day JSON ──
   const exportDayBtn = container.querySelector('#btn-export-day-json');

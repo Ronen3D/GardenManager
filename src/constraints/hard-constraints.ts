@@ -63,8 +63,8 @@ function violation(
  * pass — ordering between them is irrelevant there.
  */
 export function isLevelSatisfied(level: Level, slot: SlotRequirement): boolean {
-  return slot.acceptableLevels.includes(level)
-    || level > Math.max(...slot.acceptableLevels);
+  return slot.acceptableLevels.some(e => e.level === level)
+    || level > Math.max(...slot.acceptableLevels.map(e => e.level));
 }
 
 /**
@@ -88,7 +88,7 @@ export function checkLevelRequirement(
   if (!isLevelSatisfied(participant.level, slot)) {
     return violation(
       'LEVEL_MISMATCH',
-      `משתתף ${participant.name} (דרגה ${participant.level}) לא עומד בדרישת הדרגה [${slot.acceptableLevels.map((l) => 'דרגה ' + l).join(',')}] עבור ${task.name} משבצת "${slot.label}"`,
+      `משתתף ${participant.name} (דרגה ${participant.level}) לא עומד בדרישת הדרגה [${slot.acceptableLevels.map((e) => 'דרגה ' + e.level).join(',')}] עבור ${task.name} משבצת "${slot.label}"`,
       task.id,
       slotId,
       participant.id,
@@ -326,7 +326,7 @@ export function checkGroupFeasibility(
   for (const slot of task.slots) {
     const match = groupParticipants.find(p => {
       if (claimed.has(p.id)) return false;
-      if (!slot.acceptableLevels.includes(p.level)) return false;
+      if (!slot.acceptableLevels.some(e => e.level === p.level)) return false;
       for (const cert of slot.requiredCertifications) {
         if (!p.certifications.includes(cert)) return false;
       }
@@ -335,7 +335,7 @@ export function checkGroupFeasibility(
     if (match) {
       claimed.add(match.id);
     } else {
-      const levelDesc = slot.acceptableLevels.map(l => `דרגה ${l}`).join('/');
+      const levelDesc = slot.acceptableLevels.map(e => `דרגה ${e.level}`).join('/');
       const certDesc = slot.requiredCertifications.length > 0
         ? ` + ${slot.requiredCertifications.join(', ')}`
         : '';

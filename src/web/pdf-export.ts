@@ -35,14 +35,7 @@ import { addDays } from 'date-fns';
 /** Resolve a task's display category, with fallback for un-migrated data. */
 function getDisplayCategory(task: Task): string {
   if (task.displayCategory) return task.displayCategory;
-  switch (task.type) {
-    case 'Karov': case 'Karovit': case 'Adanit': return 'patrol';
-    case 'Hamama': return 'hamama';
-    case 'Aruga': return 'aruga';
-    case 'Mamtera': return 'mamtera';
-    case 'Shemesh': return 'shemesh';
-    default: return (task.type || 'custom').toLowerCase();
-  }
+  return (task.type || 'custom').toLowerCase();
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────

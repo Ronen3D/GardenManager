@@ -22,7 +22,7 @@ export enum Certification {
   Horesh = 'Horesh',
 }
 
-/** Task type identifiers */
+/** Task type identifiers (visual/UI categorisation only — not used in scheduling logic) */
 export enum TaskType {
   Adanit = 'Adanit',
   Hamama = 'Hamama',
@@ -31,6 +31,14 @@ export enum TaskType {
   Karov = 'Karov',
   Karovit = 'Karovit',
   Aruga = 'Aruga',
+}
+
+/** A level annotated with priority for a slot. */
+export interface LevelEntry {
+  level: Level;
+  /** When true, this level is allowed but treated as "very low priority" —
+   *  the scheduler will avoid it unless no normal-priority candidate exists. */
+  lowPriority?: boolean;
 }
 
 /** Assignment status */
@@ -108,10 +116,10 @@ export interface Participant {
   notWithIds?: string[];
   /** Explicit participant-selected פק"לים (effective חורש is derived separately). */
   pakalIds?: string[];
-  /** Task type the participant prefers to be assigned to (soft preference) */
-  preferredTaskType?: TaskType;
-  /** Task type the participant prefers NOT to be assigned to (soft preference) */
-  lessPreferredTaskType?: TaskType;
+  /** Task name the participant prefers to be assigned to (soft preference, matched against Task.sourceName) */
+  preferredTaskName?: string;
+  /** Task name the participant prefers NOT to be assigned to (soft preference, matched against Task.sourceName) */
+  lessPreferredTaskName?: string;
 }
 
 // ─── Capacity ────────────────────────────────────────────────────────────────
@@ -133,8 +141,8 @@ export interface ParticipantCapacity {
 export interface SlotRequirement {
   /** Unique slot ID within the task */
   slotId: string;
-  /** Acceptable levels for this slot */
-  acceptableLevels: Level[];
+  /** Acceptable levels for this slot (with optional priority annotation) */
+  acceptableLevels: LevelEntry[];
   /** Required certifications for this slot */
   requiredCertifications: Certification[];
   /** Certifications that DISQUALIFY a participant from this slot */
@@ -152,6 +160,8 @@ export interface Task {
   type: TaskType | string;
   /** Human-readable name */
   name: string;
+  /** Original template/definition name — used for preference matching (not day-prefixed). */
+  sourceName?: string;
   /** Time block for this task instance */
   timeBlock: TimeBlock;
   /** How many participants are required */
@@ -175,8 +185,6 @@ export interface Task {
   blocksConsecutive: boolean;
   /** Scheduling priority (0 = first). Lower = scheduled earlier in greedy phase. */
   schedulingPriority?: number;
-  /** When true, prefer L0 participants. L4 allowed with penalty; L2/L3 hard-blocked. */
-  preferJuniors?: boolean;
   /** Whether "not with" togetherness preferences apply to this task */
   togethernessRelevant?: boolean;
   /** HC-14: Enforces minimum 5h gap between this and other category-break tasks for the same participant. */
@@ -229,7 +237,7 @@ export interface ScheduleScore {
   avgRestHours: number;
   /** Standard deviation of effective load hours — lower is fairer */
   restStdDev: number;
-  /** Sum of penalty points (Hamama level misuse, etc.) */
+  /** Sum of penalty points (low-priority level usage, preference mismatches, etc.) */
   totalPenalty: number;
   /** Composite objective: maximize this */
   compositeScore: number;
@@ -286,18 +294,18 @@ export interface SchedulerConfig {
   maxIterations: number;
   /** Max time for solver in ms */
   maxSolverTimeMs: number;
-  /** Penalty for L4 assigned to a preferJuniors task — absolute last resort */
-  seniorJuniorPreferencePenalty: number;
+  /** Penalty for assigning a participant to a slot where their level is marked lowPriority */
+  lowPriorityLevelPenalty: number;
   /** Weight for daily workload balance (penalises busy-day / light-day spread) */
   dailyBalanceWeight: number;
   /** Penalty per "not with" pair violation in a togethernessRelevant task */
   notWithPenalty: number;
-  /** Penalty when participant is NOT assigned to their preferred task type (per participant, once) */
-  taskPreferencePenalty: number;
-  /** Penalty when participant IS assigned to their less-preferred task type (per assignment) */
-  taskAvoidancePenalty: number;
-  /** Bonus (penalty reduction) per assignment to participant's preferred task type */
-  taskPreferenceBonus: number;
+  /** Penalty when participant is NOT assigned to their preferred task name (per participant, once) */
+  taskNamePreferencePenalty: number;
+  /** Penalty when participant IS assigned to their less-preferred task name (per assignment) */
+  taskNameAvoidancePenalty: number;
+  /** Bonus (penalty reduction) per assignment to participant's preferred task name */
+  taskNamePreferenceBonus: number;
 }
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
@@ -307,12 +315,12 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
 
   maxIterations: 50000,
   maxSolverTimeMs: 30000,
-  seniorJuniorPreferencePenalty: 1166,
+  lowPriorityLevelPenalty: 1166,
   dailyBalanceWeight: 144,
   notWithPenalty: 1929,
-  taskPreferencePenalty: 140,
-  taskAvoidancePenalty: 27,
-  taskPreferenceBonus: 7,
+  taskNamePreferencePenalty: 140,
+  taskNameAvoidancePenalty: 27,
+  taskNamePreferenceBonus: 7,
 };
 
 // ─── Algorithm Settings (user-configurable control panel) ────────────────────
@@ -422,10 +430,10 @@ export interface ParticipantSnapshot {
   notWithIds?: string[];
   /** Explicit participant-selected פק"לים (effective חורש is derived separately). */
   pakalIds?: string[];
-  /** Task type the participant prefers to be assigned to (soft preference) */
-  preferredTaskType?: TaskType;
-  /** Task type the participant prefers NOT to be assigned to (soft preference) */
-  lessPreferredTaskType?: TaskType;
+  /** Task name the participant prefers to be assigned to (soft preference, matched against Task.sourceName) */
+  preferredTaskName?: string;
+  /** Task name the participant prefers NOT to be assigned to (soft preference, matched against Task.sourceName) */
+  lessPreferredTaskName?: string;
 }
 
 /** A named, saveable collection of participants */
@@ -510,7 +518,7 @@ export interface ReScheduleRequest {
 export interface SlotTemplate {
   id: string;
   label: string;
-  acceptableLevels: Level[];
+  acceptableLevels: LevelEntry[];
   requiredCertifications: Certification[];
   /** Certifications that DISQUALIFY a participant from this slot */
   forbiddenCertifications?: Certification[];
@@ -571,8 +579,6 @@ export interface TaskTemplate {
   description?: string;
   /** Scheduling priority (0 = first). If unset, computed from task constraints. */
   schedulingPriority?: number;
-  /** When true, prefer L0 participants. L4 allowed with penalty; L2/L3 hard-blocked by HC-13. */
-  preferJuniors?: boolean;
   /** Whether "not with" togetherness preferences apply to this task template */
   togethernessRelevant?: boolean;
   /** HC-14: Enforces minimum 5h gap between category-break tasks for same participant. */
@@ -612,8 +618,6 @@ export interface OneTimeTask {
   blocksConsecutive?: boolean;
   /** Scheduling priority (0 = first). */
   schedulingPriority?: number;
-  /** When true, prefer L0 participants. */
-  preferJuniors?: boolean;
   /** Whether "not with" togetherness preferences apply. */
   togethernessRelevant?: boolean;
   /** HC-14: Enforces minimum 5h gap between category-break tasks. */

@@ -4359,6 +4359,11 @@ tr.now-row-animate > td.time-cell {
   gap: 8px;
 }
 
+/* Toggle button for availability inspector — only visible on mobile */
+.availability-mobile-toggle {
+  display: none;
+}
+
 /* ─── Continuity Import Modal ────────────────────────────────────────────── */
 
 .gm-modal-continuity {

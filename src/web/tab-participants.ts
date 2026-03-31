@@ -9,13 +9,12 @@ import {
   Level,
   Certification,
   PakalDefinition,
-  TaskType,
   Participant,
   DateUnavailability,
 } from '../models/types';
 import * as store from './config-store';
 import { showConfirm, showToast } from './ui-modal';
-import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, TASK_TYPE_LABELS, SVG_ICONS, escHtml } from './ui-helpers';
+import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, SVG_ICONS, escHtml } from './ui-helpers';
 import { HORESH_PAKAL_ID, getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
 import { HEBREW_DAYS } from '../utils/date-utils';
 
@@ -52,7 +51,10 @@ function formatUnavailSummary(rules: DateUnavailability[]): string {
   }).join('<br>');
 }
 
-const TASK_TYPE_OPTIONS = Object.values(TaskType) as TaskType[];
+/** Get distinct task template names for preference dropdowns. */
+function getTaskNameOptions(): string[] {
+  return [...new Set(store.getAllTaskTemplates().map(t => t.name))];
+}
 
 function renderPakalCheckboxes(
   definitions: PakalDefinition[],
@@ -155,20 +157,21 @@ function renderPakalManager(): string {
 
 function renderPreferenceBadges(p: Participant): string {
   const parts: string[] = [];
-  if (p.preferredTaskType) {
-    parts.push(`<span class="badge badge-sm" style="background:#27ae60">מעדיף: ${TASK_TYPE_LABELS[p.preferredTaskType] || p.preferredTaskType}</span>`);
+  if (p.preferredTaskName) {
+    parts.push(`<span class="badge badge-sm" style="background:#27ae60">מעדיף: ${p.preferredTaskName}</span>`);
   }
-  if (p.lessPreferredTaskType) {
-    parts.push(`<span class="badge badge-sm" style="background:#e67e22">פחות: ${TASK_TYPE_LABELS[p.lessPreferredTaskType] || p.lessPreferredTaskType}</span>`);
+  if (p.lessPreferredTaskName) {
+    parts.push(`<span class="badge badge-sm" style="background:#e67e22">פחות: ${p.lessPreferredTaskName}</span>`);
   }
   return parts.length > 0 ? parts.join(' ') : '<span class="text-muted">—</span>';
 }
 
-function renderTaskTypeSelect(fieldName: string, value?: TaskType): string {
+function renderTaskNameSelect(fieldName: string, value?: string): string {
+  const options = getTaskNameOptions();
   return `<select class="input-sm" data-field="${fieldName}">
     <option value="">— ללא —</option>
-    ${TASK_TYPE_OPTIONS.map(t =>
-      `<option value="${t}" ${value === t ? 'selected' : ''}>${TASK_TYPE_LABELS[t] || t}</option>`
+    ${options.map(name =>
+      `<option value="${name}" ${value === name ? 'selected' : ''}>${name}</option>`
     ).join('')}
   </select>`;
 }
@@ -538,9 +541,9 @@ function renderEditRow(p: Participant, idx: number): string {
     <td>
       <div style="display:flex;flex-direction:column;gap:4px">
         <label style="font-size:0.75rem;margin:0">משימה מועדפת</label>
-        ${renderTaskTypeSelect('preferredTask', p.preferredTaskType)}
+        ${renderTaskNameSelect('preferredTask', p.preferredTaskName)}
         <label style="font-size:0.75rem;margin:0">עדיף שלא</label>
-        ${renderTaskTypeSelect('lessPreferredTask', p.lessPreferredTaskType)}
+        ${renderTaskNameSelect('lessPreferredTask', p.lessPreferredTaskName)}
       </div>
     </td>
     <td colspan="2"></td>
@@ -640,8 +643,8 @@ function renderAddForm(groups: string[]): string {
       </div>
     </div>
     <div class="form-row">
-      <label>מעדיף ${renderTaskTypeSelect('new-preferredTask')}</label>
-      <label>פחות מועדף ${renderTaskTypeSelect('new-lessPreferredTask')}</label>
+      <label>מעדיף ${renderTaskNameSelect('new-preferredTask')}</label>
+      <label>פחות מועדף ${renderTaskNameSelect('new-lessPreferredTask')}</label>
     </div>
     <div class="form-row">
       <button class="btn-primary btn-sm" data-action="confirm-add-participant">הוסף</button>
@@ -1058,16 +1061,16 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const newPref = (container.querySelector('[data-field="new-preferredTask"]') as HTMLSelectElement)?.value || '';
         const newLess = (container.querySelector('[data-field="new-lessPreferredTask"]') as HTMLSelectElement)?.value || '';
         if (newPref && newLess && newPref === newLess) {
-          showToast('סוג מועדף וסוג פחות מועדף לא יכולים להיות זהים', { type: 'error' });
+          showToast('משימה מועדפת ומשימה פחות מועדפת לא יכולות להיות זהות', { type: 'error' });
           return;
         }
 
         const newP = store.addParticipant({ name, level, certifications: certs, pakalIds, group });
         if (newPref || newLess) {
-          store.setTaskPreference(
+          store.setTaskNamePreference(
             newP.id,
-            newPref ? (newPref as TaskType) : undefined,
-            newLess ? (newLess as TaskType) : undefined,
+            newPref || undefined,
+            newLess || undefined,
           );
         }
         rerender();
@@ -1132,13 +1135,13 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         // Process task preferences
         const prefSelect = row.querySelector('[data-field="preferredTask"]') as HTMLSelectElement | null;
         const lessSelect = row.querySelector('[data-field="lessPreferredTask"]') as HTMLSelectElement | null;
-        const preferred = prefSelect?.value ? (prefSelect.value as TaskType) : undefined;
-        const lessPreferred = lessSelect?.value ? (lessSelect.value as TaskType) : undefined;
+        const preferred = prefSelect?.value || undefined;
+        const lessPreferred = lessSelect?.value || undefined;
         if (preferred && lessPreferred && preferred === lessPreferred) {
-          showToast('סוג מועדף וסוג פחות מועדף לא יכולים להיות זהים', { type: 'error' });
+          showToast('משימה מועדפת ומשימה פחות מועדפת לא יכולות להיות זהות', { type: 'error' });
           return;
         }
-        store.setTaskPreference(pid, preferred, lessPreferred);
+        store.setTaskNamePreference(pid, preferred, lessPreferred);
 
         editingId = null;
         rerender();

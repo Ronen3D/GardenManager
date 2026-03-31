@@ -230,7 +230,7 @@ const score1 = computeScheduleScore(
   DEFAULT_CONFIG,
 );
 assert(score1.totalPenalty > 0, 'L4 Hamama assignment incurs penalty');
-assert(score1.totalPenalty >= DEFAULT_CONFIG.seniorJuniorPreferencePenalty, 'Penalty >= seniorJuniorPreferencePenalty config');
+assert(score1.totalPenalty >= DEFAULT_CONFIG.lowPriorityLevelPenalty, 'Penalty >= lowPriorityLevelPenalty config');
 
 // L0 Hamama — should have 0 hamama penalty (only workload-based penalty possible)
 const l0HamamaAssignment = [{
@@ -658,7 +658,7 @@ import {
   isNaturalRole,
   checkSeniorHardBlock,
   validateSeniorHardBlocks,
-  computeSeniorJuniorPreferencePenalty,
+  computeLowPriorityLevelPenalty,
 } from './constraints/senior-policy';
 import { AdanitTeam } from './models/types';
 import type { SlotRequirement, Assignment } from './models/types';
@@ -719,11 +719,11 @@ const mamteraTask = createMamteraTask(baseDate);
 // Per-slot granularity: forbidden on slot A, allowed on slot B
 {
   const slotA: SlotRequirement = {
-    slotId: 'fc-slot-a', acceptableLevels: [Level.L0],
+    slotId: 'fc-slot-a', acceptableLevels: [{ level: Level.L0 }],
     requiredCertifications: [], forbiddenCertifications: [Certification.Horesh], label: 'Slot A (forbids Horesh)',
   };
   const slotB: SlotRequirement = {
-    slotId: 'fc-slot-b', acceptableLevels: [Level.L0],
+    slotId: 'fc-slot-b', acceptableLevels: [{ level: Level.L0 }],
     requiredCertifications: [], label: 'Slot B (no forbidden)',
   };
   const mixedTask: Task = {
@@ -927,17 +927,17 @@ console.log('\n── Senior Role Policy (HC-13) ──────────�
 
 // Helper slots for Adanit tests
 const adMainSlot: SlotRequirement = {
-  slotId: 'test-ad-main', acceptableLevels: [Level.L3, Level.L4],
+  slotId: 'test-ad-main', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }],
   requiredCertifications: [Certification.Nitzan], adanitTeam: AdanitTeam.SegolMain,
   label: 'Segol Main L3/L4',
 };
 const adSecSlot: SlotRequirement = {
-  slotId: 'test-ad-sec', acceptableLevels: [Level.L2],
+  slotId: 'test-ad-sec', acceptableLevels: [{ level: Level.L2 }],
   requiredCertifications: [Certification.Nitzan], adanitTeam: AdanitTeam.SegolSecondary,
   label: 'Segol Secondary L2',
 };
 const adL0Slot: SlotRequirement = {
-  slotId: 'test-ad-l0', acceptableLevels: [Level.L0],
+  slotId: 'test-ad-l0', acceptableLevels: [{ level: Level.L0 }],
   requiredCertifications: [Certification.Nitzan],
   label: 'Adanit L0',
 };
@@ -950,11 +950,11 @@ const testAdanitTask: Task = {
 };
 
 const testKarovSlot: SlotRequirement = {
-  slotId: 'test-kr-cmd', acceptableLevels: [Level.L2, Level.L3, Level.L4],
+  slotId: 'test-kr-cmd', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
   requiredCertifications: [], label: 'Karov Commander',
 };
 const testKarovL0Slot: SlotRequirement = {
-  slotId: 'test-kr-l0', acceptableLevels: [Level.L0],
+  slotId: 'test-kr-l0', acceptableLevels: [{ level: Level.L0 }],
   requiredCertifications: [], label: 'Karov L0',
 };
 const testKarovTask: Task = {
@@ -965,11 +965,11 @@ const testKarovTask: Task = {
 };
 
 const testKarovitSlot: SlotRequirement = {
-  slotId: 'test-krt-cmd', acceptableLevels: [Level.L2, Level.L3, Level.L4],
+  slotId: 'test-krt-cmd', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
   requiredCertifications: [], label: 'Karovit Commander',
 };
 const testKarovitL0Slot: SlotRequirement = {
-  slotId: 'test-krt-l0', acceptableLevels: [Level.L0],
+  slotId: 'test-krt-l0', acceptableLevels: [{ level: Level.L0 }],
   requiredCertifications: [], label: 'Karovit L0',
 };
 const testKarovitTask: Task = {
@@ -980,7 +980,7 @@ const testKarovitTask: Task = {
 };
 
 const testMamSlot: SlotRequirement = {
-  slotId: 'test-mam-l0', acceptableLevels: [Level.L0],
+  slotId: 'test-mam-l0', acceptableLevels: [{ level: Level.L0 }],
   requiredCertifications: [], forbiddenCertifications: [Certification.Horesh],
   label: 'Mamtera L0',
 };
@@ -992,7 +992,7 @@ const testMamTask: Task = {
 };
 
 const testHamSlot: SlotRequirement = {
-  slotId: 'test-ham-op', acceptableLevels: [Level.L0, Level.L2, Level.L3, Level.L4],
+  slotId: 'test-ham-op', acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
   requiredCertifications: [Certification.Hamama], label: 'Hamama Operator',
 };
 const testHamTask: Task = {
@@ -1000,11 +1000,10 @@ const testHamTask: Task = {
   timeBlock: createTimeBlockFromHours(baseDate, 6, 18),
   requiredCount: 1, slots: [testHamSlot],
   isLight: false, sameGroupRequired: false, blocksConsecutive: true,
-  preferJuniors: true,
 };
 
 const testShSlot: SlotRequirement = {
-  slotId: 'test-sh-1', acceptableLevels: [Level.L0],
+  slotId: 'test-sh-1', acceptableLevels: [{ level: Level.L0 }],
   requiredCertifications: [Certification.Nitzan], label: 'Shemesh #1',
 };
 const testShTask: Task = {
@@ -1015,7 +1014,7 @@ const testShTask: Task = {
 };
 
 const testArSlot: SlotRequirement = {
-  slotId: 'test-ar-1', acceptableLevels: [Level.L0],
+  slotId: 'test-ar-1', acceptableLevels: [{ level: Level.L0 }],
   requiredCertifications: [], label: 'Aruga L0',
 };
 const testArTask: Task = {
@@ -1098,11 +1097,11 @@ assert(checkSeniorHardBlock(spL3, testMamTask, testMamSlot)?.code === 'SENIOR_HA
 assert(checkSeniorHardBlock(spL3, testAdanitTask, adMainSlot) === null, 'HC-13: L3 in Segol Main → no violation');
 assert(checkSeniorHardBlock(spL3, testAdanitTask, adSecSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Segol Secondary → VIOLATION');
 assert(checkSeniorHardBlock(spL3, testShTask, testShSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Shemesh → VIOLATION (strict isolation)');
-assert(checkSeniorHardBlock(spL3, testHamTask, testHamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Hamama (preferJuniors) → VIOLATION');
+assert(checkSeniorHardBlock(spL3, testHamTask, testHamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Hamama → VIOLATION (not in acceptableLevels)');
 
 assert(checkSeniorHardBlock(spL2, testMamTask, testMamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Mamtera → VIOLATION (strict isolation)');
 assert(checkSeniorHardBlock(spL2, testShTask, testShSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Shemesh → VIOLATION (strict isolation)');
-assert(checkSeniorHardBlock(spL2, testHamTask, testHamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Hamama (preferJuniors) → VIOLATION');
+assert(checkSeniorHardBlock(spL2, testHamTask, testHamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Hamama → VIOLATION (not in acceptableLevels)');
 assert(checkSeniorHardBlock(spL0, testMamTask, testMamSlot) === null, 'HC-13: L0 never blocked');
 assert(checkSeniorHardBlock(spL0, testShTask, testShSlot) === null, 'HC-13: L0 never blocked (Shemesh)');
 
@@ -1143,7 +1142,7 @@ assert(checkSeniorHardBlock(spL0, testShTask, testShSlot) === null, 'HC-13: L0 n
   assert(!r.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'HC-13: L4 in Hamama no hard violation in full validation');
 }
 
-// ── computeSeniorJuniorPreferencePenalty ────────────────────────────────────────────────────
+// ── computeLowPriorityLevelPenalty ────────────────────────────────────────────────────
 
 const cfg = { ...DEFAULT_CONFIG };
 
@@ -1152,35 +1151,35 @@ const cfg = { ...DEFAULT_CONFIG };
   const assigns: Assignment[] = [
     { id: 'sr-p1', taskId: testKarovTask.id, slotId: testKarovSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorJuniorPreferencePenalty([spL3], assigns, [testKarovTask], cfg);
-  assert(pen === 0, 'Senior junior-pref penalty: natural assignment → 0');
+  const pen = computeLowPriorityLevelPenalty([spL3], assigns, [testKarovTask], cfg);
+  assert(pen === 0, 'Low-priority penalty: natural assignment → 0');
 }
 
-// L4 in preferJuniors task → seniorJuniorPreferencePenalty (absolute last resort)
+// L4 in Hamama (lowPriority) → lowPriorityLevelPenalty (absolute last resort)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorJuniorPreferencePenalty([spL4], assigns, [testHamTask], cfg);
-  assert(pen === cfg.seniorJuniorPreferencePenalty, `Senior junior-pref penalty: L4 in preferJuniors → penalty ${cfg.seniorJuniorPreferencePenalty}`);
+  const pen = computeLowPriorityLevelPenalty([spL4], assigns, [testHamTask], cfg);
+  assert(pen === cfg.lowPriorityLevelPenalty, `Low-priority penalty: L4 in Hamama (lowPriority) → penalty ${cfg.lowPriorityLevelPenalty}`);
 }
 
-// L3 in preferJuniors task → 0 (hard-blocked by HC-13, should never occur)
+// L3 in Hamama → 0 (not in acceptableLevels, hard-blocked by HC-13)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2b', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorJuniorPreferencePenalty([spL3], assigns, [testHamTask], cfg);
-  assert(pen === 0, 'Senior junior-pref penalty: L3 in preferJuniors → 0 (hard-blocked)');
+  const pen = computeLowPriorityLevelPenalty([spL3], assigns, [testHamTask], cfg);
+  assert(pen === 0, 'Low-priority penalty: L3 in Hamama → 0 (not in acceptableLevels)');
 }
 
-// L2 in preferJuniors task → 0 (hard-blocked by HC-13, should never occur)
+// L2 in Hamama → 0 (not in acceptableLevels, hard-blocked by HC-13)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2c', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorJuniorPreferencePenalty([spL2], assigns, [testHamTask], cfg);
-  assert(pen === 0, 'Senior junior-pref penalty: L2 in preferJuniors → 0 (hard-blocked)');
+  const pen = computeLowPriorityLevelPenalty([spL2], assigns, [testHamTask], cfg);
+  assert(pen === 0, 'Low-priority penalty: L2 in Hamama → 0 (not in acceptableLevels)');
 }
 
 // L0 participants never penalised
@@ -1188,12 +1187,12 @@ const cfg = { ...DEFAULT_CONFIG };
   const assigns: Assignment[] = [
     { id: 'sr-p5', taskId: testMamTask.id, slotId: testMamSlot.slotId, participantId: spL0.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const pen = computeSeniorJuniorPreferencePenalty([spL0], assigns, [testMamTask], cfg);
+  const pen = computeLowPriorityLevelPenalty([spL0], assigns, [testMamTask], cfg);
   assert(pen === 0, 'Senior junior-pref penalty: L0 never penalised');
 }
 // ── SC-10: Task Preference Penalty (with bonus) ─────────────────────────────
 
-import { computeTaskPreferencePenalty } from './constraints/soft-constraints';
+import { computeTaskNamePreferencePenalty } from './constraints/soft-constraints';
 
 console.log('\n── SC-10: Task Preference Penalty ──────');
 
@@ -1210,10 +1209,10 @@ console.log('\n── SC-10: Task Preference Penalty ──────');
     id: 'sc10-p1', name: 'PrefPerson', level: Level.L0,
     certifications: [Certification.Nitzan], group: 'A',
     availability: dayAvail, dateUnavailability: [],
-    preferredTaskType: TaskType.Mamtera,
+    preferredTaskName: 'ממטרה',
   };
 
-  const cfgPref = { ...DEFAULT_CONFIG, taskPreferencePenalty: 50, taskAvoidancePenalty: 80, taskPreferenceBonus: 25 };
+  const cfgPref = { ...DEFAULT_CONFIG, taskNamePreferencePenalty: 50, taskNameAvoidancePenalty: 80, taskNamePreferenceBonus: 25 };
 
   // No preferred assignments → binary penalty only (no bonus)
   {
@@ -1222,7 +1221,7 @@ console.log('\n── SC-10: Task Preference Penalty ──────');
         { id: 'sc10-a1', taskId: prefKarov.id, slotId: prefKarov.slots[0].slotId, participantId: 'sc10-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
       ]],
     ]);
-    const pen = computeTaskPreferencePenalty([pWithPref], cfgPref, taskMap, assigns);
+    const pen = computeTaskNamePreferencePenalty([pWithPref], cfgPref, taskMap, assigns);
     assert(pen === 50, 'SC-10 bonus: 0 preferred assignments → binary penalty 50');
   }
 
@@ -1233,7 +1232,7 @@ console.log('\n── SC-10: Task Preference Penalty ──────');
         { id: 'sc10-a2', taskId: prefMamtera.id, slotId: prefMamtera.slots[0].slotId, participantId: 'sc10-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
       ]],
     ]);
-    const pen = computeTaskPreferencePenalty([pWithPref], cfgPref, taskMap, assigns);
+    const pen = computeTaskNamePreferencePenalty([pWithPref], cfgPref, taskMap, assigns);
     assert(pen === -25, 'SC-10 bonus: 1 preferred assignment → -25 (no binary, 1× bonus)');
   }
 
@@ -1246,19 +1245,19 @@ console.log('\n── SC-10: Task Preference Penalty ──────');
         { id: 'sc10-a5', taskId: prefMamtera.id, slotId: prefMamtera.slots[0].slotId, participantId: 'sc10-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
       ]],
     ]);
-    const pen = computeTaskPreferencePenalty([pWithPref], cfgPref, taskMap, assigns);
+    const pen = computeTaskNamePreferencePenalty([pWithPref], cfgPref, taskMap, assigns);
     assert(pen === -75, 'SC-10 bonus: 3 preferred assignments → -75 (stacks)');
   }
 
   // Bonus disabled → only binary penalty applies
   {
-    const cfgNoBonus = { ...cfgPref, taskPreferenceBonus: 0 };
+    const cfgNoBonus = { ...cfgPref, taskNamePreferenceBonus: 0 };
     const assigns = new Map<string, Assignment[]>([
       ['sc10-p1', [
         { id: 'sc10-a6', taskId: prefKarov.id, slotId: prefKarov.slots[0].slotId, participantId: 'sc10-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
       ]],
     ]);
-    const pen = computeTaskPreferencePenalty([pWithPref], cfgNoBonus, taskMap, assigns);
+    const pen = computeTaskNamePreferencePenalty([pWithPref], cfgNoBonus, taskMap, assigns);
     assert(pen === 50, 'SC-10 bonus: bonus=0 → only binary penalty');
   }
 
@@ -1267,8 +1266,8 @@ console.log('\n── SC-10: Task Preference Penalty ──────');
     const pBoth: Participant = {
       ...pWithPref,
       id: 'sc10-p2',
-      preferredTaskType: TaskType.Mamtera,
-      lessPreferredTaskType: TaskType.Karov,
+      preferredTaskName: 'ממטרה',
+      lessPreferredTaskName: 'כרוב',
     };
     const assigns = new Map<string, Assignment[]>([
       ['sc10-p2', [
@@ -1276,7 +1275,7 @@ console.log('\n── SC-10: Task Preference Penalty ──────');
         { id: 'sc10-a8', taskId: prefKarov.id, slotId: prefKarov.slots[0].slotId, participantId: 'sc10-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
       ]],
     ]);
-    const pen = computeTaskPreferencePenalty([pBoth], cfgPref, taskMap, assigns);
+    const pen = computeTaskNamePreferencePenalty([pBoth], cfgPref, taskMap, assigns);
     // avoidance: 1× 80 = 80, binary: 0 (has preferred), bonus: -25
     assert(pen === 55, 'SC-10 bonus: avoidance (80) + bonus (-25) = 55, independent');
   }
@@ -1301,7 +1300,7 @@ console.log('\n── One-Time Task Integration ──────────�
       slots: [{
         id: 'ot-slot-1',
         label: 'Slot 1',
-        acceptableLevels: [Level.L0, Level.L2],
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L2 }],
         requiredCertifications: [Certification.Nitzan],
       }],
       sameGroupRequired: false,
@@ -1333,7 +1332,6 @@ console.log('\n── One-Time Task Integration ──────────�
   const heavyOt = makeOneTimeTask({
     blocksConsecutive: true,
     requiresCategoryBreak: true,
-    preferJuniors: true,
     isLight: false,
     sameGroupRequired: true,
     schedulingPriority: 5,
@@ -1343,7 +1341,6 @@ console.log('\n── One-Time Task Integration ──────────�
   });
   assert(heavyOt.blocksConsecutive === true, 'Constraint: blocksConsecutive');
   assert(heavyOt.requiresCategoryBreak === true, 'Constraint: requiresCategoryBreak');
-  assert(heavyOt.preferJuniors === true, 'Constraint: preferJuniors');
   assert(heavyOt.sameGroupRequired === true, 'Constraint: sameGroupRequired');
   assert(heavyOt.schedulingPriority === 5, 'Constraint: schedulingPriority');
   assert(heavyOt.displayCategory === 'patrol', 'Constraint: displayCategory');
@@ -1361,7 +1358,7 @@ console.log('\n── One-Time Task Integration ──────────�
     requiredCount: 1,
     slots: [{
       slotId: 'ot-overlap-slot-1',
-      acceptableLevels: [Level.L0],
+      acceptableLevels: [{ level: Level.L0 }],
       requiredCertifications: [],
     }],
     isLight: false,
@@ -1380,7 +1377,7 @@ console.log('\n── One-Time Task Integration ──────────�
     requiredCount: 1,
     slots: [{
       slotId: 'tpl-overlap-slot-1',
-      acceptableLevels: [Level.L0],
+      acceptableLevels: [{ level: Level.L0 }],
       requiredCertifications: [],
     }],
     isLight: false,

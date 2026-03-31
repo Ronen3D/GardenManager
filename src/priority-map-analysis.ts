@@ -74,6 +74,11 @@ const allParticipants: Participant[] = [
   createP('g8', 'Gamma-08', Level.L4, [Certification.Hamama], 'Gamma'),
 ];
 
+/** Check if any slot in the task has a low-priority level entry (replaces preferJuniors). */
+function hasLowPriority(task: Task): boolean {
+  return task.slots.some(s => s.acceptableLevels.some(e => e.lowPriority));
+}
+
 // ─── Candidate Pool Helper ───────────────────────────────────────────────────
 
 function countEligiblePerSlot(task: Task): { avg: number; min: number; max: number } {
@@ -83,7 +88,7 @@ function countEligiblePerSlot(task: Task): { avg: number; min: number; max: numb
   for (const slot of task.slots) {
     let eligible = 0;
     for (const p of allParticipants) {
-      if (!slot.acceptableLevels.includes(p.level)) continue;
+      if (!slot.acceptableLevels.some(e => e.level === p.level)) continue;
       if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
       if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
       eligible++;
@@ -206,7 +211,7 @@ function vB_penaltyAware(task: Task): number {
   score -= task.slots.length * 2;
 
   // Explicit penalty-risk bonus: preferJuniors tasks get big priority boost
-  if (task.preferJuniors) score -= 20;
+  if (hasLowPriority(task)) score -= 20;
 
   // Bottleneck tightness bonus
   const { min } = countEligiblePerSlot(task);
@@ -268,7 +273,7 @@ function vD_durationPool(task: Task): number {
   const score = Math.max(1, 50 - difficulty * 5);
 
   if (task.isLight) return Math.max(1, score + 15);
-  if (task.preferJuniors) return Math.max(1, score - 5);
+  if (hasLowPriority(task)) return Math.max(1, score - 5);
   return Math.max(1, score);
 }
 
@@ -300,7 +305,7 @@ function vE_multiSignal(task: Task): number {
   const bottleneck = Math.min(50, min * 3);
 
   // Signal 3: Penalty risk (0 or -20)
-  const penaltyRisk = task.preferJuniors ? -20 : 0;
+  const penaltyRisk = hasLowPriority(task) ? -20 : 0;
 
   // Signal 4: Pool average (0-50 range, lower = tighter)
   const pool = Math.min(50, avg * 2);
@@ -335,11 +340,11 @@ function vF_tieredPool(task: Task): number {
 
   const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0] === Level.L0);
+    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
   const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.preferJuniors && hasCerts) tier = 1;       // Hamama
+  if (hasLowPriority(task) && hasCerts) tier = 1;       // Hamama
   else if (allL0Only && hasCerts) tier = 2;           // Shemesh
   else if (hasCerts || hasExclusion) tier = 3;        // Karov, Mamtera
   else if (allL0Only && !task.isLight) tier = 4;      // Aruga

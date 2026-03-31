@@ -525,6 +525,12 @@
     min-height: 28px;
   }
 
+  .continuity-chip {
+    font-size: 0.6rem;
+    padding: 2px 7px;
+    gap: 4px;
+  }
+
   .scenarios-label {
     font-size: 0.65rem;
     gap: 3px;
@@ -639,9 +645,38 @@
     font-size: 0.5rem;
   }
 
-  /* ── Day window label + availability inspector — hidden on mobile ──── */
+  /* ── Day window label — compact on mobile: only action buttons ────── */
   .day-window-label {
+    justify-content: center;
+    padding: 2px 6px;
+    margin-bottom: 4px;
+    gap: 4px;
+    border: none;
+    background: transparent;
+  }
+  .day-window-label .day-window-text {
     display: none;
+  }
+  .day-window-label .availability-inline {
+    display: none;
+  }
+  .day-window-label .availability-inline.mobile-open {
+    display: flex;
+    flex-basis: 100%;
+    order: 10;
+    gap: 6px;
+  }
+  .day-window-actions {
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .day-window-actions .btn-sm {
+    font-size: 0.6rem;
+    padding: 3px 7px;
+    min-height: 24px;
+  }
+  .availability-mobile-toggle {
+    display: inline-flex !important;
   }
 
   /* ── Compact section headings ────────────────────────────────────────── */

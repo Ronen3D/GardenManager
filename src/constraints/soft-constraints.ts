@@ -11,7 +11,6 @@ import {
   Participant,
   ParticipantCapacity,
   Level,
-  TaskType,
   SchedulerConfig,
   ScheduleScore,
   ConstraintViolation,
@@ -24,7 +23,8 @@ import {
   ParticipantRestProfile,
 } from '../web/utils/rest-calculator';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
-import { computeSeniorJuniorPreferencePenalty } from './senior-policy';
+import { computeLowPriorityLevelPenalty } from './senior-policy';
+import { isLowPriority } from '../models/level-utils';
 import { dateKey } from '../utils/date-utils';
 
 /**
@@ -259,22 +259,6 @@ export function dailyWorkloadImbalance(
   return { dailyPerParticipantStdDev, dailyGlobalStdDev };
 }
 
-// ─── TaskType Hebrew Labels ─────────────────────────────────────────────────
-
-const taskTypeHebrew: Record<string, string> = {
-  Adanit: 'עדנית',
-  Hamama: 'חממה',
-  Shemesh: 'שמש',
-  Mamtera: 'ממטרה',
-  Karov: 'קרוב',
-  Karovit: 'קרובית',
-  Aruga: 'ערוגה',
-};
-
-function taskTypeLabel(type: string): string {
-  return taskTypeHebrew[type] || type;
-}
-
 // ─── Soft Constraint Warnings ────────────────────────────────────────────────
 
 /**
@@ -298,17 +282,20 @@ export function collectSoftWarnings(
       .map((a) => pMap.get(a.participantId))
       .filter((p): p is Participant => !!p);
 
-    // preferJuniors tasks: warn for L4 — absolute last resort
-    // (L2/L3 are hard-blocked by HC-13 and should never appear here)
-    // Only warn when penalty is active (> 0); if penalty is 0 the user
-    // explicitly chose to allow L4 in these tasks.
-    if ((!config || config.seniorJuniorPreferencePenalty > 0) && task.preferJuniors) {
-      for (const p of assignedPs) {
-        if (p.level === Level.L4) {
+    // Low-priority level warning: warn when a participant is assigned to a
+    // slot where their level is marked lowPriority (last resort).
+    // Only warn when penalty is active (> 0).
+    if (!config || config.lowPriorityLevelPenalty > 0) {
+      for (const asgn of taskAssignments) {
+        const p = pMap.get(asgn.participantId);
+        if (!p) continue;
+        const slot = task.slots.find(s => s.slotId === asgn.slotId);
+        if (!slot) continue;
+        if (isLowPriority(slot.acceptableLevels, p.level)) {
           warnings.push({
             severity: ViolationSeverity.Warning,
-            code: 'SENIOR_IN_JUNIOR_PREFERRED',
-            message: `${p.name} (דרגה 4) שובץ/ה ל-${task.name} כמוצא אחרון — משימה זו מיועדת לדרגה 0`,
+            code: 'LOW_PRIORITY_LEVEL',
+            message: `${p.name} (דרגה ${p.level}) שובץ/ה ל-${task.name} [${slot.label || slot.slotId}] כמוצא אחרון — דרגה זו בעדיפות נמוכה מאוד למשבצת זו`,
             taskId: task.id,
             participantId: p.id,
           });
@@ -330,13 +317,13 @@ export function collectSoftWarnings(
       }
     }
 
-    // SC-10: Less-preferred task assignment warning
+    // SC-10: Less-preferred task name assignment warning
     for (const p of assignedPs) {
-      if (p.lessPreferredTaskType && task.type === p.lessPreferredTaskType) {
+      if (p.lessPreferredTaskName && task.sourceName === p.lessPreferredTaskName) {
         warnings.push({
           severity: ViolationSeverity.Warning,
           code: 'LESS_PREFERRED_ASSIGNMENT',
-          message: `${p.name} שובץ/ה ל-${task.name} — סוג משימה שמועדף להימנע ממנו`,
+          message: `${p.name} שובץ/ה ל-${task.name} — משימה שמועדף להימנע ממנה`,
           taskId: task.id,
           participantId: p.id,
         });
@@ -344,7 +331,7 @@ export function collectSoftWarnings(
     }
   }
 
-  // SC-10: Preferred task type not satisfied — participant has a preference
+  // SC-10: Preferred task name not satisfied — participant has a preference
   // but none of their assignments match it.
   const assignmentsByPid = new Map<string, Assignment[]>();
   for (const a of assignments) {
@@ -352,15 +339,15 @@ export function collectSoftWarnings(
     if (!arr) { arr = []; assignmentsByPid.set(a.participantId, arr); }
     arr.push(a);
   }
-  const taskTypeSet = new Set(tasks.map(t => t.type));
+  const taskNameSet = new Set(tasks.map(t => t.sourceName).filter(Boolean));
   for (const p of participants) {
-    if (!p.preferredTaskType) continue;
-    // Warn if the preferred type doesn't exist in the schedule at all
-    if (!taskTypeSet.has(p.preferredTaskType)) {
+    if (!p.preferredTaskName) continue;
+    // Warn if the preferred name doesn't exist in the schedule at all
+    if (!taskNameSet.has(p.preferredTaskName)) {
       warnings.push({
         severity: ViolationSeverity.Warning,
-        code: 'PREFERRED_TYPE_UNAVAILABLE',
-        message: `${p.name} מעדיף/ה ${taskTypeLabel(p.preferredTaskType)} אך אין משימות מסוג זה בלוח — העדפה זו לא ניתנת למימוש`,
+        code: 'PREFERRED_NAME_UNAVAILABLE',
+        message: `${p.name} מעדיף/ה ${p.preferredTaskName} אך אין משימות בשם זה בלוח — העדפה זו לא ניתנת למימוש`,
         taskId: '',
         participantId: p.id,
       });
@@ -369,13 +356,13 @@ export function collectSoftWarnings(
     const pAssigns = assignmentsByPid.get(p.id) || [];
     const hasPreferred = pAssigns.some(a => {
       const task = tMap.get(a.taskId);
-      return task != null && task.type === p.preferredTaskType;
+      return task != null && task.sourceName === p.preferredTaskName;
     });
     if (!hasPreferred && pAssigns.length > 0) {
       warnings.push({
         severity: ViolationSeverity.Warning,
         code: 'PREFERRED_NOT_SATISFIED',
-        message: `${p.name} מעדיף/ה ${taskTypeLabel(p.preferredTaskType)} אך לא שובץ/ה למשימה מסוג זה`,
+        message: `${p.name} מעדיף/ה ${p.preferredTaskName} אך לא שובץ/ה למשימה בשם זה`,
         taskId: pAssigns[0].taskId,
         participantId: p.id,
       });
@@ -440,64 +427,67 @@ export function computeNotWithPenalty(
   return penalty;
 }
 
-// ─── SC-10: Task Preference Penalty ─────────────────────────────────────────
+// ─── SC-10: Task Name Preference Penalty ──────────────────────────────────
 
 /**
- * SC-10: Compute penalty for task-type preferences.
+ * SC-10: Compute penalty for task-name preferences.
+ *
+ * Matches against Task.sourceName (the original template name, not the
+ * day-prefixed display name).
  *
  * Three independent components:
  *  - **Avoidance** (per-assignment): each assignment to a participant's
- *    lessPreferredTaskType incurs `config.taskAvoidancePenalty`. Stacking
+ *    lessPreferredTaskName incurs `config.taskNameAvoidancePenalty`. Stacking
  *    gives SA a gradient — removing one disliked assignment still helps.
  *  - **Preference** (per-participant, binary): if a participant has a
- *    preferredTaskType but none of their assignments match it, incur
- *    `config.taskPreferencePenalty` once. Ensures at least one preferred
+ *    preferredTaskName but none of their assignments match it, incur
+ *    `config.taskNamePreferencePenalty` once. Ensures at least one preferred
  *    assignment.
  *  - **Preference bonus** (per-assignment): each assignment to a
- *    participant's preferredTaskType reduces penalty by
- *    `config.taskPreferenceBonus`. Provides a continuous gradient so the
+ *    participant's preferredTaskName reduces penalty by
+ *    `config.taskNamePreferenceBonus`. Provides a continuous gradient so the
  *    optimizer keeps assigning preferred tasks beyond the first one.
  */
-export function computeTaskPreferencePenalty(
+export function computeTaskNamePreferencePenalty(
   participants: Participant[],
   config: SchedulerConfig,
   taskMap: Map<string, Task>,
   assignmentsByParticipant: Map<string, Assignment[]>,
 ): number {
-  if (config.taskPreferencePenalty <= 0 && config.taskAvoidancePenalty <= 0 && config.taskPreferenceBonus <= 0) return 0;
+  if (config.taskNamePreferencePenalty <= 0 && config.taskNameAvoidancePenalty <= 0 && config.taskNamePreferenceBonus <= 0) return 0;
 
   let penalty = 0;
   for (const p of participants) {
     const pAssigns = assignmentsByParticipant.get(p.id) || [];
     if (pAssigns.length === 0) continue;
 
-    // Avoidance: per-assignment penalty for less-preferred task type
-    if (p.lessPreferredTaskType && config.taskAvoidancePenalty > 0) {
+    // Avoidance: per-assignment penalty for less-preferred task name
+    if (p.lessPreferredTaskName && config.taskNameAvoidancePenalty > 0) {
       for (const a of pAssigns) {
         const task = taskMap.get(a.taskId);
-        if (task && task.type === p.lessPreferredTaskType) {
-          penalty += config.taskAvoidancePenalty;
+        if (task && task.sourceName === p.lessPreferredTaskName) {
+          penalty += config.taskNameAvoidancePenalty;
         }
       }
     }
 
-    // Preference: binary penalty if no assignment to preferred type
-    if (p.preferredTaskType && config.taskPreferencePenalty > 0) {
+    // Preference: binary penalty if no assignment to preferred name
+    if (p.preferredTaskName && config.taskNamePreferencePenalty > 0) {
       const hasPreferred = pAssigns.some(a => {
         const task = taskMap.get(a.taskId);
-        return task != null && task.type === p.preferredTaskType;
+        return task != null && task.sourceName === p.preferredTaskName;
       });
       if (!hasPreferred) {
-        penalty += config.taskPreferencePenalty;
+        penalty += config.taskNamePreferencePenalty;
       }
     }
 
-    // Preference bonus: per-assignment reward for preferred task type
-    if (p.preferredTaskType && config.taskPreferenceBonus > 0) {
+    // Preference bonus: per-assignment reward for preferred task name
+    if (p.preferredTaskName && config.taskNamePreferenceBonus > 0) {
       for (const a of pAssigns) {
         const task = taskMap.get(a.taskId);
-        if (task && task.type === p.preferredTaskType) {
-          penalty -= config.taskPreferenceBonus;
+        if (task && task.sourceName === p.preferredTaskName) {
+          penalty -= config.taskNamePreferenceBonus;
         }
       }
     }
@@ -592,16 +582,16 @@ export function computeScheduleScore(
 
   // SC-5 (back-to-back penalty) removed — redundant with minRestWeight and HC-12.
 
-  // SC-6: Senior junior-preference penalty — pass pre-built maps
-  totalPenalty += computeSeniorJuniorPreferencePenalty(participants, assignments, tasks, config, pMap, taskMap);
+  // SC-6: Low-priority level penalty — pass pre-built maps
+  totalPenalty += computeLowPriorityLevelPenalty(participants, assignments, tasks, config, pMap, taskMap);
 
   // SC-9: "Not with" togetherness penalty
   if (ctx?.notWithPairs && ctx.notWithPairs.size > 0) {
     totalPenalty += computeNotWithPenalty(assignments, config, taskMap, assignmentsByTask, ctx.notWithPairs);
   }
 
-  // SC-10: Task preference penalty
-  totalPenalty += computeTaskPreferencePenalty(participants, config, taskMap, byParticipant);
+  // SC-10: Task name preference penalty
+  totalPenalty += computeTaskNamePreferencePenalty(participants, config, taskMap, byParticipant);
 
   // SC-8: Daily workload balance — pass pre-built data + capacities
   const dailyBalance = dailyWorkloadImbalance(participants, assignments, tasks, taskMap, byParticipant, ctx?.capacities);
@@ -678,19 +668,19 @@ export class IncrementalScorer {
   // Global min rest
   private _globalMinRest = 0;
   private _globalAvgRest = 0;
-  // Hamama penalty
-  private _juniorPrefPenalty = 0;
-  /** Per-participant Hamama penalty for O(1) delta updates */
-  private _perParticipantJuniorPrefPenalty: Map<string, number>;
+  // Low-priority level penalty
+  private _lowPriorityPenalty = 0;
+  /** Per-participant low-priority penalty for O(1) delta updates */
+  private _perParticipantLowPriorityPenalty: Map<string, number>;
   // Daily balance
   private _dailyPerParticipantStdDevSum = 0;
   private _participantCount = 0;
   // Global daily totals
   private globalDayTotals: Map<string, number>;
 
-  // Saved Hamama state for undo (set at start of recomputeForSwap)
-  private _savedJuniorPrefTotal = 0;
-  private _savedHamamaEntries: [string, number][] = [];
+  // Saved low-priority state for undo (set at start of recomputeForSwap)
+  private _savedLowPriorityTotal = 0;
+  private _savedLowPriorityEntries: [string, number][] = [];
 
   // "Not with" penalty
   private _notWithPenalty = 0;
@@ -721,7 +711,7 @@ export class IncrementalScorer {
     this.capacities = new Map();
     this.dayList = [];
     this.globalDayTotals = new Map();
-    this._perParticipantJuniorPrefPenalty = new Map();
+    this._perParticipantLowPriorityPenalty = new Map();
     this._perParticipantNotWithPenalty = new Map();
     this._notWithPairs = new Map();
     this._perParticipantTaskPrefPenalty = new Map();
@@ -777,21 +767,22 @@ export class IncrementalScorer {
       }
     }
 
-    // Compute per-participant Hamama penalty for O(1) delta updates
-    scorer._juniorPrefPenalty = 0;
+    // Compute per-participant low-priority level penalty for O(1) delta updates
+    scorer._lowPriorityPenalty = 0;
     for (const p of participants) {
-      if (p.level === Level.L0) continue;
       let pPenalty = 0;
       const pAs = scorer.assignmentsByParticipant.get(p.id) || [];
       for (const a of pAs) {
         const task = ctx.taskMap.get(a.taskId);
-        if (task?.preferJuniors && p.level === Level.L4) {
-          pPenalty += config.seniorJuniorPreferencePenalty;
+        if (!task) continue;
+        const slot = task.slots.find(s => s.slotId === a.slotId);
+        if (slot && isLowPriority(slot.acceptableLevels, p.level)) {
+          pPenalty += config.lowPriorityLevelPenalty;
         }
       }
       if (pPenalty > 0) {
-        scorer._perParticipantJuniorPrefPenalty.set(p.id, pPenalty);
-        scorer._juniorPrefPenalty += pPenalty;
+        scorer._perParticipantLowPriorityPenalty.set(p.id, pPenalty);
+        scorer._lowPriorityPenalty += pPenalty;
       }
     }
 
@@ -817,9 +808,9 @@ export class IncrementalScorer {
       }
     }
 
-    // Compute per-participant task preference penalty for O(1) delta updates.
+    // Compute per-participant task name preference penalty for O(1) delta updates.
     scorer._taskPrefPenalty = 0;
-    if (config.taskPreferencePenalty > 0 || config.taskAvoidancePenalty > 0 || config.taskPreferenceBonus > 0) {
+    if (config.taskNamePreferencePenalty > 0 || config.taskNameAvoidancePenalty > 0 || config.taskNamePreferenceBonus > 0) {
       for (const p of participants) {
         const pPenalty = scorer.computeParticipantTaskPrefPenalty(p.id);
         if (pPenalty !== 0) {
@@ -871,9 +862,9 @@ export class IncrementalScorer {
   }
 
   /**
-   * Compute task preference penalty for a specific participant.
-   * Avoidance: per-assignment penalty for lessPreferredTaskType.
-   * Preference: binary penalty if no assignment to preferredTaskType.
+   * Compute task name preference penalty for a specific participant.
+   * Avoidance: per-assignment penalty for lessPreferredTaskName.
+   * Preference: binary penalty if no assignment to preferredTaskName.
    */
   private computeParticipantTaskPrefPenalty(pid: string): number {
     const p = this.pMap.get(pid);
@@ -884,32 +875,32 @@ export class IncrementalScorer {
     let penalty = 0;
 
     // Avoidance: per-assignment penalty
-    if (p.lessPreferredTaskType && this.config.taskAvoidancePenalty > 0) {
+    if (p.lessPreferredTaskName && this.config.taskNameAvoidancePenalty > 0) {
       for (const a of pAssigns) {
         const task = this.taskMap.get(a.taskId);
-        if (task && task.type === p.lessPreferredTaskType) {
-          penalty += this.config.taskAvoidancePenalty;
+        if (task && task.sourceName === p.lessPreferredTaskName) {
+          penalty += this.config.taskNameAvoidancePenalty;
         }
       }
     }
 
     // Preference: binary penalty
-    if (p.preferredTaskType && this.config.taskPreferencePenalty > 0) {
+    if (p.preferredTaskName && this.config.taskNamePreferencePenalty > 0) {
       const hasPreferred = pAssigns.some(a => {
         const task = this.taskMap.get(a.taskId);
-        return task != null && task.type === p.preferredTaskType;
+        return task != null && task.sourceName === p.preferredTaskName;
       });
       if (!hasPreferred) {
-        penalty += this.config.taskPreferencePenalty;
+        penalty += this.config.taskNamePreferencePenalty;
       }
     }
 
-    // Preference bonus: per-assignment reward for preferred task type
-    if (p.preferredTaskType && this.config.taskPreferenceBonus > 0) {
+    // Preference bonus: per-assignment reward for preferred task name
+    if (p.preferredTaskName && this.config.taskNamePreferenceBonus > 0) {
       for (const a of pAssigns) {
         const task = this.taskMap.get(a.taskId);
-        if (task && task.type === p.preferredTaskType) {
-          penalty -= this.config.taskPreferenceBonus;
+        if (task && task.sourceName === p.preferredTaskName) {
+          penalty -= this.config.taskNamePreferenceBonus;
         }
       }
     }
@@ -1036,7 +1027,7 @@ export class IncrementalScorer {
       this.config.l0FairnessWeight * l0StdDev -
       this.config.seniorFairnessWeight * seniorStdDev -
       this.config.dailyBalanceWeight * (dailyPP + dailyGlobal) -
-      this._juniorPrefPenalty -
+      this._lowPriorityPenalty -
       this._notWithPenalty -
       this._taskPrefPenalty
     );
@@ -1084,43 +1075,43 @@ export class IncrementalScorer {
     // Recompute rest stats (global min might have changed)
     this.recomputeRestStats();
 
-    // Recompute Hamama penalty for only the two swapped participants
+    // Recompute low-priority level penalty for only the two swapped participants
     // using per-participant tracking for O(k) instead of O(P×A).
     // Save state first so finalizeUndo() can revert on rejected swaps.
-    this._savedJuniorPrefTotal = this._juniorPrefPenalty;
-    this._savedHamamaEntries = [
-      [pidA, this._perParticipantJuniorPrefPenalty.get(pidA) || 0],
-      [pidB, this._perParticipantJuniorPrefPenalty.get(pidB) || 0],
+    this._savedLowPriorityTotal = this._lowPriorityPenalty;
+    this._savedLowPriorityEntries = [
+      [pidA, this._perParticipantLowPriorityPenalty.get(pidA) || 0],
+      [pidB, this._perParticipantLowPriorityPenalty.get(pidB) || 0],
     ];
 
-    const aInvolvesHamama = aAssigns.some(a => this.taskMap.get(a.taskId)?.preferJuniors);
-    const bInvolvesHamama = bAssigns.some(a => this.taskMap.get(a.taskId)?.preferJuniors);
-    if (aInvolvesHamama || bInvolvesHamama) {
+    {
       // Remove old per-participant penalties
-      const oldPenaltyA = this._savedHamamaEntries[0][1];
-      const oldPenaltyB = this._savedHamamaEntries[1][1];
-      this._juniorPrefPenalty -= oldPenaltyA + oldPenaltyB;
+      const oldPenaltyA = this._savedLowPriorityEntries[0][1];
+      const oldPenaltyB = this._savedLowPriorityEntries[1][1];
+      this._lowPriorityPenalty -= oldPenaltyA + oldPenaltyB;
 
-      // Compute new per-participant penalties
-      const computeHamamaPenalty = (pid: string): number => {
+      // Compute new per-participant low-priority penalties
+      const computeLpPenalty = (pid: string): number => {
         const p = this.pMap.get(pid);
-        if (!p || p.level === Level.L0) return 0;
+        if (!p) return 0;
         let penalty = 0;
         const pAs = this.assignmentsByParticipant.get(pid) || [];
         for (const a of pAs) {
           const task = this.taskMap.get(a.taskId);
-          if (task?.preferJuniors && p.level === Level.L4) {
-            penalty += this.config.seniorJuniorPreferencePenalty;
+          if (!task) continue;
+          const slot = task.slots.find(s => s.slotId === a.slotId);
+          if (slot && isLowPriority(slot.acceptableLevels, p.level)) {
+            penalty += this.config.lowPriorityLevelPenalty;
           }
         }
         return penalty;
       };
 
-      const newPenaltyA = computeHamamaPenalty(pidA);
-      const newPenaltyB = computeHamamaPenalty(pidB);
-      this._perParticipantJuniorPrefPenalty.set(pidA, newPenaltyA);
-      this._perParticipantJuniorPrefPenalty.set(pidB, newPenaltyB);
-      this._juniorPrefPenalty += newPenaltyA + newPenaltyB;
+      const newPenaltyA = computeLpPenalty(pidA);
+      const newPenaltyB = computeLpPenalty(pidB);
+      this._perParticipantLowPriorityPenalty.set(pidA, newPenaltyA);
+      this._perParticipantLowPriorityPenalty.set(pidB, newPenaltyB);
+      this._lowPriorityPenalty += newPenaltyA + newPenaltyB;
     }
 
     // Recompute "not with" penalty for the two swapped participants AND any
@@ -1217,8 +1208,8 @@ export class IncrementalScorer {
     ];
     const pAObj = this.pMap.get(pidA);
     const pBObj = this.pMap.get(pidB);
-    const aHasPrefs = !!(pAObj?.preferredTaskType || pAObj?.lessPreferredTaskType);
-    const bHasPrefs = !!(pBObj?.preferredTaskType || pBObj?.lessPreferredTaskType);
+    const aHasPrefs = !!(pAObj?.preferredTaskName || pAObj?.lessPreferredTaskName);
+    const bHasPrefs = !!(pBObj?.preferredTaskName || pBObj?.lessPreferredTaskName);
     if (aHasPrefs || bHasPrefs ||
         this._savedTaskPrefEntries[0][1] !== 0 || this._savedTaskPrefEntries[1][1] !== 0) {
       // Remove old contributions
@@ -1248,11 +1239,11 @@ export class IncrementalScorer {
    * After restoring both participants, call this to finalize the undo.
    */
   finalizeUndo(): void {
-    // Restore Hamama penalty state saved at the start of recomputeForSwap
-    this._juniorPrefPenalty = this._savedJuniorPrefTotal;
-    for (const [pid, val] of this._savedHamamaEntries) {
-      if (val > 0) this._perParticipantJuniorPrefPenalty.set(pid, val);
-      else this._perParticipantJuniorPrefPenalty.delete(pid);
+    // Restore low-priority penalty state saved at the start of recomputeForSwap
+    this._lowPriorityPenalty = this._savedLowPriorityTotal;
+    for (const [pid, val] of this._savedLowPriorityEntries) {
+      if (val > 0) this._perParticipantLowPriorityPenalty.set(pid, val);
+      else this._perParticipantLowPriorityPenalty.delete(pid);
     }
     // Restore "not with" penalty state
     this._notWithPenalty = this._savedNotWithTotal;
