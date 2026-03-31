@@ -870,6 +870,10 @@
   /* ── Global expand/collapse button for participants ──────────────────── */
   .btn-expand-all-mobile {
     display: inline-flex !important;
+    align-items: center;
+    font-size: 0.75rem;
+    padding: 5px 12px !important;
+    min-height: 34px !important;
   }
 
   /* ── Participants table — compact 2-line card layout ──────────────────── */
@@ -1137,7 +1141,9 @@
     border-radius: 0;
     border-left: none;
     border-right: none;
-    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.2);
+    border-top: 1px solid var(--border, #444);
+    background: var(--bg-card, #1e1e2e);
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.3);
   }
   .bulk-toolbar .bulk-count {
     flex-basis: 100%;
@@ -1147,13 +1153,16 @@
     margin-bottom: 2px;
   }
   .bulk-toolbar .btn-sm {
-    font-size: 0.72rem;
-    padding: 6px 10px;
-    min-height: 36px;
+    font-size: 0.72rem !important;
+    padding: 6px 10px !important;
+    min-height: 36px !important;
     white-space: nowrap;
     display: inline-flex;
     align-items: center;
     gap: 4px;
+    max-width: calc(50% - 8px);
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .bulk-toolbar .btn-sm svg {
     width: 14px;
