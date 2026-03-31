@@ -1098,6 +1098,11 @@
     animation: fadeIn 0.2s ease;
   }
 
+  /* ── Task rules — hide template description on phones ──────────────── */
+  .template-title > .text-muted {
+    display: none;
+  }
+
   /* Gantt: hide desktop title, show mobile toggle */
   .gantt-desktop-title { display: none; }
 }

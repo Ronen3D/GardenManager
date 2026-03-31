@@ -181,6 +181,8 @@ export interface Task {
   togethernessRelevant?: boolean;
   /** HC-14: Enforces minimum 5h gap between this and other category-break tasks for the same participant. */
   requiresCategoryBreak?: boolean;
+  /** Display section for schedule grid/PDF layout (e.g. 'patrol', 'hamama', 'aruga', 'mamtera', 'shemesh'). */
+  displayCategory?: string;
 }
 
 // ─── Assignment ──────────────────────────────────────────────────────────────
@@ -347,7 +349,7 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-5': 'ללא שיבוץ כפול',
   'HC-6': 'משבצות מלאות',
   'HC-7': 'משתתף ייחודי למשימה',
-  'HC-8': 'כשירות קבוצת אדנית',
+  'HC-8': 'כשירות קבוצה למשימות משותפות',
   'HC-11': 'הרחקת הסמכה אסורה ממשימה',
   'HC-12': 'ללא עומס רצוף',
   'HC-13': 'מגבלות שיבוץ סגל',
@@ -573,13 +575,15 @@ export interface TaskTemplate {
   togethernessRelevant?: boolean;
   /** HC-14: Enforces minimum 5h gap between category-break tasks for same participant. */
   requiresCategoryBreak?: boolean;
+  /** Display section for schedule grid/PDF layout (e.g. 'patrol', 'hamama', 'aruga', 'mamtera', 'shemesh'). */
+  displayCategory?: string;
 }
 
 // ─── Multi-Day Schedule Types ────────────────────────────────────────────────
 
 /** Week-long schedule configuration */
 export interface WeekConfig {
-  /** Start date of the 7-day window */
+  /** Start date of the schedule window */
   startDate: Date;
   /** Number of days (default 7) */
   numDays: number;

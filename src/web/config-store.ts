@@ -374,7 +374,7 @@ export function setScheduleDate(d: Date): void {
 }
 export function setScheduleDays(n: number): void {
   pushSnapshot();
-  scheduleDays = Math.max(1, Math.min(14, n));
+  scheduleDays = Math.max(1, Math.min(7, n));
   recalcAllAvailability();
   notify();
 }
@@ -976,6 +976,7 @@ export function seedDefaultTaskTemplates(): void {
     ],
     slots: [],
     requiresCategoryBreak: true,
+    displayCategory: 'patrol',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. שתי תת-קבוצות. כל 6 חייבים ניצן. אותה קבוצה.',
   });
 
@@ -997,6 +998,7 @@ export function seedDefaultTaskTemplates(): void {
     slots: [
       { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [Level.L0, Level.L4], requiredCertifications: [Certification.Hamama] },
     ],
+    displayCategory: 'hamama',
     description: 'משמרות 12 שעות (06:00-18:00, 18:00-06:00). דורש הסמכת חממה. L2/L4 אסור. ללא דרישת ניצן.',
   });
 
@@ -1019,6 +1021,7 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'שמש #2', acceptableLevels: [Level.L0], requiredCertifications: [Certification.Nitzan] },
     ],
     requiresCategoryBreak: true,
+    displayCategory: 'shemesh',
     description: 'משמרות 4 שעות (מחזור 05:00), 6 ביום. דורש ניצן.',
   });
 
@@ -1041,6 +1044,7 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'ממטרה #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
       { id: uid('slot'), label: 'ממטרה #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
+    displayCategory: 'mamtera',
     description: '09:00-23:00. 2× L0.',
   });
 
@@ -1081,6 +1085,7 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'כרוב #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
       { id: uid('slot'), label: 'כרוב #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
+    displayCategory: 'patrol',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
   });
 
@@ -1104,6 +1109,7 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'כרובית #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
       { id: uid('slot'), label: 'כרובית #3', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
+    displayCategory: 'patrol',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 3× L0. קל — ללא השפעה על מנוחה.',
   });
 
@@ -1125,6 +1131,7 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'ערוגה #1', acceptableLevels: [Level.L0], requiredCertifications: [] },
       { id: uid('slot'), label: 'ערוגה #2', acceptableLevels: [Level.L0], requiredCertifications: [] },
     ],
+    displayCategory: 'aruga',
     description: '1.5 שעות, 2 ביום (בוקר 05:00-06:30, ערב 17:00-18:30). 2× L0.',
   });
 }
@@ -1349,6 +1356,18 @@ export function loadFromStorage(): boolean {
         // Backfill requiresCategoryBreak: Adanit and Shemesh default to true
         if (tpl.requiresCategoryBreak === undefined) {
           tpl.requiresCategoryBreak = (tpl.taskType === TaskType.Adanit || tpl.taskType === TaskType.Shemesh);
+        }
+        // Backfill displayCategory from taskType
+        if (tpl.displayCategory === undefined) {
+          switch (tpl.taskType) {
+            case 'Karov': case 'Karovit': case 'Adanit':
+              tpl.displayCategory = 'patrol'; break;
+            case 'Hamama': tpl.displayCategory = 'hamama'; break;
+            case 'Aruga':  tpl.displayCategory = 'aruga'; break;
+            case 'Mamtera': tpl.displayCategory = 'mamtera'; break;
+            case 'Shemesh': tpl.displayCategory = 'shemesh'; break;
+            default: tpl.displayCategory = (tpl.taskType || 'custom').toLowerCase(); break;
+          }
         }
       }
     }

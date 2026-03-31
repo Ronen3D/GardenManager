@@ -97,7 +97,7 @@ export function groupBadge(group: string, clickable = false): string {
 }
 
 /** Task-type badge HTML. */
-export function taskTypeBadge(type: TaskType): string {
+export function taskTypeBadge(type: TaskType | string): string {
   const color = TASK_COLORS[type] || '#7f8c8d';
   const icons: Record<string, string> = {
     Adanit: '🌱', Hamama: '🏠', Shemesh: '☀️',

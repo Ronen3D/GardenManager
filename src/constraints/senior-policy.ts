@@ -3,13 +3,10 @@
  *
  * Strict isolation model — seniors are locked to their natural domain.
  *
- * Natural roles (for known task types):
- *   L4 → Segol Main (Adanit), Karov commander, Karovit commander
- *   L3 → Segol Main (Adanit), Karov commander, Karovit commander
- *   L2 → Segol Secondary (Adanit), Karov commander, Karovit commander
- *
- * For unknown/custom task types, the slot's acceptableLevels is trusted:
- *   if the slot explicitly includes a senior level, it is considered natural.
+ * Natural roles (data-driven — no task-type branching):
+ *   Slots with adanitTeam: L3/L4 → SegolMain, L2 → SegolSecondary
+ *   All other slots: trust acceptableLevels (if the slot lists the
+ *   senior's level, the assignment is natural).
  *
  * Hard blocks (apply to ALL seniors L2/L3/L4):
  *   Forbidden from ANY task that is not their natural domain.
@@ -29,7 +26,6 @@
 import {
   Level,
   Task,
-  TaskType,
   SlotRequirement,
   AdanitTeam,
   Assignment,
@@ -39,9 +35,6 @@ import {
   SchedulerConfig,
 } from '../models/types';
 
-/** Known task types that have explicit natural-role logic. */
-const KNOWN_SENIOR_TYPES = new Set<string>([TaskType.Karov, TaskType.Karovit, TaskType.Adanit]);
-
 // ─── Natural-role detection ──────────────────────────────────────────────────
 
 /**
@@ -49,8 +42,9 @@ const KNOWN_SENIOR_TYPES = new Set<string>([TaskType.Karov, TaskType.Karovit, Ta
  * for the participant's level.
  *
  *  L0 → always natural (no restrictions from this policy)
- *  Known types (Karov/Karovit/Adanit): specific rules per type
- *  Unknown/custom types: trust the slot's acceptableLevels
+ *  preferJuniors → never natural (L4 tolerated via separate exception)
+ *  Slots with adanitTeam → team-based rules (L3/L4 = SegolMain, L2 = SegolSecondary)
+ *  All other slots → trust acceptableLevels
  */
 export function isNaturalRole(
   level: Level,
@@ -62,30 +56,15 @@ export function isNaturalRole(
   // preferJuniors tasks: no senior is "natural" here — L4 is only tolerated as last resort
   if (task.preferJuniors) return false;
 
-  const isKarov = task.type === TaskType.Karov;
-  const isKarovit = task.type === TaskType.Karovit;
-  const isAdanit = task.type === TaskType.Adanit;
-
-  // Karov and Karovit: only the commander slots (which explicitly list
-  // the senior's level) are natural. L0-only slots are NOT natural for seniors.
-  if (isKarov || isKarovit) return slot.acceptableLevels.includes(level);
-
-  if (isAdanit) {
-    // L4 → only Segol Main slots
-    if (level === Level.L4) return slot.adanitTeam === AdanitTeam.SegolMain;
-    // L3 → only Segol Main slots (same as L4)
-    if (level === Level.L3) return slot.adanitTeam === AdanitTeam.SegolMain;
-    // L2 → only Segol Secondary slots
+  // Slots with adanitTeam designation have team-based natural-role rules
+  if (slot.adanitTeam != null) {
+    if (level === Level.L4 || level === Level.L3) return slot.adanitTeam === AdanitTeam.SegolMain;
     if (level === Level.L2) return slot.adanitTeam === AdanitTeam.SegolSecondary;
+    return false;
   }
 
-  // Unknown/custom task types: trust the slot's explicit level configuration.
-  // If the slot declares a senior level as acceptable, the senior is natural for it.
-  if (!KNOWN_SENIOR_TYPES.has(task.type as string)) {
-    return slot.acceptableLevels.includes(level);
-  }
-
-  return false;
+  // All other slots (including custom task types): trust acceptableLevels
+  return slot.acceptableLevels.includes(level);
 }
 
 // ─── Hard constraint: absolute blocks ────────────────────────────────────────

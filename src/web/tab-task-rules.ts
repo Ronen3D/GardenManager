@@ -384,6 +384,13 @@ function renderAddSlotForm(templateId: string, subTeamId?: string): string {
 }
 
 function renderAddTemplateForm(): string {
+  const categoryOptions = [
+    { value: 'patrol', label: 'סיור (כרוב/אדנית)' },
+    { value: 'hamama', label: 'חממה' },
+    { value: 'aruga', label: 'ערוגה' },
+    { value: 'mamtera', label: 'ממטרה' },
+    { value: 'shemesh', label: 'שמש' },
+  ];
   return `<div class="add-form" id="add-template-form">
     <h4>משימה חדשה</h4>
     <div class="form-row">
@@ -393,6 +400,13 @@ function renderAddTemplateForm(): string {
           ${TASK_TYPE_OPTIONS.map(t => `<option value="${t}">${TASK_TYPE_LABELS[t] || t}</option>`).join('')}
           <option value="Custom">מותאם אישית</option>
         </select>
+      </label>
+      <label>קטגוריית תצוגה:
+        <select class="input-sm" data-field="tpl-display-category">
+          ${categoryOptions.map(c => `<option value="${c.value}">${c.label}</option>`).join('')}
+          <option value="">מותאם אישית</option>
+        </select>
+        <input class="input-sm" type="text" data-field="tpl-display-category-custom" placeholder="שם קטגוריה" style="width:120px; display:none;" />
       </label>
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
@@ -424,6 +438,14 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
     target.removeAttribute('aria-invalid');
     const errorEl = container.querySelector('#tset-form-error') as HTMLElement | null;
     if (errorEl) errorEl.textContent = '';
+  });
+
+  container.addEventListener('change', (e) => {
+    const target = e.target as HTMLSelectElement;
+    if (target.dataset.field === 'tpl-display-category') {
+      const customInput = container.querySelector<HTMLInputElement>('[data-field="tpl-display-category-custom"]');
+      if (customInput) customInput.style.display = target.value === '' ? 'inline-block' : 'none';
+    }
   });
 
   container.addEventListener('click', async (e) => {
@@ -732,6 +754,22 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const isLight = (form.querySelector('[data-field="tpl-light"]') as HTMLInputElement)?.checked || false;
         const desc = (form.querySelector('[data-field="tpl-desc"]') as HTMLInputElement)?.value.trim();
 
+        const catSelect = form.querySelector<HTMLSelectElement>('[data-field="tpl-display-category"]');
+        const catCustom = form.querySelector<HTMLInputElement>('[data-field="tpl-display-category-custom"]');
+        let displayCategory = catSelect?.value || '';
+        if (!displayCategory && catCustom?.value) displayCategory = catCustom.value.trim().toLowerCase();
+        if (!displayCategory) {
+          // Auto-derive from type
+          switch (type) {
+            case 'Karov': case 'Karovit': case 'Adanit': displayCategory = 'patrol'; break;
+            case 'Hamama': displayCategory = 'hamama'; break;
+            case 'Aruga': displayCategory = 'aruga'; break;
+            case 'Mamtera': displayCategory = 'mamtera'; break;
+            case 'Shemesh': displayCategory = 'shemesh'; break;
+            default: displayCategory = (type || 'custom').toLowerCase(); break;
+          }
+        }
+
         store.addTaskTemplate({
           name,
           taskType: type as TaskType,
@@ -743,8 +781,9 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
           loadWindows: [],
           blocksConsecutive: !isLight,
-          togethernessRelevant: (type === TaskType.Adanit || type === TaskType.Shemesh),
-          requiresCategoryBreak: (type === TaskType.Adanit || type === TaskType.Shemesh),
+          togethernessRelevant: false,
+          requiresCategoryBreak: false,
+          displayCategory,
           subTeams: [],
           slots: [],
           description: desc || undefined,

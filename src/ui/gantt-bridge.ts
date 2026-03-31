@@ -18,7 +18,7 @@ import { getTimelineBounds, blockDurationMinutes } from '../web/utils/time-utils
 
 // ─── Color Palette ───────────────────────────────────────────────────────────
 
-const TASK_COLORS: Record<TaskType, string> = {
+const TASK_COLORS: Record<string, string> = {
   [TaskType.Adanit]: '#4A90D9',     // Blue
   [TaskType.Hamama]: '#E74C3C',     // Red
   [TaskType.Shemesh]: '#F39C12',    // Orange
@@ -210,7 +210,7 @@ function getTaskSymbol(type: TaskType | string): string {
     case TaskType.Karov: return 'K';
     case TaskType.Karovit: return '░';
     case TaskType.Aruga: return 'R';
-    default: return '?';
+    default: return (type as string)[0]?.toUpperCase() || '?';
   }
 }
 

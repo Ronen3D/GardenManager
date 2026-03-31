@@ -92,9 +92,9 @@ function renderTopBar(
   let statusText = 'זמין';
   let statusClass = 'status-available';
 
-  const adanitTasks = myTasks.filter(x => x.task.type === TaskType.Adanit);
-  if (adanitTasks.length > 0) {
-    statusText = 'משובץ באדנית';
+  const groupTasks = myTasks.filter(x => x.task.sameGroupRequired);
+  if (groupTasks.length > 0) {
+    statusText = `משובץ ב${groupTasks[0].task.name.replace(/^D\d+\s*/, '')}`;
     statusClass = 'status-active';
   }
 

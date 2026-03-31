@@ -332,7 +332,7 @@ function generateTasksFromTemplates(): Task[] {
         const shiftLabel = tpl.shiftsPerDay > 1 ? ` משמרת ${si + 1}` : '';
         allTasks.push({
           id: `${tpl.name.toLowerCase()}-d${dayIdx + 1}-${++_tTaskCounter}`,
-          type: tpl.taskType || TaskType.Adanit,
+          type: tpl.taskType || 'Custom',
           name: `${dayLabel} ${tpl.name}${shiftLabel}`,
           timeBlock: block,
           requiredCount: slots.length,
@@ -347,6 +347,7 @@ function generateTasksFromTemplates(): Task[] {
           preferJuniors: tpl.preferJuniors,
           togethernessRelevant: tpl.togethernessRelevant,
           requiresCategoryBreak: tpl.requiresCategoryBreak,
+          displayCategory: tpl.displayCategory,
         });
       }
     }
@@ -501,7 +502,7 @@ function renderWeeklyDashboard(schedule: Schedule): string {
         </div>
         <div class="kpi">
           <span class="kpi-value" id="kpi-score" data-target="${score.compositeScore.toFixed(1)}">${score.compositeScore.toFixed(1)}</span>
-          <span class="kpi-label">ציון שבועי</span>
+          <span class="kpi-label">ציון שבצ"ק</span>
         </div>
         <div class="kpi ${totalViolations > 0 ? 'kpi-error' : 'kpi-ok'}">
           <span class="kpi-value" id="kpi-violations" data-target="${totalViolations}">${totalViolations}</span>
@@ -724,6 +725,9 @@ function renderScheduleTab(): string {
     </div>
     <div class="toolbar-right">
       ${liveModeControls}
+      <label class="scenarios-label" for="input-days" title="מספר ימים בשבצ\"ק">ימים
+        <input type="number" id="input-days" class="input-scenarios" min="1" max="7" step="1" value="${numDays}" ${_isOptimizing ? 'disabled' : ''} />
+      </label>
       <label class="scenarios-label" for="input-scenarios" title="מספר ניסיונות אופטימיזציה לבדיקה">ניסיונות
         <input type="number" id="input-scenarios" class="input-scenarios" min="50" max="50000" step="50" value="${OPTIM_ATTEMPTS}" ${_isOptimizing ? 'disabled' : ''} />
       </label>
@@ -954,7 +958,7 @@ function renderViolations(schedule: Schedule): string {
   const warn = visible.filter(v => v.severity === ViolationSeverity.Warning);
 
   if (hard.length === 0 && warn.length === 0) {
-    return '<div class="alert alert-ok">✓ אין הפרות אילוצים בכל 7 הימים.</div>';
+    return `<div class="alert alert-ok">✓ אין הפרות אילוצים בכל ${store.getScheduleDays()} הימים.</div>`;
   }
 
   // Separate into current-day and other-day violations
@@ -1400,7 +1404,7 @@ async function handleSwap(assignmentId: string): Promise<void> {
 
   if (!result.valid) {
     const msgs = result.violations.map(v => `[${v.code}] ${v.message}`).join('\n');
-    await showAlert(`ההחלפה יוצרת הפרות בשיבוץ השבועי:\n\n${msgs}`, { title: 'הפרות', icon: '⚠️' });
+    await showAlert(`ההחלפה יוצרת הפרות בשבצ"ק:\n\n${msgs}`, { title: 'הפרות', icon: '⚠️' });
   } else {
     showToast('החלפה בוצעה בהצלחה', { type: 'success' });
     // Full re-validation + refresh only on successful swap
@@ -1959,7 +1963,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.3</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.3.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2384,6 +2388,18 @@ function wireScheduleEvents(container: HTMLElement): void {
   const genBtn = container.querySelector('#btn-generate');
   if (genBtn) genBtn.addEventListener('click', doGenerate);
 
+  const daysInput = container.querySelector('#input-days') as HTMLInputElement | null;
+  if (daysInput) {
+    daysInput.addEventListener('change', () => {
+      const val = parseInt(daysInput.value, 10);
+      if (val >= 1 && val <= 7) {
+        store.setScheduleDays(val);
+        if (currentDay > val) currentDay = 1;
+        renderAll();
+      }
+    });
+  }
+
   // ── Snapshot Library Events ──
   wireSnapshotEvents(container);
 
@@ -2627,8 +2643,8 @@ function openExportModal(): void {
             <label class="export-mode-option selected" id="opt-weekly">
               <input type="radio" name="export-mode" value="weekly" checked />
               <div>
-                <div class="export-mode-label">סיכום שבועי</div>
-                <div class="export-mode-desc">טבלת סיכום מרוכזת של כל השבוע — משתתפים × ימים</div>
+                <div class="export-mode-label">סיכום כללי</div>
+                <div class="export-mode-desc">טבלת סיכום מרוכזת של כל השבצ"ק — משתתפים × ימים</div>
               </div>
             </label>
             <label class="export-mode-option" id="opt-daily">
@@ -2863,7 +2879,7 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
     <div class="tt-divider"></div>
     <div class="tt-row"><span class="tt-label">משימות כבדות</span><span class="tt-value">${heavyCount}</span></div>
     <div class="tt-row"><span class="tt-label">משימות קלות</span><span class="tt-value">${lightCount}</span></div>
-    <div class="tt-row"><span class="tt-label">שעות שבועיות</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)} שע' אפקטיביות</span></div>
+    <div class="tt-row"><span class="tt-label">סה"כ שעות</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)} שע' אפקטיביות</span></div>
     <div class="tt-row"><span class="tt-label">% עומס</span><span class="tt-value">${pctOfPeriod.toFixed(1)}% מתוך ${totalPeriodHours} שע'</span></div>
     ${isTouchDevice ? `<div class="tt-divider"></div><div class="tt-row"><button class="btn-sm btn-outline" data-action="goto-profile" data-pid="${p.id}" style="width:100%">📋 צפה בפרופיל</button></div>` : ''}
   `;

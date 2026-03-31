@@ -3085,7 +3085,8 @@ tr.row-selected:hover {
     "patrol hamama"
     "patrol aruga"
     "patrol mamtera"
-    "shemesh shemesh";
+    "shemesh shemesh"
+    "custom custom";
 }
 
 /* Narrow patrol (1-2 columns) — equal split */
@@ -3095,7 +3096,8 @@ tr.row-selected:hover {
     "patrol hamama"
     "patrol aruga"
     "patrol mamtera"
-    "shemesh shemesh";
+    "shemesh shemesh"
+    "custom custom";
 }
 
 /* No patrol tasks — single column */
@@ -3105,7 +3107,8 @@ tr.row-selected:hover {
     "hamama"
     "aruga"
     "mamtera"
-    "shemesh";
+    "shemesh"
+    "custom";
 }
 
 .area-patrol  { grid-area: patrol; }
@@ -3113,6 +3116,7 @@ tr.row-selected:hover {
 .area-aruga   { grid-area: aruga; }
 .area-mamtera { grid-area: mamtera; }
 .area-shemesh { grid-area: shemesh; }
+.area-custom  { grid-area: custom; }
 
 @media (max-width: 767px) {
   .schedule-grid-container {
@@ -3122,7 +3126,8 @@ tr.row-selected:hover {
       "hamama"
       "aruga"
       "mamtera"
-      "shemesh" !important;
+      "shemesh"
+      "custom" !important;
   }
 }
 

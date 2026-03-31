@@ -25,13 +25,25 @@ import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';
 import {
   Schedule,
   Task,
-  TaskType,
   AdanitTeam,
 } from '../models/types';
 import { getTaskAssignments, getUniqueStartTimes } from './schedule-grid-view';
 import { TASK_COLORS, TASK_TYPE_LABELS } from './ui-helpers';
 import { HEBREW_DAYS } from '../utils/date-utils';
 import { addDays } from 'date-fns';
+
+/** Resolve a task's display category, with fallback for un-migrated data. */
+function getDisplayCategory(task: Task): string {
+  if (task.displayCategory) return task.displayCategory;
+  switch (task.type) {
+    case 'Karov': case 'Karovit': case 'Adanit': return 'patrol';
+    case 'Hamama': return 'hamama';
+    case 'Aruga': return 'aruga';
+    case 'Mamtera': return 'mamtera';
+    case 'Shemesh': return 'shemesh';
+    default: return (task.type || 'custom').toLowerCase();
+  }
+}
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -203,12 +215,11 @@ function computeGridLayout(
   pageW: number,
   topY: number,
 ): { upperRegions: GridRegion[]; lowerRegions: GridRegion[]; patrol: GridRegion | null } {
-  const patrol = dayTasks.filter(t =>
-    t.type === TaskType.Karov || t.type === TaskType.Karovit || t.type === TaskType.Adanit);
-  const hamama = dayTasks.filter(t => t.type === TaskType.Hamama);
-  const aruga = dayTasks.filter(t => t.type === TaskType.Aruga);
-  const mamtera = dayTasks.filter(t => t.type === TaskType.Mamtera);
-  const shemesh = dayTasks.filter(t => t.type === TaskType.Shemesh);
+  const patrol = dayTasks.filter(t => getDisplayCategory(t) === 'patrol');
+  const hamama = dayTasks.filter(t => getDisplayCategory(t) === 'hamama');
+  const aruga = dayTasks.filter(t => getDisplayCategory(t) === 'aruga');
+  const mamtera = dayTasks.filter(t => getDisplayCategory(t) === 'mamtera');
+  const shemesh = dayTasks.filter(t => getDisplayCategory(t) === 'shemesh');
 
   const usable = pageW - 2 * PAGE_MARGIN;
   const hasPatrol = patrol.length > 0;
@@ -287,9 +298,15 @@ function renderPatrolTable(
   doc: jsPDF, tasks: Task[], schedule: Schedule,
   region: GridRegion, fontSize: number,
 ): number {
-  const karovit = tasks.filter(t => t.type === TaskType.Karovit);
-  const karov = tasks.filter(t => t.type === TaskType.Karov);
-  const adanit = tasks.filter(t => t.type === TaskType.Adanit);
+  // Split: tasks with adanitTeam slots vs. regular (per-type) columns
+  const teamTasks = tasks.filter(t => t.slots.some(s => s.adanitTeam != null));
+  const nonTeamTasks = tasks.filter(t => !t.slots.some(s => s.adanitTeam != null));
+  const nonTeamByType = new Map<string, Task[]>();
+  for (const t of nonTeamTasks) {
+    const key = t.type as string;
+    if (!nonTeamByType.has(key)) nonTeamByType.set(key, []);
+    nonTeamByType.get(key)!.push(t);
+  }
   const uniqueTimes = getUniqueStartTimes(tasks);
 
   // Section label
@@ -301,45 +318,35 @@ function renderPatrolTable(
   type ColDef = { header: string; build: (timeNum: number) => { content: string; colorKey: string } };
   const columns: ColDef[] = [];
 
-  if (karovit.length > 0) {
+  // Non-team type columns (e.g. Karovit, Karov, or any custom patrol type)
+  for (const [typeKey, typeTasks] of nonTeamByType) {
     columns.push({
-      header: TASK_TYPE_LABELS.Karovit,
+      header: (TASK_TYPE_LABELS as Record<string, string>)[typeKey] || typeKey,
       build: (timeNum) => {
-        const atTime = karovit.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
+        const atTime = typeTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
         const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
           .filter(s => s.participant).map(s => rtl(s.participant!.name))).join('\n\n');
-        return { content: names || '—', colorKey: 'Karovit' };
+        return { content: names || '—', colorKey: typeKey };
       },
     });
   }
 
-  if (karov.length > 0) {
-    columns.push({
-      header: TASK_TYPE_LABELS.Karov,
-      build: (timeNum) => {
-        const atTime = karov.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
-        const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-          .filter(s => s.participant).map(s => rtl(s.participant!.name))).join('\n\n');
-        return { content: names || '—', colorKey: 'Karov' };
-      },
-    });
-  }
-
-  // Adanit — one column per team that is actually present
-  if (adanit.length > 0) {
-    const allAdanitSlots = adanit.flatMap(tk => tk.slots);
-    const hasSecondary = allAdanitSlots.some(s => s.adanitTeam === AdanitTeam.SegolSecondary);
-    const hasMain = allAdanitSlots.some(s => s.adanitTeam === AdanitTeam.SegolMain);
+  // Team-based columns (slots with adanitTeam designation)
+  if (teamTasks.length > 0) {
+    const allTeamSlots = teamTasks.flatMap(tk => tk.slots);
+    const hasSecondary = allTeamSlots.some(s => s.adanitTeam === AdanitTeam.SegolSecondary);
+    const hasMain = allTeamSlots.some(s => s.adanitTeam === AdanitTeam.SegolMain);
 
     if (hasSecondary) {
       columns.push({
         header: 'סגול משני',
         build: (timeNum) => {
-          const atTime = adanit.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
+          const atTime = teamTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
           const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
             .filter(s => s.slot.adanitTeam === AdanitTeam.SegolSecondary && s.participant)
             .map(s => rtl(s.participant!.name))).join('\n\n');
-          return { content: names || '—', colorKey: 'Adanit' };
+          const colorKey = atTime[0]?.type as string || 'Adanit';
+          return { content: names || '—', colorKey };
         },
       });
     }
@@ -348,11 +355,12 @@ function renderPatrolTable(
       columns.push({
         header: 'סגול ראשי',
         build: (timeNum) => {
-          const atTime = adanit.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
+          const atTime = teamTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
           const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
             .filter(s => s.slot.adanitTeam === AdanitTeam.SegolMain && s.participant)
             .map(s => rtl(s.participant!.name))).join('\n\n');
-          return { content: names || '—', colorKey: 'Adanit' };
+          const colorKey = atTime[0]?.type as string || 'Adanit';
+          return { content: names || '—', colorKey };
         },
       });
     }
@@ -489,13 +497,17 @@ function renderCategoryTable(
  * Returns a value between 6 and 9 that keeps the layout compact.
  */
 function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
-  const types = [TaskType.Karov, TaskType.Karovit, TaskType.Adanit, TaskType.Hamama,
-    TaskType.Aruga, TaskType.Mamtera, TaskType.Shemesh];
+  // Group tasks by type to measure density
+  const tasksByType = new Map<string, Task[]>();
+  for (const tk of dayTasks) {
+    const key = tk.type as string;
+    if (!tasksByType.has(key)) tasksByType.set(key, []);
+    tasksByType.get(key)!.push(tk);
+  }
 
   let maxRows = 0;
   let maxSlotsPerCell = 1;
-  for (const t of types) {
-    const tasks = dayTasks.filter(tk => tk.type === t);
+  for (const [, tasks] of tasksByType) {
     if (tasks.length === 0) continue;
     maxRows = Math.max(maxRows, getUniqueStartTimes(tasks).length);
     // For merged-slot columns (e.g. Karov with 4 slots shown in one cell),
@@ -593,5 +605,5 @@ export function exportWeeklyOverview(schedule: Schedule): void {
     renderDayPage(doc, schedule, d);
   }
 
-  doc.save('weekly-overview.pdf');
+  doc.save('schedule-overview.pdf');
 }

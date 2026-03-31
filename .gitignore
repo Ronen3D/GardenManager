@@ -13,3 +13,27 @@ release2/
 # Large binary files
 *.exe
 *.blockmap
+
+# UI screenshots / snapshots (dark-*, light-* images in root)
+dark-*
+light-*
+
+# Playwright MCP debug logs & screenshots
+.playwright-mcp/
+
+# Test results & reports (generated)
+test-results/
+playwright-report/
+
+# Generated result files
+results/
+
+# Build assets (large icons)
+build/
+
+# IDE & tool settings
+.vscode/
+.claude/
+
+# Artifacts
+artifacts/

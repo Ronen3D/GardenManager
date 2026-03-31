@@ -4,16 +4,28 @@ import {
   Task,
   Assignment,
   Participant,
-  TaskType,
   AssignmentStatus,
   AdanitTeam,
   Level,
   SlotRequirement,
   LiveModeState
 } from '../models/types';
-import { TASK_COLORS, groupColor, fmt, levelBadge, groupBadge, SVG_ICONS, escHtml } from './ui-helpers';
+import { TASK_COLORS, TASK_TYPE_LABELS, groupColor, fmt, levelBadge, groupBadge, SVG_ICONS, escHtml } from './ui-helpers';
 import { isFutureTask } from '../engine/temporal';
 import { addDays } from 'date-fns';
+
+/** Resolve a task's display category, with fallback for un-migrated data. */
+function getDisplayCategory(task: Task): string {
+  if (task.displayCategory) return task.displayCategory;
+  switch (task.type) {
+    case 'Karov': case 'Karovit': case 'Adanit': return 'patrol';
+    case 'Hamama': return 'hamama';
+    case 'Aruga': return 'aruga';
+    case 'Mamtera': return 'mamtera';
+    case 'Shemesh': return 'shemesh';
+    default: return (task.type || 'custom').toLowerCase();
+  }
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -48,10 +60,17 @@ export function getTaskAssignments(task: Task, schedule: Schedule): AssignedSlot
 /** Count how many columns the patrol table would render (for grid sizing). */
 function countPatrolColumns(patrolTasks: Task[]): number {
     let count = 0;
-    if (patrolTasks.some(t => t.type === TaskType.Karovit)) count++;
-    if (patrolTasks.some(t => t.type === TaskType.Karov)) count++;
+    // Adanit-team columns (slots with adanitTeam designation)
     if (patrolTasks.some(t => t.slots.some(s => s.adanitTeam === AdanitTeam.SegolMain))) count++;
     if (patrolTasks.some(t => t.slots.some(s => s.adanitTeam === AdanitTeam.SegolSecondary))) count++;
+    // One column per unique task type that has NO adanitTeam slots
+    const nonTeamTypes = new Set<string>();
+    for (const t of patrolTasks) {
+        if (!t.slots.some(s => s.adanitTeam != null)) {
+            nonTeamTypes.add(t.type as string);
+        }
+    }
+    count += nonTeamTypes.size;
     return count;
 }
 
@@ -211,23 +230,34 @@ function renderPatrolTable(
 ): string {
     if (allPatrolTasks.length === 0) return '';
 
-    const karovitTasks = allPatrolTasks.filter(t => t.type === TaskType.Karovit);
-    const karovTasks = allPatrolTasks.filter(t => t.type === TaskType.Karov);
-    const adanitTasks = allPatrolTasks.filter(t => t.type === TaskType.Adanit);
+    // Split tasks: those with adanitTeam slots vs. regular (per-type) columns
+    const teamTasks = allPatrolTasks.filter(t => t.slots.some(s => s.adanitTeam != null));
+    const nonTeamTasks = allPatrolTasks.filter(t => !t.slots.some(s => s.adanitTeam != null));
 
-    // Detect which Adanit teams actually exist in the current tasks
-    const hasMain = adanitTasks.some(t => t.slots.some(s => s.adanitTeam === AdanitTeam.SegolMain));
-    const hasSec  = adanitTasks.some(t => t.slots.some(s => s.adanitTeam === AdanitTeam.SegolSecondary));
-    const hasKarov = karovTasks.length > 0;
-    const hasKarovit = karovitTasks.length > 0;
+    // Detect which adanit teams exist
+    const hasMain = teamTasks.some(t => t.slots.some(s => s.adanitTeam === AdanitTeam.SegolMain));
+    const hasSec  = teamTasks.some(t => t.slots.some(s => s.adanitTeam === AdanitTeam.SegolSecondary));
+
+    // Group non-team tasks by type → one column per type
+    const nonTeamTypes: string[] = [];
+    const nonTeamByType = new Map<string, Task[]>();
+    for (const t of nonTeamTasks) {
+        const key = t.type as string;
+        if (!nonTeamByType.has(key)) {
+            nonTeamTypes.push(key);
+            nonTeamByType.set(key, []);
+        }
+        nonTeamByType.get(key)!.push(t);
+    }
 
     // Build dynamic column definitions
     type Col = { key: string; label: string };
     const cols: Col[] = [];
-    if (hasMain)    cols.push({ key: 'main', label: 'סגול ראשי' });
-    if (hasSec)     cols.push({ key: 'sec',  label: 'סגול משני' });
-    if (hasKarov)   cols.push({ key: 'karov', label: 'כרוב' });
-    if (hasKarovit) cols.push({ key: 'karovit', label: 'כרובית' });
+    if (hasMain) cols.push({ key: 'main', label: 'סגול ראשי' });
+    if (hasSec)  cols.push({ key: 'sec',  label: 'סגול משני' });
+    for (const typeKey of nonTeamTypes) {
+        cols.push({ key: `type_${typeKey}`, label: (TASK_TYPE_LABELS as Record<string, string>)[typeKey] || typeKey });
+    }
 
     if (cols.length === 0) return '';
 
@@ -235,22 +265,21 @@ function renderPatrolTable(
 
     const rows = uniqueTimes.map(timeNum => {
         const time = new Date(timeNum);
-        const cells: Record<string, string> = { main: '', sec: '', karov: '', karovit: '' };
+        const cells: Record<string, string> = {};
+        for (const c of cols) cells[c.key] = '';
 
-        // Helper to render tasks of a certain type at this time
-        const renderType = (typeTasks: Task[]) => {
+        // Render non-team type columns
+        for (const typeKey of nonTeamTypes) {
+            const typeTasks = nonTeamByType.get(typeKey) || [];
             const current = typeTasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
-            return current.map(t =>
+            cells[`type_${typeKey}`] = current.map(t =>
                 getTaskAssignments(t, schedule).map(s => renderAssignmentCard(s.slot, s.assignment, s.participant, t, liveMode)).join('')
             ).join('');
-        };
+        }
 
-        if (hasKarovit) cells.karovit = renderType(karovitTasks);
-        if (hasKarov)   cells.karov = renderType(karovTasks);
-
-        // Adanit logic: Split by team
-        const currentAdanit = adanitTasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
-        currentAdanit.forEach(task => {
+        // Render adanit-team columns (split by team)
+        const currentTeam = teamTasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
+        currentTeam.forEach(task => {
             const slots = getTaskAssignments(task, schedule);
             if (hasSec) {
                 cells.sec += slots.filter(s => s.slot.adanitTeam === AdanitTeam.SegolSecondary)
@@ -274,8 +303,14 @@ function renderPatrolTable(
 
     // Build dynamic title from present task types
     const titleParts: string[] = [];
-    if (hasKarov || hasKarovit) titleParts.push(hasKarov && hasKarovit ? 'כרוב, כרובית' : hasKarov ? 'כרוב' : 'כרובית');
-    if (hasMain || hasSec) titleParts.push('אדנית');
+    if (nonTeamTypes.length > 0) {
+        titleParts.push(nonTeamTypes.map(t => (TASK_TYPE_LABELS as Record<string, string>)[t] || t).join(', '));
+    }
+    if (hasMain || hasSec) {
+        // Find the name from team tasks (e.g. "אדנית")
+        const teamTypeNames = [...new Set(teamTasks.map(t => (TASK_TYPE_LABELS as Record<string, string>)[t.type as string] || t.type))];
+        titleParts.push(teamTypeNames.join(', '));
+    }
     const title = titleParts.join(' ו');
 
     return `
@@ -288,6 +323,42 @@ function renderPatrolTable(
                         ${cols.map(c => `<th>${c.label}</th>`).join('')}
                     </tr>
                 </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+/** Generic table renderer for custom (non-built-in) display categories. */
+function renderGenericTable(tasks: Task[], schedule: Schedule, liveMode: LiveModeState): string {
+    if (tasks.length === 0) return '';
+
+    // Group by display category for title
+    const categories = [...new Set(tasks.map(t => getDisplayCategory(t)))];
+    const title = categories.map(c => (TASK_TYPE_LABELS as Record<string, string>)[c] || c).join(', ');
+    const uniqueTimes = getUniqueStartTimes(tasks);
+
+    const rows = uniqueTimes.map(timeNum => {
+        const time = new Date(timeNum);
+        const current = tasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
+        const cellContent = current.map(task => {
+            const slots = getTaskAssignments(task, schedule);
+            return slots.map(s => renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode)).join('');
+        }).join('');
+
+        return `
+            <tr data-time="${timeNum}">
+                ${renderTimeCell(time, timeNum)}
+                <td class="task-cell">${cellContent}</td>
+            </tr>
+        `;
+    }).join('');
+
+    return `
+        <div class="schedule-table-wrapper">
+            <h3 class="table-title">${title}</h3>
+            <table class="table schedule-grid-table">
+                <thead><tr><th class="col-time">זמן</th><th>${title}</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>
@@ -421,14 +492,14 @@ export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveM
         return s >= startTimeNum && s < endTimeNum;
     });
 
-    // 2. Filter by Type
-    const hamama = dayTasks.filter(t => t.type === TaskType.Hamama);
-    const aruga = dayTasks.filter(t => t.type === TaskType.Aruga);
-    const patrol = dayTasks.filter(t => 
-        t.type === TaskType.Karov || t.type === TaskType.Karovit || t.type === TaskType.Adanit
-    );
-    const mamtera = dayTasks.filter(t => t.type === TaskType.Mamtera);
-    const shemesh = dayTasks.filter(t => t.type === TaskType.Shemesh);
+    // 2. Filter by display category
+    const knownCategories = new Set(['patrol', 'hamama', 'aruga', 'mamtera', 'shemesh']);
+    const hamama = dayTasks.filter(t => getDisplayCategory(t) === 'hamama');
+    const aruga = dayTasks.filter(t => getDisplayCategory(t) === 'aruga');
+    const patrol = dayTasks.filter(t => getDisplayCategory(t) === 'patrol');
+    const mamtera = dayTasks.filter(t => getDisplayCategory(t) === 'mamtera');
+    const shemesh = dayTasks.filter(t => getDisplayCategory(t) === 'shemesh');
+    const custom = dayTasks.filter(t => !knownCategories.has(getDisplayCategory(t)));
 
     // 3. Determine patrol column count for responsive grid sizing
     const patrolColCount = countPatrolColumns(patrol);
@@ -439,6 +510,10 @@ export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveM
         : patrolColCount <= 2 && hasRight ? 'grid-patrol-narrow'
         : 'grid-patrol-wide';
 
+    const customHtml = custom.length > 0
+        ? `<div class="area-custom">${renderGenericTable(custom, schedule, liveMode)}</div>`
+        : '';
+
     return `
         <div class="schedule-grid-container ${gridClass}">
             <div class="area-patrol">${renderPatrolTable(patrol, schedule, liveMode)}</div>
@@ -446,6 +521,7 @@ export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveM
             <div class="area-aruga">${renderArogaTable(aruga, schedule, liveMode)}</div>
             <div class="area-mamtera">${renderMamteraTable(mamtera, schedule, liveMode)}</div>
             <div class="area-shemesh">${renderShemeshTable(shemesh, schedule, liveMode)}</div>
+            ${customHtml}
         </div>
     `;
 }

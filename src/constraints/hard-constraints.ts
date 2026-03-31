@@ -11,9 +11,7 @@ import {
   Participant,
   ConstraintViolation,
   ViolationSeverity,
-  TaskType,
   Level,
-  Certification,
   SlotRequirement,
   ValidationResult,
 } from '../models/types';
@@ -304,82 +302,49 @@ export function checkUniqueParticipantsPerTask(
 }
 
 /**
- * HC-8: Adanit group feasibility — the assigned group must have enough participants
- * at the required levels AND all must hold Nitzan certification.
+ * HC-8: Group feasibility for sameGroupRequired tasks — the assigned group
+ * must have enough participants to fill every slot, matching each slot's
+ * acceptableLevels and requiredCertifications.
  *
- * Required: 4× L0, 1× L2, 1× L3/L4 (total = 6)
- * Segol Main:      2× L0, 1× L3/L4
- * Segol Secondary: 2× L0, 1× L2
+ * This is data-driven: slot definitions determine what's needed, not hardcoded
+ * counts. For the default Adanit template (6 slots: 4×L0+Nitzan, 1×L2+Nitzan,
+ * 1×L3/L4+Nitzan), this produces equivalent results to the previous hardcoded check.
  */
-export function checkAdanitGroupFeasibility(
+export function checkGroupFeasibility(
   task: Task,
   groupParticipants: Participant[],
 ): ConstraintViolation[] {
-  if (task.type !== TaskType.Adanit) return [];
+  if (!task.sameGroupRequired) return [];
 
   const violations: ConstraintViolation[] = [];
+  // Track which participants have been "claimed" by a slot (greedy matching)
+  const claimed = new Set<string>();
 
-  // All Adanit participants must have Nitzan certification
-  const nitzanHolders = groupParticipants.filter((p) =>
-    p.certifications.includes(Certification.Nitzan),
-  );
-  if (nitzanHolders.length < 6) {
-    violations.push(
-      violation(
-        'ADANIT_INSUFFICIENT_NITZAN',
-        `משימת אדנית ${task.name}: הקבוצה צריכה לפחות 6 משתתפים עם הסמכת ניצן, נמצאו ${nitzanHolders.length}. חסרה הסמכת ניצן לאדנית.`,
-        task.id,
-      ),
-    );
-  }
-
-  const levels = groupParticipants.map((p) => p.level);
-
-  const l0Count = levels.filter((l) => l === Level.L0).length;
-  const l2Count = levels.filter((l) => l === Level.L2).length;
-  const l2PlusCount = levels.filter(
-    (l) => l === Level.L2 || l === Level.L3 || l === Level.L4,
-  ).length;
-  const l3l4Count = levels.filter((l) => l === Level.L3 || l === Level.L4).length;
-
-  // Need: 4× L0 (2 per team), 1× L3/L4 (Segol Main), 1× L2 (Segol Secondary)
-  if (l0Count < 4) {
-    violations.push(
-      violation(
-        'ADANIT_INSUFFICIENT_L0',
-        `משימת אדנית ${task.name}: הקבוצה צריכה לפחות 4 משתתפים בדרגה 0, נמצאו ${l0Count}. חסרים משתתפי דרגה 0 לאדנית.`,
-        task.id,
-      ),
-    );
-  }
-  if (l3l4Count < 1) {
-    violations.push(
-      violation(
-        'ADANIT_INSUFFICIENT_L3L4',
-        `משימת אדנית ${task.name}: הקבוצה צריכה לפחות משתתף אחד בדרגה 3/4 (סגול ראשי), נמצאו ${l3l4Count}. חסר משתתף דרגה 3/4 לאדנית.`,
-        task.id,
-      ),
-    );
-  }
-  if (l2Count < 1) {
-    // Segol Secondary requires exactly L2
-    violations.push(
-      violation(
-        'ADANIT_INSUFFICIENT_L2',
-        `משימת אדנית ${task.name}: הקבוצה צריכה לפחות משתתף אחד בדרגה 2 (סגול משני), נמצאו ${l2Count}. חסר משתתף דרגה 2 לאדנית.`,
-        task.id,
-      ),
-    );
-  }
-  if (l2PlusCount < 2) {
-    // Need 1× L3/L4 for Segol Main + 1× L2 for Segol Secondary = 2 total L2+
-    violations.push(
-      violation(
-        'ADANIT_INSUFFICIENT_L2PLUS',
-        `משימת אדנית ${task.name}: הקבוצה צריכה לפחות 2 משתתפים בדרגה 2 ומעלה (1× דרגה 3/4 לראשי, 1× דרגה 2 למשני), נמצאו ${l2PlusCount}. חסרים משתתפי דרגה 2+ לאדנית.`,
-        task.id,
-      ),
-    );
+  for (const slot of task.slots) {
+    const match = groupParticipants.find(p => {
+      if (claimed.has(p.id)) return false;
+      if (!slot.acceptableLevels.includes(p.level)) return false;
+      for (const cert of slot.requiredCertifications) {
+        if (!p.certifications.includes(cert)) return false;
+      }
+      return true;
+    });
+    if (match) {
+      claimed.add(match.id);
+    } else {
+      const levelDesc = slot.acceptableLevels.map(l => `דרגה ${l}`).join('/');
+      const certDesc = slot.requiredCertifications.length > 0
+        ? ` + ${slot.requiredCertifications.join(', ')}`
+        : '';
+      violations.push(
+        violation(
+          'GROUP_INSUFFICIENT',
+          `משימה "${task.name}": הקבוצה חסרה משתתף כשיר למשבצת "${slot.label || slot.slotId}" (נדרש: ${levelDesc}${certDesc})`,
+          task.id,
+          slot.slotId,
+        ),
+      );
+    }
   }
 
   return violations;
@@ -623,6 +588,17 @@ export function validateHardConstraints(
         .map((a) => pMap.get(a.participantId))
         .filter((p): p is Participant => p !== undefined);
       allViolations.push(...checkSameGroup(task, assignedParticipants));
+    }
+
+    // HC-8: Group feasibility for sameGroupRequired tasks
+    if (!disabledHC?.has('HC-8') && task.sameGroupRequired) {
+      const assignedPIds = new Set(taskAssignments.map(a => a.participantId));
+      const assignedParticipants = participants.filter(p => assignedPIds.has(p.id));
+      if (assignedParticipants.length > 0) {
+        const group = assignedParticipants[0].group;
+        const groupMembers = participants.filter(p => p.group === group);
+        allViolations.push(...checkGroupFeasibility(task, groupMembers));
+      }
     }
   }
 
