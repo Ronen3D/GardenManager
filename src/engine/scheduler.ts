@@ -31,6 +31,7 @@ import {
   MultiAttemptProgressCallback,
 } from './optimizer';
 import { resetSlotCounter, resetTaskCounter } from '../tasks/task-definitions';
+import { PhantomContext } from './phantom';
 
 export class SchedulingEngine {
   private participants: Map<string, Participant> = new Map();
@@ -39,6 +40,7 @@ export class SchedulingEngine {
   private config: SchedulerConfig;
   private weekEnd: Date = new Date();
   private disabledHC?: Set<string>;
+  private phantomContext: PhantomContext | null = null;
 
   constructor(config: Partial<SchedulerConfig> = {}, disabledHC?: Set<string>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -158,6 +160,15 @@ export class SchedulingEngine {
     resetTaskCounter();
   }
 
+  /**
+   * Set (or clear) the phantom context for cross-schedule constraint bridging.
+   * When set, the optimizer seeds phantom tasks/assignments into its internal
+   * indexes so HC-5, HC-12, and HC-14 are enforced across schedule boundaries.
+   */
+  setPhantomContext(ctx: PhantomContext | null): void {
+    this.phantomContext = ctx;
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Stage 2: Schedule Generation & Optimization
   // ═══════════════════════════════════════════════════════════════════════════
@@ -242,7 +253,7 @@ export class SchedulingEngine {
     const participants = this.getAllParticipants();
     this._validateInputs(tasks, participants);
 
-    const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC);
+    const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC, 0, this.phantomContext ?? undefined);
     return this._commitOptimizationResult(tasks, participants, result);
   }
 
@@ -271,6 +282,7 @@ export class SchedulingEngine {
       attempts,
       onProgress,
       this.disabledHC,
+      this.phantomContext ?? undefined,
     );
 
     return this._commitOptimizationResult(tasks, participants, result);

@@ -93,7 +93,7 @@ export function checkSeniorHardBlock(
     if (lvl === Level.L4) return null; // L4 allowed (penalised via soft constraint)
     return {
       code: 'SENIOR_HARD_BLOCK',
-      message: `משתתף בדרגה ${lvl} "${participant.name}" אסור ב-${task.name} — רק דרגה 0 (מועדף) או דרגה 4 (מוצא אחרון) ניתנים לשיבוץ`,
+      message: `${participant.name} (דרגה ${lvl}) אינו/ה ניתן/ת לשיבוץ ב-${task.name} — משימה זו מיועדת לדרגה 0 בלבד (דרגה 4 כמוצא אחרון)`,
       severity: ViolationSeverity.Error,
       participantId: participant.id,
       taskId: task.id,
@@ -107,7 +107,7 @@ export function checkSeniorHardBlock(
   // Everything else is forbidden
   return {
     code: 'SENIOR_HARD_BLOCK',
-    message: `משתתף בדרגה ${lvl} "${participant.name}" לא ניתן לשיבוץ ב-${task.name} [${slot.label || slot.slotId}] — סגל מוגבלים לתחום הטבעי שלהם`,
+    message: `${participant.name} (דרגה ${lvl}) אינו/ה ניתן/ת לשיבוץ ב-${task.name} [${slot.label || slot.slotId}] — לא בתחום התפקיד הטבעי שלו/ה`,
     severity: ViolationSeverity.Error,
     participantId: participant.id,
     taskId: task.id,

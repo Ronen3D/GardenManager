@@ -1471,6 +1471,21 @@ export function loadFromStorage(): boolean {
     scheduleDate = new Date(state.scheduleDate);
     scheduleDays = state.scheduleDays || 7;
 
+    // Reset stale schedule dates to the next upcoming Sunday:
+    // (a) Non-Sunday dates can result from continuity replanning ("generate from
+    //     day X"), which shifts scheduleDate mid-week. Since the schedule output
+    //     is cleared on every app restart, this mid-week date is no longer relevant.
+    // (b) Schedule dates whose entire window has elapsed are also outdated.
+    const schedEndForStaleness = new Date(
+      scheduleDate.getFullYear(), scheduleDate.getMonth(),
+      scheduleDate.getDate() + scheduleDays,
+    );
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+    if (scheduleDate.getDay() !== 0 || schedEndForStaleness < todayMidnight) {
+      scheduleDate = defaultScheduleDate();
+    }
+
     // Restore live mode state
     if (state.liveMode) {
       liveModeState = {

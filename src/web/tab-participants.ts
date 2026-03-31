@@ -11,6 +11,7 @@ import {
   PakalDefinition,
   TaskType,
   Participant,
+  DateUnavailability,
 } from '../models/types';
 import * as store from './config-store';
 import { showConfirm, showToast } from './ui-modal';
@@ -38,6 +39,17 @@ function renderNotWithBadges(pid: string): string {
     const p = store.getParticipant(id);
     return p ? `<span class="badge badge-sm" style="background:#e74c3c">${escHtml(p.name)}</span>` : '';
   }).filter(Boolean).join(' ');
+}
+
+/** Compact inline summary of unavailability rules for mobile cards. */
+function formatUnavailSummary(rules: DateUnavailability[]): string {
+  return rules.map(r => {
+    const day = HEBREW_DAYS[r.dayOfWeek];
+    const time = r.allDay
+      ? 'כל היום'
+      : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00</span>`;
+    return `<small>${day} ${time}</small>`;
+  }).join('<br>');
 }
 
 const TASK_TYPE_OPTIONS = Object.values(TaskType) as TaskType[];
@@ -441,10 +453,11 @@ export function renderParticipantsTab(): string {
         <td class="avail-cell">
           ${p.availability.map(w => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
         </td>
-        <td>
+        <td class="unavail-cell${totalRules === 0 ? ' unavail-empty' : ''}">
           <button class="btn-sm btn-outline btn-icon" data-action="toggle-blackouts" data-pid="${p.id}" title="ניהול אי-זמינות">
             ${totalRules > 0 ? `<span class="badge badge-sm" style="background:var(--warning)">${totalRules}</span>` : SVG_ICONS.block}
           </button>
+          ${totalRules > 0 ? `<span class="unavail-summary">${formatUnavailSummary(dateRules)}</span>` : ''}
         </td>
         <td class="col-actions">
           <button class="btn-sm btn-outline btn-icon" data-action="edit-participant" data-pid="${p.id}" title="עריכה">${SVG_ICONS.edit}</button>

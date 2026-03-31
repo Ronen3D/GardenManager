@@ -62,7 +62,10 @@ import {
   fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge, SVG_ICONS, escHtml,
 } from './ui-helpers';
 import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
-import { showAlert, showPrompt, showConfirm, showToast, showBottomSheet, renderCustomSelect, wireCustomSelect } from './ui-modal';
+import { showAlert, showPrompt, showConfirm, showToast, showBottomSheet, showContinuityImport, renderCustomSelect, wireCustomSelect } from './ui-modal';
+import { exportDaySnapshot } from './continuity-export';
+import { parseContinuitySnapshot } from './continuity-import';
+import { buildPhantomContext } from '../engine/phantom';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
@@ -93,6 +96,9 @@ let _snapshotPanelOpen = false;
 let _sidebarCollapsed = localStorage.getItem('gm-sidebar-collapsed') === '1';
 let _availabilityPopoverEl: HTMLElement | null = null;
 let _availabilityPopoverKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+
+/** Continuity feature: pasted or auto-populated JSON from previous schedule */
+let _continuityJson = '';
 let _availabilityInspectorDay: number | null = null;
 let _availabilityInspectorTime = '05:00';
 
@@ -199,6 +205,35 @@ function statusBadge(status: AssignmentStatus): string {
     Scheduled: 'משובץ', Locked: 'נעול', Manual: 'ידני', Conflict: 'התנגשות', Frozen: 'מוקפא'
   };
   return `<span class="badge badge-sm" style="background:${colors[status] || '#7f8c8d'}">${labels[status] || status}</span>`;
+}
+
+// ─── Violation Code → Hebrew Label ──────────────────────────────────────────
+
+const violationCodeLabels: Record<string, string> = {
+  'SLOT_NOT_FOUND':            'משבצת חסרה',
+  'LEVEL_MISMATCH':            'אי-התאמת דרגה',
+  'CERT_MISSING':              'הסמכה חסרה',
+  'AVAILABILITY_VIOLATION':    'חוסר זמינות',
+  'GROUP_MISMATCH':            'ערבוב קבוצות',
+  'EXCLUDED_CERTIFICATION':    'הסמכה אסורה',
+  'DOUBLE_BOOKING':            'שיבוץ כפול',
+  'SLOT_UNFILLED':             'משבצת ריקה',
+  'SLOT_OVERBOOKED':           'עודף שיבוצים',
+  'DUPLICATE_IN_TASK':         'משתתף כפול במשימה',
+  'GROUP_INSUFFICIENT':        'קבוצה לא מספקת',
+  'CONSECUTIVE_HIGH_LOAD':     'עומס רצוף',
+  'CATEGORY_BREAK_VIOLATION':  'הפסקה לא מספקת',
+  'PARTICIPANT_NOT_FOUND':     'משתתף לא נמצא',
+  'INFEASIBLE_SLOT':           'שיבוץ בלתי אפשרי',
+  'SENIOR_HARD_BLOCK':         'חסימת סגל',
+  'SENIOR_IN_JUNIOR_PREFERRED': 'סגל בכיר במשימת צעירים',
+  'LESS_PREFERRED_ASSIGNMENT':  'משימה לא מועדפת',
+  'PREFERRED_TYPE_UNAVAILABLE': 'סוג מועדף לא קיים',
+  'PREFERRED_NOT_SATISFIED':    'העדפה לא מומשה',
+};
+
+function violationLabel(code: string): string {
+  return violationCodeLabels[code] || code;
 }
 
 // ─── Day Window Helpers ──────────────────────────────────────────────────────
@@ -814,6 +849,8 @@ function renderScheduleTab(): string {
       </button>
       ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
       <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
+      ${renderContinuityChip()}
+      ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="ייבוא נתוני המשכיות מהשבצ\"ק הקודם">📋 ייבוא המשכיות</button>` : ''}
       ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא PDF">📤 ייצוא</button>` : ''}
     </div>
   </div>`;
@@ -857,9 +894,15 @@ function renderScheduleTab(): string {
 
   // Day window label + inline availability inspector
   const { start: dayStart, end: dayEnd } = getDayWindow(currentDay);
+  const numDaysForDayLabel = store.getScheduleDays();
+  const isLastDayForDayLabel = currentDay >= numDaysForDayLabel;
   html += `<div class="day-window-label">
     <span class="day-window-text">מציג <strong>יום ${currentDay}</strong>: ${fmtDayShort(dayStart)} ${fmt(dayStart)} – ${fmtDayShort(dayEnd)} ${fmt(dayEnd)}</span>
-    <span class="availability-inline">${renderAvailabilityInspectorInline()}</span>
+    <span class="day-window-actions">
+      <button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>
+      ${!isLastDayForDayLabel ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ\"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
+      <span class="availability-inline">${renderAvailabilityInspectorInline()}</span>
+    </span>
   </div>`;
 
   // Main layout: content + sidebar
@@ -885,6 +928,50 @@ function renderScheduleTab(): string {
 }
 
 // ─── Snapshot Panel ─────────────────────────────────────────────────────────
+
+// ─── Continuity Panel ───────────────────────────────────────────────────────
+
+function renderContinuityChip(): string {
+  const json = _continuityJson.trim();
+  if (!json) return '';
+
+  const parsed = parseContinuitySnapshot(_continuityJson);
+  if ('error' in parsed) {
+    return `<span class="continuity-chip continuity-chip-error" id="continuity-chip" title="${escHtml(parsed.error)}">
+      <span class="continuity-chip-dot"></span>
+      המשכיות: שגיאה
+      <button class="continuity-chip-clear" id="btn-continuity-clear" title="נקה">✕</button>
+    </span>`;
+  }
+
+  const pCount = parsed.participants.length;
+  const aCount = parsed.participants.reduce((sum, p) => sum + p.assignments.length, 0);
+  return `<span class="continuity-chip" id="continuity-chip" title="לחץ לצפייה/עריכה">
+    <span class="continuity-chip-dot"></span>
+    המשכיות: יום ${parsed.dayIndex}, ${pCount} משתתפים, ${aCount} שיבוצים
+    <button class="continuity-chip-clear" id="btn-continuity-clear" title="נקה">✕</button>
+  </span>`;
+}
+
+function validateContinuityJson(json: string): { ok: true; summary: string } | { ok: false; error: string } {
+  const parsed = parseContinuitySnapshot(json);
+  if ('error' in parsed) return { ok: false, error: parsed.error };
+  const pCount = parsed.participants.length;
+  const aCount = parsed.participants.reduce((sum, p) => sum + p.assignments.length, 0);
+  return { ok: true, summary: `${pCount} משתתפים, ${aCount} שיבוצים (יום ${parsed.dayIndex})` };
+}
+
+function openContinuityImportModal(): void {
+  showContinuityImport({
+    defaultValue: _continuityJson,
+    validate: validateContinuityJson,
+  }).then((result) => {
+    if (result !== null) {
+      _continuityJson = result;
+    }
+    renderAll();
+  });
+}
 
 function renderSnapshotPanel(): string {
   const snapshots = store.getAllSnapshots();
@@ -1049,19 +1136,19 @@ function renderViolations(schedule: Schedule): string {
     html += `<div class="alert alert-error"><strong>הפרות חמורות (${hard.length})</strong>`;
     if (today.length > 0) {
       html += `<div class="violation-section"><em>יום ${currentDay}:</em><ul>`;
-      for (const v of today) html += `<li><code>${v.code}</code> ${v.message}</li>`;
+      for (const v of today) html += `<li><code>${violationLabel(v.code)}</code> ${v.message}</li>`;
       html += `</ul></div>`;
     }
     if (other.length > 0) {
       html += `<div class="violation-section violation-other"><em>ימים אחרים:</em><ul>`;
-      for (const v of other) html += `<li><code>${v.code}</code> ${v.message}</li>`;
+      for (const v of other) html += `<li><code>${violationLabel(v.code)}</code> ${v.message}</li>`;
       html += `</ul></div>`;
     }
     html += '</div>';
   }
   if (warn.length > 0) {
     html += `<div class="alert alert-warn"><strong>אזהרות (${warn.length})</strong><ul>`;
-    for (const w of warn) html += `<li><code>${w.code}</code> ${w.message}</li>`;
+    for (const w of warn) html += `<li><code>${violationLabel(w.code)}</code> ${w.message}</li>`;
     html += '</ul></div>';
   }
   return html;
@@ -1328,6 +1415,19 @@ async function doGenerate(): Promise<void> {
   );
   engine.addParticipants(participants);
   engine.addTasks(tasks);
+
+  // Continuity: if previous-schedule JSON is present, build phantom context
+  if (_continuityJson.trim()) {
+    const parsed = parseContinuitySnapshot(_continuityJson);
+    if ('error' in parsed) {
+      showToast(parsed.error, { type: 'error' });
+      return;
+    }
+    const phantom = buildPhantomContext(parsed, participants);
+    if (phantom.phantomAssignments.length > 0) {
+      engine.setPhantomContext(phantom);
+    }
+  }
 
   // Switch to schedule tab and show overlay (keep old schedule visible behind it)
   currentTab = 'schedule';
@@ -1613,7 +1713,7 @@ function showRescueModal(): void {
           <summary>הצג פרטים</summary>
           <ul>`;
       for (const v of plan.violations!) {
-        violationsHtml += `<li><code>${v.code}</code> — ${v.message}</li>`;
+        violationsHtml += `<li><code>${violationLabel(v.code)}</code> — ${v.message}</li>`;
       }
       violationsHtml += `</ul></details></div>`;
     }
@@ -2040,7 +2140,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.3.2</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.3.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2312,6 +2412,30 @@ function wireSnapshotEvents(container: HTMLElement): void {
     });
   }
 
+  // ── Continuity chip + import modal events ──
+  const continuityChip = container.querySelector('#continuity-chip');
+  if (continuityChip) {
+    continuityChip.addEventListener('click', (e) => {
+      // Don't open modal if the clear button was clicked
+      if ((e.target as HTMLElement).closest('.continuity-chip-clear')) return;
+      openContinuityImportModal();
+    });
+  }
+  const continuityClear = container.querySelector('#btn-continuity-clear');
+  if (continuityClear) {
+    continuityClear.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _continuityJson = '';
+      renderAll();
+    });
+  }
+  const continuityImportBtn = container.querySelector('#btn-continuity-import');
+  if (continuityImportBtn) {
+    continuityImportBtn.addEventListener('click', () => {
+      openContinuityImportModal();
+    });
+  }
+
   // Close button inside panel
   const closeBtn = container.querySelector('#btn-snap-close');
   if (closeBtn) {
@@ -2490,6 +2614,49 @@ function wireScheduleEvents(container: HTMLElement): void {
       }
     });
   });
+
+  // ── Continuity: Export day JSON ──
+  const exportDayBtn = container.querySelector('#btn-export-day-json');
+  if (exportDayBtn && currentSchedule) {
+    exportDayBtn.addEventListener('click', () => {
+      if (!currentSchedule) return;
+      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), DAY_START_HOUR);
+      const json = JSON.stringify(snapshot, null, 2);
+      navigator.clipboard.writeText(json).then(() => {
+        showToast(`יום ${currentDay} הועתק ללוח — הדבק בשבצ"ק הבא`, { type: 'success' });
+      }).catch(() => {
+        // Fallback: populate via import modal
+        _continuityJson = json;
+        showToast('לא ניתן להעתיק ללוח — הנתונים נשמרו בזיכרון', { type: 'warning' });
+        renderAll();
+      });
+    });
+  }
+
+  // ── Continuity: Generate from end of day X ──
+  const genFromDayBtn = container.querySelector('#btn-generate-from-day');
+  if (genFromDayBtn && currentSchedule) {
+    genFromDayBtn.addEventListener('click', async () => {
+      if (!currentSchedule) return;
+      const numDaysNow = store.getScheduleDays();
+      const remainingDays = numDaysNow - currentDay;
+      if (remainingDays < 1) return;
+
+      // 1. Export snapshot for the current day
+      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), DAY_START_HOUR);
+      _continuityJson = JSON.stringify(snapshot, null, 2);
+
+      // 2. Update schedule start date to end of current day
+      const dayWindow = getDayWindow(currentDay);
+      store.setScheduleDate(dayWindow.end);
+      store.setScheduleDays(remainingDays);
+
+      // 3. Trigger generation
+      currentDay = 1;
+      renderAll();
+      await doGenerate();
+    });
+  }
 
   // ── Gantt mobile accordion toggle ──
   const ganttToggle = container.querySelector('[data-action="toggle-gantt"]');

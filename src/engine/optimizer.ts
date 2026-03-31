@@ -39,6 +39,7 @@ import { checkSeniorHardBlock } from '../constraints/senior-policy';
 import { isEligible, getRejectionReason } from './validator';
 import { dateKey } from '../utils/date-utils';
 import { computeAllCapacities } from '../utils/capacity';
+import { PhantomContext } from './phantom';
 
 // ─── Simulated Annealing Constants ──────────────────────────────────────────
 // Extracted from localSearch() for readability. Values are calibrated for the
@@ -368,15 +369,28 @@ export function greedyAssign(
   lockedAssignments: Assignment[] = [],
   disabledHC?: Set<string>,
   taskOrderJitter: number = 0,
+  phantomContext?: PhantomContext,
 ): { assignments: Assignment[]; unfilledSlots: { taskId: string; slotId: string; reason: string }[] } {
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
+
+  // Seed phantom tasks into taskMap so constraint checks can resolve them
+  if (phantomContext) {
+    for (const pt of phantomContext.phantomTasks) taskMap.set(pt.id, pt);
+  }
 
   const assignments: Assignment[] = [...lockedAssignments];
   const unfilledSlots: { taskId: string; slotId: string; reason: string }[] = [];
 
   // P4: Pre-build per-participant assignment index for O(1) lookups
   const assignmentsByParticipant = buildAssignmentMap(lockedAssignments);
+
+  // Seed phantom assignments into per-participant index for cross-schedule
+  // constraint enforcement (HC-5, HC-12, HC-14). NOT added to assignments[]
+  // or workload maps — phantoms affect only eligibility, not scoring/output.
+  if (phantomContext) {
+    for (const pa of phantomContext.phantomAssignments) addToAssignmentMap(assignmentsByParticipant, pa);
+  }
 
   // Track workload
   const workload = new Map<string, number>();
@@ -1008,6 +1022,7 @@ export function localSearchOptimize(
   config: SchedulerConfig,
   disabledHC?: Set<string>,
   unfilledSlots?: { taskId: string; slotId: string; reason: string }[],
+  phantomContext?: PhantomContext,
 ): { assignments: Assignment[]; filledSlots: string[] } {
   const current = [...assignments.map((a) => ({ ...a }))];
 
@@ -1018,6 +1033,11 @@ export function localSearchOptimize(
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
 
+  // Seed phantom tasks into taskMap for cross-schedule constraint resolution
+  if (phantomContext) {
+    for (const pt of phantomContext.phantomTasks) taskMap.set(pt.id, pt);
+  }
+
   // P1: Pre-build participant map once for delta validation
   const pMap = new Map<string, Participant>();
   for (const p of participants) pMap.set(p.id, p);
@@ -1025,6 +1045,13 @@ export function localSearchOptimize(
   // P1: Pre-build per-participant and per-task indices for O(k) lookups.
   // With in-place swaps these are patched and unpatched rather than rebuilt.
   const byParticipant = buildAssignmentMap(current);
+
+  // Seed phantom assignments into per-participant index. SA never selects
+  // phantom assignments for swapping (they're not in `current`), but
+  // feasibility checks via isEligibleForSlot read from byParticipant.
+  if (phantomContext) {
+    for (const pa of phantomContext.phantomAssignments) addToAssignmentMap(byParticipant, pa);
+  }
   const byTask = new Map<string, Assignment[]>();
   for (const a of current) {
     const list = byTask.get(a.taskId);
@@ -1392,11 +1419,12 @@ export function optimize(
   lockedAssignments: Assignment[] = [],
   disabledHC?: Set<string>,
   taskOrderJitter: number = 0,
+  phantomContext?: PhantomContext,
 ): OptimizationResult {
   const startTime = Date.now();
 
   // Phase 1: Greedy construction
-  const greedy = greedyAssign(tasks, participants, lockedAssignments, disabledHC, taskOrderJitter);
+  const greedy = greedyAssign(tasks, participants, lockedAssignments, disabledHC, taskOrderJitter, phantomContext);
 
   // Phase 2: Local search improvement (also tries to fill unfilled slots)
   const lsResult = localSearchOptimize(
@@ -1406,6 +1434,7 @@ export function optimize(
     config,
     disabledHC,
     greedy.unfilledSlots,
+    phantomContext,
   );
 
   // Remove slots that SA managed to fill
@@ -1511,6 +1540,7 @@ export function optimizeMultiAttempt(
   attempts: number = 2000,
   onProgress?: MultiAttemptProgressCallback,
   disabledHC?: Set<string>,
+  phantomContext?: PhantomContext,
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
   const totalStart = Date.now();
@@ -1543,7 +1573,7 @@ export function optimizeMultiAttempt(
 
     // Task-order jitter: 0 for first attempt, 0.3 for subsequent
     const jitter = i === 0 ? 0 : 0.3;
-    const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter);
+    const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter, phantomContext);
 
     const improved = best === null || isBetterResult(result, best);
     if (improved) {
@@ -1610,6 +1640,7 @@ export function optimizeMultiAttemptAsync(
   attempts: number = 2000,
   onProgress?: MultiAttemptProgressCallback,
   disabledHC?: Set<string>,
+  phantomContext?: PhantomContext,
 ): Promise<OptimizationResult> {
   return new Promise((resolve, reject) => {
     let best: OptimizationResult | null = null;
@@ -1645,7 +1676,7 @@ export function optimizeMultiAttemptAsync(
 
         // Task-order jitter: 0 for first attempt, 0.3 for subsequent
         const jitter = i === 0 ? 0 : 0.3;
-        const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter);
+        const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter, phantomContext);
 
         const improved = best === null || isBetterResult(result, best);
         if (improved) {

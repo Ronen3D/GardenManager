@@ -259,6 +259,22 @@ export function dailyWorkloadImbalance(
   return { dailyPerParticipantStdDev, dailyGlobalStdDev };
 }
 
+// ─── TaskType Hebrew Labels ─────────────────────────────────────────────────
+
+const taskTypeHebrew: Record<string, string> = {
+  Adanit: 'עדנית',
+  Hamama: 'חממה',
+  Shemesh: 'שמש',
+  Mamtera: 'ממטרה',
+  Karov: 'קרוב',
+  Karovit: 'קרובית',
+  Aruga: 'ערוגה',
+};
+
+function taskTypeLabel(type: string): string {
+  return taskTypeHebrew[type] || type;
+}
+
 // ─── Soft Constraint Warnings ────────────────────────────────────────────────
 
 /**
@@ -292,7 +308,7 @@ export function collectSoftWarnings(
           warnings.push({
             severity: ViolationSeverity.Warning,
             code: 'SENIOR_IN_JUNIOR_PREFERRED',
-            message: `${p.name} (דרגה 4) משובץ ל-${task.name} — מוצא אחרון. רק דרגה 0 צריכים להיות כאן; דרגה 4 הוא חלופה כשאין דרגה 0 זמינים.`,
+            message: `${p.name} (דרגה 4) שובץ/ה ל-${task.name} כמוצא אחרון — משימה זו מיועדת לדרגה 0`,
             taskId: task.id,
             participantId: p.id,
           });
@@ -308,7 +324,7 @@ export function collectSoftWarnings(
         warnings.push({
           severity: ViolationSeverity.Warning,
           code: 'GROUP_MISMATCH',
-          message: `משימה ${task.name} דורשת אותה קבוצה אך כוללת משתתפים מ-${groups.size} קבוצות: [${[...groups].join(', ')}] — זה אמור להיתפס על ידי HC-4`,
+          message: `משימה ${task.name} דורשת שכל המשתתפים יהיו מאותה קבוצה, אך כוללת משתתפים מ-${groups.size} קבוצות: [${[...groups].join(', ')}]`,
           taskId: task.id,
         });
       }
@@ -320,7 +336,7 @@ export function collectSoftWarnings(
         warnings.push({
           severity: ViolationSeverity.Warning,
           code: 'LESS_PREFERRED_ASSIGNMENT',
-          message: `${p.name} משובץ/ת ל-${task.name} — סוג משימה שהוא/היא מעדיף/ה להימנע ממנו`,
+          message: `${p.name} שובץ/ה ל-${task.name} — סוג משימה שמועדף להימנע ממנו`,
           taskId: task.id,
           participantId: p.id,
         });
@@ -344,7 +360,7 @@ export function collectSoftWarnings(
       warnings.push({
         severity: ViolationSeverity.Warning,
         code: 'PREFERRED_TYPE_UNAVAILABLE',
-        message: `${p.name} מעדיף/ה ${p.preferredTaskType} אך אין משימות מסוג זה בלוח — העדפה זו לא ניתנת למימוש`,
+        message: `${p.name} מעדיף/ה ${taskTypeLabel(p.preferredTaskType)} אך אין משימות מסוג זה בלוח — העדפה זו לא ניתנת למימוש`,
         taskId: '',
         participantId: p.id,
       });
@@ -359,7 +375,7 @@ export function collectSoftWarnings(
       warnings.push({
         severity: ViolationSeverity.Warning,
         code: 'PREFERRED_NOT_SATISFIED',
-        message: `${p.name} מעדיף/ה ${p.preferredTaskType} אך לא שובץ/ה למשימה מסוג זה`,
+        message: `${p.name} מעדיף/ה ${taskTypeLabel(p.preferredTaskType)} אך לא שובץ/ה למשימה מסוג זה`,
         taskId: pAssigns[0].taskId,
         participantId: p.id,
       });

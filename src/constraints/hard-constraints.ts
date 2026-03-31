@@ -228,7 +228,7 @@ export function checkNoDoubleBooking(
         violations.push(
           violation(
             'DOUBLE_BOOKING',
-            `משתתף ${participantId} משובץ בכפל: "${taskA.name}" ו-"${taskB.name}" חופפים`,
+            `משתתף ${participantId} משובץ/ת בכפל: "${taskA.name}" ו-"${taskB.name}" חופפים`,
             taskA.id,
             undefined,
             participantId,
@@ -292,7 +292,7 @@ export function checkUniqueParticipantsPerTask(
       violations.push(
         violation(
           'DUPLICATE_IN_TASK',
-          `משתתף ${a.participantId} משובץ מספר פעמים ב-${task.name}`,
+          `משתתף ${a.participantId} משובץ/ת מספר פעמים ב-${task.name}`,
           task.id,
           a.slotId,
           a.participantId,
@@ -410,7 +410,7 @@ export function checkNoConsecutiveHighLoad(
       violations.push(
         violation(
           'CONSECUTIVE_HIGH_LOAD',
-          `למשתתף ${participantId} משימות חוסמות עוקבות: "${current.task.name}" ו-"${next.task.name}" ללא הפסקה.`,
+          `למשתתף ${participantId} משימות עוקבות ללא הפסקה: "${current.task.name}" ו-"${next.task.name}"`,
           next.task.id,
           undefined,
           participantId,
@@ -439,8 +439,10 @@ export function checkCategoryBreak(
   participantId: string,
   assignments: Assignment[],
   taskMap: Map<string, Task>,
+  participantName?: string,
 ): ConstraintViolation[] {
   const violations: ConstraintViolation[] = [];
+  const displayName = participantName || participantId;
 
   const categoryAssignments = assignments
     .filter(a => a.participantId === participantId)
@@ -458,7 +460,7 @@ export function checkCategoryBreak(
       violations.push(
         violation(
           'CATEGORY_BREAK_VIOLATION',
-          `למשתתף ${participantId} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות 5 שעות לפחות)`,
+          `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות 5 שעות לפחות)`,
           nxt.task.id,
           undefined,
           participantId,
@@ -530,9 +532,10 @@ export function validateHardConstraints(
       const seen = new Set<string>();
       for (const a of taskAssignments) {
         if (seen.has(a.participantId)) {
+          const pName = pMap.get(a.participantId)?.name || a.participantId;
           allViolations.push(violation(
             'DUPLICATE_IN_TASK',
-            `משתתף ${a.participantId} משובץ מספר פעמים ב-${task.name}`,
+            `${pName} משובץ/ת מספר פעמים ב-${task.name}`,
             task.id, a.slotId, a.participantId,
           ));
         }
@@ -631,7 +634,7 @@ export function validateHardConstraints(
             if (blocksOverlap(prevTask.timeBlock, task.timeBlock)) {
               allViolations.push(violation(
                 'DOUBLE_BOOKING',
-                `משתתף ${p.id} משובץ בכפל: "${prevTask.name}" ו-"${task.name}" חופפים`,
+                `${p.name} משובץ/ת בכפל: "${prevTask.name}" ו-"${task.name}" חופפים`,
                 prevTask.id, undefined, p.id,
               ));
             }
@@ -660,7 +663,7 @@ export function validateHardConstraints(
         if (effectivelyBlocksAt(cur.task, 'end') && effectivelyBlocksAt(nxt.task, 'start')) {
           allViolations.push(violation(
             'CONSECUTIVE_HIGH_LOAD',
-            `למשתתף ${p.id} משימות חוסמות עוקבות: "${cur.task.name}" ו-"${nxt.task.name}" ללא הפסקה.`,
+            `ל-${p.name} משימות עוקבות ללא הפסקה: "${cur.task.name}" ו-"${nxt.task.name}"`,
             nxt.task.id, undefined, p.id,
           ));
         }
@@ -673,7 +676,7 @@ export function validateHardConstraints(
     for (const p of participants) {
       const pAssigns = assignmentsByParticipant.get(p.id) || [];
       if (pAssigns.length < 2) continue;
-      allViolations.push(...checkCategoryBreak(p.id, pAssigns, tMap));
+      allViolations.push(...checkCategoryBreak(p.id, pAssigns, tMap, p.name));
     }
   }
 

@@ -437,6 +437,86 @@ export function unlockBodyScroll(): void {
   }
 }
 
+// ─── Continuity Import Modal ────────────────────────────────────────────────
+
+export interface ContinuityImportOptions {
+  /** Pre-populate the textarea (e.g. when editing existing data). */
+  defaultValue?: string;
+  /** Validator: returns null on success or an error string. On success also returns a human summary. */
+  validate: (json: string) => { ok: true; summary: string } | { ok: false; error: string };
+}
+
+/**
+ * Show a modal for importing continuity JSON.
+ * Returns the raw JSON string on apply, or null on cancel.
+ */
+export function showContinuityImport(opts: ContinuityImportOptions): Promise<string | null> {
+  return new Promise((resolve) => {
+    const defaultVal = opts.defaultValue || '';
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'gm-modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="gm-modal-dialog gm-modal-continuity" role="dialog" aria-modal="true">
+        <div class="gm-modal-header">
+          <span class="gm-modal-icon">🔗</span>
+          <span class="gm-modal-title">ייבוא נתוני המשכיות</span>
+        </div>
+        <div class="gm-modal-body">
+          <p class="text-muted" style="margin: 0 0 10px;">הדבק את הנתונים שיוצאו מלחצן "ייצוא יום" בשבצ"ק הקודם. המערכת תאכוף אילוצים על הגבול בין השבצ"קים.</p>
+          <textarea class="continuity-textarea gm-continuity-input" rows="8"
+            placeholder="הדבק כאן JSON..." dir="ltr">${escHtml(defaultVal)}</textarea>
+          <div class="gm-continuity-status"></div>
+        </div>
+        <div class="gm-modal-actions">
+          <button class="btn-primary gm-modal-btn-ok" disabled>החל</button>
+          <button class="btn-sm btn-outline gm-modal-btn-cancel">ביטול</button>
+        </div>
+      </div>`;
+
+    lockBodyScroll();
+
+    const textarea = backdrop.querySelector('.gm-continuity-input') as HTMLTextAreaElement;
+    const statusEl = backdrop.querySelector('.gm-continuity-status') as HTMLElement;
+    const okBtn = backdrop.querySelector('.gm-modal-btn-ok') as HTMLButtonElement;
+
+    const close = (val: string | null) => { backdrop.remove(); unlockBodyScroll(); resolve(val); };
+
+    const updateValidation = () => {
+      const val = textarea.value.trim();
+      if (!val) {
+        statusEl.innerHTML = '';
+        okBtn.disabled = true;
+        return;
+      }
+      const result = opts.validate(val);
+      if (result.ok) {
+        statusEl.innerHTML = `<span class="continuity-status continuity-ok">✓ ${escHtml(result.summary)}</span>`;
+        okBtn.disabled = false;
+      } else {
+        statusEl.innerHTML = `<span class="continuity-status continuity-error">✗ ${escHtml(result.error)}</span>`;
+        okBtn.disabled = true;
+      }
+    };
+
+    // Validate initial value
+    updateValidation();
+
+    textarea.addEventListener('input', updateValidation);
+
+    okBtn.addEventListener('click', () => close(textarea.value.trim()));
+    backdrop.querySelector('.gm-modal-btn-cancel')!.addEventListener('click', () => close(null));
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(null); });
+
+    document.addEventListener('keydown', function onKey(e) {
+      if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(null); }
+    });
+
+    document.body.appendChild(backdrop);
+    textarea.focus();
+  });
+}
+
 // ─── Bottom Sheet ───────────────────────────────────────────────────────────
 
 export interface BottomSheetOptions {

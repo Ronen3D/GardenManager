@@ -1163,6 +1163,9 @@ select.input-sm {
   box-shadow: none !important;
 }
 
+/* ─── Unavailability Cell ────────────────────────────── */
+.unavail-summary { display: none; }
+
 /* ─── Availability Cell ──────────────────────────────── */
 .avail-cell small {
   display: inline-block;
@@ -4298,6 +4301,101 @@ tr.now-row-animate > td.time-cell {
   font-size: 0.8rem;
   margin-top: 6px;
   min-height: 1.2em;
+}
+
+/* ─── Continuity Chip (toolbar status indicator) ─────────────────────────── */
+
+.continuity-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: rgba(166, 227, 161, 0.12);
+  border: 1px solid var(--success, #a6e3a1);
+  font-size: 0.75rem;
+  color: var(--success, #a6e3a1);
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.continuity-chip:hover {
+  background: rgba(166, 227, 161, 0.22);
+}
+.continuity-chip-error {
+  background: rgba(243, 139, 168, 0.12);
+  border-color: var(--danger, #f38ba8);
+  color: var(--danger, #f38ba8);
+}
+.continuity-chip-error:hover {
+  background: rgba(243, 139, 168, 0.22);
+}
+.continuity-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.continuity-chip-clear {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0 2px;
+  opacity: 0.7;
+  line-height: 1;
+}
+.continuity-chip-clear:hover {
+  opacity: 1;
+}
+
+/* ─── Day Window Actions (export/generate buttons inline with day label) ── */
+
+.day-window-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ─── Continuity Import Modal ────────────────────────────────────────────── */
+
+.gm-modal-continuity {
+  max-width: 520px;
+}
+.gm-continuity-status {
+  min-height: 1.4em;
+  margin-top: 4px;
+}
+
+.continuity-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #444);
+  background: var(--bg, #11111b);
+  color: var(--text, #cdd6f4);
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  resize: vertical;
+  line-height: 1.4;
+}
+.continuity-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.15);
+}
+
+.continuity-status {
+  font-size: 0.8rem;
+}
+.continuity-ok {
+  color: var(--success, #a6e3a1);
+}
+.continuity-error {
+  color: var(--danger, #f38ba8);
 }
 
 /* ─── Export Modal ─────────────────────────────────────────────────────────── */

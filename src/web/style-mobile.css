@@ -921,6 +921,25 @@
     font-size: 0.55rem;
   }
 
+  /* Hide unavailability cell when no rules defined (remove empty placeholder) */
+  .table-participants tbody td.unavail-cell.unavail-empty {
+    display: none !important;
+  }
+
+  /* Show inline unavailability summary on mobile */
+  .table-participants tbody td.unavail-cell .unavail-summary {
+    display: inline;
+  }
+  .table-participants tbody .unavail-summary small {
+    display: inline-block;
+    background: rgba(231, 76, 60, 0.1);
+    border: 1px solid rgba(231, 76, 60, 0.2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.55rem;
+    margin: 1px 0;
+  }
+
   /* Compact icon buttons */
   .table-participants tbody td .btn-icon {
     padding: 1px 3px;
