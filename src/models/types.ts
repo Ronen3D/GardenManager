@@ -450,6 +450,8 @@ export interface TaskSet {
   description: string;
   /** Full task template data at the time of the snapshot */
   templates: TaskTemplate[];
+  /** One-time task definitions included in this set. */
+  oneTimeTasks?: OneTimeTask[];
   /** If true the set cannot be deleted or renamed */
   builtIn?: boolean;
   /** Epoch ms — used for ordering */
@@ -577,6 +579,51 @@ export interface TaskTemplate {
   requiresCategoryBreak?: boolean;
   /** Display section for schedule grid/PDF layout (e.g. 'patrol', 'hamama', 'aruga', 'mamtera', 'shemesh'). */
   displayCategory?: string;
+}
+
+// ─── One-Time Task Definition ───────────────────────────────────────────────
+
+/** A user-defined task that occurs exactly once at a specific date and time. */
+export interface OneTimeTask {
+  id: string;
+  name: string;
+  taskType: TaskType | string;
+  /** Calendar date this task occurs on (only year/month/day matter). */
+  scheduledDate: Date;
+  /** Start hour (0-23) on the scheduled date. */
+  startHour: number;
+  /** Start minute (0-59). Defaults to 0. */
+  startMinute: number;
+  /** Duration in hours. */
+  durationHours: number;
+  /** Sub-teams (each has its own slots). If empty, slots are top-level. */
+  subTeams: SubTeamTemplate[];
+  /** Top-level slots (used when there are no sub-teams). */
+  slots: SlotTemplate[];
+  /** Whether all participants must be from the same group. */
+  sameGroupRequired: boolean;
+  /** Whether this is a light task. */
+  isLight: boolean;
+  /** Base load weight outside hot windows (0..1). */
+  baseLoadWeight?: number;
+  /** Optional weighted windows (typically "hot" windows). */
+  loadWindows?: LoadWindow[];
+  /** HC-12 consecutive-task blocking flag. */
+  blocksConsecutive?: boolean;
+  /** Scheduling priority (0 = first). */
+  schedulingPriority?: number;
+  /** Certifications that DISQUALIFY a participant from this task. */
+  excludedCertifications?: Certification[];
+  /** When true, prefer L0 participants. */
+  preferJuniors?: boolean;
+  /** Whether "not with" togetherness preferences apply. */
+  togethernessRelevant?: boolean;
+  /** HC-14: Enforces minimum 5h gap between category-break tasks. */
+  requiresCategoryBreak?: boolean;
+  /** Display section for schedule grid/PDF layout. */
+  displayCategory?: string;
+  /** Custom notes / description. */
+  description?: string;
 }
 
 // ─── Multi-Day Schedule Types ────────────────────────────────────────────────

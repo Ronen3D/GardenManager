@@ -353,6 +353,81 @@ function generateTasksFromTemplates(): Task[] {
     }
   }
 
+  // ── One-Time Tasks ───────────────────────────────────────────────────────
+  const allOneTimeTasks = store.getAllOneTimeTasks();
+  const windowStart = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
+  const windowEnd = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + numDays);
+
+  for (const ot of allOneTimeTasks) {
+    const otDay = new Date(
+      ot.scheduledDate.getFullYear(),
+      ot.scheduledDate.getMonth(),
+      ot.scheduledDate.getDate(),
+    );
+
+    // Range filter: skip if outside scheduling window
+    if (otDay < windowStart || otDay >= windowEnd) continue;
+
+    const dayIdx = Math.round((otDay.getTime() - windowStart.getTime()) / 86400000);
+    const dayLabel = `D${dayIdx + 1}`;
+
+    const start = new Date(otDay.getFullYear(), otDay.getMonth(), otDay.getDate(),
+                           ot.startHour, ot.startMinute || 0);
+    const end = new Date(start.getTime() + ot.durationHours * 3600000);
+
+    // Build slots (same logic as template slot building above)
+    const slots: SlotRequirement[] = [];
+    for (const st of ot.subTeams) {
+      const adanitTeam = st.adanitTeam
+        ?? ((st.name.includes('ראשי') || /main/i.test(st.name))
+          ? AdanitTeam.SegolMain
+          : (st.name.includes('משני') || /secondary/i.test(st.name))
+            ? AdanitTeam.SegolSecondary
+            : undefined);
+
+      for (const s of st.slots) {
+        if (s.acceptableLevels.length === 0) continue;
+        slots.push({
+          slotId: `ot-slot-${++_tSlotCounter}`,
+          acceptableLevels: [...s.acceptableLevels],
+          requiredCertifications: [...s.requiredCertifications],
+          adanitTeam,
+          label: s.label,
+          subTeamId: st.id,
+        });
+      }
+    }
+    for (const s of ot.slots) {
+      if (s.acceptableLevels.length === 0) continue;
+      slots.push({
+        slotId: `ot-slot-${++_tSlotCounter}`,
+        acceptableLevels: [...s.acceptableLevels],
+        requiredCertifications: [...s.requiredCertifications],
+        label: s.label,
+      });
+    }
+
+    allTasks.push({
+      id: `ot-${ot.id}-d${dayIdx + 1}-${++_tTaskCounter}`,
+      type: ot.taskType || 'Custom',
+      name: `${dayLabel} ${ot.name}`,
+      timeBlock: { start, end },
+      requiredCount: slots.length,
+      slots,
+      isLight: ot.isLight,
+      baseLoadWeight: ot.baseLoadWeight,
+      loadWindows: (ot.loadWindows ?? []).map((w) => ({ ...w })),
+      sameGroupRequired: ot.sameGroupRequired,
+      blocksConsecutive: ot.blocksConsecutive ?? !ot.isLight,
+      schedulingPriority: ot.schedulingPriority,
+      excludedCertifications: ot.excludedCertifications,
+      preferJuniors: ot.preferJuniors,
+      togethernessRelevant: ot.togethernessRelevant,
+      requiresCategoryBreak: ot.requiresCategoryBreak,
+      displayCategory: ot.displayCategory,
+    });
+  }
+
   return allTasks;
 }
 

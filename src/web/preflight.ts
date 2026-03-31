@@ -13,6 +13,7 @@ import {
   Certification,
   TaskTemplate,
   SlotTemplate,
+  OneTimeTask,
   PreflightSeverity,
   PreflightFinding,
   PreflightResult,
@@ -20,6 +21,7 @@ import {
 import {
   getAllParticipants,
   getAllTaskTemplates,
+  getAllOneTimeTasks,
   getGroups,
   getPakalDefinitions,
   getScheduleDate,
@@ -40,7 +42,7 @@ function participantMatchesSlot(p: Participant, slot: SlotTemplate): boolean {
   return true;
 }
 
-function collectAllSlots(tpl: TaskTemplate): SlotTemplate[] {
+function collectAllSlots(tpl: TaskTemplate | OneTimeTask): SlotTemplate[] {
   const all: SlotTemplate[] = [...tpl.slots];
   for (const st of tpl.subTeams) {
     all.push(...st.slots);
@@ -54,7 +56,7 @@ function totalSlotsPerShift(tpl: TaskTemplate): number {
 
 // ─── Skill Gap Check ─────────────────────────────────────────────────────────
 
-function checkSkillGaps(participants: Participant[], templates: TaskTemplate[]): PreflightFinding[] {
+function checkSkillGaps(participants: Participant[], templates: TaskTemplate[], oneTimeTasks: OneTimeTask[]): PreflightFinding[] {
   const findings: PreflightFinding[] = [];
 
   for (const tpl of templates) {
@@ -87,12 +89,37 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[]):
     }
   }
 
+  // Check one-time tasks (only those within scheduling window)
+  for (const ot of oneTimeTasks) {
+    const allSlots = collectAllSlots(ot);
+    for (const slot of allSlots) {
+      const eligible = participants.filter(p => participantMatchesSlot(p, slot));
+      if (eligible.length === 0) {
+        const levelStr = slot.acceptableLevels.map(l => `דרגה ${l}`).join('/');
+        const certStr = slot.requiredCertifications.length > 0
+          ? ` + ${slot.requiredCertifications.join(', ')}`
+          : '';
+        findings.push({
+          severity: PreflightSeverity.Critical,
+          code: 'SKILL_GAP',
+          message: `אין משתתפים שמתאימים לדרישה ${levelStr}${certStr} עבור המשימה החד-פעמית "${ot.name}" במשבצת "${slot.label}".`,
+        });
+      } else if (eligible.length === 1) {
+        findings.push({
+          severity: PreflightSeverity.Warning,
+          code: 'SKILL_SCARCITY',
+          message: `רק משתתף אחד יכול לאייש את המשבצת "${slot.label}" במשימה החד-פעמית "${ot.name}" (${eligible[0].name}).`,
+        });
+      }
+    }
+  }
+
   return findings;
 }
 
 // ─── Capacity Check ──────────────────────────────────────────────────────────
 
-function checkCapacity(participants: Participant[], templates: TaskTemplate[]): {
+function checkCapacity(participants: Participant[], templates: TaskTemplate[], oneTimeTasks: OneTimeTask[]): {
   findings: PreflightFinding[];
   totalRequiredSlots: number;
   totalAvailableParticipantHours: number;
@@ -110,6 +137,13 @@ function checkCapacity(participants: Participant[], templates: TaskTemplate[]): 
     const hoursPerSlot = tpl.durationHours * tpl.shiftsPerDay;
     totalRequiredHours += slotsPerShift * hoursPerSlot * numDays;
     totalRequiredSlots += slotsPerShift * tpl.shiftsPerDay * numDays;
+  }
+
+  // Add one-time tasks (1 instance each)
+  for (const ot of oneTimeTasks) {
+    const slotsCount = collectAllSlots(ot).length;
+    totalRequiredHours += slotsCount * ot.durationHours;
+    totalRequiredSlots += slotsCount;
   }
 
   // Calculate total available hours using capacity calculator.
@@ -147,14 +181,22 @@ function checkCapacity(participants: Participant[], templates: TaskTemplate[]): 
 
 // ─── Group Integrity Check ───────────────────────────────────────────────────
 
-function checkGroupIntegrity(participants: Participant[], templates: TaskTemplate[]): PreflightFinding[] {
+function checkGroupIntegrity(participants: Participant[], templates: TaskTemplate[], oneTimeTasks: OneTimeTask[]): PreflightFinding[] {
   const findings: PreflightFinding[] = [];
   const groups = [...new Set(participants.map(p => p.group))];
 
+  // Check both templates and one-time tasks that require same group
+  const items: Array<{ name: string; id?: string; sameGroupRequired: boolean; shiftsPerDay?: number; slots: SlotTemplate[] }> = [];
   for (const tpl of templates) {
-    if (!tpl.sameGroupRequired) continue;
-    const allSlots = collectAllSlots(tpl);
-    if (allSlots.length === 0) continue;
+    items.push({ name: tpl.name, id: tpl.id, sameGroupRequired: tpl.sameGroupRequired, shiftsPerDay: tpl.shiftsPerDay, slots: collectAllSlots(tpl) });
+  }
+  for (const ot of oneTimeTasks) {
+    items.push({ name: ot.name, sameGroupRequired: ot.sameGroupRequired, slots: collectAllSlots(ot) });
+  }
+
+  for (const item of items) {
+    if (!item.sameGroupRequired) continue;
+    if (item.slots.length === 0) continue;
 
     // For each group, check if they can fill ALL slots simultaneously
     let anyGroupCanFill = false;
@@ -165,7 +207,7 @@ function checkGroupIntegrity(participants: Participant[], templates: TaskTemplat
 
       // Greedy check: try to assign each slot to a different member
       const used = new Set<string>();
-      for (const slot of allSlots) {
+      for (const slot of item.slots) {
         const eligible = groupMembers.filter(
           m => !used.has(m.id) && participantMatchesSlot(m, slot)
         );
@@ -186,17 +228,17 @@ function checkGroupIntegrity(participants: Participant[], templates: TaskTemplat
       findings.push({
         severity: PreflightSeverity.Critical,
         code: 'GROUP_INTEGRITY',
-        message: `אף קבוצה לא יכולה למלא את כל ${allSlots.length} המשבצות עבור "${tpl.name}" (נדרשת אותה קבוצה). יש צורך בלפחות קבוצה אחת עם משתתפים מתאימים.`,
-        templateId: tpl.id,
+        message: `אף קבוצה לא יכולה למלא את כל ${item.slots.length} המשבצות עבור "${item.name}" (נדרשת אותה קבוצה). יש צורך בלפחות קבוצה אחת עם משתתפים מתאימים.`,
+        templateId: item.id,
       });
-    } else {
+    } else if (item.shiftsPerDay && item.shiftsPerDay > 1) {
       // Check if ALL groups can fill (desirable for shift rotation)
       const insufficientGroups: string[] = [];
       for (const group of groups) {
         const groupMembers = participants.filter(p => p.group === group);
         const used = new Set<string>();
         let canFill = true;
-        for (const slot of allSlots) {
+        for (const slot of item.slots) {
           const eligible = groupMembers.filter(
             m => !used.has(m.id) && participantMatchesSlot(m, slot)
           );
@@ -206,12 +248,12 @@ function checkGroupIntegrity(participants: Participant[], templates: TaskTemplat
         if (!canFill) insufficientGroups.push(group);
       }
 
-      if (insufficientGroups.length > 0 && tpl.shiftsPerDay > 1) {
+      if (insufficientGroups.length > 0) {
         findings.push({
           severity: PreflightSeverity.Warning,
           code: 'GROUP_ROTATION_GAP',
-          message: `"${tpl.name}" כולל ${tpl.shiftsPerDay} משמרות/יום אך קבוצות [${insufficientGroups.join(', ')}] לא יכולות למלא את כל המשבצות. רוטציית משמרות עלולה להיות מוגבלת.`,
-          templateId: tpl.id,
+          message: `"${item.name}" כולל ${item.shiftsPerDay} משמרות/יום אך קבוצות [${insufficientGroups.join(', ')}] לא יכולות למלא את כל המשבצות. רוטציית משמרות עלולה להיות מוגבלת.`,
+          templateId: item.id,
         });
       }
     }
@@ -255,9 +297,20 @@ export function runPreflight(): PreflightResult {
   const participants = getAllParticipants();
   const templates = getAllTaskTemplates();
 
-  const skillGapFindings = checkSkillGaps(participants, templates);
-  const capacityResult = checkCapacity(participants, templates);
-  const groupFindings = checkGroupIntegrity(participants, templates);
+  // Filter one-time tasks to those within the scheduling window
+  const scheduleStart = getScheduleDate();
+  const numDays = getScheduleDays();
+  const windowStart = new Date(scheduleStart.getFullYear(), scheduleStart.getMonth(), scheduleStart.getDate());
+  const windowEnd = new Date(scheduleStart.getFullYear(), scheduleStart.getMonth(), scheduleStart.getDate() + numDays);
+  const allOts = getAllOneTimeTasks();
+  const inRangeOts = allOts.filter(ot => {
+    const otDay = new Date(ot.scheduledDate.getFullYear(), ot.scheduledDate.getMonth(), ot.scheduledDate.getDate());
+    return otDay >= windowStart && otDay < windowEnd;
+  });
+
+  const skillGapFindings = checkSkillGaps(participants, templates, inRangeOts);
+  const capacityResult = checkCapacity(participants, templates, inRangeOts);
+  const groupFindings = checkGroupIntegrity(participants, templates, inRangeOts);
   const horeshFindings = checkHoreshConsistency(participants);
 
   const allFindings = [

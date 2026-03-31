@@ -30,6 +30,7 @@ import {
   ParticipantSet,
   ParticipantSnapshot,
   TaskSet,
+  OneTimeTask,
 } from '../models/types';
 import {
   BUILTIN_PAKAL_DEFINITIONS,
@@ -80,6 +81,7 @@ function notify(): void {
 interface StoreSnapshot {
   participants: Array<{ p: Participant; dateUnavails: DateUnavailability[] }>;
   taskTemplates: TaskTemplate[];
+  oneTimeTasks: OneTimeTask[];
   notWithPairs: Array<[string, string[]]>;
   pakalDefinitions: PakalDefinition[];
 }
@@ -128,6 +130,18 @@ function captureSnapshot(): StoreSnapshot {
           slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
         })),
       }));
+  const ots: OneTimeTask[] = useStructured
+    ? structuredClone([...oneTimeTasks.values()])
+    : [...oneTimeTasks.values()].map(ot => ({
+        ...ot,
+        scheduledDate: new Date(ot.scheduledDate.getTime()),
+        loadWindows: (ot.loadWindows || []).map(w => ({ ...w })),
+        slots: ot.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+        subTeams: ot.subTeams.map(st => ({
+          ...st,
+          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+        })),
+      }));
   const nwPairs: Array<[string, string[]]> = [];
   for (const [pid, set] of notWithPairs) {
     nwPairs.push([pid, [...set]]);
@@ -135,6 +149,7 @@ function captureSnapshot(): StoreSnapshot {
   return {
     participants: ps,
     taskTemplates: tpls,
+    oneTimeTasks: ots,
     notWithPairs: nwPairs,
     pakalDefinitions: clonePakalDefinitions(pakalDefinitions),
   };
@@ -204,6 +219,26 @@ function restoreSnapshot(snap: StoreSnapshot): void {
         loadWindows: (tpl.loadWindows || []).map(w => ({ ...w })),
         slots: tpl.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
         subTeams: tpl.subTeams.map(st => ({
+          ...st,
+          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+        })),
+      });
+    }
+  }
+
+  oneTimeTasks.clear();
+  if (useStructured) {
+    for (const ot of (snap.oneTimeTasks || [])) {
+      oneTimeTasks.set(ot.id, structuredClone(ot));
+    }
+  } else {
+    for (const ot of (snap.oneTimeTasks || [])) {
+      oneTimeTasks.set(ot.id, {
+        ...ot,
+        scheduledDate: new Date(ot.scheduledDate.getTime()),
+        loadWindows: (ot.loadWindows || []).map(w => ({ ...w })),
+        slots: ot.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+        subTeams: ot.subTeams.map(st => ({
           ...st,
           slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
         })),
@@ -744,6 +779,56 @@ export function getAllTaskTemplates(): TaskTemplate[] {
   return [...taskTemplates.values()];
 }
 
+// ─── One-Time Task Store ────────────────────────────────────────────────────
+
+const oneTimeTasks: Map<string, OneTimeTask> = new Map();
+
+export function addOneTimeTask(task: Omit<OneTimeTask, 'id'>): OneTimeTask {
+  pushSnapshot();
+  const id = uid('ot');
+  const full: OneTimeTask = {
+    ...task,
+    id,
+    baseLoadWeight: task.isLight ? 0 : (task.baseLoadWeight ?? 1),
+    loadWindows: (task.loadWindows || []).map(w => ({ ...w })),
+  };
+  oneTimeTasks.set(id, full);
+  notify();
+  return full;
+}
+
+export function updateOneTimeTask(id: string, patch: Partial<Omit<OneTimeTask, 'id'>>): void {
+  const ot = oneTimeTasks.get(id);
+  if (!ot) return;
+  pushSnapshot();
+  Object.assign(ot, patch);
+  if (patch.loadWindows) {
+    ot.loadWindows = patch.loadWindows.map((w) => ({ ...w }));
+  }
+  if (patch.isLight !== undefined && patch.isLight) {
+    ot.baseLoadWeight = 0;
+  }
+  if (patch.baseLoadWeight !== undefined && !ot.isLight) {
+    ot.baseLoadWeight = Math.max(0, Math.min(1, patch.baseLoadWeight));
+  }
+  notify();
+}
+
+export function removeOneTimeTask(id: string): void {
+  if (!oneTimeTasks.has(id)) return;
+  pushSnapshot();
+  oneTimeTasks.delete(id);
+  notify();
+}
+
+export function getOneTimeTask(id: string): OneTimeTask | undefined {
+  return oneTimeTasks.get(id);
+}
+
+export function getAllOneTimeTasks(): OneTimeTask[] {
+  return [...oneTimeTasks.values()];
+}
+
 // ─── Slot / Sub-Team helpers ─────────────────────────────────────────────────
 
 export function addSlotToTemplate(templateId: string, slot: Omit<SlotTemplate, 'id'>): void {
@@ -1150,6 +1235,7 @@ export function initStore(): void {
     participants.clear();
     dateUnavailabilities.clear();
     taskTemplates.clear();
+    oneTimeTasks.clear();
     pakalDefinitions = clonePakalDefinitions(BUILTIN_PAKAL_DEFINITIONS);
     undoStack.length = 0;
     redoStack.length = 0;
@@ -1268,7 +1354,7 @@ function jsonDeserialize<T>(json: string): T {
 export function saveToStorage(): void {
   try {
     const state = {
-      version: 5,
+      version: 6,
       scheduleDate: scheduleDate.toISOString(),
       scheduleDays,
       liveMode: {
@@ -1294,6 +1380,10 @@ export function saveToStorage(): void {
         rules: rules.map(({ id: _, ...rest }) => rest),
       })),
       taskTemplates: Array.from(taskTemplates.values()),
+      oneTimeTasks: Array.from(oneTimeTasks.values()).map(ot => ({
+        ...ot,
+        scheduledDate: ot.scheduledDate.toISOString(),
+      })),
       notWithPairs: Array.from(notWithPairs.entries()).map(([pid, set]) => ({
         pid,
         targets: [...set],
@@ -1316,7 +1406,7 @@ export function loadFromStorage(): boolean {
     if (!raw) return false;
 
     const state = JSON.parse(raw);
-    if (!state || (state.version !== 1 && state.version !== 2 && state.version !== 3 && state.version !== 4 && state.version !== 5)) return false;
+    if (!state || (state.version !== 1 && state.version !== 2 && state.version !== 3 && state.version !== 4 && state.version !== 5 && state.version !== 6)) return false;
     let migratedDefaultL0Pakals = false;
 
     // ── Migration v1 → v2: update baseLoadWeight for Hamama/Mamtera/Karov ──
@@ -1377,6 +1467,11 @@ export function loadFromStorage(): boolean {
       migratedDefaultL0Pakals = true;
     }
 
+    // ── Migration v5 → v6: add empty oneTimeTasks ──
+    if (!state.oneTimeTasks) {
+      state.oneTimeTasks = [];
+    }
+
     // Restore schedule date/days
     scheduleDate = new Date(state.scheduleDate);
     scheduleDays = state.scheduleDays || 7;
@@ -1429,6 +1524,29 @@ export function loadFromStorage(): boolean {
       taskTemplates.set(tpl.id, tpl);
     }
 
+    // Restore one-time tasks
+    oneTimeTasks.clear();
+    for (const ot of (state.oneTimeTasks || [])) {
+      oneTimeTasks.set(ot.id, {
+        ...ot,
+        scheduledDate: new Date(ot.scheduledDate),
+        loadWindows: (ot.loadWindows || []).map((w: any) => ({ ...w })),
+        slots: (ot.slots || []).map((s: any) => ({
+          ...s,
+          acceptableLevels: [...s.acceptableLevels],
+          requiredCertifications: [...s.requiredCertifications],
+        })),
+        subTeams: (ot.subTeams || []).map((st: any) => ({
+          ...st,
+          slots: st.slots.map((s: any) => ({
+            ...s,
+            acceptableLevels: [...s.acceptableLevels],
+            requiredCertifications: [...s.requiredCertifications],
+          })),
+        })),
+      });
+    }
+
     // Restore notWithPairs
     notWithPairs.clear();
     for (const entry of (state.notWithPairs || [])) {
@@ -1443,7 +1561,7 @@ export function loadFromStorage(): boolean {
     recalcAllAvailability();
 
     // Re-persist after migration so updated version/values are saved
-    if (state.version !== 5 || migratedDefaultL0Pakals) {
+    if (state.version !== 6 || migratedDefaultL0Pakals) {
       try { saveToStorage(); } catch (_) { /* best-effort */ }
     }
 
@@ -1508,6 +1626,7 @@ export function clearStorage(): void {
   participants.clear();
   dateUnavailabilities.clear();
   taskTemplates.clear();
+  oneTimeTasks.clear();
   pakalDefinitions = clonePakalDefinitions(BUILTIN_PAKAL_DEFINITIONS);
   undoStack.length = 0;
   redoStack.length = 0;
@@ -1542,6 +1661,7 @@ export function factoryReset(): void {
   dateUnavailabilities.clear();
   notWithPairs.clear();
   taskTemplates.clear();
+  oneTimeTasks.clear();
   pakalDefinitions = clonePakalDefinitions(BUILTIN_PAKAL_DEFINITIONS);
   undoStack.length = 0;
   redoStack.length = 0;
@@ -2624,6 +2744,12 @@ function _snapshotCurrentTaskTemplates(): TaskTemplate[] {
   return JSON.parse(JSON.stringify(all)) as TaskTemplate[];
 }
 
+/** Snapshot the current in-memory one-time tasks. */
+function _snapshotCurrentOneTimeTasks(): OneTimeTask[] {
+  const all = getAllOneTimeTasks();
+  return JSON.parse(JSON.stringify(all)) as OneTimeTask[];
+}
+
 /** Create the built-in default task set from whatever templates are currently loaded. */
 function _seedBuiltInTaskSet(): void {
   const sets = _taskSets!;
@@ -2721,6 +2847,7 @@ export function saveCurrentAsTaskSet(name: string, description: string): TaskSet
     name: trimmed,
     description: description.trim(),
     templates: _snapshotCurrentTaskTemplates(),
+    oneTimeTasks: _snapshotCurrentOneTimeTasks(),
     createdAt: Date.now(),
   };
 
@@ -2752,6 +2879,14 @@ export function loadTaskSet(id: string): void {
       const restored: TaskTemplate = JSON.parse(JSON.stringify(tpl));
       taskTemplates.set(restored.id, restored);
     }
+
+    // Restore one-time tasks from the set (if present)
+    oneTimeTasks.clear();
+    for (const ot of (tset.oneTimeTasks || [])) {
+      const restored: OneTimeTask = JSON.parse(JSON.stringify(ot));
+      restored.scheduledDate = new Date(restored.scheduledDate);
+      oneTimeTasks.set(restored.id, restored);
+    }
   } finally {
     _suppressSnapshot = false;
   }
@@ -2772,6 +2907,7 @@ export function updateTaskSet(id: string): boolean {
   if (sets[idx].builtIn) return false;
 
   sets[idx].templates = _snapshotCurrentTaskTemplates();
+  sets[idx].oneTimeTasks = _snapshotCurrentOneTimeTasks();
   _saveTaskSets();
   return true;
 }
@@ -2816,6 +2952,7 @@ export function duplicateTaskSet(id: string): TaskSet | null {
     name: newName,
     description: source.description,
     templates: source.templates, // already deep-copied by getTaskSetById
+    oneTimeTasks: source.oneTimeTasks, // already deep-copied by getTaskSetById
     builtIn: false,
     createdAt: Date.now(),
   };
@@ -2853,6 +2990,8 @@ export function isTaskSetDirty(): boolean {
   if (!activeId) return false;
   const tset = getTaskSetById(activeId);
   if (!tset) return false;
-  const current = _snapshotCurrentTaskTemplates();
-  return JSON.stringify(current) !== JSON.stringify(tset.templates);
+  const currentTemplates = _snapshotCurrentTaskTemplates();
+  const currentOts = _snapshotCurrentOneTimeTasks();
+  return JSON.stringify(currentTemplates) !== JSON.stringify(tset.templates)
+    || JSON.stringify(currentOts) !== JSON.stringify(tset.oneTimeTasks || []);
 }

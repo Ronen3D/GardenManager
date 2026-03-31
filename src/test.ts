@@ -28,6 +28,7 @@ import {
   validateHardConstraints,
   computeScheduleScore,
   DEFAULT_CONFIG,
+  OneTimeTask,
 } from './index';
 import { fullValidate, previewSwap } from './engine/validator';
 import { computeParticipantRest } from './web/utils/rest-calculator';
@@ -1226,6 +1227,155 @@ console.log('\n── SC-10: Task Preference Penalty ──────');
     // avoidance: 1× 80 = 80, binary: 0 (has preferred), bonus: -25
     assert(pen === 55, 'SC-10 bonus: avoidance (80) + bonus (-25) = 55, independent');
   }
+}
+
+// ─── One-Time Task Integration Tests ────────────────────────────────────────
+
+console.log('\n── One-Time Task Integration ───────────');
+
+{
+  // Helper: build a minimal OneTimeTask
+  function makeOneTimeTask(overrides?: Partial<OneTimeTask>): OneTimeTask {
+    return {
+      id: 'ot-test-1',
+      name: 'Test One-Time',
+      taskType: TaskType.Karov,
+      scheduledDate: new Date(2026, 1, 17), // Feb 17
+      startHour: 10,
+      startMinute: 0,
+      durationHours: 4,
+      subTeams: [],
+      slots: [{
+        id: 'ot-slot-1',
+        label: 'Slot 1',
+        acceptableLevels: [Level.L0, Level.L2],
+        requiredCertifications: [Certification.Nitzan],
+      }],
+      sameGroupRequired: false,
+      isLight: false,
+      blocksConsecutive: true,
+      ...overrides,
+    };
+  }
+
+  // Test 1: OneTimeTask has all required fields
+  const ot = makeOneTimeTask();
+  assert(ot.id === 'ot-test-1', 'OneTimeTask has id');
+  assert(ot.scheduledDate instanceof Date, 'OneTimeTask scheduledDate is Date');
+  assert(ot.startHour === 10, 'OneTimeTask startHour preserved');
+  assert(ot.durationHours === 4, 'OneTimeTask durationHours preserved');
+
+  // Test 2: Midnight-crossing one-time task — end time computation
+  const midnightOt = makeOneTimeTask({
+    startHour: 22,
+    startMinute: 0,
+    durationHours: 8,
+  });
+  const mStart = new Date(2026, 1, 17, midnightOt.startHour, midnightOt.startMinute);
+  const mEnd = new Date(mStart.getTime() + midnightOt.durationHours * 3600000);
+  assert(mEnd.getHours() === 6, 'Midnight crossing: end hour is 6');
+  assert(mEnd.getDate() === 18, 'Midnight crossing: end is next day (18th)');
+
+  // Test 3: Constraint flags carry through
+  const heavyOt = makeOneTimeTask({
+    blocksConsecutive: true,
+    requiresCategoryBreak: true,
+    preferJuniors: true,
+    isLight: false,
+    sameGroupRequired: true,
+    excludedCertifications: [Certification.Horesh],
+    schedulingPriority: 5,
+    displayCategory: 'patrol',
+    togethernessRelevant: true,
+    baseLoadWeight: 0.5,
+  });
+  assert(heavyOt.blocksConsecutive === true, 'Constraint: blocksConsecutive');
+  assert(heavyOt.requiresCategoryBreak === true, 'Constraint: requiresCategoryBreak');
+  assert(heavyOt.preferJuniors === true, 'Constraint: preferJuniors');
+  assert(heavyOt.sameGroupRequired === true, 'Constraint: sameGroupRequired');
+  assert(heavyOt.excludedCertifications?.[0] === Certification.Horesh, 'Constraint: excludedCertifications');
+  assert(heavyOt.schedulingPriority === 5, 'Constraint: schedulingPriority');
+  assert(heavyOt.displayCategory === 'patrol', 'Constraint: displayCategory');
+  assert(heavyOt.baseLoadWeight === 0.5, 'Constraint: baseLoadWeight');
+
+  // Test 4: HC-5 overlap detection — one-time task overlaps with a template-generated task
+  const otTask: Task = {
+    id: 'ot-overlap-1',
+    type: TaskType.Karov,
+    name: 'D3 One-Time Overlap',
+    timeBlock: {
+      start: new Date(2026, 1, 17, 10, 0),
+      end: new Date(2026, 1, 17, 14, 0),
+    },
+    requiredCount: 1,
+    slots: [{
+      slotId: 'ot-overlap-slot-1',
+      acceptableLevels: [Level.L0],
+      requiredCertifications: [],
+    }],
+    isLight: false,
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+  };
+  // Overlapping template task (12:00-16:00 same day)
+  const tplTask: Task = {
+    id: 'tpl-overlap-1',
+    type: TaskType.Shemesh,
+    name: 'D3 Shemesh',
+    timeBlock: {
+      start: new Date(2026, 1, 17, 12, 0),
+      end: new Date(2026, 1, 17, 16, 0),
+    },
+    requiredCount: 1,
+    slots: [{
+      slotId: 'tpl-overlap-slot-1',
+      acceptableLevels: [Level.L0],
+      requiredCertifications: [],
+    }],
+    isLight: false,
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+  };
+  // Overlap check
+  assert(
+    blocksOverlap(otTask.timeBlock, tplTask.timeBlock) === true,
+    'HC-5: One-time task overlaps template task',
+  );
+
+  // Test 5: Assign same participant to both → HC-5 violation
+  const overlapParticipant: Participant = {
+    id: 'ot-p1',
+    name: 'Overlap Test',
+    level: Level.L0,
+    certifications: [],
+    group: 'Alpha',
+    availability: [{
+      start: new Date(2026, 1, 15, 5, 0),
+      end: new Date(2026, 1, 22, 5, 0),
+    }],
+    dateUnavailability: [],
+  };
+  const overlapAssignments = [
+    { id: 'oa1', taskId: otTask.id, slotId: otTask.slots[0].slotId, participantId: 'ot-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'oa2', taskId: tplTask.id, slotId: tplTask.slots[0].slotId, participantId: 'ot-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const overlapResult = validateHardConstraints(
+    [otTask, tplTask],
+    [overlapParticipant],
+    overlapAssignments,
+  );
+  const hasHC5 = overlapResult.violations.some(v => v.code === 'DOUBLE_BOOKING');
+  assert(hasHC5, 'HC-5 violation detected when same participant in overlapping one-time + template tasks');
+
+  // Test 6: ID uniqueness — ot- prefix distinguishes from template tasks
+  assert(otTask.id.startsWith('ot-'), 'One-time task ID starts with ot- prefix');
+  assert(!tplTask.id.startsWith('ot-'), 'Template task ID does not start with ot-');
+  assert(otTask.id !== tplTask.id, 'One-time and template task IDs are different');
+
+  // Test 7: Light one-time task
+  const lightOt = makeOneTimeTask({ isLight: true, baseLoadWeight: 0 });
+  assert(lightOt.isLight === true, 'Light one-time task: isLight=true');
+  assert(lightOt.baseLoadWeight === 0, 'Light one-time task: baseLoadWeight=0');
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

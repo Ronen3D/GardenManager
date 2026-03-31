@@ -64,6 +64,7 @@ export type {
   RescuePlan,
   RescueRequest,
   RescueResult,
+  OneTimeTask,
 } from './models/types';
 
 // ─── Engine ──────────────────────────────────────────────────────────────────

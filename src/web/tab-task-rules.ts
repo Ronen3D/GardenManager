@@ -16,6 +16,7 @@ import {
   PreflightResult,
   LoadWindow,
   TaskSet,
+  OneTimeTask,
 } from '../models/types';
 import * as store from './config-store';
 import { showPrompt, showConfirm, showToast } from './ui-modal';
@@ -57,6 +58,7 @@ function fmtHm(h: number, m: number): string {
 let expandedTemplateId: string | null = null;
 let addingSlotTo: { templateId: string; subTeamId?: string } | null = null;
 let showAddTemplate = false;
+let showAddOneTime = false;
 
 // ─── Task Sets Panel State ───────────────────────────────────────────────────
 
@@ -103,6 +105,30 @@ export function renderTaskRulesTab(): string {
   // Add template form
   if (showAddTemplate) {
     html += renderAddTemplateForm();
+  }
+
+  // ── One-Time Tasks Section ──
+  const oneTimeTasks = store.getAllOneTimeTasks();
+  html += `
+  <div class="tab-toolbar" style="margin-top:24px; border-top:1px solid var(--border); padding-top:16px;">
+    <div class="toolbar-left">
+      <h2>משימות חד-פעמיות <span class="count">${oneTimeTasks.length}</span></h2>
+    </div>
+    <div class="toolbar-right">
+      <button class="btn-primary btn-sm" data-action="toggle-add-onetime">+ משימה חד-פעמית</button>
+    </div>
+  </div>`;
+
+  if (showAddOneTime) {
+    html += renderAddOneTimeForm();
+  }
+
+  if (oneTimeTasks.length > 0) {
+    html += '<div class="template-list">';
+    for (const ot of oneTimeTasks) {
+      html += renderOneTimeCard(ot);
+    }
+    html += '</div>';
   }
 
   return html;
@@ -423,6 +449,103 @@ function renderAddTemplateForm(): string {
     <div class="form-row">
       <button class="btn-sm btn-primary" data-action="confirm-add-template">צור</button>
       <button class="btn-sm btn-outline" data-action="cancel-add-template">ביטול</button>
+    </div>
+  </div>`;
+}
+
+// ─── One-Time Task Renderers ─────────────────────────────────────────────────
+
+function renderAddOneTimeForm(): string {
+  const numDays = store.getScheduleDays();
+
+  // Build day options: יום 1, יום 2, ... יום N
+  const dayOptions = Array.from({ length: numDays }, (_, i) =>
+    `<option value="${i + 1}">יום ${i + 1}</option>`
+  ).join('');
+
+  const categoryOptions = [
+    { value: 'patrol', label: 'סיור (כרוב/אדנית)' },
+    { value: 'hamama', label: 'חממה' },
+    { value: 'aruga', label: 'ערוגה' },
+    { value: 'mamtera', label: 'ממטרה' },
+    { value: 'shemesh', label: 'שמש' },
+  ];
+  return `<div class="add-form" id="add-onetime-form">
+    <h4>משימה חד-פעמית חדשה</h4>
+    <div class="form-row">
+      <label>שם: <input class="input-sm" type="text" data-field="ot-name" placeholder="שם משימה" /></label>
+      <label>סוג:
+        <select class="input-sm" data-field="ot-type">
+          ${TASK_TYPE_OPTIONS.map(t => `<option value="${t}">${TASK_TYPE_LABELS[t] || t}</option>`).join('')}
+          <option value="Custom">מותאם אישית</option>
+        </select>
+      </label>
+      <label>קטגוריית תצוגה:
+        <select class="input-sm" data-field="ot-display-category">
+          ${categoryOptions.map(c => `<option value="${c.value}">${c.label}</option>`).join('')}
+          <option value="">מותאם אישית</option>
+        </select>
+      </label>
+    </div>
+    <div class="form-row">
+      <label>יום:
+        <select class="input-sm" data-field="ot-day">${dayOptions}</select>
+      </label>
+      <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="ot-start-hour" /></label>
+      <label>דקה: <input class="input-sm" type="number" min="0" max="59" value="0" data-field="ot-start-minute" style="width:60px;" /></label>
+      <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="4" data-field="ot-duration" /></label>
+      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="ot-base-load" /></label>
+    </div>
+    <div class="form-row">
+      <label class="checkbox-label"><input type="checkbox" data-field="ot-samegroup" /> נדרשת אותה קבוצה</label>
+      <label class="checkbox-label"><input type="checkbox" data-field="ot-light" /> משימה קלה</label>
+      <label class="checkbox-label"><input type="checkbox" data-field="ot-blocks-consecutive" checked /> חוסמת רצף</label>
+    </div>
+    <div class="form-row">
+      <label>תיאור: <input class="input-sm" type="text" data-field="ot-desc" placeholder="אופציונלי" style="width:300px;" /></label>
+    </div>
+    <div class="form-row">
+      <button class="btn-sm btn-primary" data-action="confirm-add-onetime">צור</button>
+      <button class="btn-sm btn-outline" data-action="cancel-add-onetime">ביטול</button>
+    </div>
+  </div>`;
+}
+
+function renderOneTimeCard(ot: OneTimeTask): string {
+  const schedDate = store.getScheduleDate();
+  const otDay = new Date(ot.scheduledDate.getFullYear(), ot.scheduledDate.getMonth(), ot.scheduledDate.getDate());
+  const schedStart = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate());
+  const dayNum = Math.round((otDay.getTime() - schedStart.getTime()) / 86400000) + 1;
+  const dateStr = `יום ${dayNum}`;
+  const timeStr = fmtHm(ot.startHour, ot.startMinute);
+  const endH = ot.startHour + Math.floor(ot.durationHours);
+  const endM = ot.startMinute + Math.round((ot.durationHours % 1) * 60);
+  const endStr = fmtHm(endH % 24, endM % 60);
+
+  const allSlots = [...ot.slots];
+  for (const st of ot.subTeams) allSlots.push(...st.slots);
+  const totalSlots = allSlots.length;
+
+  const flags: string[] = [];
+  if (ot.isLight) flags.push('קלה');
+  if (ot.sameGroupRequired) flags.push('קבוצה');
+  if (ot.blocksConsecutive) flags.push('חוסמת');
+
+  return `<div class="template-card">
+    <div class="template-header">
+      <div class="template-title">
+        ${taskTypeBadge(ot.taskType as string)}
+        <strong>${escHtml(ot.name)}</strong>
+        <span class="text-muted" style="font-size:0.85em;">📅 ${dateStr} ${timeStr}–${endStr} (${ot.durationHours} שע')</span>
+      </div>
+      <div class="template-actions">
+        <button class="btn-xs btn-danger-outline" data-action="delete-onetime" data-ot-id="${ot.id}" title="מחק">✕</button>
+      </div>
+    </div>
+    <div class="template-meta">
+      <span class="meta-item">${totalSlots} משבצות</span>
+      ${flags.length > 0 ? `<span class="meta-item text-muted">${flags.join(' · ')}</span>` : ''}
+      ${ot.description ? `<span class="meta-item text-muted">${escHtml(ot.description)}</span>` : ''}
     </div>
   </div>`;
 }
@@ -794,6 +917,84 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       }
       case 'cancel-add-template': {
         showAddTemplate = false;
+        rerender();
+        break;
+      }
+
+      // ─── One-Time Task actions ────────────────────────────────────────
+      case 'toggle-add-onetime': {
+        showAddOneTime = !showAddOneTime;
+        rerender();
+        break;
+      }
+      case 'confirm-add-onetime': {
+        const form = container.querySelector('#add-onetime-form')!;
+        const name = (form.querySelector('[data-field="ot-name"]') as HTMLInputElement)?.value.trim();
+        if (!name) return;
+        const type = (form.querySelector('[data-field="ot-type"]') as HTMLSelectElement)?.value || 'Custom';
+        const dayNum = parseInt((form.querySelector('[data-field="ot-day"]') as HTMLSelectElement)?.value || '1');
+        const schedDate = store.getScheduleDate();
+        const scheduledDate = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate() + dayNum - 1);
+
+        const startHour = parseInt((form.querySelector('[data-field="ot-start-hour"]') as HTMLInputElement)?.value || '6');
+        const startMinute = parseInt((form.querySelector('[data-field="ot-start-minute"]') as HTMLInputElement)?.value || '0');
+        const dur = parseFloat((form.querySelector('[data-field="ot-duration"]') as HTMLInputElement)?.value || '4');
+        const baseLoad = parseFloat((form.querySelector('[data-field="ot-base-load"]') as HTMLInputElement)?.value || '1');
+        const sameGroup = (form.querySelector('[data-field="ot-samegroup"]') as HTMLInputElement)?.checked || false;
+        const isLight = (form.querySelector('[data-field="ot-light"]') as HTMLInputElement)?.checked || false;
+        const blocksConsecutive = (form.querySelector('[data-field="ot-blocks-consecutive"]') as HTMLInputElement)?.checked ?? true;
+        const desc = (form.querySelector('[data-field="ot-desc"]') as HTMLInputElement)?.value.trim();
+        const catSelect = form.querySelector<HTMLSelectElement>('[data-field="ot-display-category"]');
+        let displayCategory = catSelect?.value || '';
+        if (!displayCategory) {
+          switch (type) {
+            case 'Karov': case 'Karovit': case 'Adanit': displayCategory = 'patrol'; break;
+            case 'Hamama': displayCategory = 'hamama'; break;
+            case 'Aruga': displayCategory = 'aruga'; break;
+            case 'Mamtera': displayCategory = 'mamtera'; break;
+            case 'Shemesh': displayCategory = 'shemesh'; break;
+            default: displayCategory = (type || 'custom').toLowerCase(); break;
+          }
+        }
+
+        store.addOneTimeTask({
+          name,
+          taskType: type as TaskType,
+          scheduledDate,
+          startHour,
+          startMinute,
+          durationHours: dur,
+          sameGroupRequired: sameGroup,
+          isLight,
+          baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
+          loadWindows: [],
+          blocksConsecutive,
+          togethernessRelevant: false,
+          requiresCategoryBreak: false,
+          displayCategory,
+          subTeams: [],
+          slots: [],
+          description: desc || undefined,
+        });
+        showAddOneTime = false;
+        rerender();
+        break;
+      }
+      case 'cancel-add-onetime': {
+        showAddOneTime = false;
+        rerender();
+        break;
+      }
+      case 'delete-onetime': {
+        const otId = actionButton?.dataset.otId;
+        if (!otId) return;
+        const ok = await showConfirm('למחוק את המשימה החד-פעמית?', {
+          danger: true,
+          title: 'מחיקת משימה',
+          confirmLabel: 'מחק',
+        });
+        if (!ok) return;
+        store.removeOneTimeTask(otId);
         rerender();
         break;
       }
