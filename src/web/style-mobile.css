@@ -510,11 +510,27 @@
     display: none;
   }
 
+  .schedule-toolbar {
+    padding: 6px 8px;
+  }
+
   .toolbar-right {
     flex-wrap: wrap;
     justify-content: flex-start;
     gap: 4px 6px;
     width: 100%;
+  }
+
+  .toolbar-group {
+    flex-wrap: wrap;
+  }
+  .toolbar-group + .toolbar-group:not(:empty) {
+    border-inline-start: none;
+    padding-inline-start: 0;
+    margin-inline-start: 0;
+  }
+  .toolbar-group--generate {
+    padding: 4px 6px;
   }
 
   .toolbar-right .btn-primary,
@@ -851,10 +867,15 @@
     overflow: hidden;
   }
 
-  /* ── Participants table — compact 2-line list ─────────────────────────── */
+  /* ── Participants table — compact 2-line card layout ──────────────────── */
 
   .table-participants thead {
     display: none;
+  }
+
+  .table-participants {
+    table-layout: fixed;
+    width: 100%;
   }
 
   .table-participants tbody {
@@ -867,127 +888,215 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 1px 5px;
-    padding: 5px 8px;
+    gap: 2px 4px;
+    padding: 4px 6px;
     border-bottom: 1px solid var(--border);
+    max-width: 100%;
+    overflow: hidden;
   }
 
   .table-participants tbody tr.row-selected {
     background: rgba(52, 152, 219, 0.08);
   }
 
-  /* Checkbox — compact tap target */
+  /* ── Line 1: [☐] Name [Group] [✏️][🗑️] ─────────────────────────────── */
+
+  /* Checkbox — compact */
   .table-participants .col-select {
-    min-width: 28px;
-    min-height: 28px;
+    width: 24px;
+    min-width: 24px;
+    min-height: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
     order: 0;
+    padding: 0 2px !important;
   }
 
-  /* Hide row number */
-  .table-participants tbody td:nth-child(2) {
+  /* Hide row index */
+  .table-participants .col-index {
     display: none;
   }
 
-  /* Line 1: [☐] Name  קבוצה  דרגה          [✏️][🗑️] */
-  .table-participants tbody td:nth-child(3) {
+  /* Name — primary element, most prominent */
+  .table-participants .col-name {
     order: 1;
-    flex: 1 1 0;
-    min-width: 50px;
-    font-size: 0.8rem;
-    max-width: none;
+    flex: 1 1 auto;
+    min-width: 60px;
+    font-size: 0.85rem;
+    line-height: 1.3;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  /* Group badge — always line 1 */
-  .table-participants tbody td:nth-child(4) {
+  /* Group badge — line 1, after name */
+  .table-participants .col-group {
     order: 2;
     flex-shrink: 0;
-    font-size: 0.6rem;
-  }
-
-  /* Level badge — always line 1 */
-  .table-participants tbody td:nth-child(5) {
-    order: 3;
-    flex-shrink: 0;
-    font-size: 0.6rem;
   }
 
   /* Actions — end of line 1 */
   .table-participants .col-actions {
-    order: 4;
+    order: 3;
     display: flex;
     gap: 2px;
     flex-shrink: 0;
     margin-inline-start: auto;
   }
 
-  /* Line 2: certs, pakals, [notWith], prefs, avail, unavail */
-  .table-participants tbody td:nth-child(n+6):not(.col-actions) {
-    order: 5;
+  /* Expand/collapse toggle — line 1, after actions */
+  .table-participants .col-expand {
+    display: block;
+    order: 4;
     flex-shrink: 0;
-    font-size: 0.6rem;
+    padding: 0 !important;
+  }
+  .table-participants .btn-expand-details {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: transform 0.2s ease, color 0.15s ease;
+  }
+  .table-participants .btn-expand-details:active {
+    background: var(--bg-hover);
+  }
+  .table-participants tr.row-expanded .btn-expand-details {
+    transform: rotate(180deg);
+    color: var(--accent);
   }
 
-  /* Show certs on mobile (override style.css ≤1024 hide) */
-  .table-participants tbody td:nth-child(6) {
-    display: block !important;
+  /* Override global .btn-sm 44px ONLY inside participant rows */
+  .table-participants tbody td .btn-icon.btn-sm {
+    min-height: 28px;
+    min-width: 28px;
+    padding: 2px 4px;
+  }
+  .table-participants tbody td .btn-icon svg {
+    width: 14px;
+    height: 14px;
   }
 
-  /* Show availability on mobile (override style.css ≤1024 hide) */
-  .table-participants:not(.notwith-visible) tbody td:nth-child(9),
-  .table-participants.notwith-visible tbody td:nth-child(10) {
-    display: block !important;
-  }
+  /* ── Line 2: details — hidden by default, shown on .row-expanded ───── */
 
-  /* Smaller badges */
-  .table-participants tbody .badge {
-    padding: 0 4px;
-    font-size: 0.55rem;
-    line-height: 1.5;
-  }
-
-  /* Compact availability text */
-  .table-participants tbody .avail-cell small {
-    font-size: 0.55rem;
-  }
-
-  /* Hide unavailability cell when no rules defined (remove empty placeholder) */
-  .table-participants tbody td.unavail-cell.unavail-empty {
+  .table-participants .col-level,
+  .table-participants .col-certs,
+  .table-participants .col-pakals,
+  .table-participants .col-avail,
+  .table-participants .col-unavail,
+  .table-participants .col-notwith,
+  .table-participants .col-prefs {
     display: none !important;
   }
 
-  /* Show inline unavailability summary on mobile */
-  .table-participants tbody td.unavail-cell .unavail-summary {
+  /* When expanded, show detail cells */
+  .table-participants tr.row-expanded .col-level {
+    display: block !important;
+    order: 10;
+    flex-shrink: 0;
+  }
+  .table-participants tr.row-expanded .col-level .badge {
+    opacity: 0.85;
+  }
+
+  .table-participants tr.row-expanded .col-certs {
+    display: block !important;
+    order: 11;
+    flex-shrink: 0;
+  }
+
+  .table-participants tr.row-expanded .col-pakals {
+    display: block !important;
+    order: 12;
+    flex-shrink: 0;
+  }
+
+  .table-participants tr.row-expanded .col-avail {
+    display: block !important;
+    order: 13;
+    flex-shrink: 0;
+  }
+
+  .table-participants tr.row-expanded .col-unavail {
+    display: block !important;
+    order: 14;
+    flex-shrink: 0;
+  }
+  .table-participants tr.row-expanded .col-unavail.unavail-empty {
+    display: none !important;
+  }
+  /* Hide the toggle button on mobile, show inline summary only */
+  .table-participants .col-unavail .btn-icon {
+    display: none;
+  }
+  .table-participants .col-unavail .unavail-summary {
     display: inline;
   }
-  .table-participants tbody .unavail-summary small {
+  .table-participants .unavail-summary small {
     display: inline-block;
     background: rgba(231, 76, 60, 0.1);
     border: 1px solid rgba(231, 76, 60, 0.2);
     padding: 1px 5px;
     border-radius: 3px;
-    font-size: 0.55rem;
+    font-size: 0.63rem;
     margin: 1px 0;
   }
 
-  /* Compact icon buttons */
-  .table-participants tbody td .btn-icon {
-    padding: 1px 3px;
-    min-height: 24px;
-    min-width: 24px;
-  }
-  .table-participants tbody td .btn-icon svg {
-    width: 12px;
-    height: 12px;
+  /* Hide empty-state dashes */
+  .table-participants .col-certs > .text-muted:only-child,
+  .table-participants .col-pakals > .text-muted:only-child {
+    display: none;
   }
 
-  /* Editing row — stack form fields vertically */
-  .table-participants tbody tr.row-editing td:not(.col-select):not(:nth-child(2)) {
+  /* ── Badge & text sizing ────────────────────────────────────────────── */
+
+  .table-participants tbody .badge {
+    padding: 1px 5px;
+    font-size: 0.63rem;
+    line-height: 1.4;
+    vertical-align: middle;
+  }
+
+  .table-participants .col-avail small {
+    font-size: 0.63rem;
+  }
+
+  /* Detail cells — base font size */
+  .table-participants .col-level,
+  .table-participants .col-certs,
+  .table-participants .col-pakals,
+  .table-participants .col-avail,
+  .table-participants .col-unavail {
+    font-size: 0.63rem;
+  }
+
+  /* Inline labels for mobile context */
+  .table-participants .mobile-label {
+    display: inline;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+
+  /* ── Editing row — stack form fields vertically ─────────────────────── */
+  .table-participants tbody tr.row-editing .col-expand {
+    display: none !important;
+  }
+  .table-participants tbody tr.row-editing .col-level,
+  .table-participants tbody tr.row-editing .col-certs,
+  .table-participants tbody tr.row-editing .col-pakals,
+  .table-participants tbody tr.row-editing .col-prefs,
+  .table-participants tbody tr.row-editing .col-notwith {
+    display: block !important;
+  }
+  .table-participants tbody tr.row-editing td:not(.col-select):not(.col-index):not(.col-expand) {
     flex-basis: 100%;
     min-width: 0;
   }
@@ -997,16 +1106,6 @@
   }
   .table-participants tbody tr.row-editing .checkbox-label {
     font-size: 0.75rem;
-  }
-
-  /* Participant table — prevent horizontal scroll (cards, not table grid) */
-  .table-participants {
-    table-layout: fixed;
-    width: 100%;
-  }
-  .table-participants tbody tr {
-    max-width: 100%;
-    overflow: hidden;
   }
 
   /* Bulk toolbar fixed above bottom nav — no layout shift */
@@ -1070,11 +1169,11 @@
   }
 
   .cb-select-participant {
-    width: 24px;
-    height: 24px;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 10px;
+    width: 18px;
+    height: 18px;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 7px;
     cursor: pointer;
   }
 

@@ -421,15 +421,15 @@ export function renderParticipantsTab(): string {
   html += `<div class="table-responsive"><table class="table table-participants${showNotWithColumn ? ' notwith-visible' : ''}">
     <thead><tr>
       <th class="col-select"><input type="checkbox" id="cb-select-all" title="בחר הכל" ${selectedIds.size > 0 && selectedIds.size === sorted.length ? 'checked' : ''} /></th>
-      <th>#</th>
-      <th class="sortable-th" data-action="sort-column" data-sort-col="name">שם${sortIndicator('name')}</th>
-      <th class="sortable-th" data-action="sort-column" data-sort-col="group">קבוצה${sortIndicator('group')}</th>
-      <th class="sortable-th" data-action="sort-column" data-sort-col="level">דרגה${sortIndicator('level')}</th>
-      <th>הסמכות</th>
-      <th>פק"לים</th>
-      ${showNotWithColumn ? '<th>אי התאמה</th>' : ''}
-      <th>העדפות</th>
-      <th>זמינות</th><th>אי-זמינות</th><th class="col-actions">פעולות</th>
+      <th class="col-index">#</th>
+      <th class="col-name sortable-th" data-action="sort-column" data-sort-col="name">שם${sortIndicator('name')}</th>
+      <th class="col-group sortable-th" data-action="sort-column" data-sort-col="group">קבוצה${sortIndicator('group')}</th>
+      <th class="col-level sortable-th" data-action="sort-column" data-sort-col="level">דרגה${sortIndicator('level')}</th>
+      <th class="col-certs">הסמכות</th>
+      <th class="col-pakals">פק"לים</th>
+      ${showNotWithColumn ? '<th class="col-notwith">אי התאמה</th>' : ''}
+      <th class="col-prefs">העדפות</th>
+      <th class="col-avail">זמינות</th><th class="col-unavail">אי-זמינות</th><th class="col-actions">פעולות</th><th class="col-expand"></th>
     </tr></thead><tbody>`;
 
   sorted.forEach((p, i) => {
@@ -445,27 +445,28 @@ export function renderParticipantsTab(): string {
     } else {
       html += `<tr data-participant-id="${p.id}" class="${isSelected ? 'row-selected' : ''}">
         <td class="col-select"><input type="checkbox" class="cb-select-participant" data-pid="${p.id}" ${isSelected ? 'checked' : ''} /></td>
-        <td>${i + 1}</td>
-        <td title="${p.name}"><strong>${p.name}</strong></td>
-        <td>${groupBadge(p.group, true)}</td>
-        <td>${levelBadge(p.level)}</td>
-        <td>${certBadges(p.certifications)}</td>
-        <td>${renderPakalBadges(p, pakalDefs)}</td>
-        ${showNotWithColumn ? `<td class="notwith-cell">${renderNotWithBadges(p.id)}</td>` : ''}
-        <td>${renderPreferenceBadges(p)}</td>
-        <td class="avail-cell">
-          ${p.availability.map(w => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
+        <td class="col-index">${i + 1}</td>
+        <td class="col-name" title="${p.name}"><strong>${p.name}</strong></td>
+        <td class="col-group">${groupBadge(p.group, true)}</td>
+        <td class="col-level">${levelBadge(p.level)}</td>
+        <td class="col-certs">${certBadges(p.certifications)}</td>
+        <td class="col-pakals">${renderPakalBadges(p, pakalDefs)}</td>
+        ${showNotWithColumn ? `<td class="col-notwith notwith-cell">${renderNotWithBadges(p.id)}</td>` : ''}
+        <td class="col-prefs">${renderPreferenceBadges(p)}</td>
+        <td class="col-avail avail-cell">
+          <span class="mobile-label">זמינות: </span>${p.availability.map(w => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
         </td>
-        <td class="unavail-cell${totalRules === 0 ? ' unavail-empty' : ''}">
+        <td class="col-unavail unavail-cell${totalRules === 0 ? ' unavail-empty' : ''}">
           <button class="btn-sm btn-outline btn-icon" data-action="toggle-blackouts" data-pid="${p.id}" title="ניהול אי-זמינות">
             ${totalRules > 0 ? `<span class="badge badge-sm" style="background:var(--warning)">${totalRules}</span>` : SVG_ICONS.block}
           </button>
-          ${totalRules > 0 ? `<span class="unavail-summary">${formatUnavailSummary(dateRules)}</span>` : ''}
+          ${totalRules > 0 ? `<span class="unavail-summary"><span class="mobile-label">חסר: </span>${formatUnavailSummary(dateRules)}</span>` : ''}
         </td>
         <td class="col-actions">
           <button class="btn-sm btn-outline btn-icon" data-action="edit-participant" data-pid="${p.id}" title="עריכה">${SVG_ICONS.edit}</button>
           <button class="btn-sm btn-outline btn-danger-outline btn-icon" data-action="remove-participant" data-pid="${p.id}" title="הסרה">${SVG_ICONS.trash}</button>
         </td>
+        <td class="col-expand"><button class="btn-expand-details" data-action="toggle-details" data-pid="${p.id}" title="פרטים">${SVG_ICONS.chevronDown}</button></td>
       </tr>`;
 
       // Blackout expansion row
@@ -508,9 +509,9 @@ function renderEditRow(p: Participant, idx: number): string {
   const pakalDefs = store.getPakalDefinitions();
   return `<tr class="row-editing" data-participant-id="${p.id}">
     <td class="col-select"></td>
-    <td>${idx}</td>
-    <td><input class="input-sm" type="text" data-field="name" value="${p.name}" /></td>
-    <td>
+    <td class="col-index">${idx}</td>
+    <td class="col-name"><input class="input-sm" type="text" data-field="name" value="${p.name}" /></td>
+    <td class="col-group">
       <select class="input-sm" data-field="group" data-group-select>
         ${groups.map(g => `<option value="${g}" ${p.group === g ? 'selected' : ''}>${g}</option>`).join('')}
         <option value="__new__">+ קבוצה חדשה…</option>
@@ -518,12 +519,12 @@ function renderEditRow(p: Participant, idx: number): string {
       <input class="input-sm hidden" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
       <span class="group-error hidden" style="color:var(--danger); font-size:0.75rem;"></span>
     </td>
-    <td>
+    <td class="col-level">
       <select class="input-sm" data-field="level">
         ${LEVEL_OPTIONS.map(l => `<option value="${l}" ${p.level === l ? 'selected' : ''}>L${l}</option>`).join('')}
       </select>
     </td>
-    <td>
+    <td class="col-certs">
       <div class="cert-checkboxes">
         ${CERT_OPTIONS.map(c =>
           `<label class="checkbox-label">
@@ -532,13 +533,13 @@ function renderEditRow(p: Participant, idx: number): string {
         ).join('')}
       </div>
     </td>
-    <td>
+    <td class="col-pakals">
       ${renderPakalCheckboxes(pakalDefs, p.pakalIds || [], p.certifications, 'data-pakal')}
     </td>
-    ${showNotWithColumn ? `<td>
+    ${showNotWithColumn ? `<td class="col-notwith">
       <input class="input-sm" type="text" data-field="notWith" value="${getNotWithNamesForEdit(p.id)}" placeholder="הקלד שמות, מופרדים בפסיקים" title="שמות משתתפים מופרדים בפסיק" />
     </td>` : ''}
-    <td>
+    <td class="col-prefs">
       <div style="display:flex;flex-direction:column;gap:4px">
         <label style="font-size:0.75rem;margin:0">משימה מועדפת</label>
         ${renderTaskNameSelect('preferredTask', p.preferredTaskName)}
@@ -546,11 +547,12 @@ function renderEditRow(p: Participant, idx: number): string {
         ${renderTaskNameSelect('lessPreferredTask', p.lessPreferredTaskName)}
       </div>
     </td>
-    <td colspan="2"></td>
+    <td class="col-unavail" colspan="2"></td>
     <td class="col-actions">
       <button class="btn-sm btn-primary" data-action="save-participant" data-pid="${p.id}">שמור</button>
       <button class="btn-sm btn-outline" data-action="cancel-edit">ביטול</button>
     </td>
+    <td class="col-expand"></td>
   </tr>`;
 }
 
@@ -560,7 +562,7 @@ function renderBlackoutRow(pid: string): string {
   const dateRules = store.getDateUnavailabilities(pid);
 
   let html = `<tr class="row-blackout-expansion">
-    <td colspan="${showNotWithColumn ? 12 : 11}">
+    <td colspan="${showNotWithColumn ? 13 : 12}">
       <div class="blackout-panel">
         <h4>כללי אי-זמינות</h4>
         <div class="blackout-list">`;
@@ -1163,6 +1165,11 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
             rerender();
           }
         }
+        break;
+      }
+      case 'toggle-details': {
+        const row = actionButton?.closest('tr');
+        if (row) row.classList.toggle('row-expanded');
         break;
       }
       case 'toggle-blackouts': {

@@ -766,6 +766,54 @@ section h2 {
   flex-wrap: wrap;
   gap: 12px;
 }
+.schedule-toolbar {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  align-items: center;
+}
+
+/* ─── Toolbar Groups ─────────────────────────────────── */
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar-group:empty { display: none; }
+.toolbar-group + .toolbar-group:not(:empty) {
+  border-inline-start: 1px solid var(--border);
+  padding-inline-start: 12px;
+  margin-inline-start: 4px;
+}
+
+.toolbar-group--generate {
+  background: rgba(58, 124, 197, 0.06);
+  border-radius: 6px;
+  padding: 6px 12px;
+}
+.toolbar-group--generate .input-scenarios {
+  border-color: rgba(58, 124, 197, 0.25);
+}
+.toolbar-group--generate .input-scenarios:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(58, 124, 197, 0.15);
+}
+
+.schedule-toolbar .btn-primary {
+  padding: 8px 20px;
+  box-shadow: 0 2px 8px rgba(58, 124, 197, 0.25);
+}
+
+.toolbar-group--state .btn-sm.btn-outline,
+.toolbar-group--export .btn-sm.btn-outline {
+  border-color: transparent;
+}
+.toolbar-group--state .btn-sm.btn-outline:hover,
+.toolbar-group--export .btn-sm.btn-outline:hover {
+  border-color: var(--border);
+  background: var(--bg-hover);
+}
 .tab-toolbar h2 {
   margin: 0;
   border-bottom: none;
@@ -954,6 +1002,8 @@ select.input-sm {
 /* ─── Editing Row ────────────────────────────────────── */
 .row-editing { background: var(--accent-glow); }
 .col-actions { white-space: nowrap; }
+.col-expand { display: none; } /* mobile-only: shown via style-mobile.css */
+.mobile-label { display: none; } /* mobile-only: shown via style-mobile.css */
 
 /* ─── Blackout Panel ─────────────────────────────────── */
 .row-blackout-expansion td {
@@ -1195,18 +1245,11 @@ select.input-sm {
   .kpi { min-width: 60px; }
   .kpi-value { font-size: 0.9rem; }
 
-  /* Issue 3 — Hide certifications (col 6) and availability on mobile.
-     Availability is col 7 normally, but col 8 when the notWith column is visible. */
-  .table-participants thead th:nth-child(6),
-  .table-participants tbody td:nth-child(6) {
+  /* Issue 3 — Hide certifications and availability on tablet */
+  .table-participants .col-certs {
     display: none;
   }
-  .table-participants:not(.notwith-visible) thead th:nth-child(9),
-  .table-participants:not(.notwith-visible) tbody td:nth-child(9) {
-    display: none;
-  }
-  .table-participants.notwith-visible thead th:nth-child(10),
-  .table-participants.notwith-visible tbody td:nth-child(10) {
+  .table-participants .col-avail {
     display: none;
   }
 
@@ -1270,7 +1313,7 @@ select.input-sm {
   }
 
   /* Issue 4 — Participant name truncation */
-  .table-participants tbody td:nth-child(3) {
+  .table-participants .col-name {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3064,6 +3107,14 @@ tr.row-selected:hover {
   font-size: 0.72rem;
   color: var(--text-muted, #999);
   margin-top: 1px;
+}
+
+.rescue-hover-tt-task--ref {
+  background: rgba(59, 130, 246, 0.15);
+  border-right: 3px solid var(--primary, #3b82f6);
+  border-radius: 3px;
+  padding-right: 6px;
+  margin-right: -4px;
 }
 
 .rescue-hover-tt-empty {

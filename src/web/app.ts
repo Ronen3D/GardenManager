@@ -838,21 +838,27 @@ function renderScheduleTab(): string {
     </div>
     <div class="toolbar-right">
       ${liveModeControls}
-      <label class="scenarios-label" for="input-days" title="מספר ימים בשבצ\"ק">ימים
-        <input type="number" id="input-days" class="input-scenarios" min="1" max="7" step="1" value="${numDays}" ${_isOptimizing ? 'disabled' : ''} />
-      </label>
-      <label class="scenarios-label" for="input-scenarios" title="מספר ניסיונות אופטימיזציה לבדיקה">ניסיונות
-        <input type="number" id="input-scenarios" class="input-scenarios" min="50" max="50000" step="50" value="${OPTIM_ATTEMPTS}" ${_isOptimizing ? 'disabled' : ''} />
-      </label>
-      <button class="btn-primary ${_scheduleDirty && currentSchedule ? 'btn-generate-dirty' : ''}" id="btn-generate" ${!preflight.canGenerate || _isOptimizing ? 'disabled' : ''}
-        ${!preflight.canGenerate ? 'title="תקן בעיות קריטיות בכללי המשימות תחילה"' : ''}>
-        ${_isOptimizing ? '⏳ מייעל…' : currentSchedule ? '🔄 צור מחדש' : '⚡ צור שבצ"ק'}
-      </button>
-      ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
-      <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
-      ${renderContinuityChip()}
-      ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="ייבוא נתוני המשכיות מהשבצ\"ק הקודם">📋 ייבוא המשכיות</button>` : ''}
-      ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא PDF">📤 ייצוא</button>` : ''}
+      <span class="toolbar-group toolbar-group--generate">
+        <label class="scenarios-label" for="input-days" title="מספר ימים בשבצ\"ק">ימים
+          <input type="number" id="input-days" class="input-scenarios" min="1" max="7" step="1" value="${numDays}" ${_isOptimizing ? 'disabled' : ''} />
+        </label>
+        <label class="scenarios-label" for="input-scenarios" title="מספר ניסיונות אופטימיזציה לבדיקה">ניסיונות
+          <input type="number" id="input-scenarios" class="input-scenarios" min="50" max="50000" step="50" value="${OPTIM_ATTEMPTS}" ${_isOptimizing ? 'disabled' : ''} />
+        </label>
+        <button class="btn-primary ${_scheduleDirty && currentSchedule ? 'btn-generate-dirty' : ''}" id="btn-generate" ${!preflight.canGenerate || _isOptimizing ? 'disabled' : ''}
+          ${!preflight.canGenerate ? 'title="תקן בעיות קריטיות בכללי המשימות תחילה"' : ''}>
+          ${_isOptimizing ? '⏳ מייעל…' : currentSchedule ? '🔄 צור מחדש' : '⚡ צור שבצ"ק'}
+        </button>
+      </span>
+      <span class="toolbar-group toolbar-group--state">
+        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
+        <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
+        ${renderContinuityChip()}
+        ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="ייבוא נתוני המשכיות מהשבצ\"ק הקודם">📋 ייבוא המשכיות</button>` : ''}
+      </span>
+      <span class="toolbar-group toolbar-group--export">
+        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא PDF">📤 ייצוא</button>` : ''}
+      </span>
     </div>
   </div>`;
 
@@ -1657,7 +1663,7 @@ function showRescueModal(): void {
       </div>
       <div class="rescue-context">
         <p>משבצת שהתפנתה על ידי <strong>${vacatedP?.name || '???'}</strong> ב-
-        <strong>${task?.name || '???'}</strong></p>
+        <strong>${stripDayPrefix(task?.name || '???')}</strong></p>
       </div>
       <div class="rescue-plans">`;
 
@@ -1697,10 +1703,10 @@ function showRescueModal(): void {
 
       if (plan.swaps.length === 1) {
         // Direct swap: natural sentence
-        stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${sw.taskName}</strong> (${sw.slotLabel})</li>`;
+        stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${stripDayPrefix(sw.taskName)}</strong> (${sw.slotLabel})</li>`;
       } else {
         // Chain swap: arrow style
-        stepsHtml += `<li>${assignedSpan} → <strong>${sw.taskName}</strong> (${sw.slotLabel})${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
+        stepsHtml += `<li>${assignedSpan} → <strong>${stripDayPrefix(sw.taskName)}</strong> (${sw.slotLabel})${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
       }
     }
     stepsHtml += `</ol>`;
@@ -1749,6 +1755,11 @@ function showRescueModal(): void {
   wireRescueModalEvents();
 }
 
+/** Strip D-prefix (e.g. "D1 ממטרה" → "ממטרה") from task names in the rescue modal. */
+function stripDayPrefix(name: string): string {
+  return name.replace(/^D\d+\s+/, '');
+}
+
 // ─── Rescue Tooltip: Next-3-Tasks Preview ────────────────────────────────────
 
 let _rescueTooltipEl: HTMLElement | null = null;
@@ -1778,7 +1789,8 @@ function computePostSwapTasks(
   participantId: string,
   plan: RescuePlan,
   schedule: Schedule,
-): Array<{ taskName: string; start: Date; end: Date }> {
+  referenceTaskId: string,
+): Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> {
   const taskMap = new Map<string, Task>();
   for (const t of schedule.tasks) taskMap.set(t.id, t);
 
@@ -1803,8 +1815,8 @@ function computePostSwapTasks(
     }
   }
 
-  // Resolve to task objects with time info
-  const tasks: Array<{ taskName: string; start: Date; end: Date }> = [];
+  // Resolve to task objects with time info, tracking which is the reference task
+  const tasks: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> = [];
   for (const [, taskId] of myAssignmentTaskIds) {
     const task = taskMap.get(taskId);
     if (!task) continue;
@@ -1812,33 +1824,43 @@ function computePostSwapTasks(
       taskName: task.name,
       start: task.timeBlock.start,
       end: task.timeBlock.end,
+      isReference: taskId === referenceTaskId,
     });
   }
 
   // Sort by start time ascending
   tasks.sort((a, b) => a.start.getTime() - b.start.getTime());
 
-  // Find the anchor: the earliest swap task's start time
-  let anchorTime = Infinity;
-  for (const sw of plan.swaps) {
-    const task = taskMap.get(sw.taskId);
-    if (task) {
-      const t = task.timeBlock.start.getTime();
-      if (t < anchorTime) anchorTime = t;
+  // Find the reference task index; fall back to earliest swap task
+  let refIdx = tasks.findIndex(t => t.isReference);
+  if (refIdx === -1) {
+    // Fallback: find the earliest swap task's start time
+    let anchorTime = Infinity;
+    for (const sw of plan.swaps) {
+      const task = taskMap.get(sw.taskId);
+      if (task) {
+        const t = task.timeBlock.start.getTime();
+        if (t < anchorTime) anchorTime = t;
+      }
     }
+    if (anchorTime !== Infinity) {
+      refIdx = tasks.findIndex(t => t.start.getTime() >= anchorTime);
+    }
+    if (refIdx === -1) refIdx = 0;
   }
-  if (anchorTime === Infinity) anchorTime = 0;
 
-  // Filter to tasks starting from the anchor onward and return first 3
-  return tasks.filter(t => t.start.getTime() >= anchorTime).slice(0, 3);
+  // Return 2 before + reference + 2 after
+  const startIdx = Math.max(0, refIdx - 2);
+  const endIdx = Math.min(tasks.length, refIdx + 3);
+  return tasks.slice(startIdx, endIdx);
 }
 
 /** Build HTML content for the rescue participant hover tooltip. */
 function buildRescueParticipantTooltip(
   participantName: string,
-  nextTasks: Array<{ taskName: string; start: Date; end: Date }>,
+  nextTasks: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }>,
 ): string {
-  let html = `<div class="rescue-hover-tt-header">${participantName} — משימות הבאות אם יוחל</div>`;
+  let html = `<div class="rescue-hover-tt-header">${participantName} — משימות סביב המשבצת אם יוחל</div>`;
   if (nextTasks.length === 0) {
     html += `<div class="rescue-hover-tt-empty">אין משימות קרובות</div>`;
   } else {
@@ -1846,7 +1868,9 @@ function buildRescueParticipantTooltip(
       const t = nextTasks[i];
       const dayStr = 'יום ' + hebrewDayName(t.start);
       const timeStr = fmt(t.start) + ' – ' + fmt(t.end);
-      html += `<div class="rescue-hover-tt-task">${i + 1}. ${t.taskName}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
+      const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
+      const refMarker = t.isReference ? ' ◄' : '';
+      html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${stripDayPrefix(t.taskName)}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
     }
   }
   return html;
@@ -1925,7 +1949,7 @@ function wireRescueModalEvents(): void {
       if (!participant) return;
 
       _expandedRescuePid = pid;
-      const nextTasks = computePostSwapTasks(pid, plan, currentSchedule);
+      const nextTasks = computePostSwapTasks(pid, plan, currentSchedule, _rescueResult.request.taskId);
       const detail = document.createElement('div');
       detail.className = 'rescue-inline-preview task-inline-detail';
       detail.innerHTML = buildRescueParticipantTooltip(participant.name, nextTasks);
@@ -1947,7 +1971,7 @@ function wireRescueModalEvents(): void {
 
       if (_rescueTooltipHideTimer) { clearTimeout(_rescueTooltipHideTimer); _rescueTooltipHideTimer = null; }
 
-      const nextTasks = computePostSwapTasks(pid, plan, currentSchedule);
+      const nextTasks = computePostSwapTasks(pid, plan, currentSchedule, _rescueResult.request.taskId);
       const tooltip = getRescueTooltipEl();
       tooltip.innerHTML = buildRescueParticipantTooltip(participant.name, nextTasks);
       tooltip.style.display = 'block';
@@ -2142,7 +2166,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.4.4</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.4.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
