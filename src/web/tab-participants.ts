@@ -403,6 +403,7 @@ export function renderParticipantsTab(): string {
       </div>
     </div>
     <div class="toolbar-right">
+      <button class="btn-expand-all-mobile btn-sm btn-outline" data-action="toggle-all-details">הרחב הכל</button>
       <button class="btn-sm btn-outline${_setsPanelOpen ? ' pill-active' : ''}" data-action="pset-panel-toggle" title="סטים של משתתפים">📋 סטים${store.isParticipantSetDirty() ? ' <span class="dirty-dot"></span>' : ''}</button>
       <button class="btn-sm btn-outline${_pakalPanelOpen ? ' pill-active' : ''}" data-action="pakal-panel-toggle" title="ניהול פק"לים">🎒 פק"לים</button>
       <button class="btn-primary btn-sm" data-action="add-participant">+ הוסף משתתף</button>
@@ -1170,6 +1171,17 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       case 'toggle-details': {
         const row = actionButton?.closest('tr');
         if (row) row.classList.toggle('row-expanded');
+        break;
+      }
+      case 'toggle-all-details': {
+        const table = container.querySelector('.table-participants tbody');
+        if (!table) break;
+        const rows = table.querySelectorAll('tr[data-participant-id]');
+        const allExpanded = Array.from(rows).every(r => r.classList.contains('row-expanded'));
+        rows.forEach(r => r.classList.toggle('row-expanded', !allExpanded));
+        if (actionButton) {
+          actionButton.textContent = allExpanded ? 'הרחב הכל' : 'כווץ הכל';
+        }
         break;
       }
       case 'toggle-blackouts': {

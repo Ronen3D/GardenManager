@@ -1004,6 +1004,7 @@ select.input-sm {
 .col-actions { white-space: nowrap; }
 .col-expand { display: none; } /* mobile-only: shown via style-mobile.css */
 .mobile-label { display: none; } /* mobile-only: shown via style-mobile.css */
+.btn-expand-all-mobile { display: none; } /* mobile-only: shown via style-mobile.css */
 
 /* ─── Blackout Panel ─────────────────────────────────── */
 .row-blackout-expansion td {

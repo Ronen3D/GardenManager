@@ -867,6 +867,11 @@
     overflow: hidden;
   }
 
+  /* ── Global expand/collapse button for participants ──────────────────── */
+  .btn-expand-all-mobile {
+    display: inline-flex !important;
+  }
+
   /* ── Participants table — compact 2-line card layout ──────────────────── */
 
   .table-participants thead {
@@ -1108,36 +1113,52 @@
     font-size: 0.75rem;
   }
 
-  /* Bulk toolbar fixed above bottom nav — no layout shift */
-  .bulk-toolbar {
-    position: fixed;
-    bottom: 68px;
-    left: 12px;
-    right: 12px;
-    z-index: 48;
-    flex-wrap: nowrap;
-    justify-content: center;
-    gap: 8px;
-    padding: 8px 10px;
-    margin: 0;
-    border-radius: 6px;
-  }
-  .bulk-toolbar .bulk-count {
-    font-size: 0.7rem;
-    flex-shrink: 0;
-  }
-  .bulk-toolbar .btn-sm {
-    font-size: 0.65rem;
-    padding: 6px 8px;
-    min-height: 32px;
-    white-space: nowrap;
-  }
-
   /* ── Safe tap targets ────────────────────────────────────────────────── */
 
   .btn-sm {
     min-height: 44px;
     padding: 10px 16px;
+  }
+
+  /* ── Bulk toolbar — must come AFTER global .btn-sm 44px to override ── */
+  .bulk-toolbar {
+    position: fixed !important;
+    bottom: 68px;
+    left: 0;
+    right: 0;
+    z-index: 49;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px 8px;
+    padding: 10px 12px;
+    margin: 0;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.2);
+  }
+  .bulk-toolbar .bulk-count {
+    flex-basis: 100%;
+    text-align: center;
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .bulk-toolbar .btn-sm {
+    font-size: 0.72rem;
+    padding: 6px 10px;
+    min-height: 36px;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .bulk-toolbar .btn-sm svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
   }
 
   .pill {
