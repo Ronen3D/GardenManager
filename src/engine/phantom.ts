@@ -89,8 +89,8 @@ export function buildPhantomContext(
 function continuityAssignmentToTask(taskId: string, ca: ContinuityAssignment): Task {
   return {
     id: taskId,
-    type: ca.taskType,
     name: ca.taskName,
+    sourceName: ca.sourceName,
     timeBlock: {
       start: new Date(ca.timeBlock.start),
       end: new Date(ca.timeBlock.end),
@@ -110,5 +110,6 @@ function continuityAssignmentToTask(taskId: string, ca: ContinuityAssignment): T
     sameGroupRequired: false,
     blocksConsecutive: ca.blocksConsecutive,
     requiresCategoryBreak: ca.requiresCategoryBreak,
+    color: ca.color || '#95A5A6',
   };
 }

@@ -404,7 +404,7 @@ function runVariant(variant: { name: string; fn: PriorityFn; description: string
     for (const t of tasks) {
       const pri = variant.fn(t);
       t.schedulingPriority = pri;
-      if (i === 0) priorityMap.set(`${t.type}:${t.name}`, pri);
+      if (i === 0) priorityMap.set(`${t.sourceName || t.name}:${t.name}`, pri);
     }
 
     // Shuffle participants for diversity (except first run)
@@ -447,7 +447,7 @@ console.log('── Current Task Set Priority Map (V0) ────────�
   for (const t of tasks) {
     rows.push({
       task: t.name,
-      type: t.type as string,
+      type: (t.sourceName || t.name) as string,
       slots: t.slots.length,
       priority: v0_current(t),
       v5_pool: v5_candidatePoolBased(t),
@@ -717,7 +717,7 @@ console.log('\n── PRIORITY ORDERING COMPARISON (V0 vs top variants) ──�
   for (const t of tasks) {
     const row: Record<string, string | number> = {
       task: t.name,
-      type: t.type as string,
+      type: (t.sourceName || t.name) as string,
     };
     for (const v of VARIANTS) {
       row[v.name] = v.fn(t);

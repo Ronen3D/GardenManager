@@ -5,7 +5,6 @@
 
 import {
   Task,
-  TaskType,
   SlotRequirement,
   Level,
   LevelEntry,
@@ -55,7 +54,7 @@ function buildAdanitSlots(): SlotRequirement[] {
       slotId: nextSlotId(prefix),
       acceptableLevels: [{ level: Level.L0 }],
       requiredCertifications: [Certification.Nitzan],
-      adanitTeam: AdanitTeam.SegolMain,
+      subTeamRole: AdanitTeam.SegolMain,
       label: `סגול ראשי דרגה 0 #${i + 1}`,
     });
   }
@@ -64,7 +63,7 @@ function buildAdanitSlots(): SlotRequirement[] {
     slotId: nextSlotId(prefix),
     acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }],
     requiredCertifications: [Certification.Nitzan],
-    adanitTeam: AdanitTeam.SegolMain,
+    subTeamRole: AdanitTeam.SegolMain,
     label: 'סגול ראשי דרגה 3/4',
   });
 
@@ -74,7 +73,7 @@ function buildAdanitSlots(): SlotRequirement[] {
       slotId: nextSlotId(prefix),
       acceptableLevels: [{ level: Level.L0 }],
       requiredCertifications: [Certification.Nitzan],
-      adanitTeam: AdanitTeam.SegolSecondary,
+      subTeamRole: AdanitTeam.SegolSecondary,
       label: `סגול משני דרגה 0 #${i + 1}`,
     });
   }
@@ -83,7 +82,7 @@ function buildAdanitSlots(): SlotRequirement[] {
     slotId: nextSlotId(prefix),
     acceptableLevels: [{ level: Level.L2 }],
     requiredCertifications: [Certification.Nitzan],
-    adanitTeam: AdanitTeam.SegolSecondary,
+    subTeamRole: AdanitTeam.SegolSecondary,
     label: 'סגול משני דרגה 2',
   });
 
@@ -106,7 +105,6 @@ export function createAdanitTasks(baseDate: Date): Task[] {
     const slots = buildAdanitSlots();
     return {
       id: nextTaskId('adanit'),
-      type: TaskType.Adanit,
       name: `משמרת אדנית ${i + 1}`,
       sourceName: 'אדנית',
       timeBlock: block,
@@ -127,7 +125,6 @@ export function createAdanitTasks(baseDate: Date): Task[] {
 export function createHamamaTask(timeBlock: TimeBlock): Task {
   return {
     id: nextTaskId('hamama'),
-    type: TaskType.Hamama,
     name: 'חממה',
     sourceName: 'חממה',
     timeBlock,
@@ -153,7 +150,6 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
 export function createShemeshTask(timeBlock: TimeBlock): Task {
   return {
     id: nextTaskId('shemesh'),
-    type: TaskType.Shemesh,
     name: 'שמש',
     sourceName: 'שמש',
     timeBlock,
@@ -186,7 +182,6 @@ export function createMamteraTask(baseDate: Date): Task {
   const block = createTimeBlockFromHours(baseDate, 9, 23);
   return {
     id: nextTaskId('mamtera'),
-    type: TaskType.Mamtera,
     name: 'ממטרה',
     sourceName: 'ממטרה',
     timeBlock: block,
@@ -222,7 +217,6 @@ export function createMamteraTask(baseDate: Date): Task {
 export function createKarovTask(timeBlock: TimeBlock): Task {
   return {
     id: nextTaskId('karov'),
-    type: TaskType.Karov,
     name: 'כרוב',
     sourceName: 'כרוב',
     timeBlock,
@@ -285,7 +279,6 @@ export function createKarovTask(timeBlock: TimeBlock): Task {
 export function createKarovitTask(timeBlock: TimeBlock): Task {
   return {
     id: nextTaskId('karovit'),
-    type: TaskType.Karovit,
     name: 'כרובית',
     sourceName: 'כרובית',
     timeBlock,
@@ -328,7 +321,6 @@ export function createKarovitTask(timeBlock: TimeBlock): Task {
 export function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוגה'): Task {
   return {
     id: nextTaskId('aruga'),
-    type: TaskType.Aruga,
     name: label,
     sourceName: 'ערוגה',
     timeBlock,

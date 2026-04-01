@@ -22,17 +22,6 @@ export enum Certification {
   Horesh = 'Horesh',
 }
 
-/** Task type identifiers (visual/UI categorisation only — not used in scheduling logic) */
-export enum TaskType {
-  Adanit = 'Adanit',
-  Hamama = 'Hamama',
-  Shemesh = 'Shemesh',
-  Mamtera = 'Mamtera',
-  Karov = 'Karov',
-  Karovit = 'Karovit',
-  Aruga = 'Aruga',
-}
-
 /** A level annotated with priority for a slot. */
 export interface LevelEntry {
   level: Level;
@@ -56,11 +45,16 @@ export enum ViolationSeverity {
   Warning = 'Warning', // Soft constraint → penalized but allowed
 }
 
-/** Adanit team designation */
-export enum AdanitTeam {
+/** Sub-team designation for senior-level routing. */
+export enum SubTeamRole {
   SegolMain = 'SegolMain',
   SegolSecondary = 'SegolSecondary',
 }
+
+/** @deprecated Use SubTeamRole */
+export const AdanitTeam = SubTeamRole;
+/** @deprecated Use SubTeamRole */
+export type AdanitTeam = SubTeamRole;
 
 // ─── Time ────────────────────────────────────────────────────────────────────
 
@@ -147,8 +141,8 @@ export interface SlotRequirement {
   requiredCertifications: Certification[];
   /** Certifications that DISQUALIFY a participant from this slot */
   forbiddenCertifications?: Certification[];
-  /** Optional: Adanit team designation */
-  adanitTeam?: AdanitTeam;
+  /** Optional: sub-team role for senior-level routing */
+  subTeamRole?: SubTeamRole;
   /** Optional: label for display purposes */
   label?: string;
   /** Generic sub-team identifier for togetherness grouping */
@@ -157,7 +151,6 @@ export interface SlotRequirement {
 
 export interface Task {
   id: string;
-  type: TaskType | string;
   /** Human-readable name */
   name: string;
   /** Original template/definition name — used for preference matching (not day-prefixed). */
@@ -168,7 +161,7 @@ export interface Task {
   requiredCount: number;
   /** Detailed slot requirements */
   slots: SlotRequirement[];
-  /** Whether this task is "light" (Karovit) — doesn't break rest */
+  /** Whether this task is "light" — doesn't break rest */
   isLight: boolean;
   /** Base load weight applied outside explicit load windows (0..1). */
   baseLoadWeight?: number;
@@ -180,7 +173,6 @@ export interface Task {
    * HC-12 consecutive-task blocking flag.
    * When true, this task prohibits back-to-back placement with another
    * task that also has blocksConsecutive=true (regardless of load weight).
-   * All tasks except Karov and Karovit default to true.
    */
   blocksConsecutive: boolean;
   /** Scheduling priority (0 = first). Lower = scheduled earlier in greedy phase. */
@@ -189,8 +181,12 @@ export interface Task {
   togethernessRelevant?: boolean;
   /** HC-14: Enforces minimum 5h gap between this and other category-break tasks for the same participant. */
   requiresCategoryBreak?: boolean;
-  /** Display section for schedule grid/PDF layout (e.g. 'patrol', 'hamama', 'aruga', 'mamtera', 'shemesh'). */
+  /** Display section for schedule grid/PDF layout. */
   displayCategory?: string;
+  /** Display color propagated from template (hex, e.g. '#4A90D9'). */
+  color?: string;
+  /** Badge icon propagated from template (emoji or unicode character). */
+  icon?: string;
 }
 
 // ─── Assignment ──────────────────────────────────────────────────────────────
@@ -479,7 +475,6 @@ export interface GanttRow {
 export interface GanttBlock {
   assignmentId: string;
   taskId: string;
-  taskType: TaskType | string;
   taskName: string;
   startMs: number;
   endMs: number;
@@ -522,7 +517,7 @@ export interface SlotTemplate {
   requiredCertifications: Certification[];
   /** Certifications that DISQUALIFY a participant from this slot */
   forbiddenCertifications?: Certification[];
-  adanitTeam?: AdanitTeam;
+  subTeamRole?: SubTeamRole;
 }
 
 /** Time-of-day load window with explicit weight (0..1). */
@@ -540,15 +535,14 @@ export interface SubTeamTemplate {
   id: string;
   name: string;
   slots: SlotTemplate[];
-  /** Explicit Adanit team assignment. Overrides name-based inference. */
-  adanitTeam?: AdanitTeam;
+  /** Explicit sub-team role. Overrides name-based inference. */
+  subTeamRole?: SubTeamRole;
 }
 
-/** A reusable task rule/template defining how a task type is configured */
+/** A reusable task rule/template defining how a task is configured */
 export interface TaskTemplate {
   id: string;
   name: string;
-  taskType: TaskType | string;
   /** Duration in hours */
   durationHours: number;
   /** How many shifts per day (e.g., 3 for Adanit) */
@@ -583,8 +577,14 @@ export interface TaskTemplate {
   togethernessRelevant?: boolean;
   /** HC-14: Enforces minimum 5h gap between category-break tasks for same participant. */
   requiresCategoryBreak?: boolean;
-  /** Display section for schedule grid/PDF layout (e.g. 'patrol', 'hamama', 'aruga', 'mamtera', 'shemesh'). */
+  /** Display section for schedule grid/PDF layout. */
   displayCategory?: string;
+  /** Display color for UI rendering (hex, e.g. '#4A90D9'). Auto-assigned if unset. */
+  color?: string;
+  /** Display ordering within the schedule grid. Lower = earlier (rightmost in RTL). */
+  displayOrder?: number;
+  /** Badge icon (emoji or unicode character). Auto-derived from name if unset. */
+  icon?: string;
 }
 
 // ─── One-Time Task Definition ───────────────────────────────────────────────
@@ -593,7 +593,6 @@ export interface TaskTemplate {
 export interface OneTimeTask {
   id: string;
   name: string;
-  taskType: TaskType | string;
   /** Calendar date this task occurs on (only year/month/day matter). */
   scheduledDate: Date;
   /** Start hour (0-23) on the scheduled date. */
@@ -624,6 +623,12 @@ export interface OneTimeTask {
   requiresCategoryBreak?: boolean;
   /** Display section for schedule grid/PDF layout. */
   displayCategory?: string;
+  /** Display color for UI rendering (hex, e.g. '#4A90D9'). Auto-assigned if unset. */
+  color?: string;
+  /** Display ordering within the schedule grid. Lower = earlier (rightmost in RTL). */
+  displayOrder?: number;
+  /** Badge icon (emoji or unicode character). */
+  icon?: string;
   /** Custom notes / description. */
   description?: string;
 }

@@ -470,12 +470,8 @@ section h2 {
   background: var(--task-cell-bg);
 }
 
-/* Per-task-type subtle tinting (dark mode) */
-.hamama-wrapper .task-cell  { background: rgba(231, 76, 60, 0.05); }
-.aroga-wrapper .task-cell   { background: rgba(26, 188, 156, 0.05); }
-.patrol-wrapper .task-cell  { background: rgba(74, 144, 217, 0.05); }
-.mamtera-wrapper .task-cell { background: rgba(39, 174, 96, 0.05); }
-.shemesh-wrapper .task-cell { background: rgba(243, 156, 18, 0.05); }
+/* Per-section subtle tinting via --section-color CSS variable (dark mode) */
+.schedule-table-wrapper .task-cell { background: color-mix(in srgb, var(--section-color, transparent) 5%, transparent); }
 
 /* ─── Badges ─────────────────────────────────────────── */
 .badge {
@@ -3204,62 +3200,28 @@ tr.row-selected:hover {
 
 .schedule-grid-container {
   display: grid;
-  gap: 12px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 8px;
   align-items: start;
 }
 
-/* Default wide patrol (3-4 columns) */
-.schedule-grid-container.grid-patrol-wide {
-  grid-template-columns: 2fr 1fr;
-  grid-template-areas:
-    "patrol hamama"
-    "patrol aruga"
-    "patrol mamtera"
-    "shemesh shemesh"
-    "custom custom";
+/* Smart layout: 12-unit grid with dynamic section placement */
+.schedule-grid-container.schedule-grid-smart {
+  grid-template-columns: repeat(12, 1fr);
 }
 
-/* Narrow patrol (1-2 columns) — equal split */
-.schedule-grid-container.grid-patrol-narrow {
-  grid-template-columns: 1fr 1fr;
-  grid-template-areas:
-    "patrol hamama"
-    "patrol aruga"
-    "patrol mamtera"
-    "shemesh shemesh"
-    "custom custom";
-}
-
-/* No patrol tasks — single column */
-.schedule-grid-container.grid-no-patrol {
-  grid-template-columns: 1fr;
-  grid-template-areas:
-    "hamama"
-    "aruga"
-    "mamtera"
-    "shemesh"
-    "custom";
-}
-
-.area-patrol  { grid-area: patrol; }
-.area-hamama  { grid-area: hamama; }
-.area-aruga   { grid-area: aruga; }
-.area-mamtera { grid-area: mamtera; }
-.area-shemesh { grid-area: shemesh; }
-.area-custom  { grid-area: custom; }
 
 @media (max-width: 767px) {
-  .schedule-grid-container {
-    grid-template-columns: 1fr !important;
-    grid-template-areas:
-      "patrol"
-      "hamama"
-      "aruga"
-      "mamtera"
-      "shemesh"
-      "custom" !important;
+  /* Smart layout: collapse to single column on mobile */
+  .schedule-grid-container.schedule-grid-smart {
+    display: flex !important;
+    flex-direction: column;
   }
+  .schedule-grid-container.schedule-grid-smart > * {
+    grid-column: unset !important;
+    grid-row: unset !important;
+  }
+
 }
 
 .schedule-table-wrapper {
@@ -3272,10 +3234,10 @@ tr.row-selected:hover {
 
 .table-title {
   background: var(--bg-hover);
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
-  padding: 6px 10px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
   margin: 0;
   color: var(--text-muted);
@@ -3289,15 +3251,15 @@ tr.row-selected:hover {
 .schedule-grid-table th {
   background: var(--bg-hover);
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 600;
   text-align: start;
-  padding: 5px 6px;
+  padding: 3px 4px;
   border-bottom: 1px solid var(--border);
 }
 
 .schedule-grid-table td {
-  padding: 5px 6px;
+  padding: 3px 4px;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
@@ -3307,7 +3269,7 @@ tr.row-selected:hover {
 }
 
 .col-time {
-  width: 60px;
+  width: 48px;
   text-align: center;
   font-weight: 600;
   color: var(--text-muted);
@@ -3316,7 +3278,7 @@ tr.row-selected:hover {
 .time-cell {
   background: var(--time-cell-bg);
   text-align: center;
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
   vertical-align: middle;
 }
@@ -3641,10 +3603,10 @@ tr.now-row-animate > td.time-cell {
 .assignment-card {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--border);
-  border-inline-start: 3px solid var(--text-muted); /* Default Neutral */
-  border-radius: 4px;
-  padding: 4px 6px;
-  margin-bottom: 4px;
+  border-inline-start: 2px solid var(--text-muted); /* Default Neutral */
+  border-radius: 3px;
+  padding: 2px 4px;
+  margin-bottom: 2px;
   position: relative;
   transition: all var(--transition-normal);
 }
@@ -3677,14 +3639,15 @@ tr.now-row-animate > td.time-cell {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 2px;
+  margin-bottom: 0;
 }
 
 .participant-name {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   color: var(--text);
   cursor: pointer;
+  line-height: 1.2;
 }
 .participant-name:hover {
   text-decoration: underline;
@@ -3694,19 +3657,19 @@ tr.now-row-animate > td.time-cell {
 .card-details {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.75rem;
+  gap: 4px;
+  font-size: 0.7rem;
   color: var(--text-muted);
 }
 
 .empty-slot-label {
   font-style: italic;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   text-align: center;
-  padding: 4px;
+  padding: 2px;
   background: var(--bg-hover);
-  border-radius: 4px;
+  border-radius: 3px;
 }
 
 /* (card-actions removed – buttons moved to participant tooltip) */
@@ -3811,12 +3774,8 @@ tr.now-row-animate > td.time-cell {
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
 }
 
-/* ─── Light-mode per-task-type table tinting ───────────────────── */
-[data-theme="light"] .hamama-wrapper .task-cell  { background: rgba(231, 76, 60, 0.04); }
-[data-theme="light"] .aroga-wrapper .task-cell   { background: rgba(26, 188, 156, 0.04); }
-[data-theme="light"] .patrol-wrapper .task-cell   { background: rgba(74, 144, 217, 0.04); }
-[data-theme="light"] .mamtera-wrapper .task-cell  { background: rgba(39, 174, 96, 0.04); }
-[data-theme="light"] .shemesh-wrapper .task-cell  { background: rgba(243, 156, 18, 0.04); }
+/* ─── Light-mode per-section table tinting ───────────────────── */
+[data-theme="light"] .schedule-table-wrapper .task-cell { background: color-mix(in srgb, var(--section-color, transparent) 4%, transparent); }
 
 /* ─── Light-mode card shadow for visual separation ─────────────── */
 [data-theme="light"] .schedule-table-wrapper,

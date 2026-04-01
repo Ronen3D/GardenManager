@@ -12,7 +12,6 @@ import {
   LevelEntry,
   Certification,
   PakalDefinition,
-  TaskType,
   AdanitTeam,
   TaskTemplate,
   SlotTemplate,
@@ -780,6 +779,63 @@ export function getAllTaskTemplates(): TaskTemplate[] {
   return [...taskTemplates.values()];
 }
 
+// ─── Config-Derived Helpers (task-name-agnostic) ───────────────────────────
+
+/** Auto-palette for templates that lack an explicit color. */
+const AUTO_PALETTE = ['#3498db', '#e74c3c', '#f39c12', '#27ae60', '#8e44ad', '#1abc9c', '#e67e22', '#34495e', '#16a085', '#c0392b'];
+
+/**
+ * Build a displayCategory → displayOrder map from current templates.
+ * Takes the minimum displayOrder among templates sharing a category.
+ */
+export function getDisplayOrderMap(): Record<string, number> {
+  const map: Record<string, number> = {};
+  for (const tpl of taskTemplates.values()) {
+    const cat = tpl.displayCategory;
+    if (cat && tpl.displayOrder != null) {
+      map[cat] = Math.min(map[cat] ?? Infinity, tpl.displayOrder);
+    }
+  }
+  return map;
+}
+
+/**
+ * Build a displayCategory → color map from current templates.
+ * Takes the first color found for each category.
+ */
+export function getCategoryColorMap(): Record<string, string> {
+  const map: Record<string, string> = {};
+  let autoIdx = 0;
+  for (const tpl of taskTemplates.values()) {
+    const cat = tpl.displayCategory;
+    if (cat && !map[cat]) {
+      map[cat] = tpl.color || AUTO_PALETTE[autoIdx++ % AUTO_PALETTE.length];
+    }
+  }
+  return map;
+}
+
+/**
+ * Build a template-name → visual attributes map.
+ * Keyed by template `name` (= `sourceName` on Task), not by taskType.
+ * Replaces all type-keyed map functions.
+ */
+export function getTemplateVisualMap(): Record<string, { color: string; icon: string; displayOrder: number; displayCategory: string }> {
+  const map: Record<string, { color: string; icon: string; displayOrder: number; displayCategory: string }> = {};
+  let autoIdx = 0;
+  for (const tpl of taskTemplates.values()) {
+    if (!map[tpl.name]) {
+      map[tpl.name] = {
+        color: tpl.color || AUTO_PALETTE[autoIdx++ % AUTO_PALETTE.length],
+        icon: tpl.icon || tpl.name[0] || '?',
+        displayOrder: tpl.displayOrder ?? 100,
+        displayCategory: tpl.displayCategory || tpl.name.toLowerCase(),
+      };
+    }
+  }
+  return map;
+}
+
 // ─── One-Time Task Store ────────────────────────────────────────────────────
 
 const oneTimeTasks: Map<string, OneTimeTask> = new Map();
@@ -1034,7 +1090,7 @@ export function seedDefaultTaskTemplates(): void {
   // Adanit
   addTaskTemplate({
     name: 'אדנית',
-    taskType: TaskType.Adanit,
+
     durationHours: 8,
     shiftsPerDay: 3,
     startHour: 5,
@@ -1046,14 +1102,14 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 0,
     subTeams: [
       {
-        id: uid('st'), name: 'סגול ראשי', adanitTeam: AdanitTeam.SegolMain, slots: [
+        id: uid('st'), name: 'סגול ראשי', subTeamRole: AdanitTeam.SegolMain, slots: [
           { id: uid('slot'), label: 'סגול ראשי #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'סגול ראשי #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'סגול ראשי #3', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan] },
         ],
       },
       {
-        id: uid('st'), name: 'סגול משני', adanitTeam: AdanitTeam.SegolSecondary, slots: [
+        id: uid('st'), name: 'סגול משני', subTeamRole: AdanitTeam.SegolSecondary, slots: [
           { id: uid('slot'), label: 'סגול משני #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'סגול משני #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'סגול משני #3', acceptableLevels: [{ level: Level.L2 }], requiredCertifications: [Certification.Nitzan] },
@@ -1063,13 +1119,16 @@ export function seedDefaultTaskTemplates(): void {
     slots: [],
     requiresCategoryBreak: true,
     displayCategory: 'patrol',
+    color: '#4A90D9',
+    displayOrder: 0,
+    icon: '🌱',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. שתי תת-קבוצות. כל 6 חייבים ניצן. אותה קבוצה.',
   });
 
   // Hamama
   addTaskTemplate({
     name: 'חממה',
-    taskType: TaskType.Hamama,
+
     durationHours: 12,
     shiftsPerDay: 2,
     startHour: 6,
@@ -1084,13 +1143,16 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }], requiredCertifications: [Certification.Hamama] },
     ],
     displayCategory: 'hamama',
+    color: '#E74C3C',
+    displayOrder: 1,
+    icon: '🏠',
     description: 'משמרות 12 שעות (06:00-18:00, 18:00-06:00). דורש הסמכת חממה. L2/L4 אסור. ללא דרישת ניצן.',
   });
 
   // Shemesh
   addTaskTemplate({
     name: 'שמש',
-    taskType: TaskType.Shemesh,
+
     durationHours: 4,
     shiftsPerDay: 6,
     startHour: 5,
@@ -1107,13 +1169,16 @@ export function seedDefaultTaskTemplates(): void {
     ],
     requiresCategoryBreak: true,
     displayCategory: 'shemesh',
+    color: '#F39C12',
+    displayOrder: 4,
+    icon: '☀️',
     description: 'משמרות 4 שעות (מחזור 05:00), 6 ביום. דורש ניצן.',
   });
 
   // Mamtera
   addTaskTemplate({
     name: 'ממטרה',
-    taskType: TaskType.Mamtera,
+
     durationHours: 14,
     shiftsPerDay: 1,
     startHour: 9,
@@ -1129,13 +1194,16 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'ממטרה #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
     ],
     displayCategory: 'mamtera',
+    color: '#27AE60',
+    displayOrder: 3,
+    icon: '💧',
     description: '09:00-23:00. 2× L0.',
   });
 
   // Karov
   addTaskTemplate({
     name: 'כרוב',
-    taskType: TaskType.Karov,
+
     durationHours: 8,
     shiftsPerDay: 3,
     startHour: 5,
@@ -1170,13 +1238,16 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'כרוב #3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
     ],
     displayCategory: 'patrol',
+    color: '#8E44AD',
+    displayOrder: 0,
+    icon: '🥬',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
   });
 
   // Karovit
   addTaskTemplate({
     name: 'כרובית',
-    taskType: TaskType.Karovit,
+
     durationHours: 8,
     shiftsPerDay: 3,
     startHour: 5,
@@ -1194,13 +1265,16 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'כרובית #3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
     ],
     displayCategory: 'patrol',
+    color: '#BDC3C7',
+    displayOrder: 0,
+    icon: '🥬',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 3× L0. קל — ללא השפעה על מנוחה.',
   });
 
   // Aruga
   addTaskTemplate({
     name: 'ערוגה',
-    taskType: TaskType.Aruga,
+
     durationHours: 1.5,
     shiftsPerDay: 2,
     startHour: 5,
@@ -1216,6 +1290,9 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'ערוגה #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
     ],
     displayCategory: 'aruga',
+    color: '#1ABC9C',
+    displayOrder: 2,
+    icon: '🌿',
     description: '1.5 שעות, 2 ביום (בוקר 05:00-06:30, ערב 17:00-18:30). 2× L0.',
   });
 }
@@ -1449,18 +1526,20 @@ export function loadFromStorage(): boolean {
             slot.acceptableLevels = slot.acceptableLevels.map((lvl: any) => ({ level: lvl }));
           }
         }
-        // Backfill togethernessRelevant: Adanit and Shemesh default to true
+        // Backfill togethernessRelevant: default to false
         if (tpl.togethernessRelevant === undefined) {
-          tpl.togethernessRelevant = (tpl.taskType === TaskType.Adanit || tpl.taskType === TaskType.Shemesh);
+          tpl.togethernessRelevant = false;
         }
         // Backfill requiresCategoryBreak: default to false
         if (tpl.requiresCategoryBreak === undefined) {
           tpl.requiresCategoryBreak = false;
         }
-        // Backfill displayCategory from taskType
+        // Backfill displayCategory from name
         if (tpl.displayCategory === undefined) {
-          tpl.displayCategory = (tpl.taskType || 'custom').toLowerCase();
+          tpl.displayCategory = (tpl.name || 'custom').toLowerCase();
         }
+        // Remove legacy taskType field
+        delete (tpl as any).taskType;
       }
     }
 

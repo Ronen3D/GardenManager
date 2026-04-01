@@ -110,7 +110,7 @@ function taskToContinuityAssignment(task: Task): ContinuityAssignment {
   }));
 
   return {
-    taskType: String(task.type),
+    sourceName: task.sourceName || task.name,
     taskName: task.name,
     timeBlock: {
       start: task.timeBlock.start.toISOString(),
@@ -121,5 +121,6 @@ function taskToContinuityAssignment(task: Task): ContinuityAssignment {
     isLight: task.isLight,
     baseLoadWeight: task.baseLoadWeight,
     loadWindows: loadWindows?.length ? loadWindows : undefined,
+    color: task.color,
   };
 }

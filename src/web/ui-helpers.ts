@@ -6,7 +6,8 @@
  * constants used across the web presentation layer.
  */
 
-import { Level, Certification, TaskType } from '../models/types';
+import { Level, Certification } from '../models/types';
+import { getTemplateVisualMap } from './config-store';
 
 // ─── SVG Icons ───────────────────────────────────────────────────────────────
 
@@ -25,12 +26,21 @@ export const SVG_ICONS = {
   chevronDown: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`,
 };
 
-// ─── Color Maps ──────────────────────────────────────────────────────────────
+// ─── Task Visual Helpers ────────────────────────────────────────────────────
 
-export const TASK_COLORS: Record<string, string> = {
-  Adanit: '#4A90D9', Hamama: '#E74C3C', Shemesh: '#F39C12',
-  Mamtera: '#27AE60', Karov: '#8E44AD', Karovit: '#BDC3C7', Aruga: '#1ABC9C',
-};
+/** Get color for a task-like object. Uses direct color property, falls back to template visual map by sourceName. */
+export function getTaskColor(task: { color?: string; sourceName?: string }): string {
+  if (task.color) return task.color;
+  if (task.sourceName) {
+    return getTemplateVisualMap()[task.sourceName]?.color || '#7f8c8d';
+  }
+  return '#7f8c8d';
+}
+
+/** Get label for a task-like object. Uses sourceName (template name). */
+export function getTaskLabel(task: { sourceName?: string; name?: string }): string {
+  return task.sourceName || task.name || 'משימה';
+}
 
 /** Dynamic group→color palette (auto-assigned on first access). */
 const GROUP_PALETTE = ['#3498db', '#e67e22', '#2ecc71', '#9b59b6', '#e74c3c', '#1abc9c', '#f39c12', '#34495e'];
@@ -71,12 +81,6 @@ export function levelBadge(level: Level): string {
 /** Hebrew labels for certification enum values. */
 export const CERT_LABELS: Record<string, string> = { Nitzan: 'ניצן', Salsala: 'סלסלה', Hamama: 'חממה', Horesh: 'חורש' };
 
-/** Hebrew labels for task-type enum values. */
-export const TASK_TYPE_LABELS: Record<string, string> = {
-  Adanit: 'אדנית', Hamama: 'חממה', Shemesh: 'שמש',
-  Mamtera: 'ממטרה', Karov: 'כרוב', Karovit: 'כרובית', Aruga: 'ערוגה',
-};
-
 /** Single certification badge HTML. */
 export function certBadge(c: Certification): string {
   return `<span class="badge" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${CERT_LABELS[c] || c}</span>`;
@@ -97,15 +101,23 @@ export function groupBadge(group: string, clickable = false): string {
   return `<span class="badge" style="background:${color}">${group}</span>`;
 }
 
-/** Task-type badge HTML. */
-export function taskTypeBadge(type: TaskType | string): string {
-  const color = TASK_COLORS[type] || '#7f8c8d';
-  const icons: Record<string, string> = {
-    Adanit: '🌱', Hamama: '🏠', Shemesh: '☀️',
-    Mamtera: '💧', Karov: '🥬', Karovit: '🥬', Aruga: '🌿',
-  };
-  const icon = icons[type] || '';
-  return `<span class="badge" style="background:${color}">${icon ? `<span aria-hidden="true" style="margin-inline-end:3px">${icon}</span>` : ''}${TASK_TYPE_LABELS[type] || type}</span>`;
+/** Task badge HTML from a task-like object with direct visual properties. */
+export function taskBadge(task: { color?: string; icon?: string; sourceName?: string; name?: string }): string {
+  const color = task.color || '#7f8c8d';
+  const icon = task.icon || '';
+  const label = task.sourceName || task.name || '';
+  return `<span class="badge" style="background:${color}">${icon ? `<span aria-hidden="true" style="margin-inline-end:3px">${icon}</span>` : ''}${label}</span>`;
+}
+
+/** @deprecated Use taskBadge() instead. Kept temporarily during migration. */
+export function taskTypeBadge(type: string): string {
+  const visuals = getTemplateVisualMap();
+  // Find by matching template name
+  const v = visuals[type];
+  const color = v?.color || '#7f8c8d';
+  const icon = v?.icon || '';
+  const label = type;
+  return `<span class="badge" style="background:${color}">${icon ? `<span aria-hidden="true" style="margin-inline-end:3px">${icon}</span>` : ''}${label}</span>`;
 }
 
 /** Escape a string for safe HTML interpolation. */

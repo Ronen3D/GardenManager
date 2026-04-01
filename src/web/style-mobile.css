@@ -1239,11 +1239,11 @@
   }
 
   .assignment-card {
-    padding: 8px 10px;
+    padding: 4px 6px;
   }
 
   .time-cell-inspectable {
-    min-height: 44px;
+    min-height: 36px;
   }
 
   input[type="text"],

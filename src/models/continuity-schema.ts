@@ -43,8 +43,8 @@ export interface ContinuityParticipant {
 // ─── Per-Assignment Data ────────────────────────────────────────────────────
 
 export interface ContinuityAssignment {
-  /** TaskType enum value or custom string. */
-  taskType: string;
+  /** Template source name (task identity). */
+  sourceName: string;
   /** Human-readable task name. */
   taskName: string;
   /** Absolute time block (ISO-8601). Not clipped to day window. */
@@ -60,6 +60,8 @@ export interface ContinuityAssignment {
   isLight: boolean;
   /** Base load weight outside hot windows (0..1). */
   baseLoadWeight?: number;
+  /** Display color (hex). */
+  color?: string;
   /** Weighted load windows within the task — needed by isHighLoadAtBoundary(). */
   loadWindows?: ContinuityLoadWindow[];
 }

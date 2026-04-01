@@ -133,8 +133,8 @@ function validateAssignmentEntry(a: unknown, participantName: string, index: num
   }
   const obj = a as Record<string, unknown>;
 
-  if (typeof obj.taskType !== 'string') {
-    return `${participantName}, שיבוץ #${index + 1}: שדה "taskType" חסר.`;
+  if (typeof obj.sourceName !== 'string' && typeof obj.taskType !== 'string') {
+    return `${participantName}, שיבוץ #${index + 1}: שדה "sourceName" חסר.`;
   }
   if (typeof obj.taskName !== 'string') {
     return `${participantName}, שיבוץ #${index + 1}: שדה "taskName" חסר.`;

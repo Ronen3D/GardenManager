@@ -16,7 +16,6 @@
 import {
   Level,
   Certification,
-  TaskType,
   Schedule,
   Task,
   Assignment,
@@ -74,13 +73,12 @@ for (let t = 0; t < 40; t++) {
   const end = new Date(start.getTime() + 8 * 3600000);
   tasks.push({
     id: taskId,
-    type: TaskType.Adanit,
     name: `Stress Task ${t}`,
     timeBlock: { start, end },
     requiredCount: 5,
     slots: Array.from({ length: 5 }, (_, i) => ({
       slotId: `slot-${++slotCounter}`,
-      acceptableLevels: [Level.L0, Level.L2],
+      acceptableLevels: [{ level: Level.L0 }, { level: Level.L2 }],
       requiredCertifications: [],
       label: `Slot ${i}`,
     })),

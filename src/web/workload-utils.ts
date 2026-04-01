@@ -5,25 +5,27 @@
  * tooltip, profile metrics, and sidebar computations (R1).
  */
 
-import { Task, TaskType, Participant, Assignment, ParticipantCapacity } from '../models/types';
+import { Task, Participant, Assignment, ParticipantCapacity } from '../models/types';
 import { computeTaskEffectiveHours, computeTaskHotHours, computeTaskColdHours } from './utils/load-weighting';
 
 export interface TaskBreakdown {
   heavyHours: number;
   heavyCount: number;
   effectiveHeavyHours: number;
-  /** Hours at 100% load: all non-Kruv heavy + Kruv hot-window overlap */
+  /** Hours at 100% load: heavy tasks + hot-window overlap */
   hotHours: number;
-  /** Hours at reduced load: Kruv hours outside hot windows */
+  /** Hours at reduced load: hours outside hot windows */
   coldHours: number;
   lightHours: number;
   lightCount: number;
-  /** Hours per TaskType */
-  typeHours: Record<string, number>;
-  /** Effective weighted hours per TaskType */
-  typeEffectiveHours: Record<string, number>;
-  /** Assignment count per TaskType */
-  typeCounts: Record<string, number>;
+  /** Hours per source (template name) */
+  sourceHours: Record<string, number>;
+  /** Effective weighted hours per source */
+  sourceEffectiveHours: Record<string, number>;
+  /** Assignment count per source */
+  sourceCounts: Record<string, number>;
+  /** Color per source (first color seen) */
+  sourceColors: Record<string, string>;
 }
 
 /**
@@ -36,14 +38,10 @@ export interface TaskBreakdown {
 export function computeTaskBreakdown(
   items: Iterable<{ task: Task }>,
 ): TaskBreakdown {
-  const typeHours: Record<string, number> = {};
-  const typeEffectiveHours: Record<string, number> = {};
-  const typeCounts: Record<string, number> = {};
-  for (const tt of Object.values(TaskType)) {
-    typeHours[tt] = 0;
-    typeEffectiveHours[tt] = 0;
-    typeCounts[tt] = 0;
-  }
+  const sourceHours: Record<string, number> = {};
+  const sourceEffectiveHours: Record<string, number> = {};
+  const sourceCounts: Record<string, number> = {};
+  const sourceColors: Record<string, string> = {};
 
   let heavyHours = 0;
   let heavyCount = 0;
@@ -58,9 +56,11 @@ export function computeTaskBreakdown(
     const effectiveHrs = computeTaskEffectiveHours(task);
     const hotHrs = computeTaskHotHours(task);
     const coldHrs = computeTaskColdHours(task);
-    typeHours[task.type] = (typeHours[task.type] || 0) + hrs;
-    typeEffectiveHours[task.type] = (typeEffectiveHours[task.type] || 0) + effectiveHrs;
-    typeCounts[task.type] = (typeCounts[task.type] || 0) + 1;
+    const key = task.sourceName || task.name;
+    sourceHours[key] = (sourceHours[key] || 0) + hrs;
+    sourceEffectiveHours[key] = (sourceEffectiveHours[key] || 0) + effectiveHrs;
+    sourceCounts[key] = (sourceCounts[key] || 0) + 1;
+    if (!sourceColors[key]) sourceColors[key] = task.color || '#7f8c8d';
     if (task.isLight) {
       lightHours += hrs;
       lightCount++;
@@ -81,9 +81,10 @@ export function computeTaskBreakdown(
     coldHours,
     lightHours,
     lightCount,
-    typeHours,
-    typeEffectiveHours,
-    typeCounts,
+    sourceHours,
+    sourceEffectiveHours,
+    sourceCounts,
+    sourceColors,
   };
 }
 

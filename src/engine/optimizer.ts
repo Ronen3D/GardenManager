@@ -185,7 +185,7 @@ function getEligibleCandidates(
 
   // ── C1 FIX: Single composite comparator ──
   // Merges what were three sequential (destructive) sorts into one stable sort.
-  // Same-group:  exact-level → workload → same-type count → level → random
+  // Same-group:  exact-level → workload → same-group-required count → level → random
   // Non-group:   (lowPriority level sort) → workload → exact-level → level → random
 
   // P3: Pre-compute random keys for a transitive, unbiased tiebreaker
@@ -208,15 +208,15 @@ function getEligibleCandidates(
       const scoreA = wa + 2.0 * dayA;
       const scoreB = wb + 2.0 * dayB;
       if (scoreA !== scoreB) return scoreA - scoreB;
-      // T2.5: Same-type assignment count — prefer participants with fewer
-      // same-type shifts so L3/L4 naturally alternate instead of one level hoarding.
-      const sameTypeCountA = (assignmentsByParticipant.get(a.id) || []).filter(
+      // T2.5: Same-group-required assignment count — prefer participants with fewer
+      // same-group shifts so L3/L4 naturally alternate instead of one level hoarding.
+      const sameGroupCountA = (assignmentsByParticipant.get(a.id) || []).filter(
         (asgn) => taskMap.get(asgn.taskId)?.sameGroupRequired,
       ).length;
-      const sameTypeCountB = (assignmentsByParticipant.get(b.id) || []).filter(
+      const sameGroupCountB = (assignmentsByParticipant.get(b.id) || []).filter(
         (asgn) => taskMap.get(asgn.taskId)?.sameGroupRequired,
       ).length;
-      if (sameTypeCountA !== sameTypeCountB) return sameTypeCountA - sameTypeCountB;
+      if (sameGroupCountA !== sameGroupCountB) return sameGroupCountA - sameGroupCountB;
       // T3: level ascending — resource conservation before personal preference
       if (a.level !== b.level) return a.level - b.level;
       // T3.5: Task preference tiebreaker (gentle nudge)

@@ -28,7 +28,7 @@ import {
   Level,
   Task,
   SlotRequirement,
-  AdanitTeam,
+  SubTeamRole,
   Assignment,
   Participant,
   ConstraintViolation,
@@ -56,9 +56,9 @@ export function isNaturalRole(
   if (level === Level.L0) return true;
 
   // Slots with adanitTeam designation have team-based natural-role rules
-  if (slot.adanitTeam != null) {
-    if (level === Level.L4 || level === Level.L3) return slot.adanitTeam === AdanitTeam.SegolMain;
-    if (level === Level.L2) return slot.adanitTeam === AdanitTeam.SegolSecondary;
+  if (slot.subTeamRole != null) {
+    if (level === Level.L4 || level === Level.L3) return slot.subTeamRole === SubTeamRole.SegolMain;
+    if (level === Level.L2) return slot.subTeamRole === SubTeamRole.SegolSecondary;
     return false;
   }
 

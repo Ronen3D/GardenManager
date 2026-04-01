@@ -28,14 +28,20 @@ import {
   AdanitTeam,
 } from '../models/types';
 import { getTaskAssignments, getUniqueStartTimes } from './schedule-grid-view';
-import { TASK_COLORS, TASK_TYPE_LABELS } from './ui-helpers';
 import { HEBREW_DAYS } from '../utils/date-utils';
 import { addDays } from 'date-fns';
+import {
+  computeSectionMetrics,
+  assignRows,
+  generateGridTemplate,
+  SectionMetrics,
+  SectionPlacement,
+} from './layout-engine';
 
-/** Resolve a task's display category, with fallback for un-migrated data. */
+/** Resolve a task's display category. */
 function getDisplayCategory(task: Task): string {
   if (task.displayCategory) return task.displayCategory;
-  return (task.type || 'custom').toLowerCase();
+  return (task.sourceName || task.name || 'custom').toLowerCase();
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -176,7 +182,7 @@ function tblDefaults(doc: jsPDF, y: number, fontSize = 7): Partial<UserOptions> 
   };
 }
 
-// ─── Grid Layout Engine ──────────────────────────────────────────────────────
+// ─── Grid Layout Engine (powered by shared layout-engine.ts) ────────────────
 
 /** Describes a positioned table region on the page */
 interface GridRegion {
@@ -189,146 +195,114 @@ interface GridRegion {
   width: number;
 }
 
-/**
- * Compute spatial layout regions mirroring the on-screen CSS grid:
- *
- *  RTL reading order (right = start):
- *  ┌────────────────────┬─────────────┐
- *  │  PATROL (right)    │  HAMAMA     │
- *  │  spans full height ├─────────────┤
- *  │  of right col      │  ARUGA      │
- *  ├────────────────────┴─────────────┤
- *  │  MAMTERA  │  SHEMESH (bottom)    │
- *  └───────────┴──────────────────────┘
- *
- * When a category has zero tasks, its slot is removed and neighbours expand.
- */
-function computeGridLayout(
+/** Convert layout-engine grid template to positioned PDF regions grouped by row. */
+function computeGridLayoutSmart(
   dayTasks: Task[],
   pageW: number,
   topY: number,
-): { upperRegions: GridRegion[]; lowerRegions: GridRegion[]; patrol: GridRegion | null } {
-  const patrol = dayTasks.filter(t => getDisplayCategory(t) === 'patrol');
-  const hamama = dayTasks.filter(t => getDisplayCategory(t) === 'hamama');
-  const aruga = dayTasks.filter(t => getDisplayCategory(t) === 'aruga');
-  const mamtera = dayTasks.filter(t => getDisplayCategory(t) === 'mamtera');
-  const shemesh = dayTasks.filter(t => getDisplayCategory(t) === 'shemesh');
+): { rows: GridRegion[][]; } {
+  const sections = computeSectionMetrics(dayTasks);
+  if (sections.length === 0) return { rows: [] };
 
+  const layoutRows = assignRows(sections);
+  const template = generateGridTemplate(layoutRows);
   const usable = pageW - 2 * PAGE_MARGIN;
-  const hasPatrol = patrol.length > 0;
-  const hasRight = hamama.length > 0 || aruga.length > 0; // right-side stacked column (left on page due to RTL PDF)
+  const unitWidth = usable / 12;
 
-  // ── Upper area: Patrol (right / wider) + Hamama/Aruga stacked (left / narrower) ──
-  let patrolW = 0;
-  let rightColW = 0;
+  // Group placements by row
+  const placementMap = new Map(template.placements.map(p => [p.sectionId, p]));
+  const rowMap = new Map<number, GridRegion[]>();
 
-  if (hasPatrol && hasRight) {
-    patrolW = Math.round(usable * 0.6);
-    rightColW = usable - patrolW - COL_GAP;
-  } else if (hasPatrol) {
-    patrolW = usable;
-  } else if (hasRight) {
-    rightColW = usable;
+  for (const section of sections) {
+    const placement = placementMap.get(section.id);
+    if (!placement) continue;
+
+    // Determine color from the first task in the section
+    const color = section.tasks[0]?.color || '#7f8c8d';
+
+    // Compute x and width from grid placement (RTL: higher colStart = more to the left on page,
+    // but CSS grid with direction:rtl handles this. For PDF, we position right-to-left manually.)
+    // In PDF RTL: rightmost section = highest x. Grid column 1 = rightmost.
+    const x = pageW - PAGE_MARGIN - (placement.colStart - 1 + placement.colSpan) * unitWidth;
+    const width = placement.colSpan * unitWidth - (placement.colSpan < 12 ? COL_GAP / 2 : 0);
+
+    const region: GridRegion = {
+      key: section.id,
+      label: section.title,
+      tasks: section.tasks,
+      color,
+      x,
+      y: topY, // Will be adjusted per-row during rendering
+      width,
+    };
+
+    if (!rowMap.has(placement.row)) rowMap.set(placement.row, []);
+    rowMap.get(placement.row)!.push(region);
   }
 
-  // Patrol region — positioned at the RIGHT side of the page (high x in landscape)
-  // Because jsPDF autoTable is LTR-positioned, right side = higher x
-  const patrolRegion: GridRegion | null = hasPatrol ? {
-    key: 'patrol', label: 'כרוב, כרובית ואדנית', tasks: patrol,
-    color: '', x: pageW - PAGE_MARGIN - patrolW, y: topY, width: patrolW,
-  } : null;
-
-  // Stacked right regions (Hamama on top, Aruga below)
-  const upperRegions: GridRegion[] = [];
-  if (hamama.length > 0) {
-    upperRegions.push({
-      key: 'hamama', label: TASK_TYPE_LABELS.Hamama, tasks: hamama,
-      color: TASK_COLORS.Hamama,
-      x: PAGE_MARGIN, y: topY, width: rightColW,
-    });
-  }
-  if (aruga.length > 0) {
-    upperRegions.push({
-      key: 'aruga', label: TASK_TYPE_LABELS.Aruga, tasks: aruga,
-      color: TASK_COLORS.Aruga,
-      x: PAGE_MARGIN, y: topY, width: rightColW, // y will be adjusted after hamama renders
-    });
+  // Convert to ordered array of rows
+  const rows: GridRegion[][] = [];
+  const rowNums = [...rowMap.keys()].sort((a, b) => a - b);
+  for (const rowNum of rowNums) {
+    rows.push(rowMap.get(rowNum)!);
   }
 
-  // ── Lower area: Mamtera + Shemesh side-by-side, full width ──
-  const lowerCats: { key: string; label: string; tasks: Task[]; color: string }[] = [];
-  if (shemesh.length > 0) lowerCats.push({ key: 'shemesh', label: TASK_TYPE_LABELS.Shemesh, tasks: shemesh, color: TASK_COLORS.Shemesh });
-  if (mamtera.length > 0) lowerCats.push({ key: 'mamtera', label: TASK_TYPE_LABELS.Mamtera, tasks: mamtera, color: TASK_COLORS.Mamtera });
-
-  const lowerRegions: GridRegion[] = [];
-  if (lowerCats.length > 0) {
-    const catW = lowerCats.length > 1
-      ? (usable - COL_GAP * (lowerCats.length - 1)) / lowerCats.length
-      : usable;
-    // Place from right to left (RTL)
-    let xCursor = pageW - PAGE_MARGIN;
-    for (const cat of lowerCats) {
-      xCursor -= catW;
-      lowerRegions.push({
-        key: cat.key, label: cat.label, tasks: cat.tasks,
-        color: cat.color, x: xCursor, y: 0, width: catW, // y set later
-      });
-      xCursor -= COL_GAP;
-    }
-  }
-
-  return { upperRegions, lowerRegions, patrol: patrolRegion };
+  return { rows };
 }
 
-// ─── Table Renderers ─────────────────────────────────────────────────────────
+// ─── Unified PDF Section Table Renderer ─────────────────────────────────────
 
 /**
- * Render the Patrol table (Karov + Karovit + Adanit combined) at a given
- * position. Dynamically builds columns based on which sub-types are present.
- * Returns the finalY after the table.
+ * Render any section's table at a given PDF region, using the same column
+ * strategy logic as the on-screen layout engine. Returns the finalY.
  */
-function renderPatrolTable(
+function renderSectionTablePdf(
   doc: jsPDF, tasks: Task[], schedule: Schedule,
   region: GridRegion, fontSize: number,
 ): number {
-  // Split: tasks with adanitTeam slots vs. regular (per-type) columns
-  const teamTasks = tasks.filter(t => t.slots.some(s => s.adanitTeam != null));
-  const nonTeamTasks = tasks.filter(t => !t.slots.some(s => s.adanitTeam != null));
-  const nonTeamByType = new Map<string, Task[]>();
-  for (const t of nonTeamTasks) {
-    const key = t.type as string;
-    if (!nonTeamByType.has(key)) nonTeamByType.set(key, []);
-    nonTeamByType.get(key)!.push(t);
-  }
-  const uniqueTimes = getUniqueStartTimes(tasks);
+  if (tasks.length === 0) return region.y;
 
   // Section label
   doc.setFontSize(fontSize); doc.setTextColor(80, 80, 80);
   doc.text(rtl(region.label), region.x + region.width - 1, region.y, { align: 'right' });
   const tableY = region.y + TABLE_LABEL_OFFSET;
 
-  // ── Dynamic columns (RTL order: data cols left-to-right, Time rightmost) ──
-  type ColDef = { header: string; build: (timeNum: number) => { content: string; colorKey: string } };
+  // ── Infer column strategy from slot properties (mirrors layout-engine logic) ──
+  const hasAdanit = tasks.some(t => t.slots.some(s => s.subTeamRole != null));
+  const hasMultipleSources = new Set(tasks.map(t => t.sourceName || t.name)).size > 1;
+  const hasSubTeams = tasks.some(t => t.slots.some(s => s.subTeamId));
+
+  type ColDef = { header: string; build: (timeNum: number) => { content: string; color: string } };
   const columns: ColDef[] = [];
 
-  // Non-team type columns (e.g. Karovit, Karov, or any custom patrol type)
-  for (const [typeKey, typeTasks] of nonTeamByType) {
-    columns.push({
-      header: (TASK_TYPE_LABELS as Record<string, string>)[typeKey] || typeKey,
-      build: (timeNum) => {
-        const atTime = typeTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
-        const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-          .filter(s => s.participant).map(s => rtl(s.participant!.name))).join('\n\n');
-        return { content: names || '—', colorKey: typeKey };
-      },
-    });
-  }
+  if (hasAdanit || hasMultipleSources) {
+    // ── Multi-source split strategy ──
+    const teamTasks = tasks.filter(t => t.slots.some(s => s.subTeamRole != null));
+    const nonTeamTasks = tasks.filter(t => !t.slots.some(s => s.subTeamRole != null));
+    const nonTeamBySource = new Map<string, Task[]>();
+    for (const t of nonTeamTasks) {
+      const key = t.sourceName || t.name;
+      if (!nonTeamBySource.has(key)) nonTeamBySource.set(key, []);
+      nonTeamBySource.get(key)!.push(t);
+    }
 
-  // Team-based columns (slots with adanitTeam designation)
-  if (teamTasks.length > 0) {
+    // Non-team source columns
+    for (const [sourceKey, sourceTasks] of nonTeamBySource) {
+      columns.push({
+        header: sourceKey,
+        build: (timeNum) => {
+          const atTime = sourceTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
+          const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
+            .filter(s => s.participant).map(s => rtl(s.participant!.name))).join('\n\n');
+          return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
+        },
+      });
+    }
+
+    // Team-based columns
     const allTeamSlots = teamTasks.flatMap(tk => tk.slots);
-    const hasSecondary = allTeamSlots.some(s => s.adanitTeam === AdanitTeam.SegolSecondary);
-    const hasMain = allTeamSlots.some(s => s.adanitTeam === AdanitTeam.SegolMain);
+    const hasSecondary = allTeamSlots.some(s => s.subTeamRole === AdanitTeam.SegolSecondary);
+    const hasMain = allTeamSlots.some(s => s.subTeamRole === AdanitTeam.SegolMain);
 
     if (hasSecondary) {
       columns.push({
@@ -336,48 +310,97 @@ function renderPatrolTable(
         build: (timeNum) => {
           const atTime = teamTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
           const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-            .filter(s => s.slot.adanitTeam === AdanitTeam.SegolSecondary && s.participant)
+            .filter(s => s.slot.subTeamRole === AdanitTeam.SegolSecondary && s.participant)
             .map(s => rtl(s.participant!.name))).join('\n\n');
-          const colorKey = atTime[0]?.type as string || 'Adanit';
-          return { content: names || '—', colorKey };
+          return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
         },
       });
     }
-
     if (hasMain) {
       columns.push({
         header: 'סגול ראשי',
         build: (timeNum) => {
           const atTime = teamTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
           const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-            .filter(s => s.slot.adanitTeam === AdanitTeam.SegolMain && s.participant)
+            .filter(s => s.slot.subTeamRole === AdanitTeam.SegolMain && s.participant)
             .map(s => rtl(s.participant!.name))).join('\n\n');
-          const colorKey = atTime[0]?.type as string || 'Adanit';
-          return { content: names || '—', colorKey };
+          return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
         },
       });
     }
+  } else if (hasSubTeams) {
+    // ── Sub-team strategy ──
+    const subTeamIds: string[] = [];
+    const seen = new Set<string>();
+    for (const t of tasks) {
+      for (const s of t.slots) {
+        const id = s.subTeamId ?? '';
+        if (!seen.has(id)) { seen.add(id); subTeamIds.push(id); }
+      }
+    }
+
+    const categoryLabel = region.label;
+    for (let i = 0; i < subTeamIds.length; i++) {
+      const stId = subTeamIds[i];
+      // Try to find a label from slot metadata
+      let label: string | undefined;
+      for (const t of tasks) {
+        const sample = t.slots.find(s => (s.subTeamId ?? '') === stId);
+        if (sample?.label) { label = sample.label; break; }
+      }
+      if (!label) {
+        label = subTeamIds.length === 1 ? categoryLabel : `${categoryLabel} #${subTeamIds.length - i}`;
+      }
+
+      const capturedStId = stId;
+      columns.push({
+        header: label,
+        build: (timeNum) => {
+          const atTime = tasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
+          const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
+            .filter(s => (s.slot.subTeamId ?? '') === capturedStId && s.participant)
+            .map(s => rtl(s.participant!.name))).join('\n\n');
+          return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
+        },
+      });
+    }
+  } else {
+    // ── Flat strategy ──
+    columns.push({
+      header: region.label,
+      build: (timeNum) => {
+        const atTime = tasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
+        const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
+          .filter(s => s.participant).map(s => rtl(s.participant!.name))).join('\n\n');
+        return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
+      },
+    });
   }
 
-  // Time column is always last (rightmost in the RTL table)
+  if (columns.length === 0) return region.y;
+
+  const uniqueTimes = getUniqueStartTimes(tasks);
+  const totalShifts = uniqueTimes.length;
+
+  // Build header (data columns + time column rightmost)
   const head: CellDef[] = [
     ...columns.map(c => ({ content: rtl(c.header), styles: { halign: 'center' as const } })),
     { content: rtl('זמן'), styles: { halign: 'center' as const } },
   ];
 
   const emptyStyle = { halign: 'center' as const, textColor: [190, 190, 190] as [number, number, number] };
-  const filledStyle = (colorKey: string) => ({
+  const filledStyle = (hexColor: string) => ({
     halign: 'center' as const,
-    fillColor: tint(TASK_COLORS[colorKey] || '#ecf0f1') as [number, number, number],
+    fillColor: tint(hexColor) as [number, number, number],
   });
 
   const body: CellDef[][] = uniqueTimes.map(timeNum => {
     const time = new Date(timeNum);
     const cells: CellDef[] = columns.map(col => {
-      const { content, colorKey } = col.build(timeNum);
-      return { content, styles: content === '—' ? emptyStyle : filledStyle(colorKey) };
+      const { content, color: cellColor } = col.build(timeNum);
+      return { content, styles: content === '—' ? emptyStyle : filledStyle(cellColor) };
     });
-    cells.push({ content: fmtTime(time), styles: { halign: 'center' as const } });
+    cells.push({ content: fmtTimeLabel(time, totalShifts), styles: { halign: 'center' as const } });
     return cells;
   });
 
@@ -387,83 +410,6 @@ function renderPatrolTable(
   const colStyles: Record<number, Partial<{ cellWidth: number }>> = {};
   for (let i = 0; i < columns.length; i++) colStyles[i] = { cellWidth: dataColW };
   colStyles[columns.length] = { cellWidth: timeW };
-
-  autoTable(doc, {
-    ...tblDefaults(doc, tableY, fontSize),
-    head: [head],
-    body,
-    tableWidth: region.width,
-    margin: { left: region.x, right: doc.internal.pageSize.getWidth() - region.x - region.width },
-    columnStyles: colStyles,
-  });
-
-  return (doc as any).lastAutoTable.finalY;
-}
-
-/**
- * Render a generic category table (Hamama, Aruga, Mamtera, Shemesh, or any
- * future task type) at a given position. Columns are derived dynamically
- * from the number of slots in the tasks.
- * Returns the finalY after the table.
- */
-function renderCategoryTable(
-  doc: jsPDF, tasks: Task[], schedule: Schedule,
-  region: GridRegion, fontSize: number,
-): number {
-  // Section label
-  doc.setFontSize(fontSize); doc.setTextColor(80, 80, 80);
-  doc.text(rtl(region.label), region.x + region.width - 1, region.y, { align: 'right' });
-  const tableY = region.y + TABLE_LABEL_OFFSET;
-
-  const uniqueTimes = getUniqueStartTimes(tasks);
-  const totalShifts = uniqueTimes.length;
-
-  // Determine how many slot columns this category needs
-  const maxSlots = Math.max(...tasks.map(t => t.slots.length), 1);
-
-  // Build header — for 1 slot use the category name, for N slots: "#N | ... | #1"
-  // Column order: data columns (high # to low #) then Time (rightmost)
-  const head: CellDef[] = [];
-  if (maxSlots > 1) {
-    for (let i = maxSlots; i >= 1; i--) {
-      const slotLabel = `${region.label} #${i}`;
-      head.push({ content: rtl(slotLabel), styles: { halign: 'center' as const } });
-    }
-  } else {
-    head.push({ content: rtl(region.label), styles: { halign: 'center' as const } });
-  }
-  head.push({ content: rtl('זמן'), styles: { halign: 'center' as const } });
-
-  const emptyStyle = { halign: 'center' as const, textColor: [190, 190, 190] as [number, number, number] };
-  const filledStyle = { halign: 'center' as const, fillColor: tint(region.color) as [number, number, number] };
-
-  const body: CellDef[][] = uniqueTimes.map(timeNum => {
-    const time = new Date(timeNum);
-    const atTime = tasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
-    const allAssigned = atTime.flatMap(t => getTaskAssignments(t, schedule));
-
-    const row: CellDef[] = [];
-    if (maxSlots > 1) {
-      // Reverse slot order to match on-screen (#N left → #1 right)
-      for (let i = maxSlots - 1; i >= 0; i--) {
-        const s = allAssigned[i];
-        const name = s?.participant ? rtl(s.participant.name) : '—';
-        row.push({ content: name, styles: name === '—' ? emptyStyle : filledStyle });
-      }
-    } else {
-      const names = allAssigned.filter(s => s.participant).map(s => rtl(s.participant!.name)).join('\n\n') || '—';
-      row.push({ content: names, styles: names === '—' ? emptyStyle : filledStyle });
-    }
-    row.push({ content: fmtTimeLabel(time, totalShifts), styles: { halign: 'center' as const } });
-    return row;
-  });
-
-  // Column widths: time col = 14mm, data cols share the rest
-  const timeW = 14;
-  const slotW = (region.width - timeW) / maxSlots;
-  const colStyles: Record<number, Partial<{ cellWidth: number }>> = {};
-  for (let i = 0; i < maxSlots; i++) colStyles[i] = { cellWidth: slotW };
-  colStyles[maxSlots] = { cellWidth: timeW };
 
   autoTable(doc, {
     ...tblDefaults(doc, tableY, fontSize),
@@ -493,7 +439,7 @@ function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
   // Group tasks by type to measure density
   const tasksByType = new Map<string, Task[]>();
   for (const tk of dayTasks) {
-    const key = tk.type as string;
+    const key = tk.sourceName || tk.name;
     if (!tasksByType.has(key)) tasksByType.set(key, []);
     tasksByType.get(key)!.push(tk);
   }
@@ -503,22 +449,16 @@ function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
   for (const [, tasks] of tasksByType) {
     if (tasks.length === 0) continue;
     maxRows = Math.max(maxRows, getUniqueStartTimes(tasks).length);
-    // For merged-slot columns (e.g. Karov with 4 slots shown in one cell),
-    // count the most names that can land in a single column.
     for (const tk of tasks) {
       maxSlotsPerCell = Math.max(maxSlotsPerCell, tk.slots.length);
     }
   }
 
-  // Count unique participants assigned today
   const dayTaskIds = new Set(dayTasks.map(t => t.id));
   const dayAssignments = schedule.assignments.filter(a => dayTaskIds.has(a.taskId));
   const uniqueParticipants = new Set(dayAssignments.map(a => a.participantId)).size;
 
-  // Base size: start generous, then reduce for density
-  // Few rows + few people → 9pt;  moderate → 8pt;  dense → 7pt;  very dense → 6pt
   let size = 9;
-
   if (maxRows > 6 || uniqueParticipants > 30) size = Math.min(size, 8);
   if (maxRows > 8 || uniqueParticipants > 45 || maxSlotsPerCell > 4) size = Math.min(size, 7);
   if (maxRows > 10 || uniqueParticipants > 60) size = Math.min(size, 6);
@@ -527,9 +467,9 @@ function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
 }
 
 /**
- * Render a single day's schedule onto the current page of `doc` using
- * the spatial grid layout that mirrors the on-screen CSS grid.
- * Used by both single-day export and the weekly multi-page export.
+ * Render a single day's schedule onto the current page using the smart
+ * layout engine for spatial arrangement. Sections are packed into balanced
+ * rows with proportional widths — the same algorithm as the on-screen grid.
  */
 function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number): void {
   const { start } = getDayWindow(schedule, dayIndex);
@@ -551,27 +491,18 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number): void {
 
   const pageW = doc.internal.pageSize.getWidth();
   const fontSize = chooseFontSize(dayTasks, schedule);
-  const { upperRegions, lowerRegions, patrol } = computeGridLayout(dayTasks, pageW, topY);
+  const { rows } = computeGridLayoutSmart(dayTasks, pageW, topY);
 
-  // ── Render upper-right: Patrol ──
-  let patrolBottomY = topY;
-  if (patrol) {
-    patrolBottomY = renderPatrolTable(doc, patrol.tasks, schedule, patrol, fontSize);
-  }
-
-  // ── Render upper-left: Hamama then Aruga (stacked) ──
-  let leftBottomY = topY;
-  for (const region of upperRegions) {
-    region.y = leftBottomY;
-    leftBottomY = renderCategoryTable(doc, region.tasks, schedule, region, fontSize);
-    leftBottomY += ROW_GAP;
-  }
-
-  // ── Render lower row: Mamtera + Shemesh side-by-side (full width) ──
-  const lowerTopY = Math.max(patrolBottomY, leftBottomY) + ROW_GAP;
-  for (const region of lowerRegions) {
-    region.y = lowerTopY;
-    renderCategoryTable(doc, region.tasks, schedule, region, fontSize);
+  // Render rows top-to-bottom; within each row, render sections side-by-side
+  let currentY = topY;
+  for (const rowRegions of rows) {
+    let rowBottomY = currentY;
+    for (const region of rowRegions) {
+      region.y = currentY;
+      const bottomY = renderSectionTablePdf(doc, region.tasks, schedule, region, fontSize);
+      rowBottomY = Math.max(rowBottomY, bottomY);
+    }
+    currentY = rowBottomY + ROW_GAP;
   }
 }
 

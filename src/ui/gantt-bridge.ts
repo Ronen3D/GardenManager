@@ -11,22 +11,9 @@ import {
   GanttData,
   GanttRow,
   GanttBlock,
-  TaskType,
   AssignmentStatus,
 } from '../models/types';
 import { getTimelineBounds, blockDurationMinutes } from '../web/utils/time-utils';
-
-// ─── Color Palette ───────────────────────────────────────────────────────────
-
-const TASK_COLORS: Record<string, string> = {
-  [TaskType.Adanit]: '#4A90D9',     // Blue
-  [TaskType.Hamama]: '#E74C3C',     // Red
-  [TaskType.Shemesh]: '#F39C12',    // Orange
-  [TaskType.Mamtera]: '#27AE60',    // Green
-  [TaskType.Karov]: '#8E44AD',      // Purple
-  [TaskType.Karovit]: '#BDC3C7',    // Light gray
-  [TaskType.Aruga]: '#1ABC9C',      // Teal
-};
 
 const STATUS_OPACITY: Record<AssignmentStatus, number> = {
   [AssignmentStatus.Scheduled]: 1.0,
@@ -39,8 +26,7 @@ const STATUS_OPACITY: Record<AssignmentStatus, number> = {
 /**
  * Generate a CSS color with opacity for a task block.
  */
-function getBlockColor(taskType: TaskType | string, status: AssignmentStatus): string {
-  const baseColor = TASK_COLORS[taskType as TaskType] || '#95A5A6';
+function getBlockColor(baseColor: string, status: AssignmentStatus): string {
   const opacity = STATUS_OPACITY[status] || 1.0;
   if (opacity === 1.0) return baseColor;
   // Convert hex to rgba
@@ -89,14 +75,13 @@ export function scheduleToGantt(schedule: Schedule): GanttData {
     const block: GanttBlock = {
       assignmentId: a.id,
       taskId: task.id,
-      taskType: task.type,
       taskName: task.name,
       startMs: task.timeBlock.start.getTime(),
       endMs: task.timeBlock.end.getTime(),
       durationMs: task.timeBlock.end.getTime() - task.timeBlock.start.getTime(),
       status: a.status,
       isLight: task.isLight,
-      color: getBlockColor(task.type, a.status),
+      color: getBlockColor(task.color || '#95A5A6', a.status),
     };
 
     row.blocks.push(block);
@@ -185,7 +170,7 @@ export function ganttToAscii(data: GanttData, widthChars: number = 120): string 
       const startChar = Math.floor((block.startMs - data.timelineStartMs) / msPerChar);
       const endChar = Math.floor((block.endMs - data.timelineStartMs) / msPerChar);
 
-      const symbol = block.isLight ? '░' : getTaskSymbol(block.taskType);
+      const symbol = block.isLight ? '░' : (block.taskName?.[0] || '?').toUpperCase();
       for (let c = Math.max(0, startChar); c < Math.min(chartWidth, endChar); c++) {
         chart[c] = symbol;
       }
@@ -194,24 +179,20 @@ export function ganttToAscii(data: GanttData, widthChars: number = 120): string 
     lines.push(`${label} │${chart.join('')}`);
   }
 
-  // Legend
+  // Legend — build from unique task names in data
   lines.push('─'.repeat(widthChars));
-  lines.push('Legend: A=Adanit  H=Hamama  S=Shemesh  M=Mamtera  K=Karov  ░=Karovit  R=Aruga  ·=Free');
+  const taskNames = new Set<string>();
+  for (const row of data.rows) {
+    for (const block of row.blocks) {
+      if (!block.isLight) taskNames.add(block.taskName);
+    }
+  }
+  const legend = [...taskNames]
+    .map(name => `${(name[0] || '?').toUpperCase()}=${name}`)
+    .join('  ');
+  lines.push(`Legend: ${legend}  ░=Light  ·=Free`);
 
   return lines.join('\n');
-}
-
-function getTaskSymbol(type: TaskType | string): string {
-  switch (type) {
-    case TaskType.Adanit: return 'A';
-    case TaskType.Hamama: return 'H';
-    case TaskType.Shemesh: return 'S';
-    case TaskType.Mamtera: return 'M';
-    case TaskType.Karov: return 'K';
-    case TaskType.Karovit: return '░';
-    case TaskType.Aruga: return 'R';
-    default: return (type as string)[0]?.toUpperCase() || '?';
-  }
 }
 
 // ─── JSON Export for Web UI ──────────────────────────────────────────────────
@@ -242,7 +223,7 @@ export function buildTaskSummary(schedule: Schedule): string {
     const start = task.timeBlock.start.toISOString().slice(11, 16);
     const end = task.timeBlock.end.toISOString().slice(11, 16);
 
-    lines.push(`║ ${task.name.padEnd(20)} ${start}-${end}  [${task.type}]${task.isLight ? ' (Light)' : ''}`.padEnd(63) + '║');
+    lines.push(`║ ${task.name.padEnd(20)} ${start}-${end}  [${task.sourceName || task.name}]${task.isLight ? ' (Light)' : ''}`.padEnd(63) + '║');
 
     for (const a of taskAssignments) {
       const p = pMap.get(a.participantId);

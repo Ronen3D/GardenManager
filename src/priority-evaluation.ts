@@ -758,7 +758,7 @@ function runVariant(variant: typeof VARIANTS[number]): VariantResult {
     for (const t of tasks) {
       const pri = variant.fn(t);
       t.schedulingPriority = pri;
-      if (i === 0) priorityMap.set(`${t.type}:${t.name}`, pri);
+      if (i === 0) priorityMap.set(`${t.sourceName || t.name}:${t.name}`, pri);
     }
 
     const participants = i === 0 ? [...allParticipants] : shuffle([...allParticipants]);
@@ -801,7 +801,7 @@ console.log('── PRIORITY MAP COMPARISON (non-group tasks) ──────
     const pool = countEligiblePerSlot(t);
     const row: Record<string, string | number> = {
       task: t.name,
-      type: t.type as string,
+      type: (t.sourceName || t.name) as string,
       slots: t.slots.length,
       pool_min: pool.min,
       pool_avg: pool.avg.toFixed(1),

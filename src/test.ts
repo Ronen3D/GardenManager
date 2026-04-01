@@ -9,7 +9,6 @@ import {
   Participant,
   Level,
   Certification,
-  TaskType,
   AssignmentStatus,
   ViolationSeverity,
   createTimeBlock,
@@ -384,7 +383,6 @@ console.log('\n── Load Weighting (Hot/Cold/Effective) ──');
 function makeTask(overrides: Partial<Task> & { timeBlock: Task['timeBlock'] }): Task {
   return {
     id: 'test-task',
-    type: TaskType.Adanit,
     name: 'Test Task',
     requiredCount: 1,
     slots: [],
@@ -404,7 +402,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // ── Test 1: Karovit (isLight) → 0 hot, 0 cold, 0 effective ──
 {
   const t = makeTask({
-    type: TaskType.Karovit,
     isLight: true,
     timeBlock: { start: new Date(2026, 1, 15, 5, 0), end: new Date(2026, 1, 15, 13, 0) },
   });
@@ -416,7 +413,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // ── Test 2: Adanit 8h (no windows, baseLoadWeight=1) → all hot, 0 cold ──
 {
   const t = makeTask({
-    type: TaskType.Adanit,
     baseLoadWeight: 1,
     timeBlock: { start: new Date(2026, 1, 15, 5, 0), end: new Date(2026, 1, 15, 13, 0) },
   });
@@ -428,7 +424,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // ── Test 3: Hamama 8h → all hot, 0 cold, effective = 8 ──
 {
   const t = makeTask({
-    type: TaskType.Hamama,
     baseLoadWeight: 1,
     timeBlock: { start: new Date(2026, 1, 15, 9, 0), end: new Date(2026, 1, 15, 17, 0) },
   });
@@ -441,7 +436,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // Hot = 1.5h, Cold = 6.5h, Effective = 1.5 + 6.5*0.2 = 2.8
 {
   const t = makeTask({
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 5, 0), end: new Date(2026, 1, 15, 13, 0) },
@@ -455,7 +449,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // Hot = 1.5h, Cold = 6.5h, Effective = 1.5 + 6.5*0.2 = 2.8
 {
   const t = makeTask({
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 13, 0), end: new Date(2026, 1, 15, 21, 0) },
@@ -469,7 +462,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // Hot = 0h, Cold = 8h, Effective = 0 + 8*0.2 = 1.6
 {
   const t = makeTask({
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 21, 0), end: new Date(2026, 1, 16, 5, 0) },
@@ -482,7 +474,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // ── Test 7: Effective ≥ hot hours (invariant) for Kruv shift 1 ──
 {
   const t = makeTask({
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 5, 0), end: new Date(2026, 1, 15, 13, 0) },
@@ -493,7 +484,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // ── Test 8: hot + cold = raw duration for Kruv ──
 {
   const t = makeTask({
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 5, 0), end: new Date(2026, 1, 15, 13, 0) },
@@ -508,7 +498,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // ── Test 9: Shemesh 12h → all hot, 0 cold ──
 {
   const t = makeTask({
-    type: TaskType.Shemesh,
     baseLoadWeight: 1,
     timeBlock: { start: new Date(2026, 1, 15, 6, 0), end: new Date(2026, 1, 15, 18, 0) },
   });
@@ -520,7 +509,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // ── Test 10: Aruga 4h → all hot, 0 cold ──
 {
   const t = makeTask({
-    type: TaskType.Aruga,
     baseLoadWeight: 1,
     timeBlock: { start: new Date(2026, 1, 15, 7, 0), end: new Date(2026, 1, 15, 11, 0) },
   });
@@ -532,7 +520,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // ── Test 11: Mamtera 8h → all hot, 0 cold ──
 {
   const t = makeTask({
-    type: TaskType.Mamtera,
     baseLoadWeight: 1,
     timeBlock: { start: new Date(2026, 1, 15, 14, 0), end: new Date(2026, 1, 15, 22, 0) },
   });
@@ -546,7 +533,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // Effective = 1*1.0 + 1*0.2 = 1.2
 {
   const t = makeTask({
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 4, 0), end: new Date(2026, 1, 15, 6, 0) },
@@ -560,7 +546,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // Hot = 1.5, Cold = 0, Effective = 1.5
 {
   const t = makeTask({
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 5, 0), end: new Date(2026, 1, 15, 6, 30) },
@@ -574,7 +559,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // Hot = 0, Cold = 5h, Effective = 5*0.2 = 1.0
 {
   const t = makeTask({
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 10, 0), end: new Date(2026, 1, 15, 15, 0) },
@@ -589,7 +573,6 @@ const KRUV_WINDOWS: LoadWindow[] = [
 // Hot = 3h, Cold = 12h, Effective = 3 + 12*0.2 = 5.4
 {
   const t = makeTask({
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 4, 0), end: new Date(2026, 1, 15, 19, 0) },
@@ -628,14 +611,12 @@ const KRUV_WINDOWS: LoadWindow[] = [
 {
   const a = makeTask({
     id: 'kruv-a',
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 5, 0), end: new Date(2026, 1, 15, 13, 0) },
   });
   const b = makeTask({
     id: 'kruv-b',
-    type: TaskType.Karov,
     baseLoadWeight: 0.2,
     loadWindows: KRUV_WINDOWS,
     timeBlock: { start: new Date(2026, 1, 15, 21, 0), end: new Date(2026, 1, 16, 5, 0) },
@@ -727,7 +708,7 @@ const mamteraTask = createMamteraTask(baseDate);
     requiredCertifications: [], label: 'Slot B (no forbidden)',
   };
   const mixedTask: Task = {
-    id: 'fc-mixed', type: TaskType.Mamtera, name: 'Mixed Forbidden',
+    id: 'fc-mixed', name: 'Mixed Forbidden',
     timeBlock: createTimeBlockFromHours(baseDate, 9, 23),
     requiredCount: 2, slots: [slotA, slotB],
     isLight: false, sameGroupRequired: false, blocksConsecutive: true,
@@ -928,12 +909,12 @@ console.log('\n── Senior Role Policy (HC-13) ──────────�
 // Helper slots for Adanit tests
 const adMainSlot: SlotRequirement = {
   slotId: 'test-ad-main', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }],
-  requiredCertifications: [Certification.Nitzan], adanitTeam: AdanitTeam.SegolMain,
+  requiredCertifications: [Certification.Nitzan], subTeamRole: AdanitTeam.SegolMain,
   label: 'Segol Main L3/L4',
 };
 const adSecSlot: SlotRequirement = {
   slotId: 'test-ad-sec', acceptableLevels: [{ level: Level.L2 }],
-  requiredCertifications: [Certification.Nitzan], adanitTeam: AdanitTeam.SegolSecondary,
+  requiredCertifications: [Certification.Nitzan], subTeamRole: AdanitTeam.SegolSecondary,
   label: 'Segol Secondary L2',
 };
 const adL0Slot: SlotRequirement = {
@@ -943,7 +924,7 @@ const adL0Slot: SlotRequirement = {
 };
 const testAdanitBlock = createTimeBlockFromHours(baseDate, 5, 13);
 const testAdanitTask: Task = {
-  id: 'sr-adanit-t', type: TaskType.Adanit, name: 'Test Adanit',
+  id: 'sr-adanit-t', name: 'Test Adanit',
   timeBlock: testAdanitBlock, requiredCount: 6,
   slots: [adMainSlot, adSecSlot, adL0Slot, adL0Slot, adL0Slot, adL0Slot],
   isLight: false, sameGroupRequired: true, blocksConsecutive: true,
@@ -958,7 +939,7 @@ const testKarovL0Slot: SlotRequirement = {
   requiredCertifications: [], label: 'Karov L0',
 };
 const testKarovTask: Task = {
-  id: 'sr-karov-t', type: TaskType.Karov, name: 'Test Karov',
+  id: 'sr-karov-t', name: 'Test Karov',
   timeBlock: createTimeBlockFromHours(baseDate, 5, 13),
   requiredCount: 4, slots: [testKarovSlot, testKarovL0Slot],
   isLight: false, sameGroupRequired: false, blocksConsecutive: false,
@@ -973,7 +954,7 @@ const testKarovitL0Slot: SlotRequirement = {
   requiredCertifications: [], label: 'Karovit L0',
 };
 const testKarovitTask: Task = {
-  id: 'sr-karovit-t', type: TaskType.Karovit, name: 'Test Karovit',
+  id: 'sr-karovit-t', name: 'Test Karovit',
   timeBlock: createTimeBlockFromHours(baseDate, 5, 13),
   requiredCount: 4, slots: [testKarovitSlot, testKarovitL0Slot],
   isLight: true, sameGroupRequired: false, blocksConsecutive: false,
@@ -985,7 +966,7 @@ const testMamSlot: SlotRequirement = {
   label: 'Mamtera L0',
 };
 const testMamTask: Task = {
-  id: 'sr-mam-t', type: TaskType.Mamtera, name: 'Test Mamtera',
+  id: 'sr-mam-t', name: 'Test Mamtera',
   timeBlock: createTimeBlockFromHours(baseDate, 9, 23),
   requiredCount: 2, slots: [testMamSlot],
   isLight: false, sameGroupRequired: false, blocksConsecutive: true,
@@ -996,7 +977,7 @@ const testHamSlot: SlotRequirement = {
   requiredCertifications: [Certification.Hamama], label: 'Hamama Operator',
 };
 const testHamTask: Task = {
-  id: 'sr-ham-t', type: TaskType.Hamama, name: 'Test Hamama',
+  id: 'sr-ham-t', name: 'Test Hamama',
   timeBlock: createTimeBlockFromHours(baseDate, 6, 18),
   requiredCount: 1, slots: [testHamSlot],
   isLight: false, sameGroupRequired: false, blocksConsecutive: true,
@@ -1007,7 +988,7 @@ const testShSlot: SlotRequirement = {
   requiredCertifications: [Certification.Nitzan], label: 'Shemesh #1',
 };
 const testShTask: Task = {
-  id: 'sr-sh-t', type: TaskType.Shemesh, name: 'Test Shemesh',
+  id: 'sr-sh-t', name: 'Test Shemesh',
   timeBlock: createTimeBlockFromHours(baseDate, 5, 9),
   requiredCount: 2, slots: [testShSlot],
   isLight: false, sameGroupRequired: false, blocksConsecutive: true,
@@ -1018,7 +999,7 @@ const testArSlot: SlotRequirement = {
   requiredCertifications: [], label: 'Aruga L0',
 };
 const testArTask: Task = {
-  id: 'sr-ar-t', type: TaskType.Aruga, name: 'Test Aruga',
+  id: 'sr-ar-t', name: 'Test Aruga',
   timeBlock: createTimeBlockFromHours(baseDate, 5, 7),
   requiredCount: 2, slots: [testArSlot],
   isLight: false, sameGroupRequired: false, blocksConsecutive: true,
@@ -1291,7 +1272,6 @@ console.log('\n── One-Time Task Integration ──────────�
     return {
       id: 'ot-test-1',
       name: 'Test One-Time',
-      taskType: TaskType.Karov,
       scheduledDate: new Date(2026, 1, 17), // Feb 17
       startHour: 10,
       startMinute: 0,
@@ -1349,7 +1329,6 @@ console.log('\n── One-Time Task Integration ──────────�
   // Test 4: HC-5 overlap detection — one-time task overlaps with a template-generated task
   const otTask: Task = {
     id: 'ot-overlap-1',
-    type: TaskType.Karov,
     name: 'D3 One-Time Overlap',
     timeBlock: {
       start: new Date(2026, 1, 17, 10, 0),
@@ -1368,7 +1347,6 @@ console.log('\n── One-Time Task Integration ──────────�
   // Overlapping template task (12:00-16:00 same day)
   const tplTask: Task = {
     id: 'tpl-overlap-1',
-    type: TaskType.Shemesh,
     name: 'D3 Shemesh',
     timeBlock: {
       start: new Date(2026, 1, 17, 12, 0),

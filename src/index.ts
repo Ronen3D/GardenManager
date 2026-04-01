@@ -24,7 +24,6 @@
 export {
   Level,
   Certification,
-  TaskType,
   AssignmentStatus,
   ViolationSeverity,
   AdanitTeam,

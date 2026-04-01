@@ -25,6 +25,9 @@ light-*
 test-results/
 playwright-report/
 
+# Playwright visual regression snapshots (large PNGs)
+*-snapshots/
+
 # Generated result files
 results/
 

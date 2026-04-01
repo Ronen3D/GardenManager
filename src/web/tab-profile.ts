@@ -13,7 +13,6 @@ import {
   Participant,
   Level,
   Certification,
-  TaskType,
   Schedule,
   Task,
   Assignment,
@@ -22,8 +21,8 @@ import * as store from './config-store';
 import { hebrewDayName } from '../utils/date-utils';
 import { computeTaskBreakdown } from './workload-utils';
 import {
-  TASK_COLORS, LEVEL_COLORS,
-  fmt, levelBadge, certBadge, groupBadge, taskTypeBadge,
+  LEVEL_COLORS,
+  fmt, levelBadge, certBadge, groupBadge, taskBadge,
 } from './ui-helpers';
 import { renderPakalBadges } from './pakal-utils';
 
@@ -184,7 +183,7 @@ function renderPersonalAgenda(
     } else {
       html += '<div class="agenda-tasks">';
       for (const { assignment, task } of dayTasks) {
-        const color = TASK_COLORS[task.type] || '#7f8c8d';
+        const color = task.color || '#7f8c8d';
         const hrs = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
         // Detect cross-day tasks (end time extends past this day's boundary)
         const crossDay = task.timeBlock.end.getTime() > dayEnd.getTime();
@@ -205,7 +204,7 @@ function renderPersonalAgenda(
           <div class="agenda-task-time" dir="ltr">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</div>
           <div class="agenda-task-info">
             <span class="agenda-task-name">${task.name}</span>
-            ${taskTypeBadge(task.type)}
+            ${taskBadge(task)}
             <span class="agenda-task-dur">${hrs.toFixed(1)}h</span>
             ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
             ${crossDayBadge}
@@ -262,7 +261,7 @@ function renderMetrics(
   const totalPeriodHours = numDays * 24;
 
   // Shared breakdown utility (R1)
-  const { heavyHours, effectiveHeavyHours, hotHours, coldHours, lightHours, typeHours, typeEffectiveHours, typeCounts } = computeTaskBreakdown(myTasks);
+  const { heavyHours, effectiveHeavyHours, hotHours, coldHours, lightHours, sourceHours, sourceEffectiveHours, sourceCounts, sourceColors } = computeTaskBreakdown(myTasks);
 
   const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
   const workloadClass = pctOfPeriod > 25 ? 'metric-danger' : pctOfPeriod > 18 ? 'metric-warning' : 'metric-ok';
@@ -299,18 +298,18 @@ function renderMetrics(
     <h4 class="profile-sub-title" style="margin-top:16px">פירוט לפי סוג משימה</h4>
     <div class="metrics-breakdown">`;
 
-  // Bar chart for each task type
-  const maxHours = Math.max(...Object.values(typeEffectiveHours), 1);
-  for (const tt of Object.values(TaskType)) {
-    if (typeCounts[tt] === 0) continue;
-    const color = TASK_COLORS[tt] || '#7f8c8d';
-    const barPct = (typeEffectiveHours[tt] / maxHours) * 100;
+  // Bar chart for each task source
+  const maxHours = Math.max(...Object.values(sourceEffectiveHours), 1);
+  for (const key of Object.keys(sourceCounts)) {
+    if (sourceCounts[key] === 0) continue;
+    const color = sourceColors[key] || '#7f8c8d';
+    const barPct = (sourceEffectiveHours[key] / maxHours) * 100;
     html += `<div class="breakdown-row">
-      <span class="breakdown-label">${taskTypeBadge(tt as TaskType)}</span>
+      <span class="breakdown-label"><span class="badge" style="background:${color}">${key}</span></span>
       <div class="breakdown-bar-bg">
         <div class="breakdown-bar-fill" style="width:${barPct}%;background:${color}"></div>
       </div>
-      <span class="breakdown-value">${typeCounts[tt]}× · ${typeEffectiveHours[tt].toFixed(1)} שעות אפקטיביות (${typeHours[tt].toFixed(1)} שעות גולמיות)</span>
+      <span class="breakdown-value">${sourceCounts[key]}× · ${sourceEffectiveHours[key].toFixed(1)} שעות אפקטיביות (${sourceHours[key].toFixed(1)} שעות גולמיות)</span>
     </div>`;
   }
 

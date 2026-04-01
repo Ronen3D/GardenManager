@@ -8,7 +8,6 @@
 import {
   Level,
   Certification,
-  TaskType,
   TaskTemplate,
   SlotTemplate,
   SubTeamTemplate,
@@ -21,17 +20,17 @@ import {
 import * as store from './config-store';
 import { showPrompt, showConfirm, showToast } from './ui-modal';
 import { runPreflight } from './preflight';
-import { TASK_COLORS, TASK_TYPE_LABELS, escHtml } from './ui-helpers';
+import { escHtml } from './ui-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
 const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala, Certification.Horesh];
-const TASK_TYPE_OPTIONS = Object.values(TaskType);
 
-function taskTypeBadge(type: string): string {
-  const color = TASK_COLORS[type] || '#7f8c8d';
-  return `<span class="badge" style="background:${color}">${TASK_TYPE_LABELS[type] || type}</span>`;
+function templateBadge(tpl: { color?: string; icon?: string; name: string }): string {
+  const color = tpl.color || '#7f8c8d';
+  const icon = tpl.icon || '';
+  return `<span class="badge" style="background:${color}">${icon ? `<span aria-hidden="true" style="margin-inline-end:3px">${icon}</span>` : ''}${tpl.name}</span>`;
 }
 
 function levelBadge(level: Level): string {
@@ -233,7 +232,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
   let html = `<div class="template-card ${alertClass}" data-template-id="${tpl.id}">
     <div class="template-header" data-action="toggle-template" data-tid="${tpl.id}">
       <div class="template-title">
-        ${taskTypeBadge(tpl.taskType)}
+        ${templateBadge(tpl)}
         <strong>${tpl.name}</strong>
         <span class="text-muted"> · ${tpl.shiftsPerDay} משמרות × ${tpl.durationHours} שע׳ — ${totalPeople} איש/יום</span>
         ${hasCritical ? '<span class="badge badge-sm" style="background:var(--danger)">!</span>' : ''}
@@ -423,30 +422,10 @@ function renderAddSlotForm(templateId: string, subTeamId?: string): string {
 }
 
 function renderAddTemplateForm(): string {
-  const categoryOptions = [
-    { value: 'patrol', label: 'סיור (כרוב/אדנית)' },
-    { value: 'hamama', label: 'חממה' },
-    { value: 'aruga', label: 'ערוגה' },
-    { value: 'mamtera', label: 'ממטרה' },
-    { value: 'shemesh', label: 'שמש' },
-  ];
   return `<div class="add-form" id="add-template-form">
     <h4>משימה חדשה</h4>
     <div class="form-row">
       <label>שם: <input class="input-sm" type="text" data-field="tpl-name" placeholder="שם משימה" /></label>
-      <label>סוג:
-        <select class="input-sm" data-field="tpl-type">
-          ${TASK_TYPE_OPTIONS.map(t => `<option value="${t}">${TASK_TYPE_LABELS[t] || t}</option>`).join('')}
-          <option value="Custom">מותאם אישית</option>
-        </select>
-      </label>
-      <label>קטגוריית תצוגה:
-        <select class="input-sm" data-field="tpl-display-category">
-          ${categoryOptions.map(c => `<option value="${c.value}">${c.label}</option>`).join('')}
-          <option value="">מותאם אישית</option>
-        </select>
-        <input class="input-sm" type="text" data-field="tpl-display-category-custom" placeholder="שם קטגוריה" style="width:120px; display:none;" />
-      </label>
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="tpl-start" /></label>
@@ -476,29 +455,10 @@ function renderAddOneTimeForm(): string {
     `<option value="${i + 1}">יום ${i + 1}</option>`
   ).join('');
 
-  const categoryOptions = [
-    { value: 'patrol', label: 'סיור (כרוב/אדנית)' },
-    { value: 'hamama', label: 'חממה' },
-    { value: 'aruga', label: 'ערוגה' },
-    { value: 'mamtera', label: 'ממטרה' },
-    { value: 'shemesh', label: 'שמש' },
-  ];
   return `<div class="add-form" id="add-onetime-form">
     <h4>משימה חד-פעמית חדשה</h4>
     <div class="form-row">
       <label>שם: <input class="input-sm" type="text" data-field="ot-name" placeholder="שם משימה" /></label>
-      <label>סוג:
-        <select class="input-sm" data-field="ot-type">
-          ${TASK_TYPE_OPTIONS.map(t => `<option value="${t}">${TASK_TYPE_LABELS[t] || t}</option>`).join('')}
-          <option value="Custom">מותאם אישית</option>
-        </select>
-      </label>
-      <label>קטגוריית תצוגה:
-        <select class="input-sm" data-field="ot-display-category">
-          ${categoryOptions.map(c => `<option value="${c.value}">${c.label}</option>`).join('')}
-          <option value="">מותאם אישית</option>
-        </select>
-      </label>
     </div>
     <div class="form-row">
       <label>יום:
@@ -547,7 +507,7 @@ function renderOneTimeCard(ot: OneTimeTask): string {
   return `<div class="template-card">
     <div class="template-header">
       <div class="template-title">
-        ${taskTypeBadge(ot.taskType as string)}
+        ${templateBadge({ color: ot.color, name: ot.name })}
         <strong>${escHtml(ot.name)}</strong>
         <span class="text-muted" style="font-size:0.85em;">📅 ${dateStr} ${timeStr}–${endStr} (${ot.durationHours} שע')</span>
       </div>
@@ -893,7 +853,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const form = container.querySelector('#add-template-form')!;
         const name = (form.querySelector('[data-field="tpl-name"]') as HTMLInputElement)?.value.trim();
         if (!name) return;
-        const type = (form.querySelector('[data-field="tpl-type"]') as HTMLSelectElement)?.value || 'Custom';
         const dur = parseFloat((form.querySelector('[data-field="tpl-duration"]') as HTMLInputElement)?.value || '8');
         const shifts = parseInt((form.querySelector('[data-field="tpl-shifts"]') as HTMLInputElement)?.value || '1');
         const startH = parseInt((form.querySelector('[data-field="tpl-start"]') as HTMLInputElement)?.value || '6');
@@ -902,25 +861,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const isLight = (form.querySelector('[data-field="tpl-light"]') as HTMLInputElement)?.checked || false;
         const desc = (form.querySelector('[data-field="tpl-desc"]') as HTMLInputElement)?.value.trim();
 
-        const catSelect = form.querySelector<HTMLSelectElement>('[data-field="tpl-display-category"]');
-        const catCustom = form.querySelector<HTMLInputElement>('[data-field="tpl-display-category-custom"]');
-        let displayCategory = catSelect?.value || '';
-        if (!displayCategory && catCustom?.value) displayCategory = catCustom.value.trim().toLowerCase();
-        if (!displayCategory) {
-          // Auto-derive from type
-          switch (type) {
-            case 'Karov': case 'Karovit': case 'Adanit': displayCategory = 'patrol'; break;
-            case 'Hamama': displayCategory = 'hamama'; break;
-            case 'Aruga': displayCategory = 'aruga'; break;
-            case 'Mamtera': displayCategory = 'mamtera'; break;
-            case 'Shemesh': displayCategory = 'shemesh'; break;
-            default: displayCategory = (type || 'custom').toLowerCase(); break;
-          }
-        }
+        const displayCategory = name.toLowerCase();
 
         store.addTaskTemplate({
           name,
-          taskType: type as TaskType,
           durationHours: dur,
           shiftsPerDay: shifts,
           startHour: startH,
@@ -956,7 +900,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const form = container.querySelector('#add-onetime-form')!;
         const name = (form.querySelector('[data-field="ot-name"]') as HTMLInputElement)?.value.trim();
         if (!name) return;
-        const type = (form.querySelector('[data-field="ot-type"]') as HTMLSelectElement)?.value || 'Custom';
         const dayNum = parseInt((form.querySelector('[data-field="ot-day"]') as HTMLSelectElement)?.value || '1');
         const schedDate = store.getScheduleDate();
         const scheduledDate = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate() + dayNum - 1);
@@ -969,22 +912,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const isLight = (form.querySelector('[data-field="ot-light"]') as HTMLInputElement)?.checked || false;
         const blocksConsecutive = (form.querySelector('[data-field="ot-blocks-consecutive"]') as HTMLInputElement)?.checked ?? true;
         const desc = (form.querySelector('[data-field="ot-desc"]') as HTMLInputElement)?.value.trim();
-        const catSelect = form.querySelector<HTMLSelectElement>('[data-field="ot-display-category"]');
-        let displayCategory = catSelect?.value || '';
-        if (!displayCategory) {
-          switch (type) {
-            case 'Karov': case 'Karovit': case 'Adanit': displayCategory = 'patrol'; break;
-            case 'Hamama': displayCategory = 'hamama'; break;
-            case 'Aruga': displayCategory = 'aruga'; break;
-            case 'Mamtera': displayCategory = 'mamtera'; break;
-            case 'Shemesh': displayCategory = 'shemesh'; break;
-            default: displayCategory = (type || 'custom').toLowerCase(); break;
-          }
-        }
+        const displayCategory = name.toLowerCase();
 
         store.addOneTimeTask({
           name,
-          taskType: type as TaskType,
           scheduledDate,
           startHour,
           startMinute,

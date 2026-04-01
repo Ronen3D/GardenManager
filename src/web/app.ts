@@ -19,7 +19,6 @@ import {
   Participant,
   Level,
   Certification,
-  TaskType,
   AssignmentStatus,
   ViolationSeverity,
   Schedule,
@@ -58,8 +57,8 @@ import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
 import { computeTaskBreakdown } from './workload-utils';
 import { exportWeeklyOverview, exportDailyDetail } from './pdf-export';
 import {
-  TASK_COLORS, LEVEL_COLORS, CERT_COLORS, CERT_LABELS, TASK_TYPE_LABELS,
-  fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskTypeBadge, SVG_ICONS, escHtml,
+  LEVEL_COLORS, CERT_COLORS, CERT_LABELS,
+  fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskBadge, SVG_ICONS, escHtml,
 } from './ui-helpers';
 import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
 import { showAlert, showPrompt, showConfirm, showToast, showBottomSheet, showContinuityImport, showTimePicker, renderCustomSelect, wireCustomSelect } from './ui-modal';
@@ -296,6 +295,7 @@ function generateTasksFromTemplates(): Task[] {
   const numDays = store.getScheduleDays();
   const baseDate = store.getScheduleDate();
   const templates = store.getAllTaskTemplates();
+  const visuals = store.getTemplateVisualMap();
   const allTasks: Task[] = [];
   _tSlotCounter = 0;
   _tTaskCounter = 0;
@@ -329,7 +329,7 @@ function generateTasksFromTemplates(): Task[] {
         const slots: SlotRequirement[] = [];
 
         for (const st of tpl.subTeams) {
-          const adanitTeam = st.adanitTeam
+          const subTeamRole = st.subTeamRole
             ?? ((st.name.includes('ראשי') || /main/i.test(st.name))
               ? AdanitTeam.SegolMain
               : (st.name.includes('משני') || /secondary/i.test(st.name))
@@ -346,7 +346,7 @@ function generateTasksFromTemplates(): Task[] {
               acceptableLevels: [...s.acceptableLevels],
               requiredCertifications: [...s.requiredCertifications],
               forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
-              adanitTeam,
+              subTeamRole,
               label: s.label,
               subTeamId: st.id,
             });
@@ -368,9 +368,9 @@ function generateTasksFromTemplates(): Task[] {
         }
 
         const shiftLabel = tpl.shiftsPerDay > 1 ? ` משמרת ${si + 1}` : '';
+        const v = visuals[tpl.name];
         allTasks.push({
           id: `${tpl.name.toLowerCase()}-d${dayIdx + 1}-${++_tTaskCounter}`,
-          type: tpl.taskType || 'Custom',
           name: `${dayLabel} ${tpl.name}${shiftLabel}`,
           sourceName: tpl.name,
           timeBlock: block,
@@ -385,6 +385,8 @@ function generateTasksFromTemplates(): Task[] {
           togethernessRelevant: tpl.togethernessRelevant,
           requiresCategoryBreak: tpl.requiresCategoryBreak,
           displayCategory: tpl.displayCategory,
+          color: tpl.color || v?.color || '#7f8c8d',
+          icon: tpl.icon || v?.icon || tpl.name[0] || '?',
         });
       }
     }
@@ -415,7 +417,7 @@ function generateTasksFromTemplates(): Task[] {
     // Build slots (same logic as template slot building above)
     const slots: SlotRequirement[] = [];
     for (const st of ot.subTeams) {
-      const adanitTeam = st.adanitTeam
+      const subTeamRole = st.subTeamRole
         ?? ((st.name.includes('ראשי') || /main/i.test(st.name))
           ? AdanitTeam.SegolMain
           : (st.name.includes('משני') || /secondary/i.test(st.name))
@@ -429,7 +431,7 @@ function generateTasksFromTemplates(): Task[] {
           acceptableLevels: [...s.acceptableLevels],
           requiredCertifications: [...s.requiredCertifications],
           forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
-          adanitTeam,
+          subTeamRole,
           label: s.label,
           subTeamId: st.id,
         });
@@ -448,7 +450,6 @@ function generateTasksFromTemplates(): Task[] {
 
     allTasks.push({
       id: `ot-${ot.id}-d${dayIdx + 1}-${++_tTaskCounter}`,
-      type: ot.taskType || 'Custom',
       name: `${dayLabel} ${ot.name}`,
       sourceName: ot.name,
       timeBlock: { start, end },
@@ -463,6 +464,8 @@ function generateTasksFromTemplates(): Task[] {
       togethernessRelevant: ot.togethernessRelevant,
       requiresCategoryBreak: ot.requiresCategoryBreak,
       displayCategory: ot.displayCategory,
+      color: ot.color || '#7f8c8d',
+      icon: (ot as any).icon || ot.name[0] || '?',
     });
   }
 
@@ -1206,7 +1209,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
     }
 
     if (taskAssignments.length === 0) {
-      html += `<tr class="row-warning"><td><strong>${task.name}</strong> ${crossDayTag}</td><td>${taskTypeBadge(task.type)}</td>
+      html += `<tr class="row-warning"><td><strong>${task.name}</strong> ${crossDayTag}</td><td>${taskBadge(task)}</td>
         <td>${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</td>
         <td colspan="6"><em class="text-danger">⚠ אין שיבוצים</em></td></tr>`;
       continue;
@@ -1219,10 +1222,10 @@ function renderAssignmentsTable(schedule: Schedule): string {
       const rowClass = a.status === AssignmentStatus.Conflict ? 'row-error' : isFrozen ? 'row-frozen' : '';
       html += `<tr class="${rowClass}" data-assignment-id="${a.id}">`;
       if (i === 0) {
-        html += `<td rowspan="${taskAssignments.length}" class="task-cell task-tooltip-hover${taskIsFrozen ? ' task-cell-frozen' : ''}" data-task-id="${task.id}" style="border-inline-start:4px solid ${TASK_COLORS[task.type] || '#999'}">
+        html += `<td rowspan="${taskAssignments.length}" class="task-cell task-tooltip-hover${taskIsFrozen ? ' task-cell-frozen' : ''}" data-task-id="${task.id}" style="border-inline-start:4px solid ${task.color || '#7f8c8d'}">
           <strong>${task.name}</strong>${task.isLight ? ' <small>(קלה)</small>' : ''} ${crossDayTag}
           ${taskIsFrozen ? '<span class="frozen-label">🧊 מוקפא</span>' : ''}</td>
-          <td rowspan="${taskAssignments.length}">${taskTypeBadge(task.type)}</td>
+          <td rowspan="${taskAssignments.length}">${taskBadge(task)}</td>
           <td rowspan="${taskAssignments.length}">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</td>`;
       }
       html += `<td><small>${slot?.label || a.slotId}</small></td>
@@ -2224,7 +2227,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.4.6</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.5.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3152,7 +3155,7 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
   const totalPeriodHours = numDays * 24;
 
   // Build breakdown using shared utility (R1)
-  let bd = { heavyHours: 0, heavyCount: 0, effectiveHeavyHours: 0, hotHours: 0, coldHours: 0, lightHours: 0, lightCount: 0, typeHours: {} as Record<string,number>, typeEffectiveHours: {} as Record<string,number>, typeCounts: {} as Record<string,number> };
+  let bd = { heavyHours: 0, heavyCount: 0, effectiveHeavyHours: 0, hotHours: 0, coldHours: 0, lightHours: 0, lightCount: 0, sourceHours: {} as Record<string,number>, sourceEffectiveHours: {} as Record<string,number>, sourceCounts: {} as Record<string,number>, sourceColors: {} as Record<string,string> };
   if (currentSchedule) {
     const taskMap = new Map<string, Task>();
     for (const t of currentSchedule.tasks) taskMap.set(t.id, t);
@@ -3162,7 +3165,7 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
       .filter(x => x.task);
     bd = computeTaskBreakdown(myItems);
   }
-  const { heavyHours, effectiveHeavyHours, heavyCount, lightCount, typeHours, typeEffectiveHours, typeCounts } = bd;
+  const { heavyHours, effectiveHeavyHours, heavyCount, lightCount, sourceHours, sourceEffectiveHours, sourceCounts, sourceColors } = bd;
 
   // R7: Use effectiveHeavyHours for workload %, consistent with sidebar & profile
   const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
@@ -3174,18 +3177,14 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
     : '<span class="tt-dim">אין</span>';
   const pakalHtml = renderPakalBadges(p, store.getPakalDefinitions(), 'אין');
 
-  // Build per-task breakdown rows (only show types with hours > 0)
-  const taskTypeColors: Record<string, string> = {
-    Adanit: '#e67e22', Hamama: '#c0392b', Shemesh: '#2ecc71',
-    Mamtera: '#9b59b6', Karov: '#3498db', Karovit: '#7f8c8d', Aruga: '#e74c3c',
-  };
-  const breakdownRows = Object.values(TaskType)
-    .filter(tt => typeCounts[tt] > 0)
-    .map(tt => {
-      const color = taskTypeColors[tt] || '#7f8c8d';
+  // Build per-task breakdown rows (only show sources with count > 0)
+  const breakdownRows = Object.keys(sourceCounts)
+    .filter(key => sourceCounts[key] > 0)
+    .map(key => {
+      const color = sourceColors[key] || '#7f8c8d';
       return `<div class="tt-row">
-        <span class="tt-label"><span style="color:${color};font-weight:600">${TASK_TYPE_LABELS[tt] || tt}</span></span>
-        <span class="tt-value">${typeCounts[tt]}× · ${typeEffectiveHours[tt].toFixed(1)} שע' אפקטיביות</span>
+        <span class="tt-label"><span style="color:${color};font-weight:600">${key}</span></span>
+        <span class="tt-value">${sourceCounts[key]}× · ${sourceEffectiveHours[key].toFixed(1)} שע' אפקטיביות</span>
       </div>`;
     }).join('');
 
@@ -3586,7 +3585,7 @@ function buildTaskTooltipContent(taskId: string): string {
   const pMap = new Map<string, Participant>();
   for (const p of currentSchedule.participants) pMap.set(p.id, p);
 
-  const taskColor = TASK_COLORS[task.type] || '#7f8c8d';
+  const taskColor = task.color || '#7f8c8d';
   const startStr = fmt(task.timeBlock.start);
   const endStr = fmt(task.timeBlock.end);
   const hrs = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
@@ -3627,7 +3626,7 @@ function buildTaskTooltipContent(taskId: string): string {
   return `
     <div class="ttt-header">
       <span class="ttt-task-name" style="border-inline-start:3px solid ${taskColor};padding-inline-start:8px">${task.name}</span>
-      <span class="badge badge-sm" style="background:${taskColor}">${TASK_TYPE_LABELS[task.type] || task.type}</span>
+      <span class="badge badge-sm" style="background:${taskColor}">${task.sourceName || task.name}</span>
       ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
     </div>
     <div class="ttt-time">
