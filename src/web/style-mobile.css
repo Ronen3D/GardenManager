@@ -1355,6 +1355,13 @@
     display: none;
   }
 
+  /* ── Level toggle — larger touch target on phones ──────────────────── */
+  .level-toggle {
+    min-height: 36px;
+    min-width: 44px;
+    padding: 4px 12px;
+  }
+
   /* Gantt: hide desktop title, show mobile toggle */
   .gantt-desktop-title { display: none; }
 }

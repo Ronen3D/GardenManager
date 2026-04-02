@@ -739,6 +739,7 @@ export function addTaskTemplate(tpl: Omit<TaskTemplate, 'id'>): TaskTemplate {
   const full: TaskTemplate = {
     ...tpl,
     id,
+    color: tpl.color || getNextAvailableColor(),
     baseLoadWeight: tpl.isLight ? 0 : (tpl.baseLoadWeight ?? 1),
     loadWindows: (tpl.loadWindows || []).map(w => ({ ...w })),
   };
@@ -783,6 +784,68 @@ export function getAllTaskTemplates(): TaskTemplate[] {
 
 /** Auto-palette for templates that lack an explicit color. */
 const AUTO_PALETTE = ['#3498db', '#e74c3c', '#f39c12', '#27ae60', '#8e44ad', '#1abc9c', '#e67e22', '#34495e', '#16a085', '#c0392b'];
+
+/**
+ * Return the next available unique color for a new task.
+ * Prefers AUTO_PALETTE colors not currently used by any template or one-time task.
+ * When the palette is exhausted, generates a new HSL-based color that is visually
+ * distinct from all currently used colors.
+ */
+export function getNextAvailableColor(): string {
+  const usedColors = new Set<string>();
+  for (const tpl of taskTemplates.values()) {
+    if (tpl.color) usedColors.add(tpl.color.toLowerCase());
+  }
+  for (const ot of oneTimeTasks.values()) {
+    if (ot.color) usedColors.add(ot.color.toLowerCase());
+  }
+
+  // Try palette first
+  for (const c of AUTO_PALETTE) {
+    if (!usedColors.has(c.toLowerCase())) return c;
+  }
+
+  // Palette exhausted — generate a distinct HSL color
+  const usedHues = [...usedColors].map(hex => hexToHue(hex));
+  let bestHue = 0;
+  let bestDist = -1;
+  for (let h = 0; h < 360; h += 5) {
+    const minDist = usedHues.reduce((min, uh) => {
+      const d = Math.min(Math.abs(h - uh), 360 - Math.abs(h - uh));
+      return Math.min(min, d);
+    }, 360);
+    if (minDist > bestDist) {
+      bestDist = minDist;
+      bestHue = h;
+    }
+  }
+  return hslToHex(bestHue, 65, 55);
+}
+
+function hexToHue(hex: string): number {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  if (d === 0) return 0;
+  let h = 0;
+  if (max === r) h = ((g - b) / d + 6) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  return Math.round(h * 60);
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  s /= 100; l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
 
 /**
  * Build a displayCategory → displayOrder map from current templates.
@@ -845,6 +908,7 @@ export function addOneTimeTask(task: Omit<OneTimeTask, 'id'>): OneTimeTask {
   const full: OneTimeTask = {
     ...task,
     id,
+    color: task.color || getNextAvailableColor(),
     baseLoadWeight: task.isLight ? 0 : (task.baseLoadWeight ?? 1),
     loadWindows: (task.loadWindows || []).map(w => ({ ...w })),
   };

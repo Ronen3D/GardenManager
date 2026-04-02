@@ -991,6 +991,32 @@ select.input-sm {
   color: var(--text);
 }
 
+/* ─── Level Toggle (3-state: off → normal → lowPriority) ───── */
+.level-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  font-size: 0;          /* hide any text outside badge */
+  transition: opacity 0.15s, border-color 0.15s;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.level-toggle[data-state="off"]         { opacity: 0.3; }
+.level-toggle[data-state="normal"]      { opacity: 1; border-color: var(--accent, #3498db); }
+.level-toggle[data-state="lowPriority"] { opacity: 1; border-color: #e67e22; }
+.level-toggle .badge { pointer-events: none; }
+.level-toggle .lp-badge {
+  color: #e67e22;
+  font-size: 0.6rem;
+  font-weight: 700;
+  margin-inline-start: 2px;
+  pointer-events: none;
+}
+
 .cert-checkboxes {
   display: flex;
   gap: 10px;

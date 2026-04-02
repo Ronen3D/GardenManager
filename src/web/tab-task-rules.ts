@@ -398,7 +398,7 @@ function renderAddSlotForm(templateId: string, subTeamId?: string): string {
     <div class="form-row">
       <span>דרגות:</span>
       ${LEVEL_OPTIONS.map(l =>
-        `<label class="checkbox-label"><input type="checkbox" data-slot-level="${l}" checked /> L${l}</label>`
+        `<button type="button" class="level-toggle" data-action="cycle-level" data-slot-level="${l}" data-state="normal">${levelBadge(l)}</button>`
       ).join('')}
     </div>
     <div class="form-row">
@@ -774,14 +774,27 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         rerender();
         break;
       }
+      case 'cycle-level': {
+        const btn = actionButton!;
+        const cur = btn.dataset.state;
+        const next = cur === 'normal' ? 'lowPriority' : cur === 'lowPriority' ? 'off' : 'normal';
+        btn.dataset.state = next;
+        const lvl = parseInt(btn.dataset.slotLevel!) as Level;
+        const lpSup = '<sup class="lp-badge">LP</sup>';
+        btn.innerHTML = next === 'off' ? `<span class="text-muted">L${lvl}</span>`
+          : levelBadge(lvl) + (next === 'lowPriority' ? lpSup : '');
+        break;
+      }
       case 'confirm-add-slot': {
         const tid = actionButton?.dataset.tid!;
         const stid = actionButton?.dataset.stid;
         const form = actionButton?.closest('.add-slot-form')!;
         const label = (form.querySelector('[data-field="slot-label"]') as HTMLInputElement)?.value.trim() || 'משבצת';
-        const levels: Level[] = [];
-        form.querySelectorAll<HTMLInputElement>('[data-slot-level]').forEach(cb => {
-          if (cb.checked) levels.push(parseInt(cb.dataset.slotLevel!) as Level);
+        const acceptableLevels: { level: Level; lowPriority?: boolean }[] = [];
+        form.querySelectorAll<HTMLElement>('[data-slot-level]').forEach(btn => {
+          const state = btn.dataset.state;
+          if (state === 'normal') acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level });
+          else if (state === 'lowPriority') acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level, lowPriority: true });
         });
         const certs: Certification[] = [];
         form.querySelectorAll<HTMLInputElement>('[data-slot-cert]').forEach(cb => {
@@ -800,7 +813,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         }
 
         const slot: Omit<SlotTemplate, 'id'> = {
-          label, acceptableLevels: levels.map(l => ({ level: l })), requiredCertifications: certs,
+          label, acceptableLevels, requiredCertifications: certs,
           forbiddenCertifications: forbiddenCerts.length > 0 ? forbiddenCerts : undefined,
         };
 
