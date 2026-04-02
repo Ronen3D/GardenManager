@@ -73,7 +73,7 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[], 
         findings.push({
           severity: PreflightSeverity.Critical,
           code: 'SKILL_GAP',
-          message: `אין משתתפים שמתאימים לדרישה ${levelStr}${certStr} עבור המשימה "${tpl.name}" במשבצת "${slot.label}".`,
+          message: `אין משתתפים שמתאימים לדרישה ${levelStr}${certStr} עבור המשימה "${tpl.name}" במשבצת "${slot.label || tpl.name}".`,
           templateId: tpl.id,
           slotId: slot.id,
         });
@@ -81,7 +81,7 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[], 
         findings.push({
           severity: PreflightSeverity.Warning,
           code: 'SKILL_SCARCITY',
-          message: `רק משתתף אחד יכול לאייש את המשבצת "${slot.label}" במשימה "${tpl.name}" (${eligible[0].name}). אין כרגע חלופה זמינה.`,
+          message: `רק משתתף אחד יכול לאייש את המשבצת "${slot.label || tpl.name}" במשימה "${tpl.name}" (${eligible[0].name}). אין כרגע חלופה זמינה.`,
           templateId: tpl.id,
           slotId: slot.id,
         });
@@ -102,13 +102,13 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[], 
         findings.push({
           severity: PreflightSeverity.Critical,
           code: 'SKILL_GAP',
-          message: `אין משתתפים שמתאימים לדרישה ${levelStr}${certStr} עבור המשימה החד-פעמית "${ot.name}" במשבצת "${slot.label}".`,
+          message: `אין משתתפים שמתאימים לדרישה ${levelStr}${certStr} עבור המשימה החד-פעמית "${ot.name}" במשבצת "${slot.label || ot.name}".`,
         });
       } else if (eligible.length === 1) {
         findings.push({
           severity: PreflightSeverity.Warning,
           code: 'SKILL_SCARCITY',
-          message: `רק משתתף אחד יכול לאייש את המשבצת "${slot.label}" במשימה החד-פעמית "${ot.name}" (${eligible[0].name}).`,
+          message: `רק משתתף אחד יכול לאייש את המשבצת "${slot.label || ot.name}" במשימה החד-פעמית "${ot.name}" (${eligible[0].name}).`,
         });
       }
     }

@@ -1364,6 +1364,44 @@
 
   /* Gantt: hide desktop title, show mobile toggle */
   .gantt-desktop-title { display: none; }
+
+  /* ── Manual Build Mode — Mobile ────────────────────────────────────────── */
+
+  /* Hide inline warehouse on mobile — use bottom sheet instead */
+  .manual-warehouse {
+    display: none;
+  }
+
+  .manual-build-strip {
+    padding: 6px 12px;
+    font-size: 0.8rem;
+  }
+
+  /* Larger touch targets for slot cards in manual mode */
+  .manual-slot-target {
+    min-height: 44px;
+  }
+
+  .manual-slot-empty {
+    min-height: 44px;
+  }
+
+  /* Bottom sheet warehouse cards — 2-column, large touch targets */
+  .warehouse-sheet-cards {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .warehouse-card-sheet {
+    min-height: 48px;
+    padding: 10px 10px;
+  }
+
+  /* Remove button in bottom sheet — full width, large */
+  .btn-manual-remove-sheet {
+    min-height: 48px;
+    font-size: 1rem;
+  }
 }
 
 /* When bottom nav is active, hide mobile-only elements on desktop */

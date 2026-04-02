@@ -37,7 +37,7 @@ import { computeScheduleScore, ScoreContext, IncrementalScorer } from '../constr
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
 import { isEligible, getRejectionReason } from './validator';
-import { dateKey } from '../utils/date-utils';
+import { dateKey, describeSlot } from '../utils/date-utils';
 import { computeAllCapacities } from '../utils/capacity';
 import { PhantomContext } from './phantom';
 
@@ -151,7 +151,7 @@ function isEligibleForSlot(
   if (_diagnosticLogging) {
     const code = getRejectionReason(participant, task, slot, participantAssignments, taskMap, { disabledHC });
     if (code) {
-      const _tag = `${participant.name} → ${task.name} [${slot.label || slot.slotId}]`;
+      const _tag = `${participant.name} → ${task.name} [${describeSlot(task.name, slot.label, task.timeBlock)}]`;
       console.log(`[Elig] REJECT: ${_tag} — ${code}`);
     }
     return code === null;

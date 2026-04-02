@@ -32,6 +32,7 @@ import {
 } from './optimizer';
 import { resetSlotCounter, resetTaskCounter } from '../tasks/task-definitions';
 import { PhantomContext } from './phantom';
+import { describeSlot } from '../utils/date-utils';
 
 export class SchedulingEngine {
   private participants: Map<string, Participant> = new Map();
@@ -207,9 +208,12 @@ export class SchedulingEngine {
       allViolations.push({
         severity: ViolationSeverity.Error,
         code: 'INFEASIBLE_SLOT',
-        message: reason
-          ? `לא ניתן לשבץ: ${reason} (עמדה "${slot?.label ?? slotId}" במשימה "${task?.name ?? taskId}")`
-          : `שבצ"ק בלתי אפשרי: לא ניתן למלא עמדה "${slot?.label ?? slotId}" במשימה "${task?.name ?? taskId}". אין משתתפים זמינים.`,
+        message: (() => {
+          const slotDesc = task ? describeSlot(task.name, slot?.label, task.timeBlock) : slotId;
+          return reason
+            ? `לא ניתן לשבץ: ${reason} (עמדה "${slotDesc}" במשימה "${task?.name ?? taskId}")`
+            : `שבצ"ק בלתי אפשרי: לא ניתן למלא עמדה "${slotDesc}" במשימה "${task?.name ?? taskId}". אין משתתפים זמינים.`;
+        })(),
         taskId,
         slotId,
       });

@@ -10,6 +10,7 @@ import {
   getUniqueStartTimes as _getUniqueStartTimes,
   getTaskAssignments as _getTaskAssignments,
   AssignedSlot as _AssignedSlot,
+  ManualBuildRenderCtx,
 } from './layout-engine';
 
 // ─── Re-exports for backward compatibility ──────────────────────────────────
@@ -22,7 +23,7 @@ export const getTaskAssignments = _getTaskAssignments;
 
 // ─── Main View Export ────────────────────────────────────────────────────────
 
-export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveMode: LiveModeState): string {
+export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveMode: LiveModeState, manualCtx?: ManualBuildRenderCtx): string {
     if (schedule.tasks.length === 0) return '<div class="alert alert-info">אין משימות בשבצ"ק.</div>';
 
     // 1. Calculate Day Range
@@ -50,5 +51,5 @@ export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveM
     if (dayTasks.length === 0) return '<div class="alert alert-info">אין משימות ביום זה.</div>';
 
     // 2. Delegate to the smart layout engine
-    return renderScheduleGridV2(dayTasks, schedule, liveMode);
+    return renderScheduleGridV2(dayTasks, schedule, liveMode, manualCtx);
 }

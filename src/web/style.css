@@ -5237,3 +5237,270 @@ tr.now-row-animate > td.time-cell {
   align-items: center;
   margin-bottom: 4px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MANUAL BUILD MODE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Manual Build Strip ──────────────────────────────────────────────────── */
+
+.manual-build-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-card));
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+}
+
+.manual-build-status {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* ── Slot States in Manual Mode ──────────────────────────────────────────── */
+
+.manual-slot-target {
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.manual-slot-target:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.manual-slot-empty {
+  border: 1.5px dashed var(--text-muted);
+  min-height: 36px;
+}
+
+.manual-slot-selected {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent) !important;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
+}
+
+.manual-slot-hint {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.manual-slot-hint .badge {
+  font-size: 0.55rem;
+  padding: 1px 4px;
+}
+
+.btn-manual-remove {
+  font-size: 0.7rem;
+  color: var(--danger);
+  background: none;
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+  margin-inline-start: 4px;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.btn-manual-remove:hover {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}
+
+/* ── Participant Warehouse ───────────────────────────────────────────────── */
+
+.manual-warehouse {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--bg-card);
+}
+
+.warehouse-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 12px;
+}
+
+.warehouse-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.warehouse-filter {
+  padding: 4px 10px;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  max-width: 200px;
+}
+
+.warehouse-pool {
+  margin-bottom: 10px;
+}
+
+.warehouse-pool:last-child {
+  margin-bottom: 0;
+}
+
+.warehouse-pool-header {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.warehouse-pool-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.warehouse-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: border-color 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+  user-select: none;
+  position: relative;
+}
+
+.warehouse-card:hover {
+  border-color: var(--accent);
+}
+
+.wc-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.wc-badges {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.wc-badges .badge {
+  font-size: 0.6rem;
+  padding: 1px 4px;
+}
+
+.wc-load {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Eligible participant (slot selected) */
+.wc-eligible {
+  background: color-mix(in srgb, var(--success) 12%, var(--bg-card));
+  border-color: var(--success);
+}
+
+.wc-eligible:hover {
+  background: color-mix(in srgb, var(--success) 22%, var(--bg-card));
+  border-color: var(--success);
+}
+
+/* Ineligible participant (slot selected) */
+.wc-ineligible {
+  opacity: 0.35;
+  cursor: not-allowed;
+  border-color: var(--border);
+}
+
+.wc-ineligible:hover {
+  border-color: var(--border);
+}
+
+/* ── Mobile Bottom Sheet Warehouse ───────────────────────────────────────── */
+
+.warehouse-sheet-header {
+  margin-bottom: 12px;
+}
+
+.warehouse-sheet-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.warehouse-sheet-reqs {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.warehouse-sheet-reqs .badge {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+}
+
+.btn-manual-remove-sheet {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-card));
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s ease;
+}
+
+.btn-manual-remove-sheet:hover {
+  background: color-mix(in srgb, var(--danger) 18%, var(--bg-card));
+}
+
+.warehouse-sheet-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.warehouse-card-sheet {
+  min-height: 48px;
+  padding: 8px 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}

@@ -19,7 +19,15 @@ import {
   LiveModeState,
   AssignmentStatus,
 } from '../models/types';
-import { groupColor, fmt, SVG_ICONS, escHtml } from './ui-helpers';
+import { groupColor, fmt, SVG_ICONS, escHtml, levelBadge, certBadges } from './ui-helpers';
+
+// ─── Manual Build Context ──────────────────────────────────────────────────
+
+export interface ManualBuildRenderCtx {
+  active: boolean;
+  selectedTaskId?: string;
+  selectedSlotId?: string;
+}
 import { getDisplayOrderMap, getCategoryColorMap } from './config-store';
 import { isFutureTask } from '../engine/temporal';
 
@@ -495,19 +503,29 @@ function renderAssignmentCard(
   participant: Participant | undefined,
   task: Task,
   liveMode: LiveModeState,
+  manualCtx?: ManualBuildRenderCtx,
 ): string {
   const isFuture = isFutureTask(task, liveMode.currentTimestamp);
   const isFrozen = liveMode.enabled && !isFuture;
   const isLocked = assignment?.status === AssignmentStatus.Locked || assignment?.status === AssignmentStatus.Manual;
   const isConflict = assignment?.status === AssignmentStatus.Conflict;
+  const isManualActive = manualCtx?.active === true;
+  const isSelected = isManualActive && manualCtx.selectedTaskId === task.id && manualCtx.selectedSlotId === slot.slotId;
 
   let cardClass = 'assignment-card';
   if (isConflict) cardClass += ' status-conflict';
   else if (isFrozen) cardClass += ' status-frozen';
   else if (isLocked) cardClass += ' status-locked';
 
+  // Manual-build mode classes
+  if (isManualActive) {
+    cardClass += ' manual-slot-target';
+    if (isSelected) cardClass += ' manual-slot-selected';
+    if (!participant) cardClass += ' manual-slot-empty';
+  }
+
   const dataAttrs = assignment
-    ? `data-assignment-id="${assignment.id}" data-task-id="${task.id}"`
+    ? `data-assignment-id="${assignment.id}" data-task-id="${task.id}" data-slot-id="${slot.slotId}"`
     : `data-slot-id="${slot.slotId}" data-task-id="${task.id}"`;
 
   let content = '';
@@ -519,17 +537,25 @@ function renderAssignmentCard(
 
     content = `
       <div class="card-header">
-        <span class="participant-name participant-hover" role="button" tabindex="0" ${hoverAttrs} style="color:${groupColor(participant.group)}">
+        <span class="participant-name ${isManualActive ? '' : 'participant-hover'}" role="button" tabindex="0" ${hoverAttrs} style="color:${groupColor(participant.group)}">
           ${escHtml(participant.name)}
         </span>
       </div>
       <div class="card-details">
         ${isLocked ? '<span title="נעל">🔒</span>' : ''}
         ${isFrozen ? `<span title="מוקפא">${SVG_ICONS.snowflake}</span>` : ''}
+        ${isSelected && isManualActive && !isFrozen ? '<button class="btn-manual-remove" data-action="manual-remove" title="הסר שיבוץ">✕ הסר</button>' : ''}
       </div>
     `;
   } else {
-    content = `<div class="empty-slot-label">${slot.label ? escHtml(slot.label) : 'ריק'}</div>`;
+    // Empty slot: show label + hints in manual-build mode
+    let slotHint = '';
+    if (isManualActive) {
+      const levels = slot.acceptableLevels.map(l => l.level).join('/');
+      const certs = slot.requiredCertifications;
+      slotHint = `<div class="manual-slot-hint">${levels ? `L${levels}` : ''}${certs.length ? ' ' + certBadges(certs, '') : ''}</div>`;
+    }
+    content = `<div class="empty-slot-label">${escHtml(slot.label || task.name)}</div>${slotHint}`;
   }
 
   return `
@@ -553,6 +579,7 @@ export function renderSectionTable(
   section: SectionMetrics,
   schedule: Schedule,
   liveMode: LiveModeState,
+  manualCtx?: ManualBuildRenderCtx,
 ): string {
   if (section.tasks.length === 0) return '';
 
@@ -571,7 +598,7 @@ export function renderSectionTable(
         const allSlots = getTaskAssignments(task, schedule);
         const matched = col.matchSlots(task, allSlots);
         return matched.map(s =>
-          renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode)
+          renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode, manualCtx)
         );
       });
       return `<td class="task-cell">${cellCards.join('')}</td>`;
@@ -618,6 +645,7 @@ export function renderScheduleGridV2(
   dayTasks: Task[],
   schedule: Schedule,
   liveMode: LiveModeState,
+  manualCtx?: ManualBuildRenderCtx,
 ): string {
   if (dayTasks.length === 0) return '';
 
@@ -640,7 +668,7 @@ export function renderScheduleGridV2(
     if (!placement) return '';
 
     const gridStyle = `grid-row: ${placement.row}; grid-column: ${placement.colStart} / span ${placement.colSpan};`;
-    const tableHtml = renderSectionTable(section, schedule, liveMode);
+    const tableHtml = renderSectionTable(section, schedule, liveMode, manualCtx);
     if (!tableHtml) return '';
 
     return `<div style="${gridStyle}">${tableHtml}</div>`;

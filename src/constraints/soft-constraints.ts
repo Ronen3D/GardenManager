@@ -25,7 +25,7 @@ import {
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { computeLowPriorityLevelPenalty } from './senior-policy';
 import { isLowPriority } from '../models/level-utils';
-import { dateKey } from '../utils/date-utils';
+import { dateKey, describeSlot } from '../utils/date-utils';
 
 /**
  * SC-3: Workload balance — penalize uneven distribution of non-light assignments.
@@ -295,7 +295,7 @@ export function collectSoftWarnings(
           warnings.push({
             severity: ViolationSeverity.Warning,
             code: 'LOW_PRIORITY_LEVEL',
-            message: `${p.name} (דרגה ${p.level}) שובץ/ה ל-${task.name} [${slot.label || slot.slotId}] כמוצא אחרון — דרגה זו בעדיפות נמוכה מאוד למשבצת זו`,
+            message: `${p.name} (דרגה ${p.level}) שובץ/ה ל-${task.name} [${describeSlot(task.name, slot.label, task.timeBlock)}] כמוצא אחרון — דרגה זו בעדיפות נמוכה מאוד למשבצת זו`,
             taskId: task.id,
             participantId: p.id,
           });

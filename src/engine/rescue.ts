@@ -31,7 +31,7 @@ import { isEligible } from './validator';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { validateHardConstraints } from '../constraints/hard-constraints';
-import { dateKey } from '../utils/date-utils';
+import { dateKey, describeSlot } from '../utils/date-utils';
 
 // ─── Scoring Weights ─────────────────────────────────────────────────────────
 
@@ -253,7 +253,7 @@ function generateDepth1Plans(ctx: RescueContext): CandidatePlan[] {
         toParticipantId: p.id,
         taskId: ctx.vacatedTask.id,
         taskName: ctx.vacatedTask.name,
-        slotLabel: ctx.vacatedSlot.label || ctx.vacatedSlot.slotId,
+        slotLabel: describeSlot(ctx.vacatedTask.name, ctx.vacatedSlot.label, ctx.vacatedTask.timeBlock),
       }],
       impactScore,
       dailyLoadDelta,
@@ -329,7 +329,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
               toParticipantId: p.id,
               taskId: ctx.vacatedTask.id,
               taskName: ctx.vacatedTask.name,
-              slotLabel: ctx.vacatedSlot.label || ctx.vacatedSlot.slotId,
+              slotLabel: describeSlot(ctx.vacatedTask.name, ctx.vacatedSlot.label, ctx.vacatedTask.timeBlock),
             },
             {
               assignmentId: donorAssignment.id,
@@ -337,7 +337,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
               toParticipantId: q.id,
               taskId: donorTask.id,
               taskName: donorTask.name,
-              slotLabel: donorSlot.label || donorSlot.slotId,
+              slotLabel: describeSlot(donorTask.name, donorSlot.label, donorTask.timeBlock),
             },
           ],
           impactScore,
@@ -484,7 +484,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
                   toParticipantId: p.id,
                   taskId: ctx.vacatedTask.id,
                   taskName: ctx.vacatedTask.name,
-                  slotLabel: ctx.vacatedSlot.label || ctx.vacatedSlot.slotId,
+                  slotLabel: describeSlot(ctx.vacatedTask.name, ctx.vacatedSlot.label, ctx.vacatedTask.timeBlock),
                 },
                 {
                   assignmentId: donorP.id,
@@ -492,7 +492,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
                   toParticipantId: q.id,
                   taskId: donorPTask.id,
                   taskName: donorPTask.name,
-                  slotLabel: donorPSlot.label || donorPSlot.slotId,
+                  slotLabel: describeSlot(donorPTask.name, donorPSlot.label, donorPTask.timeBlock),
                 },
                 {
                   assignmentId: donorQ.id,
@@ -500,7 +500,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
                   toParticipantId: r.id,
                   taskId: donorQTask.id,
                   taskName: donorQTask.name,
-                  slotLabel: donorQSlot.label || donorQSlot.slotId,
+                  slotLabel: describeSlot(donorQTask.name, donorQSlot.label, donorQTask.timeBlock),
                 },
               ],
               impactScore,

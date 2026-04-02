@@ -32,8 +32,10 @@ import {
   LiveModeState,
   ConstraintViolation,
   AlgorithmSettings,
+  RejectionCode,
 } from '../index';
-import { hebrewDayName } from '../utils/date-utils';
+import { getRejectionReason, getEligibleParticipantsForSlot } from '../engine/validator';
+import { hebrewDayName, describeSlot } from '../utils/date-utils';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { renderScheduleGrid } from './schedule-grid-view';
 import { generateShiftBlocks } from './utils/time-utils';
@@ -135,6 +137,39 @@ let _rescueAssignmentId: string | null = null;
 let _rescuePage = 0;
 /** Escape key handler for rescue modal (stored for cleanup) */
 let _rescueEscHandler: ((e: KeyboardEvent) => void) | null = null;
+
+// ─── Manual Build Mode State ────────────────────────────────────────────────
+
+let _manualBuildActive = false;
+/** Currently selected slot in manual-build mode */
+let _manualSelectedTaskId: string | null = null;
+let _manualSelectedSlotId: string | null = null;
+/** Cached eligible participant IDs for the selected slot */
+let _eligibleForSelectedSlot: Set<string> | null = null;
+/** Manual-build undo stack: snapshots of assignment arrays */
+let _manualUndoStack: Assignment[][] = [];
+/** Warehouse search filter text */
+let _warehouseFilter = '';
+
+/** HC rejection code → Hebrew user-facing message */
+const REJECTION_MESSAGES: Record<RejectionCode, string> = {
+  'HC-1':  'הדרגה לא מתאימה למשבצת הזו',
+  'HC-2':  'חסרה הסמכה נדרשת',
+  'HC-3':  'המשתתף לא זמין בשעות המשימה',
+  'HC-4':  'המשתתפים חייבים להיות מאותה קבוצה',
+  'HC-5':  'המשתתף כבר משובץ במשימה חופפת',
+  'HC-7':  'המשתתף כבר משובץ במשימה הזו',
+  'HC-11': 'למשתתף הסמכה אסורה למשבצת הזו',
+  'HC-12': 'לא ניתן לשבץ למשימות כבדות רצופות',
+  'HC-13': 'מגבלת שיבוץ סגל — מחוץ לתחום הטבעי',
+  'HC-14': 'נדרשת הפסקה של 5 שעות לפחות ממשימת קטגוריה',
+};
+
+function clearManualSelection(): void {
+  _manualSelectedTaskId = null;
+  _manualSelectedSlotId = null;
+  _eligibleForSelectedSlot = null;
+}
 
 // ─── Formatting Helpers (app-local) ──────────────────────────────────────────
 
@@ -852,6 +887,7 @@ function renderScheduleTab(): string {
         </button>
       </span>
       <span class="toolbar-group toolbar-group--state">
+        ${currentSchedule ? `<button class="btn-sm ${_manualBuildActive ? 'btn-primary' : 'btn-outline'}" id="btn-manual-build" title="${_manualBuildActive ? 'יציאה ממצב בנייה ידנית' : 'בנייה ידנית של שבצ\"ק'}">${_manualBuildActive ? '✕ יציאה מבנייה ידנית' : '✏️ בנייה ידנית'}</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
         <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾 שמירת שבצקים${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
         ${renderContinuityChip()}
@@ -912,10 +948,25 @@ function renderScheduleTab(): string {
     </span>
   </div>`;
 
+  // Manual-build undo strip
+  if (_manualBuildActive) {
+    const totalSlots = s.tasks.reduce((sum, t) => sum + t.slots.length, 0);
+    const filledSlots = s.assignments.length;
+    html += `<div class="manual-build-strip">
+      <span class="manual-build-status">מצב בנייה ידנית — ${filledSlots}/${totalSlots} משבצות מלאות</span>
+      <button class="btn-sm btn-outline" id="btn-manual-undo" ${_manualUndoStack.length === 0 ? 'disabled' : ''} title="ביטול פעולה אחרונה">↩ ביטול</button>
+    </div>`;
+  }
+
   // Main layout: content + sidebar
+  const manualCtx = { active: _manualBuildActive, selectedTaskId: _manualSelectedTaskId ?? undefined, selectedSlotId: _manualSelectedSlotId ?? undefined };
   html += `<div class="schedule-layout">`;
   html += `<div class="schedule-main">`;
-  html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState())}</section>`;
+  html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState(), manualCtx)}</section>`;
+  // Participant warehouse (desktop: inline; mobile: hidden, shown via bottom sheet)
+  if (_manualBuildActive) {
+    html += renderParticipantWarehouse(s);
+  }
   // Gantt chart: wrapped in mobile-toggleable accordion
   html += `<section class="gantt-section">`;
   html += `<button class="gantt-mobile-toggle" aria-expanded="true" data-action="toggle-gantt">${SVG_ICONS.chart} מערכת שעות כללית</button>`;
@@ -932,6 +983,324 @@ function renderScheduleTab(): string {
   html += renderOptimOverlay();
 
   return html;
+}
+
+// ─── Manual Build: Participant Warehouse ────────────────────────────────────
+
+function renderParticipantWarehouse(schedule: Schedule): string {
+  const participants = schedule.participants;
+  const l0Pool = participants.filter(p => p.level === Level.L0);
+  const seniorPool = participants.filter(p => p.level !== Level.L0);
+
+  // Count current-day assignments per participant
+  const { start: dayStart, end: dayEnd } = getDayWindow(currentDay);
+  const dayTaskIds = new Set(schedule.tasks.filter(t => {
+    const s = new Date(t.timeBlock.start).getTime();
+    return s >= dayStart.getTime() && s < dayEnd.getTime();
+  }).map(t => t.id));
+  const dayAssignmentCounts = new Map<string, number>();
+  for (const a of schedule.assignments) {
+    if (dayTaskIds.has(a.taskId)) {
+      dayAssignmentCounts.set(a.participantId, (dayAssignmentCounts.get(a.participantId) || 0) + 1);
+    }
+  }
+
+  const filterText = _warehouseFilter.trim().toLowerCase();
+
+  function renderPool(pool: Participant[], label: string): string {
+    let filtered = pool;
+    if (filterText) {
+      filtered = pool.filter(p => p.name.toLowerCase().includes(filterText));
+    }
+
+    // Sort: eligible first (if slot selected), then by name
+    if (_eligibleForSelectedSlot) {
+      filtered.sort((a, b) => {
+        const aElig = _eligibleForSelectedSlot!.has(a.id) ? 0 : 1;
+        const bElig = _eligibleForSelectedSlot!.has(b.id) ? 0 : 1;
+        if (aElig !== bElig) return aElig - bElig;
+        return a.name.localeCompare(b.name, 'he');
+      });
+    }
+
+    const cards = filtered.map(p => {
+      const dayCount = dayAssignmentCounts.get(p.id) || 0;
+      let cardClass = 'warehouse-card';
+      if (_eligibleForSelectedSlot) {
+        cardClass += _eligibleForSelectedSlot.has(p.id) ? ' wc-eligible' : ' wc-ineligible';
+      }
+      return `<div class="${cardClass}" data-pid="${p.id}" role="button" tabindex="0">
+        <span class="wc-name" style="color:${groupColor(p.group)}">${escHtml(p.name)}</span>
+        <span class="wc-badges">${levelBadge(p.level)} ${certBadges(p.certifications, '')}</span>
+        ${dayCount > 0 ? `<span class="wc-load" title="${dayCount} שיבוצים היום">${dayCount}</span>` : ''}
+      </div>`;
+    }).join('');
+
+    return `<div class="warehouse-pool">
+      <div class="warehouse-pool-header">${label} (${filtered.length})</div>
+      <div class="warehouse-pool-cards">${cards || '<span class="text-muted">אין משתתפים</span>'}</div>
+    </div>`;
+  }
+
+  return `<section class="manual-warehouse" id="manual-warehouse">
+    <div class="warehouse-header">
+      <h3>מאגר משתתפים</h3>
+      <input type="search" class="warehouse-filter" id="warehouse-filter" placeholder="חיפוש שם..." value="${escHtml(_warehouseFilter)}" />
+    </div>
+    ${renderPool(l0Pool, 'דרגה 0')}
+    ${renderPool(seniorPool, 'סגל (L2-L4)')}
+  </section>`;
+}
+
+/**
+ * Build warehouse HTML for use inside a mobile bottom sheet.
+ * Includes a header with slot context and a remove button if the slot is filled.
+ */
+function buildWarehouseSheetContent(schedule: Schedule): string {
+  const task = schedule.tasks.find(t => t.id === _manualSelectedTaskId);
+  if (!task || !_manualSelectedSlotId) return '';
+  const slot = task.slots.find(s => s.slotId === _manualSelectedSlotId);
+  if (!slot) return '';
+
+  const existingAssignment = schedule.assignments.find(
+    a => a.taskId === task.id && a.slotId === _manualSelectedSlotId
+  );
+  const existingParticipant = existingAssignment
+    ? schedule.participants.find(p => p.id === existingAssignment.participantId)
+    : undefined;
+
+  const levels = slot.acceptableLevels.map(l => l.level).join('/');
+  let header = `<div class="warehouse-sheet-header">
+    <div class="warehouse-sheet-title">בחר משתתף ל-"${escHtml(task.name)}"</div>
+    <div class="warehouse-sheet-reqs">${levels ? `L${levels}` : ''} ${certBadges(slot.requiredCertifications, '')}</div>
+  </div>`;
+
+  if (existingAssignment && existingParticipant) {
+    header += `<button class="btn-manual-remove-sheet" data-action="manual-remove" data-assignment-id="${existingAssignment.id}">✕ הסר שיבוץ של ${escHtml(existingParticipant.name)}</button>`;
+  }
+
+  // Render participant cards
+  const participants = schedule.participants;
+  const filterText = _warehouseFilter.trim().toLowerCase();
+  let filtered = filterText ? participants.filter(p => p.name.toLowerCase().includes(filterText)) : [...participants];
+
+  // Sort eligible first
+  if (_eligibleForSelectedSlot) {
+    filtered.sort((a, b) => {
+      const aElig = _eligibleForSelectedSlot!.has(a.id) ? 0 : 1;
+      const bElig = _eligibleForSelectedSlot!.has(b.id) ? 0 : 1;
+      if (aElig !== bElig) return aElig - bElig;
+      return a.name.localeCompare(b.name, 'he');
+    });
+  }
+
+  const cards = filtered.map(p => {
+    let cardClass = 'warehouse-card warehouse-card-sheet';
+    if (_eligibleForSelectedSlot) {
+      cardClass += _eligibleForSelectedSlot.has(p.id) ? ' wc-eligible' : ' wc-ineligible';
+    }
+    return `<div class="${cardClass}" data-pid="${p.id}" role="button" tabindex="0">
+      <span class="wc-name" style="color:${groupColor(p.group)}">${escHtml(p.name)}</span>
+      <span class="wc-badges">${levelBadge(p.level)} ${certBadges(p.certifications, '')}</span>
+    </div>`;
+  }).join('');
+
+  return `${header}<div class="warehouse-sheet-cards">${cards}</div>`;
+}
+
+// ─── Manual Build: Interaction Handlers ─────────────────────────────────────
+
+function handleManualSlotClick(taskId: string, slotId: string): void {
+  if (!currentSchedule) return;
+
+  // Toggle off if already selected
+  if (_manualSelectedTaskId === taskId && _manualSelectedSlotId === slotId) {
+    clearManualSelection();
+    renderAll();
+    return;
+  }
+
+  // Check if the slot is frozen
+  const task = currentSchedule.tasks.find(t => t.id === taskId);
+  if (!task) return;
+  const lm = store.getLiveModeState();
+  if (lm.enabled && !isFutureTask(task, lm.currentTimestamp)) {
+    showToast('המשימה מוקפאת — לא ניתן לערוך', { type: 'error' });
+    return;
+  }
+
+  // Select slot + compute eligible
+  _manualSelectedTaskId = taskId;
+  _manualSelectedSlotId = slotId;
+
+  const allTasks = currentSchedule.tasks;
+  const disabledHC = engine ? new Set(store.getAlgorithmSettings().disabledHardConstraints) : undefined;
+  const eligible = getEligibleParticipantsForSlot(task, slotId, currentSchedule.participants, currentSchedule.assignments, allTasks, disabledHC);
+  _eligibleForSelectedSlot = new Set(eligible.map(p => p.id));
+
+  if (isSmallScreen) {
+    openWarehouseSheet();
+  } else {
+    renderAll();
+  }
+}
+
+async function handleManualParticipantClick(participantId: string): Promise<void> {
+  if (!currentSchedule || !engine || !_manualSelectedTaskId || !_manualSelectedSlotId) return;
+
+  const task = currentSchedule.tasks.find(t => t.id === _manualSelectedTaskId);
+  if (!task) return;
+  const slot = task.slots.find(s => s.slotId === _manualSelectedSlotId);
+  if (!slot) return;
+  const participant = currentSchedule.participants.find(p => p.id === participantId);
+  if (!participant) return;
+
+  // Build assignment context for eligibility check
+  const taskMap = new Map(currentSchedule.tasks.map(t => [t.id, t]));
+  const pMap = new Map(currentSchedule.participants.map(p => [p.id, p]));
+  const existingAssignment = currentSchedule.assignments.find(
+    a => a.taskId === task.id && a.slotId === _manualSelectedSlotId
+  );
+
+  // Build participant's current assignments, excluding the target slot if it's a replace
+  const pAssignments = currentSchedule.assignments.filter(
+    a => a.participantId === participantId && !(a.taskId === task.id && a.slotId === _manualSelectedSlotId)
+  );
+
+  const taskAssignments = currentSchedule.assignments.filter(a => a.taskId === task.id);
+  const disabledHC = new Set(store.getAlgorithmSettings().disabledHardConstraints);
+
+  const reason = getRejectionReason(participant, task, slot, pAssignments, taskMap, {
+    checkSameGroup: true,
+    taskAssignments,
+    participantMap: pMap,
+    disabledHC,
+  });
+
+  if (reason) {
+    showToast(REJECTION_MESSAGES[reason] || `אילוץ ${reason}`, { type: 'error' });
+    return;
+  }
+
+  // Check if participant is already assigned elsewhere (not in target slot)
+  const otherAssignment = currentSchedule.assignments.find(
+    a => a.participantId === participantId && !(a.taskId === task.id && a.slotId === _manualSelectedSlotId)
+  );
+  if (otherAssignment) {
+    const otherTask = currentSchedule.tasks.find(t => t.id === otherAssignment.taskId);
+    const confirmed = await showConfirm(
+      `${participant.name} משובץ כרגע ב-"${otherTask?.name || '?'}". להעביר לכאן?`
+    );
+    if (!confirmed) return;
+  }
+
+  executeManualAssignment(participantId, existingAssignment, otherAssignment || null);
+}
+
+function executeManualAssignment(
+  participantId: string,
+  existingInSlot: Assignment | undefined,
+  moveFrom: Assignment | null,
+): void {
+  if (!currentSchedule || !engine) return;
+
+  // Push undo snapshot
+  _manualUndoStack.push(currentSchedule.assignments.map(a => ({ ...a })));
+
+  // Remove from source slot if moving
+  if (moveFrom) {
+    currentSchedule.assignments = currentSchedule.assignments.filter(a => a.id !== moveFrom.id);
+  }
+
+  if (existingInSlot) {
+    // Replace existing occupant
+    existingInSlot.participantId = participantId;
+    existingInSlot.status = AssignmentStatus.Manual;
+    existingInSlot.updatedAt = new Date();
+  } else {
+    // New assignment
+    currentSchedule.assignments.push({
+      id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      taskId: _manualSelectedTaskId!,
+      slotId: _manualSelectedSlotId!,
+      participantId,
+      status: AssignmentStatus.Manual,
+      updatedAt: new Date(),
+    } as Assignment);
+  }
+
+  engine.importSchedule(currentSchedule);
+  clearManualSelection();
+  revalidateAndRefresh();
+  showToast('שיבוץ בוצע', { type: 'success' });
+}
+
+function handleManualRemove(assignmentId: string): void {
+  if (!currentSchedule || !engine) return;
+  const a = currentSchedule.assignments.find(a => a.id === assignmentId);
+  if (!a) return;
+
+  if (a.status === AssignmentStatus.Frozen) {
+    showToast('השיבוץ מוקפא — לא ניתן לשנות', { type: 'error' });
+    return;
+  }
+
+  // Push undo snapshot
+  _manualUndoStack.push(currentSchedule.assignments.map(a => ({ ...a })));
+
+  currentSchedule.assignments = currentSchedule.assignments.filter(x => x.id !== assignmentId);
+  engine.importSchedule(currentSchedule);
+  clearManualSelection();
+  revalidateAndRefresh();
+  showToast('השיבוץ הוסר', { type: 'info' });
+}
+
+function handleManualUndo(): void {
+  if (!currentSchedule || !engine || _manualUndoStack.length === 0) return;
+  const prev = _manualUndoStack.pop()!;
+  currentSchedule.assignments = prev;
+  engine.importSchedule(currentSchedule);
+  clearManualSelection();
+  revalidateAndRefresh();
+  showToast('הפעולה בוטלה', { type: 'info' });
+}
+
+/** Open warehouse as a bottom sheet on mobile */
+function openWarehouseSheet(): void {
+  if (!currentSchedule) return;
+  const content = buildWarehouseSheetContent(currentSchedule);
+  const handle = showBottomSheet(content, {
+    title: 'בחר משתתף',
+  });
+
+  // Wire participant card clicks inside the sheet
+  // Use requestAnimationFrame to ensure DOM is painted
+  requestAnimationFrame(() => {
+    const sheetBody = document.querySelector('.gm-bs-body');
+    if (!sheetBody) return;
+    sheetBody.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      const card = target.closest('.warehouse-card[data-pid]') as HTMLElement | null;
+      if (card) {
+        e.stopPropagation();
+        const pid = card.dataset.pid!;
+        handleManualParticipantClick(pid).then(() => {
+          handle.close();
+        });
+        return;
+      }
+      // Remove button
+      const removeBtn = target.closest('[data-action="manual-remove"]') as HTMLElement | null;
+      if (removeBtn) {
+        e.stopPropagation();
+        const aid = removeBtn.dataset.assignmentId;
+        if (aid) {
+          handleManualRemove(aid);
+          handle.close();
+        }
+      }
+    });
+  });
 }
 
 // ─── Snapshot Panel ─────────────────────────────────────────────────────────
@@ -1226,7 +1595,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
           <td rowspan="${taskAssignments.length}">${taskBadge(task)}</td>
           <td rowspan="${taskAssignments.length}">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</td>`;
       }
-      html += `<td><small>${slot?.label || a.slotId}</small></td>
+      html += `<td><small>${slot?.label || task.name}</small></td>
         <td><strong class="participant-hover" data-pid="${p?.id || ''}">${p?.name || '???'}</strong></td>
         <td>${p ? levelBadge(p.level) : '—'}</td>
         <td>${p ? groupBadge(p.group) : '—'}</td>
@@ -2225,7 +2594,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.5.8</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.5.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2952,6 +3321,77 @@ function wireScheduleEvents(container: HTMLElement): void {
   // ── Export PDF button ──
   const exportBtn = container.querySelector('#btn-export-pdf');
   if (exportBtn) exportBtn.addEventListener('click', openExportModal);
+
+  // ── Manual Build Mode ──
+  const manualBuildBtn = container.querySelector('#btn-manual-build');
+  if (manualBuildBtn) {
+    manualBuildBtn.addEventListener('click', () => {
+      _manualBuildActive = !_manualBuildActive;
+      clearManualSelection();
+      _manualUndoStack = [];
+      _warehouseFilter = '';
+      renderAll();
+    });
+  }
+
+  const manualUndoBtn = container.querySelector('#btn-manual-undo');
+  if (manualUndoBtn) {
+    manualUndoBtn.addEventListener('click', handleManualUndo);
+  }
+
+  // Manual-build: slot click delegation on schedule grid
+  if (_manualBuildActive) {
+    container.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+
+      // Handle remove button click
+      const removeBtn = target.closest('[data-action="manual-remove"]') as HTMLElement | null;
+      if (removeBtn) {
+        e.stopPropagation();
+        const card = removeBtn.closest('.assignment-card') as HTMLElement | null;
+        const aid = card?.dataset.assignmentId;
+        if (aid) handleManualRemove(aid);
+        return;
+      }
+
+      // Handle slot card click
+      const card = target.closest('.assignment-card[data-task-id]') as HTMLElement | null;
+      if (card) {
+        const taskId = card.dataset.taskId;
+        const slotId = card.dataset.slotId;
+        if (taskId && slotId) {
+          handleManualSlotClick(taskId, slotId);
+        }
+        return;
+      }
+
+      // Handle warehouse participant card click (desktop)
+      const warehouseCard = target.closest('.warehouse-card[data-pid]') as HTMLElement | null;
+      if (warehouseCard) {
+        const pid = warehouseCard.dataset.pid;
+        if (pid) handleManualParticipantClick(pid);
+        return;
+      }
+    });
+
+    // Warehouse search filter
+    const filterInput = container.querySelector('#warehouse-filter') as HTMLInputElement | null;
+    if (filterInput) {
+      filterInput.addEventListener('input', () => {
+        _warehouseFilter = filterInput.value;
+        renderAll();
+      });
+    }
+
+    // Escape key to clear selection
+    const escHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && _manualBuildActive && (_manualSelectedTaskId || _manualSelectedSlotId)) {
+        clearManualSelection();
+        renderAll();
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+  }
 }
 
 // ─── Export PDF Modal ────────────────────────────────────────────────────────
@@ -3613,7 +4053,7 @@ function buildTaskTooltipContent(taskId: string): string {
           <span class="ttt-mate-level" style="background:${levelColors[p.level]}">L${p.level}</span>
         </div>
         <div class="ttt-mate-meta">
-          ${slot ? `<span class="ttt-slot">${slot.label}</span>` : ''}
+          ${slot ? `<span class="ttt-slot">${slot.label || task.name}</span>` : ''}
           ${certsHtml}
         </div>
       </div>`;

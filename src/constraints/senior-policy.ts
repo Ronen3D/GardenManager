@@ -36,6 +36,7 @@ import {
   SchedulerConfig,
 } from '../models/types';
 import { isAcceptedLevel, isLowPriority } from '../models/level-utils';
+import { describeSlot } from '../utils/date-utils';
 
 // ─── Natural-role detection ──────────────────────────────────────────────────
 
@@ -100,7 +101,7 @@ export function checkSeniorHardBlock(
   // Everything else is forbidden
   return {
     code: 'SENIOR_HARD_BLOCK',
-    message: `${participant.name} (דרגה ${lvl}) אינו/ה ניתן/ת לשיבוץ ב-${task.name} [${slot.label || slot.slotId}] — לא בתחום התפקיד הטבעי שלו/ה`,
+    message: `${participant.name} (דרגה ${lvl}) אינו/ה ניתן/ת לשיבוץ ב-${task.name} [${describeSlot(task.name, slot.label, task.timeBlock)}] — לא בתחום התפקיד הטבעי שלו/ה`,
     severity: ViolationSeverity.Error,
     participantId: participant.id,
     taskId: task.id,
