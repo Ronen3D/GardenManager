@@ -820,14 +820,13 @@ export function getCategoryColorMap(): Record<string, string> {
  * Keyed by template `name` (= `sourceName` on Task), not by taskType.
  * Replaces all type-keyed map functions.
  */
-export function getTemplateVisualMap(): Record<string, { color: string; icon: string; displayOrder: number; displayCategory: string }> {
-  const map: Record<string, { color: string; icon: string; displayOrder: number; displayCategory: string }> = {};
+export function getTemplateVisualMap(): Record<string, { color: string; displayOrder: number; displayCategory: string }> {
+  const map: Record<string, { color: string; displayOrder: number; displayCategory: string }> = {};
   let autoIdx = 0;
   for (const tpl of taskTemplates.values()) {
     if (!map[tpl.name]) {
       map[tpl.name] = {
         color: tpl.color || AUTO_PALETTE[autoIdx++ % AUTO_PALETTE.length],
-        icon: tpl.icon || tpl.name[0] || '?',
         displayOrder: tpl.displayOrder ?? 100,
         displayCategory: tpl.displayCategory || tpl.name.toLowerCase(),
       };
@@ -1103,16 +1102,16 @@ export function seedDefaultTaskTemplates(): void {
     subTeams: [
       {
         id: uid('st'), name: 'סגול ראשי', subTeamRole: AdanitTeam.SegolMain, slots: [
-          { id: uid('slot'), label: 'סגול ראשי #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול ראשי #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול ראשי #3', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'משתתף בסגול א', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'משתתף בסגול א', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'סגל בסגול א', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan] },
         ],
       },
       {
         id: uid('st'), name: 'סגול משני', subTeamRole: AdanitTeam.SegolSecondary, slots: [
-          { id: uid('slot'), label: 'סגול משני #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול משני #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגול משני #3', acceptableLevels: [{ level: Level.L2 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'משתתף בסגול ב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'משתתף בסגול ב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'בכיר בסגול ב\'', acceptableLevels: [{ level: Level.L2 }], requiredCertifications: [Certification.Nitzan] },
         ],
       },
     ],
@@ -1121,7 +1120,6 @@ export function seedDefaultTaskTemplates(): void {
     displayCategory: 'patrol',
     color: '#4A90D9',
     displayOrder: 0,
-    icon: '🌱',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. שתי תת-קבוצות. כל 6 חייבים ניצן. אותה קבוצה.',
   });
 
@@ -1145,7 +1143,6 @@ export function seedDefaultTaskTemplates(): void {
     displayCategory: 'hamama',
     color: '#E74C3C',
     displayOrder: 1,
-    icon: '🏠',
     description: 'משמרות 12 שעות (06:00-18:00, 18:00-06:00). דורש הסמכת חממה. L2/L4 אסור. ללא דרישת ניצן.',
   });
 
@@ -1164,14 +1161,13 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 6,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'שמש #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'שמש #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בשמש', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בשמש', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
     ],
     requiresCategoryBreak: true,
     displayCategory: 'shemesh',
     color: '#F39C12',
     displayOrder: 4,
-    icon: '☀️',
     description: 'משמרות 4 שעות (מחזור 05:00), 6 ביום. דורש ניצן.',
   });
 
@@ -1190,13 +1186,12 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 2,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'ממטרה #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
-      { id: uid('slot'), label: 'ממטרה #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
+      { id: uid('slot'), label: 'משתתף בממטרה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
+      { id: uid('slot'), label: 'משתתף בממטרה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
     ],
     displayCategory: 'mamtera',
     color: '#27AE60',
     displayOrder: 3,
-    icon: '💧',
     description: '09:00-23:00. 2× L0.',
   });
 
@@ -1232,15 +1227,14 @@ export function seedDefaultTaskTemplates(): void {
     ],
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'כרוב מפקד', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרוב + סלסלה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Salsala] },
-      { id: uid('slot'), label: 'כרוב #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרוב #3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'מפקד כרוב (דרגה 2/3/4)', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'נהג כרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Salsala] },
+      { id: uid('slot'), label: 'משתתף בכרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'משתתף בקרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
     ],
     displayCategory: 'patrol',
     color: '#8E44AD',
     displayOrder: 0,
-    icon: '🥬',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
   });
 
@@ -1259,15 +1253,14 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 5,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'כרובית מפקד', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרובית #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרובית #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'כרובית #3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'סגל כרובית', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
     ],
     displayCategory: 'patrol',
     color: '#BDC3C7',
     displayOrder: 0,
-    icon: '🥬',
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 3× L0. קל — ללא השפעה על מנוחה.',
   });
 
@@ -1286,13 +1279,12 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 4,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'ערוגה #1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'ערוגה #2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'משתתף בערוגה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'משתתף בערוגה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
     ],
     displayCategory: 'aruga',
     color: '#1ABC9C',
     displayOrder: 2,
-    icon: '🌿',
     description: '1.5 שעות, 2 ביום (בוקר 05:00-06:30, ערב 17:00-18:30). 2× L0.',
   });
 }

@@ -27,10 +27,9 @@ import { escHtml } from './ui-helpers';
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
 const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala, Certification.Horesh];
 
-function templateBadge(tpl: { color?: string; icon?: string; name: string }): string {
+function templateBadge(tpl: { color?: string; name: string }): string {
   const color = tpl.color || '#7f8c8d';
-  const icon = tpl.icon || '';
-  return `<span class="badge" style="background:${color}">${icon ? `<span aria-hidden="true" style="margin-inline-end:3px">${icon}</span>` : ''}${tpl.name}</span>`;
+  return `<span class="badge" style="background:${color}">${tpl.name}</span>`;
 }
 
 function levelBadge(level: Level): string {

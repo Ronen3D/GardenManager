@@ -1141,6 +1141,12 @@
     font-size: 0.75rem;
   }
 
+  /* Preference eligibility warning — mobile compact */
+  .pref-eligibility-warning {
+    font-size: 0.72rem;
+    padding: 5px 8px;
+  }
+
   /* Inline unavailability editor — mobile compact */
   .table-participants tbody tr.row-editing .col-avail::before {
     content: 'זמינות';

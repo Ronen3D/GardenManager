@@ -102,11 +102,10 @@ export function groupBadge(group: string, clickable = false): string {
 }
 
 /** Task badge HTML from a task-like object with direct visual properties. */
-export function taskBadge(task: { color?: string; icon?: string; sourceName?: string; name?: string }): string {
+export function taskBadge(task: { color?: string; sourceName?: string; name?: string }): string {
   const color = task.color || '#7f8c8d';
-  const icon = task.icon || '';
   const label = task.sourceName || task.name || '';
-  return `<span class="badge" style="background:${color}">${icon ? `<span aria-hidden="true" style="margin-inline-end:3px">${icon}</span>` : ''}${label}</span>`;
+  return `<span class="badge" style="background:${color}">${label}</span>`;
 }
 
 /** @deprecated Use taskBadge() instead. Kept temporarily during migration. */
@@ -115,9 +114,8 @@ export function taskTypeBadge(type: string): string {
   // Find by matching template name
   const v = visuals[type];
   const color = v?.color || '#7f8c8d';
-  const icon = v?.icon || '';
   const label = type;
-  return `<span class="badge" style="background:${color}">${icon ? `<span aria-hidden="true" style="margin-inline-end:3px">${icon}</span>` : ''}${label}</span>`;
+  return `<span class="badge" style="background:${color}">${label}</span>`;
 }
 
 /** Escape a string for safe HTML interpolation. */

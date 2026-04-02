@@ -185,8 +185,6 @@ export interface Task {
   displayCategory?: string;
   /** Display color propagated from template (hex, e.g. '#4A90D9'). */
   color?: string;
-  /** Badge icon propagated from template (emoji or unicode character). */
-  icon?: string;
 }
 
 // ─── Assignment ──────────────────────────────────────────────────────────────
@@ -583,8 +581,6 @@ export interface TaskTemplate {
   color?: string;
   /** Display ordering within the schedule grid. Lower = earlier (rightmost in RTL). */
   displayOrder?: number;
-  /** Badge icon (emoji or unicode character). Auto-derived from name if unset. */
-  icon?: string;
 }
 
 // ─── One-Time Task Definition ───────────────────────────────────────────────
@@ -627,8 +623,6 @@ export interface OneTimeTask {
   color?: string;
   /** Display ordering within the schedule grid. Lower = earlier (rightmost in RTL). */
   displayOrder?: number;
-  /** Badge icon (emoji or unicode character). */
-  icon?: string;
   /** Custom notes / description. */
   description?: string;
 }

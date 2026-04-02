@@ -13,11 +13,17 @@ import {
   ConstraintViolation,
   ViolationSeverity,
   SwapRequest,
+  Level,
+  Certification,
+  TaskTemplate,
+  SlotTemplate,
+  SubTeamRole,
 } from '../models/types';
 import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt, CATEGORY_BREAK_MS } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 import { checkSeniorHardBlock } from '../constraints/senior-policy';
+import { isAcceptedLevel, isLowPriority } from '../models/level-utils';
 
 export interface FullValidationResult extends ValidationResult {
   /** Soft constraint warnings (non-fatal) */
@@ -269,4 +275,107 @@ export function getEligibleParticipantsForSlot(
       disabledHC,
     });
   });
+}
+
+// ─── Template-level eligibility (static checks, no runtime context) ─────────
+
+export interface TemplateEligibilityResult {
+  eligible: boolean;
+  /** Hebrew human-readable reasons (empty when eligible) */
+  reasons: string[];
+}
+
+/**
+ * HC-13 check adapted for SlotTemplate (same shape as SlotRequirement for
+ * the fields we need: subTeamRole, acceptableLevels).
+ * Returns true when the senior is BLOCKED from this slot.
+ */
+function isSeniorBlockedForTemplateSlot(level: Level, slot: SlotTemplate): boolean {
+  if (level === Level.L0) return false;
+  // Low-priority levels are allowed (with soft penalty) — not blocked
+  if (isLowPriority(slot.acceptableLevels, level)) return false;
+  // Inline isNaturalRole logic (mirrors senior-policy.ts, _task param unused)
+  if (slot.subTeamRole != null) {
+    if (level === Level.L4 || level === Level.L3) {
+      return slot.subTeamRole !== SubTeamRole.SegolMain;
+    }
+    if (level === Level.L2) {
+      return slot.subTeamRole !== SubTeamRole.SegolSecondary;
+    }
+    return true;
+  }
+  if (isLowPriority(slot.acceptableLevels, level)) return true;
+  return !isAcceptedLevel(slot.acceptableLevels, level);
+}
+
+const CERT_LABELS_HE: Record<string, string> = {
+  Nitzan: 'ניצן', Salsala: 'סלסלה', Hamama: 'חממה', Horesh: 'חורש',
+};
+
+/**
+ * Check whether a participant (by level + certifications) can fill ANY slot
+ * in a task template. Only static constraints are checked (HC-1, HC-2, HC-11, HC-13).
+ *
+ * Used by the preference-selection UI to warn when a preference can never be satisfied.
+ */
+export function checkTemplateEligibility(
+  level: Level,
+  certifications: Certification[],
+  template: TaskTemplate,
+): TemplateEligibilityResult {
+  // Collect all slots: top-level + sub-team slots
+  const allSlots: SlotTemplate[] = [
+    ...template.slots,
+    ...template.subTeams.flatMap(st => st.slots),
+  ];
+
+  if (allSlots.length === 0) return { eligible: true, reasons: [] };
+
+  // Track which constraint codes blocked across ALL slots
+  const blockedBy = new Set<string>();
+
+  for (const slot of allSlots) {
+    // HC-13: Senior hard block
+    if (isSeniorBlockedForTemplateSlot(level, slot)) { blockedBy.add('HC-13'); continue; }
+    // HC-11: Forbidden certifications
+    if (slot.forbiddenCertifications?.some(c => certifications.includes(c))) { blockedBy.add('HC-11'); continue; }
+    // HC-1: Level check (reuse existing isLevelSatisfied — works with SlotTemplate since it has acceptableLevels)
+    if (!isLevelSatisfied(level, slot as unknown as SlotRequirement)) { blockedBy.add('HC-1'); continue; }
+    // HC-2: Required certifications
+    if (slot.requiredCertifications.some(c => !certifications.includes(c))) { blockedBy.add('HC-2'); continue; }
+    // Passed all checks — eligible for this slot
+    return { eligible: true, reasons: [] };
+  }
+
+  // No slot passed — build human-readable reasons
+  const reasons: string[] = [];
+  if (blockedBy.has('HC-13')) {
+    reasons.push(`סגל בדרגה L${level} לא יכול להשתבץ למשימה הזו (מחוץ לתחום הטבעי)`);
+  }
+  if (blockedBy.has('HC-1')) {
+    reasons.push(`הדרגה (L${level}) לא מתאימה לאף משבצת במשימה הזו`);
+  }
+  if (blockedBy.has('HC-2')) {
+    // Find which certs are required across slots but the participant lacks
+    const missingCerts = new Set<Certification>();
+    for (const slot of allSlots) {
+      for (const c of slot.requiredCertifications) {
+        if (!certifications.includes(c)) missingCerts.add(c);
+      }
+    }
+    const names = [...missingCerts].map(c => CERT_LABELS_HE[c] || c).join(', ');
+    reasons.push(`חסרה הסמכה נדרשת (${names}) לכל המשבצות במשימה הזו`);
+  }
+  if (blockedBy.has('HC-11')) {
+    const forbidden = new Set<Certification>();
+    for (const slot of allSlots) {
+      for (const c of slot.forbiddenCertifications || []) {
+        if (certifications.includes(c)) forbidden.add(c);
+      }
+    }
+    const names = [...forbidden].map(c => CERT_LABELS_HE[c] || c).join(', ');
+    reasons.push(`יש לך הסמכה אסורה (${names}) במשימה הזו`);
+  }
+
+  return { eligible: false, reasons };
 }

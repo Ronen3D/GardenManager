@@ -386,7 +386,6 @@ function generateTasksFromTemplates(): Task[] {
           requiresCategoryBreak: tpl.requiresCategoryBreak,
           displayCategory: tpl.displayCategory,
           color: tpl.color || v?.color || '#7f8c8d',
-          icon: tpl.icon || v?.icon || tpl.name[0] || '?',
         });
       }
     }
@@ -465,7 +464,6 @@ function generateTasksFromTemplates(): Task[] {
       requiresCategoryBreak: ot.requiresCategoryBreak,
       displayCategory: ot.displayCategory,
       color: ot.color || '#7f8c8d',
-      icon: (ot as any).icon || ot.name[0] || '?',
     });
   }
 
@@ -2227,7 +2225,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.5.5</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.5.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

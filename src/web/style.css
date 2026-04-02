@@ -4204,6 +4204,27 @@ tr.now-row-animate > td.time-cell {
   min-height: 1.2em;
 }
 
+/* ─── Preference Eligibility Warning ─────────────────────────────────── */
+
+.pref-eligibility-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  background: rgba(243, 156, 18, 0.12);
+  border-inline-start: 3px solid var(--warning);
+  color: var(--warning);
+}
+.pref-eligibility-warning .warn-icon {
+  flex-shrink: 0;
+  font-size: 0.9rem;
+}
+.pref-eligibility-warning.hidden { display: none; }
+
 /* ─── Participant Sets (extends .preset-*) ───────────────────────────── */
 
 .pset-count-badge {

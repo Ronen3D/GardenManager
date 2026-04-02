@@ -17,6 +17,7 @@ import { showConfirm, showToast } from './ui-modal';
 import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, SVG_ICONS, escHtml } from './ui-helpers';
 import { HORESH_PAKAL_ID, getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
 import { HEBREW_DAYS } from '../utils/date-utils';
+import { checkTemplateEligibility, TemplateEligibilityResult } from '../engine/validator';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -173,7 +174,79 @@ function renderTaskNameSelect(fieldName: string, value?: string): string {
     ${options.map(name =>
       `<option value="${name}" ${value === name ? 'selected' : ''}>${name}</option>`
     ).join('')}
-  </select>`;
+  </select>
+  <div class="pref-eligibility-warning hidden" data-warning-for="${fieldName}">
+    <span class="warn-icon">⚠</span>
+    <span class="warn-text"></span>
+  </div>`;
+}
+
+// ─── Preference Eligibility Warning Helpers ─────────────────────────────────
+
+/** Read participant level + certs from an edit row or add form. */
+function readParticipantFromForm(
+  row: Element,
+  isAddForm: boolean,
+): { level: Level; certifications: Certification[] } {
+  const levelField = isAddForm ? 'new-level' : 'level';
+  const levelSel = row.querySelector(`[data-field="${levelField}"]`) as HTMLSelectElement | null;
+  const level = parseInt(levelSel?.value || '0') as Level;
+  const certAttr = isAddForm ? 'data-new-cert' : 'data-cert';
+  const certs: Certification[] = [];
+  row.querySelectorAll<HTMLInputElement>(`[${certAttr}]`).forEach(cb => {
+    if (cb.checked) {
+      const val = isAddForm ? cb.dataset.newCert : cb.dataset.cert;
+      if (val) certs.push(val as Certification);
+    }
+  });
+  return { level, certifications: certs };
+}
+
+/** Show/hide the eligibility warning for a preference select. */
+function updatePrefWarning(
+  container: Element,
+  fieldName: string,
+  taskName: string,
+  level: Level,
+  certs: Certification[],
+): void {
+  const warningEl = container.querySelector(`[data-warning-for="${fieldName}"]`) as HTMLElement | null;
+  if (!warningEl) return;
+  const textEl = warningEl.querySelector('.warn-text') as HTMLElement;
+
+  if (!taskName) {
+    warningEl.classList.add('hidden');
+    return;
+  }
+
+  const templates = store.getAllTaskTemplates().filter(t => t.name === taskName);
+  if (templates.length === 0) { warningEl.classList.add('hidden'); return; }
+
+  // Eligible if ANY template with this name has a fillable slot
+  let bestResult: TemplateEligibilityResult = { eligible: false, reasons: [] };
+  for (const tpl of templates) {
+    const result = checkTemplateEligibility(level, certs, tpl);
+    if (result.eligible) { bestResult = result; break; }
+    if (bestResult.reasons.length === 0) bestResult = result;
+  }
+
+  if (bestResult.eligible) {
+    warningEl.classList.add('hidden');
+  } else {
+    textEl.textContent = bestResult.reasons.join(' | ');
+    warningEl.classList.remove('hidden');
+  }
+}
+
+/** Trigger eligibility warning for both preference selects in a row/form. */
+function recheckAllPrefWarnings(container: Element, isAddForm: boolean): void {
+  const { level, certifications } = readParticipantFromForm(container, isAddForm);
+  const prefField = isAddForm ? 'new-preferredTask' : 'preferredTask';
+  const lessField = isAddForm ? 'new-lessPreferredTask' : 'lessPreferredTask';
+  const prefVal = (container.querySelector(`[data-field="${prefField}"]`) as HTMLSelectElement | null)?.value || '';
+  const lessVal = (container.querySelector(`[data-field="${lessField}"]`) as HTMLSelectElement | null)?.value || '';
+  updatePrefWarning(container, prefField, prefVal, level, certifications);
+  updatePrefWarning(container, lessField, lessVal, level, certifications);
 }
 
 // ─── Group Name Validation ───────────────────────────────────────────────────
@@ -766,6 +839,52 @@ function renderBulkDeleteDialog(): string {
 export function wireParticipantsEvents(container: HTMLElement, rerender: () => void): void {
   container.querySelectorAll<HTMLElement>('tr.row-editing, #add-participant-form').forEach(scope => {
     syncAutoHoreshPakal(scope, '[data-cert="Horesh"], [data-new-cert="Horesh"]', '[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]');
+  });
+
+  // ─── Preference eligibility warnings: show on edit open if prefs already set ─
+  container.querySelectorAll<HTMLElement>('tr.row-editing').forEach(row => {
+    recheckAllPrefWarnings(row, false);
+  });
+  const addForm = container.querySelector('#add-participant-form') as HTMLElement | null;
+  if (addForm && !addForm.classList.contains('hidden')) {
+    recheckAllPrefWarnings(addForm, true);
+  }
+
+  // ─── Preference eligibility warnings: react to select / level / cert changes ─
+  container.addEventListener('change', (e) => {
+    const target = e.target as HTMLElement;
+    const field = target.getAttribute('data-field') || '';
+
+    // Preference select changed → update just that warning
+    if (['preferredTask', 'lessPreferredTask', 'new-preferredTask', 'new-lessPreferredTask'].includes(field)) {
+      const isAdd = field.startsWith('new-');
+      const scope = isAdd
+        ? target.closest('#add-participant-form')
+        : target.closest('tr.row-editing');
+      if (!scope) return;
+      const { level, certifications } = readParticipantFromForm(scope, isAdd);
+      updatePrefWarning(scope, field, (target as HTMLSelectElement).value, level, certifications);
+      return;
+    }
+
+    // Level changed → recheck both preference warnings in the same row/form
+    if (field === 'level' || field === 'new-level') {
+      const isAdd = field === 'new-level';
+      const scope = isAdd
+        ? target.closest('#add-participant-form')
+        : target.closest('tr.row-editing');
+      if (scope) recheckAllPrefWarnings(scope, isAdd);
+      return;
+    }
+
+    // Certification checkbox changed → recheck both preference warnings
+    if (target.hasAttribute('data-cert') || target.hasAttribute('data-new-cert')) {
+      const isAdd = target.hasAttribute('data-new-cert');
+      const scope = isAdd
+        ? target.closest('#add-participant-form')
+        : target.closest('tr.row-editing');
+      if (scope) recheckAllPrefWarnings(scope, isAdd);
+    }
   });
 
   // ─── Easter egg: triple-tap on count badge toggles "אי התאמה" column ──
