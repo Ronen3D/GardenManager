@@ -870,7 +870,7 @@ function renderScheduleTab(): string {
       </div>`;
   }
 
-  let html = `<div class="tab-toolbar schedule-toolbar">
+  let html = `<div class="tab-toolbar schedule-toolbar${_manualBuildActive ? ' schedule-toolbar-manual' : ''}">
     <div class="toolbar-left"><h2>תצוגת שבצ"ק</h2>
       <span class="text-muted" style="margin-inline-start:12px">שבצ"ק ל-${numDays} ימים</span>
     </div>
@@ -936,8 +936,10 @@ function renderScheduleTab(): string {
 
   const s = currentSchedule;
 
-  // Weekly Dashboard — always visible
-  html += renderWeeklyDashboard(s);
+  // Weekly Dashboard — hide in manual build mode on mobile to save space
+  if (!_manualBuildActive) {
+    html += renderWeeklyDashboard(s);
+  }
 
   // Day Navigator tabs
   html += renderDayNavigator();
@@ -1086,9 +1088,12 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
     : undefined;
 
   const levels = slot.acceptableLevels.map(l => l.level).join('/');
+  const cleanTaskName = (task.sourceName || task.name).replace(/^D\d+\s+/, '');
+  const slotLabel = slot.label ? ` — ${slot.label}` : '';
+  const timeRange = `${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}`;
   let header = `<div class="warehouse-sheet-header">
-    <div class="warehouse-sheet-title">בחר משתתף ל-"${escHtml(task.name)}"</div>
-    <div class="warehouse-sheet-reqs">${levels ? `L${levels}` : ''} ${certBadges(slot.requiredCertifications, '')}</div>
+    <div class="warehouse-sheet-title">בחר משתתף ל-${escHtml(cleanTaskName)}${escHtml(slotLabel)}</div>
+    <div class="warehouse-sheet-reqs">${timeRange} ${levels ? `L${levels}` : ''} ${certBadges(slot.requiredCertifications, '')}</div>
   </div>`;
 
   if (existingAssignment && existingParticipant) {
@@ -1121,7 +1126,11 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
     </div>`;
   }).join('');
 
-  return `${header}<div class="warehouse-sheet-cards">${cards}</div>`;
+  return `${header}
+    <div class="warehouse-sheet-filter">
+      <input type="search" class="warehouse-sheet-search" id="warehouse-sheet-search" placeholder="🔍 חיפוש שם..." autocomplete="off" />
+    </div>
+    <div class="warehouse-sheet-cards">${cards}</div>`;
 }
 
 // ─── Manual Build: Interaction Handlers ─────────────────────────────────────
@@ -1245,10 +1254,30 @@ function executeManualAssignment(
     } as Assignment);
   }
 
+  // Capture info for feedback before clearing selection
+  const assignedParticipant = currentSchedule.participants.find(p => p.id === participantId);
+  const assignedTask = currentSchedule.tasks.find(t => t.id === _manualSelectedTaskId);
+  const assignedSlotId = _manualSelectedSlotId;
+
   engine.importSchedule(currentSchedule);
   clearManualSelection();
   revalidateAndRefresh();
-  showToast('שיבוץ בוצע', { type: 'success' });
+
+  // Descriptive toast with participant + task name
+  const pName = assignedParticipant?.name || '';
+  const tName = assignedTask ? (assignedTask.sourceName || assignedTask.name).replace(/^D\d+\s+/, '') : '';
+  showToast(`${pName} שובץ/ה ל${tName}`, { type: 'success' });
+
+  // Highlight the just-assigned slot with a pulse animation
+  if (assignedTask && assignedSlotId) {
+    requestAnimationFrame(() => {
+      const card = document.querySelector(`.assignment-card[data-task-id="${assignedTask.id}"][data-slot-id="${assignedSlotId}"]`);
+      if (card) {
+        card.classList.add('assignment-flash');
+        card.addEventListener('animationend', () => card.classList.remove('assignment-flash'), { once: true });
+      }
+    });
+  }
 }
 
 function handleManualRemove(assignmentId: string): void {
@@ -1289,11 +1318,26 @@ function openWarehouseSheet(): void {
     title: 'בחר משתתף',
   });
 
-  // Wire participant card clicks inside the sheet
+  // Wire participant card clicks and search inside the sheet
   // Use requestAnimationFrame to ensure DOM is painted
   requestAnimationFrame(() => {
     const sheetBody = document.querySelector('.gm-bs-body');
     if (!sheetBody) return;
+
+    // Wire search/filter
+    const searchInput = sheetBody.querySelector('#warehouse-sheet-search') as HTMLInputElement | null;
+    if (searchInput) {
+      searchInput.addEventListener('input', () => {
+        const query = searchInput.value.trim().toLowerCase();
+        const cards = sheetBody.querySelectorAll('.warehouse-card[data-pid]');
+        cards.forEach(card => {
+          const name = card.querySelector('.wc-name')?.textContent?.toLowerCase() || '';
+          (card as HTMLElement).style.display = name.includes(query) ? '' : 'none';
+        });
+      });
+      searchInput.focus();
+    }
+
     sheetBody.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
       const card = target.closest('.warehouse-card[data-pid]') as HTMLElement | null;
@@ -1974,6 +2018,13 @@ function doCreateManualSchedule(): void {
 
   store.saveSchedule(currentSchedule);
   renderAll();
+
+  // Auto-scroll to the grid so slots are immediately visible
+  requestAnimationFrame(() => {
+    const grid = document.querySelector('.schedule-grid-container');
+    if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
   showToast('שבצ"ק ריק נוצר — בחר משבצת ואז משתתף', { type: 'success' });
 }
 

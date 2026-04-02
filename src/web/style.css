@@ -5274,6 +5274,16 @@ tr.now-row-animate > td.time-cell {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
+/* Flash animation for just-assigned slot */
+@keyframes assignment-flash {
+  0%   { background-color: color-mix(in srgb, var(--success, #22c55e) 40%, var(--bg-card)); transform: scale(1.03); }
+  100% { background-color: transparent; transform: scale(1); }
+}
+
+.assignment-flash {
+  animation: assignment-flash 0.6s ease-out;
+}
+
 .manual-slot-empty {
   border: 1.5px dashed var(--text-muted);
   min-height: 36px;
@@ -5489,6 +5499,30 @@ tr.now-row-animate > td.time-cell {
 
 .btn-manual-remove-sheet:hover {
   background: color-mix(in srgb, var(--danger) 18%, var(--bg-card));
+}
+
+.warehouse-sheet-filter {
+  margin-bottom: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-card);
+}
+
+.warehouse-sheet-search {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+
+.warehouse-sheet-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .warehouse-sheet-cards {

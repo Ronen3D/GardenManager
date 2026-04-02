@@ -668,8 +668,8 @@
   .day-tab {
     scroll-snap-align: start;
     flex-shrink: 0;
-    min-height: 32px;
-    padding: 4px 8px 3px;
+    min-height: 40px;
+    padding: 6px 10px 5px;
   }
 
   .day-tab-label {
@@ -1375,6 +1375,9 @@
   .manual-build-strip {
     padding: 6px 12px;
     font-size: 0.8rem;
+    position: sticky;
+    top: 0;
+    z-index: 10;
   }
 
   /* Larger touch targets for slot cards in manual mode */
@@ -1414,6 +1417,20 @@
 
   .schedule-grid-compact .assignment-card {
     padding: 3px 5px;
+  }
+
+  /* ── Manual build toolbar: hide non-essential groups on mobile ── */
+  .schedule-toolbar-manual .toolbar-group--generate {
+    display: none;
+  }
+  .schedule-toolbar-manual .toolbar-group--day-actions {
+    display: none;
+  }
+  /* Inside state group, hide reset/continuity — keep exit + snapshots */
+  .schedule-toolbar-manual #btn-reset-storage,
+  .schedule-toolbar-manual #btn-continuity-import,
+  .schedule-toolbar-manual .continuity-chip {
+    display: none;
   }
 }
 

@@ -1291,15 +1291,15 @@ export function seedDefaultTaskTemplates(): void {
     ],
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'מפקד כרוב (דרגה 2/3/4)', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'נהג כרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Salsala] },
-      { id: uid('slot'), label: 'משתתף בכרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'משתתף בקרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'מפקד כרוב (דרגה 2/3/4)', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'נהג כרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Salsala, Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בכרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בקרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
     ],
     displayCategory: 'patrol',
     color: '#8E44AD',
     displayOrder: 0,
-    description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
+    description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. דורש ניצן. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
   });
 
   // Karovit
@@ -1317,15 +1317,15 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 5,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'סגל כרובית', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'סגל כרובית', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
     ],
     displayCategory: 'patrol',
     color: '#BDC3C7',
     displayOrder: 0,
-    description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 3× L0. קל — ללא השפעה על מנוחה.',
+    description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 3× L0. דורש ניצן. קל — ללא השפעה על מנוחה.',
   });
 
   // Aruga
@@ -1343,13 +1343,13 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 4,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'משתתף בערוגה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
-      { id: uid('slot'), label: 'משתתף בערוגה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { id: uid('slot'), label: 'משתתף בערוגה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בערוגה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
     ],
     displayCategory: 'aruga',
     color: '#1ABC9C',
     displayOrder: 2,
-    description: '1.5 שעות, 2 ביום (בוקר 05:00-06:30, ערב 17:00-18:30). 2× L0.',
+    description: '1.5 שעות, 2 ביום (בוקר 05:00-06:30, ערב 17:00-18:30). 2× L0. דורש ניצן.',
   });
 }
 
