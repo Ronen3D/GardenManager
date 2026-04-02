@@ -14,23 +14,46 @@ import {
   createTimeBlock,
   createTimeBlockFromHours,
   blockDurationHours,
+  blockDurationMinutes,
   blocksOverlap,
   isFullyCovered,
   gapHours,
+  gapMinutes,
   generateShiftBlocks,
   mergeBlocks,
+  sortBlocksByStart,
+  formatBlock,
+  getTimelineBounds,
   createHamamaTask,
   createShemeshTask,
   createKarovTask,
   createArugaTask,
   createKarovitTask,
+  createAdanitTasks,
   validateHardConstraints,
   computeScheduleScore,
   DEFAULT_CONFIG,
   OneTimeTask,
+  computeAllRestProfiles,
+  computeRestFairness,
+  isEligible,
+  getRejectionReason,
+  ParticipantRestProfile,
 } from './index';
 import { fullValidate, previewSwap } from './engine/validator';
 import { computeParticipantRest } from './web/utils/rest-calculator';
+import { isDateInBlock } from './web/utils/time-utils';
+import {
+  checkLevelRequirement,
+  checkCertificationRequirement,
+  checkAvailability,
+  checkSameGroup,
+  checkSlotsFilled,
+  checkUniqueParticipantsPerTask,
+  checkGroupFeasibility,
+  checkCategoryBreak,
+} from './constraints/hard-constraints';
+import { workloadImbalanceSplit, dailyWorkloadImbalance, collectSoftWarnings } from './constraints/soft-constraints';
 
 let passed = 0;
 let failed = 0;
@@ -1402,6 +1425,1178 @@ console.log('\n── One-Time Task Integration ──────────�
   const lightOt = makeOneTimeTask({ isLight: true, baseLoadWeight: 0 });
   assert(lightOt.isLight === true, 'Light one-time task: isLight=true');
   assert(lightOt.baseLoadWeight === 0, 'Light one-time task: baseLoadWeight=0');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEW COMPREHENSIVE TESTS — Strengthening coverage across all modules
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── Time Utilities: Edge Cases & Untested Functions ────────────────────────
+
+console.log('\n── Time Utilities: Extended ─────────────');
+
+// blockDurationMinutes
+{
+  const b = createTimeBlockFromHours(baseDate, 9, 11);
+  assert(blockDurationMinutes(b) === 120, 'blockDurationMinutes: 9-11 = 120min');
+}
+{
+  const b = createTimeBlockFromHours(baseDate, 22, 6);
+  assert(blockDurationMinutes(b) === 480, 'blockDurationMinutes: 22-06 midnight crossing = 480min');
+}
+
+// gapMinutes
+{
+  const a = createTimeBlockFromHours(baseDate, 6, 10);
+  const b = createTimeBlockFromHours(baseDate, 12, 16);
+  assert(gapMinutes(a, b) === 120, 'gapMinutes: 2h gap = 120min');
+}
+{
+  const a = createTimeBlockFromHours(baseDate, 6, 10);
+  const b = createTimeBlockFromHours(baseDate, 10, 14);
+  assert(gapMinutes(a, b) === 0, 'gapMinutes: adjacent blocks = 0min');
+}
+{
+  const a = createTimeBlockFromHours(baseDate, 6, 12);
+  const b = createTimeBlockFromHours(baseDate, 10, 14);
+  assert(gapMinutes(a, b) === 0, 'gapMinutes: overlapping blocks = 0min');
+}
+
+// sortBlocksByStart
+{
+  const blocks = [
+    createTimeBlockFromHours(baseDate, 14, 18),
+    createTimeBlockFromHours(baseDate, 6, 10),
+    createTimeBlockFromHours(baseDate, 10, 14),
+  ];
+  const sorted = sortBlocksByStart(blocks);
+  assert(sorted[0].start.getHours() === 6, 'sortBlocksByStart: first starts at 6');
+  assert(sorted[1].start.getHours() === 10, 'sortBlocksByStart: second starts at 10');
+  assert(sorted[2].start.getHours() === 14, 'sortBlocksByStart: third starts at 14');
+  // Original array unchanged
+  assert(blocks[0].start.getHours() === 14, 'sortBlocksByStart: does not mutate original');
+}
+{
+  const sorted = sortBlocksByStart([]);
+  assert(sorted.length === 0, 'sortBlocksByStart: empty array returns empty');
+}
+
+// formatBlock
+{
+  const b = createTimeBlockFromHours(new Date(2026, 1, 15), 9, 17);
+  const formatted = formatBlock(b);
+  assert(formatted.includes('2026-02-15'), 'formatBlock: includes date');
+  assert(formatted.includes('09:00'), 'formatBlock: includes start time');
+  assert(formatted.includes('17:00'), 'formatBlock: includes end time');
+  assert(formatted.includes('→'), 'formatBlock: includes arrow separator');
+}
+
+// getTimelineBounds
+{
+  const blocks = [
+    createTimeBlockFromHours(baseDate, 10, 14),
+    createTimeBlockFromHours(baseDate, 6, 8),
+    createTimeBlockFromHours(baseDate, 18, 22),
+  ];
+  const bounds = getTimelineBounds(blocks);
+  assert(bounds !== null, 'getTimelineBounds: non-null for non-empty');
+  assert(bounds!.start.getHours() === 6, 'getTimelineBounds: earliest start = 6');
+  assert(bounds!.end.getHours() === 22, 'getTimelineBounds: latest end = 22');
+}
+{
+  const bounds = getTimelineBounds([]);
+  assert(bounds === null, 'getTimelineBounds: null for empty array');
+}
+
+// isDateInBlock
+{
+  const b = createTimeBlockFromHours(baseDate, 9, 17);
+  const inside = new Date(2026, 1, 15, 12, 0);
+  const before = new Date(2026, 1, 15, 8, 0);
+  const atStart = new Date(2026, 1, 15, 9, 0);
+  assert(isDateInBlock(inside, b) === true, 'isDateInBlock: midpoint is inside');
+  assert(isDateInBlock(before, b) === false, 'isDateInBlock: before block is outside');
+  assert(isDateInBlock(atStart, b) === true, 'isDateInBlock: start boundary is inside');
+}
+
+// mergeBlocks: non-overlapping blocks stay separate
+{
+  const blocks = [
+    createTimeBlockFromHours(baseDate, 6, 8),
+    createTimeBlockFromHours(baseDate, 10, 12),
+    createTimeBlockFromHours(baseDate, 14, 16),
+  ];
+  const merged = mergeBlocks(blocks);
+  assert(merged.length === 3, 'mergeBlocks: 3 non-overlapping → 3');
+}
+
+// mergeBlocks: all overlapping merge into one
+{
+  const blocks = [
+    createTimeBlockFromHours(baseDate, 6, 12),
+    createTimeBlockFromHours(baseDate, 8, 16),
+    createTimeBlockFromHours(baseDate, 14, 20),
+  ];
+  const merged = mergeBlocks(blocks);
+  assert(merged.length === 1, 'mergeBlocks: fully overlapping chain → 1');
+  assert(blockDurationHours(merged[0]) === 14, 'mergeBlocks: merged 6-20 = 14h');
+}
+
+// mergeBlocks: empty input
+{
+  const merged = mergeBlocks([]);
+  assert(merged.length === 0, 'mergeBlocks: empty → empty');
+}
+
+// createTimeBlockFromHours with explicit durationHours
+{
+  const b = createTimeBlockFromHours(baseDate, 22, 0, 10);
+  assert(blockDurationHours(b) === 10, 'createTimeBlockFromHours: explicit duration overrides endHour');
+  assert(b.end.getHours() === 8, 'createTimeBlockFromHours: explicit duration → end at 08:00');
+}
+
+// isFullyCovered: multiple windows covering task
+{
+  const task = createTimeBlockFromHours(baseDate, 6, 18);
+  const windows = [
+    { start: new Date(2026, 1, 15, 6, 0), end: new Date(2026, 1, 15, 12, 0) },
+    { start: new Date(2026, 1, 15, 12, 0), end: new Date(2026, 1, 15, 18, 0) },
+  ];
+  // isFullyCovered requires a SINGLE window to cover the entire task
+  assert(isFullyCovered(task, windows) === false, 'isFullyCovered: split windows do NOT cover (requires single window)');
+}
+
+// blocksOverlap: identical blocks
+{
+  const b = createTimeBlockFromHours(baseDate, 10, 14);
+  assert(blocksOverlap(b, b) === true, 'blocksOverlap: identical blocks overlap');
+}
+
+// blocksOverlap: one inside another
+{
+  const outer = createTimeBlockFromHours(baseDate, 6, 18);
+  const inner = createTimeBlockFromHours(baseDate, 10, 14);
+  assert(blocksOverlap(outer, inner) === true, 'blocksOverlap: contained block overlaps');
+  assert(blocksOverlap(inner, outer) === true, 'blocksOverlap: symmetric containment');
+}
+
+// ─── Hard Constraints: Individual Functions ─────────────────────────────────
+
+console.log('\n── Hard Constraints: Individual Functions ──');
+
+// ── HC-1: checkLevelRequirement ────────────────────────────────────────────
+
+// Level mismatch: L0 in L2-only slot
+{
+  const l0P: Participant = {
+    id: 'hc1-l0', name: 'HC1-L0', level: Level.L0,
+    certifications: [Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const l2Slot: SlotRequirement = {
+    slotId: 'hc1-s1', acceptableLevels: [{ level: Level.L2 }],
+    requiredCertifications: [], label: 'L2 Only',
+  };
+  const task: Task = {
+    id: 'hc1-t1', name: 'HC1 Test Task',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [l2Slot],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const v = checkLevelRequirement(l0P, task, 'hc1-s1');
+  assert(v !== null, 'HC-1: L0 in L2-only slot → violation');
+  assert(v!.code === 'LEVEL_MISMATCH', 'HC-1: violation code = LEVEL_MISMATCH');
+}
+
+// Level match: L2 in L2 slot
+{
+  const l2P: Participant = {
+    id: 'hc1-l2', name: 'HC1-L2', level: Level.L2,
+    certifications: [Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const l2Slot: SlotRequirement = {
+    slotId: 'hc1-s2', acceptableLevels: [{ level: Level.L2 }],
+    requiredCertifications: [], label: 'L2 Only',
+  };
+  const task: Task = {
+    id: 'hc1-t2', name: 'HC1 Test2',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [l2Slot],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const v = checkLevelRequirement(l2P, task, 'hc1-s2');
+  assert(v === null, 'HC-1: L2 in L2 slot → no violation');
+}
+
+// Overqualified: L4 in L2 slot (accepted by HC-1, blocked by HC-13 separately)
+{
+  const l4P: Participant = {
+    id: 'hc1-l4', name: 'HC1-L4', level: Level.L4,
+    certifications: [Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const l2Slot: SlotRequirement = {
+    slotId: 'hc1-s3', acceptableLevels: [{ level: Level.L2 }],
+    requiredCertifications: [], label: 'L2 Only',
+  };
+  const task: Task = {
+    id: 'hc1-t3', name: 'HC1 Test3',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [l2Slot],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const v = checkLevelRequirement(l4P, task, 'hc1-s3');
+  assert(v === null, 'HC-1: L4 overqualified for L2 slot → no violation (HC-13 handles separately)');
+}
+
+// Nonexistent slot
+{
+  const pAny: Participant = {
+    id: 'hc1-any', name: 'HC1-Any', level: Level.L0,
+    certifications: [], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const task: Task = {
+    id: 'hc1-t4', name: 'HC1 Test4',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const v = checkLevelRequirement(pAny, task, 'nonexistent-slot');
+  assert(v !== null, 'HC-1: nonexistent slot → violation');
+  assert(v!.code === 'SLOT_NOT_FOUND', 'HC-1: nonexistent slot → SLOT_NOT_FOUND');
+}
+
+// ── HC-2: checkCertificationRequirement ────────────────────────────────────
+
+// Multiple required certs — missing one
+{
+  const pOneCert: Participant = {
+    id: 'hc2-p1', name: 'HC2-P1', level: Level.L0,
+    certifications: [Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const multiCertSlot: SlotRequirement = {
+    slotId: 'hc2-s1', acceptableLevels: [{ level: Level.L0 }],
+    requiredCertifications: [Certification.Nitzan, Certification.Hamama], label: 'Multi Cert',
+  };
+  const task: Task = {
+    id: 'hc2-t1', name: 'HC2 Test',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [multiCertSlot],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const v = checkCertificationRequirement(pOneCert, task, 'hc2-s1');
+  assert(v !== null, 'HC-2: missing one of two certs → violation');
+  assert(v!.code === 'CERT_MISSING', 'HC-2: violation code = CERT_MISSING');
+}
+
+// All certs present
+{
+  const pBothCerts: Participant = {
+    id: 'hc2-p2', name: 'HC2-P2', level: Level.L0,
+    certifications: [Certification.Nitzan, Certification.Hamama], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const multiCertSlot: SlotRequirement = {
+    slotId: 'hc2-s2', acceptableLevels: [{ level: Level.L0 }],
+    requiredCertifications: [Certification.Nitzan, Certification.Hamama], label: 'Multi Cert',
+  };
+  const task: Task = {
+    id: 'hc2-t2', name: 'HC2 Test2',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [multiCertSlot],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const v = checkCertificationRequirement(pBothCerts, task, 'hc2-s2');
+  assert(v === null, 'HC-2: all certs present → no violation');
+}
+
+// No certs required
+{
+  const pNoCerts: Participant = {
+    id: 'hc2-p3', name: 'HC2-P3', level: Level.L0,
+    certifications: [], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const noCertSlot: SlotRequirement = {
+    slotId: 'hc2-s3', acceptableLevels: [{ level: Level.L0 }],
+    requiredCertifications: [], label: 'No Cert',
+  };
+  const task: Task = {
+    id: 'hc2-t3', name: 'HC2 Test3',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [noCertSlot],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const v = checkCertificationRequirement(pNoCerts, task, 'hc2-s3');
+  assert(v === null, 'HC-2: no certs required → no violation');
+}
+
+// ── HC-3: checkAvailability ────────────────────────────────────────────────
+
+// Participant not available at all
+{
+  const noAvailP: Participant = {
+    id: 'hc3-p1', name: 'HC3-NoAvail', level: Level.L0,
+    certifications: [], group: 'A',
+    availability: [], dateUnavailability: [],
+  };
+  const task: Task = {
+    id: 'hc3-t1', name: 'HC3 Test',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const v = checkAvailability(noAvailP, task);
+  assert(v !== null, 'HC-3: no availability → violation');
+  assert(v!.code === 'AVAILABILITY_VIOLATION', 'HC-3: violation code = AVAILABILITY_VIOLATION');
+}
+
+// Partial availability
+{
+  const partialP: Participant = {
+    id: 'hc3-p2', name: 'HC3-Partial', level: Level.L0,
+    certifications: [], group: 'A',
+    availability: [{ start: new Date(2026, 1, 15, 8, 0), end: new Date(2026, 1, 15, 12, 0) }],
+    dateUnavailability: [],
+  };
+  const task: Task = {
+    id: 'hc3-t2', name: 'HC3 Test2',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const v = checkAvailability(partialP, task);
+  assert(v !== null, 'HC-3: partial availability → violation');
+}
+
+// Full availability
+{
+  const fullP: Participant = {
+    id: 'hc3-p3', name: 'HC3-Full', level: Level.L0,
+    certifications: [], group: 'A',
+    availability: dayAvail,
+    dateUnavailability: [],
+  };
+  const task: Task = {
+    id: 'hc3-t3', name: 'HC3 Test3',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const v = checkAvailability(fullP, task);
+  assert(v === null, 'HC-3: full availability → no violation');
+}
+
+// ── HC-4: checkSameGroup ────────────────────────────────────────────────
+
+{
+  const groupATask: Task = {
+    id: 'hc4-t1', name: 'HC4 GroupTask',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 2, slots: [],
+    isLight: false, sameGroupRequired: true, blocksConsecutive: true,
+  };
+  const pGroupA: Participant = {
+    id: 'hc4-pa', name: 'HC4-A', level: Level.L0,
+    certifications: [], group: 'Alpha',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const pGroupB: Participant = {
+    id: 'hc4-pb', name: 'HC4-B', level: Level.L0,
+    certifications: [], group: 'Beta',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  // Different groups → violation
+  const vDiff = checkSameGroup(groupATask, [pGroupA, pGroupB]);
+  assert(vDiff.length === 1, 'HC-4: different groups → 1 violation');
+  assert(vDiff[0].code === 'GROUP_MISMATCH', 'HC-4: violation code = GROUP_MISMATCH');
+
+  // Same group → no violation
+  const pGroupA2: Participant = { ...pGroupB, id: 'hc4-pa2', group: 'Alpha' };
+  const vSame = checkSameGroup(groupATask, [pGroupA, pGroupA2]);
+  assert(vSame.length === 0, 'HC-4: same group → no violations');
+
+  // Non-group task → no violation regardless
+  const nonGroupTask: Task = { ...groupATask, id: 'hc4-t2', sameGroupRequired: false };
+  const vNonGroup = checkSameGroup(nonGroupTask, [pGroupA, pGroupB]);
+  assert(vNonGroup.length === 0, 'HC-4: non-group task → no violations');
+
+  // Empty participants → no violation
+  const vEmpty = checkSameGroup(groupATask, []);
+  assert(vEmpty.length === 0, 'HC-4: empty participants → no violations');
+}
+
+// ── HC-6: checkSlotsFilled ─────────────────────────────────────────────
+
+{
+  const slot1: SlotRequirement = {
+    slotId: 'hc6-s1', acceptableLevels: [{ level: Level.L0 }],
+    requiredCertifications: [], label: 'Slot 1',
+  };
+  const slot2: SlotRequirement = {
+    slotId: 'hc6-s2', acceptableLevels: [{ level: Level.L0 }],
+    requiredCertifications: [], label: 'Slot 2',
+  };
+  const task: Task = {
+    id: 'hc6-t1', name: 'HC6 Test',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 2, slots: [slot1, slot2],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+
+  // Slot unfilled
+  const assigns1: Assignment[] = [
+    { id: 'hc6-a1', taskId: 'hc6-t1', slotId: 'hc6-s1', participantId: 'p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const v1 = checkSlotsFilled(task, assigns1);
+  assert(v1.length === 1, 'HC-6: one unfilled slot → 1 violation');
+  assert(v1[0].code === 'SLOT_UNFILLED', 'HC-6: violation code = SLOT_UNFILLED');
+
+  // Slot overbooked
+  const assigns2: Assignment[] = [
+    { id: 'hc6-a2', taskId: 'hc6-t1', slotId: 'hc6-s1', participantId: 'p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc6-a3', taskId: 'hc6-t1', slotId: 'hc6-s1', participantId: 'p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc6-a4', taskId: 'hc6-t1', slotId: 'hc6-s2', participantId: 'p3', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const v2 = checkSlotsFilled(task, assigns2);
+  assert(v2.length === 1, 'HC-6: one overbooked slot → 1 violation');
+  assert(v2[0].code === 'SLOT_OVERBOOKED', 'HC-6: violation code = SLOT_OVERBOOKED');
+
+  // All filled correctly
+  const assigns3: Assignment[] = [
+    { id: 'hc6-a5', taskId: 'hc6-t1', slotId: 'hc6-s1', participantId: 'p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc6-a6', taskId: 'hc6-t1', slotId: 'hc6-s2', participantId: 'p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const v3 = checkSlotsFilled(task, assigns3);
+  assert(v3.length === 0, 'HC-6: all slots filled correctly → no violations');
+
+  // Both slots unfilled
+  const v4 = checkSlotsFilled(task, []);
+  assert(v4.length === 2, 'HC-6: both slots unfilled → 2 violations');
+}
+
+// ── HC-7: checkUniqueParticipantsPerTask ─────────────────────────────────
+
+{
+  const slot1: SlotRequirement = {
+    slotId: 'hc7-s1', acceptableLevels: [{ level: Level.L0 }],
+    requiredCertifications: [], label: 'Slot 1',
+  };
+  const slot2: SlotRequirement = {
+    slotId: 'hc7-s2', acceptableLevels: [{ level: Level.L0 }],
+    requiredCertifications: [], label: 'Slot 2',
+  };
+  const task: Task = {
+    id: 'hc7-t1', name: 'HC7 Test',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 2, slots: [slot1, slot2],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+
+  // Same participant in two slots → violation
+  const assigns: Assignment[] = [
+    { id: 'hc7-a1', taskId: 'hc7-t1', slotId: 'hc7-s1', participantId: 'dup-p', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc7-a2', taskId: 'hc7-t1', slotId: 'hc7-s2', participantId: 'dup-p', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const v = checkUniqueParticipantsPerTask(task, assigns);
+  assert(v.length === 1, 'HC-7: duplicate participant → 1 violation');
+  assert(v[0].code === 'DUPLICATE_IN_TASK', 'HC-7: violation code = DUPLICATE_IN_TASK');
+
+  // Different participants → no violation
+  const uniqueAssigns: Assignment[] = [
+    { id: 'hc7-a3', taskId: 'hc7-t1', slotId: 'hc7-s1', participantId: 'p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc7-a4', taskId: 'hc7-t1', slotId: 'hc7-s2', participantId: 'p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const v2 = checkUniqueParticipantsPerTask(task, uniqueAssigns);
+  assert(v2.length === 0, 'HC-7: unique participants → no violations');
+}
+
+// ── HC-8: checkGroupFeasibility ────────────────────────────────────────────
+
+{
+  const l0Slot: SlotRequirement = {
+    slotId: 'hc8-s-l0', acceptableLevels: [{ level: Level.L0 }],
+    requiredCertifications: [Certification.Nitzan], label: 'L0 Slot',
+  };
+  const l2Slot: SlotRequirement = {
+    slotId: 'hc8-s-l2', acceptableLevels: [{ level: Level.L2 }],
+    requiredCertifications: [Certification.Nitzan], label: 'L2 Slot',
+  };
+  const task: Task = {
+    id: 'hc8-t1', name: 'HC8 Test',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 2, slots: [l0Slot, l2Slot],
+    isLight: false, sameGroupRequired: true, blocksConsecutive: true,
+  };
+
+  // Group has both L0 and L2 with certs → no violation
+  const fullGroup: Participant[] = [
+    { id: 'hc8-p1', name: 'L0-1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] },
+    { id: 'hc8-p2', name: 'L2-1', level: Level.L2, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] },
+  ];
+  const v1 = checkGroupFeasibility(task, fullGroup);
+  assert(v1.length === 0, 'HC-8: group has all needed levels+certs → no violations');
+
+  // Group missing L2 → violation
+  const noL2Group: Participant[] = [
+    { id: 'hc8-p3', name: 'L0-2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] },
+    { id: 'hc8-p4', name: 'L0-3', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] },
+  ];
+  const v2 = checkGroupFeasibility(task, noL2Group);
+  assert(v2.length === 1, 'HC-8: group missing L2 → 1 violation');
+  assert(v2[0].code === 'GROUP_INSUFFICIENT', 'HC-8: violation code = GROUP_INSUFFICIENT');
+
+  // Non-sameGroupRequired task → no check
+  const nonGroupTask: Task = { ...task, id: 'hc8-t2', sameGroupRequired: false };
+  const v3 = checkGroupFeasibility(nonGroupTask, noL2Group);
+  assert(v3.length === 0, 'HC-8: non-group task → no violations');
+
+  // Group has L2 but missing Nitzan cert → violation
+  const noCertGroup: Participant[] = [
+    { id: 'hc8-p5', name: 'L0-c', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] },
+    { id: 'hc8-p6', name: 'L2-nc', level: Level.L2, certifications: [], group: 'A', availability: dayAvail, dateUnavailability: [] },
+  ];
+  const v4 = checkGroupFeasibility(task, noCertGroup);
+  assert(v4.length === 1, 'HC-8: group L2 missing cert → violation');
+}
+
+// ── HC-14: checkCategoryBreak ──────────────────────────────────────────────
+
+console.log('\n── Category Break (HC-14) ──────────────');
+
+{
+  const catP: Participant = {
+    id: 'hc14-p1', name: 'HC14Tester', level: Level.L0,
+    certifications: [Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+
+  // Two category-break tasks with only 3h gap → violation (need 5h)
+  const catTask1: Task = {
+    id: 'hc14-t1', name: 'Cat Task 1',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 10),
+    requiredCount: 1, slots: [{ slotId: 'hc14-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true, requiresCategoryBreak: true,
+  };
+  const catTask2: Task = {
+    id: 'hc14-t2', name: 'Cat Task 2',
+    timeBlock: createTimeBlockFromHours(baseDate, 13, 17),
+    requiredCount: 1, slots: [{ slotId: 'hc14-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true, requiresCategoryBreak: true,
+  };
+  const tMap14 = new Map([[ catTask1.id, catTask1 ], [ catTask2.id, catTask2 ]]);
+  const assigns14: Assignment[] = [
+    { id: 'hc14-a1', taskId: catTask1.id, slotId: 'hc14-s1', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc14-a2', taskId: catTask2.id, slotId: 'hc14-s2', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const v1 = checkCategoryBreak(catP.id, assigns14, tMap14);
+  assert(v1.length === 1, 'HC-14: 3h gap between category tasks → violation');
+  assert(v1[0].code === 'CATEGORY_BREAK_VIOLATION', 'HC-14: violation code = CATEGORY_BREAK_VIOLATION');
+
+  // 6h gap → no violation
+  const catTask3: Task = {
+    ...catTask2, id: 'hc14-t3',
+    timeBlock: createTimeBlockFromHours(baseDate, 16, 20),
+  };
+  const tMap14b = new Map([[ catTask1.id, catTask1 ], [ catTask3.id, catTask3 ]]);
+  const assigns14b: Assignment[] = [
+    { id: 'hc14-a3', taskId: catTask1.id, slotId: 'hc14-s1', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc14-a4', taskId: catTask3.id, slotId: 'hc14-s2', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const v2 = checkCategoryBreak(catP.id, assigns14b, tMap14b);
+  assert(v2.length === 0, 'HC-14: 6h gap between category tasks → no violation');
+
+  // One task without requiresCategoryBreak → no violation
+  const catTask4: Task = {
+    ...catTask2, id: 'hc14-t4', requiresCategoryBreak: false,
+  };
+  const tMap14c = new Map([[ catTask1.id, catTask1 ], [ catTask4.id, catTask4 ]]);
+  const assigns14c: Assignment[] = [
+    { id: 'hc14-a5', taskId: catTask1.id, slotId: 'hc14-s1', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc14-a6', taskId: catTask4.id, slotId: 'hc14-s2', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const v3 = checkCategoryBreak(catP.id, assigns14c, tMap14c);
+  assert(v3.length === 0, 'HC-14: one task without category flag → no violation');
+
+  // Exactly 5h gap → no violation (equal to minimum)
+  const catTask5: Task = {
+    ...catTask2, id: 'hc14-t5',
+    timeBlock: createTimeBlockFromHours(baseDate, 15, 19),
+  };
+  const tMap14d = new Map([[ catTask1.id, catTask1 ], [ catTask5.id, catTask5 ]]);
+  const assigns14d: Assignment[] = [
+    { id: 'hc14-a7', taskId: catTask1.id, slotId: 'hc14-s1', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc14-a8', taskId: catTask5.id, slotId: 'hc14-s2', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const v4 = checkCategoryBreak(catP.id, assigns14d, tMap14d);
+  assert(v4.length === 0, 'HC-14: exactly 5h gap → no violation');
+
+  // validateHardConstraints integration with HC-14
+  const r14 = validateHardConstraints([catTask1, catTask2], [catP], assigns14);
+  assert(r14.violations.some(v => v.code === 'CATEGORY_BREAK_VIOLATION'), 'HC-14: full validation catches category break');
+}
+
+// ── disabledHC parameter ───────────────────────────────────────────────────
+
+console.log('\n── disabledHC Parameter ─────────────────');
+
+{
+  // Setup: L4 in Shemesh (blocked by HC-13) + same participant double-booked (blocked by HC-5)
+  const disP: Participant = {
+    id: 'dis-p1', name: 'DisabledTest', level: Level.L4,
+    certifications: [Certification.Nitzan, Certification.Hamama], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const disTask1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  const disTask2 = createHamamaTask(createTimeBlockFromHours(baseDate, 8, 14));
+  const disAssigns: Assignment[] = [
+    { id: 'dis-a1', taskId: disTask1.id, slotId: disTask1.slots[0].slotId, participantId: disP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'dis-a2', taskId: disTask2.id, slotId: disTask2.slots[0].slotId, participantId: disP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+
+  // No disabled → both violations
+  const rAll = validateHardConstraints([disTask1, disTask2], [disP], disAssigns);
+  assert(rAll.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'disabledHC: HC-13 fires when not disabled');
+  assert(rAll.violations.some(v => v.code === 'DOUBLE_BOOKING'), 'disabledHC: HC-5 fires when not disabled');
+
+  // Disable HC-13 → only HC-5 remains
+  const r13Off = validateHardConstraints([disTask1, disTask2], [disP], disAssigns, new Set(['HC-13']));
+  assert(!r13Off.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'disabledHC: HC-13 suppressed when disabled');
+  assert(r13Off.violations.some(v => v.code === 'DOUBLE_BOOKING'), 'disabledHC: HC-5 still fires when HC-13 disabled');
+
+  // Disable HC-5 → only HC-13 remains for double booking
+  const r5Off = validateHardConstraints([disTask1, disTask2], [disP], disAssigns, new Set(['HC-5']));
+  assert(!r5Off.violations.some(v => v.code === 'DOUBLE_BOOKING'), 'disabledHC: HC-5 suppressed when disabled');
+  assert(r5Off.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'disabledHC: HC-13 still fires when HC-5 disabled');
+
+  // Disable both → no double-booking or senior block violations (other violations may remain)
+  const rBothOff = validateHardConstraints([disTask1, disTask2], [disP], disAssigns, new Set(['HC-5', 'HC-13']));
+  assert(!rBothOff.violations.some(v => v.code === 'DOUBLE_BOOKING'), 'disabledHC: HC-5 suppressed');
+  assert(!rBothOff.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'disabledHC: HC-13 suppressed');
+
+  // Disable HC-6 → unfilled slots don't produce violations
+  const singleSlotTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 14));
+  const emptyAssigns: Assignment[] = [];
+  const r6On = validateHardConstraints([singleSlotTask], [disP], emptyAssigns);
+  assert(r6On.violations.some(v => v.code === 'SLOT_UNFILLED'), 'disabledHC: HC-6 fires when not disabled');
+  const r6Off = validateHardConstraints([singleSlotTask], [disP], emptyAssigns, new Set(['HC-6']));
+  assert(!r6Off.violations.some(v => v.code === 'SLOT_UNFILLED'), 'disabledHC: HC-6 suppressed when disabled');
+}
+
+// ─── Validator: Extended Tests ──────────────────────────────────────────────
+
+console.log('\n── Validator: Extended ──────────────────');
+
+// fullValidate with both hard violations and warnings
+{
+  // L4 in Hamama → valid but with LOW_PRIORITY_LEVEL warning
+  const valP: Participant = {
+    id: 'val-l4', name: 'Val-L4', level: Level.L4,
+    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const valTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
+  const valAssigns: Assignment[] = [
+    { id: 'val-a1', taskId: valTask.id, slotId: valTask.slots[0].slotId, participantId: valP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const fvr = fullValidate([valTask], [valP], valAssigns);
+  // L4 in Hamama is allowed (no hard violation) because acceptableLevels has L4 lowPriority
+  assert(fvr.warnings.some(w => w.code === 'LOW_PRIORITY_LEVEL'), 'fullValidate: L4 in Hamama → LOW_PRIORITY_LEVEL warning');
+  assert(fvr.summary.includes('אזהרות'), 'fullValidate: summary mentions warnings');
+}
+
+// fullValidate: completely valid schedule → תקין summary
+{
+  const valP0: Participant = {
+    id: 'val-p0', name: 'Val-P0', level: Level.L0,
+    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const valTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
+  const valAssigns: Assignment[] = [
+    { id: 'val-a2', taskId: valTask.id, slotId: valTask.slots[0].slotId, participantId: valP0.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const fvr = fullValidate([valTask], [valP0], valAssigns);
+  assert(fvr.valid === true, 'fullValidate: valid schedule reports valid=true');
+  assert(fvr.violations.length === 0, 'fullValidate: no violations');
+  assert(fvr.summary.includes('תקין'), 'fullValidate: summary says valid');
+}
+
+// fullValidate: invalid schedule → summary mentions violations count
+{
+  const valPBad: Participant = {
+    id: 'val-bad', name: 'Val-Bad', level: Level.L0,
+    certifications: [], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const valTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
+  const valAssigns: Assignment[] = [
+    { id: 'val-a3', taskId: valTask.id, slotId: valTask.slots[0].slotId, participantId: valPBad.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const fvr = fullValidate([valTask], [valPBad], valAssigns);
+  assert(fvr.valid === false, 'fullValidate: invalid schedule reports valid=false');
+  assert(fvr.violations.length > 0, 'fullValidate: has violations');
+  assert(fvr.summary.includes('לא תקין'), 'fullValidate: summary says invalid');
+}
+
+// previewSwap: valid swap
+{
+  const swapP1: Participant = {
+    id: 'swap-p1', name: 'Swap-P1', level: Level.L0,
+    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const swapP2: Participant = {
+    id: 'swap-p2', name: 'Swap-P2', level: Level.L0,
+    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const swapTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
+  const swapAssigns: Assignment[] = [
+    { id: 'swap-a1', taskId: swapTask.id, slotId: swapTask.slots[0].slotId, participantId: swapP1.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const result = previewSwap(
+    [swapTask], [swapP1, swapP2], swapAssigns,
+    { assignmentId: 'swap-a1', newParticipantId: swapP2.id },
+  );
+  assert(result.valid === true, 'previewSwap: valid swap between two eligible participants');
+}
+
+// previewSwap: swap causing double-booking
+{
+  const dbP1: Participant = {
+    id: 'db-p1', name: 'DB-P1', level: Level.L0,
+    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const dbP2: Participant = {
+    id: 'db-p2', name: 'DB-P2', level: Level.L0,
+    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const dbTask1 = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
+  const dbTask2 = createShemeshTask(createTimeBlockFromHours(baseDate, 8, 14));
+  const dbAssigns: Assignment[] = [
+    { id: 'db-a1', taskId: dbTask1.id, slotId: dbTask1.slots[0].slotId, participantId: dbP1.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'db-a2', taskId: dbTask2.id, slotId: dbTask2.slots[0].slotId, participantId: dbP2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  // Swap dbTask2 to dbP1 → overlaps with dbTask1
+  const result = previewSwap(
+    [dbTask1, dbTask2], [dbP1, dbP2], dbAssigns,
+    { assignmentId: 'db-a2', newParticipantId: dbP1.id },
+  );
+  assert(result.valid === false, 'previewSwap: swap causing double-booking → invalid');
+  assert(result.violations.some(v => v.code === 'DOUBLE_BOOKING'), 'previewSwap: double-booking violation detected');
+}
+
+// ── isEligible / getRejectionReason ────────────────────────────────────────
+
+console.log('\n── Eligibility & Rejection Reasons ─────');
+
+{
+  const eligP: Participant = {
+    id: 'elig-p1', name: 'Elig-P1', level: Level.L0,
+    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const eligTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
+  const eligSlot = eligTask.slots[0];
+  const tMap = new Map([[eligTask.id, eligTask]]);
+
+  // Eligible with no existing assignments
+  assert(isEligible(eligP, eligTask, eligSlot, [], tMap) === true, 'isEligible: eligible participant → true');
+  assert(getRejectionReason(eligP, eligTask, eligSlot, [], tMap) === null, 'getRejectionReason: eligible → null');
+
+  // Missing cert
+  const noCertP: Participant = { ...eligP, id: 'elig-p2', certifications: [Certification.Nitzan] };
+  assert(isEligible(noCertP, eligTask, eligSlot, [], tMap) === false, 'isEligible: missing cert → false');
+  assert(getRejectionReason(noCertP, eligTask, eligSlot, [], tMap) === 'HC-2', 'getRejectionReason: missing cert → HC-2');
+
+  // Already assigned to same task → HC-5 fires first (same timeblock overlaps with itself)
+  const existingAssign: Assignment[] = [
+    { id: 'elig-a1', taskId: eligTask.id, slotId: eligSlot.slotId, participantId: eligP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  assert(isEligible(eligP, eligTask, eligSlot, existingAssign, tMap) === false, 'isEligible: already assigned → false');
+  assert(getRejectionReason(eligP, eligTask, eligSlot, existingAssign, tMap) === 'HC-5', 'getRejectionReason: already assigned (same block overlap) → HC-5');
+
+  // Already assigned to a NON-overlapping task of same ID → would be HC-7
+  // But in practice tasks have unique IDs, so HC-5 and HC-7 are correlated
+
+  // Double-booking: existing overlapping assignment
+  const otherTask = createShemeshTask(createTimeBlockFromHours(baseDate, 8, 14));
+  const tMap2 = new Map([[eligTask.id, eligTask], [otherTask.id, otherTask]]);
+  const overlapAssign: Assignment[] = [
+    { id: 'elig-a2', taskId: otherTask.id, slotId: otherTask.slots[0].slotId, participantId: eligP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  assert(isEligible(eligP, eligTask, eligSlot, overlapAssign, tMap2) === false, 'isEligible: overlapping task → false');
+  assert(getRejectionReason(eligP, eligTask, eligSlot, overlapAssign, tMap2) === 'HC-5', 'getRejectionReason: overlap → HC-5');
+
+  // No availability
+  const noAvailP: Participant = { ...eligP, id: 'elig-p3', availability: [] };
+  assert(isEligible(noAvailP, eligTask, eligSlot, [], tMap) === false, 'isEligible: no availability → false');
+  assert(getRejectionReason(noAvailP, eligTask, eligSlot, [], tMap) === 'HC-3', 'getRejectionReason: no availability → HC-3');
+}
+
+// ─── Rest Calculator: Extended Tests ────────────────────────────────────────
+
+console.log('\n── Rest Calculator: Extended ────────────');
+
+// No assignments → Infinity rest, 0 work hours
+{
+  const rest0 = computeParticipantRest('empty-p', [], []);
+  assert(rest0.restGaps.length === 0, 'Rest: no assignments → no rest gaps');
+  assert(rest0.minRestHours === Infinity, 'Rest: no assignments → min rest = Infinity');
+  assert(rest0.totalWorkHours === 0, 'Rest: no assignments → 0 work hours');
+  assert(rest0.nonLightAssignmentCount === 0, 'Rest: no assignments → 0 non-light count');
+}
+
+// Single assignment → no rest gaps
+{
+  const singleTask = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  const singleAssign: Assignment[] = [
+    { id: 'rest-s1', taskId: singleTask.id, slotId: singleTask.slots[0].slotId, participantId: 'rest-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const rest1 = computeParticipantRest('rest-p1', singleAssign, [singleTask]);
+  assert(rest1.restGaps.length === 0, 'Rest: single assignment → no rest gaps');
+  assert(rest1.nonLightAssignmentCount === 1, 'Rest: single assignment → count=1');
+  assert(rest1.totalWorkHours === 4, 'Rest: 4h task → 4h work');
+}
+
+// Light-only assignments → 0 work hours
+{
+  const lightTask = createKarovitTask(createTimeBlockFromHours(baseDate, 6, 14));
+  const lightAssign: Assignment[] = [
+    { id: 'rest-l1', taskId: lightTask.id, slotId: lightTask.slots[0].slotId, participantId: 'rest-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const restLight = computeParticipantRest('rest-p2', lightAssign, [lightTask]);
+  assert(restLight.nonLightAssignmentCount === 0, 'Rest: light only → 0 non-light count');
+  assert(restLight.totalWorkHours === 0, 'Rest: light only → 0 work hours');
+  assert(restLight.totalLightHours === 8, 'Rest: light 8h → totalLightHours=8');
+}
+
+// Three tasks with varying gaps → correct min/max/avg
+{
+  const r3t1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 8));   // 2h
+  const r3t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 12, 14)); // 2h, gap=4h
+  const r3t3 = createShemeshTask(createTimeBlockFromHours(baseDate, 20, 22)); // 2h, gap=6h
+  const r3Assigns: Assignment[] = [
+    { id: 'r3-a1', taskId: r3t1.id, slotId: r3t1.slots[0].slotId, participantId: 'rest-p3', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'r3-a2', taskId: r3t2.id, slotId: r3t2.slots[0].slotId, participantId: 'rest-p3', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'r3-a3', taskId: r3t3.id, slotId: r3t3.slots[0].slotId, participantId: 'rest-p3', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const rest3 = computeParticipantRest('rest-p3', r3Assigns, [r3t1, r3t2, r3t3]);
+  assert(rest3.restGaps.length === 2, 'Rest: 3 tasks → 2 rest gaps');
+  assert(rest3.minRestHours === 4, 'Rest: min rest = 4h');
+  assert(rest3.maxRestHours === 6, 'Rest: max rest = 6h');
+  assert(rest3.avgRestHours === 5, 'Rest: avg rest = 5h');
+  assert(rest3.nonLightAssignmentCount === 3, 'Rest: 3 non-light tasks counted');
+  assert(rest3.totalWorkHours === 6, 'Rest: 3×2h = 6h work');
+}
+
+// Non-blocking task (blocksConsecutive=false) doesn't create penalised rest gaps
+{
+  const blockingTask = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  const nonBlockingTask = createKarovTask(createTimeBlockFromHours(baseDate, 10, 14)); // blocksConsecutive=false
+  const blockingTask2 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18));
+  const nbAssigns: Assignment[] = [
+    { id: 'nb-a1', taskId: blockingTask.id, slotId: blockingTask.slots[0].slotId, participantId: 'rest-p4', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'nb-a2', taskId: nonBlockingTask.id, slotId: nonBlockingTask.slots[0].slotId, participantId: 'rest-p4', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'nb-a3', taskId: blockingTask2.id, slotId: blockingTask2.slots[0].slotId, participantId: 'rest-p4', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const restNb = computeParticipantRest('rest-p4', nbAssigns, [blockingTask, nonBlockingTask, blockingTask2]);
+  // Karov (non-blocking) between two blocking tasks: blocking↔karov gap is NOT penalised
+  // Only blocking↔blocking gaps are counted
+  assert(restNb.nonLightAssignmentCount === 3, 'Rest: non-blocking still counted as work');
+  // The Karov breaks the blocking chain, so we expect gaps between blocking-blocking pairs only
+  // With no direct blocking→blocking adjacency, we should see limited rest gaps
+  assert(restNb.restGaps.length <= 1, 'Rest: non-blocking task breaks rest gap chain');
+}
+
+// computeAllRestProfiles: covers all participants
+{
+  const rap1: Participant = {
+    id: 'rap-1', name: 'RAP1', level: Level.L0,
+    certifications: [Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const rap2: Participant = {
+    id: 'rap-2', name: 'RAP2', level: Level.L0,
+    certifications: [Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const rapTask = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  const rapAssigns: Assignment[] = [
+    { id: 'rap-a1', taskId: rapTask.id, slotId: rapTask.slots[0].slotId, participantId: 'rap-1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const profiles = computeAllRestProfiles([rap1, rap2], rapAssigns, [rapTask]);
+  assert(profiles.size === 2, 'computeAllRestProfiles: returns profile for each participant');
+  assert(profiles.get('rap-1')!.nonLightAssignmentCount === 1, 'computeAllRestProfiles: rap-1 has 1 assignment');
+  assert(profiles.get('rap-2')!.nonLightAssignmentCount === 0, 'computeAllRestProfiles: rap-2 has 0 assignments');
+}
+
+// computeRestFairness: multiple participants with different rest profiles
+{
+  const t1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 8));
+  const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 10, 12));
+  const t3 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 16));
+  const p1: Participant = { id: 'rf-1', name: 'RF1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const p2: Participant = { id: 'rf-2', name: 'RF2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const rfAssigns: Assignment[] = [
+    { id: 'rf-a1', taskId: t1.id, slotId: t1.slots[0].slotId, participantId: 'rf-1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'rf-a2', taskId: t2.id, slotId: t2.slots[0].slotId, participantId: 'rf-1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'rf-a3', taskId: t1.id, slotId: t1.slots[1].slotId, participantId: 'rf-2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'rf-a4', taskId: t3.id, slotId: t3.slots[0].slotId, participantId: 'rf-2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const profiles = computeAllRestProfiles([p1, p2], rfAssigns, [t1, t2, t3]);
+  const fairness = computeRestFairness(profiles);
+  assert(fairness.globalMinRest >= 0, 'computeRestFairness: globalMinRest >= 0');
+  assert(isFinite(fairness.globalMinRest), 'computeRestFairness: globalMinRest is finite');
+  assert(isFinite(fairness.globalAvgRest), 'computeRestFairness: globalAvgRest is finite');
+  assert(fairness.stdDevRest >= 0, 'computeRestFairness: stdDevRest >= 0');
+}
+
+// computeRestFairness: no participants with rest gaps → Infinity
+{
+  const emptyProfiles = new Map<string, ParticipantRestProfile>();
+  const fairnessEmpty = computeRestFairness(emptyProfiles);
+  assert(fairnessEmpty.globalMinRest === Infinity, 'computeRestFairness: empty → Infinity');
+  assert(fairnessEmpty.stdDevRest === 0, 'computeRestFairness: empty → stdDev=0');
+}
+
+// ─── Soft Constraints: workloadImbalanceSplit ───────────────────────────────
+
+console.log('\n── Soft Constraints: Workload Balance ──');
+
+// Equal workload → zero penalty
+{
+  const wlTask = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  const wlP1: Participant = { id: 'wl-1', name: 'WL1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const wlP2: Participant = { id: 'wl-2', name: 'WL2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  // Both assigned to identical tasks
+  const wlTask2 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  const wlAssigns: Assignment[] = [
+    { id: 'wl-a1', taskId: wlTask.id, slotId: wlTask.slots[0].slotId, participantId: 'wl-1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'wl-a2', taskId: wlTask2.id, slotId: wlTask2.slots[0].slotId, participantId: 'wl-2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const wlStats = workloadImbalanceSplit([wlP1, wlP2], wlAssigns, [wlTask, wlTask2]);
+  assert(wlStats.l0StdDev === 0, 'SC-3: equal workload → l0StdDev=0');
+  assert(wlStats.l0Penalty === 0, 'SC-3: equal workload → l0Penalty=0');
+}
+
+// Unequal workload → nonzero penalty
+{
+  const wlTaskBig = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 18)); // 12h
+  const wlTaskSmall = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 8)); // 2h
+  const wlP1: Participant = { id: 'wl2-1', name: 'WL2-1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const wlP2: Participant = { id: 'wl2-2', name: 'WL2-2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const wlAssigns: Assignment[] = [
+    { id: 'wl2-a1', taskId: wlTaskBig.id, slotId: wlTaskBig.slots[0].slotId, participantId: 'wl2-1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'wl2-a2', taskId: wlTaskSmall.id, slotId: wlTaskSmall.slots[0].slotId, participantId: 'wl2-2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const wlStats = workloadImbalanceSplit([wlP1, wlP2], wlAssigns, [wlTaskBig, wlTaskSmall]);
+  assert(wlStats.l0StdDev > 0, 'SC-3: unequal workload → l0StdDev > 0');
+  assert(wlStats.l0Penalty > 0, 'SC-3: unequal workload → l0Penalty > 0');
+  assert(wlStats.l0Avg === 7, 'SC-3: (12+2)/2 = avg 7h');
+}
+
+// Split pool: L0 and seniors balanced independently
+{
+  const spTask1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 14)); // 8h
+  const spTask2 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10)); // 4h
+  const spL0a: Participant = { id: 'sp2-l0a', name: 'SP-L0a', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const spL0b: Participant = { id: 'sp2-l0b', name: 'SP-L0b', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const spSr: Participant = { id: 'sp2-sr', name: 'SP-Sr', level: Level.L3, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  // L0s get unequal work, senior gets none
+  const spAssigns: Assignment[] = [
+    { id: 'sp2-a1', taskId: spTask1.id, slotId: spTask1.slots[0].slotId, participantId: 'sp2-l0a', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'sp2-a2', taskId: spTask2.id, slotId: spTask2.slots[0].slotId, participantId: 'sp2-l0b', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const spStats = workloadImbalanceSplit([spL0a, spL0b, spSr], spAssigns, [spTask1, spTask2]);
+  assert(spStats.l0StdDev > 0, 'SC-3 split: L0 pool has imbalance');
+  assert(spStats.seniorStdDev === 0, 'SC-3 split: senior pool (1 person with 0h) has stdDev=0');
+  assert(spStats.seniorAvg === 0, 'SC-3 split: senior avg = 0');
+  assert(spStats.l0Avg === 6, 'SC-3 split: L0 avg = (8+4)/2 = 6');
+}
+
+// Light tasks → 0 effective hours (not counted in workload)
+{
+  const lightTask = createKarovitTask(createTimeBlockFromHours(baseDate, 6, 14)); // 8h but light
+  const wlPLight: Participant = { id: 'wl-light', name: 'WL-Light', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const lightAssigns: Assignment[] = [
+    { id: 'wl-la1', taskId: lightTask.id, slotId: lightTask.slots[0].slotId, participantId: 'wl-light', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const lightStats = workloadImbalanceSplit([wlPLight], lightAssigns, [lightTask]);
+  assert(lightStats.l0Avg === 0, 'SC-3: light task → 0 effective hours → avg=0');
+}
+
+// ─── collectSoftWarnings ────────────────────────────────────────────────────
+
+console.log('\n── collectSoftWarnings ─────────────────');
+
+// No warnings for a clean schedule
+{
+  const cwP: Participant = {
+    id: 'cw-p1', name: 'CW-P1', level: Level.L0,
+    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const cwTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
+  const cwAssigns: Assignment[] = [
+    { id: 'cw-a1', taskId: cwTask.id, slotId: cwTask.slots[0].slotId, participantId: cwP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const warnings = collectSoftWarnings([cwTask], [cwP], cwAssigns);
+  // Should be zero or minimal warnings for a valid L0 assignment
+  assert(!warnings.some(w => w.code === 'LOW_PRIORITY_LEVEL'), 'collectSoftWarnings: L0 in Hamama → no LOW_PRIORITY_LEVEL');
+}
+
+// LOW_PRIORITY_LEVEL warning for L4 in Hamama
+{
+  const cwP4: Participant = {
+    id: 'cw-p4', name: 'CW-P4', level: Level.L4,
+    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const cwTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
+  const cwAssigns: Assignment[] = [
+    { id: 'cw-a2', taskId: cwTask.id, slotId: cwTask.slots[0].slotId, participantId: cwP4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const warnings = collectSoftWarnings([cwTask], [cwP4], cwAssigns);
+  assert(warnings.some(w => w.code === 'LOW_PRIORITY_LEVEL'), 'collectSoftWarnings: L4 in Hamama → LOW_PRIORITY_LEVEL warning');
+}
+
+// ─── computeScheduleScore: Extended Tests ───────────────────────────────────
+
+console.log('\n── computeScheduleScore: Extended ──────');
+
+// Score with zero assignments → baseline
+{
+  const scoreP: Participant = {
+    id: 'score-p1', name: 'Score-P1', level: Level.L0,
+    certifications: [Certification.Nitzan], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const scoreTask = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  const score = computeScheduleScore([scoreTask], [scoreP], [], DEFAULT_CONFIG);
+  assert(score.totalPenalty === 0, 'Score: empty schedule → 0 penalty');
+  assert(score.l0StdDev === 0, 'Score: empty schedule → l0StdDev=0');
+}
+
+// Score with balanced assignments → low penalty, good composite
+{
+  const p1: Participant = { id: 'sb-p1', name: 'SB1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const p2: Participant = { id: 'sb-p2', name: 'SB2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const t1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18));
+  const assigns: Assignment[] = [
+    { id: 'sb-a1', taskId: t1.id, slotId: t1.slots[0].slotId, participantId: 'sb-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'sb-a2', taskId: t2.id, slotId: t2.slots[0].slotId, participantId: 'sb-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const scoreBalanced = computeScheduleScore([t1, t2], [p1, p2], assigns, DEFAULT_CONFIG);
+  assert(scoreBalanced.l0StdDev === 0, 'Score: balanced 4h each → l0StdDev=0');
+  assert(scoreBalanced.l0AvgEffective === 4, 'Score: balanced avg = 4h');
+}
+
+// Score with imbalanced assignments → higher penalty
+{
+  const p1: Participant = { id: 'si-p1', name: 'SI1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const p2: Participant = { id: 'si-p2', name: 'SI2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const t1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 14)); // 8h
+  const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18)); // 4h
+  // P1 gets both tasks (12h), P2 gets nothing
+  const assigns: Assignment[] = [
+    { id: 'si-a1', taskId: t1.id, slotId: t1.slots[0].slotId, participantId: 'si-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'si-a2', taskId: t2.id, slotId: t2.slots[0].slotId, participantId: 'si-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const scoreImb = computeScheduleScore([t1, t2], [p1, p2], assigns, DEFAULT_CONFIG);
+  assert(scoreImb.l0StdDev > 0, 'Score: imbalanced → l0StdDev > 0');
+}
+
+// Score comparison: balanced vs imbalanced → balanced has better composite
+{
+  const pb1: Participant = { id: 'cmp-p1', name: 'CMP1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const pb2: Participant = { id: 'cmp-p2', name: 'CMP2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const ct1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  const ct2 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18));
+
+  const balAssigns: Assignment[] = [
+    { id: 'cmp-a1', taskId: ct1.id, slotId: ct1.slots[0].slotId, participantId: 'cmp-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'cmp-a2', taskId: ct2.id, slotId: ct2.slots[0].slotId, participantId: 'cmp-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const imbAssigns: Assignment[] = [
+    { id: 'cmp-a3', taskId: ct1.id, slotId: ct1.slots[0].slotId, participantId: 'cmp-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'cmp-a4', taskId: ct2.id, slotId: ct2.slots[0].slotId, participantId: 'cmp-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const scoreBal = computeScheduleScore([ct1, ct2], [pb1, pb2], balAssigns, DEFAULT_CONFIG);
+  const scoreImb = computeScheduleScore([ct1, ct2], [pb1, pb2], imbAssigns, DEFAULT_CONFIG);
+  assert(scoreBal.compositeScore >= scoreImb.compositeScore, 'Score: balanced schedule has better (>=) composite score than imbalanced');
+}
+
+// ─── Engine: Extended Integration Tests ─────────────────────────────────────
+
+console.log('\n── Engine: Extended Integration ─────────');
+
+// Engine validates schedule after generation
+{
+  const testEngine = new SchedulingEngine({ maxIterations: 200, maxSolverTimeMs: 3000 });
+  const p1: Participant = { id: 'eng-p1', name: 'Eng1', level: Level.L0, certifications: [Certification.Nitzan, Certification.Hamama], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  const p2: Participant = { id: 'eng-p2', name: 'Eng2', level: Level.L0, certifications: [Certification.Nitzan, Certification.Hamama], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  const p3: Participant = { id: 'eng-p3', name: 'Eng3', level: Level.L0, certifications: [Certification.Nitzan, Certification.Hamama], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  testEngine.addParticipants([p1, p2, p3]);
+
+  const engTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
+  testEngine.addTask(engTask);
+
+  const engSchedule = testEngine.generateSchedule();
+  assert(engSchedule.assignments.length > 0, 'Engine: generates at least 1 assignment');
+
+  const engValidation = testEngine.validate();
+  // A schedule from the engine should pass basic validation
+  // (though it may have unfilled slot warnings)
+  console.log(`  Engine validation: valid=${engValidation.valid}, violations=${engValidation.violations.length}`);
+}
+
+// Engine with no participants → throws validation error
+{
+  const emptyEngine = new SchedulingEngine({ maxIterations: 100, maxSolverTimeMs: 1000 });
+  const emptyTask = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  emptyEngine.addTask(emptyTask);
+  let threwError = false;
+  try {
+    emptyEngine.generateSchedule();
+  } catch (e) {
+    threwError = true;
+  }
+  assert(threwError, 'Engine: no participants → throws validation error');
+}
+
+// Engine with no tasks → throws validation error
+{
+  const noTaskEngine = new SchedulingEngine({ maxIterations: 100, maxSolverTimeMs: 1000 });
+  const ntP: Participant = { id: 'nt-p1', name: 'NT1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  noTaskEngine.addParticipants([ntP]);
+  let threwError = false;
+  try {
+    noTaskEngine.generateSchedule();
+  } catch (e) {
+    threwError = true;
+  }
+  assert(threwError, 'Engine: no tasks → throws validation error');
+}
+
+// Engine stats accuracy
+{
+  const statsEngine = new SchedulingEngine({ maxIterations: 100, maxSolverTimeMs: 1000 });
+  const sp1: Participant = { id: 'st-p1', name: 'ST1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  const sp2: Participant = { id: 'st-p2', name: 'ST2', level: Level.L2, certifications: [Certification.Nitzan], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  statsEngine.addParticipants([sp1, sp2]);
+  statsEngine.addTask(createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10)));
+  statsEngine.addTask(createHamamaTask(createTimeBlockFromHours(baseDate, 10, 18)));
+  const stats = statsEngine.getStats();
+  assert(stats.totalTasks === 2, 'Engine stats: 2 tasks');
+  assert(stats.totalParticipants === 2, 'Engine stats: 2 participants');
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
