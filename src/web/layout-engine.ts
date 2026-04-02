@@ -675,7 +675,7 @@ export function renderScheduleGridV2(
   }).join('');
 
   return `
-    <div class="schedule-grid-container schedule-grid-smart">
+    <div class="schedule-grid-container schedule-grid-smart${manualCtx?.active ? ' schedule-grid-compact' : ''}">
       ${sectionHtml}
     </div>
   `;

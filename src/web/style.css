@@ -5504,3 +5504,98 @@ tr.now-row-animate > td.time-cell {
   align-items: flex-start;
   gap: 4px;
 }
+
+/* ── Compact Grid for Manual Build Mode ─────────────────────────────────── */
+
+.schedule-grid-compact {
+  gap: 4px;
+}
+
+.schedule-grid-compact .table-title {
+  padding: 2px 6px;
+  font-size: 0.7rem;
+}
+
+.schedule-grid-compact .schedule-grid-table th {
+  padding: 2px 3px;
+  font-size: 0.65rem;
+}
+
+.schedule-grid-compact .schedule-grid-table td {
+  padding: 2px 3px;
+}
+
+.schedule-grid-compact .assignment-card {
+  padding: 1px 3px;
+  margin-bottom: 1px;
+}
+
+.schedule-grid-compact .participant-name {
+  font-size: 0.72rem;
+}
+
+.schedule-grid-compact .card-details {
+  font-size: 0.65rem;
+  gap: 2px;
+}
+
+.schedule-grid-compact .manual-slot-empty {
+  min-height: 28px;
+}
+
+.schedule-grid-compact .empty-slot-label {
+  font-size: 0.65rem;
+}
+
+.schedule-grid-compact .manual-slot-hint {
+  font-size: 0.58rem;
+  margin-top: 1px;
+}
+
+.schedule-grid-compact .manual-slot-hint .badge {
+  font-size: 0.5rem;
+  padding: 0px 3px;
+}
+
+.schedule-grid-compact .schedule-table-wrapper {
+  box-shadow: none;
+}
+
+/* ── Violations Toggle (Manual Build Mode) ─────────────────────────────── */
+
+.violations-section {
+  margin-top: 8px;
+}
+
+.violations-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text);
+  text-align: start;
+}
+
+.violations-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.violations-toggle h2 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.violations-toggle-icon {
+  margin-inline-start: auto;
+  font-size: 0.9rem;
+  opacity: 0.6;
+}
+
+.violations-content {
+  margin-top: 4px;
+}

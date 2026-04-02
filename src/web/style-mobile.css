@@ -561,7 +561,7 @@
   .toolbar-right .btn-sm {
     font-size: 0.65rem;
     padding: 4px 8px;
-    min-height: 28px;
+    min-height: 36px;
   }
 
   .continuity-chip {
@@ -1401,6 +1401,19 @@
   .btn-manual-remove-sheet {
     min-height: 48px;
     font-size: 1rem;
+  }
+
+  /* Compact grid: slightly smaller touch targets (still >= 36px) */
+  .schedule-grid-compact .manual-slot-target {
+    min-height: 36px;
+  }
+
+  .schedule-grid-compact .manual-slot-empty {
+    min-height: 36px;
+  }
+
+  .schedule-grid-compact .assignment-card {
+    padding: 3px 5px;
   }
 }
 

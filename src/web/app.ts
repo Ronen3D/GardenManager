@@ -668,7 +668,9 @@ function renderWeeklyDashboard(schedule: Schedule): string {
       </div>
     </div>
     <div class="dashboard-meta">
-      התוצאה הטובה ביותר מתוך ${scheduleActualAttempts} ניסיונות, בזמן חישוב של ${(scheduleElapsed / 1000).toFixed(1)} שניות.
+      ${scheduleActualAttempts > 0
+        ? `התוצאה הטובה ביותר מתוך ${scheduleActualAttempts} ניסיונות, בזמן חישוב של ${(scheduleElapsed / 1000).toFixed(1)} שניות.`
+        : 'שבצ"ק נבנה ידנית.'}
     </div>
   </div>`;
 }
@@ -885,6 +887,7 @@ function renderScheduleTab(): string {
           ${!preflight.canGenerate ? 'title="תקן בעיות קריטיות בכללי המשימות תחילה"' : ''}>
           ${_isOptimizing ? '⏳ מייעל…' : currentSchedule ? '🔄 צור מחדש' : '⚡ צור שבצ"ק'}
         </button>
+        ${!currentSchedule && preflight.canGenerate && !_isOptimizing ? `<button class="btn-sm btn-outline" id="btn-create-manual" title="צור שבצ\"ק ריק לבנייה ידנית">✏️ בנייה ידנית</button>` : ''}
       </span>
       <span class="toolbar-group toolbar-group--state">
         ${currentSchedule ? `<button class="btn-sm ${_manualBuildActive ? 'btn-primary' : 'btn-outline'}" id="btn-manual-build" title="${_manualBuildActive ? 'יציאה ממצב בנייה ידנית' : 'בנייה ידנית של שבצ\"ק'}">${_manualBuildActive ? '✕ יציאה מבנייה ידנית' : '✏️ בנייה ידנית'}</button>` : ''}
@@ -924,7 +927,8 @@ function renderScheduleTab(): string {
       html += `<div class="empty-state">
         <div class="empty-icon">${SVG_ICONS.tasks}</div>
         <p>טרם נוצר שבצ"ק.</p>
-        <p class="text-muted">הגדר משתתפים ומשימות, ואז תלחץ על "צור שבצ"ק".</p>
+        <p class="text-muted">הגדר משתתפים ומשימות, ואז לחץ על "צור שבצ"ק" או בנה ידנית.</p>
+        <button class="btn-sm btn-outline" id="btn-create-manual-empty" title="צור שבצ\"ק ריק לבנייה ידנית" style="margin-top:12px">✏️ התחל בנייה ידנית</button>
       </div>`;
     }
     return html;
@@ -968,11 +972,23 @@ function renderScheduleTab(): string {
     html += renderParticipantWarehouse(s);
   }
   // Gantt chart: wrapped in mobile-toggleable accordion
+  const ganttExpanded = !_manualBuildActive;
   html += `<section class="gantt-section">`;
-  html += `<button class="gantt-mobile-toggle" aria-expanded="true" data-action="toggle-gantt">${SVG_ICONS.chart} מערכת שעות כללית</button>`;
-  html += `<div class="gantt-section-content"><h2 class="gantt-desktop-title">מערכת שעות כללית</h2>${renderGanttChart(s)}</div>`;
+  html += `<button class="gantt-mobile-toggle" aria-expanded="${ganttExpanded}" data-action="toggle-gantt">${SVG_ICONS.chart} מערכת שעות כללית</button>`;
+  html += `<div class="gantt-section-content"${_manualBuildActive ? ' style="display:none"' : ''}><h2 class="gantt-desktop-title">מערכת שעות כללית</h2>${renderGanttChart(s)}</div>`;
   html += `</section>`;
-  html += `<section><h2>הפרות אילוצים <span class="count">${filterVisibleViolations(s.violations).length}</span></h2>${renderViolations(s)}</section>`;
+  // In manual build mode, collapse violations by default (empty schedule generates hundreds)
+  const violationCount = filterVisibleViolations(s.violations).length;
+  if (_manualBuildActive) {
+    html += `<section class="violations-section violations-collapsed">
+      <button class="violations-toggle" data-action="toggle-violations" aria-expanded="false">
+        <h2>הפרות אילוצים <span class="count">${violationCount}</span></h2>
+        <span class="violations-toggle-icon">▸</span>
+      </button>
+    </section>`;
+  } else {
+    html += `<section><h2>הפרות אילוצים <span class="count">${violationCount}</span></h2>${renderViolations(s)}</section>`;
+  }
   html += `</div>`;
   html += renderParticipantSidebar(s);
   // Mobile-only FAB to toggle sidebar drawer
@@ -1894,6 +1910,73 @@ async function doGenerate(): Promise<void> {
   showToast(`שבצ"ק נוצר בהצלחה (${(scheduleElapsed / 1000).toFixed(1)} שניות)`, { type: 'success' });
 }
 
+// ─── Create Empty Manual Schedule ──────────────────────────────────────────
+
+function doCreateManualSchedule(): void {
+  const participants = store.getAllParticipants();
+  const tasks = generateTasksFromTemplates();
+
+  if (tasks.length === 0) {
+    showToast('אין משימות להציג — הגדר תחילה כללי משימות', { type: 'error' });
+    return;
+  }
+
+  // Initialize engine (same as doGenerate) so revalidateAndRefresh() works
+  const algoSettings = store.getAlgorithmSettings();
+  engine = new SchedulingEngine(
+    algoSettings.config,
+    store.getDisabledHCSet(),
+  );
+  engine.addParticipants(participants);
+  engine.addTasks(tasks);
+
+  // Build empty schedule — tasks populated, no assignments
+  const emptySchedule: Schedule = {
+    id: `manual-${Date.now()}`,
+    tasks,
+    participants,
+    assignments: [],
+    feasible: false,
+    score: {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    },
+    violations: [],
+    generatedAt: new Date(),
+  };
+
+  engine.importSchedule(emptySchedule);
+  engine.revalidateFull();
+  currentSchedule = engine.getSchedule()!;
+
+  currentDay = 1;
+  _scheduleDirty = false;
+  _snapshotDirty = true;
+  store.setActiveSnapshotId(null);
+
+  // Activate manual build mode immediately
+  _manualBuildActive = true;
+  clearManualSelection();
+  _manualUndoStack = [];
+  _warehouseFilter = '';
+
+  scheduleElapsed = 0;
+  scheduleActualAttempts = 0;
+
+  store.saveSchedule(currentSchedule);
+  renderAll();
+  showToast('שבצ"ק ריק נוצר — בחר משבצת ואז משתתף', { type: 'success' });
+}
+
 // ─── Interactive Handlers ────────────────────────────────────────────────────
 
 /**
@@ -2594,7 +2677,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2656,7 +2739,16 @@ function renderAll(): void {
   }
 
   html += '</div>';
+
+  // Preserve scroll position during manual-build re-renders
+  const savedScrollY = _manualBuildActive && currentTab === 'schedule' ? window.scrollY : 0;
+
   app.innerHTML = html;
+
+  // Restore scroll position for manual build mode
+  if (savedScrollY > 0) {
+    requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
+  }
 
   // Wire events
   wireTabNav(app);
@@ -3043,6 +3135,11 @@ function wireScheduleEvents(container: HTMLElement): void {
   const genBtn = container.querySelector('#btn-generate');
   if (genBtn) genBtn.addEventListener('click', doGenerate);
 
+  const createManualBtn = container.querySelector('#btn-create-manual');
+  if (createManualBtn) createManualBtn.addEventListener('click', doCreateManualSchedule);
+  const createManualEmptyBtn = container.querySelector('#btn-create-manual-empty');
+  if (createManualEmptyBtn) createManualEmptyBtn.addEventListener('click', doCreateManualSchedule);
+
   const daysInput = container.querySelector('#input-days') as HTMLInputElement | null;
   if (daysInput) {
     daysInput.addEventListener('change', () => {
@@ -3135,6 +3232,35 @@ function wireScheduleEvents(container: HTMLElement): void {
       const expanded = ganttToggle.getAttribute('aria-expanded') === 'true';
       ganttToggle.setAttribute('aria-expanded', String(!expanded));
       ganttContent.style.display = expanded ? 'none' : '';
+    });
+  }
+
+  // ── Violations toggle (manual build mode) ──
+  const violationsToggle = container.querySelector('[data-action="toggle-violations"]');
+  if (violationsToggle) {
+    violationsToggle.addEventListener('click', () => {
+      const section = violationsToggle.closest('.violations-section');
+      if (!section) return;
+      const expanded = violationsToggle.getAttribute('aria-expanded') === 'true';
+      if (!expanded) {
+        // Lazy-render violations content
+        let content = section.querySelector('.violations-content') as HTMLElement | null;
+        if (!content && currentSchedule) {
+          content = document.createElement('div');
+          content.className = 'violations-content';
+          content.innerHTML = renderViolations(currentSchedule);
+          section.appendChild(content);
+        }
+        if (content) content.style.display = '';
+        section.classList.remove('violations-collapsed');
+      } else {
+        const content = section.querySelector('.violations-content') as HTMLElement | null;
+        if (content) content.style.display = 'none';
+        section.classList.add('violations-collapsed');
+      }
+      violationsToggle.setAttribute('aria-expanded', String(!expanded));
+      const icon = violationsToggle.querySelector('.violations-toggle-icon');
+      if (icon) icon.textContent = expanded ? '▸' : '▾';
     });
   }
 
