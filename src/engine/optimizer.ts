@@ -151,7 +151,7 @@ function isEligibleForSlot(
   if (_diagnosticLogging) {
     const code = getRejectionReason(participant, task, slot, participantAssignments, taskMap, { disabledHC });
     if (code) {
-      const _tag = `${participant.name} → ${task.name} [${describeSlot(task.name, slot.label, task.timeBlock)}]`;
+      const _tag = `${participant.name} → ${task.name} [${describeSlot(slot.label, task.timeBlock)}]`;
       console.log(`[Elig] REJECT: ${_tag} — ${code}`);
     }
     return code === null;

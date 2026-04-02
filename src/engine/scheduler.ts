@@ -205,15 +205,13 @@ export class SchedulingEngine {
     for (const { taskId, slotId, reason } of result.unfilledSlots) {
       const task = this.tasks.get(taskId);
       const slot = task?.slots.find((s) => s.slotId === slotId);
+      const slotDesc = task ? describeSlot(slot?.label, task.timeBlock) : slotId;
       allViolations.push({
         severity: ViolationSeverity.Error,
         code: 'INFEASIBLE_SLOT',
-        message: (() => {
-          const slotDesc = task ? describeSlot(task.name, slot?.label, task.timeBlock) : slotId;
-          return reason
-            ? `לא ניתן לשבץ: ${reason} (עמדה "${slotDesc}" במשימה "${task?.name ?? taskId}")`
-            : `שבצ"ק בלתי אפשרי: לא ניתן למלא עמדה "${slotDesc}" במשימה "${task?.name ?? taskId}". אין משתתפים זמינים.`;
-        })(),
+        message: reason
+          ? `לא ניתן לשבץ: ${reason} (עמדה "${slotDesc}" במשימה "${task?.name ?? taskId}")`
+          : `שבצ"ק בלתי אפשרי: לא ניתן למלא עמדה "${slotDesc}" במשימה "${task?.name ?? taskId}". אין משתתפים זמינים.`,
         taskId,
         slotId,
       });

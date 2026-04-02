@@ -295,7 +295,7 @@ export function collectSoftWarnings(
           warnings.push({
             severity: ViolationSeverity.Warning,
             code: 'LOW_PRIORITY_LEVEL',
-            message: `${p.name} (דרגה ${p.level}) שובץ/ה ל-${task.name} [${describeSlot(task.name, slot.label, task.timeBlock)}] כמוצא אחרון — דרגה זו בעדיפות נמוכה מאוד למשבצת זו`,
+            message: `${p.name} (דרגה ${p.level}) שובץ/ה ל-${task.name} [${describeSlot(slot.label, task.timeBlock)}] כמוצא אחרון — דרגה זו בעדיפות נמוכה מאוד למשבצת זו`,
             taskId: task.id,
             participantId: p.id,
           });

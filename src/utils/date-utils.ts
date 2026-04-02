@@ -16,16 +16,16 @@ export function fmtTime(d: Date): string {
 }
 
 /**
- * Build a human-readable slot description using the sub-task name and shift time.
- * Falls back to `taskName` when `slotLabel` is absent.
+ * Build a human-readable slot description using the slot label and shift time.
+ * When `slotLabel` is absent, returns only the time range — callers already
+ * show `taskName` in the surrounding context so repeating it would be redundant.
  */
 export function describeSlot(
-  taskName: string,
   slotLabel: string | undefined,
   timeBlock: { start: Date; end: Date },
 ): string {
   const time = `${fmtTime(timeBlock.start)}–${fmtTime(timeBlock.end)}`;
-  return `${slotLabel || taskName} ${time}`;
+  return slotLabel ? `${slotLabel} ${time}` : time;
 }
 
 /** Calendar-date key from a Date (YYYY-MM-DD in local time) */

@@ -28,7 +28,7 @@ import {
   AdanitTeam,
 } from '../models/types';
 import { getTaskAssignments, getUniqueStartTimes } from './schedule-grid-view';
-import { HEBREW_DAYS } from '../utils/date-utils';
+import { HEBREW_DAYS, fmtTime } from '../utils/date-utils';
 import { addDays } from 'date-fns';
 import {
   computeSectionMetrics,
@@ -127,9 +127,6 @@ function getNumDays(schedule: Schedule): number {
   return Math.ceil((Math.max(...ends) - Math.min(...starts)) / (24 * 3600_000));
 }
 
-function fmtTime(d: Date): string {
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
 
 /** Format time — if ≤ 2 unique shifts in a category, use named labels; otherwise HH:MM */
 function fmtTimeLabel(d: Date, totalShifts: number): string {

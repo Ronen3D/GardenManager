@@ -101,7 +101,7 @@ export function checkSeniorHardBlock(
   // Everything else is forbidden
   return {
     code: 'SENIOR_HARD_BLOCK',
-    message: `${participant.name} (דרגה ${lvl}) אינו/ה ניתן/ת לשיבוץ ב-${task.name} [${describeSlot(task.name, slot.label, task.timeBlock)}] — לא בתחום התפקיד הטבעי שלו/ה`,
+    message: `${participant.name} (דרגה ${lvl}) אינו/ה ניתן/ת לשיבוץ ב-${task.name} [${describeSlot(slot.label, task.timeBlock)}] — לא בתחום התפקיד הטבעי שלו/ה`,
     severity: ViolationSeverity.Error,
     participantId: participant.id,
     taskId: task.id,

@@ -7,6 +7,7 @@
  */
 
 import { Level, Certification } from '../models/types';
+import { fmtTime } from '../utils/date-utils';
 import { getTemplateVisualMap } from './config-store';
 
 // ─── SVG Icons ───────────────────────────────────────────────────────────────
@@ -67,9 +68,9 @@ export const CERT_COLORS: Record<string, string> = {
 
 // ─── Formatting Helpers ──────────────────────────────────────────────────────
 
-/** Format a Date as HH:MM (24h, en-GB). */
+/** Format a Date as HH:MM (24h). Delegates to shared fmtTime. */
 export function fmt(d: Date): string {
-  return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  return fmtTime(d);
 }
 
 /** Level badge HTML. */

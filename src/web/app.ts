@@ -35,7 +35,7 @@ import {
   RejectionCode,
 } from '../index';
 import { getRejectionReason, getEligibleParticipantsForSlot } from '../engine/validator';
-import { hebrewDayName, describeSlot } from '../utils/date-utils';
+import { hebrewDayName } from '../utils/date-utils';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { renderScheduleGrid } from './schedule-grid-view';
 import { generateShiftBlocks } from './utils/time-utils';

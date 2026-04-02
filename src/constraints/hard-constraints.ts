@@ -89,7 +89,7 @@ export function checkLevelRequirement(
   if (!isLevelSatisfied(participant.level, slot)) {
     return violation(
       'LEVEL_MISMATCH',
-      `משתתף ${participant.name} (דרגה ${participant.level}) לא עומד בדרישת הדרגה [${slot.acceptableLevels.map((e) => 'דרגה ' + e.level).join(',')}] עבור ${task.name} משבצת "${describeSlot(task.name, slot.label, task.timeBlock)}"`,
+      `משתתף ${participant.name} (דרגה ${participant.level}) לא עומד בדרישת הדרגה [${slot.acceptableLevels.map((e) => 'דרגה ' + e.level).join(',')}] עבור ${task.name} משבצת "${describeSlot(slot.label, task.timeBlock)}"`,
       task.id,
       slotId,
       participant.id,
@@ -113,7 +113,7 @@ export function checkCertificationRequirement(
     if (!participant.certifications.includes(cert)) {
       return violation(
         'CERT_MISSING',
-        `משתתף ${participant.name} חסר הסמכה נדרשת "${cert}" עבור ${task.name} משבצת "${describeSlot(task.name, slot.label, task.timeBlock)}"`,
+        `משתתף ${participant.name} חסר הסמכה נדרשת "${cert}" עבור ${task.name} משבצת "${describeSlot(slot.label, task.timeBlock)}"`,
         task.id,
         slotId,
         participant.id,
@@ -184,7 +184,7 @@ export function checkForbiddenCertifications(
       violations.push(
         violation(
           'EXCLUDED_CERTIFICATION',
-          `${p.name} מחזיק/ה בהסמכה ${forbidden.join(', ')} ואסור/ה במשבצת "${describeSlot(task.name, slot.label, task.timeBlock)}" במשימת "${task.name}"`,
+          `${p.name} מחזיק/ה בהסמכה ${forbidden.join(', ')} ואסור/ה במשבצת "${describeSlot(slot.label, task.timeBlock)}" במשימת "${task.name}"`,
           task.id,
           slot.slotId,
           p.id,
@@ -258,7 +258,7 @@ export function checkSlotsFilled(
       violations.push(
         violation(
           'SLOT_UNFILLED',
-          `למשבצת "${describeSlot(task.name, slot.label, task.timeBlock)}" ב-${task.name} לא משובץ משתתף`,
+          `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} לא משובץ משתתף`,
           task.id,
           slot.slotId,
         ),
@@ -267,7 +267,7 @@ export function checkSlotsFilled(
       violations.push(
         violation(
           'SLOT_OVERBOOKED',
-          `למשבצת "${describeSlot(task.name, slot.label, task.timeBlock)}" ב-${task.name} יש ${slotAssignments.length} משתתפים (צפוי 1)`,
+          `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} יש ${slotAssignments.length} משתתפים (צפוי 1)`,
           task.id,
           slot.slotId,
         ),
@@ -343,7 +343,7 @@ export function checkGroupFeasibility(
       violations.push(
         violation(
           'GROUP_INSUFFICIENT',
-          `משימה "${task.name}": הקבוצה חסרה משתתף כשיר למשבצת "${describeSlot(task.name, slot.label, task.timeBlock)}" (נדרש: ${levelDesc}${certDesc})`,
+          `משימה "${task.name}": הקבוצה חסרה משתתף כשיר למשבצת "${describeSlot(slot.label, task.timeBlock)}" (נדרש: ${levelDesc}${certDesc})`,
           task.id,
           slot.slotId,
         ),
@@ -515,13 +515,13 @@ export function validateHardConstraints(
         if (slotAssignments.length === 0) {
           allViolations.push(violation(
             'SLOT_UNFILLED',
-            `למשבצת "${describeSlot(task.name, slot.label, task.timeBlock)}" ב-${task.name} לא משובץ משתתף`,
+            `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} לא משובץ משתתף`,
             task.id, slot.slotId,
           ));
         } else if (slotAssignments.length > 1) {
           allViolations.push(violation(
             'SLOT_OVERBOOKED',
-            `למשבצת "${describeSlot(task.name, slot.label, task.timeBlock)}" ב-${task.name} יש ${slotAssignments.length} משתתפים (צפוי 1)`,
+            `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} יש ${slotAssignments.length} משתתפים (צפוי 1)`,
             task.id, slot.slotId,
           ));
         }

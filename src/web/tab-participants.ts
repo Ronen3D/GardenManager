@@ -16,7 +16,7 @@ import * as store from './config-store';
 import { showConfirm, showToast } from './ui-modal';
 import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, SVG_ICONS, escHtml } from './ui-helpers';
 import { HORESH_PAKAL_ID, getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
-import { HEBREW_DAYS } from '../utils/date-utils';
+import { HEBREW_DAYS, fmtTime } from '../utils/date-utils';
 import { checkTemplateEligibility, TemplateEligibilityResult } from '../engine/validator';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -317,9 +317,6 @@ function resolveGroupInput(
   return existing ?? raw.trim();
 }
 
-function fmtTime(d: Date): string {
-  return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
-}
 
 // ─── State ───────────────────────────────────────────────────────────────────
 

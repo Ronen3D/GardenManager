@@ -231,7 +231,7 @@ export function buildTaskSummary(schedule: Schedule): string {
       const slot = task.slots.find((s) => s.slotId === a.slotId);
       if (p) {
         const status = a.status !== AssignmentStatus.Scheduled ? ` [${a.status}]` : '';
-        lines.push(`║   → ${p.name} (L${p.level}, ${p.group})${status}  <${describeSlot(task.name, slot?.label, task.timeBlock)}>`.padEnd(63) + '║');
+        lines.push(`║   → ${p.name} (L${p.level}, ${p.group})${status}  <${describeSlot(slot?.label, task.timeBlock)}>`.padEnd(63) + '║');
       }
     }
     lines.push('║' + '─'.repeat(62) + '║');
