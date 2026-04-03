@@ -1328,12 +1328,12 @@ export function seedDefaultTaskTemplates(): void {
     description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 3× L0. דורש ניצן. קל — ללא השפעה על מנוחה.',
   });
 
-  // Aruga
+  // ערוגת בוקר
   addTaskTemplate({
-    name: 'ערוגה',
+    name: 'ערוגת בוקר',
 
     durationHours: 1.5,
-    shiftsPerDay: 2,
+    shiftsPerDay: 1,
     startHour: 5,
     sameGroupRequired: false,
     isLight: false,
@@ -1343,13 +1343,37 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 4,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'משתתף בערוגה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'משתתף בערוגה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בערוגת בוקר', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בערוגת בוקר', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
     ],
     displayCategory: 'aruga',
     color: '#1ABC9C',
     displayOrder: 2,
-    description: '1.5 שעות, 2 ביום (בוקר 05:00-06:30, ערב 17:00-18:30). 2× L0. דורש ניצן.',
+    description: '1.5 שעות, משמרת אחת ביום (05:00-06:30). 2× L0. דורש ניצן.',
+  });
+
+  // ערוגת ערב
+  addTaskTemplate({
+    name: 'ערוגת ערב',
+
+    durationHours: 1.5,
+    shiftsPerDay: 1,
+    startHour: 17,
+    sameGroupRequired: false,
+    isLight: false,
+    baseLoadWeight: 1,
+    loadWindows: [],
+    blocksConsecutive: true,
+    schedulingPriority: 4,
+    subTeams: [],
+    slots: [
+      { id: uid('slot'), label: 'משתתף בערוגת ערב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בערוגת ערב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+    ],
+    displayCategory: 'aruga',
+    color: '#1ABC9C',
+    displayOrder: 2,
+    description: '1.5 שעות, משמרת אחת ביום (17:00-18:30). 2× L0. דורש ניצן.',
   });
 }
 

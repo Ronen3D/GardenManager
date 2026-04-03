@@ -2728,7 +2728,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.1</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2822,6 +2822,7 @@ function renderAll(): void {
   if (currentTab === 'schedule' && currentSchedule) {
     requestAnimationFrame(runKpiAnimations);
   }
+
 }
 
 function wireTabNav(container: HTMLElement): void {

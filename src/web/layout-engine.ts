@@ -625,7 +625,7 @@ export function renderSectionTable(
   const sectionColor = catColors[section.id] || '#999';
 
   return `
-    <div class="${wrapperClass}" data-section="${section.id}" style="--section-color: ${sectionColor}">
+    <div class="${wrapperClass}" data-section="${section.id}" data-columns="${columns.length}" style="--section-color: ${sectionColor}; --col-count: ${columns.length}">
       <h3 class="table-title">${section.title}</h3>
       <table class="table schedule-grid-table">
         <thead><tr><th class="col-time">זמן</th>${headerCells}</tr></thead>

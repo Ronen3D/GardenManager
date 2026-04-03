@@ -318,11 +318,11 @@ export function createKarovitTask(timeBlock: TimeBlock): Task {
 // ─── Aruga ───────────────────────────────────────────────────────────────────
 // 1.5h, 2× L0. Specific morning/evening slots.
 
-export function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוגה'): Task {
+export function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוגה', sourceName?: string): Task {
   return {
     id: nextTaskId('aruga'),
     name: label,
-    sourceName: 'ערוגה',
+    sourceName: sourceName ?? label,
     timeBlock,
     requiredCount: 2,
     slots: [
@@ -354,7 +354,8 @@ export function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוג�
  *  - 1 Mamtera (09:00-23:00)
  *  - 3 Karov blocks (05:00 cycle)
  *  - 3 Karovit blocks (05:00 cycle, 4 people each)
- *  - 2 Aruga (morning 05:00-06:30, evening 17:00-18:30)
+ *  - 1 ערוגת בוקר (05:00-06:30)
+ *  - 1 ערוגת ערב (17:00-18:30)
  *
  * Counter behaviour: resets slot/task counters when called standalone.
  * When called from `generateWeeklyTasks`, pass `resetCounters: false`
@@ -414,14 +415,15 @@ export function generateDailyTasks(baseDate: Date, resetCounters: boolean = true
     tasks.push(createKarovitTask(block));
   }
 
-  // Aruga: morning 05:00-06:30, evening 17:00-18:30
+  // ערוגת בוקר: 05:00-06:30
   const arugaMorningStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5, 0);
   const arugaMorningEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 6, 30);
-  tasks.push(createArugaTask({ start: arugaMorningStart, end: arugaMorningEnd }, 'ערוגה בוקר'));
+  tasks.push(createArugaTask({ start: arugaMorningStart, end: arugaMorningEnd }, 'ערוגת בוקר', 'ערוגת בוקר'));
 
+  // ערוגת ערב: 17:00-18:30
   const arugaEveningStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 17, 0);
   const arugaEveningEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 18, 30);
-  tasks.push(createArugaTask({ start: arugaEveningStart, end: arugaEveningEnd }, 'ערוגה ערב'));
+  tasks.push(createArugaTask({ start: arugaEveningStart, end: arugaEveningEnd }, 'ערוגת ערב', 'ערוגת ערב'));
 
   return tasks;
 }
