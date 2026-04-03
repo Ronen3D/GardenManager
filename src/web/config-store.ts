@@ -12,7 +12,6 @@ import {
   LevelEntry,
   Certification,
   PakalDefinition,
-  AdanitTeam,
   TaskTemplate,
   SlotTemplate,
   SubTeamTemplate,
@@ -1179,14 +1178,14 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 0,
     subTeams: [
       {
-        id: uid('st'), name: 'סגול ראשי', subTeamRole: AdanitTeam.SegolMain, slots: [
+        id: uid('st'), name: 'סגול ראשי', slots: [
           { id: uid('slot'), label: 'משתתף בסגול א', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'משתתף בסגול א', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'סגל בסגול א', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan] },
         ],
       },
       {
-        id: uid('st'), name: 'סגול משני', subTeamRole: AdanitTeam.SegolSecondary, slots: [
+        id: uid('st'), name: 'סגול משני', slots: [
           { id: uid('slot'), label: 'משתתף בסגול ב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'משתתף בסגול ב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
           { id: uid('slot'), label: 'בכיר בסגול ב\'', acceptableLevels: [{ level: Level.L2 }], requiredCertifications: [Certification.Nitzan] },

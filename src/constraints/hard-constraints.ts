@@ -50,22 +50,12 @@ function violation(
  * HC-1 pure boolean check: does the participant's level satisfy the slot's
  * acceptableLevels list?
  *
- * Accepts an explicit match OR a level strictly higher than the highest
- * listed (overqualified).  The overqualified path is intentional for
- * natural-domain tasks where a senior may fill a junior slot as a fallback.
- *
- * Callers must enforce HC-13 (senior hard blocks) independently to prevent
- * seniors entering non-natural / restricted task types.  In particular,
- * `isEligibleForSlot()` in validator.ts checks HC-13 BEFORE calling this
- * function, ensuring the overqualified path only fires when HC-13 has
- * already approved the assignment (e.g. L4 in an L0 Hamama slot).
- * The optimizer's swap-feasibility check and `validateHardConstraints()`
- * both evaluate HC-1 and HC-13 as independent constraints that must all
- * pass — ordering between them is irrelevant there.
+ * A level is satisfied if and only if it appears in the slot's
+ * acceptableLevels array (regardless of the lowPriority flag).
+ * acceptableLevels is the single source of truth for level eligibility.
  */
 export function isLevelSatisfied(level: Level, slot: SlotRequirement): boolean {
-  return slot.acceptableLevels.some(e => e.level === level)
-    || level > Math.max(...slot.acceptableLevels.map(e => e.level));
+  return slot.acceptableLevels.some(e => e.level === level);
 }
 
 /**

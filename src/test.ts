@@ -664,7 +664,6 @@ import {
   validateSeniorHardBlocks,
   computeLowPriorityLevelPenalty,
 } from './constraints/senior-policy';
-import { AdanitTeam } from './models/types';
 import type { SlotRequirement, Assignment } from './models/types';
 
 console.log('\n── Forbidden Certification Constraint (HC-11) ───────────');
@@ -932,12 +931,12 @@ console.log('\n── Senior Role Policy (HC-13) ──────────�
 // Helper slots for Adanit tests
 const adMainSlot: SlotRequirement = {
   slotId: 'test-ad-main', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }],
-  requiredCertifications: [Certification.Nitzan], subTeamRole: AdanitTeam.SegolMain,
+  requiredCertifications: [Certification.Nitzan],
   label: 'Segol Main L3/L4',
 };
 const adSecSlot: SlotRequirement = {
   slotId: 'test-ad-sec', acceptableLevels: [{ level: Level.L2 }],
-  requiredCertifications: [Certification.Nitzan], subTeamRole: AdanitTeam.SegolSecondary,
+  requiredCertifications: [Certification.Nitzan],
   label: 'Segol Secondary L2',
 };
 const adL0Slot: SlotRequirement = {
@@ -1647,7 +1646,8 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     isLight: false, sameGroupRequired: false, blocksConsecutive: true,
   };
   const v = checkLevelRequirement(l4P, task, 'hc1-s3');
-  assert(v === null, 'HC-1: L4 overqualified for L2 slot → no violation (HC-13 handles separately)');
+  assert(v !== null, 'HC-1: L4 not in L2-only slot acceptableLevels → violation');
+  assert(v!.code === 'LEVEL_MISMATCH', 'HC-1: correct violation code for level mismatch');
 }
 
 // Nonexistent slot

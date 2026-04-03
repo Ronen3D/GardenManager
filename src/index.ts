@@ -26,7 +26,6 @@ export {
   Certification,
   AssignmentStatus,
   ViolationSeverity,
-  AdanitTeam,
   PreflightSeverity,
   DEFAULT_CONFIG,
 } from './models/types';

@@ -25,7 +25,6 @@ import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';
 import {
   Schedule,
   Task,
-  AdanitTeam,
 } from '../models/types';
 import { getTaskAssignments, getUniqueStartTimes } from './schedule-grid-view';
 import { HEBREW_DAYS, fmtTime } from '../utils/date-utils';
@@ -265,17 +264,17 @@ function renderSectionTablePdf(
   const tableY = region.y + TABLE_LABEL_OFFSET;
 
   // ── Infer column strategy from slot properties (mirrors layout-engine logic) ──
-  const hasAdanit = tasks.some(t => t.slots.some(s => s.subTeamRole != null));
+  const hasTeams = tasks.some(t => t.slots.some(s => s.subTeamId != null));
   const hasMultipleSources = new Set(tasks.map(t => t.sourceName || t.name)).size > 1;
   const hasSubTeams = tasks.some(t => t.slots.some(s => s.subTeamId));
 
   type ColDef = { header: string; build: (timeNum: number) => { content: string; color: string } };
   const columns: ColDef[] = [];
 
-  if (hasAdanit || hasMultipleSources) {
+  if (hasTeams || hasMultipleSources) {
     // ── Multi-source split strategy ──
-    const teamTasks = tasks.filter(t => t.slots.some(s => s.subTeamRole != null));
-    const nonTeamTasks = tasks.filter(t => !t.slots.some(s => s.subTeamRole != null));
+    const teamTasks = tasks.filter(t => t.slots.some(s => s.subTeamId != null));
+    const nonTeamTasks = tasks.filter(t => !t.slots.some(s => s.subTeamId != null));
     const nonTeamBySource = new Map<string, Task[]>();
     for (const t of nonTeamTasks) {
       const key = t.sourceName || t.name;
@@ -296,30 +295,19 @@ function renderSectionTablePdf(
       });
     }
 
-    // Team-based columns
+    // Team-based columns (deterministic order)
     const allTeamSlots = teamTasks.flatMap(tk => tk.slots);
-    const hasSecondary = allTeamSlots.some(s => s.subTeamRole === AdanitTeam.SegolSecondary);
-    const hasMain = allTeamSlots.some(s => s.subTeamRole === AdanitTeam.SegolMain);
+    const distinctTeamIds = [...new Set(allTeamSlots.map(s => s.subTeamId).filter(Boolean))] as string[];
+    distinctTeamIds.sort();
 
-    if (hasSecondary) {
+    for (const teamId of distinctTeamIds) {
+      const label = allTeamSlots.find(s => s.subTeamId === teamId)?.subTeamLabel ?? teamId;
       columns.push({
-        header: 'סגול משני',
+        header: label,
         build: (timeNum) => {
           const atTime = teamTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
           const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-            .filter(s => s.slot.subTeamRole === AdanitTeam.SegolSecondary && s.participant)
-            .map(s => rtl(s.participant!.name))).join('\n\n');
-          return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
-        },
-      });
-    }
-    if (hasMain) {
-      columns.push({
-        header: 'סגול ראשי',
-        build: (timeNum) => {
-          const atTime = teamTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
-          const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-            .filter(s => s.slot.subTeamRole === AdanitTeam.SegolMain && s.participant)
+            .filter(s => s.slot.subTeamId === teamId && s.participant)
             .map(s => rtl(s.participant!.name))).join('\n\n');
           return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
         },

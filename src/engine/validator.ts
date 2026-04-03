@@ -17,7 +17,6 @@ import {
   Certification,
   TaskTemplate,
   SlotTemplate,
-  SubTeamRole,
 } from '../models/types';
 import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt, CATEGORY_BREAK_MS } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
@@ -294,24 +293,12 @@ export interface TemplateEligibilityResult {
 
 /**
  * HC-13 check adapted for SlotTemplate (same shape as SlotRequirement for
- * the fields we need: subTeamRole, acceptableLevels).
+ * the fields we need: acceptableLevels).
  * Returns true when the senior is BLOCKED from this slot.
  */
 function isSeniorBlockedForTemplateSlot(level: Level, slot: SlotTemplate): boolean {
   if (level === Level.L0) return false;
-  // Low-priority levels are allowed (with soft penalty) — not blocked
   if (isLowPriority(slot.acceptableLevels, level)) return false;
-  // Inline isNaturalRole logic (mirrors senior-policy.ts, _task param unused)
-  if (slot.subTeamRole != null) {
-    if (level === Level.L4 || level === Level.L3) {
-      return slot.subTeamRole !== SubTeamRole.SegolMain;
-    }
-    if (level === Level.L2) {
-      return slot.subTeamRole !== SubTeamRole.SegolSecondary;
-    }
-    return true;
-  }
-  if (isLowPriority(slot.acceptableLevels, level)) return true;
   return !isAcceptedLevel(slot.acceptableLevels, level);
 }
 

@@ -25,7 +25,6 @@ import {
   Task,
   Assignment,
   SlotRequirement,
-  AdanitTeam,
   RescueResult,
   RescuePlan,
   RescueRequest,
@@ -398,13 +397,6 @@ function generateTasksFromTemplates(): Task[] {
         const slots: SlotRequirement[] = [];
 
         for (const st of tpl.subTeams) {
-          const subTeamRole = st.subTeamRole
-            ?? ((st.name.includes('ראשי') || /main/i.test(st.name))
-              ? AdanitTeam.SegolMain
-              : (st.name.includes('משני') || /secondary/i.test(st.name))
-                ? AdanitTeam.SegolSecondary
-                : undefined);
-
           for (const s of st.slots) {
             if (s.acceptableLevels.length === 0) {
               console.warn(`Slot "${s.label}" in template "${tpl.name}" has no acceptable levels — skipping`);
@@ -415,8 +407,8 @@ function generateTasksFromTemplates(): Task[] {
               acceptableLevels: [...s.acceptableLevels],
               requiredCertifications: [...s.requiredCertifications],
               forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
-              subTeamRole,
               label: s.label,
+              subTeamLabel: st.name,
               subTeamId: st.id,
             });
           }
@@ -485,13 +477,6 @@ function generateTasksFromTemplates(): Task[] {
     // Build slots (same logic as template slot building above)
     const slots: SlotRequirement[] = [];
     for (const st of ot.subTeams) {
-      const subTeamRole = st.subTeamRole
-        ?? ((st.name.includes('ראשי') || /main/i.test(st.name))
-          ? AdanitTeam.SegolMain
-          : (st.name.includes('משני') || /secondary/i.test(st.name))
-            ? AdanitTeam.SegolSecondary
-            : undefined);
-
       for (const s of st.slots) {
         if (s.acceptableLevels.length === 0) continue;
         slots.push({
@@ -499,8 +484,8 @@ function generateTasksFromTemplates(): Task[] {
           acceptableLevels: [...s.acceptableLevels],
           requiredCertifications: [...s.requiredCertifications],
           forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
-          subTeamRole,
           label: s.label,
+          subTeamLabel: st.name,
           subTeamId: st.id,
         });
       }
@@ -2755,7 +2740,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.5</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

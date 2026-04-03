@@ -45,17 +45,6 @@ export enum ViolationSeverity {
   Warning = 'Warning', // Soft constraint → penalized but allowed
 }
 
-/** Sub-team designation for senior-level routing. */
-export enum SubTeamRole {
-  SegolMain = 'SegolMain',
-  SegolSecondary = 'SegolSecondary',
-}
-
-/** @deprecated Use SubTeamRole */
-export const AdanitTeam = SubTeamRole;
-/** @deprecated Use SubTeamRole */
-export type AdanitTeam = SubTeamRole;
-
 // ─── Time ────────────────────────────────────────────────────────────────────
 
 /** A continuous time block (supports midnight crossing) */
@@ -141,10 +130,10 @@ export interface SlotRequirement {
   requiredCertifications: Certification[];
   /** Certifications that DISQUALIFY a participant from this slot */
   forbiddenCertifications?: Certification[];
-  /** Optional: sub-team role for senior-level routing */
-  subTeamRole?: SubTeamRole;
   /** Optional: label for display purposes */
   label?: string;
+  /** Display label inherited from sub-team name (for layout column headers) */
+  subTeamLabel?: string;
   /** Generic sub-team identifier for togetherness grouping */
   subTeamId?: string;
 }
@@ -525,7 +514,6 @@ export interface SlotTemplate {
   requiredCertifications: Certification[];
   /** Certifications that DISQUALIFY a participant from this slot */
   forbiddenCertifications?: Certification[];
-  subTeamRole?: SubTeamRole;
 }
 
 /** Time-of-day load window with explicit weight (0..1). */
@@ -543,8 +531,6 @@ export interface SubTeamTemplate {
   id: string;
   name: string;
   slots: SlotTemplate[];
-  /** Explicit sub-team role. Overrides name-based inference. */
-  subTeamRole?: SubTeamRole;
 }
 
 /** A reusable task rule/template defining how a task is configured */

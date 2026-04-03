@@ -15,7 +15,6 @@ import {
   Assignment,
   Participant,
   SlotRequirement,
-  AdanitTeam,
   LiveModeState,
   AssignmentStatus,
 } from '../models/types';
@@ -194,22 +193,25 @@ function subTeamStrategy(tasks: Task[]): ColumnDefinition[] {
 }
 
 /**
- * Multi-source split strategy: columns for subTeamRole designations + one column per
+ * Multi-source split strategy: columns for sub-team IDs + one column per
  * non-team source name. Used for sections combining team-based tasks
  * with other source types.
  */
 function multiSourceSplitStrategy(tasks: Task[]): ColumnDefinition[] {
   const columns: ColumnDefinition[] = [];
 
-  // Detect which sub-team roles exist
-  const hasMain = tasks.some(t => t.slots.some(s => s.subTeamRole === AdanitTeam.SegolMain));
-  const hasSec = tasks.some(t => t.slots.some(s => s.subTeamRole === AdanitTeam.SegolSecondary));
+  // Collect all slots once for ID extraction and label lookup
+  const allSlots = tasks.flatMap(t => t.slots);
+  const distinctTeamIds = [...new Set(
+    allSlots.map(s => s.subTeamId).filter(Boolean)
+  )] as string[];
+  distinctTeamIds.sort();
 
   // Group non-team tasks by sourceName → one column per source
   const nonTeamSources: string[] = [];
   const nonTeamBySource = new Map<string, Task[]>();
   for (const t of tasks) {
-    if (!t.slots.some(s => s.subTeamRole != null)) {
+    if (!t.slots.some(s => s.subTeamId != null)) {
       const key = t.sourceName || t.name;
       if (!nonTeamBySource.has(key)) {
         nonTeamSources.push(key);
@@ -220,20 +222,13 @@ function multiSourceSplitStrategy(tasks: Task[]): ColumnDefinition[] {
   }
 
   // Team columns first (they appear on the right in RTL)
-  if (hasMain) {
+  for (const teamId of distinctTeamIds) {
+    const label = allSlots.find(s => s.subTeamId === teamId)?.subTeamLabel ?? teamId;
     columns.push({
-      key: 'adanit-main',
-      header: 'סגול ראשי',
+      key: `team-${teamId}`,
+      header: label,
       matchSlots: (_task: Task, slots: AssignedSlot[]) =>
-        slots.filter(s => s.slot.subTeamRole === AdanitTeam.SegolMain),
-    });
-  }
-  if (hasSec) {
-    columns.push({
-      key: 'adanit-secondary',
-      header: 'סגול משני',
-      matchSlots: (_task: Task, slots: AssignedSlot[]) =>
-        slots.filter(s => s.slot.subTeamRole === AdanitTeam.SegolSecondary),
+        slots.filter(s => s.slot.subTeamId === teamId),
     });
   }
 
@@ -243,7 +238,7 @@ function multiSourceSplitStrategy(tasks: Task[]): ColumnDefinition[] {
       key: `source-${sourceKey}`,
       header: sourceKey,
       matchSlots: (task: Task, slots: AssignedSlot[]) =>
-        (task.sourceName || task.name) === sourceKey && !task.slots.some(s => s.subTeamRole != null) ? slots : [],
+        (task.sourceName || task.name) === sourceKey && !task.slots.some(s => s.subTeamId != null) ? slots : [],
     });
   }
 
@@ -254,10 +249,10 @@ function multiSourceSplitStrategy(tasks: Task[]): ColumnDefinition[] {
  * Infer the best column strategy for a set of tasks based on their slot properties.
  */
 function inferColumnStrategy(tasks: Task[]): ColumnStrategy {
-  const hasAdanit = tasks.some(t => t.slots.some(s => s.subTeamRole != null));
+  const hasTeams = tasks.some(t => t.slots.some(s => s.subTeamId != null));
   const hasMultipleSources = new Set(tasks.map(t => t.sourceName || t.name)).size > 1;
 
-  if (hasAdanit || hasMultipleSources) return multiSourceSplitStrategy;
+  if (hasTeams || hasMultipleSources) return multiSourceSplitStrategy;
 
   const hasSubTeams = tasks.some(t => t.slots.some(s => s.subTeamId));
   if (hasSubTeams) return subTeamStrategy;
@@ -305,11 +300,12 @@ export function computeSectionMetrics(dayTasks: Task[]): SectionMetrics[] {
               const stId = col.key.replace('subteam-', '');
               return (s.subTeamId ?? '') === stId || (s.subTeamId == null && stId === '0');
             }
-            if (col.key === 'adanit-main') return s.subTeamRole === AdanitTeam.SegolMain;
-            if (col.key === 'adanit-secondary') return s.subTeamRole === AdanitTeam.SegolSecondary;
+            if (col.key.startsWith('team-')) {
+              return s.subTeamId === col.key.replace('team-', '');
+            }
             if (col.key.startsWith('source-')) {
               const sourceKey = col.key.replace('source-', '');
-              return (task.sourceName || task.name) === sourceKey && s.subTeamRole == null;
+              return (task.sourceName || task.name) === sourceKey && s.subTeamId == null;
             }
             return true;
           }).length;

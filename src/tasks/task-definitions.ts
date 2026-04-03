@@ -9,7 +9,6 @@ import {
   Level,
   LevelEntry,
   Certification,
-  AdanitTeam,
   TimeBlock,
 } from '../models/types';
 import { generateShiftBlocks, createTimeBlockFromHours } from '../web/utils/time-utils';
@@ -54,7 +53,6 @@ function buildAdanitSlots(): SlotRequirement[] {
       slotId: nextSlotId(prefix),
       acceptableLevels: [{ level: Level.L0 }],
       requiredCertifications: [Certification.Nitzan],
-      subTeamRole: AdanitTeam.SegolMain,
       label: 'משתתף בסגול א',
     });
   }
@@ -63,7 +61,6 @@ function buildAdanitSlots(): SlotRequirement[] {
     slotId: nextSlotId(prefix),
     acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }],
     requiredCertifications: [Certification.Nitzan],
-    subTeamRole: AdanitTeam.SegolMain,
     label: 'סגל בסגול א',
   });
 
@@ -73,7 +70,6 @@ function buildAdanitSlots(): SlotRequirement[] {
       slotId: nextSlotId(prefix),
       acceptableLevels: [{ level: Level.L0 }],
       requiredCertifications: [Certification.Nitzan],
-      subTeamRole: AdanitTeam.SegolSecondary,
       label: 'משתתף בסגול ב',
     });
   }
@@ -82,7 +78,6 @@ function buildAdanitSlots(): SlotRequirement[] {
     slotId: nextSlotId(prefix),
     acceptableLevels: [{ level: Level.L2 }],
     requiredCertifications: [Certification.Nitzan],
-    subTeamRole: AdanitTeam.SegolSecondary,
     label: 'בכיר בסגול ב\'',
   });
 

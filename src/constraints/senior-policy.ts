@@ -4,9 +4,8 @@
  * Strict isolation model — seniors are locked to their natural domain.
  *
  * Natural roles (data-driven — no task-type branching):
- *   Slots with adanitTeam: L3/L4 → SegolMain, L2 → SegolSecondary
- *   All other slots: trust acceptableLevels (if the slot lists the
- *   senior's level as normal-priority, the assignment is natural).
+ *   A slot is natural for a senior if their level appears in
+ *   acceptableLevels at normal priority (not lowPriority).
  *
  * Hard blocks (apply to ALL seniors L2/L3/L4):
  *   Forbidden from ANY task that is not their natural domain,
@@ -28,7 +27,6 @@ import {
   Level,
   Task,
   SlotRequirement,
-  SubTeamRole,
   Assignment,
   Participant,
   ConstraintViolation,
@@ -45,9 +43,8 @@ import { describeSlot } from '../utils/date-utils';
  * for the participant's level.
  *
  *  L0 → always natural (no restrictions from this policy)
- *  Slots with adanitTeam → team-based rules (L3/L4 = SegolMain, L2 = SegolSecondary)
  *  lowPriority levels → NOT natural (tolerated as last resort via soft penalty)
- *  All other slots → trust acceptableLevels at normal priority
+ *  All other levels → trust acceptableLevels at normal priority
  */
 export function isNaturalRole(
   level: Level,
@@ -56,17 +53,10 @@ export function isNaturalRole(
 ): boolean {
   if (level === Level.L0) return true;
 
-  // Slots with adanitTeam designation have team-based natural-role rules
-  if (slot.subTeamRole != null) {
-    if (level === Level.L4 || level === Level.L3) return slot.subTeamRole === SubTeamRole.SegolMain;
-    if (level === Level.L2) return slot.subTeamRole === SubTeamRole.SegolSecondary;
-    return false;
-  }
-
   // A level listed as lowPriority is NOT a natural role — it's a last resort
   if (isLowPriority(slot.acceptableLevels, level)) return false;
 
-  // All other slots: trust acceptableLevels (normal-priority entries)
+  // Trust acceptableLevels: natural if listed at normal priority
   return isAcceptedLevel(slot.acceptableLevels, level);
 }
 
