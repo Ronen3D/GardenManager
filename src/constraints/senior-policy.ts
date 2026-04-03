@@ -31,17 +31,16 @@ import { isAcceptedLevel, isLowPriority } from '../models/level-utils';
  * Returns true if the given (task, slot) combination is a "natural" assignment
  * for the participant's level.
  *
- *  L0 → always natural (no restrictions from this policy)
+ * Level-agnostic:
  *  lowPriority levels → NOT natural (tolerated as last resort via soft penalty)
- *  All other levels → trust acceptableLevels at normal priority
+ *  Listed at normal priority → natural
+ *  Not listed at all → not natural (blocked by HC-1)
  */
 export function isNaturalRole(
   level: Level,
   _task: Task,
   slot: SlotRequirement,
 ): boolean {
-  if (level === Level.L0) return true;
-
   // A level listed as lowPriority is NOT a natural role — it's a last resort
   if (isLowPriority(slot.acceptableLevels, level)) return false;
 

@@ -1078,6 +1078,49 @@ assert(!isNaturalRole(Level.L4, testKarovTask, testKarovL0Slot), 'HC-13: L4 NOT 
 assert(!isNaturalRole(Level.L4, testKarovitTask, testKarovitL0Slot), 'HC-13: L4 NOT natural in Karovit L0 slot');
 assert(!isNaturalRole(Level.L2, testAdanitTask, adMainSlot), 'HC-13: L2 NOT natural in Segol Main');
 
+// ── isNaturalRole: level-agnostic lowPriority ────────────────────────────────────
+{
+  // Slot with preferred L3/L4 and lowPriority L0
+  const mixedSlot: SlotRequirement = {
+    slotId: 'test-mixed', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }, { level: Level.L0, lowPriority: true }],
+    requiredCertifications: [], label: 'Mixed preferred+lowPriority',
+  };
+  const mixedTask: Task = {
+    id: 'sr-mixed-t', name: 'Test Mixed',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [mixedSlot],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: false,
+  };
+  // L3/L4 preferred → natural
+  assert(isNaturalRole(Level.L3, mixedTask, mixedSlot), 'isNaturalRole: L3 preferred → natural');
+  assert(isNaturalRole(Level.L4, mixedTask, mixedSlot), 'isNaturalRole: L4 preferred → natural');
+  // L0 lowPriority → NOT natural (last resort, receives penalty)
+  assert(!isNaturalRole(Level.L0, mixedTask, mixedSlot), 'isNaturalRole: L0 lowPriority → NOT natural');
+  // L2 not listed → not natural (blocked by HC-1)
+  assert(!isNaturalRole(Level.L2, mixedTask, mixedSlot), 'isNaturalRole: L2 not listed → not natural');
+
+  // Verify penalty: L0 in lowPriority slot gets penalized
+  const l0P: Participant = {
+    id: 'mix-l0', name: 'Mix-L0', level: Level.L0,
+    certifications: [], group: 'A', availability: dayAvail, dateUnavailability: [],
+  };
+  const mixAssigns: Assignment[] = [
+    { id: 'mix-a1', taskId: mixedTask.id, slotId: mixedSlot.slotId, participantId: l0P.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const mixPen = computeLowPriorityLevelPenalty([l0P], mixAssigns, [mixedTask], DEFAULT_CONFIG);
+  assert(mixPen === DEFAULT_CONFIG.lowPriorityLevelPenalty, 'lowPriority penalty: L0 in lowPriority slot → penalty applied');
+
+  // L3 in same slot → no penalty (natural)
+  const l3P: Participant = {
+    id: 'mix-l3', name: 'Mix-L3', level: Level.L3,
+    certifications: [], group: 'A', availability: dayAvail, dateUnavailability: [],
+  };
+  const mixAssigns2: Assignment[] = [
+    { id: 'mix-a2', taskId: mixedTask.id, slotId: mixedSlot.slotId, participantId: l3P.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  assert(computeLowPriorityLevelPenalty([l3P], mixAssigns2, [mixedTask], DEFAULT_CONFIG) === 0, 'lowPriority penalty: L3 preferred → 0');
+}
+
 // ── checkSeniorHardBlock (legacy stub — always returns null) ─────────────────────
 
 assert(checkSeniorHardBlock(spL4, testAdanitTask, adMainSlot) === null, 'HC-13 stub: L4 in Segol Main → null');
