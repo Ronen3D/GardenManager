@@ -1112,11 +1112,11 @@ export function seedDefaultParticipants(): void {
 
   interface MemberSpec { level: Level; certs: Certification[]; tag: string }
   const template: MemberSpec[] = [
-    { level: Level.L4, certs: [Certification.Nitzan], tag: 'L4' },
-    { level: Level.L3, certs: [Certification.Nitzan], tag: 'L3' },
-    { level: Level.L2, certs: [Certification.Nitzan], tag: 'L2' },
-    { level: Level.L2, certs: [Certification.Nitzan], tag: 'L2' },
-    { level: Level.L2, certs: [Certification.Nitzan], tag: 'L2' },
+    { level: Level.L4, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L4' },
+    { level: Level.L3, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L3' },
+    { level: Level.L2, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L2' },
+    { level: Level.L2, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L2' },
+    { level: Level.L2, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L2' },
     { level: Level.L0, certs: [Certification.Nitzan, Certification.Salsala], tag: 'L0-Salsala' },
     { level: Level.L0, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L0-Hamama' },
     { level: Level.L0, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L0-Hamama' },
