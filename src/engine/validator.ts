@@ -21,8 +21,7 @@ import {
 import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt, CATEGORY_BREAK_MS } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
-import { checkSeniorHardBlock } from '../constraints/senior-policy';
-import { isAcceptedLevel, isLowPriority } from '../models/level-utils';
+
 
 export interface FullValidationResult extends ValidationResult {
   /** Soft constraint warnings (non-fatal) */
@@ -97,7 +96,6 @@ export type RejectionCode =
   | 'HC-7'   // Already assigned to this task
   | 'HC-11'  // Forbidden certification (per-slot)
   | 'HC-12'  // Consecutive high-load tasks
-  | 'HC-13'  // Senior hard block
   | 'HC-14'; // Category break (5h minimum)
 
 /** Optional context for eligibility / rejection checks. */
@@ -138,9 +136,6 @@ function checkEligibility(
   opts?: EligibilityOpts,
 ): RejectionCode | null {
   const disabled = opts?.disabledHC;
-
-  // HC-13: Senior hard blocks (L4 non-natural/non-Hamama, L3 Mamtera)
-  if (!disabled?.has('HC-13') && checkSeniorHardBlock(participant, task, slot)) return 'HC-13';
 
   // HC-11: Forbidden certification check (per-slot)
   if (!disabled?.has('HC-11') && slot.forbiddenCertifications?.some(c => participant.certifications.includes(c))) return 'HC-11';
@@ -291,24 +286,13 @@ export interface TemplateEligibilityResult {
   reasons: string[];
 }
 
-/**
- * HC-13 check adapted for SlotTemplate (same shape as SlotRequirement for
- * the fields we need: acceptableLevels).
- * Returns true when the senior is BLOCKED from this slot.
- */
-function isSeniorBlockedForTemplateSlot(level: Level, slot: SlotTemplate): boolean {
-  if (level === Level.L0) return false;
-  if (isLowPriority(slot.acceptableLevels, level)) return false;
-  return !isAcceptedLevel(slot.acceptableLevels, level);
-}
-
 const CERT_LABELS_HE: Record<string, string> = {
   Nitzan: 'ניצן', Salsala: 'סלסלה', Hamama: 'חממה', Horesh: 'חורש',
 };
 
 /**
  * Check whether a participant (by level + certifications) can fill ANY slot
- * in a task template. Only static constraints are checked (HC-1, HC-2, HC-11, HC-13).
+ * in a task template. Only static constraints are checked (HC-1, HC-2, HC-11).
  *
  * Used by the preference-selection UI to warn when a preference can never be satisfied.
  */
@@ -329,8 +313,6 @@ export function checkTemplateEligibility(
   const blockedBy = new Set<string>();
 
   for (const slot of allSlots) {
-    // HC-13: Senior hard block
-    if (isSeniorBlockedForTemplateSlot(level, slot)) { blockedBy.add('HC-13'); continue; }
     // HC-11: Forbidden certifications
     if (slot.forbiddenCertifications?.some(c => certifications.includes(c))) { blockedBy.add('HC-11'); continue; }
     // HC-1: Level check (reuse existing isLevelSatisfied — works with SlotTemplate since it has acceptableLevels)
@@ -343,9 +325,6 @@ export function checkTemplateEligibility(
 
   // No slot passed — build human-readable reasons
   const reasons: string[] = [];
-  if (blockedBy.has('HC-13')) {
-    reasons.push(`סגל בדרגה L${level} לא יכול להשתבץ למשימה הזו (מחוץ לתחום הטבעי)`);
-  }
   if (blockedBy.has('HC-1')) {
     reasons.push(`הדרגה (L${level}) לא מתאימה לאף משבצת במשימה הזו`);
   }

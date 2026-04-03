@@ -1,26 +1,17 @@
 /**
- * Senior Role Policy  (HC-13 hard blocks + soft penalties)
- *
- * Strict isolation model — seniors are locked to their natural domain.
+ * Senior Role Policy  (soft penalties only)
  *
  * Natural roles (data-driven — no task-type branching):
  *   A slot is natural for a senior if their level appears in
  *   acceptableLevels at normal priority (not lowPriority).
  *
- * Hard blocks (apply to ALL seniors L2/L3/L4):
- *   Forbidden from ANY task that is not their natural domain,
- *   UNLESS their level appears as lowPriority in the slot's
- *   acceptableLevels (allowed with soft penalty).
+ * Hard level-gating is handled entirely by HC-1 (isLevelSatisfied).
+ * This module provides:
+ *   - isNaturalRole(): classifies assignments as natural vs last-resort
+ *   - computeLowPriorityLevelPenalty(): soft penalty for lowPriority slots
  *
- * Low-priority exception:
- *   Slots that list a senior level with lowPriority=true allow that
- *   senior as an absolute last resort, with the maximum possible
- *   penalty. The system should only place them there when the
- *   alternative is a complete failure.
- *
- * Zero exceptions:
- *   Seniors can no longer be used for general tasks even if L0 is under
- *   extreme load.
+ * Legacy exports checkSeniorHardBlock / validateSeniorHardBlocks are
+ * kept for backward compatibility but always return no violations.
  */
 
 import {
@@ -30,11 +21,9 @@ import {
   Assignment,
   Participant,
   ConstraintViolation,
-  ViolationSeverity,
   SchedulerConfig,
 } from '../models/types';
 import { isAcceptedLevel, isLowPriority } from '../models/level-utils';
-import { describeSlot } from '../utils/date-utils';
 
 // ─── Natural-role detection ──────────────────────────────────────────────────
 
@@ -60,72 +49,30 @@ export function isNaturalRole(
   return isAcceptedLevel(slot.acceptableLevels, level);
 }
 
-// ─── Hard constraint: absolute blocks ────────────────────────────────────────
+// ─── Legacy hard-constraint stubs (kept for backward compatibility) ─────────
 
 /**
- * HC-13 · Senior hard blocks (strict isolation)
- *
- * Returns a violation if any senior (L2, L3, L4) is assigned to a task
- * that is NOT their natural domain and NOT listed (even as lowPriority)
- * in the slot's acceptableLevels.
- *
- * Low-priority exception: if the senior's level appears in acceptableLevels
- * with lowPriority=true, the assignment is allowed (with maximum soft penalty).
+ * Legacy stub — always returns null (no violation).
+ * Hard level-gating is now handled entirely by HC-1 (isLevelSatisfied).
  */
 export function checkSeniorHardBlock(
-  participant: Participant,
-  task: Task,
-  slot: SlotRequirement,
+  _participant: Participant,
+  _task: Task,
+  _slot: SlotRequirement,
 ): ConstraintViolation | null {
-  const lvl = participant.level;
-
-  // Only applies to seniors (L2/L3/L4)
-  if (lvl === Level.L0) return null;
-
-  // Low-priority level: allowed (soft-penalised via lowPriorityLevelPenalty)
-  if (isLowPriority(slot.acceptableLevels, lvl)) return null;
-
-  // Natural role → allowed
-  if (isNaturalRole(lvl, task, slot)) return null;
-
-  // Everything else is forbidden
-  return {
-    code: 'SENIOR_HARD_BLOCK',
-    message: `${participant.name} (דרגה ${lvl}) אינו/ה ניתן/ת לשיבוץ ב-${task.name} [${describeSlot(slot.label, task.timeBlock)}] — לא בתחום התפקיד הטבעי שלו/ה`,
-    severity: ViolationSeverity.Error,
-    participantId: participant.id,
-    taskId: task.id,
-    slotId: slot.slotId,
-  };
+  return null;
 }
 
 /**
- * Validate all assignments for senior hard blocks.
- * Returns an array of violations (empty = all OK).
+ * Legacy stub — always returns empty array.
+ * Hard level-gating is now handled entirely by HC-1 (isLevelSatisfied).
  */
 export function validateSeniorHardBlocks(
-  participants: Participant[],
-  assignments: Assignment[],
-  tasks: Task[],
+  _participants: Participant[],
+  _assignments: Assignment[],
+  _tasks: Task[],
 ): ConstraintViolation[] {
-  const pMap = new Map(participants.map(p => [p.id, p]));
-  const tMap = new Map(tasks.map(t => [t.id, t]));
-  const violations: ConstraintViolation[] = [];
-
-  for (const a of assignments) {
-    const p = pMap.get(a.participantId);
-    const task = tMap.get(a.taskId);
-    if (!p || !task) continue;
-    if (p.level === Level.L0) continue;
-
-    const slot = task.slots.find(s => s.slotId === a.slotId);
-    if (!slot) continue;
-
-    const v = checkSeniorHardBlock(p, task, slot);
-    if (v) violations.push(v);
-  }
-
-  return violations;
+  return [];
 }
 
 // ─── Soft penalty: low-priority level assignments ──────────────────────────

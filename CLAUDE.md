@@ -63,9 +63,9 @@ Scheduling Engine (src/engine/)
   └── rescue.ts        — Minimum-disruption replanning (depth 1→2→3 swap chains)
         │
 Constraints (src/constraints/)
-  ├── hard-constraints.ts  — HC-1 through HC-13 (must pass or schedule is invalid)
+  ├── hard-constraints.ts  — HC-1 through HC-14 (must pass or schedule is invalid)
   ├── soft-constraints.ts  — SC-1 through SC-7 (penalties guiding optimization)
-  └── senior-policy.ts     — HC-13: L2/L3/L4 natural role isolation
+  └── senior-policy.ts     — Senior soft penalty (lowPriority last-resort) + isNaturalRole classification
         │
 Foundation
   ├── models/types.ts          — All enums, interfaces, type aliases (TaskTemplate, SlotTemplate, etc.)
@@ -83,9 +83,9 @@ Foundation
 
 - **Levels:** L0 (junior), L2, L3, L4 (senior). No L1 exists.
 - **Certifications:** Nitzan, Salsala, Hamama, Horesh — gate eligibility for specific task types (configured per slot, not per task type).
-- **Hard constraints** (HC-1 to HC-13): Binary pass/fail. Violations make a schedule invalid.
+- **Hard constraints** (HC-1 to HC-14): Binary pass/fail. Violations make a schedule invalid. HC-1 is the sole level gate for all participants.
 - **Soft constraints** (SC-1 to SC-7): Numeric penalties. The optimizer minimizes total penalty.
-- **Senior policy (HC-13):** Seniors have "natural roles" by domain. L4 can be used as last resort with max penalty (`preferJuniors` exception).
+- **Senior policy:** Seniors have "natural roles" determined by `isNaturalRole()`. Slots can mark a senior level as `lowPriority` (last-resort) — the soft penalty `lowPriorityLevelPenalty` heavily discourages these placements. Hard level-gating is handled by HC-1.
 - **Optimizer:** Two-phase — greedy assignment followed by swap-based local search with simulated annealing. Multi-attempt runs pick the best result.
 - **Temporal (live mode):** A time anchor divides the schedule into frozen past and modifiable future.
 - **Rescue planning:** When a slot is vacated, enumerates single-swap, then 2-swap, then 3-swap chain alternatives scored by workload impact.

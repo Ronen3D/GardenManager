@@ -17,7 +17,6 @@ import {
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
-import { validateSeniorHardBlocks } from './senior-policy';
 import { describeSlot } from '../utils/date-utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -575,8 +574,6 @@ export function validateHardConstraints(
       }
     }
 
-    // HC-10 replaced by HC-13 (senior policy) — see below
-
     // HC-11: Forbidden certification — per-slot check
     if (!disabledHC?.has('HC-11')) {
       allViolations.push(...checkForbiddenCertifications(task, taskAssignments, pMap));
@@ -675,11 +672,6 @@ export function validateHardConstraints(
       if (pAssigns.length < 2) continue;
       allViolations.push(...checkCategoryBreak(p.id, pAssigns, tMap, p.name, categoryBreakMs));
     }
-  }
-
-  // HC-13: Senior hard blocks (L4 non-natural/non-Hamama, L3 Mamtera)
-  if (!disabledHC?.has('HC-13')) {
-    allViolations.push(...validateSeniorHardBlocks(participants, assignments, tasks));
   }
 
   return {

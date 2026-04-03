@@ -1078,71 +1078,41 @@ assert(!isNaturalRole(Level.L4, testKarovTask, testKarovL0Slot), 'HC-13: L4 NOT 
 assert(!isNaturalRole(Level.L4, testKarovitTask, testKarovitL0Slot), 'HC-13: L4 NOT natural in Karovit L0 slot');
 assert(!isNaturalRole(Level.L2, testAdanitTask, adMainSlot), 'HC-13: L2 NOT natural in Segol Main');
 
-// ── checkSeniorHardBlock ────────────────────────────────────────────────────────────
+// ── checkSeniorHardBlock (legacy stub — always returns null) ─────────────────────
 
-assert(checkSeniorHardBlock(spL4, testAdanitTask, adMainSlot) === null, 'HC-13: L4 in Segol Main → no violation');
-assert(checkSeniorHardBlock(spL4, testKarovTask, testKarovSlot) === null, 'HC-13: L4 in Karov → no violation');
-assert(checkSeniorHardBlock(spL4, testKarovitTask, testKarovitSlot) === null, 'HC-13: L4 in Karovit → no violation');
-assert(checkSeniorHardBlock(spL4, testHamTask, testHamSlot) === null, 'HC-13: L4 in Hamama → no hard violation (soft only)');
-assert(checkSeniorHardBlock(spL4, testMamTask, testMamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in Mamtera → VIOLATION');
-assert(checkSeniorHardBlock(spL4, testShTask, testShSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in Shemesh → VIOLATION');
-assert(checkSeniorHardBlock(spL4, testArTask, testArSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in Aruga → VIOLATION');
-assert(checkSeniorHardBlock(spL4, testAdanitTask, adSecSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in Segol Secondary → VIOLATION');
-assert(checkSeniorHardBlock(spL4, testAdanitTask, adL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in L0 Adanit slot → VIOLATION');
-assert(checkSeniorHardBlock(spL4, testKarovTask, testKarovL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in Karov L0 slot → VIOLATION');
-assert(checkSeniorHardBlock(spL4, testKarovitTask, testKarovitL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L4 in Karovit L0 slot → VIOLATION');
-assert(checkSeniorHardBlock(spL3, testKarovTask, testKarovL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Karov L0 slot → VIOLATION');
-assert(checkSeniorHardBlock(spL3, testKarovitTask, testKarovitL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Karovit L0 slot → VIOLATION');
-assert(checkSeniorHardBlock(spL2, testKarovTask, testKarovL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Karov L0 slot → VIOLATION');
-assert(checkSeniorHardBlock(spL2, testKarovitTask, testKarovitL0Slot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Karovit L0 slot → VIOLATION');
+assert(checkSeniorHardBlock(spL4, testAdanitTask, adMainSlot) === null, 'HC-13 stub: L4 in Segol Main → null');
+assert(checkSeniorHardBlock(spL4, testMamTask, testMamSlot) === null, 'HC-13 stub: L4 in Mamtera → null (hard-block now via HC-1)');
+assert(checkSeniorHardBlock(spL4, testShTask, testShSlot) === null, 'HC-13 stub: L4 in Shemesh → null (hard-block now via HC-1)');
+assert(checkSeniorHardBlock(spL4, testHamTask, testHamSlot) === null, 'HC-13 stub: L4 in Hamama → null');
+assert(checkSeniorHardBlock(spL3, testMamTask, testMamSlot) === null, 'HC-13 stub: L3 in Mamtera → null');
+assert(checkSeniorHardBlock(spL0, testMamTask, testMamSlot) === null, 'HC-13 stub: L0 → null');
 
-assert(checkSeniorHardBlock(spL3, testMamTask, testMamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Mamtera → VIOLATION');
-assert(checkSeniorHardBlock(spL3, testAdanitTask, adMainSlot) === null, 'HC-13: L3 in Segol Main → no violation');
-assert(checkSeniorHardBlock(spL3, testAdanitTask, adSecSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Segol Secondary → VIOLATION');
-assert(checkSeniorHardBlock(spL3, testShTask, testShSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Shemesh → VIOLATION (strict isolation)');
-assert(checkSeniorHardBlock(spL3, testHamTask, testHamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L3 in Hamama → VIOLATION (not in acceptableLevels)');
-
-assert(checkSeniorHardBlock(spL2, testMamTask, testMamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Mamtera → VIOLATION (strict isolation)');
-assert(checkSeniorHardBlock(spL2, testShTask, testShSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Shemesh → VIOLATION (strict isolation)');
-assert(checkSeniorHardBlock(spL2, testHamTask, testHamSlot)?.code === 'SENIOR_HARD_BLOCK', 'HC-13: L2 in Hamama → VIOLATION (not in acceptableLevels)');
-assert(checkSeniorHardBlock(spL0, testMamTask, testMamSlot) === null, 'HC-13: L0 never blocked');
-assert(checkSeniorHardBlock(spL0, testShTask, testShSlot) === null, 'HC-13: L0 never blocked (Shemesh)');
-
-// ── validateSeniorHardBlocks (aggregate) ────────────────────────────────────────
+// ── validateSeniorHardBlocks (legacy stub — always returns []) ──────────────────
 {
   const badAssigns: Assignment[] = [
     { id: 'sr-a1', taskId: testShTask.id, slotId: testShSlot.slotId, participantId: spL4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
   const v = validateSeniorHardBlocks([spL4], badAssigns, [testShTask]);
-  assert(v.length === 1, 'HC-13: validateSeniorHardBlocks catches L4 in Shemesh');
-  assert(v[0].code === 'SENIOR_HARD_BLOCK', 'HC-13: correct violation code');
-}
-{
-  const goodAssigns: Assignment[] = [
-    { id: 'sr-a2', taskId: testAdanitTask.id, slotId: adMainSlot.slotId, participantId: spL4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'sr-a3', taskId: testAdanitTask.id, slotId: adSecSlot.slotId, participantId: spL2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'sr-a4', taskId: testKarovTask.id, slotId: testKarovSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-  ];
-  const v = validateSeniorHardBlocks([spL4, spL3, spL2], goodAssigns, [testAdanitTask, testKarovTask]);
-  assert(v.length === 0, 'HC-13: natural assignments → no violations');
+  assert(v.length === 0, 'validateSeniorHardBlocks stub: always returns empty (HC-1 handles level gating)');
 }
 
-// ── validateHardConstraints integration ───────────────────────────────────────────
+// ── validateHardConstraints integration (level gating now via HC-1) ──────────────
 {
+  // L4 in Shemesh (L0-only slot) → blocked by HC-1 LEVEL_MISMATCH
   const assigns: Assignment[] = [
     { id: 'sr-fa1', taskId: testShTask.id, slotId: testShSlot.slotId, participantId: spL4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
   const r = validateHardConstraints([testShTask], [spL4], assigns);
-  assert(r.valid === false, 'HC-13: full validation rejects L4 in Shemesh');
-  assert(r.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'HC-13: full validation has SENIOR_HARD_BLOCK code');
+  assert(r.valid === false, 'HC-1: full validation rejects L4 in L0-only Shemesh slot');
+  assert(r.violations.some(v => v.code === 'LEVEL_MISMATCH'), 'HC-1: full validation has LEVEL_MISMATCH code');
 }
-// L4 in Hamama should NOT produce a SENIOR_HARD_BLOCK (only soft penalty)
+// L4 in Hamama (lowPriority) → no hard violation (soft penalty only)
 {
   const assigns: Assignment[] = [
     { id: 'sr-fa2', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
   const r = validateHardConstraints([testHamTask], [spL4], assigns);
-  assert(!r.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'HC-13: L4 in Hamama no hard violation in full validation');
+  assert(!r.violations.some(v => v.code === 'LEVEL_MISMATCH'), 'L4 in Hamama (lowPriority) passes HC-1');
 }
 
 // ── computeLowPriorityLevelPenalty ────────────────────────────────────────────────────
@@ -1167,7 +1137,7 @@ const cfg = { ...DEFAULT_CONFIG };
   assert(pen === cfg.lowPriorityLevelPenalty, `Low-priority penalty: L4 in Hamama (lowPriority) → penalty ${cfg.lowPriorityLevelPenalty}`);
 }
 
-// L3 in Hamama → 0 (not in acceptableLevels, hard-blocked by HC-13)
+// L3 in Hamama → 0 (not in acceptableLevels, hard-blocked by HC-1)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2b', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL3.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
@@ -1176,7 +1146,7 @@ const cfg = { ...DEFAULT_CONFIG };
   assert(pen === 0, 'Low-priority penalty: L3 in Hamama → 0 (not in acceptableLevels)');
 }
 
-// L2 in Hamama → 0 (not in acceptableLevels, hard-blocked by HC-13)
+// L2 in Hamama → 0 (not in acceptableLevels, hard-blocked by HC-1)
 {
   const assigns: Assignment[] = [
     { id: 'sr-p2c', taskId: testHamTask.id, slotId: testHamSlot.slotId, participantId: spL2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
@@ -1628,7 +1598,7 @@ console.log('\n── Hard Constraints: Individual Functions ──');
   assert(v === null, 'HC-1: L2 in L2 slot → no violation');
 }
 
-// Overqualified: L4 in L2 slot (accepted by HC-1, blocked by HC-13 separately)
+// Overqualified: L4 in L2 slot (blocked by HC-1 — level not in acceptableLevels)
 {
   const l4P: Participant = {
     id: 'hc1-l4', name: 'HC1-L4', level: Level.L4,
@@ -2044,7 +2014,7 @@ console.log('\n── Category Break (HC-14) ───────────�
 console.log('\n── disabledHC Parameter ─────────────────');
 
 {
-  // Setup: L4 in Shemesh (blocked by HC-13) + same participant double-booked (blocked by HC-5)
+  // Setup: L4 in Shemesh (L0-only → blocked by HC-1) + same participant double-booked (blocked by HC-5)
   const disP: Participant = {
     id: 'dis-p1', name: 'DisabledTest', level: Level.L4,
     certifications: [Certification.Nitzan, Certification.Hamama], group: 'A',
@@ -2057,25 +2027,25 @@ console.log('\n── disabledHC Parameter ────────────�
     { id: 'dis-a2', taskId: disTask2.id, slotId: disTask2.slots[0].slotId, participantId: disP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
 
-  // No disabled → both violations
+  // No disabled → both violations (HC-1 LEVEL_MISMATCH + HC-5 DOUBLE_BOOKING)
   const rAll = validateHardConstraints([disTask1, disTask2], [disP], disAssigns);
-  assert(rAll.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'disabledHC: HC-13 fires when not disabled');
+  assert(rAll.violations.some(v => v.code === 'LEVEL_MISMATCH'), 'disabledHC: HC-1 fires when not disabled');
   assert(rAll.violations.some(v => v.code === 'DOUBLE_BOOKING'), 'disabledHC: HC-5 fires when not disabled');
 
-  // Disable HC-13 → only HC-5 remains
-  const r13Off = validateHardConstraints([disTask1, disTask2], [disP], disAssigns, new Set(['HC-13']));
-  assert(!r13Off.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'disabledHC: HC-13 suppressed when disabled');
-  assert(r13Off.violations.some(v => v.code === 'DOUBLE_BOOKING'), 'disabledHC: HC-5 still fires when HC-13 disabled');
+  // Disable HC-1 → only HC-5 remains
+  const r1Off = validateHardConstraints([disTask1, disTask2], [disP], disAssigns, new Set(['HC-1']));
+  assert(!r1Off.violations.some(v => v.code === 'LEVEL_MISMATCH'), 'disabledHC: HC-1 suppressed when disabled');
+  assert(r1Off.violations.some(v => v.code === 'DOUBLE_BOOKING'), 'disabledHC: HC-5 still fires when HC-1 disabled');
 
-  // Disable HC-5 → only HC-13 remains for double booking
+  // Disable HC-5 → only HC-1 remains
   const r5Off = validateHardConstraints([disTask1, disTask2], [disP], disAssigns, new Set(['HC-5']));
   assert(!r5Off.violations.some(v => v.code === 'DOUBLE_BOOKING'), 'disabledHC: HC-5 suppressed when disabled');
-  assert(r5Off.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'disabledHC: HC-13 still fires when HC-5 disabled');
+  assert(r5Off.violations.some(v => v.code === 'LEVEL_MISMATCH'), 'disabledHC: HC-1 still fires when HC-5 disabled');
 
-  // Disable both → no double-booking or senior block violations (other violations may remain)
-  const rBothOff = validateHardConstraints([disTask1, disTask2], [disP], disAssigns, new Set(['HC-5', 'HC-13']));
+  // Disable both → no level or double-booking violations (other violations may remain)
+  const rBothOff = validateHardConstraints([disTask1, disTask2], [disP], disAssigns, new Set(['HC-1', 'HC-5']));
   assert(!rBothOff.violations.some(v => v.code === 'DOUBLE_BOOKING'), 'disabledHC: HC-5 suppressed');
-  assert(!rBothOff.violations.some(v => v.code === 'SENIOR_HARD_BLOCK'), 'disabledHC: HC-13 suppressed');
+  assert(!rBothOff.violations.some(v => v.code === 'LEVEL_MISMATCH'), 'disabledHC: HC-1 suppressed');
 
   // Disable HC-6 → unfilled slots don't produce violations
   const singleSlotTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 14));

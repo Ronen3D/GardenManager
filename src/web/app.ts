@@ -162,7 +162,6 @@ const REJECTION_MESSAGES: Record<RejectionCode, string> = {
   'HC-7':  'המשתתף כבר משובץ במשימה הזו',
   'HC-11': 'למשתתף הסמכה אסורה למשבצת הזו',
   'HC-12': 'לא ניתן לשבץ למשימות כבדות רצופות',
-  'HC-13': 'מגבלת שיבוץ סגל — מחוץ לתחום הטבעי',
   'HC-14': 'נדרשת הפסקה של 5 שעות לפחות ממשימת קטגוריה',
 };
 
@@ -2740,7 +2739,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.6</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

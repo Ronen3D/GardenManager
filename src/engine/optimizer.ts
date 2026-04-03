@@ -35,7 +35,6 @@ import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt, CATEGORY_BREAK_MS } from '../constraints/hard-constraints';
 import { computeScheduleScore, ScoreContext, IncrementalScorer } from '../constraints/soft-constraints';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
-import { checkSeniorHardBlock } from '../constraints/senior-policy';
 import { isEligible, getRejectionReason } from './validator';
 import { dateKey, describeSlot } from '../utils/date-utils';
 import { computeAllCapacities } from '../utils/capacity';
@@ -517,7 +516,6 @@ export function greedyAssign(
           if (!isLevelSatisfied(p.level, slot)) continue;
           if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
           if (!isFullyCovered(task.timeBlock, p.availability)) continue;
-          if (checkSeniorHardBlock(p, task, slot)) continue;
           if (hasForbiddenCertification(p, slot)) continue;
 
           // Already eligible (shouldn't happen since candidates was empty, but guard)
@@ -634,7 +632,7 @@ export function greedyAssign(
           const certStr = slot.requiredCertifications.length > 0
             ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
 
-          // Collect per-participant rejection codes to surface HC-12×HC-13 conflicts
+          // Collect per-participant rejection codes to surface constraint conflicts
           const rejectionCounts = new Map<string, number>();
           for (const p of participants) {
             const pAssigns = assignmentsByParticipant.get(p.id) || [];
@@ -645,24 +643,14 @@ export function greedyAssign(
           }
 
           let reason: string;
-          // Detect HC-12 × HC-13 combo: some candidates blocked by senior policy,
-          // remaining blocked by consecutive high-load
           const hc12Count = rejectionCounts.get('HC-12') || 0;
-          const hc13Count = rejectionCounts.get('HC-13') || 0;
           const hc14Count = rejectionCounts.get('HC-14') || 0;
-          if (hc14Count > 0 && (hc12Count > 0 || hc13Count > 0)) {
-            const parts = [`${hc14Count} ע"י מינימום 5 שעות הפסקה`];
-            if (hc12Count > 0) parts.push(`${hc12Count} ע"י עומס רצוף`);
-            if (hc13Count > 0) parts.push(`${hc13Count} ע"י מדיניות סגל`);
-            reason = `התנגשות אילוצים ב${task.name}: ${parts.join(', ')}. ${levelStr}${certStr}`;
+          if (hc14Count > 0 && hc12Count > 0) {
+            reason = `התנגשות אילוצים ב${task.name}: ${hc14Count} ע"י מינימום 5 שעות הפסקה, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
           } else if (hc14Count > 0) {
             reason = `חסימת HC-14 מינימום 5 שעות הפסקה: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות קטגוריה קרובות (נדרשות 5 שעות הפסקה)`;
-          } else if (hc12Count > 0 && hc13Count > 0) {
-            reason = `התנגשות HC-12×HC-13 ב${task.name}: ${hc13Count} נחסמו ע"י מדיניות סגל, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
           } else if (hc12Count > 0) {
             reason = `חסימת HC-12 עומס רצוף: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות כבדות סמוכות`;
-          } else if (hc13Count > 0) {
-            reason = `חסימת HC-13 מדיניות סגל: כל המועמדים ${levelStr}${certStr} ל${task.name} מוגבלים ע"י אילוצי תפקיד סגל`;
           } else {
             reason = `חסר ${levelStr}${certStr} עבור ${task.name}`;
           }
@@ -900,12 +888,6 @@ function isSwapFeasible(
   if (!disabledHC?.has('HC-3')) {
     if (!isFullyCovered(taskI.timeBlock, pI.availability)) return false;
     if (!isFullyCovered(taskJ.timeBlock, pJ.availability)) return false;
-  }
-
-  // HC-13: Senior hard blocks
-  if (!disabledHC?.has('HC-13')) {
-    if (slotI && checkSeniorHardBlock(pI, taskI, slotI)) return false;
-    if (slotJ && checkSeniorHardBlock(pJ, taskJ, slotJ)) return false;
   }
 
   // HC-11: Forbidden certification check (per-slot)

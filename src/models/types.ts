@@ -320,7 +320,7 @@ export type HardConstraintCode =
   | 'HC-8'   // Adanit feasibility
   | 'HC-11'  // Forbidden certification (per-slot)
   | 'HC-12'  // No consecutive high-load
-  | 'HC-13'  // Senior hard blocks
+  | 'HC-13'  // Senior policy (soft penalty only)
   | 'HC-14'; // Minimum category break (5h)
 
 /** Full algorithm settings: weights + constraint toggles */
@@ -343,7 +343,7 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-8': 'כשירות קבוצה למשימות משותפות',
   'HC-11': 'הסמכה אסורה במשבצת',
   'HC-12': 'ללא עומס רצוף',
-  'HC-13': 'מגבלות שיבוץ סגל',
+  'HC-13': 'מדיניות סגל (עונש רך)',
   'HC-14': 'הפסקה מינימלית בין משימות קטגוריה',
 };
 
