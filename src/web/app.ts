@@ -1183,7 +1183,7 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
 
   const allTasks = currentSchedule.tasks;
   const disabledHC = engine ? new Set(store.getAlgorithmSettings().disabledHardConstraints) : undefined;
-  const eligible = getEligibleParticipantsForSlot(task, slotId, currentSchedule.participants, currentSchedule.assignments, allTasks, disabledHC);
+  const eligible = getEligibleParticipantsForSlot(task, slotId, currentSchedule.participants, currentSchedule.assignments, allTasks, disabledHC, store.getCategoryBreakHours() * 3600000);
   _eligibleForSelectedSlot = new Set(eligible.map(p => p.id));
 
   if (isSmallScreen) {
@@ -1223,6 +1223,7 @@ async function handleManualParticipantClick(participantId: string): Promise<void
     taskAssignments,
     participantMap: pMap,
     disabledHC,
+    categoryBreakMs: store.getCategoryBreakHours() * 3600000,
   });
 
   if (reason) {
@@ -1545,6 +1546,7 @@ function loadScheduleSnapshot(snapshotId: string): void {
   engine = new SchedulingEngine(
     algoSettings.config,
     store.getDisabledHCSet(),
+    store.getCategoryBreakHours() * 3600000,
   );
 
   // 4. Load data into engine
@@ -1871,6 +1873,7 @@ async function doGenerate(): Promise<void> {
   engine = new SchedulingEngine(
     algoSettings.config,
     store.getDisabledHCSet(),
+    store.getCategoryBreakHours() * 3600000,
   );
   engine.addParticipants(participants);
   engine.addTasks(tasks);
@@ -1993,6 +1996,7 @@ function doCreateManualSchedule(): void {
   engine = new SchedulingEngine(
     algoSettings.config,
     store.getDisabledHCSet(),
+    store.getCategoryBreakHours() * 3600000,
   );
   engine.addParticipants(participants);
   engine.addTasks(tasks);
@@ -2209,7 +2213,7 @@ function openRescueModal(assignmentId: string): void {
 
   _rescuePage = 0;
   _rescueAssignmentId = assignmentId;
-  _rescueResult = generateRescuePlans(currentSchedule, request, liveMode.currentTimestamp, _rescuePage);
+  _rescueResult = generateRescuePlans(currentSchedule, request, liveMode.currentTimestamp, _rescuePage, undefined, store.getDisabledHCSet(), store.getCategoryBreakHours() * 3600000);
   showRescueModal();
 }
 
@@ -2476,7 +2480,7 @@ function wireRescueModalEvents(): void {
     _rescuePage++;
     const liveMode = store.getLiveModeState();
     const wantTotal = (_rescuePage + 1) * 3; // PAGE_SIZE = 3
-    const result = generateRescuePlans(currentSchedule, _rescueResult.request, liveMode.currentTimestamp, 0, wantTotal);
+    const result = generateRescuePlans(currentSchedule, _rescueResult.request, liveMode.currentTimestamp, 0, wantTotal, store.getDisabledHCSet(), store.getCategoryBreakHours() * 3600000);
     // Ranks are already sequential from the engine (1-based per returned plan)
     _rescueResult = result;
     showRescueModal();
@@ -2751,7 +2755,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.4</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

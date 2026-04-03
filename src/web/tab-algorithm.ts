@@ -12,6 +12,7 @@ import {
   ALL_HC_CODES,
   HC_LABELS,
   AlgorithmPreset,
+  getHC14Label,
 } from '../models/types';
 import * as store from './config-store';
 import { showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
@@ -251,7 +252,7 @@ export function renderAlgorithmTab(): string {
         <input type="checkbox" data-action="algo-toggle-hc" data-code="${code}" ${enabled ? 'checked' : ''} />
         <span class="algo-toggle-code">${code}</span>
         <div class="algo-toggle-content">
-          <span class="algo-toggle-label">${HC_LABELS[code]}</span>
+          <span class="algo-toggle-label">${code === 'HC-14' ? getHC14Label(store.getCategoryBreakHours()) : HC_LABELS[code]}</span>
           <span class="algo-toggle-desc">${HC_DESCRIPTIONS[code]}</span>
           ${!enabled ? '<span class="algo-toggle-warning">⚠ מושבת — המערכת תדלג על בדיקה זו</span>' : ''}
         </div>

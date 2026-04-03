@@ -42,10 +42,12 @@ export class SchedulingEngine {
   private weekEnd: Date = new Date();
   private disabledHC?: Set<string>;
   private phantomContext: PhantomContext | null = null;
+  private categoryBreakMs?: number;
 
-  constructor(config: Partial<SchedulerConfig> = {}, disabledHC?: Set<string>) {
+  constructor(config: Partial<SchedulerConfig> = {}, disabledHC?: Set<string>, categoryBreakMs?: number) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.disabledHC = disabledHC;
+    this.categoryBreakMs = categoryBreakMs;
     // Bug #12 fix: reset module-level counters so IDs start fresh
     // for each new engine instance.
     resetAssignmentCounter();
@@ -193,7 +195,7 @@ export class SchedulingEngine {
     this.weekEnd = maxEnd > 0 ? new Date(maxEnd) : new Date();
 
     // Collect all violations
-    const hardValidation = validateHardConstraints(tasks, participants, result.assignments, this.disabledHC);
+    const hardValidation = validateHardConstraints(tasks, participants, result.assignments, this.disabledHC, this.categoryBreakMs);
     const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.config);
 
     const allViolations: ConstraintViolation[] = [
@@ -255,7 +257,7 @@ export class SchedulingEngine {
     const participants = this.getAllParticipants();
     this._validateInputs(tasks, participants);
 
-    const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC, 0, this.phantomContext ?? undefined);
+    const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC, 0, this.phantomContext ?? undefined, this.categoryBreakMs);
     return this._commitOptimizationResult(tasks, participants, result);
   }
 
@@ -285,6 +287,7 @@ export class SchedulingEngine {
       onProgress,
       this.disabledHC,
       this.phantomContext ?? undefined,
+      this.categoryBreakMs,
     );
 
     return this._commitOptimizationResult(tasks, participants, result);
@@ -332,6 +335,7 @@ export class SchedulingEngine {
       this.currentSchedule.participants,
       this.currentSchedule.assignments,
       this.disabledHC,
+      this.categoryBreakMs,
     );
   }
 
@@ -346,7 +350,7 @@ export class SchedulingEngine {
     if (!this.currentSchedule) return;
     const { tasks, participants, assignments } = this.currentSchedule;
 
-    const hard = validateHardConstraints(tasks, participants, assignments, this.disabledHC);
+    const hard = validateHardConstraints(tasks, participants, assignments, this.disabledHC, this.categoryBreakMs);
     const soft = collectSoftWarnings(tasks, participants, assignments, this.config);
     const score = computeScheduleScore(tasks, participants, assignments, this.config, this._buildScoreCtx(tasks, participants));
 
@@ -582,6 +586,9 @@ export class SchedulingEngine {
       this.config,
       lockedAssignments,
       this.disabledHC,
+      0,
+      undefined,
+      this.categoryBreakMs,
     );
 
     // Validate
@@ -590,6 +597,7 @@ export class SchedulingEngine {
       this.getAllParticipants(),
       result.assignments,
       this.disabledHC,
+      this.categoryBreakMs,
     );
     const softWarnings = collectSoftWarnings(
       this.currentSchedule.tasks,

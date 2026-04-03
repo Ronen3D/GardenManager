@@ -16,6 +16,7 @@ import {
   LoadWindow,
   TaskSet,
   OneTimeTask,
+  DEFAULT_CATEGORY_BREAK_HOURS,
 } from '../models/types';
 import * as store from './config-store';
 import { showPrompt, showConfirm, showToast } from './ui-modal';
@@ -132,6 +133,22 @@ export function renderTaskRulesTab(): string {
     }
     html += '</div>';
   }
+
+  // ── Global Task Settings ──
+  const cbh = store.getCategoryBreakHours();
+  html += `
+  <div class="tab-toolbar" style="margin-top:24px; border-top:1px solid var(--border); padding-top:16px;">
+    <div class="toolbar-left">
+      <h2>הגדרות כלליות</h2>
+    </div>
+  </div>
+  <div class="template-card" style="margin-top:8px;">
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <label for="category-break-hours" style="white-space:nowrap;">הפסקה מינימלית בין משימות קטגוריה (שעות)</label>
+      <input id="category-break-hours" type="number" min="0.5" max="24" step="0.5" value="${cbh}"
+             data-action="set-category-break" style="width:80px;" />
+    </div>
+  </div>`;
 
   return html;
 }
@@ -536,10 +553,17 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
   });
 
   container.addEventListener('change', (e) => {
-    const target = e.target as HTMLSelectElement;
-    if (target.dataset.field === 'tpl-display-category') {
+    const target = e.target as HTMLElement;
+    if ((target as HTMLSelectElement).dataset.field === 'tpl-display-category') {
       const customInput = container.querySelector<HTMLInputElement>('[data-field="tpl-display-category-custom"]');
-      if (customInput) customInput.style.display = target.value === '' ? 'inline-block' : 'none';
+      if (customInput) customInput.style.display = (target as HTMLSelectElement).value === '' ? 'inline-block' : 'none';
+    }
+    if ((target as HTMLInputElement).dataset.action === 'set-category-break') {
+      const val = parseFloat((target as HTMLInputElement).value);
+      if (!isNaN(val)) {
+        store.setCategoryBreakHours(val);
+        rerender();
+      }
     }
   });
 

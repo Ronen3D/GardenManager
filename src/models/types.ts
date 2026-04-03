@@ -355,8 +355,16 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-11': 'הסמכה אסורה במשבצת',
   'HC-12': 'ללא עומס רצוף',
   'HC-13': 'מגבלות שיבוץ סגל',
-  'HC-14': 'הפסקה מינימלית בין משימות קטגוריה (5 שעות)',
+  'HC-14': 'הפסקה מינימלית בין משימות קטגוריה',
 };
+
+/** Default minimum hours for HC-14 category break. */
+export const DEFAULT_CATEGORY_BREAK_HOURS = 5;
+
+/** Build the HC-14 label with the current break hours value. */
+export function getHC14Label(hours: number): string {
+  return `הפסקה מינימלית בין משימות קטגוריה (${hours} שעות)`;
+}
 
 /** All hard constraint codes in display order */
 export const ALL_HC_CODES: HardConstraintCode[] = [
@@ -456,6 +464,8 @@ export interface TaskSet {
   oneTimeTasks?: OneTimeTask[];
   /** If true the set cannot be deleted or renamed */
   builtIn?: boolean;
+  /** Minimum hours between category-break tasks (HC-14). Defaults to 5. */
+  categoryBreakHours?: number;
   /** Epoch ms — used for ordering */
   createdAt: number;
 }

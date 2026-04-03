@@ -31,6 +31,7 @@ import {
   ParticipantSnapshot,
   TaskSet,
   OneTimeTask,
+  DEFAULT_CATEGORY_BREAK_HOURS,
 } from '../models/types';
 import {
   BUILTIN_PAKAL_DEFINITIONS,
@@ -411,6 +412,19 @@ export function setScheduleDays(n: number): void {
   pushSnapshot();
   scheduleDays = Math.max(1, Math.min(7, n));
   recalcAllAvailability();
+  notify();
+}
+
+// ─── HC-14 Category Break Hours ─────────────────────────────────────────────
+
+let _categoryBreakHours: number = DEFAULT_CATEGORY_BREAK_HOURS;
+
+export function getCategoryBreakHours(): number { return _categoryBreakHours; }
+export function setCategoryBreakHours(hours: number): void {
+  const clamped = Math.max(0.5, Math.min(24, hours));
+  if (clamped === _categoryBreakHours) return;
+  pushSnapshot();
+  _categoryBreakHours = clamped;
   notify();
 }
 
@@ -1510,9 +1524,10 @@ function jsonDeserialize<T>(json: string): T {
 export function saveToStorage(): void {
   try {
     const state = {
-      version: 6,
+      version: 7,
       scheduleDate: scheduleDate.toISOString(),
       scheduleDays,
+      categoryBreakHours: _categoryBreakHours,
       liveMode: {
         enabled: liveModeState.enabled,
         currentTimestamp: liveModeState.currentTimestamp.toISOString(),
@@ -1562,7 +1577,7 @@ export function loadFromStorage(): boolean {
     if (!raw) return false;
 
     const state = JSON.parse(raw);
-    if (!state || (state.version !== 1 && state.version !== 2 && state.version !== 3 && state.version !== 4 && state.version !== 5 && state.version !== 6)) return false;
+    if (!state || (state.version !== 1 && state.version !== 2 && state.version !== 3 && state.version !== 4 && state.version !== 5 && state.version !== 6 && state.version !== 7)) return false;
     let migratedDefaultL0Pakals = false;
 
     // ── Migration v1 → v2: update baseLoadWeight for Hamama/Mamtera/Karov ──
@@ -1661,6 +1676,7 @@ export function loadFromStorage(): boolean {
     // Restore schedule date/days
     scheduleDate = new Date(state.scheduleDate);
     scheduleDays = state.scheduleDays || 7;
+    _categoryBreakHours = typeof state.categoryBreakHours === 'number' ? state.categoryBreakHours : DEFAULT_CATEGORY_BREAK_HOURS;
 
     // Reset stale schedule dates to the next upcoming Sunday:
     // (a) Non-Sunday dates can result from continuity replanning ("generate from
@@ -1875,6 +1891,7 @@ export function factoryReset(): void {
   _activeParticipantSetId = undefined;
   _taskSets = null;
   _activeTaskSetId = undefined;
+  _categoryBreakHours = DEFAULT_CATEGORY_BREAK_HOURS;
 }
 
 /**
@@ -2963,6 +2980,7 @@ function _seedBuiltInTaskSet(): void {
     description: 'תבניות המשימות המקוריות',
     templates: snap,
     builtIn: true,
+    categoryBreakHours: DEFAULT_CATEGORY_BREAK_HOURS,
     createdAt: 0,
   });
   _saveTaskSets();
@@ -3049,6 +3067,7 @@ export function saveCurrentAsTaskSet(name: string, description: string): TaskSet
     description: description.trim(),
     templates: _snapshotCurrentTaskTemplates(),
     oneTimeTasks: _snapshotCurrentOneTimeTasks(),
+    categoryBreakHours: _categoryBreakHours,
     createdAt: Date.now(),
   };
 
@@ -3088,6 +3107,9 @@ export function loadTaskSet(id: string): void {
       restored.scheduledDate = new Date(restored.scheduledDate);
       oneTimeTasks.set(restored.id, restored);
     }
+
+    // Restore category break hours
+    _categoryBreakHours = tset.categoryBreakHours ?? DEFAULT_CATEGORY_BREAK_HOURS;
   } finally {
     _suppressSnapshot = false;
   }
@@ -3109,6 +3131,7 @@ export function updateTaskSet(id: string): boolean {
 
   sets[idx].templates = _snapshotCurrentTaskTemplates();
   sets[idx].oneTimeTasks = _snapshotCurrentOneTimeTasks();
+  sets[idx].categoryBreakHours = _categoryBreakHours;
   _saveTaskSets();
   return true;
 }
@@ -3154,6 +3177,7 @@ export function duplicateTaskSet(id: string): TaskSet | null {
     description: source.description,
     templates: source.templates, // already deep-copied by getTaskSetById
     oneTimeTasks: source.oneTimeTasks, // already deep-copied by getTaskSetById
+    categoryBreakHours: source.categoryBreakHours,
     builtIn: false,
     createdAt: Date.now(),
   };
@@ -3194,5 +3218,6 @@ export function isTaskSetDirty(): boolean {
   const currentTemplates = _snapshotCurrentTaskTemplates();
   const currentOts = _snapshotCurrentOneTimeTasks();
   return JSON.stringify(currentTemplates) !== JSON.stringify(tset.templates)
-    || JSON.stringify(currentOts) !== JSON.stringify(tset.oneTimeTasks || []);
+    || JSON.stringify(currentOts) !== JSON.stringify(tset.oneTimeTasks || [])
+    || _categoryBreakHours !== (tset.categoryBreakHours ?? DEFAULT_CATEGORY_BREAK_HOURS);
 }

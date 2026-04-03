@@ -40,8 +40,9 @@ export function fullValidate(
   participants: Participant[],
   assignments: Assignment[],
   disabledHC?: Set<string>,
+  categoryBreakMs?: number,
 ): FullValidationResult {
-  const hard = validateHardConstraints(tasks, participants, assignments, disabledHC);
+  const hard = validateHardConstraints(tasks, participants, assignments, disabledHC, categoryBreakMs);
   const warnings = collectSoftWarnings(tasks, participants, assignments);
 
   const hardCount = hard.violations.length;
@@ -72,6 +73,7 @@ export function previewSwap(
   participants: Participant[],
   assignments: Assignment[],
   swap: SwapRequest,
+  categoryBreakMs?: number,
 ): FullValidationResult {
   // Create a temporary copy with the swap applied
   const tempAssignments = assignments.map((a) => {
@@ -81,7 +83,7 @@ export function previewSwap(
     return { ...a };
   });
 
-  return fullValidate(tasks, participants, tempAssignments);
+  return fullValidate(tasks, participants, tempAssignments, undefined, categoryBreakMs);
 }
 
 // ─── R8: Rejection Reason Codes ──────────────────────────────────────────────
@@ -109,6 +111,8 @@ export interface EligibilityOpts {
   participantMap?: Map<string, Participant>;
   /** Hard constraints that are disabled (skip those checks) */
   disabledHC?: Set<string>;
+  /** HC-14 category break threshold in ms (defaults to CATEGORY_BREAK_MS) */
+  categoryBreakMs?: number;
 }
 
 /**
@@ -189,10 +193,11 @@ function checkEligibility(
     }
   }
 
-  // HC-14: Category break — minimum 5h between category-flagged tasks
-  // Note: for overlapping tasks, gap is negative (< 5h) so HC-14 fires,
+  // HC-14: Category break — minimum gap between category-flagged tasks
+  // Note: for overlapping tasks, gap is negative so HC-14 fires,
   // but HC-5 (double-booking) is checked first and rejects before reaching here.
   if (!disabled?.has('HC-14') && task.requiresCategoryBreak) {
+    const breakMs = opts?.categoryBreakMs ?? CATEGORY_BREAK_MS;
     const taskStart = task.timeBlock.start.getTime();
     const taskEnd = task.timeBlock.end.getTime();
     for (const a of participantAssignments) {
@@ -202,7 +207,7 @@ function checkEligibility(
         taskStart - otherTask.timeBlock.end.getTime(),
         otherTask.timeBlock.start.getTime() - taskEnd,
       );
-      if (gap < CATEGORY_BREAK_MS) return 'HC-14';
+      if (gap < breakMs) return 'HC-14';
     }
   }
 
@@ -251,6 +256,7 @@ export function getEligibleParticipantsForSlot(
   currentAssignments: Assignment[],
   tasks: Task[],
   disabledHC?: Set<string>,
+  categoryBreakMs?: number,
 ): Participant[] {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) return [];
@@ -273,6 +279,7 @@ export function getEligibleParticipantsForSlot(
       taskAssignments,
       participantMap: pMap,
       disabledHC,
+      categoryBreakMs,
     });
   });
 }

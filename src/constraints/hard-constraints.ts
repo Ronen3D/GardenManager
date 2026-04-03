@@ -425,25 +425,30 @@ export function checkNoConsecutiveHighLoad(
 
 // ─── HC-14: Category Break ──────────────────────────────────────────────────
 
-/** Minimum gap (ms) required between two category-break tasks for the same participant. */
-export const CATEGORY_BREAK_MS = 5 * 60 * 60 * 1000; // 5 hours
+/** Default minimum gap (ms) between two category-break tasks. */
+const DEFAULT_CATEGORY_BREAK_MS = 5 * 60 * 60 * 1000; // 5 hours
+
+/** Backwards-compatible alias — tests and legacy call sites can keep using this. */
+export const CATEGORY_BREAK_MS = DEFAULT_CATEGORY_BREAK_MS;
 
 /**
- * HC-14: A participant must have at least 5 hours between any two tasks
- * where both have requiresCategoryBreak=true.
+ * HC-14: A participant must have at least `categoryBreakMs` between any two
+ * tasks where both have requiresCategoryBreak=true.
  *
  * Because tasks are sorted by start time, checking only adjacent pairs
- * of category-flagged tasks is sufficient: if A→B gap >= 5h, then
- * A→C gap is necessarily >= 5h as well.
+ * of category-flagged tasks is sufficient: if A→B gap >= threshold, then
+ * A→C gap is necessarily >= threshold as well.
  */
 export function checkCategoryBreak(
   participantId: string,
   assignments: Assignment[],
   taskMap: Map<string, Task>,
   participantName?: string,
+  categoryBreakMs: number = DEFAULT_CATEGORY_BREAK_MS,
 ): ConstraintViolation[] {
   const violations: ConstraintViolation[] = [];
   const displayName = participantName || participantId;
+  const requiredHours = categoryBreakMs / 3600000;
 
   const categoryAssignments = assignments
     .filter(a => a.participantId === participantId)
@@ -457,11 +462,11 @@ export function checkCategoryBreak(
     if (cur.task.id === nxt.task.id) continue;
 
     const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
-    if (gap < CATEGORY_BREAK_MS) {
+    if (gap < categoryBreakMs) {
       violations.push(
         violation(
           'CATEGORY_BREAK_VIOLATION',
-          `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות 5 שעות לפחות)`,
+          `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות ${requiredHours} שעות לפחות)`,
           nxt.task.id,
           undefined,
           participantId,
@@ -487,6 +492,7 @@ export function validateHardConstraints(
   participants: Participant[],
   assignments: Assignment[],
   disabledHC?: Set<string>,
+  categoryBreakMs?: number,
 ): ValidationResult {
   const allViolations: ConstraintViolation[] = [];
   const pMap = buildParticipantMap(participants);
@@ -672,12 +678,12 @@ export function validateHardConstraints(
     }
   }
 
-  // HC-14: Category break — minimum 5h between category-flagged tasks
+  // HC-14: Category break — minimum gap between category-flagged tasks
   if (!disabledHC?.has('HC-14')) {
     for (const p of participants) {
       const pAssigns = assignmentsByParticipant.get(p.id) || [];
       if (pAssigns.length < 2) continue;
-      allViolations.push(...checkCategoryBreak(p.id, pAssigns, tMap, p.name));
+      allViolations.push(...checkCategoryBreak(p.id, pAssigns, tMap, p.name, categoryBreakMs));
     }
   }
 
