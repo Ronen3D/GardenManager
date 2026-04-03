@@ -415,10 +415,7 @@ export function checkNoConsecutiveHighLoad(
 // ─── HC-14: Category Break ──────────────────────────────────────────────────
 
 /** Default minimum gap (ms) between two category-break tasks. */
-const DEFAULT_CATEGORY_BREAK_MS = 5 * 60 * 60 * 1000; // 5 hours
-
-/** Backwards-compatible alias — tests and legacy call sites can keep using this. */
-export const CATEGORY_BREAK_MS = DEFAULT_CATEGORY_BREAK_MS;
+export const CATEGORY_BREAK_MS = 5 * 60 * 60 * 1000; // 5 hours
 
 /**
  * HC-14: A participant must have at least `categoryBreakMs` between any two
@@ -433,7 +430,7 @@ export function checkCategoryBreak(
   assignments: Assignment[],
   taskMap: Map<string, Task>,
   participantName?: string,
-  categoryBreakMs: number = DEFAULT_CATEGORY_BREAK_MS,
+  categoryBreakMs: number = CATEGORY_BREAK_MS,
 ): ConstraintViolation[] {
   const violations: ConstraintViolation[] = [];
   const displayName = participantName || participantId;

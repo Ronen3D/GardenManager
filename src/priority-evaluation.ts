@@ -24,9 +24,8 @@ import {
   DEFAULT_CONFIG,
   SchedulerConfig,
 } from './models/types';
-import { generateDailyTasks } from './tasks/task-definitions';
+import { generateDailyTasks, resetSlotCounter, resetTaskCounter } from './tasks/cli-task-factory';
 import { optimize, resetAssignmentCounter } from './engine/optimizer';
-import { resetSlotCounter, resetTaskCounter } from './tasks/task-definitions';
 
 // ─── Participant Pool (canonical 24-participant set) ──────────────────────────
 

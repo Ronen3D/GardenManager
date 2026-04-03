@@ -183,8 +183,8 @@ function restoreSnapshot(snap: StoreSnapshot): void {
     }
   }
 
-  // Bug #6 fix: ensure participant inline dateUnavailability shares the
-  // same array reference as the dateUnavailabilities Map entry.
+  // Ensure participant inline dateUnavailability shares the same array
+  // reference as the dateUnavailabilities Map entry.
   for (const [id, p] of participants) {
     p.dateUnavailability = dateUnavailabilities.get(id) || [];
   }
@@ -1504,14 +1504,6 @@ function jsonDeserialize<T>(json: string): T {
     if (value && typeof value === 'object' && '__date__' in value) {
       return new Date(value.__date__);
     }
-    // Backward compat: data saved by the old (broken) serializer stored
-    // Dates as bare ISO-8601 strings without the { __date__ } wrapper.
-    if (
-      typeof value === 'string' &&
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)
-    ) {
-      return new Date(value);
-    }
     return value;
   }) as T;
 }
@@ -1532,9 +1524,9 @@ export function saveToStorage(): void {
         currentTimestamp: liveModeState.currentTimestamp.toISOString(),
       },
       pakalDefinitions,
-      // Bug #8 fix: omit inline dateUnavailability from participant
-      // serialization — the dateUnavailabilities Map is the single
-      // source of truth (serialized separately below).
+      // Omit inline dateUnavailability from participant serialization —
+      // the dateUnavailabilities Map is the single source of truth
+      // (serialized separately below).
       participants: Array.from(participants.values()).map(p => {
         const { dateUnavailability: _, ...rest } = p;
         return {
@@ -1576,101 +1568,7 @@ export function loadFromStorage(): boolean {
     if (!raw) return false;
 
     const state = JSON.parse(raw);
-    if (!state || (state.version !== 1 && state.version !== 2 && state.version !== 3 && state.version !== 4 && state.version !== 5 && state.version !== 6 && state.version !== 7)) return false;
-    let migratedDefaultL0Pakals = false;
-
-    // ── Migration v1 → v2: update baseLoadWeight for Hamama/Mamtera/Karov ──
-    if (state.version === 1 && Array.isArray(state.taskTemplates)) {
-      for (const tpl of state.taskTemplates) {
-        if (tpl.taskType === 'Hamama' && (tpl.baseLoadWeight === 0.6 || tpl.baseLoadWeight === undefined)) {
-          tpl.baseLoadWeight = 5 / 6;
-        }
-        if (tpl.taskType === 'Mamtera' && (tpl.baseLoadWeight === 1 || tpl.baseLoadWeight === undefined)) {
-          tpl.baseLoadWeight = 4 / 9;
-        }
-        if (tpl.taskType === 'Karov' && (tpl.baseLoadWeight === 0.2 || tpl.baseLoadWeight === undefined)) {
-          tpl.baseLoadWeight = 1 / 3;
-          if (typeof tpl.description === 'string') {
-            tpl.description = tpl.description.replace('חיצוני הוא 20% עומס', 'חיצוני הוא ~33% עומס');
-          }
-        }
-      }
-      state.version = 2;
-    }
-
-    // ── Migration: backfill new data-driven fields for existing templates ──
-    if (Array.isArray(state.taskTemplates)) {
-      for (const tpl of state.taskTemplates) {
-        // Migration: convert old preferJuniors flag to lowPriority entries
-        if ((tpl as any).preferJuniors) {
-          for (const slot of [...tpl.slots, ...tpl.subTeams.flatMap((st: any) => st.slots)]) {
-            slot.acceptableLevels = slot.acceptableLevels.map((e: any) => {
-              const lvl = typeof e === 'number' ? e : e.level;
-              if (lvl !== Level.L0 && !((typeof e === 'object') && e.lowPriority)) {
-                return { level: lvl, lowPriority: true };
-              }
-              return typeof e === 'number' ? { level: e } : e;
-            });
-          }
-          delete (tpl as any).preferJuniors;
-        }
-        // Migration: convert old flat Level[] to LevelEntry[]
-        for (const slot of [...tpl.slots, ...tpl.subTeams.flatMap((st: any) => st.slots)]) {
-          if (slot.acceptableLevels.length > 0 && typeof slot.acceptableLevels[0] === 'number') {
-            slot.acceptableLevels = slot.acceptableLevels.map((lvl: any) => ({ level: lvl }));
-          }
-        }
-        // Backfill togethernessRelevant: default to false
-        if (tpl.togethernessRelevant === undefined) {
-          tpl.togethernessRelevant = false;
-        }
-        // Backfill requiresCategoryBreak: default to false
-        if (tpl.requiresCategoryBreak === undefined) {
-          tpl.requiresCategoryBreak = false;
-        }
-        // Backfill displayCategory from name
-        if (tpl.displayCategory === undefined) {
-          tpl.displayCategory = (tpl.name || 'custom').toLowerCase();
-        }
-        // Remove legacy taskType field
-        delete (tpl as any).taskType;
-      }
-    }
-
-    // Migration: rename old participant preference fields
-    if (Array.isArray(state.participants)) {
-      for (const p of state.participants) {
-        if ((p as any).preferredTaskType !== undefined && (p as any).preferredTaskName === undefined) {
-          (p as any).preferredTaskName = (p as any).preferredTaskType;
-          delete (p as any).preferredTaskType;
-        }
-        if ((p as any).lessPreferredTaskType !== undefined && (p as any).lessPreferredTaskName === undefined) {
-          (p as any).lessPreferredTaskName = (p as any).lessPreferredTaskType;
-          delete (p as any).lessPreferredTaskType;
-        }
-      }
-    }
-
-    // Migration: convert old flat Level[] in one-time tasks
-    if (Array.isArray(state.oneTimeTasks)) {
-      for (const ot of state.oneTimeTasks) {
-        for (const slot of [...(ot.slots || []), ...(ot.subTeams || []).flatMap((st: any) => st.slots || [])]) {
-          if (slot.acceptableLevels?.length > 0 && typeof slot.acceptableLevels[0] === 'number') {
-            slot.acceptableLevels = slot.acceptableLevels.map((lvl: any) => ({ level: lvl }));
-          }
-        }
-      }
-    }
-
-    if (Array.isArray(state.participants) && needsDefaultL0PakalSeed(state.participants)) {
-      state.participants = applyDefaultL0PakalSeed(state.participants);
-      migratedDefaultL0Pakals = true;
-    }
-
-    // ── Migration v5 → v6: add empty oneTimeTasks ──
-    if (!state.oneTimeTasks) {
-      state.oneTimeTasks = [];
-    }
+    if (!state || state.version !== 7) return false;
 
     // Restore schedule date/days
     scheduleDate = new Date(state.scheduleDate);
@@ -1729,7 +1627,8 @@ export function loadFromStorage(): boolean {
       }
     }
 
-    // Bug #1 fix: sync participant inline dateUnavailability to the canonical Map
+    // Sync participant inline dateUnavailability to the canonical Map
+    // so both references stay aligned.
     for (const [id, p] of participants) {
       p.dateUnavailability = dateUnavailabilities.get(id) || [];
     }
@@ -1772,14 +1671,9 @@ export function loadFromStorage(): boolean {
     }
     syncNotWithToParticipants();
 
-    // Bug #5 fix: recompute availability from canonical inputs instead of
-    // using the stale windows that were serialised at save time.
+    // Recompute availability from canonical inputs instead of using the
+    // stale windows that were serialized at save time.
     recalcAllAvailability();
-
-    // Re-persist after migration so updated version/values are saved
-    if (state.version !== 6 || migratedDefaultL0Pakals) {
-      try { saveToStorage(); } catch (_) { /* best-effort */ }
-    }
 
     return true;
   } catch (err) {
@@ -2046,25 +1940,8 @@ function _initPresets(): AlgorithmPreset[] {
       _presets = [_deepCopyPreset(DEFAULT_PRESET)];
     }
   } else {
-    // First load — migrate existing working copy
     _presets = [_deepCopyPreset(DEFAULT_PRESET)];
-    const current = getAlgorithmSettings();
-    const defaultJson = JSON.stringify(DEFAULT_ALGORITHM_SETTINGS);
-    const currentJson = JSON.stringify(current);
-    if (currentJson !== defaultJson) {
-      // User had customised settings before presets existed — preserve them
-      const migrated: AlgorithmPreset = {
-        id: uid('preset'),
-        name: 'ההגדרות שלי',
-        description: 'הועבר מהגדרות האלגוריתם הקודמות שלך',
-        settings: current,
-        createdAt: Date.now(),
-      };
-      _presets.push(migrated);
-      _activePresetId = migrated.id;
-    } else {
-      _activePresetId = DEFAULT_PRESET.id;
-    }
+    _activePresetId = DEFAULT_PRESET.id;
     _savePresets();
     _saveActivePresetId();
   }

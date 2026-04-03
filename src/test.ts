@@ -24,12 +24,6 @@ import {
   sortBlocksByStart,
   formatBlock,
   getTimelineBounds,
-  createHamamaTask,
-  createShemeshTask,
-  createKarovTask,
-  createArugaTask,
-  createKarovitTask,
-  createAdanitTasks,
   validateHardConstraints,
   computeScheduleScore,
   DEFAULT_CONFIG,
@@ -40,6 +34,109 @@ import {
   getRejectionReason,
   ParticipantRestProfile,
 } from './index';
+import { TimeBlock, SlotRequirement } from './models/types';
+
+// ─── Local test task factories (replacing deleted task-definitions.ts) ───────
+
+let _testSlotCounter = 0;
+let _testTaskCounter = 0;
+function _nextSlotId(prefix: string): string { return `${prefix}-slot-${++_testSlotCounter}`; }
+function _nextTaskId(prefix: string): string { return `${prefix}-${++_testTaskCounter}`; }
+
+function createHamamaTask(timeBlock: TimeBlock): Task {
+  return {
+    id: _nextTaskId('hamama'), name: 'חממה', sourceName: 'חממה', timeBlock, requiredCount: 1,
+    slots: [{
+      slotId: _nextSlotId('hamama'),
+      acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
+      requiredCertifications: [Certification.Hamama], label: 'מפעיל חממה',
+    }],
+    isLight: false, baseLoadWeight: 5 / 6, sameGroupRequired: false, blocksConsecutive: true,
+  };
+}
+
+function createShemeshTask(timeBlock: TimeBlock): Task {
+  return {
+    id: _nextTaskId('shemesh'), name: 'שמש', sourceName: 'שמש', timeBlock, requiredCount: 2,
+    slots: [
+      { slotId: _nextSlotId('shemesh'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בשמש' },
+      { slotId: _nextSlotId('shemesh'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בשמש' },
+    ],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true, requiresCategoryBreak: true,
+  };
+}
+
+function createMamteraTask(baseDate: Date): Task {
+  const block = createTimeBlockFromHours(baseDate, 9, 23);
+  return {
+    id: _nextTaskId('mamtera'), name: 'ממטרה', sourceName: 'ממטרה', timeBlock: block, requiredCount: 2,
+    slots: [
+      { slotId: _nextSlotId('mamtera'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh], label: 'משתתף בממטרה' },
+      { slotId: _nextSlotId('mamtera'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh], label: 'משתתף בממטרה' },
+    ],
+    isLight: false, baseLoadWeight: 4 / 9, sameGroupRequired: false, blocksConsecutive: true,
+  };
+}
+
+function createKarovTask(timeBlock: TimeBlock): Task {
+  return {
+    id: _nextTaskId('karov'), name: 'כרוב', sourceName: 'כרוב', timeBlock, requiredCount: 4,
+    slots: [
+      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan], label: 'מפקד כרוב' },
+      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Salsala, Certification.Nitzan], label: 'נהג כרוב' },
+      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בכרוב' },
+      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בקרוב' },
+    ],
+    isLight: false, baseLoadWeight: 1 / 3,
+    loadWindows: [
+      { id: 'karov-hot-am', startHour: 5, startMinute: 0, endHour: 6, endMinute: 30, weight: 1 },
+      { id: 'karov-hot-pm', startHour: 17, startMinute: 0, endHour: 18, endMinute: 30, weight: 1 },
+    ],
+    sameGroupRequired: false, blocksConsecutive: false,
+  };
+}
+
+function createKarovitTask(timeBlock: TimeBlock): Task {
+  return {
+    id: _nextTaskId('karovit'), name: 'כרובית', sourceName: 'כרובית', timeBlock, requiredCount: 4,
+    slots: [
+      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan], label: 'סגל כרובית' },
+      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בכרובית' },
+      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בכרובית' },
+      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בכרובית' },
+    ],
+    isLight: true, sameGroupRequired: false, blocksConsecutive: false,
+  };
+}
+
+function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוגה', sourceName?: string): Task {
+  return {
+    id: _nextTaskId('aruga'), name: label, sourceName: sourceName ?? label, timeBlock, requiredCount: 2,
+    slots: [
+      { slotId: _nextSlotId('aruga'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בערוגה' },
+      { slotId: _nextSlotId('aruga'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בערוגה' },
+    ],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+}
+
+function createAdanitTasks(baseDate: Date): Task[] {
+  const shifts = generateShiftBlocks(
+    new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 5, 0), 8, 3,
+  );
+  return shifts.map((block, i) => {
+    const slots: SlotRequirement[] = [];
+    const prefix = 'adanit';
+    for (let j = 0; j < 2; j++) slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בסגול א' });
+    slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan], label: 'סגל בסגול א' });
+    for (let j = 0; j < 2; j++) slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בסגול ב' });
+    slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L2 }], requiredCertifications: [Certification.Nitzan], label: 'בכיר בסגול ב\'' });
+    return {
+      id: _nextTaskId('adanit'), name: `משמרת אדנית ${i + 1}`, sourceName: 'אדנית', timeBlock: block,
+      requiredCount: 6, slots, isLight: false, sameGroupRequired: true, blocksConsecutive: true, requiresCategoryBreak: true,
+    };
+  });
+}
 import { fullValidate, previewSwap } from './engine/validator';
 import { computeParticipantRest } from './web/utils/rest-calculator';
 import { isDateInBlock } from './web/utils/time-utils';
@@ -655,16 +752,13 @@ const KRUV_WINDOWS: LoadWindow[] = [
 
 // ─── Choresh (HC-11) Tests ───────────────────────────────────────────────────
 
-import { createMamteraTask } from './index';
 import { checkForbiddenCertifications, checkNoConsecutiveHighLoad } from './constraints/hard-constraints';
 import { getLoadWeightAtTime, isHighLoadAtBoundary } from './web/utils/load-weighting';
 import {
   isNaturalRole,
-  checkSeniorHardBlock,
-  validateSeniorHardBlocks,
   computeLowPriorityLevelPenalty,
 } from './constraints/senior-policy';
-import type { SlotRequirement, Assignment } from './models/types';
+import type { Assignment } from './models/types';
 
 console.log('\n── Forbidden Certification Constraint (HC-11) ───────────');
 
@@ -1121,23 +1215,6 @@ assert(!isNaturalRole(Level.L2, testAdanitTask, adMainSlot), 'HC-13: L2 NOT natu
   assert(computeLowPriorityLevelPenalty([l3P], mixAssigns2, [mixedTask], DEFAULT_CONFIG) === 0, 'lowPriority penalty: L3 preferred → 0');
 }
 
-// ── checkSeniorHardBlock (legacy stub — always returns null) ─────────────────────
-
-assert(checkSeniorHardBlock(spL4, testAdanitTask, adMainSlot) === null, 'HC-13 stub: L4 in Segol Main → null');
-assert(checkSeniorHardBlock(spL4, testMamTask, testMamSlot) === null, 'HC-13 stub: L4 in Mamtera → null (hard-block now via HC-1)');
-assert(checkSeniorHardBlock(spL4, testShTask, testShSlot) === null, 'HC-13 stub: L4 in Shemesh → null (hard-block now via HC-1)');
-assert(checkSeniorHardBlock(spL4, testHamTask, testHamSlot) === null, 'HC-13 stub: L4 in Hamama → null');
-assert(checkSeniorHardBlock(spL3, testMamTask, testMamSlot) === null, 'HC-13 stub: L3 in Mamtera → null');
-assert(checkSeniorHardBlock(spL0, testMamTask, testMamSlot) === null, 'HC-13 stub: L0 → null');
-
-// ── validateSeniorHardBlocks (legacy stub — always returns []) ──────────────────
-{
-  const badAssigns: Assignment[] = [
-    { id: 'sr-a1', taskId: testShTask.id, slotId: testShSlot.slotId, participantId: spL4.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-  ];
-  const v = validateSeniorHardBlocks([spL4], badAssigns, [testShTask]);
-  assert(v.length === 0, 'validateSeniorHardBlocks stub: always returns empty (HC-1 handles level gating)');
-}
 
 // ── validateHardConstraints integration (level gating now via HC-1) ──────────────
 {

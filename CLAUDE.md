@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Garden Manager is a constraint-based scheduling system for garden teams. It generates weekly schedules for participants, respecting hard constraints (eligibility, certification, availability) and optimizing soft constraints (rest fairness, workload balance). The UI is in Hebrew.
 
-**Task types are fully data-driven.** They are defined as `TaskTemplate` objects in the config store (`src/web/config-store.ts`), not hardcoded in the engine or constraints. Users create/edit/delete task types through the UI ("חוקי משימות" tab). The engine, optimizer, and constraint system operate on generic `Task`/`SlotRequirement` interfaces — they never branch on task name or type. Do not add new hardcoded task types in code; all task configuration flows through templates. The legacy factory functions in `src/tasks/task-definitions.ts` are only used by Node CLI scripts (`src/index.ts`, priority analysis), not by the web app.
+**Task types are fully data-driven.** They are defined as `TaskTemplate` objects in the config store (`src/web/config-store.ts`), not hardcoded in the engine or constraints. Users create/edit/delete task types through the UI ("חוקי משימות" tab). The engine, optimizer, and constraint system operate on generic `Task`/`SlotRequirement` interfaces — they never branch on task name or type. Do not add new hardcoded task types in code; all task configuration flows through templates. The factory functions in `src/tasks/cli-task-factory.ts` are only used by Node CLI scripts (demo, priority analysis), not by the web app.
 
 ## Build & Run Commands
 
@@ -69,7 +69,7 @@ Constraints (src/constraints/)
         │
 Foundation
   ├── models/types.ts          — All enums, interfaces, type aliases (TaskTemplate, SlotTemplate, etc.)
-  ├── tasks/task-definitions.ts — Legacy factory functions (Node CLI only, not used by web app)
+  ├── tasks/cli-task-factory.ts  — Task factories for CLI scripts (demo, priority analysis)
   ├── utils/                    — Capacity computation, date utilities
   └── ui/gantt-bridge.ts       — Schedule → Gantt data conversion
 ```

@@ -9,9 +9,9 @@ import {
   Participant,
   Level,
   Certification,
-  generateDailyTasks,
   ViolationSeverity,
 } from './index';
+import { generateDailyTasks } from './tasks/cli-task-factory';
 import { scheduleToGantt, ganttToAscii, buildTaskSummary } from './ui/gantt-bridge';
 import { computeAllRestProfiles, computeRestFairness } from './web/utils/rest-calculator';
 

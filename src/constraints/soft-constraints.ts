@@ -84,7 +84,7 @@ export function workloadImbalanceSplit(
   /**
    * Compute stats with proportional targets when capacities are available.
    *
-   * Without capacities: target_i = totalLoad / N (flat average, legacy behaviour).
+   * Without capacities: target_i = totalLoad / N (flat average).
    * With capacities:    target_i = totalLoad × (cap_i / totalCap).
    *
    * All values remain in hours, preserving weight calibration.

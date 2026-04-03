@@ -26,7 +26,7 @@ import {
   Schedule,
   Task,
 } from '../models/types';
-import { getTaskAssignments, getUniqueStartTimes } from './schedule-grid-view';
+import { getTaskAssignments, getUniqueStartTimes } from './layout-engine';
 import { HEBREW_DAYS, fmtTime } from '../utils/date-utils';
 import { addDays } from 'date-fns';
 import {

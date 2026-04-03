@@ -9,9 +9,6 @@
  * This module provides:
  *   - isNaturalRole(): classifies assignments as natural vs last-resort
  *   - computeLowPriorityLevelPenalty(): soft penalty for lowPriority slots
- *
- * Legacy exports checkSeniorHardBlock / validateSeniorHardBlocks are
- * kept for backward compatibility but always return no violations.
  */
 
 import {
@@ -20,7 +17,6 @@ import {
   SlotRequirement,
   Assignment,
   Participant,
-  ConstraintViolation,
   SchedulerConfig,
 } from '../models/types';
 import { isAcceptedLevel, isLowPriority } from '../models/level-utils';
@@ -46,32 +42,6 @@ export function isNaturalRole(
 
   // Trust acceptableLevels: natural if listed at normal priority
   return isAcceptedLevel(slot.acceptableLevels, level);
-}
-
-// ─── Legacy hard-constraint stubs (kept for backward compatibility) ─────────
-
-/**
- * Legacy stub — always returns null (no violation).
- * Hard level-gating is now handled entirely by HC-1 (isLevelSatisfied).
- */
-export function checkSeniorHardBlock(
-  _participant: Participant,
-  _task: Task,
-  _slot: SlotRequirement,
-): ConstraintViolation | null {
-  return null;
-}
-
-/**
- * Legacy stub — always returns empty array.
- * Hard level-gating is now handled entirely by HC-1 (isLevelSatisfied).
- */
-export function validateSeniorHardBlocks(
-  _participants: Participant[],
-  _assignments: Assignment[],
-  _tasks: Task[],
-): ConstraintViolation[] {
-  return [];
 }
 
 // ─── Soft penalty: low-priority level assignments ──────────────────────────

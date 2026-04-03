@@ -1574,12 +1574,6 @@ select.input-sm {
   line-height: 1;
 }
 
-.day-window-label {
-  display: none; /* replaced by day-nav-availability inside day-navigator */
-}
-
-/* day-nav-availability — removed, controls moved to avail-strip */
-
 .day-window-text {
   white-space: nowrap;
 }
@@ -1596,19 +1590,6 @@ select.input-sm {
   width: auto;
 }
 
-/* legacy – keep selector but hide */
-.availability-inspector-bar {
-  display: none;
-}
-
-.availability-inspector-copy {
-  display: none;
-}
-
-.availability-inspector-controls {
-  display: none;
-}
-
 .availability-time-input-wrap {
   display: flex;
   flex-direction: column;
@@ -1621,9 +1602,6 @@ select.input-sm {
   min-width: 118px;
 }
 
-.availability-inspector-note {
-  display: none;
-}
 
 /* ─── Schedule Layout ────────────────────────────────── */
 .schedule-layout {

@@ -98,23 +98,8 @@ export { validateHardConstraints } from './constraints/hard-constraints';
 export { computeScheduleScore, collectSoftWarnings } from './constraints/soft-constraints';
 export {
   isNaturalRole,
-  checkSeniorHardBlock,
-  validateSeniorHardBlocks,
   computeLowPriorityLevelPenalty,
 } from './constraints/senior-policy';
-
-// ─── Task Definitions ────────────────────────────────────────────────────────
-export {
-  createAdanitTasks,
-  createHamamaTask,
-  createShemeshTask,
-  createMamteraTask,
-  createKarovTask,
-  createKarovitTask,
-  createArugaTask,
-  generateDailyTasks,
-  generateWeeklyTasks,
-} from './tasks/task-definitions';
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 export {

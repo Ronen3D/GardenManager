@@ -15,9 +15,8 @@ import {
   DEFAULT_CONFIG,
   SchedulerConfig,
 } from './models/types';
-import { generateDailyTasks } from './tasks/task-definitions';
+import { generateDailyTasks, resetSlotCounter, resetTaskCounter } from './tasks/cli-task-factory';
 import { optimize, greedyAssign, resetAssignmentCounter } from './engine/optimizer';
-import { resetSlotCounter, resetTaskCounter } from './tasks/task-definitions';
 
 // ─── Participant Pool (same as demo.ts — 24 people across 3 groups) ──────────
 

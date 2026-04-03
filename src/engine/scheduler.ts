@@ -30,7 +30,7 @@ import {
   resetAssignmentCounter,
   MultiAttemptProgressCallback,
 } from './optimizer';
-import { resetSlotCounter, resetTaskCounter } from '../tasks/task-definitions';
+
 import { PhantomContext } from './phantom';
 import { describeSlot } from '../utils/date-utils';
 
@@ -48,11 +48,8 @@ export class SchedulingEngine {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.disabledHC = disabledHC;
     this.categoryBreakMs = categoryBreakMs;
-    // Bug #12 fix: reset module-level counters so IDs start fresh
-    // for each new engine instance.
+    // Reset assignment counter so IDs start fresh for each new engine instance.
     resetAssignmentCounter();
-    resetSlotCounter();
-    resetTaskCounter();
   }
 
   /** Build a ScoreContext with pre-computed capacities for proportional scoring */
@@ -159,8 +156,6 @@ export class SchedulingEngine {
     this.tasks.clear();
     this.currentSchedule = null;
     resetAssignmentCounter();
-    resetSlotCounter();
-    resetTaskCounter();
   }
 
   /**

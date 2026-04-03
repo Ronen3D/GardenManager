@@ -7,19 +7,8 @@ import {
 import { addDays } from 'date-fns';
 import {
   renderScheduleGridV2,
-  getUniqueStartTimes as _getUniqueStartTimes,
-  getTaskAssignments as _getTaskAssignments,
-  AssignedSlot as _AssignedSlot,
   ManualBuildRenderCtx,
 } from './layout-engine';
-
-// ─── Re-exports for backward compatibility ──────────────────────────────────
-// These helpers are now defined in layout-engine.ts but many consumers
-// (pdf-export.ts, app.ts, etc.) import them from here.
-
-export type AssignedSlot = _AssignedSlot;
-export const getUniqueStartTimes = _getUniqueStartTimes;
-export const getTaskAssignments = _getTaskAssignments;
 
 // ─── Main View Export ────────────────────────────────────────────────────────
 

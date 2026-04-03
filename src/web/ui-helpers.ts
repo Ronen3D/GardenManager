@@ -109,15 +109,6 @@ export function taskBadge(task: { color?: string; sourceName?: string; name?: st
   return `<span class="badge" style="background:${color}">${label}</span>`;
 }
 
-/** @deprecated Use taskBadge() instead. Kept temporarily during migration. */
-export function taskTypeBadge(type: string): string {
-  const visuals = getTemplateVisualMap();
-  // Find by matching template name
-  const v = visuals[type];
-  const color = v?.color || '#7f8c8d';
-  const label = type;
-  return `<span class="badge" style="background:${color}">${label}</span>`;
-}
 
 /** Escape a string for safe HTML interpolation. */
 export function escHtml(s: string): string {
