@@ -97,6 +97,8 @@ let _snapshotPanelOpen = false;
 let _sidebarCollapsed = localStorage.getItem('gm-sidebar-collapsed') === '1';
 let _availabilityPopoverEl: HTMLElement | null = null;
 let _availabilityPopoverKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+let _availabilityInlineOpen = false;
+let _availabilityInlineTimeMs: number | null = null;
 
 /** Continuity feature: pasted or auto-populated JSON from previous schedule */
 let _continuityJson = '';
@@ -230,6 +232,38 @@ function renderAvailabilityInspectorInline(): string {
     <input type="time" id="gm-availability-time" class="input-sm availability-time-input" value="${_availabilityInspectorTime}" step="60" title="שעה לבדיקת זמינות (00:00–04:59 נספרות לסוף היום)" />
     <button class="btn-sm btn-primary" id="btn-open-availability-inspector" title="בדיקת זמינות לפי זמן">הצג זמינות</button>
   `;
+}
+
+/** Collapsible availability strip between schedule grid and gantt */
+function renderAvailabilityStrip(): string {
+  if (!currentSchedule) return '';
+
+  // Collapsed state — just the bar
+  if (!_availabilityInlineOpen) {
+    return `<div class="avail-strip" data-action="open-avail-strip">
+      <span class="avail-strip-icon">🕐</span>
+      <span class="avail-strip-label">בדיקת עתודה פנויה</span>
+      <span class="avail-strip-arrow">◂</span>
+    </div>`;
+  }
+
+  // Expanded state — inputs + results
+  let html = `<div class="avail-strip avail-strip-open">`;
+  html += `<div class="avail-strip-header" data-action="close-avail-strip">
+    <span class="avail-strip-icon">🕐</span>
+    <span class="avail-strip-label">בדיקת עתודה פנויה</span>
+    <span class="avail-strip-arrow">▾</span>
+  </div>`;
+
+  html += `<div class="avail-strip-body">`;
+  html += `<div class="avail-strip-inputs">${renderAvailabilityInspectorInline()}</div>`;
+
+  if (_availabilityInlineTimeMs !== null) {
+    html += `<div class="avail-strip-results">${buildAvailabilityPopoverContent(_availabilityInlineTimeMs)}</div>`;
+  }
+
+  html += `</div></div>`;
+  return html;
 }
 
 function statusBadge(status: AssignmentStatus): string {
@@ -575,12 +609,10 @@ function renderDayNavigator(): string {
     const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
     const dayName = hebrewDayName(date);
 
-    // Count tasks and assignments for this day
     let taskCount = 0;
     let violationCount = 0;
     if (currentSchedule) {
       taskCount = currentSchedule.tasks.filter(t => taskIntersectsDay(t, d)).length;
-      // Count violations for tasks on this day
       const dayTaskIds = new Set(currentSchedule.tasks.filter(t => taskIntersectsDay(t, d)).map(t => t.id));
       violationCount = filterVisibleViolations(currentSchedule.violations).filter(v =>
         v.severity === ViolationSeverity.Error && v.taskId && dayTaskIds.has(v.taskId)
@@ -591,7 +623,6 @@ function renderDayNavigator(): string {
       ? `<span class="day-violation-dot" title="${violationCount} הפרות">!</span>`
       : '';
 
-    // Frozen / partially frozen indicators
     let frozenTag = '';
     let frozenClass = '';
     if (liveMode.enabled) {
@@ -943,17 +974,6 @@ function renderScheduleTab(): string {
 
   // Day Navigator tabs
   html += renderDayNavigator();
-
-  // Day window label + inline availability inspector
-  const { start: dayStart, end: dayEnd } = getDayWindow(currentDay);
-  html += `<div class="day-window-label">
-    <span class="day-window-text">מציג <strong>יום ${currentDay}</strong>: ${fmtDayShort(dayStart)} ${fmt(dayStart)} – ${fmtDayShort(dayEnd)} ${fmt(dayEnd)}</span>
-    <span class="day-window-actions">
-      <button class="btn-sm btn-outline availability-mobile-toggle" id="btn-availability-mobile-toggle" title="בדיקת זמינות פק\"לים">${_availabilityMobileOpen ? '🕐 ✕' : '🕐'}</button>
-      <span class="availability-inline${_availabilityMobileOpen ? ' mobile-open' : ''}">${renderAvailabilityInspectorInline()}</span>
-    </span>
-  </div>`;
-
   // Manual-build undo strip
   if (_manualBuildActive) {
     const totalSlots = s.tasks.reduce((sum, t) => sum + t.slots.length, 0);
@@ -973,6 +993,9 @@ function renderScheduleTab(): string {
   if (_manualBuildActive) {
     html += renderParticipantWarehouse(s);
   }
+  // Availability inspector strip — between schedule grid and gantt
+  html += renderAvailabilityStrip();
+
   // Gantt chart: wrapped in mobile-toggleable accordion
   const ganttExpanded = !_manualBuildActive;
   html += `<section class="gantt-section">`;
@@ -2728,7 +2751,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.3</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.6.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3218,13 +3241,36 @@ function wireScheduleEvents(container: HTMLElement): void {
     });
   });
 
-  // ── Availability inspector mobile toggle ──
-  const availMobileToggle = container.querySelector('#btn-availability-mobile-toggle');
-  if (availMobileToggle) {
-    availMobileToggle.addEventListener('click', () => {
-      _availabilityMobileOpen = !_availabilityMobileOpen;
-      renderAll();
+  // ── Availability strip: open / close / results ──
+  const availStrip = container.querySelector('.avail-strip') as HTMLElement | null;
+  if (availStrip) {
+    availStrip.addEventListener('click', (e) => {
+      const action = (e.target as HTMLElement).closest('[data-action]') as HTMLElement | null;
+      if (action?.dataset.action === 'open-avail-strip') {
+        _availabilityInlineOpen = true;
+        renderAll();
+        return;
+      }
+      if (action?.dataset.action === 'close-avail-strip') {
+        _availabilityInlineOpen = false;
+        _availabilityInlineTimeMs = null;
+        renderAll();
+        return;
+      }
+      // Close button inside results
+      const closeTarget = (e.target as HTMLElement).closest('[data-action="close-availability-popover"]');
+      if (closeTarget) {
+        _availabilityInlineTimeMs = null;
+        renderAll();
+        return;
+      }
+      // Participant click
+      const participantTarget = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
+      if (participantTarget?.dataset.pid) {
+        navigateToProfile(participantTarget.dataset.pid);
+      }
     });
+    wireParticipantTooltip(availStrip);
   }
 
   // ── Continuity: Export day JSON ──
@@ -3337,7 +3383,9 @@ function wireScheduleEvents(container: HTMLElement): void {
     if (!target) return;
     const timeMs = Number(target.dataset.timeMs || target.closest('tr[data-time]')?.getAttribute('data-time'));
     if (!Number.isFinite(timeMs)) return;
-    openAvailabilityPopover(target, timeMs);
+    _availabilityInlineOpen = true;
+    _availabilityInlineTimeMs = timeMs;
+    renderAll();
   });
 
   container.addEventListener('keydown', (e) => {
@@ -3347,7 +3395,9 @@ function wireScheduleEvents(container: HTMLElement): void {
     e.preventDefault();
     const timeMs = Number(target.dataset.timeMs || target.closest('tr[data-time]')?.getAttribute('data-time'));
     if (!Number.isFinite(timeMs)) return;
-    openAvailabilityPopover(target, timeMs);
+    _availabilityInlineOpen = true;
+    _availabilityInlineTimeMs = timeMs;
+    renderAll();
   });
 
   wireCustomSelect(container, 'gm-availability-day', (value) => {
@@ -3380,7 +3430,8 @@ function wireScheduleEvents(container: HTMLElement): void {
         return;
       }
       _availabilityInspectorTime = timeValue;
-      openAvailabilityPopover(availabilityBtn, timestamp.getTime());
+      _availabilityInlineTimeMs = timestamp.getTime();
+      renderAll();
     });
   }
 
@@ -3971,58 +4022,6 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
   `;
 }
 
-function openAvailabilityPopover(anchor: HTMLElement, timeMs: number): void {
-  if (!currentSchedule) return;
-  hideAvailabilityPopover();
-
-  const backdrop = document.createElement('div');
-  backdrop.className = 'availability-popover-backdrop';
-  backdrop.innerHTML = `<div class="availability-popover" role="dialog" aria-modal="true"></div>`;
-  document.body.appendChild(backdrop);
-
-  const popover = backdrop.querySelector('.availability-popover') as HTMLElement;
-  popover.innerHTML = buildAvailabilityPopoverContent(timeMs);
-
-  const rect = anchor.getBoundingClientRect();
-  const viewportPadding = 8;
-  const gap = 10;
-  const { width, height } = popover.getBoundingClientRect();
-  let left = rect.right + gap;
-  let top = rect.top - 6;
-  if (left + width > window.innerWidth - viewportPadding) {
-    left = rect.left - width - gap;
-  }
-  if (left < viewportPadding) {
-    left = Math.max(viewportPadding, window.innerWidth - width - viewportPadding);
-  }
-  if (top + height > window.innerHeight - viewportPadding) {
-    top = Math.max(viewportPadding, Math.min(rect.bottom - height, window.innerHeight - height - viewportPadding));
-  }
-  if (top < viewportPadding) top = viewportPadding;
-  popover.style.left = `${left}px`;
-  popover.style.top = `${top}px`;
-
-  backdrop.addEventListener('click', (e) => {
-    const closeTarget = (e.target as HTMLElement).closest('[data-action="close-availability-popover"]');
-    if (closeTarget || e.target === backdrop) {
-      hideAvailabilityPopover();
-      return;
-    }
-    const participantTarget = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
-    if (participantTarget?.dataset.pid) {
-      hideAvailabilityPopover();
-      navigateToProfile(participantTarget.dataset.pid);
-    }
-  });
-
-  wireParticipantTooltip(backdrop);
-
-  _availabilityPopoverKeyHandler = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') hideAvailabilityPopover();
-  };
-  document.addEventListener('keydown', _availabilityPopoverKeyHandler);
-  _availabilityPopoverEl = backdrop;
-}
 
 /** Wire event-delegated tooltip for .participant-hover elements. */
 function wireParticipantTooltip(container: HTMLElement): void {

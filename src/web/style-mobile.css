@@ -684,37 +684,9 @@
     font-size: 0.5rem;
   }
 
-  /* ── Day window label — compact on mobile: only availability toggle ── */
+  /* ── Day window label — hidden ── */
   .day-window-label {
-    justify-content: flex-end;
-    padding: 2px 6px;
-    margin-bottom: 4px;
-    gap: 4px;
-    border: none;
-    background: transparent;
-  }
-  .day-window-label .day-window-text {
     display: none;
-  }
-  .day-window-label .availability-inline {
-    display: none;
-  }
-  .day-window-label .availability-inline.mobile-open {
-    display: flex;
-    flex-basis: 100%;
-    order: 10;
-    gap: 6px;
-  }
-  .day-window-actions {
-    gap: 4px;
-  }
-  .day-window-actions .btn-sm {
-    font-size: 0.6rem;
-    padding: 3px 7px;
-    min-height: 24px;
-  }
-  .availability-mobile-toggle {
-    display: inline-flex !important;
   }
 
   /* ── Compact section headings ────────────────────────────────────────── */
