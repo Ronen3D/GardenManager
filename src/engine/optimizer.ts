@@ -653,9 +653,9 @@ export function greedyAssign(
           const hc12Count = rejectionCounts.get('HC-12') || 0;
           const hc14Count = rejectionCounts.get('HC-14') || 0;
           if (hc14Count > 0 && hc12Count > 0) {
-            reason = `התנגשות אילוצים ב${task.name}: ${hc14Count} ע"י מינימום 5 שעות הפסקה, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
+            reason = `התנגשות אילוצים ב${task.name}: ${hc14Count} ע"י מרווח מינימלי, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
           } else if (hc14Count > 0) {
-            reason = `חסימת HC-14 מינימום 5 שעות הפסקה: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות קטגוריה קרובות (נדרשות 5 שעות הפסקה)`;
+            reason = `חסימת HC-14 מרווח מינימלי: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות קרובות עם דרישת מרווח`;
           } else if (hc12Count > 0) {
             reason = `חסימת HC-12 עומס רצוף: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות כבדות סמוכות`;
           } else {

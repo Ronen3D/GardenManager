@@ -164,14 +164,25 @@ export function renderTaskRulesTab(): string {
   html += `
   <div class="tab-toolbar" style="margin-top:24px; border-top:1px solid var(--border); padding-top:16px;">
     <div class="toolbar-left">
-      <h2>הגדרות כלליות</h2>
+      <h2 style="display:flex; align-items:center; gap:8px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        מרווחים מינימליים
+      </h2>
     </div>
   </div>
-  <div class="template-card" style="margin-top:8px;">
-    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-      <label for="category-break-hours" style="white-space:nowrap;">הפסקה מינימלית בין משימות קטגוריה (שעות)</label>
-      <input id="category-break-hours" type="number" min="0.5" max="24" step="0.5" value="${cbh}"
-             data-action="set-category-break" style="width:80px;" />
+  <div class="template-card global-settings-card" style="margin-top:8px;">
+    <div style="padding:18px 22px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+        <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-width:0;">
+          <label for="category-break-hours" style="font-size:0.92rem; font-weight:500;">מרווח מינימלי בין משימות בעלות ההגדרה</label>
+          <span style="font-size:0.78rem; color:var(--text-muted);">משימות עם ההגדרה הזו לא ישובצו ברצף — תישמר הפסקה של לפחות X שעות ביניהן</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+          <input id="category-break-hours" type="number" min="0.5" max="24" step="0.5" value="${cbh}"
+                 data-action="set-category-break" style="width:60px; text-align:center; font-size:1rem; font-weight:600;" />
+          <span style="font-size:0.82rem; color:var(--text-muted);">שעות</span>
+        </div>
+      </div>
     </div>
   </div>`;
 
@@ -288,7 +299,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         ${tpl.isLight ? '<span class="badge badge-sm badge-outline">קלה</span>' : ''}
         ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">ניתן לשבץ ברצף</span>'}
         ${tpl.togethernessRelevant ? '<span class="badge badge-sm badge-outline">אי התאמה</span>' : ''}
-        ${tpl.requiresCategoryBreak ? '<span class="badge badge-sm badge-outline">מינימום 5 שעות הפסקה</span>' : ''}
+        ${tpl.requiresCategoryBreak ? `<span class="badge badge-sm badge-outline">מרווח מינימלי ${store.getCategoryBreakHours()} שע׳</span>` : ''}
         <span class="expand-arrow">${isExpanded ? '▼' : '▶'}</span>
       </div>
     </div>`;
@@ -309,7 +320,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חוסם רצף משימות</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="requiresCategoryBreak" data-tid="${tpl.id}" ${tpl.requiresCategoryBreak ? 'checked' : ''} /> מינימום 5 שעות הפסקה</label>
+      <label class="checkbox-label"><input type="checkbox" data-tpl-field="requiresCategoryBreak" data-tid="${tpl.id}" ${tpl.requiresCategoryBreak ? 'checked' : ''} /> מרווח מינימלי (${store.getCategoryBreakHours()} שע׳)</label>
       <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
     </div>`;
 
