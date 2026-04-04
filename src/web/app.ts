@@ -77,6 +77,11 @@ let scheduleActualAttempts = 0;
 let currentDay = 1;
 /** True while multi-attempt optimization is running */
 let _isOptimizing = false;
+/** True while undo/redo is executing — prevents onStoreChanged from reconciling */
+let _undoRedoInProgress = false;
+/** Parallel schedule snapshots kept in sync with the store's undo/redo stacks */
+const _scheduleUndoStack: Array<Schedule | null> = [];
+const _scheduleRedoStack: Array<Schedule | null> = [];
 /**
  * True when the config store has been mutated after the latest schedule
  * generation.  Signals that the current schedule may be out of sync with
@@ -2738,7 +2743,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.1</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2852,12 +2857,38 @@ function wireTabNav(container: HTMLElement): void {
 }
 
 function doUndoRedo(action: 'undo' | 'redo'): void {
+  _undoRedoInProgress = true;
   const ok = action === 'undo' ? store.undo() : store.redo();
-  if (ok) {
-    // Manual Mode: keep existing schedule but strip orphaned assignments
-    // and mark dirty.  The store subscriber handles both automatically.
-    renderAll();
+  _undoRedoInProgress = false;
+  if (!ok) return;
+
+  const sourceStack = action === 'undo' ? _scheduleUndoStack : _scheduleRedoStack;
+  const targetStack = action === 'undo' ? _scheduleRedoStack : _scheduleUndoStack;
+
+  if (sourceStack.length > 0) {
+    // Save current schedule to the opposite stack
+    targetStack.push(currentSchedule ? structuredClone(currentSchedule) : null);
+    const restored = sourceStack.pop()!;
+    if (restored) {
+      currentSchedule = restored;
+      // Re-wire the engine so violations/scoring stay consistent
+      if (engine) {
+        engine.importSchedule(currentSchedule);
+        engine.addParticipants(currentSchedule.participants);
+        engine.revalidateFull();
+        currentSchedule = engine.getSchedule()!;
+      }
+      store.saveSchedule(currentSchedule);
+    } else {
+      // No schedule existed before this mutation — clear it
+      currentSchedule = null;
+      engine = null;
+      store.clearSchedule();
+    }
   }
+
+  _scheduleDirty = true;
+  renderAll();
 }
 
 function wireUndoRedo(container: HTMLElement): void {
@@ -4338,6 +4369,17 @@ function wireTaskTooltip(container: HTMLElement): void {
 function onStoreChanged(): void {
   // Never mess with schedule during optimization
   if (_isOptimizing) return;
+
+  // During undo/redo the schedule is restored from the parallel stack
+  // in doUndoRedo(), so skip reconciliation here.
+  if (_undoRedoInProgress) return;
+
+  // Push pre-reconciliation schedule so undo can perfectly restore it.
+  // Must push even when null to keep in sync with the store's undo stack.
+  _scheduleUndoStack.push(currentSchedule ? structuredClone(currentSchedule) : null);
+  if (_scheduleUndoStack.length > 80) _scheduleUndoStack.shift();
+  _scheduleRedoStack.length = 0;
+
   if (!currentSchedule) return;
 
   _scheduleDirty = true;
@@ -4436,8 +4478,47 @@ function init(): void {
     showToast('שמירת נתונים נכשלה — ייתכן שהדפדפן חסם אחסון מקומי', { type: 'error', duration: 5000 });
   });
 
-  // Clear any previously saved schedule so the app starts fresh
-  store.clearSchedule();
+  // Restore persisted schedule (if any) so it survives page reloads
+  const savedSchedule = store.loadSchedule();
+  if (savedSchedule) {
+    const algoSettings = store.getAlgorithmSettings();
+    const currentParticipants = store.getAllParticipants();
+
+    // Reconcile with current participant roster (participants may have been
+    // added/removed since the schedule was saved)
+    const storeIds = new Set(currentParticipants.map(p => p.id));
+    const reconciledAssignments = savedSchedule.assignments.filter(
+      a => storeIds.has(a.participantId),
+    );
+    const reconciledParticipants = currentParticipants.filter(
+      p => savedSchedule.participants.some(sp => sp.id === p.id),
+    );
+
+    const reconciledSchedule: Schedule = {
+      ...savedSchedule,
+      participants: reconciledParticipants,
+      assignments: reconciledAssignments,
+    };
+
+    engine = new SchedulingEngine(
+      algoSettings.config,
+      store.getDisabledHCSet(),
+      store.getCategoryBreakHours() * 3600000,
+    );
+    engine.addParticipants(reconciledParticipants);
+    engine.addTasks(savedSchedule.tasks);
+    engine.importSchedule(reconciledSchedule);
+    engine.revalidateFull();
+    currentSchedule = engine.getSchedule()!;
+    currentDay = 1;
+    _scheduleDirty = false;
+
+    // Apply live mode freeze if active
+    const liveMode = store.getLiveModeState();
+    if (liveMode.enabled) {
+      freezeAssignments(currentSchedule, liveMode.currentTimestamp);
+    }
+  }
 
   renderAll();
 

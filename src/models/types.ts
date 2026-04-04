@@ -463,11 +463,11 @@ export interface TaskSet {
   /** Full task template data at the time of the snapshot */
   templates: TaskTemplate[];
   /** One-time task definitions included in this set. */
-  oneTimeTasks?: OneTimeTask[];
+  oneTimeTasks: OneTimeTask[];
   /** If true the set cannot be deleted or renamed */
   builtIn?: boolean;
   /** Minimum hours between category-break tasks (HC-14). Defaults to 5. */
-  categoryBreakHours?: number;
+  categoryBreakHours: number;
   /** Epoch ms — used for ordering */
   createdAt: number;
 }

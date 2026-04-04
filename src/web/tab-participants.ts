@@ -314,6 +314,30 @@ let _bulkDialogOpen = false;
 /** When true the bulk delete confirmation dialog is open */
 let _bulkDeleteDialogOpen = false;
 
+function getVisibleParticipants(allParticipants: Participant[] = store.getAllParticipants()): Participant[] {
+  const filtered = filterGroup
+    ? allParticipants.filter(p => p.group === filterGroup)
+    : allParticipants;
+  return sortParticipants(filtered);
+}
+
+function reconcileSelection(visibleParticipants: Participant[] = getVisibleParticipants()): void {
+  const visibleIds = new Set(visibleParticipants.map(p => p.id));
+
+  for (const id of Array.from(selectedIds)) {
+    if (!visibleIds.has(id)) selectedIds.delete(id);
+  }
+
+  if (_lastClickedId && !visibleIds.has(_lastClickedId)) {
+    _lastClickedId = null;
+  }
+
+  if (selectedIds.size === 0) {
+    _bulkDialogOpen = false;
+    _bulkDeleteDialogOpen = false;
+  }
+}
+
 // ─── Participant Sets Panel State ────────────────────────────────────────────
 
 let _setsPanelOpen = false;
@@ -433,10 +457,12 @@ function renderSetsPanel(): string {
 export function renderParticipantsTab(): string {
   const allParticipants = store.getAllParticipants();
   const groups = store.getGroups();
-  const filtered = filterGroup
-    ? allParticipants.filter(p => p.group === filterGroup)
-    : allParticipants;
-  const sorted = sortParticipants(filtered);
+  const sorted = getVisibleParticipants(allParticipants);
+  reconcileSelection(sorted);
+  const visibleSelectedCount = sorted.reduce(
+    (count, participant) => count + (selectedIds.has(participant.id) ? 1 : 0),
+    0,
+  );
 
   let html = `
   <div class="tab-toolbar">
@@ -468,7 +494,7 @@ export function renderParticipantsTab(): string {
   // Table
   html += `<div class="table-responsive"><table class="table table-participants${showNotWithColumn ? ' notwith-visible' : ''}">
     <thead><tr>
-      <th class="col-select"><input type="checkbox" id="cb-select-all" title="בחר הכל" ${selectedIds.size > 0 && selectedIds.size === sorted.length ? 'checked' : ''} /></th>
+      <th class="col-select"><input type="checkbox" id="cb-select-all" title="בחר הכל" ${visibleSelectedCount > 0 && visibleSelectedCount === sorted.length ? 'checked' : ''} /></th>
       <th class="col-index">#</th>
       <th class="col-name sortable-th" data-action="sort-column" data-sort-col="name">שם${sortIndicator('name')}</th>
       <th class="col-group sortable-th" data-action="sort-column" data-sort-col="group">קבוצה${sortIndicator('group')}</th>

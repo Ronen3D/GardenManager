@@ -616,6 +616,18 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         rerender();
         break;
       }
+      case 'algo-weight-input': {
+        // On commit (blur / Enter), correct the displayed value to the clamped range
+        const inp = el as HTMLInputElement;
+        const v = parseFloat(inp.value);
+        if (isNaN(v)) break;
+        const lo = parseFloat(inp.min);
+        const hi = parseFloat(inp.max);
+        if (!isNaN(lo) && !isNaN(hi)) {
+          inp.value = String(Math.min(hi, Math.max(lo, v)));
+        }
+        break;
+      }
     }
   });
 
@@ -631,17 +643,22 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
       const numVal = parseFloat(el.value);
       if (isNaN(numVal)) return;
 
+      // Clamp to declared range — type="number" doesn't enforce min/max on typed input
+      const lo = parseFloat(el.min);
+      const hi = parseFloat(el.max);
+      const clamped = (!isNaN(lo) && !isNaN(hi)) ? Math.min(hi, Math.max(lo, numVal)) : numVal;
+
       // Sync the paired control (slider ↔ number input)
       const card = el.closest('.algo-weight-card');
       if (card) {
         const sibling = action === 'algo-weight-slider'
           ? card.querySelector<HTMLInputElement>('[data-action="algo-weight-input"]')
           : card.querySelector<HTMLInputElement>('[data-action="algo-weight-slider"]');
-        if (sibling) sibling.value = String(numVal);
+        if (sibling) sibling.value = String(clamped);
       }
 
       // Store pending value and debounce persist
-      _pendingWeight = { key, value: numVal };
+      _pendingWeight = { key, value: clamped };
       clearTimeout(_weightDebounce);
       _weightDebounce = window.setTimeout(() => {
         if (!_pendingWeight) return;

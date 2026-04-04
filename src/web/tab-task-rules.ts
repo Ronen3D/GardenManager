@@ -246,6 +246,10 @@ function renderTaskSetPanel(): string {
   return html;
 }
 
+function buildTaskSetLoadConfirmMessage(taskSet: TaskSet): string {
+  return `טעינת הסט תחליף את תבניות המשימות, את המשימות החד-פעמיות השמורות בו, ואת הגדרת ההפסקה המינימלית בין משימות קטגוריה. להמשיך?`;
+}
+
 
 function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
   const isExpanded = expandedTemplateId === tpl.id;
@@ -1014,7 +1018,9 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
 async function _handleTaskSetItemAction(action: string, id: string, rerender: () => void): Promise<void> {
   switch (action) {
     case 'load': {
-      const ok = await showConfirm('טעינת הסט תחליף את כל תבניות המשימות הנוכחיות. להמשיך?', {
+      const tset = store.getTaskSetById(id);
+      if (!tset) return;
+      const ok = await showConfirm(buildTaskSetLoadConfirmMessage(tset), {
         danger: true,
         title: 'טעינת סט משימות',
         confirmLabel: 'טען',

@@ -2867,6 +2867,14 @@ function _deepCopyTaskSet(s: TaskSet): TaskSet {
   return JSON.parse(JSON.stringify(s)) as TaskSet;
 }
 
+function _snapshotCurrentTaskSetState(): Pick<TaskSet, 'templates' | 'oneTimeTasks' | 'categoryBreakHours'> {
+  return {
+    templates: _snapshotCurrentTaskTemplates(),
+    oneTimeTasks: _snapshotCurrentOneTimeTasks(),
+    categoryBreakHours: _categoryBreakHours,
+  };
+}
+
 /** Lazily initialise task sets from localStorage. */
 function _initTaskSets(): TaskSet[] {
   if (_taskSets) return _taskSets;
@@ -2908,15 +2916,14 @@ function _snapshotCurrentOneTimeTasks(): OneTimeTask[] {
 function _seedBuiltInTaskSet(): void {
   const sets = _taskSets!;
   if (sets.find(s => s.id === 'tset-default')) return;
-  const snap = _snapshotCurrentTaskTemplates();
-  if (snap.length === 0) return; // don't seed empty
+  const snapshot = _snapshotCurrentTaskSetState();
+  if (snapshot.templates.length === 0) return; // don't seed empty
   sets.unshift({
     id: 'tset-default',
     name: 'סט ברירת מחדל',
     description: 'תבניות המשימות המקוריות',
-    templates: snap,
+    ...snapshot,
     builtIn: true,
-    categoryBreakHours: DEFAULT_CATEGORY_BREAK_HOURS,
     createdAt: 0,
   });
   _saveTaskSets();
@@ -2997,13 +3004,12 @@ export function saveCurrentAsTaskSet(name: string, description: string): TaskSet
     return null;
   }
 
+  const snapshot = _snapshotCurrentTaskSetState();
   const tset: TaskSet = {
     id: uid('tset'),
     name: trimmed,
     description: description.trim(),
-    templates: _snapshotCurrentTaskTemplates(),
-    oneTimeTasks: _snapshotCurrentOneTimeTasks(),
-    categoryBreakHours: _categoryBreakHours,
+    ...snapshot,
     createdAt: Date.now(),
   };
 
@@ -3017,7 +3023,8 @@ export function saveCurrentAsTaskSet(name: string, description: string): TaskSet
 }
 
 /**
- * Load a task set — replaces ALL current task templates.
+ * Load a task set — replaces task templates, one-time tasks,
+ * and category-break settings as a single snapshot.
  * This is a single undoable action.
  */
 export function loadTaskSet(id: string): void {
@@ -3036,16 +3043,14 @@ export function loadTaskSet(id: string): void {
       taskTemplates.set(restored.id, restored);
     }
 
-    // Restore one-time tasks from the set (if present)
     oneTimeTasks.clear();
-    for (const ot of (tset.oneTimeTasks || [])) {
+    for (const ot of tset.oneTimeTasks) {
       const restored: OneTimeTask = JSON.parse(JSON.stringify(ot));
       restored.scheduledDate = new Date(restored.scheduledDate);
       oneTimeTasks.set(restored.id, restored);
     }
 
-    // Restore category break hours
-    _categoryBreakHours = tset.categoryBreakHours ?? DEFAULT_CATEGORY_BREAK_HOURS;
+    _categoryBreakHours = tset.categoryBreakHours;
   } finally {
     _suppressSnapshot = false;
   }
@@ -3065,9 +3070,10 @@ export function updateTaskSet(id: string): boolean {
   if (idx === -1) return false;
   if (sets[idx].builtIn) return false;
 
-  sets[idx].templates = _snapshotCurrentTaskTemplates();
-  sets[idx].oneTimeTasks = _snapshotCurrentOneTimeTasks();
-  sets[idx].categoryBreakHours = _categoryBreakHours;
+  const snapshot = _snapshotCurrentTaskSetState();
+  sets[idx].templates = snapshot.templates;
+  sets[idx].oneTimeTasks = snapshot.oneTimeTasks;
+  sets[idx].categoryBreakHours = snapshot.categoryBreakHours;
   _saveTaskSets();
   return true;
 }
@@ -3152,8 +3158,9 @@ export function isTaskSetDirty(): boolean {
   const tset = getTaskSetById(activeId);
   if (!tset) return false;
   const currentTemplates = _snapshotCurrentTaskTemplates();
+  if (JSON.stringify(currentTemplates) !== JSON.stringify(tset.templates)) return true;
   const currentOts = _snapshotCurrentOneTimeTasks();
-  return JSON.stringify(currentTemplates) !== JSON.stringify(tset.templates)
-    || JSON.stringify(currentOts) !== JSON.stringify(tset.oneTimeTasks || [])
-    || _categoryBreakHours !== (tset.categoryBreakHours ?? DEFAULT_CATEGORY_BREAK_HOURS);
+  if (JSON.stringify(currentOts) !== JSON.stringify(tset.oneTimeTasks)) return true;
+  if (_categoryBreakHours !== tset.categoryBreakHours) return true;
+  return false;
 }
