@@ -101,7 +101,7 @@ function renderTopBar(
   const certHtml = p.certifications.length > 0
     ? p.certifications.map(c => certBadge(c)).join(' ')
     : '<span class="text-muted">אין</span>';
-  const pakalHtml = renderPakalBadges(p, store.getPakalDefinitions(), 'אין');
+  const pakalHtml = renderPakalBadges(p, store.getAllPakalDefinitionsIncludeDeleted(), 'אין');
 
   return `
   <div class="profile-topbar">

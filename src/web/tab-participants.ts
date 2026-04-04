@@ -467,7 +467,7 @@ export function renderParticipantsTab(): string {
     const isExpanded = expandedBlackoutId === p.id;
     const totalRules = dateRules.length;
     const isSelected = selectedIds.has(p.id);
-    const pakalDefs = store.getPakalDefinitions();
+    const allPakalDefs = store.getAllPakalDefinitionsIncludeDeleted();
 
     if (isEditing) {
       html += renderEditRow(p, i + 1);
@@ -479,7 +479,7 @@ export function renderParticipantsTab(): string {
         <td class="col-group">${groupBadge(p.group, true)}</td>
         <td class="col-level">${levelBadge(p.level)}</td>
         <td class="col-certs">${certBadges(p.certifications)}</td>
-        <td class="col-pakals">${renderPakalBadges(p, pakalDefs)}</td>
+        <td class="col-pakals">${renderPakalBadges(p, allPakalDefs)}</td>
         ${showNotWithColumn ? `<td class="col-notwith notwith-cell">${renderNotWithBadges(p.id)}</td>` : ''}
         <td class="col-prefs">${renderPreferenceBadges(p)}</td>
         <td class="col-avail avail-cell">
@@ -574,6 +574,16 @@ function renderEditRow(p: Participant, idx: number): string {
     </td>
     <td class="col-pakals">
       ${renderPakalCheckboxes(pakalDefs, p.pakalIds || [], p.certifications, 'data-pakal')}
+      ${(() => {
+        const activeIds = new Set(pakalDefs.map(d => d.id));
+        return (p.pakalIds || []).filter(id => !activeIds.has(id)).map(id => {
+          const tomb = store.getPakalById(id);
+          const label = tomb ? tomb.label : id;
+          return `<label class="checkbox-label badge-orphan-label">
+            <input type="checkbox" data-pakal="${id}" checked /> ⚠ ${escHtml(label)}
+          </label>`;
+        }).join('');
+      })()}
     </td>
     ${showNotWithColumn ? `<td class="col-notwith">
       <input class="input-sm" type="text" data-field="notWith" value="${getNotWithNamesForEdit(p.id)}" placeholder="הקלד שמות, מופרדים בפסיקים" title="שמות משתתפים מופרדים בפסיק" />

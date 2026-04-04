@@ -386,6 +386,10 @@ export function getPakalDefinitions(): PakalDefinition[] {
   return clonePakalDefinitions(pakalDefinitions.filter(d => !d.deleted));
 }
 
+export function getAllPakalDefinitionsIncludeDeleted(): PakalDefinition[] {
+  return clonePakalDefinitions(pakalDefinitions);
+}
+
 export function getPakalById(id: string): PakalDefinition | undefined {
   const def = pakalDefinitions.find(d => d.id === id);
   return def ? { ...def } : undefined;
