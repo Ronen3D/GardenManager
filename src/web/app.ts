@@ -2750,7 +2750,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.6</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2987,9 +2987,9 @@ function applyTheme(theme: 'dark' | 'light'): void {
 function getStoredTheme(): 'dark' | 'light' {
   const stored = localStorage.getItem(THEME_STORAGE_KEY);
   if (stored === 'light' || stored === 'dark') return stored;
-  // Fallback to system preference
-  if (window.matchMedia?.('(prefers-color-scheme: light)').matches) return 'light';
-  return 'dark';
+  // Default: light for mobile/tablet, dark for desktop
+  const isMobileOrTablet = window.matchMedia?.('(max-width: 1024px)').matches;
+  return isMobileOrTablet ? 'light' : 'dark';
 }
 
 function toggleTheme(): void {
