@@ -549,7 +549,7 @@ function renderAssignmentCard(
     if (isManualActive) {
       const levels = slot.acceptableLevels.map(l => l.level).join('/');
       const certs = slot.requiredCertifications;
-      slotHint = `<div class="manual-slot-hint">${levels ? `L${levels}` : ''}${certs.length ? ' ' + certBadges(certs, '') : ''}</div>`;
+      slotHint = `<div class="manual-slot-hint">${levels ? `${levels}` : ''}${certs.length ? ' ' + certBadges(certs, '') : ''}</div>`;
     }
     content = `<div class="empty-slot-label">${escHtml(slot.label || task.name)}</div>${slotHint}`;
   }

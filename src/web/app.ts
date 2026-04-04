@@ -1108,7 +1108,7 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
   const timeRange = `${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}`;
   let header = `<div class="warehouse-sheet-header">
     <div class="warehouse-sheet-title">בחר משתתף ל-${escHtml(cleanTaskName)}${escHtml(slotLabel)}</div>
-    <div class="warehouse-sheet-reqs">${timeRange} ${levels ? `L${levels}` : ''} ${certBadges(slot.requiredCertifications, '')}</div>
+    <div class="warehouse-sheet-reqs">${timeRange} ${levels ? `${levels}` : ''} ${certBadges(slot.requiredCertifications, '')}</div>
   </div>`;
 
   if (existingAssignment && existingParticipant) {
@@ -1737,7 +1737,7 @@ function renderGanttChart(schedule: Schedule): string {
 
     html += `<div class="gantt-row"><div class="gantt-label-col">
       <span class="gantt-name participant-hover" data-pid="${row.participantId}">${row.participantName}</span>
-      <span class="gantt-meta">${row.group} · L${row.level}</span>
+      <span class="gantt-meta">${row.group} · ${row.level}</span>
     </div><div class="gantt-timeline-col">`;
 
     for (const block of row.blocks) {
@@ -2096,7 +2096,7 @@ async function handleSwap(assignmentId: string): Promise<void> {
 
   const suggestions = currentSchedule.participants
     .filter(p => p.id !== assignment.participantId)
-    .map(p => `${p.name} (L${p.level}, ${p.group})`);
+    .map(p => `${p.name} (${p.level}, ${p.group})`);
 
   const choice = await showPrompt(
     `החלפה ב-"${task.name}".\nנוכחי: ${currentP?.name}`,
@@ -2751,7 +2751,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.8</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3860,7 +3860,7 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
     <div class="tt-header">
       <span class="tt-name">${p.name}</span>
       ${actionsHtml}
-      <span class="tt-level" style="background:${LEVEL_COLORS[p.level]}">L${p.level}</span>
+      <span class="tt-level" style="background:${LEVEL_COLORS[p.level]}">${p.level}</span>
     </div>
     <div class="tt-row"><span class="tt-label">קבוצה</span><span class="tt-value" style="color:${groupColor(p.group)}">${p.group}</span></div>
     <div class="tt-row"><span class="tt-label">הסמכות</span><span class="tt-value">${certsHtml}</span></div>
@@ -4215,7 +4215,7 @@ function buildTaskTooltipContent(taskId: string): string {
       teammatesHtml += `<div class="ttt-mate">
         <div class="ttt-mate-main">
           <span class="ttt-mate-name">${p.name}</span>
-          <span class="ttt-mate-level" style="background:${levelColors[p.level]}">L${p.level}</span>
+          <span class="ttt-mate-level" style="background:${levelColors[p.level]}">${p.level}</span>
         </div>
         <div class="ttt-mate-meta">
           ${slot ? `<span class="ttt-slot">${slot.label || task.name}</span>` : ''}

@@ -37,7 +37,7 @@ function templateBadge(tpl: { color?: string; name: string }): string {
 
 function levelBadge(level: Level): string {
   const colors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
-  return `<span class="badge badge-sm" style="background:${colors[level]}">L${level}</span>`;
+  return `<span class="badge badge-sm" style="background:${colors[level]}">${level}</span>`;
 }
 
 function certBadge(certId: string): string {

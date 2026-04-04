@@ -549,9 +549,10 @@ function renderEditRow(p: Participant, idx: number): string {
       <span class="group-error hidden" style="color:var(--danger); font-size:0.75rem;"></span>
     </td>
     <td class="col-level">
+      <label style="font-size:0.75rem;margin:0">דרגה
       <select class="input-sm" data-field="level">
-        ${LEVEL_OPTIONS.map(l => `<option value="${l}" ${p.level === l ? 'selected' : ''}>L${l}</option>`).join('')}
-      </select>
+        ${LEVEL_OPTIONS.map(l => `<option value="${l}" ${p.level === l ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></label>
     </td>
     <td class="col-certs">
       <div class="cert-checkboxes">
@@ -711,7 +712,7 @@ function renderAddForm(groups: string[]): string {
       </label>
       <label>דרגה
         <select class="input-sm" data-field="new-level">
-          ${LEVEL_OPTIONS.map(l => `<option value="${l}" ${l === Level.L0 ? 'selected' : ''}>L${l}</option>`).join('')}
+          ${LEVEL_OPTIONS.map(l => `<option value="${l}" ${l === Level.L0 ? 'selected' : ''}>${l}</option>`).join('')}
         </select>
       </label>
     </div>
