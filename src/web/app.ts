@@ -59,6 +59,7 @@ import { exportWeeklyOverview, exportDailyDetail } from './pdf-export';
 import {
   LEVEL_COLORS,
   fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskBadge, SVG_ICONS, escHtml,
+  applyTheme, getStoredTheme,
 } from './ui-helpers';
 import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
 import { showAlert, showPrompt, showConfirm, showToast, showBottomSheet, showContinuityImport, showTimePicker, renderCustomSelect, wireCustomSelect } from './ui-modal';
@@ -2750,16 +2751,13 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.7</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
         <button class="btn-sm btn-outline" id="btn-redo" ${!store.getUndoRedoState().canRedo ? 'disabled' : ''}
           title="שחזור">↩<span class="btn-label"> שחזור${store.getUndoRedoState().redoDepth ? ' (' + store.getUndoRedoState().redoDepth + ')' : ''}</span></button>
       </div>
-      <button class="theme-toggle" id="btn-theme-toggle" title="החלף מצב בהיר/כהה">
-        ${document.documentElement.dataset.theme === 'light' ? SVG_ICONS.moon : SVG_ICONS.sun}
-      </button>
     </div>
     <p class="subtitle">
       <span id="live-clock">${formatLiveClock()}</span>
@@ -2833,7 +2831,6 @@ function renderAll(): void {
   // Wire events
   wireTabNav(app);
   wireUndoRedo(app);
-  wireThemeToggle(app);
   wireFactoryReset(app);
 
   const content = document.getElementById('tab-content')!;
@@ -2970,51 +2967,6 @@ function runKpiAnimations(): void {
     feasEl.offsetHeight; // trigger reflow
     feasEl.style.animation = 'kpiFadeIn 0.3s ease';
   }
-}
-
-// ─── Theme Toggle ────────────────────────────────────────────────────────────
-
-const THEME_STORAGE_KEY = 'gardenmanager_theme';
-
-function applyTheme(theme: 'dark' | 'light'): void {
-  if (theme === 'light') {
-    document.documentElement.dataset.theme = 'light';
-  } else {
-    delete document.documentElement.dataset.theme;
-  }
-}
-
-function getStoredTheme(): 'dark' | 'light' {
-  const stored = localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark') return stored;
-  // Default: light for mobile/tablet, dark for desktop
-  const isMobileOrTablet = window.matchMedia?.('(max-width: 1024px)').matches;
-  return isMobileOrTablet ? 'light' : 'dark';
-}
-
-function toggleTheme(): void {
-  const current = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
-  const next = current === 'dark' ? 'light' : 'dark';
-
-  const commitSwitch = () => {
-    applyTheme(next);
-    localStorage.setItem(THEME_STORAGE_KEY, next);
-    const btn = document.getElementById('btn-theme-toggle');
-    if (btn) btn.innerHTML = next === 'light' ? SVG_ICONS.moon : SVG_ICONS.sun;
-  };
-
-  // Use the View Transitions API when available for a seamless crossfade;
-  // otherwise fall back to the CSS transition path which is still smooth.
-  if (typeof document.startViewTransition === 'function') {
-    document.startViewTransition(commitSwitch);
-  } else {
-    commitSwitch();
-  }
-}
-
-function wireThemeToggle(container: HTMLElement): void {
-  const btn = container.querySelector('#btn-theme-toggle');
-  if (btn) btn.addEventListener('click', toggleTheme);
 }
 
 function wireFactoryReset(container: HTMLElement): void {

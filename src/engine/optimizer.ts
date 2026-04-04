@@ -170,10 +170,10 @@ function getEligibleCandidates(
   participantWorkload: Map<string, number>,
   dailyWorkload?: Map<string, Map<string, number>>,
   disabledHC?: Set<string>,
-  /** Per-group count of Nitzan-certified members. When provided, participants
-   *  from groups with fewer Nitzan holders are deprioritised (tie-break only)
-   *  to protect tight Adanit groups from losing members to non-Adanit tasks. */
-  adanitGroupNitzanCount?: Map<string, number>,
+  /** Per-group count of members eligible for same-group tasks. When provided,
+   *  participants from groups with fewer eligible members are deprioritised
+   *  (tie-break only) to keep tight groups available for same-group duties. */
+  sameGroupEligibleCount?: Map<string, number>,
   categoryBreakMs?: number,
 ): Participant[] {
   const eligible = participants.filter((p) =>
@@ -257,13 +257,13 @@ function getEligibleCandidates(
     // skip level bias so all eligible levels compete fairly.
     if (aExact === 1 && a.level !== b.level) return a.level - b.level;
 
-    // Adanit member protection: prefer participants from groups with more
-    // Nitzan holders (those groups have more Adanit capacity, so their
-    // members are less precious). Participants from tight groups are
-    // deprioritised to keep them available for Adanit shifts.
-    if (adanitGroupNitzanCount) {
-      const aCap = adanitGroupNitzanCount.get(a.group) ?? 0;
-      const bCap = adanitGroupNitzanCount.get(b.group) ?? 0;
+    // Same-group task protection: prefer participants from groups with more
+    // members eligible for same-group tasks (those groups can spare people).
+    // Participants from tight groups are deprioritised to keep them available
+    // for same-group shifts (e.g. Adanit).
+    if (sameGroupEligibleCount) {
+      const aCap = sameGroupEligibleCount.get(a.group) ?? 0;
+      const bCap = sameGroupEligibleCount.get(b.group) ?? 0;
       if (aCap !== bCap) return bCap - aCap;
     }
 
@@ -422,20 +422,47 @@ export function greedyAssign(
     }
   }
 
-  // ITEM 10: Pre-compute per-group count of members who hold ALL required certs
-  // for same-group tasks. Used as a tie-breaker to protect tight groups.
-  const sameGroupCertReqs = new Set<string>();
-  for (const t of tasks) {
-    if (t.sameGroupRequired) {
+  // ITEM 10: Pre-compute per-group count of members eligible for same-group
+  // tasks. When multiple same-group tasks exist with different cert requirements,
+  // we compute eligibility per unique cert set and take the minimum per group
+  // (the tightest bottleneck). Used as a tie-breaker to protect tight groups.
+  const sameGroupTasks = tasks.filter(t => t.sameGroupRequired);
+  let sameGroupEligibleCount: Map<string, number> | undefined;
+  if (sameGroupTasks.length > 0) {
+    // Collect unique cert requirement sets across all same-group tasks
+    const uniqueCertSets: string[][] = [];
+    for (const t of sameGroupTasks) {
+      const certSet = new Set<string>();
       for (const s of t.slots) {
-        for (const c of s.requiredCertifications) sameGroupCertReqs.add(c);
+        for (const c of s.requiredCertifications) certSet.add(c);
+      }
+      const sorted = [...certSet].sort();
+      if (!uniqueCertSets.some(ex => ex.length === sorted.length && ex.every((c, i) => c === sorted[i]))) {
+        uniqueCertSets.push(sorted);
       }
     }
-  }
-  const adanitGroupNitzanCount = new Map<string, number>();
-  for (const p of participants) {
-    if ([...sameGroupCertReqs].every(c => p.certifications.includes(c))) {
-      adanitGroupNitzanCount.set(p.group, (adanitGroupNitzanCount.get(p.group) || 0) + 1);
+
+    // For each unique cert set, compute per-group eligible count
+    const perSetCounts: Map<string, number>[] = [];
+    for (const certs of uniqueCertSets) {
+      const groupCount = new Map<string, number>();
+      for (const p of participants) {
+        if (certs.every(c => p.certifications.includes(c))) {
+          groupCount.set(p.group, (groupCount.get(p.group) || 0) + 1);
+        }
+      }
+      perSetCounts.push(groupCount);
+    }
+
+    // Single cert set (current production case): use directly. Multiple: take min.
+    if (perSetCounts.length === 1) {
+      sameGroupEligibleCount = perSetCounts[0];
+    } else {
+      sameGroupEligibleCount = new Map<string, number>();
+      const allGroups = new Set<string>(participants.map(p => p.group));
+      for (const g of allGroups) {
+        sameGroupEligibleCount.set(g, Math.min(...perSetCounts.map(m => m.get(g) ?? 0)));
+      }
     }
   }
 
@@ -483,7 +510,7 @@ export function greedyAssign(
         workload,
         dailyWorkload,
         disabledHC,
-        adanitGroupNitzanCount,
+        sameGroupEligibleCount,
         categoryBreakMs,
       );
 

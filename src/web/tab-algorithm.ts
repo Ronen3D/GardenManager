@@ -16,7 +16,7 @@ import {
 } from '../models/types';
 import * as store from './config-store';
 import { showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
-import { escHtml } from './ui-helpers';
+import { escHtml, SVG_ICONS, getStoredTheme, setTheme, getCurrentTheme } from './ui-helpers';
 
 // ─── Weight field metadata ───────────────────────────────────────────────────
 
@@ -369,6 +369,22 @@ export function renderAlgorithmTab(): string {
   // ── Pakal Management ──
   html += renderPakalSection();
 
+  // ── Display Settings (theme) ──
+  const theme = getStoredTheme();
+  html += `
+  <div class="algo-section">
+    <h3 class="algo-section-title">תצוגה</h3>
+    <p class="algo-section-desc">בחירת מראה כללי של המערכת.</p>
+    <div class="theme-segmented">
+      <button class="theme-seg-btn ${theme === 'light' ? 'theme-seg-active' : ''}" data-action="set-theme" data-theme="light">
+        ${SVG_ICONS.sun} <span>בהיר</span>
+      </button>
+      <button class="theme-seg-btn ${theme === 'dark' ? 'theme-seg-active' : ''}" data-action="set-theme" data-theme="dark">
+        ${SVG_ICONS.moon} <span>כהה</span>
+      </button>
+    </div>
+  </div>`;
+
   // ── Factory Reset (danger zone) ──
   html += `
   <div class="algo-section algo-danger-zone">
@@ -533,6 +549,16 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         _presetFormError = '';
         _presetRenameTargetId = null;
         rerender();
+        break;
+      }
+
+      // ── Theme toggle ──
+      case 'set-theme': {
+        const theme = btn.dataset.theme as 'dark' | 'light';
+        if (theme && theme !== getCurrentTheme()) {
+          setTheme(theme);
+          rerender();
+        }
         break;
       }
 

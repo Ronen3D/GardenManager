@@ -120,3 +120,41 @@ export function escHtml(s: string): string {
 export function escAttr(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+// ─── Theme Utilities ────────────────────────────────────────────────────────
+
+const THEME_STORAGE_KEY = 'gardenmanager_theme';
+
+export function applyTheme(theme: 'dark' | 'light'): void {
+  if (theme === 'light') {
+    document.documentElement.dataset.theme = 'light';
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+}
+
+export function getStoredTheme(): 'dark' | 'light' {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === 'light' || stored === 'dark') return stored;
+  const isMobileOrTablet = window.matchMedia?.('(max-width: 1024px)').matches;
+  return isMobileOrTablet ? 'light' : 'dark';
+}
+
+export function getCurrentTheme(): 'dark' | 'light' {
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+}
+
+export function setTheme(theme: 'dark' | 'light'): void {
+  // Write to localStorage immediately so subsequent renders read the correct value.
+  localStorage.setItem(THEME_STORAGE_KEY, theme);
+
+  const commitSwitch = () => {
+    applyTheme(theme);
+  };
+
+  if (typeof document.startViewTransition === 'function') {
+    document.startViewTransition(commitSwitch);
+  } else {
+    commitSwitch();
+  }
+}
