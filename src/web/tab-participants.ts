@@ -579,6 +579,16 @@ function renderEditRow(p: Participant, idx: number): string {
             <input type="checkbox" data-cert="${def.id}" ${p.certifications.includes(def.id) ? 'checked' : ''} /> ${escHtml(def.label)}
           </label>`
         ).join('')}
+        ${(() => {
+          const activeIds = new Set(getCertOptions().map(d => d.id));
+          return p.certifications.filter(c => !activeIds.has(c)).map(c => {
+            const tomb = store.getCertificationById(c);
+            const label = tomb ? tomb.label : c;
+            return `<label class="checkbox-label badge-orphan-label">
+              <input type="checkbox" data-cert="${c}" checked /> ⚠ ${escHtml(label)}
+            </label>`;
+          }).join('');
+        })()}
       </div>
     </td>
     <td class="col-pakals">
@@ -1212,14 +1222,8 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         row.querySelectorAll<HTMLInputElement>('[data-cert]').forEach(cb => {
           if (cb.checked && cb.dataset.cert) certs.push(cb.dataset.cert);
         });
-        // Preserve orphan certs (deleted definitions still referenced by participant)
-        const existing = store.getAllParticipants().find(p => p.id === pid);
-        if (existing) {
-          const knownIds = new Set(getCertOptions().map(d => d.id));
-          for (const c of existing.certifications) {
-            if (!knownIds.has(c)) certs.push(c);
-          }
-        }
+        // Orphan certs (deleted definitions) are rendered as checkboxes in the edit row,
+        // so they are already included in certs[] if the user kept them checked.
         const pakalIds = collectPakalIds(row, '[data-pakal]');
 
         store.updateParticipant(pid, { name, group, level, certifications: certs, pakalIds });

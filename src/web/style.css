@@ -3959,6 +3959,10 @@ tr.now-row-animate > td.time-cell {
   border: 2px dashed #e74c3c;
   color: #fff;
 }
+.badge-orphan-label {
+  color: #e74c3c;
+  font-style: italic;
+}
 
 /* Color swatch in-use indicator (dimmed) */
 .cert-color-swatch.in-use {
