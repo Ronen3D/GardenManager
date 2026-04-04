@@ -1779,28 +1779,10 @@ export function loadSchedule(): Schedule | null {
 
 /**
  * Clear all persisted state (reset to defaults on next load).
+ * Delegates to factoryReset() so every reset path is comprehensive.
  */
 export function clearStorage(): void {
-  // Cancel any pending debounced save to prevent re-persisting stale data
-  if (_saveDebounceTimer) {
-    clearTimeout(_saveDebounceTimer);
-    _saveDebounceTimer = null;
-  }
-  try {
-    localStorage.removeItem(STORAGE_KEY_STATE);
-    localStorage.removeItem(STORAGE_KEY_SCHEDULE);
-  } catch (err) {
-    console.warn('[Store] Failed to clear localStorage:', err);
-  }
-  // Also clear in-memory state so the app is consistent
-  participants.clear();
-  dateUnavailabilities.clear();
-  taskTemplates.clear();
-  oneTimeTasks.clear();
-  pakalDefinitions = clonePakalDefinitions(BUILTIN_PAKAL_DEFINITIONS);
-  certificationDefinitions = DEFAULT_CERTIFICATION_DEFINITIONS.map(d => ({ ...d }));
-  undoStack.length = 0;
-  redoStack.length = 0;
+  factoryReset();
 }
 
 /**
@@ -1847,6 +1829,9 @@ export function factoryReset(): void {
   _taskSets = null;
   _activeTaskSetId = undefined;
   _categoryBreakHours = DEFAULT_CATEGORY_BREAK_HOURS;
+  scheduleDate = defaultScheduleDate();
+  scheduleDays = 7;
+  liveModeState = { enabled: false, currentTimestamp: new Date() };
 }
 
 /**

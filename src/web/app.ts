@@ -80,8 +80,9 @@ let _isOptimizing = false;
 /** True while undo/redo is executing — prevents onStoreChanged from reconciling */
 let _undoRedoInProgress = false;
 /** Parallel schedule snapshots kept in sync with the store's undo/redo stacks */
-const _scheduleUndoStack: Array<Schedule | null> = [];
-const _scheduleRedoStack: Array<Schedule | null> = [];
+interface ScheduleSnapshot { schedule: Schedule | null; dirty: boolean }
+const _scheduleUndoStack: ScheduleSnapshot[] = [];
+const _scheduleRedoStack: ScheduleSnapshot[] = [];
 /**
  * True when the config store has been mutated after the latest schedule
  * generation.  Signals that the current schedule may be out of sync with
@@ -116,6 +117,8 @@ let _viewMode: ViewMode = 'SCHEDULE_VIEW';
 let _profileParticipantId: string | null = null;
 /** Saved scroll position of the schedule view for seamless return */
 let _scheduleScrollY = 0;
+/** When true, renderAll() will restore _scheduleScrollY after DOM replacement */
+let _restoreScheduleScroll = false;
 /** Progress state for the optimization overlay */
 let _optimProgress: {
   attempt: number;
@@ -1181,15 +1184,15 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
   }
 }
 
-async function handleManualParticipantClick(participantId: string): Promise<void> {
-  if (!currentSchedule || !engine || !_manualSelectedTaskId || !_manualSelectedSlotId) return;
+async function handleManualParticipantClick(participantId: string): Promise<boolean> {
+  if (!currentSchedule || !engine || !_manualSelectedTaskId || !_manualSelectedSlotId) return false;
 
   const task = currentSchedule.tasks.find(t => t.id === _manualSelectedTaskId);
-  if (!task) return;
+  if (!task) return false;
   const slot = task.slots.find(s => s.slotId === _manualSelectedSlotId);
-  if (!slot) return;
+  if (!slot) return false;
   const participant = currentSchedule.participants.find(p => p.id === participantId);
-  if (!participant) return;
+  if (!participant) return false;
 
   // Build assignment context for eligibility check
   const taskMap = new Map(currentSchedule.tasks.map(t => [t.id, t]));
@@ -1198,9 +1201,12 @@ async function handleManualParticipantClick(participantId: string): Promise<void
     a => a.taskId === task.id && a.slotId === _manualSelectedSlotId
   );
 
-  // Build participant's current assignments, excluding the target slot if it's a replace
+  // Build participant's current assignments, excluding assignments to this task
+  // so HC-7 ("already assigned to this task") doesn't wrongly reject.  This
+  // must match the filter in getEligibleParticipantsForSlot (validator.ts)
+  // which also uses `a.taskId !== task.id`.
   const pAssignments = currentSchedule.assignments.filter(
-    a => a.participantId === participantId && !(a.taskId === task.id && a.slotId === _manualSelectedSlotId)
+    a => a.participantId === participantId && a.taskId !== task.id
   );
 
   const taskAssignments = currentSchedule.assignments.filter(a => a.taskId === task.id);
@@ -1216,7 +1222,7 @@ async function handleManualParticipantClick(participantId: string): Promise<void
 
   if (reason) {
     showToast(REJECTION_MESSAGES[reason] || `אילוץ ${reason}`, { type: 'error' });
-    return;
+    return false;
   }
 
   // Check if participant is already assigned elsewhere (not in target slot)
@@ -1228,10 +1234,11 @@ async function handleManualParticipantClick(participantId: string): Promise<void
     const confirmed = await showConfirm(
       `${participant.name} משובץ כרגע ב-"${otherTask?.name || '?'}". להעביר לכאן?`
     );
-    if (!confirmed) return;
+    if (!confirmed) return false;
   }
 
   executeManualAssignment(participantId, existingAssignment, otherAssignment || null);
+  return true;
 }
 
 function executeManualAssignment(
@@ -1356,8 +1363,8 @@ function openWarehouseSheet(): void {
       if (card) {
         e.stopPropagation();
         const pid = card.dataset.pid!;
-        handleManualParticipantClick(pid).then(() => {
-          handle.close();
+        handleManualParticipantClick(pid).then((assigned) => {
+          if (assigned) handle.close();
         });
         return;
       }
@@ -2727,8 +2734,8 @@ function renderAll(): void {
         // Back to schedule: restore scroll position
         _viewMode = 'SCHEDULE_VIEW';
         _profileParticipantId = null;
+        _restoreScheduleScroll = true;
         renderAll();
-        requestAnimationFrame(() => window.scrollTo(0, _scheduleScrollY));
       }, handleProfileSos);
       // Wire task tooltip in profile view too
       wireTaskTooltip(root);
@@ -2743,7 +2750,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.2</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2806,12 +2813,19 @@ function renderAll(): void {
 
   html += '</div>';
 
-  // Preserve scroll position during manual-build re-renders
-  const savedScrollY = _manualBuildActive && currentTab === 'schedule' ? window.scrollY : 0;
+  // Preserve scroll position during schedule re-renders (manual build,
+  // returning from profile view, or any re-render while on schedule tab)
+  const shouldPreserveScroll =
+    (currentTab === 'schedule' && _manualBuildActive) ||
+    _restoreScheduleScroll;
+  if (currentTab === 'schedule' && _manualBuildActive) {
+    _scheduleScrollY = window.scrollY;
+  }
+  const savedScrollY = shouldPreserveScroll ? _scheduleScrollY : 0;
+  _restoreScheduleScroll = false;
 
   app.innerHTML = html;
 
-  // Restore scroll position for manual build mode
   if (savedScrollY > 0) {
     requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
   }
@@ -2867,8 +2881,13 @@ function doUndoRedo(action: 'undo' | 'redo'): void {
 
   if (sourceStack.length > 0) {
     // Save current schedule to the opposite stack
-    targetStack.push(currentSchedule ? structuredClone(currentSchedule) : null);
-    const restored = sourceStack.pop()!;
+    targetStack.push({
+      schedule: currentSchedule ? structuredClone(currentSchedule) : null,
+      dirty: _scheduleDirty,
+    });
+    const snap = sourceStack.pop()!;
+    _scheduleDirty = snap.dirty;
+    const restored = snap.schedule;
     if (restored) {
       currentSchedule = restored;
       // Re-wire the engine so violations/scoring stay consistent
@@ -2887,7 +2906,6 @@ function doUndoRedo(action: 'undo' | 'redo'): void {
     }
   }
 
-  _scheduleDirty = true;
   renderAll();
 }
 
@@ -4376,7 +4394,10 @@ function onStoreChanged(): void {
 
   // Push pre-reconciliation schedule so undo can perfectly restore it.
   // Must push even when null to keep in sync with the store's undo stack.
-  _scheduleUndoStack.push(currentSchedule ? structuredClone(currentSchedule) : null);
+  _scheduleUndoStack.push({
+    schedule: currentSchedule ? structuredClone(currentSchedule) : null,
+    dirty: _scheduleDirty,
+  });
   if (_scheduleUndoStack.length > 80) _scheduleUndoStack.shift();
   _scheduleRedoStack.length = 0;
 

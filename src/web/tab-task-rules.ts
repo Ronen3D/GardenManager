@@ -71,6 +71,16 @@ function fmtHm(h: number, m: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+/** Parse an HH:MM string with range validation (00:00–23:59). */
+function parseHm(value: string): { h: number; m: number } | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+  return { h, m };
+}
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 let expandedTemplateId: string | null = null;
@@ -526,9 +536,10 @@ function renderOneTimeCard(ot: OneTimeTask): string {
   const dayNum = Math.round((otDay.getTime() - schedStart.getTime()) / 86400000) + 1;
   const dateStr = `יום ${dayNum}`;
   const timeStr = fmtHm(ot.startHour, ot.startMinute);
-  const endH = ot.startHour + Math.floor(ot.durationHours);
-  const endM = ot.startMinute + Math.round((ot.durationHours % 1) * 60);
-  const endStr = fmtHm(endH % 24, endM % 60);
+  const totalMinutes = ot.startMinute + Math.round((ot.durationHours % 1) * 60);
+  const endH = ot.startHour + Math.floor(ot.durationHours) + Math.floor(totalMinutes / 60);
+  const endM = totalMinutes % 60;
+  const endStr = fmtHm(endH % 24, endM);
 
   const allSlots = [...ot.slots];
   for (const st of ot.subTeams) allSlots.push(...st.slots);
@@ -721,16 +732,19 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const end = (block.querySelector('[data-field="lw-end"]') as HTMLInputElement | null)?.value || '06:30';
         const weight = parseFloat((block.querySelector('[data-field="lw-weight"]') as HTMLInputElement | null)?.value || '1');
 
-        const [sh, sm] = start.split(':').map((n) => parseInt(n, 10));
-        const [eh, em] = end.split(':').map((n) => parseInt(n, 10));
-        if ([sh, sm, eh, em].some(Number.isNaN)) break;
+        const ps = parseHm(start);
+        const pe = parseHm(end);
+        if (!ps || !pe) {
+          showToast('שעה לא תקינה — יש להזין בפורמט HH:MM (00:00–23:59)', { type: 'error' });
+          break;
+        }
 
         const newWindow: LoadWindow = {
           id: `lw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          startHour: sh,
-          startMinute: sm,
-          endHour: eh,
-          endMinute: em,
+          startHour: ps.h,
+          startMinute: ps.m,
+          endHour: pe.h,
+          endMinute: pe.m,
           weight: Math.max(0, Math.min(1, weight)),
         };
 
@@ -753,20 +767,23 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const weightInput = body.querySelector(`[data-field="lw-edit-weight"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
         if (!startInput || !endInput || !weightInput) break;
 
-        const [sh, sm] = startInput.value.split(':').map((n) => parseInt(n, 10));
-        const [eh, em] = endInput.value.split(':').map((n) => parseInt(n, 10));
+        const ps = parseHm(startInput.value);
+        const pe = parseHm(endInput.value);
         const weight = parseFloat(weightInput.value || '1');
-        if ([sh, sm, eh, em].some(Number.isNaN)) break;
+        if (!ps || !pe) {
+          showToast('שעה לא תקינה — יש להזין בפורמט HH:MM (00:00–23:59)', { type: 'error' });
+          break;
+        }
 
         store.updateTaskTemplate(tid, {
           loadWindows: (tpl.loadWindows || []).map((w) =>
             w.id === lwid
               ? {
                   ...w,
-                  startHour: sh,
-                  startMinute: sm,
-                  endHour: eh,
-                  endMinute: em,
+                  startHour: ps.h,
+                  startMinute: ps.m,
+                  endHour: pe.h,
+                  endMinute: pe.m,
                   weight: Math.max(0, Math.min(1, weight)),
                 }
               : w,
