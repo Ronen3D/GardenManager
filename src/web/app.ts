@@ -18,7 +18,6 @@ import {
   SchedulingEngine,
   Participant,
   Level,
-  Certification,
   AssignmentStatus,
   ViolationSeverity,
   Schedule,
@@ -58,7 +57,7 @@ import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
 import { computeTaskBreakdown } from './workload-utils';
 import { exportWeeklyOverview, exportDailyDetail } from './pdf-export';
 import {
-  LEVEL_COLORS, CERT_COLORS, CERT_LABELS,
+  LEVEL_COLORS,
   fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskBadge, SVG_ICONS, escHtml,
 } from './ui-helpers';
 import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
@@ -3826,8 +3825,8 @@ function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId
   const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
 
   const certsHtml = p.certifications.length > 0
-    ? p.certifications.map((c: Certification) => {
-        return `<span class="tt-cert" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${CERT_LABELS[c] || c}</span>`;
+    ? p.certifications.map((c: string) => {
+        return `<span class="tt-cert" style="background:${store.getCertColor(c)}">${escHtml(store.getCertLabel(c))}</span>`;
       }).join(' ')
     : '<span class="tt-dim">אין</span>';
   const pakalHtml = renderPakalBadges(p, store.getPakalDefinitions(), 'אין');
@@ -4209,7 +4208,7 @@ function buildTaskTooltipContent(taskId: string): string {
       const levelColors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
       const certsHtml = p.certifications.length > 0
         ? p.certifications.map(c =>
-            `<span class="ttt-cert" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${CERT_LABELS[c] || c}</span>`
+            `<span class="ttt-cert" style="background:${store.getCertColor(c)}">${escHtml(store.getCertLabel(c))}</span>`
           ).join('')
         : '';
       teammatesHtml += `<div class="ttt-mate">

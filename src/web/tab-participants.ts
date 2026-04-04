@@ -7,22 +7,24 @@
 
 import {
   Level,
-  Certification,
+  CertificationDefinition,
   PakalDefinition,
   Participant,
   DateUnavailability,
 } from '../models/types';
 import * as store from './config-store';
 import { showConfirm, showToast } from './ui-modal';
-import { levelBadge, certBadges, groupBadge, groupColor, CERT_LABELS, SVG_ICONS, escHtml } from './ui-helpers';
-import { HORESH_PAKAL_ID, getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
+import { levelBadge, certBadges, groupBadge, groupColor, SVG_ICONS, escHtml } from './ui-helpers';
+import { getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
 import { HEBREW_DAYS, fmtTime } from '../utils/date-utils';
 import { checkTemplateEligibility, TemplateEligibilityResult } from '../engine/validator';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
-const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala, Certification.Horesh];
+function getCertOptions(): CertificationDefinition[] {
+  return store.getCertificationDefinitions();
+}
 
 function getNotWithNamesForEdit(pid: string): string {
   const ids = store.getNotWithIds(pid);
@@ -60,52 +62,28 @@ function getTaskNameOptions(): string[] {
 function renderPakalCheckboxes(
   definitions: PakalDefinition[],
   explicitIds: string[],
-  certifications: Certification[],
+  _certifications: string[],
   attrName: string,
 ): string {
   const effectiveIds = new Set(getEffectivePakalIds({
     id: '',
     name: '',
     level: Level.L0,
-    certifications,
+    certifications: _certifications,
     group: '',
     availability: [],
     dateUnavailability: [],
     pakalIds: explicitIds,
   }, definitions));
-  const explicitSet = new Set(explicitIds);
-  const horeshAuto = certifications.includes(Certification.Horesh);
 
   return `<div class="pakal-checkboxes">
     ${definitions.map(def => {
-      const autoManaged = horeshAuto && def.id === HORESH_PAKAL_ID;
       const checked = effectiveIds.has(def.id);
-      return `<label class="checkbox-label${autoManaged ? ' pakal-auto' : ''}" title="${autoManaged ? 'נוסף אוטומטית כשיש הסמכת חורש' : escHtml(def.label)}">
-        <input type="checkbox" ${attrName}="${def.id}" ${checked ? 'checked' : ''}${autoManaged ? ' disabled data-auto-managed="1"' : ''} data-manual-checked="${explicitSet.has(def.id) ? '1' : '0'}" /> ${escHtml(def.label)}${autoManaged ? ' <span class="text-muted">(אוטומטי)</span>' : ''}
+      return `<label class="checkbox-label" title="${escHtml(def.label)}">
+        <input type="checkbox" ${attrName}="${def.id}" ${checked ? 'checked' : ''} /> ${escHtml(def.label)}
       </label>`;
     }).join('')}
   </div>`;
-}
-
-function syncAutoHoreshPakal(scope: ParentNode, certSelector: string, pakalSelector: string): void {
-  const horeshCert = scope.querySelector<HTMLInputElement>(certSelector);
-  const horeshPakal = scope.querySelector<HTMLInputElement>(pakalSelector);
-  if (!horeshCert || !horeshPakal) return;
-
-  const label = horeshPakal.closest('label');
-  if (horeshCert.checked) {
-    horeshPakal.dataset.manualChecked = horeshPakal.dataset.manualChecked || (horeshPakal.checked ? '1' : '0');
-    horeshPakal.checked = true;
-    horeshPakal.disabled = true;
-    horeshPakal.dataset.autoManaged = '1';
-    label?.classList.add('pakal-auto');
-  } else {
-    horeshPakal.disabled = false;
-    horeshPakal.checked = false;
-    horeshPakal.dataset.manualChecked = '0';
-    delete horeshPakal.dataset.autoManaged;
-    label?.classList.remove('pakal-auto');
-  }
 }
 
 function collectPakalIds(scope: ParentNode, selector: string): string[] {
@@ -113,7 +91,6 @@ function collectPakalIds(scope: ParentNode, selector: string): string[] {
   scope.querySelectorAll<HTMLInputElement>(selector).forEach(cb => {
     const pakalId = cb.getAttribute(selector.includes('new-pakal') ? 'data-new-pakal' : 'data-pakal');
     if (!pakalId || !cb.checked) return;
-    if (cb.dataset.autoManaged === '1' && cb.dataset.manualChecked !== '1') return;
     ids.push(pakalId);
   });
   return ids;
@@ -187,16 +164,16 @@ function renderTaskNameSelect(fieldName: string, value?: string): string {
 function readParticipantFromForm(
   row: Element,
   isAddForm: boolean,
-): { level: Level; certifications: Certification[] } {
+): { level: Level; certifications: string[] } {
   const levelField = isAddForm ? 'new-level' : 'level';
   const levelSel = row.querySelector(`[data-field="${levelField}"]`) as HTMLSelectElement | null;
   const level = parseInt(levelSel?.value || '0') as Level;
   const certAttr = isAddForm ? 'data-new-cert' : 'data-cert';
-  const certs: Certification[] = [];
+  const certs: string[] = [];
   row.querySelectorAll<HTMLInputElement>(`[${certAttr}]`).forEach(cb => {
     if (cb.checked) {
       const val = isAddForm ? cb.dataset.newCert : cb.dataset.cert;
-      if (val) certs.push(val as Certification);
+      if (val) certs.push(val);
     }
   });
   return { level, certifications: certs };
@@ -208,7 +185,7 @@ function updatePrefWarning(
   fieldName: string,
   taskName: string,
   level: Level,
-  certs: Certification[],
+  certs: string[],
 ): void {
   const warningEl = container.querySelector(`[data-warning-for="${fieldName}"]`) as HTMLElement | null;
   if (!warningEl) return;
@@ -597,9 +574,9 @@ function renderEditRow(p: Participant, idx: number): string {
     </td>
     <td class="col-certs">
       <div class="cert-checkboxes">
-        ${CERT_OPTIONS.map(c =>
+        ${getCertOptions().map(def =>
           `<label class="checkbox-label">
-            <input type="checkbox" data-cert="${c}" ${p.certifications.includes(c) ? 'checked' : ''} /> ${CERT_LABELS[c] || c}
+            <input type="checkbox" data-cert="${def.id}" ${p.certifications.includes(def.id) ? 'checked' : ''} /> ${escHtml(def.label)}
           </label>`
         ).join('')}
       </div>
@@ -739,17 +716,16 @@ function renderAddForm(groups: string[]): string {
     </div>
     <div class="form-row">
       <span>הסמכות:</span>
-      ${CERT_OPTIONS.map(c =>
+      ${getCertOptions().map((def, i) =>
         `<label class="checkbox-label">
-          <input type="checkbox" data-new-cert="${c}" ${c === Certification.Nitzan ? 'checked' : ''} /> ${CERT_LABELS[c] || c}
+          <input type="checkbox" data-new-cert="${def.id}" ${i === 0 ? 'checked' : ''} /> ${escHtml(def.label)}
         </label>`
       ).join('')}
     </div>
     <div class="form-row form-row-pakalim">
       <span>פק"לים:</span>
       <div>
-        ${renderPakalCheckboxes(pakalDefs, [], [Certification.Nitzan], 'data-new-pakal')}
-        <small class="text-muted">חורש נוסף אוטומטית כשמסמנים הסמכת חורש.</small>
+        ${renderPakalCheckboxes(pakalDefs, [], [getCertOptions()[0]?.id].filter(Boolean), 'data-new-pakal')}
       </div>
     </div>
     <div class="form-row">
@@ -834,10 +810,6 @@ function renderBulkDeleteDialog(): string {
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
 export function wireParticipantsEvents(container: HTMLElement, rerender: () => void): void {
-  container.querySelectorAll<HTMLElement>('tr.row-editing, #add-participant-form').forEach(scope => {
-    syncAutoHoreshPakal(scope, '[data-cert="Horesh"], [data-new-cert="Horesh"]', '[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]');
-  });
-
   // ─── Preference eligibility warnings: show on edit open if prefs already set ─
   container.querySelectorAll<HTMLElement>('tr.row-editing').forEach(row => {
     recheckAllPrefWarnings(row, false);
@@ -976,25 +948,6 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       if (timeFields) timeFields.classList.toggle('hidden', checked);
     }
 
-    const changeTarget = e.target as HTMLInputElement;
-    if (changeTarget.matches('[data-cert="Horesh"], [data-new-cert="Horesh"]')) {
-      const scope = changeTarget.closest('tr.row-editing, #add-participant-form');
-      if (scope) {
-        syncAutoHoreshPakal(scope, '[data-cert="Horesh"], [data-new-cert="Horesh"]', '[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]');
-      }
-    }
-
-    // Reverse sync: checking pakal-horesh auto-checks Horesh certification
-    if (changeTarget.matches('[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]')) {
-      const scope = changeTarget.closest('tr.row-editing, #add-participant-form');
-      if (scope && changeTarget.checked) {
-        const certCb = scope.querySelector<HTMLInputElement>('[data-cert="Horesh"], [data-new-cert="Horesh"]');
-        if (certCb && !certCb.checked) {
-          certCb.checked = true;
-          syncAutoHoreshPakal(scope, '[data-cert="Horesh"], [data-new-cert="Horesh"]', '[data-pakal="pakal-horesh"], [data-new-pakal="pakal-horesh"]');
-        }
-      }
-    }
   });
 
   // ─── Group select change handlers (show/hide + validate new-group input) ──
@@ -1208,9 +1161,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         if (group === null) return; // validation failed — error is shown inline
 
         const level = parseInt(levelEl?.value || '0') as Level;
-        const certs: Certification[] = [];
+        const certs: string[] = [];
         container.querySelectorAll<HTMLInputElement>('[data-new-cert]').forEach(cb => {
-          if (cb.checked) certs.push(cb.dataset.newCert as Certification);
+          if (cb.checked && cb.dataset.newCert) certs.push(cb.dataset.newCert);
         });
         const pakalIds = collectPakalIds(container, '[data-new-pakal]');
 
@@ -1255,10 +1208,18 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         if (group === null) return; // validation failed
 
         const level = parseInt((row.querySelector('[data-field="level"]') as HTMLSelectElement)?.value || '0') as Level;
-        const certs: Certification[] = [];
+        const certs: string[] = [];
         row.querySelectorAll<HTMLInputElement>('[data-cert]').forEach(cb => {
-          if (cb.checked) certs.push(cb.dataset.cert as Certification);
+          if (cb.checked && cb.dataset.cert) certs.push(cb.dataset.cert);
         });
+        // Preserve orphan certs (deleted definitions still referenced by participant)
+        const existing = store.getAllParticipants().find(p => p.id === pid);
+        if (existing) {
+          const knownIds = new Set(getCertOptions().map(d => d.id));
+          for (const c of existing.certifications) {
+            if (!knownIds.has(c)) certs.push(c);
+          }
+        }
         const pakalIds = collectPakalIds(row, '[data-pakal]');
 
         store.updateParticipant(pid, { name, group, level, certifications: certs, pakalIds });

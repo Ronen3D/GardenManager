@@ -181,6 +181,59 @@ export function flushPendingWeightUpdate(): void {
 // Register flush with the config-store so preset save operations can call it
 store.registerWeightFlush(flushPendingWeightUpdate);
 
+// ─── Certification Management ───────────────────────────────────────────────
+
+const CERT_COLOR_PALETTE = [
+  '#16a085', '#8e44ad', '#c0392b', '#27ae60', '#2980b9',
+  '#d35400', '#f39c12', '#1abc9c', '#e74c3c', '#34495e',
+];
+
+let _selectedCertColor = '';
+
+function renderCertificationSection(): string {
+  const defs = store.getCertificationDefinitions();
+  const usedColors = new Set(defs.map(d => d.color));
+  if (!_selectedCertColor || usedColors.has(_selectedCertColor)) {
+    _selectedCertColor = CERT_COLOR_PALETTE.find(c => !usedColors.has(c)) || CERT_COLOR_PALETTE[0];
+  }
+
+  let html = `
+  <div class="algo-section">
+    <h3 class="algo-section-title">ניהול הסמכות</h3>
+    <p class="algo-section-desc">הוסף או הסר הסמכות. שינויים זמינים מיד בלשוניות משתתפים ומשימות.</p>
+    <div class="cert-def-list">`;
+
+  for (const def of defs) {
+    const usage = store.getCertificationUsage(def.id);
+    const usageText = `${usage.participantCount} משתתפים, ${usage.slotCount} משבצות`;
+    html += `
+      <div class="cert-def-item">
+        <span class="badge" style="background:${def.color}">${escHtml(def.label)}</span>
+        <span class="cert-usage-count">${usageText}</span>
+        <button class="btn-icon btn-sm" data-action="cert-remove" data-cert-id="${def.id}" title="הסר הסמכה">✕</button>
+      </div>`;
+  }
+
+  html += `
+    </div>
+    <div class="cert-add-form">
+      <div class="cert-add-row">
+        <input type="text" class="input-sm" data-field="cert-name" placeholder="שם הסמכה חדשה" />
+        <button class="btn-sm btn-primary" data-action="cert-add">+ הוסף</button>
+      </div>
+      <div class="cert-color-palette">
+        ${CERT_COLOR_PALETTE.map(c => {
+          const inUse = usedColors.has(c);
+          return `<button type="button" class="cert-color-swatch${c === _selectedCertColor ? ' selected' : ''}${inUse ? ' in-use' : ''}" data-action="cert-select-color" data-color="${c}" style="background:${c}" title="${c}${inUse ? ' (בשימוש)' : ''}"></button>`;
+        }).join('')}
+      </div>
+      ${usedColors.size >= CERT_COLOR_PALETTE.length ? '<p class="cert-palette-note">כל הצבעים בשימוש — צבע ישותף עם הסמכה קיימת</p>' : ''}
+    </div>
+  </div>`;
+
+  return html;
+}
+
 // ─── Render ──────────────────────────────────────────────────────────────────
 
 export function renderAlgorithmTab(): string {
@@ -262,6 +315,9 @@ export function renderAlgorithmTab(): string {
   html += `
     </div>
   </div>`;
+
+  // ── Certification Management ──
+  html += renderCertificationSection();
 
   // ── Factory Reset (danger zone) ──
   html += `
@@ -494,6 +550,45 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         _presetFormMode = 'none';
         _presetFormError = '';
         _presetRenameTargetId = null;
+        rerender();
+        break;
+      }
+
+      // ── Certification management ──
+      case 'cert-add': {
+        const nameInput = container.querySelector<HTMLInputElement>('[data-field="cert-name"]');
+        const name = nameInput?.value.trim() ?? '';
+        if (!name) {
+          showToast('יש להזין שם להסמכה', { type: 'error' });
+          break;
+        }
+        try {
+          store.addCertification(name, _selectedCertColor);
+          showToast(`הסמכה "${name}" נוספה`, { type: 'success' });
+        } catch (err: any) {
+          showToast(err.message || 'שגיאה', { type: 'error' });
+        }
+        rerender();
+        break;
+      }
+      case 'cert-remove': {
+        const certId = btn.dataset.certId;
+        if (!certId) break;
+        const usage = store.getCertificationUsage(certId);
+        const label = store.getCertLabel(certId);
+        if (usage.participantCount > 0 || usage.slotCount > 0) {
+          showConfirm(
+            `הסמכה "${label}" נמצאת בשימוש (${usage.participantCount} משתתפים, ${usage.slotCount} משבצות). למחוק בכל זאת? אזהרה תוצג על משתתפים ומשימות שעדיין משתמשים בה.`,
+            { danger: true, title: 'מחיקת הסמכה', confirmLabel: 'מחק' },
+          ).then(ok => { if (ok) { store.removeCertification(certId); rerender(); } });
+        } else {
+          store.removeCertification(certId);
+          rerender();
+        }
+        break;
+      }
+      case 'cert-select-color': {
+        _selectedCertColor = btn.dataset.color || CERT_COLOR_PALETTE[0];
         rerender();
         break;
       }

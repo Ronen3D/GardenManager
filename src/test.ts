@@ -8,7 +8,6 @@ import {
   SchedulingEngine,
   Participant,
   Level,
-  Certification,
   AssignmentStatus,
   ViolationSeverity,
   createTimeBlock,
@@ -34,7 +33,7 @@ import {
   getRejectionReason,
   ParticipantRestProfile,
 } from './index';
-import { TimeBlock, SlotRequirement } from './models/types';
+import { TimeBlock, SlotRequirement, DEFAULT_CERTIFICATION_DEFINITIONS, CertificationDefinition } from './models/types';
 
 // ─── Local test task factories (replacing deleted task-definitions.ts) ───────
 
@@ -49,7 +48,7 @@ function createHamamaTask(timeBlock: TimeBlock): Task {
     slots: [{
       slotId: _nextSlotId('hamama'),
       acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
-      requiredCertifications: [Certification.Hamama], label: 'מפעיל חממה',
+      requiredCertifications: ['Hamama'], label: 'מפעיל חממה',
     }],
     isLight: false, baseLoadWeight: 5 / 6, sameGroupRequired: false, blocksConsecutive: true,
   };
@@ -59,8 +58,8 @@ function createShemeshTask(timeBlock: TimeBlock): Task {
   return {
     id: _nextTaskId('shemesh'), name: 'שמש', sourceName: 'שמש', timeBlock, requiredCount: 2,
     slots: [
-      { slotId: _nextSlotId('shemesh'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בשמש' },
-      { slotId: _nextSlotId('shemesh'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בשמש' },
+      { slotId: _nextSlotId('shemesh'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בשמש' },
+      { slotId: _nextSlotId('shemesh'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בשמש' },
     ],
     isLight: false, sameGroupRequired: false, blocksConsecutive: true, requiresCategoryBreak: true,
   };
@@ -71,8 +70,8 @@ function createMamteraTask(baseDate: Date): Task {
   return {
     id: _nextTaskId('mamtera'), name: 'ממטרה', sourceName: 'ממטרה', timeBlock: block, requiredCount: 2,
     slots: [
-      { slotId: _nextSlotId('mamtera'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh], label: 'משתתף בממטרה' },
-      { slotId: _nextSlotId('mamtera'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh], label: 'משתתף בממטרה' },
+      { slotId: _nextSlotId('mamtera'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: ['Horesh'], label: 'משתתף בממטרה' },
+      { slotId: _nextSlotId('mamtera'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: ['Horesh'], label: 'משתתף בממטרה' },
     ],
     isLight: false, baseLoadWeight: 4 / 9, sameGroupRequired: false, blocksConsecutive: true,
   };
@@ -82,10 +81,10 @@ function createKarovTask(timeBlock: TimeBlock): Task {
   return {
     id: _nextTaskId('karov'), name: 'כרוב', sourceName: 'כרוב', timeBlock, requiredCount: 4,
     slots: [
-      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan], label: 'מפקד כרוב' },
-      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Salsala, Certification.Nitzan], label: 'נהג כרוב' },
-      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בכרוב' },
-      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בקרוב' },
+      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: ['Nitzan'], label: 'מפקד כרוב' },
+      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Salsala', 'Nitzan'], label: 'נהג כרוב' },
+      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בכרוב' },
+      { slotId: _nextSlotId('karov'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בקרוב' },
     ],
     isLight: false, baseLoadWeight: 1 / 3,
     loadWindows: [
@@ -100,10 +99,10 @@ function createKarovitTask(timeBlock: TimeBlock): Task {
   return {
     id: _nextTaskId('karovit'), name: 'כרובית', sourceName: 'כרובית', timeBlock, requiredCount: 4,
     slots: [
-      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan], label: 'סגל כרובית' },
-      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בכרובית' },
-      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בכרובית' },
-      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בכרובית' },
+      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: ['Nitzan'], label: 'סגל כרובית' },
+      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בכרובית' },
+      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בכרובית' },
+      { slotId: _nextSlotId('karovit'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בכרובית' },
     ],
     isLight: true, sameGroupRequired: false, blocksConsecutive: false,
   };
@@ -113,8 +112,8 @@ function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוגה', sou
   return {
     id: _nextTaskId('aruga'), name: label, sourceName: sourceName ?? label, timeBlock, requiredCount: 2,
     slots: [
-      { slotId: _nextSlotId('aruga'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בערוגה' },
-      { slotId: _nextSlotId('aruga'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בערוגה' },
+      { slotId: _nextSlotId('aruga'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בערוגה' },
+      { slotId: _nextSlotId('aruga'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בערוגה' },
     ],
     isLight: false, sameGroupRequired: false, blocksConsecutive: true,
   };
@@ -127,10 +126,10 @@ function createAdanitTasks(baseDate: Date): Task[] {
   return shifts.map((block, i) => {
     const slots: SlotRequirement[] = [];
     const prefix = 'adanit';
-    for (let j = 0; j < 2; j++) slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בסגול א' });
-    slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan], label: 'סגל בסגול א' });
-    for (let j = 0; j < 2; j++) slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan], label: 'משתתף בסגול ב' });
-    slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L2 }], requiredCertifications: [Certification.Nitzan], label: 'בכיר בסגול ב\'' });
+    for (let j = 0; j < 2; j++) slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בסגול א' });
+    slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: ['Nitzan'], label: 'סגל בסגול א' });
+    for (let j = 0; j < 2; j++) slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בסגול ב' });
+    slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L2 }], requiredCertifications: ['Nitzan'], label: 'בכיר בסגול ב\'' });
     return {
       id: _nextTaskId('adanit'), name: `משמרת אדנית ${i + 1}`, sourceName: 'אדנית', timeBlock: block,
       requiredCount: 6, slots, isLight: false, sameGroupRequired: true, blocksConsecutive: true, requiresCategoryBreak: true,
@@ -228,12 +227,12 @@ const dayAvail = [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 1
 
 const testP0: Participant = {
   id: 'tp0', name: 'TestP0', level: Level.L0,
-  certifications: [Certification.Nitzan, Certification.Hamama],
+  certifications: ['Nitzan', 'Hamama'],
   group: 'TestGroup', availability: dayAvail, dateUnavailability: [],
 };
 const testP0b: Participant = {
   id: 'tp0b', name: 'TestP0b', level: Level.L0,
-  certifications: [Certification.Nitzan],
+  certifications: ['Nitzan'],
   group: 'TestGroup', availability: dayAvail, dateUnavailability: [],
 };
 
@@ -333,7 +332,7 @@ console.log('\n── Soft Constraints ─────────────�
 
 const testP4: Participant = {
   id: 'tp4', name: 'TestP4', level: Level.L4,
-  certifications: [Certification.Hamama],
+  certifications: ['Hamama'],
   group: 'TestGroup', availability: dayAvail, dateUnavailability: [],
 };
 
@@ -421,7 +420,7 @@ for (let i = 0; i < 10; i++) {
     id: `p${i}`,
     name: `Person-${i}`,
     level: Level.L0,
-    certifications: [Certification.Nitzan, Certification.Hamama, Certification.Salsala],
+    certifications: ['Nitzan', 'Hamama', 'Salsala'],
     group: 'TeamA',
     availability: dayWindow,
     dateUnavailability: [],
@@ -430,15 +429,15 @@ for (let i = 0; i < 10; i++) {
 // Add L2, L3, L4
 participants.push({
   id: 'pl2', name: 'Commander-L2', level: Level.L2,
-  certifications: [Certification.Nitzan], group: 'TeamA', availability: dayWindow, dateUnavailability: [],
+  certifications: ['Nitzan'], group: 'TeamA', availability: dayWindow, dateUnavailability: [],
 });
 participants.push({
   id: 'pl3', name: 'Commander-L3', level: Level.L3,
-  certifications: [Certification.Nitzan, Certification.Hamama], group: 'TeamA', availability: dayWindow, dateUnavailability: [],
+  certifications: ['Nitzan', 'Hamama'], group: 'TeamA', availability: dayWindow, dateUnavailability: [],
 });
 participants.push({
   id: 'pl4', name: 'Commander-L4', level: Level.L4,
-  certifications: [Certification.Hamama], group: 'TeamA', availability: dayWindow, dateUnavailability: [],
+  certifications: ['Hamama'], group: 'TeamA', availability: dayWindow, dateUnavailability: [],
 });
 
 engine.addParticipants(participants);
@@ -768,7 +767,7 @@ const mamteraTask = createMamteraTask(baseDate);
 {
   const normalP: Participant = {
     id: 'tc-normal', name: 'NormalPerson', level: Level.L0,
-    certifications: [Certification.Nitzan], group: 'A',
+    certifications: ['Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const pMap = new Map([['tc-normal', normalP]]);
@@ -784,7 +783,7 @@ const mamteraTask = createMamteraTask(baseDate);
 {
   const choreshP: Participant = {
     id: 'tc-chor', name: 'ChoreshPerson', level: Level.L0,
-    certifications: [Certification.Nitzan, Certification.Horesh], group: 'A',
+    certifications: ['Nitzan', 'Horesh'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const pMap = new Map([['tc-chor', choreshP]]);
@@ -801,7 +800,7 @@ const mamteraTask = createMamteraTask(baseDate);
 {
   const choreshP: Participant = {
     id: 'tc-chor2', name: 'ChoreshPerson2', level: Level.L0,
-    certifications: [Certification.Nitzan, Certification.Hamama, Certification.Horesh], group: 'A',
+    certifications: ['Nitzan', 'Hamama', 'Horesh'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const pMap = new Map([['tc-chor2', choreshP]]);
@@ -817,7 +816,7 @@ const mamteraTask = createMamteraTask(baseDate);
 {
   const slotA: SlotRequirement = {
     slotId: 'fc-slot-a', acceptableLevels: [{ level: Level.L0 }],
-    requiredCertifications: [], forbiddenCertifications: [Certification.Horesh], label: 'Slot A (forbids Horesh)',
+    requiredCertifications: [], forbiddenCertifications: ['Horesh'], label: 'Slot A (forbids Horesh)',
   };
   const slotB: SlotRequirement = {
     slotId: 'fc-slot-b', acceptableLevels: [{ level: Level.L0 }],
@@ -831,7 +830,7 @@ const mamteraTask = createMamteraTask(baseDate);
   };
   const choreshP: Participant = {
     id: 'fc-chor', name: 'ChoreshMixed', level: Level.L0,
-    certifications: [Certification.Horesh], group: 'A',
+    certifications: ['Horesh'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const pMap = new Map([['fc-chor', choreshP]]);
@@ -855,7 +854,7 @@ const mamteraTask = createMamteraTask(baseDate);
 {
   const choreshP: Participant = {
     id: 'tc-chor3', name: 'ChoreshFull', level: Level.L0,
-    certifications: [Certification.Nitzan, Certification.Horesh], group: 'A',
+    certifications: ['Nitzan', 'Horesh'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const badAssign = [{
@@ -930,7 +929,7 @@ console.log('\n── Consecutive High-Load Constraint (HC-12) ──');
 
 const hcParticipant: Participant = {
   id: 'hc12-p1', name: 'HC12Tester', level: Level.L0,
-  certifications: [Certification.Nitzan], group: 'A',
+  certifications: ['Nitzan'], group: 'A',
   availability: dayAvail, dateUnavailability: [],
 };
 
@@ -1025,17 +1024,17 @@ console.log('\n── Senior Role Policy (HC-13) ──────────�
 // Helper slots for Adanit tests
 const adMainSlot: SlotRequirement = {
   slotId: 'test-ad-main', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }],
-  requiredCertifications: [Certification.Nitzan],
+  requiredCertifications: ['Nitzan'],
   label: 'Segol Main L3/L4',
 };
 const adSecSlot: SlotRequirement = {
   slotId: 'test-ad-sec', acceptableLevels: [{ level: Level.L2 }],
-  requiredCertifications: [Certification.Nitzan],
+  requiredCertifications: ['Nitzan'],
   label: 'Segol Secondary L2',
 };
 const adL0Slot: SlotRequirement = {
   slotId: 'test-ad-l0', acceptableLevels: [{ level: Level.L0 }],
-  requiredCertifications: [Certification.Nitzan],
+  requiredCertifications: ['Nitzan'],
   label: 'Adanit L0',
 };
 const testAdanitBlock = createTimeBlockFromHours(baseDate, 5, 13);
@@ -1078,7 +1077,7 @@ const testKarovitTask: Task = {
 
 const testMamSlot: SlotRequirement = {
   slotId: 'test-mam-l0', acceptableLevels: [{ level: Level.L0 }],
-  requiredCertifications: [], forbiddenCertifications: [Certification.Horesh],
+  requiredCertifications: [], forbiddenCertifications: ['Horesh'],
   label: 'Mamtera L0',
 };
 const testMamTask: Task = {
@@ -1090,7 +1089,7 @@ const testMamTask: Task = {
 
 const testHamSlot: SlotRequirement = {
   slotId: 'test-ham-op', acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
-  requiredCertifications: [Certification.Hamama], label: 'Hamama Operator',
+  requiredCertifications: ['Hamama'], label: 'Hamama Operator',
 };
 const testHamTask: Task = {
   id: 'sr-ham-t', name: 'Test Hamama',
@@ -1101,7 +1100,7 @@ const testHamTask: Task = {
 
 const testShSlot: SlotRequirement = {
   slotId: 'test-sh-1', acceptableLevels: [{ level: Level.L0 }],
-  requiredCertifications: [Certification.Nitzan], label: 'Shemesh #1',
+  requiredCertifications: ['Nitzan'], label: 'Shemesh #1',
 };
 const testShTask: Task = {
   id: 'sr-sh-t', name: 'Test Shemesh',
@@ -1123,22 +1122,22 @@ const testArTask: Task = {
 
 const spL0: Participant = {
   id: 'sp-l0', name: 'SP-L0', level: Level.L0,
-  certifications: [Certification.Nitzan, Certification.Hamama], group: 'A',
+  certifications: ['Nitzan', 'Hamama'], group: 'A',
   availability: dayAvail, dateUnavailability: [],
 };
 const spL2: Participant = {
   id: 'sp-l2', name: 'SP-L2', level: Level.L2,
-  certifications: [Certification.Nitzan, Certification.Hamama], group: 'A',
+  certifications: ['Nitzan', 'Hamama'], group: 'A',
   availability: dayAvail, dateUnavailability: [],
 };
 const spL3: Participant = {
   id: 'sp-l3', name: 'SP-L3', level: Level.L3,
-  certifications: [Certification.Nitzan, Certification.Hamama], group: 'A',
+  certifications: ['Nitzan', 'Hamama'], group: 'A',
   availability: dayAvail, dateUnavailability: [],
 };
 const spL4: Participant = {
   id: 'sp-l4', name: 'SP-L4', level: Level.L4,
-  certifications: [Certification.Nitzan, Certification.Hamama], group: 'A',
+  certifications: ['Nitzan', 'Hamama'], group: 'A',
   availability: dayAvail, dateUnavailability: [],
 };
 
@@ -1300,7 +1299,7 @@ console.log('\n── SC-10: Task Preference Penalty ──────');
 
   const pWithPref: Participant = {
     id: 'sc10-p1', name: 'PrefPerson', level: Level.L0,
-    certifications: [Certification.Nitzan], group: 'A',
+    certifications: ['Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
     preferredTaskName: 'ממטרה',
   };
@@ -1393,7 +1392,7 @@ console.log('\n── One-Time Task Integration ──────────�
         id: 'ot-slot-1',
         label: 'Slot 1',
         acceptableLevels: [{ level: Level.L0 }, { level: Level.L2 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
       }],
       sameGroupRequired: false,
       isLight: false,
@@ -1679,7 +1678,7 @@ console.log('\n── Hard Constraints: Individual Functions ──');
 {
   const l0P: Participant = {
     id: 'hc1-l0', name: 'HC1-L0', level: Level.L0,
-    certifications: [Certification.Nitzan], group: 'A',
+    certifications: ['Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const l2Slot: SlotRequirement = {
@@ -1701,7 +1700,7 @@ console.log('\n── Hard Constraints: Individual Functions ──');
 {
   const l2P: Participant = {
     id: 'hc1-l2', name: 'HC1-L2', level: Level.L2,
-    certifications: [Certification.Nitzan], group: 'A',
+    certifications: ['Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const l2Slot: SlotRequirement = {
@@ -1722,7 +1721,7 @@ console.log('\n── Hard Constraints: Individual Functions ──');
 {
   const l4P: Participant = {
     id: 'hc1-l4', name: 'HC1-L4', level: Level.L4,
-    certifications: [Certification.Nitzan], group: 'A',
+    certifications: ['Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const l2Slot: SlotRequirement = {
@@ -1764,12 +1763,12 @@ console.log('\n── Hard Constraints: Individual Functions ──');
 {
   const pOneCert: Participant = {
     id: 'hc2-p1', name: 'HC2-P1', level: Level.L0,
-    certifications: [Certification.Nitzan], group: 'A',
+    certifications: ['Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const multiCertSlot: SlotRequirement = {
     slotId: 'hc2-s1', acceptableLevels: [{ level: Level.L0 }],
-    requiredCertifications: [Certification.Nitzan, Certification.Hamama], label: 'Multi Cert',
+    requiredCertifications: ['Nitzan', 'Hamama'], label: 'Multi Cert',
   };
   const task: Task = {
     id: 'hc2-t1', name: 'HC2 Test',
@@ -1786,12 +1785,12 @@ console.log('\n── Hard Constraints: Individual Functions ──');
 {
   const pBothCerts: Participant = {
     id: 'hc2-p2', name: 'HC2-P2', level: Level.L0,
-    certifications: [Certification.Nitzan, Certification.Hamama], group: 'A',
+    certifications: ['Nitzan', 'Hamama'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const multiCertSlot: SlotRequirement = {
     slotId: 'hc2-s2', acceptableLevels: [{ level: Level.L0 }],
-    requiredCertifications: [Certification.Nitzan, Certification.Hamama], label: 'Multi Cert',
+    requiredCertifications: ['Nitzan', 'Hamama'], label: 'Multi Cert',
   };
   const task: Task = {
     id: 'hc2-t2', name: 'HC2 Test2',
@@ -2009,11 +2008,11 @@ console.log('\n── Hard Constraints: Individual Functions ──');
 {
   const l0Slot: SlotRequirement = {
     slotId: 'hc8-s-l0', acceptableLevels: [{ level: Level.L0 }],
-    requiredCertifications: [Certification.Nitzan], label: 'L0 Slot',
+    requiredCertifications: ['Nitzan'], label: 'L0 Slot',
   };
   const l2Slot: SlotRequirement = {
     slotId: 'hc8-s-l2', acceptableLevels: [{ level: Level.L2 }],
-    requiredCertifications: [Certification.Nitzan], label: 'L2 Slot',
+    requiredCertifications: ['Nitzan'], label: 'L2 Slot',
   };
   const task: Task = {
     id: 'hc8-t1', name: 'HC8 Test',
@@ -2024,16 +2023,16 @@ console.log('\n── Hard Constraints: Individual Functions ──');
 
   // Group has both L0 and L2 with certs → no violation
   const fullGroup: Participant[] = [
-    { id: 'hc8-p1', name: 'L0-1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] },
-    { id: 'hc8-p2', name: 'L2-1', level: Level.L2, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] },
+    { id: 'hc8-p1', name: 'L0-1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] },
+    { id: 'hc8-p2', name: 'L2-1', level: Level.L2, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] },
   ];
   const v1 = checkGroupFeasibility(task, fullGroup);
   assert(v1.length === 0, 'HC-8: group has all needed levels+certs → no violations');
 
   // Group missing L2 → violation
   const noL2Group: Participant[] = [
-    { id: 'hc8-p3', name: 'L0-2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] },
-    { id: 'hc8-p4', name: 'L0-3', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] },
+    { id: 'hc8-p3', name: 'L0-2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] },
+    { id: 'hc8-p4', name: 'L0-3', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] },
   ];
   const v2 = checkGroupFeasibility(task, noL2Group);
   assert(v2.length === 1, 'HC-8: group missing L2 → 1 violation');
@@ -2046,7 +2045,7 @@ console.log('\n── Hard Constraints: Individual Functions ──');
 
   // Group has L2 but missing Nitzan cert → violation
   const noCertGroup: Participant[] = [
-    { id: 'hc8-p5', name: 'L0-c', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] },
+    { id: 'hc8-p5', name: 'L0-c', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] },
     { id: 'hc8-p6', name: 'L2-nc', level: Level.L2, certifications: [], group: 'A', availability: dayAvail, dateUnavailability: [] },
   ];
   const v4 = checkGroupFeasibility(task, noCertGroup);
@@ -2060,7 +2059,7 @@ console.log('\n── Category Break (HC-14) ───────────�
 {
   const catP: Participant = {
     id: 'hc14-p1', name: 'HC14Tester', level: Level.L0,
-    certifications: [Certification.Nitzan], group: 'A',
+    certifications: ['Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
 
@@ -2137,7 +2136,7 @@ console.log('\n── disabledHC Parameter ────────────�
   // Setup: L4 in Shemesh (L0-only → blocked by HC-1) + same participant double-booked (blocked by HC-5)
   const disP: Participant = {
     id: 'dis-p1', name: 'DisabledTest', level: Level.L4,
-    certifications: [Certification.Nitzan, Certification.Hamama], group: 'A',
+    certifications: ['Nitzan', 'Hamama'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const disTask1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
@@ -2185,7 +2184,7 @@ console.log('\n── Validator: Extended ────────────�
   // L4 in Hamama → valid but with LOW_PRIORITY_LEVEL warning
   const valP: Participant = {
     id: 'val-l4', name: 'Val-L4', level: Level.L4,
-    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const valTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
@@ -2202,7 +2201,7 @@ console.log('\n── Validator: Extended ────────────�
 {
   const valP0: Participant = {
     id: 'val-p0', name: 'Val-P0', level: Level.L0,
-    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const valTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
@@ -2236,12 +2235,12 @@ console.log('\n── Validator: Extended ────────────�
 {
   const swapP1: Participant = {
     id: 'swap-p1', name: 'Swap-P1', level: Level.L0,
-    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const swapP2: Participant = {
     id: 'swap-p2', name: 'Swap-P2', level: Level.L0,
-    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const swapTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
@@ -2259,12 +2258,12 @@ console.log('\n── Validator: Extended ────────────�
 {
   const dbP1: Participant = {
     id: 'db-p1', name: 'DB-P1', level: Level.L0,
-    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const dbP2: Participant = {
     id: 'db-p2', name: 'DB-P2', level: Level.L0,
-    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const dbTask1 = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
@@ -2289,7 +2288,7 @@ console.log('\n── Eligibility & Rejection Reasons ─────');
 {
   const eligP: Participant = {
     id: 'elig-p1', name: 'Elig-P1', level: Level.L0,
-    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const eligTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
@@ -2301,7 +2300,7 @@ console.log('\n── Eligibility & Rejection Reasons ─────');
   assert(getRejectionReason(eligP, eligTask, eligSlot, [], tMap) === null, 'getRejectionReason: eligible → null');
 
   // Missing cert
-  const noCertP: Participant = { ...eligP, id: 'elig-p2', certifications: [Certification.Nitzan] };
+  const noCertP: Participant = { ...eligP, id: 'elig-p2', certifications: ['Nitzan'] };
   assert(isEligible(noCertP, eligTask, eligSlot, [], tMap) === false, 'isEligible: missing cert → false');
   assert(getRejectionReason(noCertP, eligTask, eligSlot, [], tMap) === 'HC-2', 'getRejectionReason: missing cert → HC-2');
 
@@ -2409,12 +2408,12 @@ console.log('\n── Rest Calculator: Extended ──────────�
 {
   const rap1: Participant = {
     id: 'rap-1', name: 'RAP1', level: Level.L0,
-    certifications: [Certification.Nitzan], group: 'A',
+    certifications: ['Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const rap2: Participant = {
     id: 'rap-2', name: 'RAP2', level: Level.L0,
-    certifications: [Certification.Nitzan], group: 'A',
+    certifications: ['Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const rapTask = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
@@ -2432,8 +2431,8 @@ console.log('\n── Rest Calculator: Extended ──────────�
   const t1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 8));
   const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 10, 12));
   const t3 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 16));
-  const p1: Participant = { id: 'rf-1', name: 'RF1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
-  const p2: Participant = { id: 'rf-2', name: 'RF2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const p1: Participant = { id: 'rf-1', name: 'RF1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const p2: Participant = { id: 'rf-2', name: 'RF2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
   const rfAssigns: Assignment[] = [
     { id: 'rf-a1', taskId: t1.id, slotId: t1.slots[0].slotId, participantId: 'rf-1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
     { id: 'rf-a2', taskId: t2.id, slotId: t2.slots[0].slotId, participantId: 'rf-1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
@@ -2463,8 +2462,8 @@ console.log('\n── Soft Constraints: Workload Balance ──');
 // Equal workload → zero penalty
 {
   const wlTask = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
-  const wlP1: Participant = { id: 'wl-1', name: 'WL1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
-  const wlP2: Participant = { id: 'wl-2', name: 'WL2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const wlP1: Participant = { id: 'wl-1', name: 'WL1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const wlP2: Participant = { id: 'wl-2', name: 'WL2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
   // Both assigned to identical tasks
   const wlTask2 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
   const wlAssigns: Assignment[] = [
@@ -2480,8 +2479,8 @@ console.log('\n── Soft Constraints: Workload Balance ──');
 {
   const wlTaskBig = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 18)); // 12h
   const wlTaskSmall = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 8)); // 2h
-  const wlP1: Participant = { id: 'wl2-1', name: 'WL2-1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
-  const wlP2: Participant = { id: 'wl2-2', name: 'WL2-2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const wlP1: Participant = { id: 'wl2-1', name: 'WL2-1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const wlP2: Participant = { id: 'wl2-2', name: 'WL2-2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
   const wlAssigns: Assignment[] = [
     { id: 'wl2-a1', taskId: wlTaskBig.id, slotId: wlTaskBig.slots[0].slotId, participantId: 'wl2-1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
     { id: 'wl2-a2', taskId: wlTaskSmall.id, slotId: wlTaskSmall.slots[0].slotId, participantId: 'wl2-2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
@@ -2496,9 +2495,9 @@ console.log('\n── Soft Constraints: Workload Balance ──');
 {
   const spTask1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 14)); // 8h
   const spTask2 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10)); // 4h
-  const spL0a: Participant = { id: 'sp2-l0a', name: 'SP-L0a', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
-  const spL0b: Participant = { id: 'sp2-l0b', name: 'SP-L0b', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
-  const spSr: Participant = { id: 'sp2-sr', name: 'SP-Sr', level: Level.L3, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const spL0a: Participant = { id: 'sp2-l0a', name: 'SP-L0a', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const spL0b: Participant = { id: 'sp2-l0b', name: 'SP-L0b', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const spSr: Participant = { id: 'sp2-sr', name: 'SP-Sr', level: Level.L3, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
   // L0s get unequal work, senior gets none
   const spAssigns: Assignment[] = [
     { id: 'sp2-a1', taskId: spTask1.id, slotId: spTask1.slots[0].slotId, participantId: 'sp2-l0a', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
@@ -2514,7 +2513,7 @@ console.log('\n── Soft Constraints: Workload Balance ──');
 // Light tasks → 0 effective hours (not counted in workload)
 {
   const lightTask = createKarovitTask(createTimeBlockFromHours(baseDate, 6, 14)); // 8h but light
-  const wlPLight: Participant = { id: 'wl-light', name: 'WL-Light', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const wlPLight: Participant = { id: 'wl-light', name: 'WL-Light', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
   const lightAssigns: Assignment[] = [
     { id: 'wl-la1', taskId: lightTask.id, slotId: lightTask.slots[0].slotId, participantId: 'wl-light', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
@@ -2530,7 +2529,7 @@ console.log('\n── collectSoftWarnings ────────────�
 {
   const cwP: Participant = {
     id: 'cw-p1', name: 'CW-P1', level: Level.L0,
-    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const cwTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
@@ -2546,7 +2545,7 @@ console.log('\n── collectSoftWarnings ────────────�
 {
   const cwP4: Participant = {
     id: 'cw-p4', name: 'CW-P4', level: Level.L4,
-    certifications: [Certification.Hamama, Certification.Nitzan], group: 'A',
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const cwTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
@@ -2565,7 +2564,7 @@ console.log('\n── computeScheduleScore: Extended ──────');
 {
   const scoreP: Participant = {
     id: 'score-p1', name: 'Score-P1', level: Level.L0,
-    certifications: [Certification.Nitzan], group: 'A',
+    certifications: ['Nitzan'], group: 'A',
     availability: dayAvail, dateUnavailability: [],
   };
   const scoreTask = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
@@ -2576,8 +2575,8 @@ console.log('\n── computeScheduleScore: Extended ──────');
 
 // Score with balanced assignments → low penalty, good composite
 {
-  const p1: Participant = { id: 'sb-p1', name: 'SB1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
-  const p2: Participant = { id: 'sb-p2', name: 'SB2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const p1: Participant = { id: 'sb-p1', name: 'SB1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const p2: Participant = { id: 'sb-p2', name: 'SB2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
   const t1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
   const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18));
   const assigns: Assignment[] = [
@@ -2591,8 +2590,8 @@ console.log('\n── computeScheduleScore: Extended ──────');
 
 // Score with imbalanced assignments → higher penalty
 {
-  const p1: Participant = { id: 'si-p1', name: 'SI1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
-  const p2: Participant = { id: 'si-p2', name: 'SI2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const p1: Participant = { id: 'si-p1', name: 'SI1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const p2: Participant = { id: 'si-p2', name: 'SI2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
   const t1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 14)); // 8h
   const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18)); // 4h
   // P1 gets both tasks (12h), P2 gets nothing
@@ -2606,8 +2605,8 @@ console.log('\n── computeScheduleScore: Extended ──────');
 
 // Score comparison: balanced vs imbalanced → balanced has better composite
 {
-  const pb1: Participant = { id: 'cmp-p1', name: 'CMP1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
-  const pb2: Participant = { id: 'cmp-p2', name: 'CMP2', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const pb1: Participant = { id: 'cmp-p1', name: 'CMP1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const pb2: Participant = { id: 'cmp-p2', name: 'CMP2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
   const ct1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
   const ct2 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18));
 
@@ -2631,9 +2630,9 @@ console.log('\n── Engine: Extended Integration ─────────')
 // Engine validates schedule after generation
 {
   const testEngine = new SchedulingEngine({ maxIterations: 200, maxSolverTimeMs: 3000 });
-  const p1: Participant = { id: 'eng-p1', name: 'Eng1', level: Level.L0, certifications: [Certification.Nitzan, Certification.Hamama], group: 'A', availability: dayWindow, dateUnavailability: [] };
-  const p2: Participant = { id: 'eng-p2', name: 'Eng2', level: Level.L0, certifications: [Certification.Nitzan, Certification.Hamama], group: 'A', availability: dayWindow, dateUnavailability: [] };
-  const p3: Participant = { id: 'eng-p3', name: 'Eng3', level: Level.L0, certifications: [Certification.Nitzan, Certification.Hamama], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  const p1: Participant = { id: 'eng-p1', name: 'Eng1', level: Level.L0, certifications: ['Nitzan', 'Hamama'], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  const p2: Participant = { id: 'eng-p2', name: 'Eng2', level: Level.L0, certifications: ['Nitzan', 'Hamama'], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  const p3: Participant = { id: 'eng-p3', name: 'Eng3', level: Level.L0, certifications: ['Nitzan', 'Hamama'], group: 'A', availability: dayWindow, dateUnavailability: [] };
   testEngine.addParticipants([p1, p2, p3]);
 
   const engTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
@@ -2665,7 +2664,7 @@ console.log('\n── Engine: Extended Integration ─────────')
 // Engine with no tasks → throws validation error
 {
   const noTaskEngine = new SchedulingEngine({ maxIterations: 100, maxSolverTimeMs: 1000 });
-  const ntP: Participant = { id: 'nt-p1', name: 'NT1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  const ntP: Participant = { id: 'nt-p1', name: 'NT1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayWindow, dateUnavailability: [] };
   noTaskEngine.addParticipants([ntP]);
   let threwError = false;
   try {
@@ -2679,14 +2678,216 @@ console.log('\n── Engine: Extended Integration ─────────')
 // Engine stats accuracy
 {
   const statsEngine = new SchedulingEngine({ maxIterations: 100, maxSolverTimeMs: 1000 });
-  const sp1: Participant = { id: 'st-p1', name: 'ST1', level: Level.L0, certifications: [Certification.Nitzan], group: 'A', availability: dayWindow, dateUnavailability: [] };
-  const sp2: Participant = { id: 'st-p2', name: 'ST2', level: Level.L2, certifications: [Certification.Nitzan], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  const sp1: Participant = { id: 'st-p1', name: 'ST1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayWindow, dateUnavailability: [] };
+  const sp2: Participant = { id: 'st-p2', name: 'ST2', level: Level.L2, certifications: ['Nitzan'], group: 'A', availability: dayWindow, dateUnavailability: [] };
   statsEngine.addParticipants([sp1, sp2]);
   statsEngine.addTask(createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10)));
   statsEngine.addTask(createHamamaTask(createTimeBlockFromHours(baseDate, 10, 18)));
   const stats = statsEngine.getStats();
   assert(stats.totalTasks === 2, 'Engine stats: 2 tasks');
   assert(stats.totalParticipants === 2, 'Engine stats: 2 participants');
+}
+
+// ─── Dynamic Certifications ──────────────────────────────────────────────────
+
+console.log('\n── Dynamic Certifications ──────────────────');
+
+{
+  // Verify default definitions
+  assert(DEFAULT_CERTIFICATION_DEFINITIONS.length === 4, 'Defaults: 4 certifications');
+  assert(DEFAULT_CERTIFICATION_DEFINITIONS[0].id === 'Nitzan', 'Defaults: first is Nitzan');
+  assert(DEFAULT_CERTIFICATION_DEFINITIONS[0].label === 'ניצן', 'Defaults: Nitzan label is Hebrew');
+  assert(DEFAULT_CERTIFICATION_DEFINITIONS[0].color === '#16a085', 'Defaults: Nitzan color is teal');
+  assert(DEFAULT_CERTIFICATION_DEFINITIONS[1].id === 'Salsala', 'Defaults: second is Salsala');
+  assert(DEFAULT_CERTIFICATION_DEFINITIONS[2].id === 'Hamama', 'Defaults: third is Hamama');
+  assert(DEFAULT_CERTIFICATION_DEFINITIONS[3].id === 'Horesh', 'Defaults: fourth is Horesh');
+
+  // Verify IDs match old enum string values (engine compatibility)
+  const ids = DEFAULT_CERTIFICATION_DEFINITIONS.map(d => d.id);
+  assert(ids.includes('Nitzan'), 'Compat: Nitzan ID matches legacy enum');
+  assert(ids.includes('Salsala'), 'Compat: Salsala ID matches legacy enum');
+  assert(ids.includes('Hamama'), 'Compat: Hamama ID matches legacy enum');
+  assert(ids.includes('Horesh'), 'Compat: Horesh ID matches legacy enum');
+
+  // Verify all have valid hex colors
+  for (const def of DEFAULT_CERTIFICATION_DEFINITIONS) {
+    assert(/^#[0-9a-fA-F]{6}$/.test(def.color), `Defaults: ${def.id} has valid hex color`);
+  }
+
+  // Verify CertificationDefinition shape
+  const def: CertificationDefinition = DEFAULT_CERTIFICATION_DEFINITIONS[0];
+  assert(typeof def.id === 'string', 'Shape: id is string');
+  assert(typeof def.label === 'string', 'Shape: label is string');
+  assert(typeof def.color === 'string', 'Shape: color is string');
+  assert(def.id.length > 0, 'Shape: id is non-empty');
+  assert(def.label.length > 0, 'Shape: label is non-empty');
+}
+
+// HC-2 with string-based certifications (dynamic certs)
+{
+  const baseDate = new Date(2025, 0, 6);
+  const tb = createTimeBlockFromHours(baseDate, 8, 16);
+
+  // Task requiring a custom (non-default) cert ID
+  const customCertTask: Task = {
+    id: 'custom-cert-task', name: 'CustomCertTask', timeBlock: tb, requiredCount: 1,
+    slots: [{
+      slotId: 'cc-s1',
+      acceptableLevels: [{ level: Level.L0 }],
+      requiredCertifications: ['CustomCert123'],
+      label: 'slot',
+    }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: false,
+  };
+
+  // Participant WITH the custom cert
+  const pWith: Participant = {
+    id: 'cc-p1', name: 'HasCustom', level: Level.L0,
+    certifications: ['CustomCert123'], group: 'A',
+    availability: [{ start: new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 0), end: new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + 1, 0) }],
+    dateUnavailability: [],
+  };
+
+  // Participant WITHOUT the custom cert
+  const pWithout: Participant = {
+    id: 'cc-p2', name: 'NoCustom', level: Level.L0,
+    certifications: ['Nitzan'], group: 'A',
+    availability: [{ start: new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 0), end: new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + 1, 0) }],
+    dateUnavailability: [],
+  };
+
+  const taskMap = new Map([[customCertTask.id, customCertTask]]);
+
+  // HC-2: participant with correct custom cert → eligible
+  const eligWith = isEligible(pWith, customCertTask, customCertTask.slots[0], [], taskMap);
+  assert(eligWith === true, 'HC-2 dynamic: participant with custom cert is eligible');
+
+  // HC-2: participant without custom cert → not eligible
+  const eligWithout = isEligible(pWithout, customCertTask, customCertTask.slots[0], [], taskMap);
+  assert(eligWithout === false, 'HC-2 dynamic: participant without custom cert is not eligible');
+
+  // HC-2: rejection reason is cert missing
+  const reason = getRejectionReason(pWithout, customCertTask, customCertTask.slots[0], [], taskMap);
+  assert(reason === 'HC-2', 'HC-2 dynamic: rejection reason is HC-2');
+}
+
+// HC-11 with string-based forbidden certifications (dynamic certs)
+{
+  const baseDate = new Date(2025, 0, 6);
+  const tb = createTimeBlockFromHours(baseDate, 8, 16);
+  const dayWindow = [{ start: new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 0), end: new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + 1, 0) }];
+
+  // Task with forbidden custom cert
+  const forbiddenTask: Task = {
+    id: 'fc-task', name: 'ForbiddenCustom', timeBlock: tb, requiredCount: 1,
+    slots: [{
+      slotId: 'fc-s1',
+      acceptableLevels: [{ level: Level.L0 }],
+      requiredCertifications: [],
+      forbiddenCertifications: ['DangerousCert'],
+      label: 'slot',
+    }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: false,
+  };
+
+  // Participant WITH the forbidden cert
+  const pForbidden: Participant = {
+    id: 'fc-p1', name: 'HasDangerous', level: Level.L0,
+    certifications: ['Nitzan', 'DangerousCert'], group: 'A',
+    availability: dayWindow, dateUnavailability: [],
+  };
+
+  // Participant WITHOUT the forbidden cert
+  const pClean: Participant = {
+    id: 'fc-p2', name: 'NoDangerous', level: Level.L0,
+    certifications: ['Nitzan'], group: 'A',
+    availability: dayWindow, dateUnavailability: [],
+  };
+
+  const taskMap = new Map([[forbiddenTask.id, forbiddenTask]]);
+
+  const eligForbidden = isEligible(pForbidden, forbiddenTask, forbiddenTask.slots[0], [], taskMap);
+  assert(eligForbidden === false, 'HC-11 dynamic: participant with forbidden custom cert is not eligible');
+
+  const reasonForbidden = getRejectionReason(pForbidden, forbiddenTask, forbiddenTask.slots[0], [], taskMap);
+  assert(reasonForbidden === 'HC-11', 'HC-11 dynamic: rejection reason is HC-11');
+
+  const eligClean = isEligible(pClean, forbiddenTask, forbiddenTask.slots[0], [], taskMap);
+  assert(eligClean === true, 'HC-11 dynamic: participant without forbidden cert is eligible');
+}
+
+// Multi-cert requirement (AND logic) with dynamic cert IDs
+{
+  const baseDate = new Date(2025, 0, 6);
+  const tb = createTimeBlockFromHours(baseDate, 8, 16);
+  const dayWindow = [{ start: new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 0), end: new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + 1, 0) }];
+
+  const multiCertTask: Task = {
+    id: 'mc-task', name: 'MultiCert', timeBlock: tb, requiredCount: 1,
+    slots: [{
+      slotId: 'mc-s1',
+      acceptableLevels: [{ level: Level.L0 }],
+      requiredCertifications: ['CertA', 'CertB', 'CertC'],
+      label: 'slot',
+    }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: false,
+  };
+
+  const pAll: Participant = {
+    id: 'mc-p1', name: 'HasAll', level: Level.L0,
+    certifications: ['CertA', 'CertB', 'CertC'], group: 'A',
+    availability: dayWindow, dateUnavailability: [],
+  };
+
+  const pPartial: Participant = {
+    id: 'mc-p2', name: 'HasPartial', level: Level.L0,
+    certifications: ['CertA', 'CertC'], group: 'A', // missing CertB
+    availability: dayWindow, dateUnavailability: [],
+  };
+
+  const pNone: Participant = {
+    id: 'mc-p3', name: 'HasNone', level: Level.L0,
+    certifications: [], group: 'A',
+    availability: dayWindow, dateUnavailability: [],
+  };
+
+  const taskMap = new Map([[multiCertTask.id, multiCertTask]]);
+  assert(isEligible(pAll, multiCertTask, multiCertTask.slots[0], [], taskMap) === true, 'Multi-cert: all certs → eligible');
+  assert(isEligible(pPartial, multiCertTask, multiCertTask.slots[0], [], taskMap) === false, 'Multi-cert: partial certs → not eligible');
+  assert(isEligible(pNone, multiCertTask, multiCertTask.slots[0], [], taskMap) === false, 'Multi-cert: no certs → not eligible');
+}
+
+// Cert strings work in full validation pipeline
+{
+  const baseDate = new Date(2025, 0, 6);
+  const tb = createTimeBlockFromHours(baseDate, 8, 16);
+  const dayWindow = [{ start: new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 0), end: new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + 1, 0) }];
+
+  const task: Task = {
+    id: 'val-task', name: 'ValidatorTest', timeBlock: tb, requiredCount: 1,
+    slots: [{
+      slotId: 'val-s1',
+      acceptableLevels: [{ level: Level.L0 }],
+      requiredCertifications: ['DynCert'],
+      label: 'slot',
+    }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: false,
+  };
+
+  const p: Participant = {
+    id: 'val-p1', name: 'P1', level: Level.L0,
+    certifications: ['WrongCert'], group: 'A',
+    availability: dayWindow, dateUnavailability: [],
+  };
+
+  const result = validateHardConstraints(
+    [task], [p],
+    [{ id: 'val-a1', taskId: 'val-task', slotId: 'val-s1', participantId: 'val-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() }],
+    new Set(),
+  );
+  const certViolation = result.violations.find(v => v.code === 'CERT_MISSING');
+  assert(certViolation !== undefined, 'Validator: CERT_MISSING for wrong dynamic cert');
+  assert(certViolation!.message.length > 0, 'Validator: violation message is non-empty');
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

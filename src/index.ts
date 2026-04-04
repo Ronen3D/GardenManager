@@ -23,7 +23,7 @@
 // ─── Models ──────────────────────────────────────────────────────────────────
 export {
   Level,
-  Certification,
+  DEFAULT_CERTIFICATION_DEFINITIONS,
   AssignmentStatus,
   ViolationSeverity,
   PreflightSeverity,
@@ -31,6 +31,7 @@ export {
 } from './models/types';
 
 export type {
+  CertificationDefinition,
   TimeBlock,
   AvailabilityWindow,
   DateUnavailability,

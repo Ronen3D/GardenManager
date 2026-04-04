@@ -12,7 +12,6 @@
 import {
   Participant,
   Level,
-  Certification,
   Schedule,
   Task,
   Assignment,

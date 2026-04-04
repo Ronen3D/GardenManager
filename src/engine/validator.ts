@@ -14,7 +14,6 @@ import {
   ViolationSeverity,
   SwapRequest,
   Level,
-  Certification,
   TaskTemplate,
   SlotTemplate,
 } from '../models/types';
@@ -286,9 +285,7 @@ export interface TemplateEligibilityResult {
   reasons: string[];
 }
 
-const CERT_LABELS_HE: Record<string, string> = {
-  Nitzan: 'ניצן', Salsala: 'סלסלה', Hamama: 'חממה', Horesh: 'חורש',
-};
+import { getCertLabel } from '../web/config-store';
 
 /**
  * Check whether a participant (by level + certifications) can fill ANY slot
@@ -298,7 +295,7 @@ const CERT_LABELS_HE: Record<string, string> = {
  */
 export function checkTemplateEligibility(
   level: Level,
-  certifications: Certification[],
+  certifications: string[],
   template: TaskTemplate,
 ): TemplateEligibilityResult {
   // Collect all slots: top-level + sub-team slots
@@ -329,24 +326,23 @@ export function checkTemplateEligibility(
     reasons.push(`הדרגה (L${level}) לא מתאימה לאף משבצת במשימה הזו`);
   }
   if (blockedBy.has('HC-2')) {
-    // Find which certs are required across slots but the participant lacks
-    const missingCerts = new Set<Certification>();
+    const missingCerts = new Set<string>();
     for (const slot of allSlots) {
       for (const c of slot.requiredCertifications) {
         if (!certifications.includes(c)) missingCerts.add(c);
       }
     }
-    const names = [...missingCerts].map(c => CERT_LABELS_HE[c] || c).join(', ');
+    const names = [...missingCerts].map(c => getCertLabel(c)).join(', ');
     reasons.push(`חסרה הסמכה נדרשת (${names}) לכל המשבצות במשימה הזו`);
   }
   if (blockedBy.has('HC-11')) {
-    const forbidden = new Set<Certification>();
+    const forbidden = new Set<string>();
     for (const slot of allSlots) {
       for (const c of slot.forbiddenCertifications || []) {
         if (certifications.includes(c)) forbidden.add(c);
       }
     }
-    const names = [...forbidden].map(c => CERT_LABELS_HE[c] || c).join(', ');
+    const names = [...forbidden].map(c => getCertLabel(c)).join(', ');
     reasons.push(`יש לך הסמכה אסורה (${names}) במשימה הזו`);
   }
 

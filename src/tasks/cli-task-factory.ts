@@ -11,7 +11,6 @@ import {
   Task,
   SlotRequirement,
   Level,
-  Certification,
   TimeBlock,
 } from '../models/types';
 import { generateShiftBlocks, createTimeBlockFromHours } from '../web/utils/time-utils';
@@ -42,7 +41,7 @@ function buildAdanitSlots(): SlotRequirement[] {
     slots.push({
       slotId: nextSlotId(prefix),
       acceptableLevels: [{ level: Level.L0 }],
-      requiredCertifications: [Certification.Nitzan],
+      requiredCertifications: ['Nitzan'],
       subTeamId: 'segol-main',
       label: 'משתתף בסגול א',
     });
@@ -51,7 +50,7 @@ function buildAdanitSlots(): SlotRequirement[] {
   slots.push({
     slotId: nextSlotId(prefix),
     acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }],
-    requiredCertifications: [Certification.Nitzan],
+    requiredCertifications: ['Nitzan'],
     subTeamId: 'segol-main',
     label: 'סגל בסגול א',
   });
@@ -61,7 +60,7 @@ function buildAdanitSlots(): SlotRequirement[] {
     slots.push({
       slotId: nextSlotId(prefix),
       acceptableLevels: [{ level: Level.L0 }],
-      requiredCertifications: [Certification.Nitzan],
+      requiredCertifications: ['Nitzan'],
       subTeamId: 'segol-secondary',
       label: 'משתתף בסגול ב',
     });
@@ -70,7 +69,7 @@ function buildAdanitSlots(): SlotRequirement[] {
   slots.push({
     slotId: nextSlotId(prefix),
     acceptableLevels: [{ level: Level.L2 }],
-    requiredCertifications: [Certification.Nitzan],
+    requiredCertifications: ['Nitzan'],
     subTeamId: 'segol-secondary',
     label: 'בכיר בסגול ב\'',
   });
@@ -115,7 +114,7 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
       {
         slotId: nextSlotId('hamama'),
         acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
-        requiredCertifications: [Certification.Hamama],
+        requiredCertifications: ['Hamama'],
         label: 'מפעיל חממה',
       },
     ],
@@ -139,13 +138,13 @@ export function createShemeshTask(timeBlock: TimeBlock): Task {
       {
         slotId: nextSlotId('shemesh'),
         acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'משתתף בשמש',
       },
       {
         slotId: nextSlotId('shemesh'),
         acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'משתתף בשמש',
       },
     ],
@@ -171,14 +170,14 @@ export function createMamteraTask(baseDate: Date): Task {
         slotId: nextSlotId('mamtera'),
         acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
-        forbiddenCertifications: [Certification.Horesh],
+        forbiddenCertifications: ['Horesh'],
         label: 'משתתף בממטרה',
       },
       {
         slotId: nextSlotId('mamtera'),
         acceptableLevels: [{ level: Level.L0 }],
         requiredCertifications: [],
-        forbiddenCertifications: [Certification.Horesh],
+        forbiddenCertifications: ['Horesh'],
         label: 'משתתף בממטרה',
       },
     ],
@@ -202,25 +201,25 @@ export function createKarovTask(timeBlock: TimeBlock): Task {
       {
         slotId: nextSlotId('karov'),
         acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'מפקד כרוב',
       },
       {
         slotId: nextSlotId('karov'),
         acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: [Certification.Salsala, Certification.Nitzan],
+        requiredCertifications: ['Salsala', 'Nitzan'],
         label: 'נהג כרוב',
       },
       {
         slotId: nextSlotId('karov'),
         acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'משתתף בכרוב',
       },
       {
         slotId: nextSlotId('karov'),
         acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'משתתף בקרוב',
       },
     ],
@@ -262,25 +261,25 @@ export function createKarovitTask(timeBlock: TimeBlock): Task {
       {
         slotId: nextSlotId('karovit'),
         acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'סגל כרובית',
       },
       {
         slotId: nextSlotId('karovit'),
         acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'משתתף בכרובית',
       },
       {
         slotId: nextSlotId('karovit'),
         acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'משתתף בכרובית',
       },
       {
         slotId: nextSlotId('karovit'),
         acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'משתתף בכרובית',
       },
     ],
@@ -303,13 +302,13 @@ export function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוג�
       {
         slotId: nextSlotId('aruga'),
         acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'משתתף בערוגה',
       },
       {
         slotId: nextSlotId('aruga'),
         acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: [Certification.Nitzan],
+        requiredCertifications: ['Nitzan'],
         label: 'משתתף בערוגה',
       },
     ],

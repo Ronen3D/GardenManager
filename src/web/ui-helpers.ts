@@ -6,9 +6,9 @@
  * constants used across the web presentation layer.
  */
 
-import { Level, Certification } from '../models/types';
+import { Level } from '../models/types';
 import { fmtTime } from '../utils/date-utils';
-import { getTemplateVisualMap } from './config-store';
+import { getTemplateVisualMap, getCertLabel, getCertColor, getCertificationById } from './config-store';
 
 // ─── SVG Icons ───────────────────────────────────────────────────────────────
 
@@ -62,9 +62,6 @@ export const LEVEL_COLORS: Record<Level, string> = {
   [Level.L4]: '#e74c3c',
 };
 
-export const CERT_COLORS: Record<string, string> = {
-  Nitzan: '#16a085', Salsala: '#8e44ad', Hamama: '#c0392b', Horesh: '#27ae60',
-};
 
 // ─── Formatting Helpers ──────────────────────────────────────────────────────
 
@@ -79,16 +76,20 @@ export function levelBadge(level: Level): string {
   return `<span class="badge" style="background:${LEVEL_COLORS[level]}">${labels[level]}</span>`;
 }
 
-/** Hebrew labels for certification enum values. */
-export const CERT_LABELS: Record<string, string> = { Nitzan: 'ניצן', Salsala: 'סלסלה', Hamama: 'חממה', Horesh: 'חורש' };
-
-/** Single certification badge HTML. */
-export function certBadge(c: Certification): string {
-  return `<span class="badge" style="background:${CERT_COLORS[c] || '#7f8c8d'}">${CERT_LABELS[c] || c}</span>`;
+/** Single certification badge HTML. Shows orphan warning if cert definition was deleted. */
+export function certBadge(c: string): string {
+  const def = getCertificationById(c);
+  if (!def) {
+    return `<span class="badge badge-orphan" title="הסמכה שנמחקה: ${escHtml(c)}">⚠ ${escHtml(c)}</span>`;
+  }
+  if (def.deleted) {
+    return `<span class="badge badge-orphan" title="הסמכה שנמחקה: ${escHtml(def.label)}">⚠ ${escHtml(def.label)}</span>`;
+  }
+  return `<span class="badge" style="background:${def.color}">${escHtml(def.label)}</span>`;
 }
 
 /** Multiple certification badges (returns dash when empty). */
-export function certBadges(certs: Certification[], emptyLabel = '—'): string {
+export function certBadges(certs: string[], emptyLabel = '—'): string {
   if (certs.length === 0) return `<span class="text-muted">${emptyLabel}</span>`;
   return certs.map(c => certBadge(c)).join(' ');
 }

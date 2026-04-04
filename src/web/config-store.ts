@@ -10,7 +10,8 @@ import {
   Participant,
   Level,
   LevelEntry,
-  Certification,
+  CertificationDefinition,
+  DEFAULT_CERTIFICATION_DEFINITIONS,
   PakalDefinition,
   TaskTemplate,
   SlotTemplate,
@@ -38,7 +39,6 @@ import {
   clonePakalDefinitions,
   normalizePakalDefinitions,
   sanitizePakalIds,
-  enforceHoreshConsistency,
 } from './pakal-utils';
 
 // ─── ID Generation ───────────────────────────────────────────────────────────
@@ -84,6 +84,7 @@ interface StoreSnapshot {
   oneTimeTasks: OneTimeTask[];
   notWithPairs: Array<[string, string[]]>;
   pakalDefinitions: PakalDefinition[];
+  certificationDefinitions: CertificationDefinition[];
 }
 
 const MAX_HISTORY = 80;
@@ -124,10 +125,10 @@ function captureSnapshot(): StoreSnapshot {
     : [...taskTemplates.values()].map(tpl => ({
         ...tpl,
         loadWindows: (tpl.loadWindows || []).map(w => ({ ...w })),
-        slots: tpl.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+        slots: tpl.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
         subTeams: tpl.subTeams.map(st => ({
           ...st,
-          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
         })),
       }));
   const ots: OneTimeTask[] = useStructured
@@ -136,10 +137,10 @@ function captureSnapshot(): StoreSnapshot {
         ...ot,
         scheduledDate: new Date(ot.scheduledDate.getTime()),
         loadWindows: (ot.loadWindows || []).map(w => ({ ...w })),
-        slots: ot.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+        slots: ot.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
         subTeams: ot.subTeams.map(st => ({
           ...st,
-          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
         })),
       }));
   const nwPairs: Array<[string, string[]]> = [];
@@ -152,6 +153,7 @@ function captureSnapshot(): StoreSnapshot {
     oneTimeTasks: ots,
     notWithPairs: nwPairs,
     pakalDefinitions: clonePakalDefinitions(pakalDefinitions),
+    certificationDefinitions: certificationDefinitions.map(d => ({ ...d })),
   };
 }
 
@@ -198,6 +200,7 @@ function restoreSnapshot(snap: StoreSnapshot): void {
   syncNotWithToParticipants();
 
   pakalDefinitions = normalizePakalDefinitions(snap.pakalDefinitions);
+  certificationDefinitions = snap.certificationDefinitions.map(d => ({ ...d }));
   for (const p of participants.values()) {
     p.pakalIds = sanitizePakalIds(p.pakalIds, pakalDefinitions);
   }
@@ -217,10 +220,10 @@ function restoreSnapshot(snap: StoreSnapshot): void {
       taskTemplates.set(tpl.id, {
         ...tpl,
         loadWindows: (tpl.loadWindows || []).map(w => ({ ...w })),
-        slots: tpl.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+        slots: tpl.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
         subTeams: tpl.subTeams.map(st => ({
           ...st,
-          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
         })),
       });
     }
@@ -237,10 +240,10 @@ function restoreSnapshot(snap: StoreSnapshot): void {
         ...ot,
         scheduledDate: new Date(ot.scheduledDate.getTime()),
         loadWindows: (ot.loadWindows || []).map(w => ({ ...w })),
-        slots: ot.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+        slots: ot.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
         subTeams: ot.subTeams.map(st => ({
           ...st,
-          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications] })),
+          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
         })),
       });
     }
@@ -298,6 +301,68 @@ const dateUnavailabilities: Map<string, DateUnavailability[]> = new Map(); // pa
 const notWithPairs: Map<string, Set<string>> = new Map(); // participantId -> set of partner IDs
 let pakalDefinitions: PakalDefinition[] = clonePakalDefinitions(BUILTIN_PAKAL_DEFINITIONS);
 
+// ─── Certification Definitions ──────────────────────────────────────────────
+
+let certificationDefinitions: CertificationDefinition[] = DEFAULT_CERTIFICATION_DEFINITIONS.map(d => ({ ...d }));
+
+export function getCertificationDefinitions(): CertificationDefinition[] {
+  return certificationDefinitions.filter(d => !d.deleted).map(d => ({ ...d }));
+}
+
+export function getCertificationById(id: string): CertificationDefinition | undefined {
+  const def = certificationDefinitions.find(d => d.id === id);
+  return def ? { ...def } : undefined;
+}
+
+export function getCertLabel(certId: string): string {
+  return certificationDefinitions.find(d => d.id === certId)?.label ?? certId;
+}
+
+export function getCertColor(certId: string): string {
+  return certificationDefinitions.find(d => d.id === certId)?.color ?? '#7f8c8d';
+}
+
+export function addCertification(label: string, color: string): CertificationDefinition {
+  const trimmed = label.trim();
+  if (!trimmed) throw new Error('Certification label cannot be empty');
+  if (!color || !/^#[0-9a-fA-F]{6}$/.test(color)) throw new Error('Invalid hex color');
+  if (certificationDefinitions.some(d => !d.deleted && d.label === trimmed)) {
+    throw new Error(`Certification "${trimmed}" already exists`);
+  }
+  pushSnapshot();
+  const def: CertificationDefinition = { id: uid('cert'), label: trimmed, color };
+  certificationDefinitions.push(def);
+  notify();
+  return { ...def };
+}
+
+export function removeCertification(id: string): void {
+  const def = certificationDefinitions.find(d => d.id === id && !d.deleted);
+  if (!def) return;
+  pushSnapshot();
+  def.deleted = true;
+  notify();
+}
+
+export function getCertificationUsage(id: string): { participantCount: number; slotCount: number } {
+  let participantCount = 0;
+  let slotCount = 0;
+  for (const p of participants.values()) {
+    if (p.certifications.includes(id)) participantCount++;
+  }
+  for (const tpl of taskTemplates.values()) {
+    for (const s of [...tpl.slots, ...tpl.subTeams.flatMap(st => st.slots)]) {
+      if (s.requiredCertifications.includes(id) || s.forbiddenCertifications?.includes(id)) slotCount++;
+    }
+  }
+  for (const ot of oneTimeTasks.values()) {
+    for (const s of [...ot.slots, ...ot.subTeams.flatMap(st => st.slots)]) {
+      if (s.requiredCertifications.includes(id) || s.forbiddenCertifications?.includes(id)) slotCount++;
+    }
+  }
+  return { participantCount, slotCount };
+}
+
 function normalizePakalLabel(raw: string): string {
   return raw.trim().replace(/\s+/g, ' ');
 }
@@ -350,7 +415,6 @@ export function getPakalUsageCount(id: string): number {
   let count = 0;
   for (const participant of participants.values()) {
     const selected = new Set(sanitizePakalIds(participant.pakalIds, pakalDefinitions));
-    if (participant.certifications.includes(Certification.Horesh)) selected.add(HORESH_PAKAL_ID);
     if (selected.has(id)) count += 1;
   }
   return count;
@@ -499,13 +563,13 @@ function recalcAllAvailability(): void {
 
 export function addParticipant(data: {
   name: string; level?: Level;
-  certifications?: Certification[]; pakalIds?: string[]; group: string;
+  certifications?: string[]; pakalIds?: string[]; group: string;
 }): Participant {
   pushSnapshot();
   const id = uid('p');
-  const rawCerts = data.certifications ?? [Certification.Nitzan];
-  const rawPakalIds = sanitizePakalIds(data.pakalIds, pakalDefinitions);
-  const { certifications: certs, pakalIds: pIds } = enforceHoreshConsistency(rawCerts, rawPakalIds);
+  const firstActiveId = certificationDefinitions.find(d => !d.deleted)?.id;
+  const certs = data.certifications ?? (firstActiveId ? [firstActiveId] : []);
+  const pIds = sanitizePakalIds(data.pakalIds, pakalDefinitions);
   const p: Participant = {
     id,
     name: data.name,
@@ -529,12 +593,6 @@ export function updateParticipant(id: string, patch: Partial<Omit<Participant, '
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'pakalIds')) {
     nextPatch.pakalIds = sanitizePakalIds(nextPatch.pakalIds, pakalDefinitions);
   }
-  // Enforce Horesh pakal ↔ certification consistency
-  const mergedCerts = nextPatch.certifications ?? p.certifications;
-  const mergedPakalIds = nextPatch.pakalIds ?? p.pakalIds;
-  const { certifications: certs, pakalIds: pIds } = enforceHoreshConsistency(mergedCerts, mergedPakalIds);
-  nextPatch.certifications = certs;
-  nextPatch.pakalIds = pIds;
   Object.assign(p, nextPatch);
   p.availability = computeAvailability(id);
   notify();
@@ -1110,20 +1168,20 @@ export function seedDefaultParticipants(): void {
 
   const deptNames = ['קבוצה 1', 'קבוצה 2', 'קבוצה 3', 'קבוצה 4'];
 
-  interface MemberSpec { level: Level; certs: Certification[]; tag: string }
+  interface MemberSpec { level: Level; certs: string[]; tag: string }
   const template: MemberSpec[] = [
-    { level: Level.L4, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L4' },
-    { level: Level.L3, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L3' },
-    { level: Level.L2, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L2' },
-    { level: Level.L2, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L2' },
-    { level: Level.L2, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L2' },
-    { level: Level.L0, certs: [Certification.Nitzan, Certification.Salsala], tag: 'L0-Salsala' },
-    { level: Level.L0, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L0-Hamama' },
-    { level: Level.L0, certs: [Certification.Nitzan, Certification.Hamama], tag: 'L0-Hamama' },
-    { level: Level.L0, certs: [Certification.Nitzan], tag: 'L0' },
-    { level: Level.L0, certs: [Certification.Nitzan], tag: 'L0' },
-    { level: Level.L0, certs: [Certification.Nitzan], tag: 'L0' },
-    { level: Level.L0, certs: [Certification.Nitzan], tag: 'L0' },
+    { level: Level.L4, certs: ['Nitzan', 'Hamama'], tag: 'L4' },
+    { level: Level.L3, certs: ['Nitzan', 'Hamama'], tag: 'L3' },
+    { level: Level.L2, certs: ['Nitzan', 'Hamama'], tag: 'L2' },
+    { level: Level.L2, certs: ['Nitzan', 'Hamama'], tag: 'L2' },
+    { level: Level.L2, certs: ['Nitzan', 'Hamama'], tag: 'L2' },
+    { level: Level.L0, certs: ['Nitzan', 'Salsala'], tag: 'L0-Salsala' },
+    { level: Level.L0, certs: ['Nitzan', 'Hamama'], tag: 'L0-Hamama' },
+    { level: Level.L0, certs: ['Nitzan', 'Hamama'], tag: 'L0-Hamama' },
+    { level: Level.L0, certs: ['Nitzan'], tag: 'L0' },
+    { level: Level.L0, certs: ['Nitzan'], tag: 'L0' },
+    { level: Level.L0, certs: ['Nitzan'], tag: 'L0' },
+    { level: Level.L0, certs: ['Nitzan'], tag: 'L0' },
   ];
 
   // Horesh certification per department: set of template indices
@@ -1140,7 +1198,7 @@ export function seedDefaultParticipants(): void {
     template.forEach((spec, i) => {
       const id = uid('p');
       const certs = [...spec.certs];
-      if (horeshIndices?.has(i)) certs.push(Certification.Horesh);
+      if (horeshIndices?.has(i)) certs.push('Horesh');
       const nextL0Index = l0PakalIndexByDept.get(dept) ?? 0;
       const pakalId = spec.level === Level.L0
         ? DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP[dept]?.[nextL0Index]
@@ -1179,16 +1237,16 @@ export function seedDefaultTaskTemplates(): void {
     subTeams: [
       {
         id: uid('st'), name: 'סגול ראשי', slots: [
-          { id: uid('slot'), label: 'משתתף בסגול א', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'משתתף בסגול א', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'סגל בסגול א', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'משתתף בסגול א', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+          { id: uid('slot'), label: 'משתתף בסגול א', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+          { id: uid('slot'), label: 'סגל בסגול א', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: ['Nitzan'] },
         ],
       },
       {
         id: uid('st'), name: 'סגול משני', slots: [
-          { id: uid('slot'), label: 'משתתף בסגול ב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'משתתף בסגול ב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-          { id: uid('slot'), label: 'בכיר בסגול ב\'', acceptableLevels: [{ level: Level.L2 }], requiredCertifications: [Certification.Nitzan] },
+          { id: uid('slot'), label: 'משתתף בסגול ב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+          { id: uid('slot'), label: 'משתתף בסגול ב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+          { id: uid('slot'), label: 'בכיר בסגול ב\'', acceptableLevels: [{ level: Level.L2 }], requiredCertifications: ['Nitzan'] },
         ],
       },
     ],
@@ -1215,7 +1273,7 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 1,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }], requiredCertifications: [Certification.Hamama] },
+      { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }], requiredCertifications: ['Hamama'] },
     ],
     displayCategory: 'hamama',
     color: '#E74C3C',
@@ -1238,8 +1296,8 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 6,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'משתתף בשמש', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'משתתף בשמש', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בשמש', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      { id: uid('slot'), label: 'משתתף בשמש', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
     ],
     requiresCategoryBreak: true,
     displayCategory: 'shemesh',
@@ -1263,8 +1321,8 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 2,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'משתתף בממטרה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
-      { id: uid('slot'), label: 'משתתף בממטרה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: [Certification.Horesh] },
+      { id: uid('slot'), label: 'משתתף בממטרה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: ['Horesh'] },
+      { id: uid('slot'), label: 'משתתף בממטרה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: ['Horesh'] },
     ],
     displayCategory: 'mamtera',
     color: '#27AE60',
@@ -1304,10 +1362,10 @@ export function seedDefaultTaskTemplates(): void {
     ],
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'מפקד כרוב (דרגה 2/3/4)', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'נהג כרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Salsala, Certification.Nitzan] },
-      { id: uid('slot'), label: 'משתתף בכרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'משתתף בקרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'מפקד כרוב (דרגה 2/3/4)', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: ['Nitzan'] },
+      { id: uid('slot'), label: 'נהג כרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Salsala', 'Nitzan'] },
+      { id: uid('slot'), label: 'משתתף בכרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      { id: uid('slot'), label: 'משתתף בקרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
     ],
     displayCategory: 'patrol',
     color: '#8E44AD',
@@ -1330,10 +1388,10 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 5,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'סגל כרובית', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'סגל כרובית', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: ['Nitzan'] },
+      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
     ],
     displayCategory: 'patrol',
     color: '#BDC3C7',
@@ -1356,8 +1414,8 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 4,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'משתתף בערוגת בוקר', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'משתתף בערוגת בוקר', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בערוגת בוקר', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      { id: uid('slot'), label: 'משתתף בערוגת בוקר', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
     ],
     displayCategory: 'aruga',
     color: '#1ABC9C',
@@ -1380,8 +1438,8 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 4,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'משתתף בערוגת ערב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
-      { id: uid('slot'), label: 'משתתף בערוגת ערב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [Certification.Nitzan] },
+      { id: uid('slot'), label: 'משתתף בערוגת ערב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      { id: uid('slot'), label: 'משתתף בערוגת ערב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
     ],
     displayCategory: 'aruga',
     color: '#1ABC9C',
@@ -1524,6 +1582,7 @@ export function saveToStorage(): void {
         currentTimestamp: liveModeState.currentTimestamp.toISOString(),
       },
       pakalDefinitions,
+      certificationDefinitions,
       // Omit inline dateUnavailability from participant serialization —
       // the dateUnavailabilities Map is the single source of truth
       // (serialized separately below).
@@ -1602,6 +1661,7 @@ export function loadFromStorage(): boolean {
     participants.clear();
     dateUnavailabilities.clear();
     pakalDefinitions = normalizePakalDefinitions(state.pakalDefinitions);
+    certificationDefinitions = (state.certificationDefinitions?.length ? state.certificationDefinitions : DEFAULT_CERTIFICATION_DEFINITIONS).map((d: CertificationDefinition) => ({ ...d }));
 
     for (const pData of (state.participants || [])) {
       const p: Participant = {
@@ -1738,6 +1798,7 @@ export function clearStorage(): void {
   taskTemplates.clear();
   oneTimeTasks.clear();
   pakalDefinitions = clonePakalDefinitions(BUILTIN_PAKAL_DEFINITIONS);
+  certificationDefinitions = DEFAULT_CERTIFICATION_DEFINITIONS.map(d => ({ ...d }));
   undoStack.length = 0;
   redoStack.length = 0;
 }
@@ -1773,6 +1834,7 @@ export function factoryReset(): void {
   taskTemplates.clear();
   oneTimeTasks.clear();
   pakalDefinitions = clonePakalDefinitions(BUILTIN_PAKAL_DEFINITIONS);
+  certificationDefinitions = DEFAULT_CERTIFICATION_DEFINITIONS.map(d => ({ ...d }));
   undoStack.length = 0;
   redoStack.length = 0;
   _algorithmSettings = null;
@@ -2481,7 +2543,6 @@ function _snapshotCurrentPakalCatalog(participantSnapshots: ParticipantSnapshot[
   const referencedIds = new Set<string>();
   for (const snap of participantSnapshots) {
     for (const pakalId of snap.pakalIds || []) referencedIds.add(pakalId);
-    if (snap.certifications.includes(Certification.Horesh)) referencedIds.add(HORESH_PAKAL_ID);
   }
   return getPakalDefinitions().filter(def => def.builtIn || referencedIds.has(def.id));
 }
@@ -2619,9 +2680,8 @@ export function loadParticipantSet(id: string): void {
     // Add participants from the set
     for (const snap of pset.participants) {
       const pid = uid('p');
-      const rawCerts = [...snap.certifications];
-      const rawPakalIds = sanitizePakalIds(snap.pakalIds, pakalDefinitions);
-      const { certifications: certs, pakalIds: pIds } = enforceHoreshConsistency(rawCerts, rawPakalIds);
+      const certs = [...snap.certifications];
+      const pIds = sanitizePakalIds(snap.pakalIds, pakalDefinitions);
       const p: Participant = {
         id: pid,
         name: snap.name,

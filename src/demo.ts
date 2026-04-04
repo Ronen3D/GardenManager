@@ -8,7 +8,6 @@ import {
   SchedulingEngine,
   Participant,
   Level,
-  Certification,
   ViolationSeverity,
 } from './index';
 import { generateDailyTasks } from './tasks/cli-task-factory';
@@ -26,7 +25,7 @@ function createP(
   id: string,
   name: string,
   level: Level,
-  certs: Certification[],
+  certs: string[],
   group: string,
 ): Participant {
   return {
@@ -42,38 +41,38 @@ function createP(
 
 // Group Alpha (8+ members for Adanit)
 const groupAlpha: Participant[] = [
-  createP('a1', 'Alpha-01', Level.L0, [Certification.Nitzan], 'Alpha'),
-  createP('a2', 'Alpha-02', Level.L0, [Certification.Salsala], 'Alpha'),
-  createP('a3', 'Alpha-03', Level.L0, [Certification.Nitzan, Certification.Hamama], 'Alpha'),
-  createP('a4', 'Alpha-04', Level.L0, [Certification.Horesh], 'Alpha'),
-  createP('a5', 'Alpha-05', Level.L0, [Certification.Horesh], 'Alpha'),
-  createP('a6', 'Alpha-06', Level.L2, [Certification.Nitzan], 'Alpha'),
-  createP('a7', 'Alpha-07', Level.L3, [Certification.Nitzan, Certification.Hamama], 'Alpha'),
-  createP('a8', 'Alpha-08', Level.L4, [Certification.Hamama], 'Alpha'),
+  createP('a1', 'Alpha-01', Level.L0, ['Nitzan'], 'Alpha'),
+  createP('a2', 'Alpha-02', Level.L0, ['Salsala'], 'Alpha'),
+  createP('a3', 'Alpha-03', Level.L0, ['Nitzan', 'Hamama'], 'Alpha'),
+  createP('a4', 'Alpha-04', Level.L0, ['Horesh'], 'Alpha'),
+  createP('a5', 'Alpha-05', Level.L0, ['Horesh'], 'Alpha'),
+  createP('a6', 'Alpha-06', Level.L2, ['Nitzan'], 'Alpha'),
+  createP('a7', 'Alpha-07', Level.L3, ['Nitzan', 'Hamama'], 'Alpha'),
+  createP('a8', 'Alpha-08', Level.L4, ['Hamama'], 'Alpha'),
 ];
 
 // Group Beta
 const groupBeta: Participant[] = [
-  createP('b1', 'Beta-01', Level.L0, [Certification.Nitzan], 'Beta'),
-  createP('b2', 'Beta-02', Level.L0, [Certification.Salsala, Certification.Nitzan], 'Beta'),
-  createP('b3', 'Beta-03', Level.L0, [Certification.Hamama], 'Beta'),
-  createP('b4', 'Beta-04', Level.L0, [Certification.Horesh], 'Beta'),
+  createP('b1', 'Beta-01', Level.L0, ['Nitzan'], 'Beta'),
+  createP('b2', 'Beta-02', Level.L0, ['Salsala', 'Nitzan'], 'Beta'),
+  createP('b3', 'Beta-03', Level.L0, ['Hamama'], 'Beta'),
+  createP('b4', 'Beta-04', Level.L0, ['Horesh'], 'Beta'),
   createP('b5', 'Beta-05', Level.L0, [], 'Beta'),
   createP('b6', 'Beta-06', Level.L2, [], 'Beta'),
-  createP('b7', 'Beta-07', Level.L3, [Certification.Hamama], 'Beta'),
+  createP('b7', 'Beta-07', Level.L3, ['Hamama'], 'Beta'),
   createP('b8', 'Beta-08', Level.L4, [], 'Beta'),
 ];
 
 // Group Gamma (extra pool)
 const groupGamma: Participant[] = [
-  createP('g1', 'Gamma-01', Level.L0, [Certification.Nitzan, Certification.Salsala], 'Gamma'),
-  createP('g2', 'Gamma-02', Level.L0, [Certification.Hamama], 'Gamma'),
-  createP('g3', 'Gamma-03', Level.L2, [Certification.Nitzan], 'Gamma'),
-  createP('g4', 'Gamma-04', Level.L0, [Certification.Horesh], 'Gamma'),
+  createP('g1', 'Gamma-01', Level.L0, ['Nitzan', 'Salsala'], 'Gamma'),
+  createP('g2', 'Gamma-02', Level.L0, ['Hamama'], 'Gamma'),
+  createP('g3', 'Gamma-03', Level.L2, ['Nitzan'], 'Gamma'),
+  createP('g4', 'Gamma-04', Level.L0, ['Horesh'], 'Gamma'),
   createP('g5', 'Gamma-05', Level.L0, [], 'Gamma'),
-  createP('g6', 'Gamma-06', Level.L2, [Certification.Nitzan], 'Gamma'),
-  createP('g7', 'Gamma-07', Level.L3, [Certification.Nitzan], 'Gamma'),
-  createP('g8', 'Gamma-08', Level.L4, [Certification.Hamama], 'Gamma'),
+  createP('g6', 'Gamma-06', Level.L2, ['Nitzan'], 'Gamma'),
+  createP('g7', 'Gamma-07', Level.L3, ['Nitzan'], 'Gamma'),
+  createP('g8', 'Gamma-08', Level.L4, ['Hamama'], 'Gamma'),
 ];
 
 const allParticipants = [...groupAlpha, ...groupBeta, ...groupGamma];

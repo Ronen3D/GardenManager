@@ -19,7 +19,6 @@
 import {
   Participant,
   Level,
-  Certification,
   Task,
   DEFAULT_CONFIG,
   SchedulerConfig,
@@ -35,7 +34,7 @@ const DAY_END = new Date(2026, 1, 16, 12, 0);
 
 function createP(
   id: string, name: string, level: Level,
-  certs: Certification[], group: string,
+  certs: string[], group: string,
 ): Participant {
   return {
     id, name, level,
@@ -48,32 +47,32 @@ function createP(
 
 const allParticipants: Participant[] = [
   // Group Alpha (8)
-  createP('a1', 'Alpha-01', Level.L0, [Certification.Nitzan], 'Alpha'),
-  createP('a2', 'Alpha-02', Level.L0, [Certification.Salsala], 'Alpha'),
-  createP('a3', 'Alpha-03', Level.L0, [Certification.Nitzan, Certification.Hamama], 'Alpha'),
-  createP('a4', 'Alpha-04', Level.L0, [Certification.Horesh], 'Alpha'),
-  createP('a5', 'Alpha-05', Level.L0, [Certification.Horesh], 'Alpha'),
-  createP('a6', 'Alpha-06', Level.L2, [Certification.Nitzan], 'Alpha'),
-  createP('a7', 'Alpha-07', Level.L3, [Certification.Nitzan, Certification.Hamama], 'Alpha'),
-  createP('a8', 'Alpha-08', Level.L4, [Certification.Hamama], 'Alpha'),
+  createP('a1', 'Alpha-01', Level.L0, ['Nitzan'], 'Alpha'),
+  createP('a2', 'Alpha-02', Level.L0, ['Salsala'], 'Alpha'),
+  createP('a3', 'Alpha-03', Level.L0, ['Nitzan', 'Hamama'], 'Alpha'),
+  createP('a4', 'Alpha-04', Level.L0, ['Horesh'], 'Alpha'),
+  createP('a5', 'Alpha-05', Level.L0, ['Horesh'], 'Alpha'),
+  createP('a6', 'Alpha-06', Level.L2, ['Nitzan'], 'Alpha'),
+  createP('a7', 'Alpha-07', Level.L3, ['Nitzan', 'Hamama'], 'Alpha'),
+  createP('a8', 'Alpha-08', Level.L4, ['Hamama'], 'Alpha'),
   // Group Beta (8)
-  createP('b1', 'Beta-01', Level.L0, [Certification.Nitzan], 'Beta'),
-  createP('b2', 'Beta-02', Level.L0, [Certification.Salsala, Certification.Nitzan], 'Beta'),
-  createP('b3', 'Beta-03', Level.L0, [Certification.Hamama], 'Beta'),
-  createP('b4', 'Beta-04', Level.L0, [Certification.Horesh], 'Beta'),
+  createP('b1', 'Beta-01', Level.L0, ['Nitzan'], 'Beta'),
+  createP('b2', 'Beta-02', Level.L0, ['Salsala', 'Nitzan'], 'Beta'),
+  createP('b3', 'Beta-03', Level.L0, ['Hamama'], 'Beta'),
+  createP('b4', 'Beta-04', Level.L0, ['Horesh'], 'Beta'),
   createP('b5', 'Beta-05', Level.L0, [], 'Beta'),
   createP('b6', 'Beta-06', Level.L2, [], 'Beta'),
-  createP('b7', 'Beta-07', Level.L3, [Certification.Hamama], 'Beta'),
+  createP('b7', 'Beta-07', Level.L3, ['Hamama'], 'Beta'),
   createP('b8', 'Beta-08', Level.L4, [], 'Beta'),
   // Group Gamma (8)
-  createP('g1', 'Gamma-01', Level.L0, [Certification.Nitzan, Certification.Salsala], 'Gamma'),
-  createP('g2', 'Gamma-02', Level.L0, [Certification.Hamama], 'Gamma'),
-  createP('g3', 'Gamma-03', Level.L2, [Certification.Nitzan], 'Gamma'),
-  createP('g4', 'Gamma-04', Level.L0, [Certification.Horesh], 'Gamma'),
+  createP('g1', 'Gamma-01', Level.L0, ['Nitzan', 'Salsala'], 'Gamma'),
+  createP('g2', 'Gamma-02', Level.L0, ['Hamama'], 'Gamma'),
+  createP('g3', 'Gamma-03', Level.L2, ['Nitzan'], 'Gamma'),
+  createP('g4', 'Gamma-04', Level.L0, ['Horesh'], 'Gamma'),
   createP('g5', 'Gamma-05', Level.L0, [], 'Gamma'),
-  createP('g6', 'Gamma-06', Level.L2, [Certification.Nitzan], 'Gamma'),
-  createP('g7', 'Gamma-07', Level.L3, [Certification.Nitzan], 'Gamma'),
-  createP('g8', 'Gamma-08', Level.L4, [Certification.Hamama], 'Gamma'),
+  createP('g6', 'Gamma-06', Level.L2, ['Nitzan'], 'Gamma'),
+  createP('g7', 'Gamma-07', Level.L3, ['Nitzan'], 'Gamma'),
+  createP('g8', 'Gamma-08', Level.L4, ['Hamama'], 'Gamma'),
 ];
 
 /** Check if any slot in the task has a low-priority level entry (replaces preferJuniors). */

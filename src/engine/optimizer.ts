@@ -28,7 +28,6 @@ import {
   SchedulerConfig,
   ScheduleScore,
   Level,
-  Certification,
   SlotRequirement,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
@@ -423,11 +422,19 @@ export function greedyAssign(
     }
   }
 
-  // ITEM 10: Pre-compute per-group Nitzan-certified member count.
-  // Used as a tie-breaker to protect tight Adanit groups from losing members.
+  // ITEM 10: Pre-compute per-group count of members who hold ALL required certs
+  // for same-group tasks. Used as a tie-breaker to protect tight groups.
+  const sameGroupCertReqs = new Set<string>();
+  for (const t of tasks) {
+    if (t.sameGroupRequired) {
+      for (const s of t.slots) {
+        for (const c of s.requiredCertifications) sameGroupCertReqs.add(c);
+      }
+    }
+  }
   const adanitGroupNitzanCount = new Map<string, number>();
   for (const p of participants) {
-    if (p.certifications.includes(Certification.Nitzan)) {
+    if ([...sameGroupCertReqs].every(c => p.certifications.includes(c))) {
       adanitGroupNitzanCount.set(p.group, (adanitGroupNitzanCount.get(p.group) || 0) + 1);
     }
   }

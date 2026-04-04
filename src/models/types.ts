@@ -14,13 +14,26 @@ export enum Level {
   L4 = 4,
 }
 
-/** Certification types a participant can hold */
-export enum Certification {
-  Nitzan = 'Nitzan',
-  Salsala = 'Salsala',
-  Hamama = 'Hamama',
-  Horesh = 'Horesh',
+/** A user-manageable certification definition. */
+export interface CertificationDefinition {
+  /** Unique stable ID — also used as the match key in participant/slot arrays. */
+  id: string;
+  /** Hebrew display label (e.g. 'ניצן'). */
+  label: string;
+  /** Display color for badge (hex, e.g. '#16a085'). */
+  color: string;
+  /** When true, the definition was deleted but kept as a tombstone so orphan
+   *  badges can still display the original Hebrew label and color. */
+  deleted?: boolean;
 }
+
+/** Default certification definitions — the single source of initial config. */
+export const DEFAULT_CERTIFICATION_DEFINITIONS: CertificationDefinition[] = [
+  { id: 'Nitzan',  label: 'ניצן',   color: '#16a085' },
+  { id: 'Salsala', label: 'סלסלה',  color: '#8e44ad' },
+  { id: 'Hamama',  label: 'חממה',   color: '#c0392b' },
+  { id: 'Horesh',  label: 'חורש',   color: '#27ae60' },
+];
 
 /** A level annotated with priority for a slot. */
 export interface LevelEntry {
@@ -89,7 +102,7 @@ export interface Participant {
   id: string;
   name: string;
   level: Level;
-  certifications: Certification[];
+  certifications: string[];
   group: string;
   /** Time windows when participant is available */
   availability: AvailabilityWindow[];
@@ -127,9 +140,9 @@ export interface SlotRequirement {
   /** Acceptable levels for this slot (with optional priority annotation) */
   acceptableLevels: LevelEntry[];
   /** Required certifications for this slot */
-  requiredCertifications: Certification[];
+  requiredCertifications: string[];
   /** Certifications that DISQUALIFY a participant from this slot */
-  forbiddenCertifications?: Certification[];
+  forbiddenCertifications?: string[];
   /** Optional: label for display purposes */
   label?: string;
   /** Display label inherited from sub-team name (for layout column headers) */
@@ -413,7 +426,7 @@ export interface ScheduleSnapshot {
 export interface ParticipantSnapshot {
   name: string;
   level: Level;
-  certifications: Certification[];
+  certifications: string[];
   group: string;
   /** Recurring weekday unavailability rules (IDs stripped for stable comparison) */
   dateUnavailability: Omit<DateUnavailability, 'id'>[];
@@ -511,9 +524,9 @@ export interface SlotTemplate {
   id: string;
   label: string;
   acceptableLevels: LevelEntry[];
-  requiredCertifications: Certification[];
+  requiredCertifications: string[];
   /** Certifications that DISQUALIFY a participant from this slot */
-  forbiddenCertifications?: Certification[];
+  forbiddenCertifications?: string[];
 }
 
 /** Time-of-day load window with explicit weight (0..1). */

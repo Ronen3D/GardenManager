@@ -7,7 +7,7 @@
 
 import {
   Level,
-  Certification,
+  CertificationDefinition,
   TaskTemplate,
   SlotTemplate,
   SubTeamTemplate,
@@ -26,7 +26,9 @@ import { escHtml } from './ui-helpers';
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
-const CERT_OPTIONS = [Certification.Nitzan, Certification.Hamama, Certification.Salsala, Certification.Horesh];
+function getCertOptions(): CertificationDefinition[] {
+  return store.getCertificationDefinitions();
+}
 
 function templateBadge(tpl: { color?: string; name: string }): string {
   const color = tpl.color || '#7f8c8d';
@@ -38,13 +40,26 @@ function levelBadge(level: Level): string {
   return `<span class="badge badge-sm" style="background:${colors[level]}">L${level}</span>`;
 }
 
-function certBadge(cert: Certification): string {
-  const colors: Record<string, string> = { Nitzan: '#16a085', Salsala: '#8e44ad', Hamama: '#c0392b' };
-  return `<span class="badge badge-sm" style="background:${colors[cert] || '#7f8c8d'}">${cert}</span>`;
+function certBadge(certId: string): string {
+  const def = store.getCertificationById(certId);
+  if (!def) {
+    return `<span class="badge badge-sm badge-orphan" title="הסמכה שנמחקה: ${escHtml(certId)}">⚠ ${escHtml(certId)}</span>`;
+  }
+  if (def.deleted) {
+    return `<span class="badge badge-sm badge-orphan" title="הסמכה שנמחקה: ${escHtml(def.label)}">⚠ ${escHtml(def.label)}</span>`;
+  }
+  return `<span class="badge badge-sm" style="background:${def.color}">${escHtml(def.label)}</span>`;
 }
 
-function forbiddenCertBadge(cert: Certification): string {
-  return `<span class="badge badge-sm" style="background:#c0392b;text-decoration:line-through">${cert}</span>`;
+function forbiddenCertBadge(certId: string): string {
+  const def = store.getCertificationById(certId);
+  if (!def) {
+    return `<span class="badge badge-sm badge-orphan" title="הסמכה אסורה שנמחקה: ${escHtml(certId)}" style="text-decoration:line-through">⚠ ${escHtml(certId)}</span>`;
+  }
+  if (def.deleted) {
+    return `<span class="badge badge-sm badge-orphan" title="הסמכה אסורה שנמחקה: ${escHtml(def.label)}" style="text-decoration:line-through">⚠ ${escHtml(def.label)}</span>`;
+  }
+  return `<span class="badge badge-sm" style="background:#c0392b;text-decoration:line-through">${escHtml(def.label)}</span>`;
 }
 
 /** Strip English level references (L0, L3/L4, (L2+), etc.) from a slot label. */
@@ -420,14 +435,14 @@ function renderAddSlotForm(templateId: string, subTeamId?: string): string {
     </div>
     <div class="form-row">
       <span>הסמכות נדרשות:</span>
-      ${CERT_OPTIONS.map(c =>
-        `<label class="checkbox-label"><input type="checkbox" data-slot-cert="${c}" /> ${c}</label>`
+      ${getCertOptions().map(def =>
+        `<label class="checkbox-label"><input type="checkbox" data-slot-cert="${def.id}" /> ${escHtml(def.label)}</label>`
       ).join('')}
     </div>
     <div class="form-row">
       <span>הסמכות אסורות:</span>
-      ${CERT_OPTIONS.map(c =>
-        `<label class="checkbox-label"><input type="checkbox" data-slot-forbidden-cert="${c}" /> ${c}</label>`
+      ${getCertOptions().map(def =>
+        `<label class="checkbox-label"><input type="checkbox" data-slot-forbidden-cert="${def.id}" /> ${escHtml(def.label)}</label>`
       ).join('')}
     </div>
     <div class="form-row">
@@ -820,19 +835,19 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           if (state === 'normal') acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level });
           else if (state === 'lowPriority') acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level, lowPriority: true });
         });
-        const certs: Certification[] = [];
+        const certs: string[] = [];
         form.querySelectorAll<HTMLInputElement>('[data-slot-cert]').forEach(cb => {
-          if (cb.checked) certs.push(cb.dataset.slotCert as Certification);
+          if (cb.checked && cb.dataset.slotCert) certs.push(cb.dataset.slotCert);
         });
-        const forbiddenCerts: Certification[] = [];
+        const forbiddenCerts: string[] = [];
         form.querySelectorAll<HTMLInputElement>('[data-slot-forbidden-cert]').forEach(cb => {
-          if (cb.checked) forbiddenCerts.push(cb.dataset.slotForbiddenCert as Certification);
+          if (cb.checked && cb.dataset.slotForbiddenCert) forbiddenCerts.push(cb.dataset.slotForbiddenCert);
         });
 
         // Validate: same cert cannot be both required and forbidden
         const overlap = certs.filter(c => forbiddenCerts.includes(c));
         if (overlap.length > 0) {
-          showToast(`הסמכה לא יכולה להיות גם נדרשת וגם אסורה: ${overlap.join(', ')}`, { type: 'error' });
+          showToast(`הסמכה לא יכולה להיות גם נדרשת וגם אסורה: ${overlap.map(c => store.getCertLabel(c)).join(', ')}`, { type: 'error' });
           break;
         }
 
