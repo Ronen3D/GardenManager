@@ -234,6 +234,53 @@ function renderCertificationSection(): string {
   return html;
 }
 
+// ─── Pakal Management ──────────────────────────────────────────────────────
+
+let _pakalEditingId: string | null = null;
+let _pakalError = '';
+
+function renderPakalSection(): string {
+  const defs = store.getPakalDefinitions();
+
+  let html = `
+  <div class="algo-section">
+    <h3 class="algo-section-title">ניהול פק"לים</h3>
+    <p class="algo-section-desc">הוסף, ערוך או הסר פק"לים. שינויים זמינים מיד בלשונית משתתפים.</p>
+    <div class="cert-def-list">`;
+
+  for (const def of defs) {
+    const usageCount = store.getPakalUsageCount(def.id);
+    const usageText = `${usageCount} משתתפים`;
+    const editing = _pakalEditingId === def.id;
+    html += `
+      <div class="cert-def-item">
+        ${editing
+          ? `<input type="text" class="input-sm pakal-edit-input" data-field="pakal-edit-label" data-pakal-id="${def.id}" value="${escHtml(def.label)}" maxlength="40" />`
+          : `<span class="badge" style="background:#1f6feb">${escHtml(def.label)}</span>`}
+        <span class="cert-usage-count">${usageText}</span>
+        <div class="cert-def-item-actions">
+          ${!editing ? `<button class="btn-icon btn-sm" data-action="pakal-edit" data-pakal-id="${def.id}" title="ערוך">✎</button>` : ''}
+          ${editing ? `<button class="btn-icon btn-sm" data-action="pakal-save" data-pakal-id="${def.id}" title="שמור">✓</button>` : ''}
+          ${editing ? `<button class="btn-icon btn-sm" data-action="pakal-cancel" title="ביטול">✕</button>` : ''}
+          ${!editing ? `<button class="btn-icon btn-sm" data-action="pakal-remove" data-pakal-id="${def.id}" title="הסר פק&quot;ל">✕</button>` : ''}
+        </div>
+      </div>`;
+  }
+
+  html += `
+    </div>
+    ${_pakalError ? `<div class="preset-validation-error">${escHtml(_pakalError)}</div>` : ''}
+    <div class="cert-add-form">
+      <div class="cert-add-row">
+        <input type="text" class="input-sm" data-field="pakal-new-label" maxlength="40" placeholder="שם פק&quot;ל חדש" />
+        <button class="btn-sm btn-primary" data-action="pakal-add">+ הוסף</button>
+      </div>
+    </div>
+  </div>`;
+
+  return html;
+}
+
 // ─── Render ──────────────────────────────────────────────────────────────────
 
 export function renderAlgorithmTab(): string {
@@ -318,6 +365,9 @@ export function renderAlgorithmTab(): string {
 
   // ── Certification Management ──
   html += renderCertificationSection();
+
+  // ── Pakal Management ──
+  html += renderPakalSection();
 
   // ── Factory Reset (danger zone) ──
   html += `
@@ -590,6 +640,65 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
       case 'cert-select-color': {
         _selectedCertColor = btn.dataset.color || CERT_COLOR_PALETTE[0];
         rerender();
+        break;
+      }
+
+      // ── Pakal management ──
+      case 'pakal-add': {
+        const labelInput = container.querySelector<HTMLInputElement>('[data-field="pakal-new-label"]');
+        const result = store.addPakal(labelInput?.value || '');
+        if (result.error) {
+          _pakalError = result.error;
+          rerender();
+          break;
+        }
+        _pakalError = '';
+        _pakalEditingId = null;
+        showToast('פק"ל נוסף', { type: 'success' });
+        rerender();
+        break;
+      }
+      case 'pakal-edit': {
+        _pakalEditingId = btn.dataset.pakalId || null;
+        _pakalError = '';
+        rerender();
+        break;
+      }
+      case 'pakal-cancel': {
+        _pakalEditingId = null;
+        _pakalError = '';
+        rerender();
+        break;
+      }
+      case 'pakal-save': {
+        const pakalId = btn.dataset.pakalId || '';
+        const input = container.querySelector<HTMLInputElement>(`[data-field="pakal-edit-label"][data-pakal-id="${pakalId}"]`);
+        const error = store.renamePakal(pakalId, input?.value || '');
+        if (error) {
+          _pakalError = error;
+          rerender();
+          break;
+        }
+        _pakalEditingId = null;
+        _pakalError = '';
+        showToast('פק"ל עודכן', { type: 'success' });
+        rerender();
+        break;
+      }
+      case 'pakal-remove': {
+        const pakalId = btn.dataset.pakalId;
+        if (!pakalId) break;
+        const usageCount = store.getPakalUsageCount(pakalId);
+        const label = store.getPakalLabel(pakalId);
+        if (usageCount > 0) {
+          showConfirm(
+            `פק"ל "${label}" נמצא בשימוש (${usageCount} משתתפים). למחוק בכל זאת? אזהרה תוצג על משתתפים שעדיין משתמשים בו.`,
+            { danger: true, title: 'מחיקת פק"ל', confirmLabel: 'מחק' },
+          ).then(ok => { if (ok) { store.removePakal(pakalId); rerender(); } });
+        } else {
+          store.removePakal(pakalId);
+          rerender();
+        }
         break;
       }
     }

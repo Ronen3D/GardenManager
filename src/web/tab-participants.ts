@@ -96,43 +96,6 @@ function collectPakalIds(scope: ParentNode, selector: string): string[] {
   return ids;
 }
 
-function renderPakalManager(): string {
-  const definitions = store.getPakalDefinitions();
-  return `<div class="preset-panel pakal-panel">
-    <div class="preset-panel-header">
-      <h3>🎒 פק"לים <span class="count">${definitions.length}</span></h3>
-      <button class="btn-xs btn-outline" data-action="pakal-panel-close" title="סגור">✕</button>
-    </div>
-    <div class="pakal-panel-note text-muted">הערך חורש נוסף אוטומטית למשתתף שיש לו הסמכת חורש.</div>
-    <div class="pakal-inline-form">
-      <input type="text" class="input-sm pakal-name-input" data-field="pakal-new-label" maxlength="40" placeholder="פק"ל מותאם אישית" />
-      <button class="btn-sm btn-primary" data-action="pakal-add">הוסף</button>
-    </div>
-    ${_pakalError ? `<div class="preset-validation-error">${escHtml(_pakalError)}</div>` : ''}
-    <div class="pakal-list">
-      ${definitions.map(def => {
-        const usageCount = store.getPakalUsageCount(def.id);
-        const editing = _pakalEditingId === def.id;
-        return `<div class="pakal-item">
-          <div class="pakal-item-main">
-            ${editing
-              ? `<input type="text" class="input-sm pakal-edit-input" data-field="pakal-edit-label" data-pakal-id="${def.id}" value="${escHtml(def.label)}" maxlength="40" />`
-              : `<span class="pakal-item-label">${escHtml(def.label)}</span>`}
-            <span class="pset-count-badge">${usageCount} בשימוש</span>
-            ${def.builtIn ? '<span class="preset-builtin-badge">מובנה</span>' : ''}
-          </div>
-          <div class="pakal-item-actions">
-            ${!def.builtIn && !editing ? `<button class="btn-xs btn-outline" data-action="pakal-edit" data-pakal-id="${def.id}" title="ערוך">✎</button>` : ''}
-            ${!def.builtIn && editing ? `<button class="btn-xs btn-primary" data-action="pakal-save" data-pakal-id="${def.id}" title="שמור">שמור</button>` : ''}
-            ${!def.builtIn && editing ? `<button class="btn-xs btn-outline" data-action="pakal-cancel" title="ביטול">ביטול</button>` : ''}
-            ${!def.builtIn && !editing ? `<button class="btn-xs btn-danger-outline" data-action="pakal-delete" data-pakal-id="${def.id}" title="מחק">✕</button>` : ''}
-          </div>
-        </div>`;
-      }).join('')}
-    </div>
-  </div>`;
-}
-
 function renderPreferenceBadges(p: Participant): string {
   const parts: string[] = [];
   if (p.preferredTaskName) {
@@ -344,9 +307,6 @@ let _setsPanelOpen = false;
 let _setsFormMode: 'none' | 'save-as' | 'rename' = 'none';
 let _setsFormError = '';
 let _setsRenameTargetId: string | null = null;
-let _pakalPanelOpen = false;
-let _pakalEditingId: string | null = null;
-let _pakalError = '';
 
 /** Clear participant selection state (called on tab change) */
 export function clearParticipantSelection(): void {
@@ -478,7 +438,6 @@ export function renderParticipantsTab(): string {
     <div class="toolbar-right">
       <button class="btn-expand-all-mobile btn-sm btn-outline" data-action="toggle-all-details">הרחב הכל</button>
       <button class="btn-sm btn-outline${_setsPanelOpen ? ' pill-active' : ''}" data-action="pset-panel-toggle" title="סטים של משתתפים">📋 סטים${store.isParticipantSetDirty() ? ' <span class="dirty-dot"></span>' : ''}</button>
-      <button class="btn-sm btn-outline${_pakalPanelOpen ? ' pill-active' : ''}" data-action="pakal-panel-toggle" title="ניהול פק"לים">🎒 פק"לים</button>
       <button class="btn-primary btn-sm" data-action="add-participant">+ הוסף משתתף</button>
     </div>
   </div>`;
@@ -487,10 +446,6 @@ export function renderParticipantsTab(): string {
   if (_setsPanelOpen) {
     html += renderSetsPanel();
   }
-  if (_pakalPanelOpen) {
-    html += renderPakalManager();
-  }
-
   // Table
   html += `<div class="table-responsive"><table class="table table-participants${showNotWithColumn ? ' notwith-visible' : ''}">
     <thead><tr>
@@ -1094,78 +1049,6 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       }
       case 'filter-group': {
         filterGroup = actionButton?.dataset.group || '';
-        rerender();
-        break;
-      }
-      case 'pakal-panel-toggle': {
-        _pakalPanelOpen = !_pakalPanelOpen;
-        _pakalEditingId = null;
-        _pakalError = '';
-        rerender();
-        break;
-      }
-      case 'pakal-panel-close': {
-        _pakalPanelOpen = false;
-        _pakalEditingId = null;
-        _pakalError = '';
-        rerender();
-        break;
-      }
-      case 'pakal-add': {
-        const labelInput = container.querySelector<HTMLInputElement>('[data-field="pakal-new-label"]');
-        const result = store.addCustomPakal(labelInput?.value || '');
-        if (result.error) {
-          _pakalError = result.error;
-          rerender();
-          return;
-        }
-        _pakalError = '';
-        _pakalEditingId = null;
-        showToast('פק"ל נוסף', { type: 'success' });
-        rerender();
-        break;
-      }
-      case 'pakal-edit': {
-        _pakalEditingId = actionButton?.dataset.pakalId || null;
-        _pakalError = '';
-        rerender();
-        break;
-      }
-      case 'pakal-cancel': {
-        _pakalEditingId = null;
-        _pakalError = '';
-        rerender();
-        break;
-      }
-      case 'pakal-save': {
-        const pakalId = actionButton?.dataset.pakalId || '';
-        const input = container.querySelector<HTMLInputElement>(`[data-field="pakal-edit-label"][data-pakal-id="${pakalId}"]`);
-        const error = store.renameCustomPakal(pakalId, input?.value || '');
-        if (error) {
-          _pakalError = error;
-          rerender();
-          return;
-        }
-        _pakalEditingId = null;
-        _pakalError = '';
-        showToast('פק"ל עודכן', { type: 'success' });
-        rerender();
-        break;
-      }
-      case 'pakal-delete': {
-        const pakalId = actionButton?.dataset.pakalId || '';
-        const pakal = store.getPakalDefinitions().find(def => def.id === pakalId);
-        if (!pakal) return;
-        const confirmed = await showConfirm(`למחוק את הפק"ל "${pakal.label}"?`, { danger: true, title: 'מחיקת פק"ל', confirmLabel: 'מחק' });
-        if (!confirmed) return;
-        const error = store.removeCustomPakal(pakalId);
-        if (error) {
-          _pakalError = error;
-          rerender();
-          return;
-        }
-        _pakalError = '';
-        showToast('פק"ל נמחק', { type: 'success' });
         rerender();
         break;
       }

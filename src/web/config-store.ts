@@ -34,12 +34,16 @@ import {
   DEFAULT_CATEGORY_BREAK_HOURS,
 } from '../models/types';
 import {
-  BUILTIN_PAKAL_DEFINITIONS,
+  DEFAULT_PAKAL_DEFINITIONS,
   HORESH_PAKAL_ID,
   clonePakalDefinitions,
   normalizePakalDefinitions,
   sanitizePakalIds,
 } from './pakal-utils';
+import {
+  normalizeCertificationDefinitions,
+  sanitizeCertificationIds,
+} from './certification-utils';
 
 // ─── ID Generation ───────────────────────────────────────────────────────────
 
@@ -299,7 +303,7 @@ export function getUndoRedoState(): { canUndo: boolean; canRedo: boolean; undoDe
 const participants: Map<string, Participant> = new Map();
 const dateUnavailabilities: Map<string, DateUnavailability[]> = new Map(); // participantId -> rules
 const notWithPairs: Map<string, Set<string>> = new Map(); // participantId -> set of partner IDs
-let pakalDefinitions: PakalDefinition[] = clonePakalDefinitions(BUILTIN_PAKAL_DEFINITIONS);
+let pakalDefinitions: PakalDefinition[] = clonePakalDefinitions(DEFAULT_PAKAL_DEFINITIONS);
 
 // ─── Certification Definitions ──────────────────────────────────────────────
 
@@ -374,35 +378,46 @@ function ensurePakalDefinitions(definitions: PakalDefinition[]): void {
   }
 }
 
-export function getPakalDefinitions(): PakalDefinition[] {
-  return clonePakalDefinitions(pakalDefinitions);
+function ensureCertificationDefinitions(definitions: CertificationDefinition[]): void {
+  certificationDefinitions = normalizeCertificationDefinitions([...certificationDefinitions, ...definitions]);
 }
 
-export function addCustomPakal(label: string): { definition?: PakalDefinition; error?: string } {
+export function getPakalDefinitions(): PakalDefinition[] {
+  return clonePakalDefinitions(pakalDefinitions.filter(d => !d.deleted));
+}
+
+export function getPakalById(id: string): PakalDefinition | undefined {
+  const def = pakalDefinitions.find(d => d.id === id);
+  return def ? { ...def } : undefined;
+}
+
+export function getPakalLabel(pakalId: string): string {
+  return pakalDefinitions.find(d => d.id === pakalId)?.label ?? pakalId;
+}
+
+export function addPakal(label: string): { definition?: PakalDefinition; error?: string } {
   const normalizedLabel = normalizePakalLabel(label);
   if (!normalizedLabel) return { error: 'שם פק"ל לא יכול להיות ריק' };
-  const duplicate = pakalDefinitions.find(def => def.label.toLowerCase() === normalizedLabel.toLowerCase());
+  const duplicate = pakalDefinitions.find(def => !def.deleted && def.label.toLowerCase() === normalizedLabel.toLowerCase());
   if (duplicate) return { error: 'פק"ל כזה כבר קיים' };
 
   pushSnapshot();
   const definition: PakalDefinition = {
     id: uid('pakal'),
     label: normalizedLabel,
-    builtIn: false,
   };
   pakalDefinitions = [...pakalDefinitions, definition];
   notify();
   return { definition };
 }
 
-export function renameCustomPakal(id: string, label: string): string | null {
+export function renamePakal(id: string, label: string): string | null {
   const normalizedLabel = normalizePakalLabel(label);
   if (!normalizedLabel) return 'שם פק"ל לא יכול להיות ריק';
-  const definition = pakalDefinitions.find(def => def.id === id);
+  const definition = pakalDefinitions.find(def => def.id === id && !def.deleted);
   if (!definition) return 'פק"ל לא נמצא';
-  if (definition.builtIn) return 'לא ניתן לשנות פק"ל מובנה';
 
-  const duplicate = pakalDefinitions.find(def => def.id !== id && def.label.toLowerCase() === normalizedLabel.toLowerCase());
+  const duplicate = pakalDefinitions.find(def => def.id !== id && !def.deleted && def.label.toLowerCase() === normalizedLabel.toLowerCase());
   if (duplicate) return 'פק"ל כזה כבר קיים';
 
   pushSnapshot();
@@ -420,16 +435,12 @@ export function getPakalUsageCount(id: string): number {
   return count;
 }
 
-export function removeCustomPakal(id: string): string | null {
-  const definition = pakalDefinitions.find(def => def.id === id);
-  if (!definition) return 'פק"ל לא נמצא';
-  if (definition.builtIn) return 'לא ניתן למחוק פק"ל מובנה';
-  if (getPakalUsageCount(id) > 0) return 'לא ניתן למחוק פק"ל שנמצא בשימוש';
-
+export function removePakal(id: string): void {
+  const def = pakalDefinitions.find(d => d.id === id && !d.deleted);
+  if (!def) return;
   pushSnapshot();
-  pakalDefinitions = pakalDefinitions.filter(def => def.id !== id);
+  def.deleted = true;
   notify();
-  return null;
 }
 
 function normalizeDateUnavailabilityRule(
@@ -1463,7 +1474,7 @@ export function initStore(): void {
     dateUnavailabilities.clear();
     taskTemplates.clear();
     oneTimeTasks.clear();
-    pakalDefinitions = clonePakalDefinitions(BUILTIN_PAKAL_DEFINITIONS);
+    pakalDefinitions = clonePakalDefinitions(DEFAULT_PAKAL_DEFINITIONS);
     undoStack.length = 0;
     redoStack.length = 0;
     // Reset lazy-loaded participant sets so they re-initialise
@@ -1660,7 +1671,9 @@ export function loadFromStorage(): boolean {
     // Restore participants
     participants.clear();
     dateUnavailabilities.clear();
-    pakalDefinitions = normalizePakalDefinitions(state.pakalDefinitions);
+    pakalDefinitions = state.pakalDefinitions?.length
+      ? normalizePakalDefinitions(state.pakalDefinitions)
+      : clonePakalDefinitions(DEFAULT_PAKAL_DEFINITIONS);
     certificationDefinitions = (state.certificationDefinitions?.length ? state.certificationDefinitions : DEFAULT_CERTIFICATION_DEFINITIONS).map((d: CertificationDefinition) => ({ ...d }));
 
     for (const pData of (state.participants || [])) {
@@ -1815,7 +1828,7 @@ export function factoryReset(): void {
   notWithPairs.clear();
   taskTemplates.clear();
   oneTimeTasks.clear();
-  pakalDefinitions = clonePakalDefinitions(BUILTIN_PAKAL_DEFINITIONS);
+  pakalDefinitions = clonePakalDefinitions(DEFAULT_PAKAL_DEFINITIONS);
   certificationDefinitions = DEFAULT_CERTIFICATION_DEFINITIONS.map(d => ({ ...d }));
   undoStack.length = 0;
   redoStack.length = 0;
@@ -2459,14 +2472,17 @@ function _deepCopyPSet(s: ParticipantSet): ParticipantSet {
 
 function _normalizeParticipantSet(pset: ParticipantSet): ParticipantSet {
   const pakalCatalog = normalizePakalDefinitions(pset.pakalCatalog);
+  const certificationCatalog = normalizeCertificationDefinitions(pset.certificationCatalog);
   const participants = (pset.participants || []).map(snap => ({
     ...snap,
     pakalIds: sanitizePakalIds(snap.pakalIds, pakalCatalog),
+    certifications: sanitizeCertificationIds(snap.certifications, certificationCatalog),
   }));
 
   return {
     ...pset,
     pakalCatalog,
+    certificationCatalog,
     participants: pset.id === 'pset-default' && needsDefaultL0PakalSeed(participants)
       ? applyDefaultL0PakalSeed(participants)
       : participants,
@@ -2529,7 +2545,17 @@ function _snapshotCurrentPakalCatalog(participantSnapshots: ParticipantSnapshot[
   for (const snap of participantSnapshots) {
     for (const pakalId of snap.pakalIds || []) referencedIds.add(pakalId);
   }
-  return getPakalDefinitions().filter(def => def.builtIn || referencedIds.has(def.id));
+  return getPakalDefinitions().filter(def => referencedIds.has(def.id));
+}
+
+function _snapshotCurrentCertificationCatalog(participantSnapshots: ParticipantSnapshot[]): CertificationDefinition[] {
+  const referencedIds = new Set<string>();
+  for (const snap of participantSnapshots) {
+    for (const certId of snap.certifications) referencedIds.add(certId);
+  }
+  return certificationDefinitions
+    .filter(def => referencedIds.has(def.id))
+    .map(def => ({ ...def }));
 }
 
 /** Create the built-in default set from whatever participants are currently loaded. */
@@ -2545,6 +2571,7 @@ function _seedBuiltInParticipantSet(): void {
     description: 'המשתתפים המקוריים',
     participants: snap,
     pakalCatalog,
+    certificationCatalog: _snapshotCurrentCertificationCatalog(snap),
     builtIn: true,
     createdAt: 0,
   });
@@ -2634,6 +2661,7 @@ export function saveCurrentAsParticipantSet(name: string, description: string): 
     description: description.trim(),
     participants: participantsSnapshot,
     pakalCatalog: _snapshotCurrentPakalCatalog(participantsSnapshot),
+    certificationCatalog: _snapshotCurrentCertificationCatalog(participantsSnapshot),
     createdAt: Date.now(),
   };
 
@@ -2661,6 +2689,7 @@ export function loadParticipantSet(id: string): void {
     participants.clear();
     dateUnavailabilities.clear();
     ensurePakalDefinitions(pset.pakalCatalog || []);
+    ensureCertificationDefinitions(pset.certificationCatalog);
 
     // Add participants from the set
     for (const snap of pset.participants) {
@@ -2740,6 +2769,7 @@ export function updateParticipantSet(id: string): boolean {
   const participantsSnapshot = _snapshotCurrentParticipants();
   sets[idx].participants = participantsSnapshot;
   sets[idx].pakalCatalog = _snapshotCurrentPakalCatalog(participantsSnapshot);
+  sets[idx].certificationCatalog = _snapshotCurrentCertificationCatalog(participantsSnapshot);
   _saveParticipantSets();
   return true;
 }
@@ -2785,6 +2815,7 @@ export function duplicateParticipantSet(id: string): ParticipantSet | null {
     description: source.description,
     participants: source.participants, // already deep-copied by getParticipantSetById
     pakalCatalog: source.pakalCatalog,
+    certificationCatalog: source.certificationCatalog,
     builtIn: false,
     createdAt: Date.now(),
   };
@@ -2826,10 +2857,12 @@ export function isParticipantSetDirty(): boolean {
   const current = {
     participants: participantsSnapshot,
     pakalCatalog: _snapshotCurrentPakalCatalog(participantsSnapshot),
+    certificationCatalog: _snapshotCurrentCertificationCatalog(participantsSnapshot),
   };
   return JSON.stringify(current) !== JSON.stringify({
     participants: pset.participants,
     pakalCatalog: pset.pakalCatalog || normalizePakalDefinitions(undefined),
+    certificationCatalog: pset.certificationCatalog,
   });
 }
 

@@ -93,7 +93,9 @@ export interface DateUnavailability {
 export interface PakalDefinition {
   id: string;
   label: string;
-  builtIn?: boolean;
+  /** When true, the definition was deleted but kept as a tombstone so orphan
+   *  badges can still display the original Hebrew label. */
+  deleted?: boolean;
 }
 
 // ─── Participant ─────────────────────────────────────────────────────────────
@@ -449,6 +451,8 @@ export interface ParticipantSet {
   participants: ParticipantSnapshot[];
   /** פק"ל catalog required to render the snapshot correctly. */
   pakalCatalog?: PakalDefinition[];
+  /** Certification catalog required to render the snapshot correctly. */
+  certificationCatalog: CertificationDefinition[];
   /** If true the set cannot be deleted or renamed */
   builtIn?: boolean;
   /** Epoch ms — used for ordering */
