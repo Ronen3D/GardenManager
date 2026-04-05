@@ -25,7 +25,7 @@ import {
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { computeLowPriorityLevelPenalty } from './senior-policy';
 import { isLowPriority } from '../models/level-utils';
-import { dateKey, describeSlot } from '../utils/date-utils';
+import { operationalDateKey, describeSlot } from '../utils/date-utils';
 
 /**
  * SC-3: Workload balance — penalize uneven distribution of non-light assignments.
@@ -170,13 +170,14 @@ export function dailyWorkloadImbalance(
   prebuiltTaskMap?: Map<string, Task>,
   assignmentsByParticipant?: Map<string, Assignment[]>,
   capacities?: Map<string, ParticipantCapacity>,
+  dayStartHour: number = 5,
 ): { dailyPerParticipantStdDev: number; dailyGlobalStdDev: number } {
   const taskMap = prebuiltTaskMap ?? new Map(tasks.map(t => [t.id, t]));
 
-  // ── Collect all calendar days present in the schedule ──
+  // ── Collect all operational days present in the schedule ──
   const allDays = new Set<string>();
   for (const t of tasks) {
-    allDays.add(dateKey(t.timeBlock.start));
+    allDays.add(operationalDateKey(t.timeBlock.start, dayStartHour));
   }
   const dayList = [...allDays].sort();
   if (dayList.length <= 1) {
@@ -185,7 +186,7 @@ export function dailyWorkloadImbalance(
   }
 
   // ── Per-participant daily loads ──
-  // participantId → (dateKey → effectiveHours)
+  // participantId → (operationalDateKey → effectiveHours)
   const dayIndex = new Map<string, number>();
   for (let i = 0; i < dayList.length; i++) dayIndex.set(dayList[i], i);
   const numDays = dayList.length;
@@ -206,7 +207,7 @@ export function dailyWorkloadImbalance(
     for (const a of pAssignments) {
       const task = taskMap.get(a.taskId);
       if (!task) continue;
-      const dk = dateKey(task.timeBlock.start);
+      const dk = operationalDateKey(task.timeBlock.start, dayStartHour);
       const idx = dayIndex.get(dk);
       if (idx === undefined) continue;
       const eff = computeTaskEffectiveHours(task);
@@ -513,6 +514,8 @@ export interface ScoreContext {
   capacities?: Map<string, ParticipantCapacity>;
   /** Optional: "not with" pair preferences for togetherness penalty */
   notWithPairs?: Map<string, Set<string>>;
+  /** Hour (0-23) defining the operational day boundary (default 5) */
+  dayStartHour?: number;
 }
 
 /**
@@ -594,7 +597,7 @@ export function computeScheduleScore(
   totalPenalty += computeTaskNamePreferencePenalty(participants, config, taskMap, byParticipant);
 
   // SC-8: Daily workload balance — pass pre-built data + capacities
-  const dailyBalance = dailyWorkloadImbalance(participants, assignments, tasks, taskMap, byParticipant, ctx?.capacities);
+  const dailyBalance = dailyWorkloadImbalance(participants, assignments, tasks, taskMap, byParticipant, ctx?.capacities, ctx?.dayStartHour ?? 5);
 
   // Composite score
   const minRest = isFinite(fairness.globalMinRest) ? fairness.globalMinRest : 0;
@@ -630,7 +633,7 @@ export function computeScheduleScore(
 interface ParticipantScoreData {
   effectiveHours: number;
   minRest: number;  // min rest gap (Infinity if no blocking rest gaps)
-  dailyLoads: Map<string, number>; // dateKey → effective hours
+  dailyLoads: Map<string, number>; // operationalDateKey → effective hours
   dailyStdDev: number; // std-dev of this participant's daily loads
   isL0: boolean;
   capacity: number; // total available hours
@@ -656,6 +659,7 @@ export class IncrementalScorer {
   private assignmentsByParticipant: Map<string, Assignment[]>;
   private capacities: Map<string, ParticipantCapacity>;
   private dayList: string[];
+  private _dayStartHour = 5;
 
   // Running statistics for L0 pool
   private l0Sum = 0;
@@ -735,9 +739,11 @@ export class IncrementalScorer {
     scorer.assignmentsByParticipant = ctx.assignmentsByParticipant ?? new Map();
     scorer.capacities = ctx.capacities ?? new Map();
 
-    // Collect all days
+    // Collect all operational days
+    const dsh = ctx.dayStartHour ?? 5;
+    scorer._dayStartHour = dsh;
     const allDays = new Set<string>();
-    for (const t of tasks) allDays.add(dateKey(t.timeBlock.start));
+    for (const t of tasks) allDays.add(operationalDateKey(t.timeBlock.start, dsh));
     scorer.dayList = [...allDays].sort();
 
     // Init global day totals
@@ -917,7 +923,7 @@ export class IncrementalScorer {
       if (!task) continue;
       const eff = computeTaskEffectiveHours(task);
       effectiveHours += eff;
-      const dk = dateKey(task.timeBlock.start);
+      const dk = operationalDateKey(task.timeBlock.start, this._dayStartHour);
       dailyLoads.set(dk, (dailyLoads.get(dk) || 0) + eff);
     }
 

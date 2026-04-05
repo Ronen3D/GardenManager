@@ -43,11 +43,13 @@ export class SchedulingEngine {
   private disabledHC?: Set<string>;
   private phantomContext: PhantomContext | null = null;
   private categoryBreakMs?: number;
+  private dayStartHour: number;
 
-  constructor(config: Partial<SchedulerConfig> = {}, disabledHC?: Set<string>, categoryBreakMs?: number) {
+  constructor(config: Partial<SchedulerConfig> = {}, disabledHC?: Set<string>, categoryBreakMs?: number, dayStartHour: number = 5) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.disabledHC = disabledHC;
     this.categoryBreakMs = categoryBreakMs;
+    this.dayStartHour = dayStartHour;
     // Reset assignment counter so IDs start fresh for each new engine instance.
     resetAssignmentCounter();
   }
@@ -69,8 +71,9 @@ export class SchedulingEngine {
     return {
       taskMap: new Map(tasks.map(t => [t.id, t])),
       pMap: new Map(participants.map(p => [p.id, p])),
-      capacities: computeAllCapacities(participants, schedStart, schedEnd),
+      capacities: computeAllCapacities(participants, schedStart, schedEnd, this.dayStartHour),
       notWithPairs,
+      dayStartHour: this.dayStartHour,
     };
   }
 
@@ -252,7 +255,7 @@ export class SchedulingEngine {
     const participants = this.getAllParticipants();
     this._validateInputs(tasks, participants);
 
-    const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC, 0, this.phantomContext ?? undefined, this.categoryBreakMs);
+    const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC, 0, this.phantomContext ?? undefined, this.categoryBreakMs, this.dayStartHour);
     return this._commitOptimizationResult(tasks, participants, result);
   }
 
@@ -283,6 +286,7 @@ export class SchedulingEngine {
       this.disabledHC,
       this.phantomContext ?? undefined,
       this.categoryBreakMs,
+      this.dayStartHour,
     );
 
     return this._commitOptimizationResult(tasks, participants, result);
@@ -584,6 +588,7 @@ export class SchedulingEngine {
       0,
       undefined,
       this.categoryBreakMs,
+      this.dayStartHour,
     );
 
     // Validate

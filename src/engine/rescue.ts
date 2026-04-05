@@ -31,7 +31,7 @@ import { isEligible } from './validator';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { validateHardConstraints } from '../constraints/hard-constraints';
-import { dateKey, describeSlot } from '../utils/date-utils';
+import { operationalDateKey, describeSlot } from '../utils/date-utils';
 
 // ─── Scoring Weights ─────────────────────────────────────────────────────────
 
@@ -61,6 +61,7 @@ function computeDayLoadStdDev(
   participants: Participant[],
   assignments: Assignment[],
   taskMap: Map<string, Task>,
+  dayStartHour: number,
   byParticipant?: Map<string, Assignment[]>,
 ): number {
   // Build or reuse per-participant index — O(A) instead of O(P×A)
@@ -80,7 +81,7 @@ function computeDayLoadStdDev(
       for (const a of pAssignments) {
         const task = taskMap.get(a.taskId);
         if (!task) continue;
-        if (dateKey(task.timeBlock.start) !== dayKey) continue;
+        if (operationalDateKey(task.timeBlock.start, dayStartHour) !== dayKey) continue;
         hours += computeTaskEffectiveHours(task);
       }
     }
@@ -142,6 +143,7 @@ function computeSwapImpact(
   participants: Participant[],
   baseDayStdDevs: Map<string, number>,
   baseWeeklyStdDev: number,
+  dayStartHour: number,
 ): { dailyLoadDelta: number; weeklyLoadDelta: number } {
   // Build swap lookup for O(1) instead of O(swaps) per assignment
   const swapMap = new Map<string, string>();
@@ -169,7 +171,7 @@ function computeSwapImpact(
     const assignment = assignmentById.get(aId);
     if (assignment) {
       const task = taskMap.get(assignment.taskId);
-      if (task) affectedDays.add(dateKey(task.timeBlock.start));
+      if (task) affectedDays.add(operationalDateKey(task.timeBlock.start, dayStartHour));
     }
   }
 
@@ -178,11 +180,11 @@ function computeSwapImpact(
   for (const day of affectedDays) {
     let baseDayStdDev = baseDayStdDevs.get(day);
     if (baseDayStdDev === undefined) {
-      baseDayStdDev = computeDayLoadStdDev(day, participants, baseAssignments, taskMap);
+      baseDayStdDev = computeDayLoadStdDev(day, participants, baseAssignments, taskMap, dayStartHour);
       // Cache for subsequent candidate evaluations at this depth
       baseDayStdDevs.set(day, baseDayStdDev);
     }
-    const newDayStdDev = computeDayLoadStdDev(day, participants, tempAssignments, taskMap, tempByParticipant);
+    const newDayStdDev = computeDayLoadStdDev(day, participants, tempAssignments, taskMap, dayStartHour, tempByParticipant);
     totalDailyDelta += newDayStdDev - baseDayStdDev;
   }
 
@@ -221,6 +223,7 @@ interface RescueContext {
   ) => Assignment[];
   disabledHC?: Set<string>;
   categoryBreakMs?: number;
+  dayStartHour: number;
 }
 
 // ─── Depth 1: Direct replacements ───────────────────────────────────────────
@@ -244,7 +247,7 @@ function generateDepth1Plans(ctx: RescueContext): CandidatePlan[] {
     const swap = { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id };
     const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
       ctx.schedule.assignments, [swap], ctx.taskMap, ctx.schedule.participants,
-      ctx.baseDayStdDevs, ctx.baseWeeklyStdDev,
+      ctx.baseDayStdDevs, ctx.baseWeeklyStdDev, ctx.dayStartHour,
     );
     const impactScore = scorePlan(1, dailyLoadDelta, weeklyLoadDelta);
 
@@ -321,7 +324,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
         ];
         const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
           ctx.schedule.assignments, swapSet, ctx.taskMap, ctx.schedule.participants,
-          ctx.baseDayStdDevs, ctx.baseWeeklyStdDev,
+          ctx.baseDayStdDevs, ctx.baseWeeklyStdDev, ctx.dayStartHour,
         );
         const impactScore = scorePlan(2, dailyLoadDelta, weeklyLoadDelta);
 
@@ -367,7 +370,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
   // Pre-sort participants by daily load proximity to average on the affected day.
   // Participants closest to average workload produce lower-impact swaps, so
   // exploring them first makes the MAX_DEPTH3 cap more likely to include the best plans.
-  const affectedDay = dateKey(ctx.vacatedTask.timeBlock.start);
+  const affectedDay = operationalDateKey(ctx.vacatedTask.timeBlock.start, ctx.dayStartHour);
   const participantLoads = new Map<string, number>();
   let totalLoad = 0;
   for (const p of ctx.schedule.participants) {
@@ -375,7 +378,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
     const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
     for (const a of pAssignments) {
       const task = ctx.taskMap.get(a.taskId);
-      if (task && dateKey(task.timeBlock.start) === affectedDay) {
+      if (task && operationalDateKey(task.timeBlock.start, ctx.dayStartHour) === affectedDay) {
         hours += computeTaskEffectiveHours(task);
       }
     }
@@ -479,7 +482,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
             ];
             const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
               ctx.schedule.assignments, swapSet, ctx.taskMap, ctx.schedule.participants,
-              ctx.baseDayStdDevs, ctx.baseWeeklyStdDev,
+              ctx.baseDayStdDevs, ctx.baseWeeklyStdDev, ctx.dayStartHour,
             );
             const impactScore = scorePlan(3, dailyLoadDelta, weeklyLoadDelta);
 
@@ -547,6 +550,7 @@ export function generateRescuePlans(
   maxPlans?: number,
   disabledHC?: Set<string>,
   categoryBreakMs?: number,
+  dayStartHour: number = 5,
 ): RescueResult {
   // Validate page parameter
   page = Math.max(0, Math.floor(page));
@@ -605,9 +609,9 @@ export function generateRescuePlans(
   }
 
   // Compute baseline metrics
-  const affectedDayKey = dateKey(vacatedTask.timeBlock.start);
+  const affectedDayKey = operationalDateKey(vacatedTask.timeBlock.start, dayStartHour);
   const baseDayStdDevs = new Map<string, number>();
-  baseDayStdDevs.set(affectedDayKey, computeDayLoadStdDev(affectedDayKey, schedule.participants, schedule.assignments, taskMap));
+  baseDayStdDevs.set(affectedDayKey, computeDayLoadStdDev(affectedDayKey, schedule.participants, schedule.assignments, taskMap, dayStartHour));
   const baseWeeklyStdDev = computeTotalLoadStdDev(schedule.participants, schedule.assignments, taskMap);
 
   // Build per-participant assignment index (excluding the vacated assignment)
@@ -627,6 +631,7 @@ export function generateRescuePlans(
     anchor, taskAssignmentsFor,
     disabledHC,
     categoryBreakMs,
+    dayStartHour,
   };
 
   // Generate plans at each depth, expanding only when needed.

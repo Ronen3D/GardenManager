@@ -129,7 +129,7 @@ export interface Participant {
 export interface ParticipantCapacity {
   /** Total available hours across the entire schedule window */
   totalAvailableHours: number;
-  /** Available hours per calendar day (keyed by YYYY-MM-DD dateKey) */
+  /** Available hours per operational day (keyed by YYYY-MM-DD via operationalDateKey) */
   dailyAvailableHours: Map<string, number>;
 }
 
@@ -344,6 +344,8 @@ export interface AlgorithmSettings {
   config: SchedulerConfig;
   /** Hard constraints that are DISABLED (unchecked by user) */
   disabledHardConstraints: HardConstraintCode[];
+  /** Hour (0-23) that defines the start of an operational "day". Default 5 (05:00). */
+  dayStartHour: number;
 }
 
 /** Human-readable labels for hard constraints */
@@ -379,6 +381,7 @@ export const ALL_HC_CODES: HardConstraintCode[] = [
 export const DEFAULT_ALGORITHM_SETTINGS: AlgorithmSettings = {
   config: { ...DEFAULT_CONFIG },
   disabledHardConstraints: [],
+  dayStartHour: 5,
 };
 
 // ─── Algorithm Presets ───────────────────────────────────────────────────────
@@ -400,7 +403,7 @@ export const DEFAULT_PRESET: AlgorithmPreset = {
   id: 'preset-default',
   name: 'ברירת מחדל',
   description: 'הגדרות ברירת המחדל',
-  settings: { ...DEFAULT_ALGORITHM_SETTINGS, config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [] },
+  settings: { ...DEFAULT_ALGORITHM_SETTINGS, config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
   builtIn: true,
   createdAt: 0,
 };

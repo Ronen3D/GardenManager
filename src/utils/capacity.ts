@@ -10,21 +10,19 @@
  */
 
 import { Participant, ParticipantCapacity } from '../models/types';
-import { dateKey } from './date-utils';
+import { operationalDateKey } from './date-utils';
 
 /**
- * Compute available hours for a single calendar day, given a participant's
+ * Compute available hours for a single operational day, given a participant's
  * availability windows.
  *
- * @param day       The calendar date to evaluate (time portion ignored)
+ * @param opDayStart  The start of the operational day (dayStartHour on some calendar date)
  * @param participant The participant with materialized availability windows
- * @returns Available hours on that day (0–24)
+ * @returns Available hours on that operational day (0–24)
  */
-function computeDayAvailableHours(day: Date, participant: Participant): number {
-  const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0);
-  const dayEnd = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59, 999);
-  const dayStartMs = dayStart.getTime();
-  const dayEndMs = dayEnd.getTime() + 1; // exclusive end = midnight next day
+function computeDayAvailableHours(opDayStart: Date, participant: Participant): number {
+  const dayStartMs = opDayStart.getTime();
+  const dayEndMs = dayStartMs + 24 * 3_600_000; // exactly 24 hours
 
   // 1. Compute hours covered by availability windows on this day
   let availableHours = 0;
@@ -54,28 +52,34 @@ function computeDayAvailableHours(day: Date, participant: Participant): number {
  * @param participant    The participant
  * @param scheduleStart  Start of the schedule window (inclusive)
  * @param scheduleEnd    End of the schedule window (exclusive)
+ * @param dayStartHour   The operational day boundary hour (0–23)
  * @returns ParticipantCapacity with totalAvailableHours and dailyAvailableHours
  */
 export function computeParticipantCapacity(
   participant: Participant,
   scheduleStart: Date,
   scheduleEnd: Date,
+  dayStartHour: number = 5,
 ): ParticipantCapacity {
   const dailyAvailableHours = new Map<string, number>();
   let totalAvailableHours = 0;
 
-  // Iterate over each calendar day in the schedule window
-  const cursor = new Date(scheduleStart.getFullYear(), scheduleStart.getMonth(), scheduleStart.getDate());
-  const endDay = new Date(scheduleEnd.getFullYear(), scheduleEnd.getMonth(), scheduleEnd.getDate());
+  // Iterate over each operational day in the schedule window.
+  // An operational day starts at dayStartHour on a calendar date and runs 24 hours.
+  const cursor = new Date(
+    scheduleStart.getFullYear(), scheduleStart.getMonth(), scheduleStart.getDate(),
+    dayStartHour, 0, 0, 0,
+  );
+  const endMs = scheduleEnd.getTime();
 
-  while (cursor <= endDay) {
+  while (cursor.getTime() < endMs) {
     const hours = computeDayAvailableHours(cursor, participant);
-    const dk = dateKey(cursor);
+    const dk = operationalDateKey(cursor, dayStartHour);
     dailyAvailableHours.set(dk, hours);
     totalAvailableHours += hours;
 
-    // Advance to next day
-    cursor.setDate(cursor.getDate() + 1);
+    // Advance to next operational day (24 hours)
+    cursor.setTime(cursor.getTime() + 24 * 3_600_000);
   }
 
   return { totalAvailableHours, dailyAvailableHours };
@@ -87,16 +91,18 @@ export function computeParticipantCapacity(
  * @param participants   All participants
  * @param scheduleStart  Start of the schedule window
  * @param scheduleEnd    End of the schedule window
+ * @param dayStartHour   The operational day boundary hour (0–23)
  * @returns Map from participant ID to ParticipantCapacity
  */
 export function computeAllCapacities(
   participants: Participant[],
   scheduleStart: Date,
   scheduleEnd: Date,
+  dayStartHour: number = 5,
 ): Map<string, ParticipantCapacity> {
   const result = new Map<string, ParticipantCapacity>();
   for (const p of participants) {
-    result.set(p.id, computeParticipantCapacity(p, scheduleStart, scheduleEnd));
+    result.set(p.id, computeParticipantCapacity(p, scheduleStart, scheduleEnd, dayStartHour));
   }
   return result;
 }

@@ -1,13 +1,18 @@
 /**
- * Algorithm Tab — Advanced Algorithm Control Panel
+ * Settings Tab — Collapsible accordion-based settings panel.
  *
- * Organized into logical groups with inline descriptions, collapsible
- * details, and clear explanations for every setting.
+ * Three top-level sections:
+ *   1. Algorithm Settings (weights + hard constraints + presets)
+ *   2. Certifications & Pakals
+ *   3. Additional Settings (display + danger zone)
+ *
+ * Each section is a collapsible accordion, closed by default.
  */
 
 import {
   SchedulerConfig,
   DEFAULT_CONFIG,
+  DEFAULT_ALGORITHM_SETTINGS,
   HardConstraintCode,
   ALL_HC_CODES,
   HC_LABELS,
@@ -151,6 +156,11 @@ const HC_DESCRIPTIONS: Record<HardConstraintCode, string> = {
   'HC-14': 'נדרשת הפסקה מינימלית של 5 שעות בין משימות קטגוריה לאותו משתתף.',
 };
 
+// ─── Accordion state (which sections are expanded) ──────────────────────────
+
+/** Which accordion sections are currently expanded (empty = all collapsed). */
+const _openAccordions = new Set<string>();
+
 // ─── Panel state (mirrors snapshot panel pattern) ────────────────────────────
 
 let _presetPanelOpen = false;
@@ -190,7 +200,186 @@ const CERT_COLOR_PALETTE = [
 
 let _selectedCertColor = '';
 
-function renderCertificationSection(): string {
+// Old renderCertificationSection / renderPakalSection removed —
+// replaced by renderCertificationContent() / renderPakalContent() above.
+
+let _pakalEditingId: string | null = null;
+let _pakalError = '';
+
+// ─── Accordion Helpers ──────────────────────────────────────────────────────
+
+interface AccordionOpts {
+  id: string;
+  icon: string;
+  title: string;
+  summary: string;
+  body: string;
+  className?: string;
+}
+
+function renderAccordion(opts: AccordionOpts): string {
+  const isOpen = _openAccordions.has(opts.id);
+  return `
+  <div class="settings-accordion ${opts.className || ''}" id="${opts.id}">
+    <button class="settings-accordion-header"
+            aria-expanded="${isOpen}"
+            aria-controls="${opts.id}-body"
+            data-action="settings-accordion-toggle"
+            data-accordion="${opts.id}">
+      <span class="settings-acc-icon">${opts.icon}</span>
+      <span class="settings-acc-title">${opts.title}</span>
+      <span class="settings-acc-summary">${opts.summary}</span>
+    </button>
+    <div class="settings-accordion-body ${isOpen ? 'open' : ''}"
+         id="${opts.id}-body" role="region">
+      <div class="settings-accordion-body-inner">
+        ${opts.body}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderNestedAccordion(opts: AccordionOpts): string {
+  const isOpen = _openAccordions.has(opts.id);
+  return `
+  <div class="settings-nested-accordion" id="${opts.id}">
+    <button class="settings-nested-header"
+            aria-expanded="${isOpen}"
+            aria-controls="${opts.id}-body"
+            data-action="settings-accordion-toggle"
+            data-accordion="${opts.id}">
+      <span class="settings-nested-icon">${opts.icon}</span>
+      <span class="settings-nested-title">${opts.title}</span>
+      <span class="settings-nested-summary">${opts.summary}</span>
+    </button>
+    <div class="settings-nested-body ${isOpen ? 'open' : ''}"
+         id="${opts.id}-body" role="region">
+      <div class="settings-nested-body-inner">
+        ${opts.body}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ─── Summary Helpers ────────────────────────────────────────────────────────
+
+function getAlgoSummary(cfg: SchedulerConfig, disabledHC: Set<HardConstraintCode>): string {
+  let modified = 0;
+  for (const group of WEIGHT_GROUPS) {
+    for (const f of group.fields) {
+      if (cfg[f.key] !== DEFAULT_CONFIG[f.key]) modified++;
+    }
+  }
+  const parts: string[] = [];
+  if (modified > 0) parts.push(`${modified} משקלות שונו`);
+  if (disabledHC.size > 0) parts.push(`${disabledHC.size} אילוצים מושבתים`);
+  return parts.length > 0 ? parts.join(', ') : 'ברירת מחדל';
+}
+
+function getWeightsSummary(cfg: SchedulerConfig): string {
+  let modified = 0;
+  for (const group of WEIGHT_GROUPS) {
+    for (const f of group.fields) {
+      if (cfg[f.key] !== DEFAULT_CONFIG[f.key]) modified++;
+    }
+  }
+  const total = WEIGHT_GROUPS.reduce((n, g) => n + g.fields.length, 0);
+  return modified > 0 ? `${total} משקלות, ${modified} שונו` : `${total} משקלות, ברירת מחדל`;
+}
+
+function getConstraintsSummary(disabledHC: Set<HardConstraintCode>): string {
+  if (disabledHC.size === 0) return `${ALL_HC_CODES.length} פעילים`;
+  return `${disabledHC.size} מושבתים מתוך ${ALL_HC_CODES.length}`;
+}
+
+function getCertPakalSummary(): string {
+  const certs = store.getCertificationDefinitions();
+  const pakals = store.getPakalDefinitions();
+  return `${certs.length} הסמכות, ${pakals.length} פק"לים`;
+}
+
+function getDisplaySummary(): string {
+  return `ערכת נושא: ${getStoredTheme() === 'dark' ? 'כהה' : 'בהיר'}`;
+}
+
+// ─── Content Renderers ──────────────────────────────────────────────────────
+
+// ─── General Settings (day boundary) ────────────────────────────────────────
+
+function renderGeneralSettings(dayStartHour: number): string {
+  const isCustom = dayStartHour !== DEFAULT_ALGORITHM_SETTINGS.dayStartHour;
+  const defaultLabel = `${String(DEFAULT_ALGORITHM_SETTINGS.dayStartHour).padStart(2, '0')}:00`;
+  const options = Array.from({ length: 24 }, (_, h) => ({
+    value: String(h),
+    label: `${String(h).padStart(2, '0')}:00`,
+    selected: h === dayStartHour,
+  }));
+
+  return `
+    <div class="algo-grid">
+      <div class="algo-weight-card${isCustom ? ' modified' : ''}">
+        <div class="algo-weight-header">
+          <label class="algo-weight-label" title="השעה שמגדירה את תחילת היום התפעולי">שעת תחילת יום</label>
+          ${isCustom ? `<span class="algo-weight-default" title="ברירת מחדל: ${defaultLabel}">↺ ${defaultLabel}</span>` : ''}
+        </div>
+        <div class="algo-weight-controls">
+          ${renderCustomSelect({
+            id: 'gm-day-start-hour',
+            options,
+            className: 'input-sm',
+          })}
+        </div>
+        <p class="algo-weight-desc">"יום" במערכת מוגדר כ-24 שעות מהשעה הנבחרת. לדוגמה, 05:00 = היום רץ מ-05:00 עד 05:00 למחרת. משפיע על תצוגת יום, הקפאת מצב חי, איזון עומס יומי וייצוא.</p>
+      </div>
+    </div>`;
+}
+
+// ─── Weight Groups ──────────────────────────────────────────────────────────
+
+function renderWeightGroups(cfg: SchedulerConfig): string {
+  let html = '';
+  for (const group of WEIGHT_GROUPS) {
+    html += `
+    <div class="algo-section" style="border:none;box-shadow:none;padding:0.5rem 0;margin-bottom:0.5rem;background:transparent;">
+      <h3 class="algo-section-title">${group.title}</h3>
+      <p class="algo-section-desc">${group.description}</p>
+      <div class="algo-grid">`;
+    for (const f of group.fields) {
+      const val = cfg[f.key];
+      const defaultVal = DEFAULT_CONFIG[f.key];
+      const isCustom = val !== defaultVal;
+      html += renderWeightInput(f, val, defaultVal, isCustom);
+    }
+    html += `
+      </div>
+    </div>`;
+  }
+  return html;
+}
+
+function renderHardConstraints(disabledHC: Set<HardConstraintCode>): string {
+  let html = `
+    <p class="algo-section-desc">כללים שחייבים להתקיים כדי שהלו"ז יהיה תקין. ביטול סימון משבית את הכלל בכל המערכת. <strong>ביטול אילוצים עלול לייצר לוחות לא תקינים.</strong></p>
+    <div class="algo-toggle-list">`;
+  for (const code of ALL_HC_CODES) {
+    const enabled = !disabledHC.has(code);
+    html += `
+      <label class="algo-toggle-item${enabled ? '' : ' disabled'}">
+        <input type="checkbox" data-action="algo-toggle-hc" data-code="${code}" ${enabled ? 'checked' : ''} />
+        <span class="algo-toggle-code">${code}</span>
+        <div class="algo-toggle-content">
+          <span class="algo-toggle-label">${code === 'HC-14' ? getHC14Label(store.getCategoryBreakHours()) : HC_LABELS[code]}</span>
+          <span class="algo-toggle-desc">${HC_DESCRIPTIONS[code]}</span>
+          ${!enabled ? '<span class="algo-toggle-warning">⚠ מושבת — המערכת תדלג על בדיקה זו</span>' : ''}
+        </div>
+      </label>`;
+  }
+  html += `
+    </div>`;
+  return html;
+}
+
+function renderCertificationContent(): string {
   const defs = store.getCertificationDefinitions();
   const usedColors = new Set(defs.map(d => d.color));
   if (!_selectedCertColor || usedColors.has(_selectedCertColor)) {
@@ -198,11 +387,9 @@ function renderCertificationSection(): string {
   }
 
   let html = `
-  <div class="algo-section">
-    <h3 class="algo-section-title">ניהול הסמכות</h3>
+    <h3 class="algo-section-title">הסמכות</h3>
     <p class="algo-section-desc">הוסף או הסר הסמכות. שינויים זמינים מיד בלשוניות משתתפים ומשימות.</p>
     <div class="cert-def-list">`;
-
   for (const def of defs) {
     const usage = store.getCertificationUsage(def.id);
     const usageText = `${usage.participantCount} משתתפים, ${usage.slotCount} משבצות`;
@@ -213,7 +400,6 @@ function renderCertificationSection(): string {
         <button class="btn-icon btn-sm" data-action="cert-remove" data-cert-id="${def.id}" title="הסר הסמכה">✕</button>
       </div>`;
   }
-
   html += `
     </div>
     <div class="cert-add-form">
@@ -228,26 +414,17 @@ function renderCertificationSection(): string {
         }).join('')}
       </div>
       ${usedColors.size >= CERT_COLOR_PALETTE.length ? '<p class="cert-palette-note">כל הצבעים בשימוש — צבע ישותף עם הסמכה קיימת</p>' : ''}
-    </div>
-  </div>`;
-
+    </div>`;
   return html;
 }
 
-// ─── Pakal Management ──────────────────────────────────────────────────────
-
-let _pakalEditingId: string | null = null;
-let _pakalError = '';
-
-function renderPakalSection(): string {
+function renderPakalContent(): string {
   const defs = store.getPakalDefinitions();
 
   let html = `
-  <div class="algo-section">
-    <h3 class="algo-section-title">ניהול פק"לים</h3>
+    <h3 class="algo-section-title">פק"לים</h3>
     <p class="algo-section-desc">הוסף, ערוך או הסר פק"לים. שינויים זמינים מיד בלשונית משתתפים.</p>
     <div class="cert-def-list">`;
-
   for (const def of defs) {
     const usageCount = store.getPakalUsageCount(def.id);
     const usageText = `${usageCount} משתתפים`;
@@ -266,7 +443,6 @@ function renderPakalSection(): string {
         </div>
       </div>`;
   }
-
   html += `
     </div>
     ${_pakalError ? `<div class="preset-validation-error">${escHtml(_pakalError)}</div>` : ''}
@@ -275,10 +451,32 @@ function renderPakalSection(): string {
         <input type="text" class="input-sm" data-field="pakal-new-label" maxlength="40" placeholder="שם פק&quot;ל חדש" />
         <button class="btn-sm btn-primary" data-action="pakal-add">+ הוסף</button>
       </div>
-    </div>
-  </div>`;
-
+    </div>`;
   return html;
+}
+
+function renderDisplayContent(): string {
+  const theme = getStoredTheme();
+  return `
+    <h3 class="algo-section-title">תצוגה</h3>
+    <p class="algo-section-desc">בחירת מראה כללי של המערכת.</p>
+    <div class="theme-segmented">
+      <button class="theme-seg-btn ${theme === 'light' ? 'theme-seg-active' : ''}" data-action="set-theme" data-theme="light">
+        ${SVG_ICONS.sun} <span>בהיר</span>
+      </button>
+      <button class="theme-seg-btn ${theme === 'dark' ? 'theme-seg-active' : ''}" data-action="set-theme" data-theme="dark">
+        ${SVG_ICONS.moon} <span>כהה</span>
+      </button>
+    </div>`;
+}
+
+function renderDangerContent(): string {
+  return `
+    <div class="settings-danger-area">
+      <h3 class="algo-section-title">אזור סכנה</h3>
+      <p class="algo-section-desc">איפוס מלא של כל נתוני המערכת — משתתפים, משימות, שיבוצים, והגדרות.</p>
+      <button class="btn-sm btn-danger-outline" id="btn-factory-reset" title="איפוס מלא של המערכת למצב התחלתי">⚠ איפוס מערכת</button>
+    </div>`;
 }
 
 // ─── Render ──────────────────────────────────────────────────────────────────
@@ -294,14 +492,18 @@ export function renderAlgorithmTab(): string {
   const activePreset = activeId ? presets.find(p => p.id === activeId) : undefined;
   const isBuiltIn = activePreset?.builtIn ?? false;
 
-  // ── Preset Toolbar (simplified — panel behind toggle) ──
-  const presetCount = presets.length;
+  // ── Tab Title ──
   let html = `
   <div class="tab-toolbar">
     <div class="toolbar-left">
-      <h2>הגדרות אלגוריתם</h2>
+      <h2>הגדרות</h2>
     </div>
-    <div class="toolbar-right">
+  </div>`;
+
+  // ── Section 1: Algorithm Settings ──
+  const presetCount = presets.length;
+  const algoBody = `
+    <div class="settings-preset-toolbar">
       ${renderCustomSelect({
         id: 'gm-preset-select',
         options: presets.map(p => ({ value: p.id, label: `${escHtml(p.name)}${p.id === activeId && dirty ? ' (שונה)' : ''}`, selected: p.id === activeId })),
@@ -311,87 +513,54 @@ export function renderAlgorithmTab(): string {
       ${dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
       <button class="btn btn-sm ${_presetPanelOpen ? 'btn-primary' : 'btn-outline'}" data-action="algo-preset-panel-toggle" title="ניהול הגדרות שמורות">💾${presetCount > 0 ? ` (${presetCount})` : ''}</button>
     </div>
-  </div>`;
+    ${_presetPanelOpen ? renderPresetPanel(presets, activeId, dirty, isBuiltIn) : ''}
+    ${renderNestedAccordion({
+      id: 'acc-general',
+      icon: '🕐',
+      title: 'הגדרות כלליות',
+      summary: `שעת תחילת יום: ${String(settings.dayStartHour).padStart(2, '0')}:00`,
+      body: renderGeneralSettings(settings.dayStartHour),
+    })}
+    ${renderNestedAccordion({
+      id: 'acc-weights',
+      icon: '⚖',
+      title: 'משקלות',
+      summary: getWeightsSummary(cfg),
+      body: renderWeightGroups(cfg),
+    })}
+    ${renderNestedAccordion({
+      id: 'acc-constraints',
+      icon: '🔒',
+      title: 'תנאים מחייבים',
+      summary: getConstraintsSummary(disabledHC),
+      body: renderHardConstraints(disabledHC),
+    })}`;
 
-  // ── Collapsible Preset Panel ──
-  if (_presetPanelOpen) {
-    html += renderPresetPanel(presets, activeId, dirty, isBuiltIn);
-  }
+  html += renderAccordion({
+    id: 'acc-algorithm',
+    icon: '⚙',
+    title: 'הגדרות אלגוריתם',
+    summary: getAlgoSummary(cfg, disabledHC),
+    body: algoBody,
+  });
 
-  // ── Grouped Scoring Weight Sections ──
-  for (const group of WEIGHT_GROUPS) {
-    html += `
-  <div class="algo-section">
-    <h3 class="algo-section-title">${group.title}</h3>
-    <p class="algo-section-desc">${group.description}</p>
-    <div class="algo-grid">`;
+  // ── Section 2: Certifications & Pakals ──
+  html += renderAccordion({
+    id: 'acc-entities',
+    icon: '🏅',
+    title: 'הסמכות ופק"לים',
+    summary: getCertPakalSummary(),
+    body: renderCertificationContent() + '<hr class="settings-divider">' + renderPakalContent(),
+  });
 
-    for (const f of group.fields) {
-      const val = cfg[f.key];
-      const defaultVal = DEFAULT_CONFIG[f.key];
-      const isCustom = val !== defaultVal;
-      html += renderWeightInput(f, val, defaultVal, isCustom);
-    }
-
-    html += `
-    </div>
-  </div>`;
-  }
-
-  // ── Hard Constraint Toggles ──
-  html += `
-  <div class="algo-section">
-    <h3 class="algo-section-title">תנאים מחייבים</h3>
-    <p class="algo-section-desc">כללים שחייבים להתקיים כדי שהלו"ז יהיה תקין. ביטול סימון משבית את הכלל בכל המערכת. <strong>ביטול אילוצים עלול לייצר לוחות לא תקינים.</strong></p>
-    <div class="algo-toggle-list">`;
-
-  for (const code of ALL_HC_CODES) {
-    const enabled = !disabledHC.has(code);
-    html += `
-      <label class="algo-toggle-item${enabled ? '' : ' disabled'}">
-        <input type="checkbox" data-action="algo-toggle-hc" data-code="${code}" ${enabled ? 'checked' : ''} />
-        <span class="algo-toggle-code">${code}</span>
-        <div class="algo-toggle-content">
-          <span class="algo-toggle-label">${code === 'HC-14' ? getHC14Label(store.getCategoryBreakHours()) : HC_LABELS[code]}</span>
-          <span class="algo-toggle-desc">${HC_DESCRIPTIONS[code]}</span>
-          ${!enabled ? '<span class="algo-toggle-warning">⚠ מושבת — המערכת תדלג על בדיקה זו</span>' : ''}
-        </div>
-      </label>`;
-  }
-
-  html += `
-    </div>
-  </div>`;
-
-  // ── Certification Management ──
-  html += renderCertificationSection();
-
-  // ── Pakal Management ──
-  html += renderPakalSection();
-
-  // ── Display Settings (theme) ──
-  const theme = getStoredTheme();
-  html += `
-  <div class="algo-section">
-    <h3 class="algo-section-title">תצוגה</h3>
-    <p class="algo-section-desc">בחירת מראה כללי של המערכת.</p>
-    <div class="theme-segmented">
-      <button class="theme-seg-btn ${theme === 'light' ? 'theme-seg-active' : ''}" data-action="set-theme" data-theme="light">
-        ${SVG_ICONS.sun} <span>בהיר</span>
-      </button>
-      <button class="theme-seg-btn ${theme === 'dark' ? 'theme-seg-active' : ''}" data-action="set-theme" data-theme="dark">
-        ${SVG_ICONS.moon} <span>כהה</span>
-      </button>
-    </div>
-  </div>`;
-
-  // ── Factory Reset (danger zone) ──
-  html += `
-  <div class="algo-section algo-danger-zone">
-    <h3 class="algo-section-title">אזור סכנה</h3>
-    <p class="algo-section-desc">איפוס מלא של כל נתוני המערכת — משתתפים, משימות, שיבוצים, והגדרות.</p>
-    <button class="btn-sm btn-danger-outline" id="btn-factory-reset" title="איפוס מלא של המערכת למצב התחלתי">⚠ איפוס מערכת</button>
-  </div>`;
+  // ── Section 3: Additional Settings ──
+  html += renderAccordion({
+    id: 'acc-additional',
+    icon: '🎨',
+    title: 'הגדרות נוספות',
+    summary: getDisplaySummary(),
+    body: renderDisplayContent() + renderDangerContent(),
+  });
 
   return html;
 }
@@ -733,6 +902,14 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
   // ── Custom preset select wiring ──
   wireCustomSelect(container, 'gm-preset-select', (id) => {
     store.loadPreset(id);
+    rerender();
+  });
+
+  // ── Day start hour select ──
+  wireCustomSelect(container, 'gm-day-start-hour', (v) => {
+    const hour = parseInt(v, 10);
+    if (isNaN(hour) || hour < 0 || hour > 23) return;
+    store.setAlgorithmSettings({ dayStartHour: hour });
     rerender();
   });
 

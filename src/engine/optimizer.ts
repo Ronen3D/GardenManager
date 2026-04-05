@@ -35,7 +35,7 @@ import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt, CATEGOR
 import { computeScheduleScore, ScoreContext, IncrementalScorer } from '../constraints/soft-constraints';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { isEligible, getRejectionReason } from './validator';
-import { dateKey, describeSlot } from '../utils/date-utils';
+import { operationalDateKey, describeSlot } from '../utils/date-utils';
 import { computeAllCapacities } from '../utils/capacity';
 import { PhantomContext } from './phantom';
 
@@ -175,13 +175,14 @@ function getEligibleCandidates(
    *  (tie-break only) to keep tight groups available for same-group duties. */
   sameGroupEligibleCount?: Map<string, number>,
   categoryBreakMs?: number,
+  dayStartHour?: number,
 ): Participant[] {
   const eligible = participants.filter((p) =>
     isEligibleForSlot(p, task, slot, assignmentsByParticipant.get(p.id) || [], taskMap, disabledHC, categoryBreakMs),
   );
 
-  // Calendar day of the task being assigned
-  const taskDay = dateKey(task.timeBlock.start);
+  // Operational day of the task being assigned
+  const taskDay = operationalDateKey(task.timeBlock.start, dayStartHour ?? 5);
 
   // ── C1 FIX: Single composite comparator ──
   // Merges what were three sequential (destructive) sorts into one stable sort.
@@ -372,6 +373,7 @@ export function greedyAssign(
   taskOrderJitter: number = 0,
   phantomContext?: PhantomContext,
   categoryBreakMs?: number,
+  dayStartHour: number = 5,
 ): { assignments: Assignment[]; unfilledSlots: { taskId: string; slotId: string; reason: string }[] } {
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
@@ -396,7 +398,7 @@ export function greedyAssign(
 
   // Track workload
   const workload = new Map<string, number>();
-  // Track per-day workload: participantId → (dateKey → effectiveHours)
+  // Track per-day workload: participantId → (operationalDateKey → effectiveHours)
   const dailyWorkload = new Map<string, Map<string, number>>();
   for (const p of participants) {
     workload.set(p.id, 0);
@@ -415,7 +417,7 @@ export function greedyAssign(
           (workload.get(a.participantId) || 0) + eff,
         );
       }
-      const dk = dateKey(task.timeBlock.start);
+      const dk = operationalDateKey(task.timeBlock.start, dayStartHour);
       let pDaily = dailyWorkload.get(a.participantId);
       if (!pDaily) { pDaily = new Map(); dailyWorkload.set(a.participantId, pDaily); }
       pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
@@ -471,7 +473,7 @@ export function greedyAssign(
   for (const task of sortedTasks) {
     // For same-group tasks (Adanit), we need special handling
     if (task.sameGroupRequired) {
-      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant, dailyWorkload, disabledHC, categoryBreakMs);
+      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant, dailyWorkload, disabledHC, categoryBreakMs, dayStartHour);
       if (!assigned) {
         // Mark all slots as unfilled with specific reasons
         for (const slot of task.slots) {
@@ -512,6 +514,7 @@ export function greedyAssign(
         disabledHC,
         sameGroupEligibleCount,
         categoryBreakMs,
+        dayStartHour,
       );
 
       if (candidates.length > 0) {
@@ -532,7 +535,7 @@ export function greedyAssign(
           workload.set(chosen.id, (workload.get(chosen.id) || 0) + eff);
         }
         // Always update daily workload (light tasks get floor of 1h)
-        const dk = dateKey(task.timeBlock.start);
+        const dk = operationalDateKey(task.timeBlock.start, dayStartHour);
         let pDaily = dailyWorkload.get(chosen.id);
         if (!pDaily) { pDaily = new Map(); dailyWorkload.set(chosen.id, pDaily); }
         pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
@@ -613,7 +616,7 @@ export function greedyAssign(
             if (!blockingTask.isLight) {
               workload.set(p.id, (workload.get(p.id) || 0) - blockEff);
             }
-            const blockDk = dateKey(blockingTask.timeBlock.start);
+            const blockDk = operationalDateKey(blockingTask.timeBlock.start, dayStartHour);
             const pDailyMap = dailyWorkload.get(p.id);
             if (pDailyMap) pDailyMap.set(blockDk, (pDailyMap.get(blockDk) || 0) - blockDailyEff);
 
@@ -651,7 +654,7 @@ export function greedyAssign(
             if (!task.isLight) {
               workload.set(p.id, (workload.get(p.id) || 0) + targetEff);
             }
-            const targetDk = dateKey(task.timeBlock.start);
+            const targetDk = operationalDateKey(task.timeBlock.start, dayStartHour);
             let pDailyTarget = dailyWorkload.get(p.id);
             if (!pDailyTarget) { pDailyTarget = new Map(); dailyWorkload.set(p.id, pDailyTarget); }
             pDailyTarget.set(targetDk, (pDailyTarget.get(targetDk) || 0) + targetDailyEff);
@@ -734,6 +737,7 @@ function assignSameGroupTask(
   dailyWorkload?: Map<string, Map<string, number>>,
   disabledHC?: Set<string>,
   categoryBreakMs?: number,
+  dayStartHour: number = 5,
 ): boolean {
   // Already have some locked assignments for this task?
   const lockedForTask = currentAssignments.filter((a) => a.taskId === task.id);
@@ -810,6 +814,7 @@ function assignSameGroupTask(
         disabledHC,
         undefined,
         categoryBreakMs,
+        dayStartHour,
       );
 
       if (candidates.length > 0) {
@@ -843,7 +848,7 @@ function assignSameGroupTask(
             );
           }
           if (dailyWorkload) {
-            const dk = dateKey(t.timeBlock.start);
+            const dk = operationalDateKey(t.timeBlock.start, dayStartHour);
             let pDaily = dailyWorkload.get(a.participantId);
             if (!pDaily) { pDaily = new Map(); dailyWorkload.set(a.participantId, pDaily); }
             pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
@@ -1050,6 +1055,7 @@ export function localSearchOptimize(
   unfilledSlots?: { taskId: string; slotId: string; reason: string }[],
   phantomContext?: PhantomContext,
   categoryBreakMs?: number,
+  dayStartHour: number = 5,
 ): { assignments: Assignment[]; filledSlots: string[] } {
   const current = [...assignments.map((a) => ({ ...a }))];
 
@@ -1093,7 +1099,7 @@ export function localSearchOptimize(
     if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
     if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
   }
-  const capacities = computeAllCapacities(participants, schedStart, schedEnd);
+  const capacities = computeAllCapacities(participants, schedStart, schedEnd, dayStartHour);
 
   // Build ScoreContext once — taskMap, pMap, and the mutable indices are
   // kept consistent via in-place patching so the same ctx is valid for
@@ -1113,6 +1119,7 @@ export function localSearchOptimize(
     assignmentsByTask: byTask,
     capacities,
     notWithPairs,
+    dayStartHour,
   };
 
   let currentScore = computeScheduleScore(tasks, participants, current, config, scoreCtx);
@@ -1448,11 +1455,12 @@ export function optimize(
   taskOrderJitter: number = 0,
   phantomContext?: PhantomContext,
   categoryBreakMs?: number,
+  dayStartHour: number = 5,
 ): OptimizationResult {
   const startTime = Date.now();
 
   // Phase 1: Greedy construction
-  const greedy = greedyAssign(tasks, participants, lockedAssignments, disabledHC, taskOrderJitter, phantomContext, categoryBreakMs);
+  const greedy = greedyAssign(tasks, participants, lockedAssignments, disabledHC, taskOrderJitter, phantomContext, categoryBreakMs, dayStartHour);
 
   // Phase 2: Local search improvement (also tries to fill unfilled slots)
   const lsResult = localSearchOptimize(
@@ -1464,6 +1472,7 @@ export function optimize(
     greedy.unfilledSlots,
     phantomContext,
     categoryBreakMs,
+    dayStartHour,
   );
 
   // Remove slots that SA managed to fill
@@ -1481,7 +1490,7 @@ export function optimize(
     if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
     if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
   }
-  const finalCapacities = computeAllCapacities(participants, schedStart, schedEnd);
+  const finalCapacities = computeAllCapacities(participants, schedStart, schedEnd, dayStartHour);
   // Rebuild notWithPairs for final scoring
   const finalNotWithPairs = new Map<string, Set<string>>();
   for (const p of participants) {
@@ -1494,6 +1503,7 @@ export function optimize(
     pMap: new Map(participants.map(p => [p.id, p])),
     capacities: finalCapacities,
     notWithPairs: finalNotWithPairs,
+    dayStartHour,
   };
   const score = computeScheduleScore(tasks, participants, lsResult.assignments, config, finalCtx);
 
@@ -1672,6 +1682,7 @@ export function optimizeMultiAttemptAsync(
   disabledHC?: Set<string>,
   phantomContext?: PhantomContext,
   categoryBreakMs?: number,
+  dayStartHour: number = 5,
 ): Promise<OptimizationResult> {
   return new Promise((resolve, reject) => {
     let best: OptimizationResult | null = null;
@@ -1707,7 +1718,7 @@ export function optimizeMultiAttemptAsync(
 
         // Task-order jitter: 0 for first attempt, 0.3 for subsequent
         const jitter = i === 0 ? 0 : 0.3;
-        const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter, phantomContext, categoryBreakMs);
+        const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter, phantomContext, categoryBreakMs, dayStartHour);
 
         const improved = best === null || isBetterResult(result, best);
         if (improved) {

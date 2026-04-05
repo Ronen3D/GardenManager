@@ -45,7 +45,6 @@ function getDisplayCategory(task: Task): string {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const DAY_START_HOUR = 5;
 const PAGE_MARGIN = 8;                // mm from each edge
 const COL_GAP = 4;                    // mm between grid columns
 const ROW_GAP = 3;                    // mm between grid rows
@@ -102,18 +101,18 @@ function createDoc(): jsPDF {
   return doc;
 }
 
-function getDayWindow(schedule: Schedule, dayIndex: number): { start: Date; end: Date } {
+function getDayWindow(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): { start: Date; end: Date } {
   const allStarts = schedule.tasks.map(t => new Date(t.timeBlock.start).getTime());
   const scheduleStart = new Date(Math.min(...allStarts));
   const dayAnchor = addDays(scheduleStart, dayIndex - 1);
   const dayStart = new Date(dayAnchor);
-  if (dayStart.getHours() < DAY_START_HOUR) dayStart.setDate(dayStart.getDate() - 1);
-  dayStart.setHours(DAY_START_HOUR, 0, 0, 0);
+  if (dayStart.getHours() < dayStartHour) dayStart.setDate(dayStart.getDate() - 1);
+  dayStart.setHours(dayStartHour, 0, 0, 0);
   return { start: dayStart, end: addDays(dayStart, 1) };
 }
 
-function getTasksForDay(schedule: Schedule, dayIndex: number): Task[] {
-  const { start, end } = getDayWindow(schedule, dayIndex);
+function getTasksForDay(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): Task[] {
+  const { start, end } = getDayWindow(schedule, dayIndex, dayStartHour);
   return schedule.tasks.filter(t => {
     const s = new Date(t.timeBlock.start).getTime();
     return s >= start.getTime() && s < end.getTime();
@@ -456,8 +455,8 @@ function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
  * layout engine for spatial arrangement. Sections are packed into balanced
  * rows with proportional widths — the same algorithm as the on-screen grid.
  */
-function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number): void {
-  const { start } = getDayWindow(schedule, dayIndex);
+function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStartHour: number = 5): void {
+  const { start } = getDayWindow(schedule, dayIndex, dayStartHour);
   const dayName = HEBREW_DAYS[start.getDay()];
   const numDays = getNumDays(schedule);
 
@@ -467,7 +466,7 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number): void {
     `יום ${dayIndex} / ${numDays}`,
   );
 
-  const dayTasks = getTasksForDay(schedule, dayIndex);
+  const dayTasks = getTasksForDay(schedule, dayIndex, dayStartHour);
   if (dayTasks.length === 0) {
     doc.setFontSize(10); doc.setTextColor(150, 150, 150);
     doc.text(rtl('אין משימות ביום זה'), doc.internal.pageSize.getWidth() / 2, topY + 15, { align: 'center' });
@@ -494,9 +493,9 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number): void {
 /**
  * Export a single day's schedule as a one-page A4 landscape PDF.
  */
-export function exportDailyDetail(schedule: Schedule, dayIndex: number): void {
+export function exportDailyDetail(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): void {
   const doc = createDoc();
-  renderDayPage(doc, schedule, dayIndex);
+  renderDayPage(doc, schedule, dayIndex, dayStartHour);
   doc.save(`daily-day${dayIndex}.pdf`);
 }
 
@@ -505,13 +504,13 @@ export function exportDailyDetail(schedule: Schedule, dayIndex: number): void {
 /**
  * Export one page per day — all days in a single PDF file.
  */
-export function exportWeeklyOverview(schedule: Schedule): void {
+export function exportWeeklyOverview(schedule: Schedule, dayStartHour: number = 5): void {
   const doc = createDoc();
   const numDays = getNumDays(schedule);
 
   for (let d = 1; d <= numDays; d++) {
     if (d > 1) doc.addPage();
-    renderDayPage(doc, schedule, d);
+    renderDayPage(doc, schedule, d, dayStartHour);
   }
 
   doc.save('schedule-overview.pdf');

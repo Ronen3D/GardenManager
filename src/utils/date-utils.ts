@@ -28,10 +28,34 @@ export function describeSlot(
   return slotLabel ? `${slotLabel} ${time}` : time;
 }
 
-/** Calendar-date key from a Date (YYYY-MM-DD in local time) */
-export function dateKey(d: Date): string {
+/**
+ * Calendar-date key from a Date (YYYY-MM-DD in local time).
+ *
+ * For scheduling/day-grouping logic, use {@link operationalDateKey} instead —
+ * it respects the configurable day boundary. This function uses midnight as
+ * the day boundary and should only be used for calendar-date formatting
+ * (UI display, import/export filenames, etc.).
+ */
+export function calendarDateKey(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * Date key for the "operational day" a timestamp belongs to.
+ * If the hour is before dayStartHour, the timestamp is attributed
+ * to the previous calendar day's operational period.
+ *
+ * Engine/scheduling code should ALWAYS use this function, never
+ * calendarDateKey(), to ensure day grouping respects the configured
+ * boundary. calendarDateKey() exists only for calendar-date formatting
+ * (UI display, import/export filenames, etc.).
+ */
+export function operationalDateKey(d: Date, dayStartHour: number): string {
+  if (d.getHours() < dayStartHour) {
+    return calendarDateKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1));
+  }
+  return calendarDateKey(d);
 }

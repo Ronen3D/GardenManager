@@ -67,7 +67,7 @@ export function renderProfileView(ctx: ProfileContext): string {
 
   // Left column: Agenda
   html += '<div class="profile-left">';
-  html += renderPersonalAgenda(p, myTasks, numDays, baseDate, ctx.frozenAssignmentIds, ctx.showSosButtons);
+  html += renderPersonalAgenda(p, myTasks, numDays, baseDate, ctx.frozenAssignmentIds, ctx.showSosButtons, store.getDayStartHour());
   html += '</div>';
 
   // Right column: Unavailability + Metrics
@@ -149,8 +149,8 @@ function renderPersonalAgenda(
   baseDate: Date,
   frozenAssignmentIds?: Set<string>,
   showSosButtons?: boolean,
+  dayStartHour: number = 5,
 ): string {
-  const DAY_START_HOUR = 5;
 
   let html = `<div class="profile-card">
     <h3 class="profile-card-title">📅 לו"ז אישי</h3>
@@ -158,8 +158,8 @@ function renderPersonalAgenda(
 
   for (let d = 1; d <= numDays; d++) {
     const dayDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-    const dayStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), DAY_START_HOUR, 0);
-    const dayEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1, DAY_START_HOUR, 0);
+    const dayStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), dayStartHour, 0);
+    const dayEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1, dayStartHour, 0);
 
     // Anchor each task to the day it STARTS in (no duplicates across days).
     // Cross-day tasks are displayed once, with a visual indicator.
@@ -187,7 +187,7 @@ function renderPersonalAgenda(
         // Detect cross-day tasks (end time extends past this day's boundary)
         const crossDay = task.timeBlock.end.getTime() > dayEnd.getTime();
         const endDayIdx = crossDay
-          ? Math.ceil((task.timeBlock.end.getTime() - new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), DAY_START_HOUR, 0).getTime()) / 86400000)
+          ? Math.ceil((task.timeBlock.end.getTime() - new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0).getTime()) / 86400000)
           : 0;
         const crossDayBadge = crossDay
           ? `<span class="badge badge-sm" style="background:#555;color:#ffc107" title="ממשיך ליום ${endDayIdx}">← יום ${endDayIdx}</span>`

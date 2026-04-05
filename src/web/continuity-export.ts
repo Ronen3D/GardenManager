@@ -27,7 +27,7 @@ export function exportDaySnapshot(
   schedule: Schedule,
   dayIndex: number,
   scheduleBaseDate: Date,
-  dayStartHour: number = 5,
+  dayStartHour: number,
 ): ContinuitySnapshot {
   // Compute day window — same formula as getDayWindow() in app.ts
   const dayStart = new Date(

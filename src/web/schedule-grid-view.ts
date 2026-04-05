@@ -12,7 +12,7 @@ import {
 
 // ─── Main View Export ────────────────────────────────────────────────────────
 
-export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveMode: LiveModeState, manualCtx?: ManualBuildRenderCtx): string {
+export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveMode: LiveModeState, manualCtx?: ManualBuildRenderCtx, dayStartHour: number = 5): string {
     if (schedule.tasks.length === 0) return '<div class="alert alert-info">אין משימות בשבצ"ק.</div>';
 
     // 1. Calculate Day Range
@@ -23,10 +23,10 @@ export function renderScheduleGrid(schedule: Schedule, currentDay: number, liveM
     const dayAnchor = addDays(scheduleStart, currentDay - 1);
 
     const dayStart = new Date(dayAnchor);
-    if (dayStart.getHours() < 5) {
+    if (dayStart.getHours() < dayStartHour) {
         dayStart.setDate(dayStart.getDate() - 1);
     }
-    dayStart.setHours(5, 0, 0, 0);
+    dayStart.setHours(dayStartHour, 0, 0, 0);
     const dayEnd = addDays(dayStart, 1);
 
     const startTimeNum = dayStart.getTime();

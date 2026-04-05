@@ -148,12 +148,13 @@ export function getFutureWindow(
   scheduleDate: Date,
   scheduleDays: number,
   anchor: Date,
+  dayStartHour: number,
 ): TimeBlock {
   const scheduleEnd = new Date(
     scheduleDate.getFullYear(),
     scheduleDate.getMonth(),
     scheduleDate.getDate() + scheduleDays,
-    5, 0, // 05:00 end boundary (matches DAY_START_HOUR)
+    dayStartHour, 0,
   );
 
   return {
@@ -171,7 +172,7 @@ export function getAnchorDayIndex(
   scheduleDate: Date,
   scheduleDays: number,
   anchor: Date,
-  dayStartHour: number = 5,
+  dayStartHour: number,
 ): number {
   for (let d = 1; d <= scheduleDays; d++) {
     const dayStart = new Date(
@@ -211,7 +212,7 @@ export function isDayFrozen(
   dayIndex: number,
   scheduleDate: Date,
   anchor: Date,
-  dayStartHour: number = 5,
+  dayStartHour: number,
 ): boolean {
   // The end of this day = start of next day
   const dayEnd = new Date(
@@ -231,7 +232,7 @@ export function isDayPartiallyFrozen(
   dayIndex: number,
   scheduleDate: Date,
   anchor: Date,
-  dayStartHour: number = 5,
+  dayStartHour: number,
 ): boolean {
   const dayStart = new Date(
     scheduleDate.getFullYear(),

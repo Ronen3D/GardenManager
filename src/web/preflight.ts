@@ -24,6 +24,7 @@ import {
   getGroups,
   getScheduleDate,
   getScheduleDays,
+  getDayStartHour,
 } from './config-store';
 import { computeAllCapacities } from '../utils/capacity';
 
@@ -150,7 +151,7 @@ function checkCapacity(participants: Participant[], templates: TaskTemplate[], o
   const scheduleStart = getScheduleDate();
   const scheduleEnd = new Date(scheduleStart);
   scheduleEnd.setDate(scheduleEnd.getDate() + numDays - 1);
-  const capacities = computeAllCapacities(participants, scheduleStart, scheduleEnd);
+  const capacities = computeAllCapacities(participants, scheduleStart, scheduleEnd, getDayStartHour());
   let totalAvailableParticipantHours = 0;
   for (const cap of capacities.values()) {
     totalAvailableParticipantHours += cap.totalAvailableHours;

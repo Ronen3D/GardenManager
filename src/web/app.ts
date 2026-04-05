@@ -130,7 +130,7 @@ let _optimProgress: {
 } | null = null;
 
 /** The 24h window boundary hour (05:00–05:00 by default) */
-const DAY_START_HOUR = 5;
+// Day boundary hour is now configurable via store.getDayStartHour()
 
 /** Sidebar workload bar thresholds (fraction of total period hours). */
 const WORKLOAD_OVER_THRESHOLD = 0.18;
@@ -203,7 +203,7 @@ function resolveLogicalDayTimestamp(dayIndex: number, timeValue: string): Date |
   const parsed = parseTimeInput(timeValue);
   if (!parsed) return null;
   const base = store.getScheduleDate();
-  const dayOffset = parsed.hours < DAY_START_HOUR ? dayIndex : dayIndex - 1;
+  const dayOffset = parsed.hours < store.getDayStartHour() ? dayIndex : dayIndex - 1;
   return new Date(
     base.getFullYear(),
     base.getMonth(),
@@ -235,7 +235,7 @@ function renderAvailabilityInspectorInline(): string {
 
   return `
     ${renderCustomSelect({ id: 'gm-availability-day', options: dayOptions, className: 'input-sm availability-day-select' })}
-    <input type="time" id="gm-availability-time" class="input-sm availability-time-input" value="${_availabilityInspectorTime}" step="60" title="שעה לבדיקת זמינות (00:00–04:59 נספרות לסוף היום)" />
+    <input type="time" id="gm-availability-time" class="input-sm availability-time-input" value="${_availabilityInspectorTime}" step="60" title="${store.getDayStartHour() > 0 ? `שעה לבדיקת זמינות (00:00–${String(store.getDayStartHour() - 1).padStart(2, '0')}:59 נספרות לסוף היום)` : 'שעה לבדיקת זמינות'}" />
     <button class="btn-sm btn-primary" id="btn-open-availability-inspector" title="בדיקת זמינות לפי זמן">הצג זמינות</button>
   `;
 }
@@ -330,8 +330,8 @@ function filterVisibleViolations(violations: ConstraintViolation[]): ConstraintV
  */
 function getDayWindow(dayIndex: number): { start: Date; end: Date } {
   const base = store.getScheduleDate();
-  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex - 1, DAY_START_HOUR, 0);
-  const end = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex, DAY_START_HOUR, 0);
+  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex - 1, store.getDayStartHour(), 0);
+  const end = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex, store.getDayStartHour(), 0);
   return { start, end };
 }
 
@@ -618,10 +618,10 @@ function renderDayNavigator(): string {
     let frozenTag = '';
     let frozenClass = '';
     if (liveMode.enabled) {
-      if (isDayFrozen(d, baseDate, liveMode.currentTimestamp, DAY_START_HOUR)) {
+      if (isDayFrozen(d, baseDate, liveMode.currentTimestamp, store.getDayStartHour())) {
         frozenTag = `<span class="day-frozen-badge" title="היום הזה מוקפא כי הוא בעבר">🧊</span>`;
         frozenClass = ' day-tab-frozen';
-      } else if (isDayPartiallyFrozen(d, baseDate, liveMode.currentTimestamp, DAY_START_HOUR)) {
+      } else if (isDayPartiallyFrozen(d, baseDate, liveMode.currentTimestamp, store.getDayStartHour())) {
         frozenTag = `<span class="day-frozen-badge day-frozen-partial" title="מוקפא חלקית לפי שעה נוכחית">⏳</span>`;
         frozenClass = ' day-tab-partial-frozen';
       }
@@ -860,8 +860,8 @@ function renderScheduleTab(): string {
       let selected = false;
       if (liveMode.enabled) {
         const anchor = liveMode.currentTimestamp;
-        const dayStart = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1, DAY_START_HOUR, 0);
-        const dayEnd = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d, DAY_START_HOUR, 0);
+        const dayStart = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1, store.getDayStartHour(), 0);
+        const dayEnd = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d, store.getDayStartHour(), 0);
         selected = anchor.getTime() >= dayStart.getTime() && anchor.getTime() < dayEnd.getTime();
       }
       daySelectOpts.push({ value: String(d), label, selected });
@@ -871,7 +871,7 @@ function renderScheduleTab(): string {
       daySelectOpts[0].selected = true;
     }
 
-    const anchorHour = liveMode.enabled ? liveMode.currentTimestamp.getHours() : 5;
+    const anchorHour = liveMode.enabled ? liveMode.currentTimestamp.getHours() : store.getDayStartHour();
     const hourSelectOpts: { value: string; label: string; selected: boolean }[] = [];
     for (let h = 0; h < 24; h++) {
       hourSelectOpts.push({ value: String(h), label: `${String(h).padStart(2, '0')}:00`, selected: h === anchorHour });
@@ -980,7 +980,7 @@ function renderScheduleTab(): string {
   const manualCtx = { active: _manualBuildActive, selectedTaskId: _manualSelectedTaskId ?? undefined, selectedSlotId: _manualSelectedSlotId ?? undefined };
   html += `<div class="schedule-layout">`;
   html += `<div class="schedule-main">`;
-  html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState(), manualCtx)}</section>`;
+  html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState(), manualCtx, store.getDayStartHour())}</section>`;
   // Participant warehouse (desktop: inline; mobile: hidden, shown via bottom sheet)
   if (_manualBuildActive) {
     html += renderParticipantWarehouse(s);
@@ -1543,6 +1543,7 @@ function loadScheduleSnapshot(snapshotId: string): void {
     algoSettings.config,
     store.getDisabledHCSet(),
     store.getCategoryBreakHours() * 3600000,
+    store.getDayStartHour(),
   );
 
   // 4. Load data into engine
@@ -1870,6 +1871,7 @@ async function doGenerate(): Promise<void> {
     algoSettings.config,
     store.getDisabledHCSet(),
     store.getCategoryBreakHours() * 3600000,
+    store.getDayStartHour(),
   );
   engine.addParticipants(participants);
   engine.addTasks(tasks);
@@ -1993,6 +1995,7 @@ function doCreateManualSchedule(): void {
     algoSettings.config,
     store.getDisabledHCSet(),
     store.getCategoryBreakHours() * 3600000,
+    store.getDayStartHour(),
   );
   engine.addParticipants(participants);
   engine.addTasks(tasks);
@@ -2209,7 +2212,7 @@ function openRescueModal(assignmentId: string): void {
 
   _rescuePage = 0;
   _rescueAssignmentId = assignmentId;
-  _rescueResult = generateRescuePlans(currentSchedule, request, liveMode.currentTimestamp, _rescuePage, undefined, store.getDisabledHCSet(), store.getCategoryBreakHours() * 3600000);
+  _rescueResult = generateRescuePlans(currentSchedule, request, liveMode.currentTimestamp, _rescuePage, undefined, store.getDisabledHCSet(), store.getCategoryBreakHours() * 3600000, store.getDayStartHour());
   showRescueModal();
 }
 
@@ -2476,7 +2479,7 @@ function wireRescueModalEvents(): void {
     _rescuePage++;
     const liveMode = store.getLiveModeState();
     const wantTotal = (_rescuePage + 1) * 3; // PAGE_SIZE = 3
-    const result = generateRescuePlans(currentSchedule, _rescueResult.request, liveMode.currentTimestamp, 0, wantTotal, store.getDisabledHCSet(), store.getCategoryBreakHours() * 3600000);
+    const result = generateRescuePlans(currentSchedule, _rescueResult.request, liveMode.currentTimestamp, 0, wantTotal, store.getDisabledHCSet(), store.getCategoryBreakHours() * 3600000, store.getDayStartHour());
     // Ranks are already sequential from the engine (1-based per returned plan)
     _rescueResult = result;
     showRescueModal();
@@ -2751,7 +2754,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.7.9</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3266,7 +3269,7 @@ function wireScheduleEvents(container: HTMLElement): void {
   if (exportDayBtn && currentSchedule) {
     exportDayBtn.addEventListener('click', () => {
       if (!currentSchedule) return;
-      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), DAY_START_HOUR);
+      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), store.getDayStartHour());
       const json = JSON.stringify(snapshot, null, 2);
       navigator.clipboard.writeText(json).then(() => {
         showToast(`יום ${currentDay} הועתק ללוח — הדבק בשבצ"ק הבא`, { type: 'success' });
@@ -3289,7 +3292,7 @@ function wireScheduleEvents(container: HTMLElement): void {
       if (remainingDays < 1) return;
 
       // 1. Export snapshot for the current day
-      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), DAY_START_HOUR);
+      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), store.getDayStartHour());
       _continuityJson = JSON.stringify(snapshot, null, 2);
 
       // 2. Update schedule start date to end of current day
@@ -3727,11 +3730,11 @@ function wireExportModalEvents(): void {
     try {
       status.textContent = 'מייצא…';
       if (selectedMode === 'weekly') {
-        exportWeeklyOverview(currentSchedule);
+        exportWeeklyOverview(currentSchedule, store.getDayStartHour());
       } else {
         const daySelectEl = backdrop.querySelector('#gm-export-day-select') as HTMLElement | null;
         const dayIdx = parseInt(daySelectEl?.dataset.value || '1', 10);
-        exportDailyDetail(currentSchedule, dayIdx);
+        exportDailyDetail(currentSchedule, dayIdx, store.getDayStartHour());
       }
       status.textContent = '✓ הייצוא הושלם';
       setTimeout(closeModal, 1200);

@@ -1896,23 +1896,29 @@ export function getAlgorithmSettings(): AlgorithmSettings {
           disabledHardConstraints: Array.isArray(parsed.disabledHardConstraints)
             ? parsed.disabledHardConstraints as HardConstraintCode[]
             : [],
+          dayStartHour: typeof parsed.dayStartHour === 'number'
+            ? Math.max(0, Math.min(23, Math.floor(parsed.dayStartHour)))
+            : DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
         };
       } else {
         _algorithmSettings = {
           config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
           disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
+          dayStartHour: DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
         };
       }
     } catch {
       _algorithmSettings = {
         config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
         disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
+        dayStartHour: DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
       };
     }
   }
   return {
     config: { ..._algorithmSettings.config },
     disabledHardConstraints: [..._algorithmSettings.disabledHardConstraints],
+    dayStartHour: _algorithmSettings.dayStartHour,
   };
 }
 
@@ -1927,6 +1933,9 @@ export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
     disabledHardConstraints: patch.disabledHardConstraints !== undefined
       ? [...patch.disabledHardConstraints]
       : current.disabledHardConstraints,
+    dayStartHour: patch.dayStartHour !== undefined
+      ? patch.dayStartHour
+      : current.dayStartHour,
   };
   _saveAlgorithmSettings();
 }
@@ -1939,12 +1948,21 @@ export function resetAlgorithmSettings(): void {
   _algorithmSettings = {
     config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
     disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
+    dayStartHour: DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
   };
   _saveAlgorithmSettings();
   // Also switch active preset to Default
   _initPresets(); // ensure loaded
   _activePresetId = DEFAULT_PRESET.id;
   _saveActivePresetId();
+}
+
+/**
+ * Get the configured day-start hour (0-23). Convenience shorthand for
+ * `getAlgorithmSettings().dayStartHour`.
+ */
+export function getDayStartHour(): number {
+  return getAlgorithmSettings().dayStartHour;
 }
 
 /**
@@ -2024,6 +2042,7 @@ function _deepCopyPreset(p: AlgorithmPreset): AlgorithmPreset {
     settings: {
       config: { ...p.settings.config },
       disabledHardConstraints: [...p.settings.disabledHardConstraints],
+      dayStartHour: p.settings.dayStartHour ?? DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
     },
   };
 }
@@ -2095,6 +2114,9 @@ export function loadPreset(id: string): void {
   _algorithmSettings = {
     config: { ...preset.settings.config },
     disabledHardConstraints: [...preset.settings.disabledHardConstraints],
+    dayStartHour: typeof preset.settings.dayStartHour === 'number'
+      ? preset.settings.dayStartHour
+      : DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
   };
   _saveAlgorithmSettings();
   _activePresetId = id;
@@ -2353,6 +2375,7 @@ export function saveScheduleAsSnapshot(
     algorithmSettings: {
       config: { ...algorithmSettings.config },
       disabledHardConstraints: [...algorithmSettings.disabledHardConstraints],
+      dayStartHour: algorithmSettings.dayStartHour,
     },
     createdAt: Date.now(),
   };
@@ -2380,6 +2403,7 @@ export function updateSnapshot(id: string, schedule: Schedule, algorithmSettings
   snapshots[idx].algorithmSettings = {
     config: { ...algorithmSettings.config },
     disabledHardConstraints: [...algorithmSettings.disabledHardConstraints],
+    dayStartHour: algorithmSettings.dayStartHour,
   };
   _saveSnapshots();
   return true;
