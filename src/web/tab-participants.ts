@@ -1082,6 +1082,12 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const levelEl = container.querySelector('[data-field="new-level"]') as HTMLSelectElement;
         const name = nameEl?.value.trim();
         if (!name) { nameEl?.focus(); return; }
+        if (store.isParticipantNameTaken(name)) {
+          showToast('משתתף/ת בשם זה כבר קיים/ת', { type: 'error' });
+          nameEl?.focus();
+          nameEl?.select();
+          return;
+        }
 
         const formEl = container.querySelector('#add-participant-form')!;
         const newGroupInput = formEl.querySelector('[data-field="new-group-name"]') as HTMLInputElement | null;
@@ -1129,7 +1135,15 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       case 'save-participant': {
         const pid = actionButton?.dataset.pid!;
         const row = container.querySelector(`tr[data-participant-id="${pid}"]`)!;
-        const name = (row.querySelector('[data-field="name"]') as HTMLInputElement)?.value.trim();
+        const nameEl = row.querySelector('[data-field="name"]') as HTMLInputElement;
+        const name = nameEl?.value.trim();
+        if (!name) { nameEl?.focus(); return; }
+        if (store.isParticipantNameTaken(name, pid)) {
+          showToast('משתתף/ת בשם זה כבר קיים/ת', { type: 'error' });
+          nameEl?.focus();
+          nameEl?.select();
+          return;
+        }
         const groupSel = row.querySelector('[data-field="group"]') as HTMLSelectElement;
         const newGroupInput = row.querySelector('[data-field="new-group-name"]') as HTMLInputElement | null;
         const errorSpan = row.querySelector('.group-error') as HTMLElement | null;

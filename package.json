@@ -14,7 +14,7 @@
     "test:e2e": "playwright test",
     "test:e2e:phone": "playwright test --project=phone",
     "test:e2e:desktop": "playwright test --project=desktop",
-    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && tsc -p tsconfig.electron.json && electron .\"",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5174 && tsc -p tsconfig.electron.json && electron .\"",
     "electron:compile": "tsc -p tsconfig.electron.json",
     "electron:build": "vite build && tsc -p tsconfig.electron.json && electron-builder --win"
   },

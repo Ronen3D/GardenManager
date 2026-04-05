@@ -99,7 +99,10 @@ let _snapshotFormError = '';
 /** Whether the snapshot panel is expanded */
 let _snapshotPanelOpen = false;
 /** Whether the workload sidebar is collapsed */
-let _sidebarCollapsed = localStorage.getItem('gm-sidebar-collapsed') === '1';
+let _sidebarCollapsed = (() => {
+  try { return localStorage.getItem('gm-sidebar-collapsed') === '1'; }
+  catch { return false; }
+})();
 let _availabilityPopoverEl: HTMLElement | null = null;
 let _availabilityPopoverKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 let _availabilityInlineOpen = false;
@@ -380,6 +383,10 @@ function generateTasksFromTemplates(): Task[] {
     const dayLabel = `D${dayIdx + 1}`;
 
     for (const tpl of templates) {
+      if (tpl.shiftsPerDay < 1 || tpl.durationHours <= 0) {
+        console.warn(`Template "${tpl.name}" has invalid shiftsPerDay (${tpl.shiftsPerDay}) or durationHours (${tpl.durationHours}) — skipping`);
+        continue;
+      }
       const startDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tpl.startHour, 0);
 
       let shifts: { start: Date; end: Date }[];
@@ -1567,7 +1574,9 @@ function loadScheduleSnapshot(snapshotId: string): void {
   }
 
   // 7. Persist as current schedule
-  store.saveSchedule(currentSchedule);
+  if (!store.saveSchedule(currentSchedule)) {
+    showToast('טעינת התמונה הצליחה אך השמירה נכשלה — נפח האחסון מלא.', { type: 'warning', duration: 6000 });
+  }
   store.setActiveSnapshotId(snapshotId);
 
   // 8. Re-render
@@ -1913,6 +1922,7 @@ async function doGenerate(): Promise<void> {
   }
 
   const t0 = performance.now();
+  let scheduleSaved = false;
 
   try {
     const schedule = await engine.generateScheduleAsync(
@@ -1941,7 +1951,7 @@ async function doGenerate(): Promise<void> {
     store.setActiveSnapshotId(null);
 
     // Persist schedule to localStorage
-    store.saveSchedule(schedule);
+    scheduleSaved = store.saveSchedule(schedule);
 
     // Apply live mode freeze if active
     const liveMode = store.getLiveModeState();
@@ -1977,7 +1987,11 @@ async function doGenerate(): Promise<void> {
 
   // Final atomic render with the winning schedule
   renderAll();
-  showToast(`שבצ"ק נוצר בהצלחה (${(scheduleElapsed / 1000).toFixed(1)} שניות)`, { type: 'success' });
+  if (scheduleSaved) {
+    showToast(`שבצ"ק נוצר בהצלחה (${(scheduleElapsed / 1000).toFixed(1)} שניות)`, { type: 'success' });
+  } else {
+    showToast('השבצ"ק נוצר אך לא נשמר — נפח האחסון בדפדפן מלא. בטעינה מחדש הוא יאבד.', { type: 'warning', duration: 8000 });
+  }
 }
 
 // ─── Create Empty Manual Schedule ──────────────────────────────────────────
@@ -2044,7 +2058,7 @@ function doCreateManualSchedule(): void {
   scheduleElapsed = 0;
   scheduleActualAttempts = 0;
 
-  store.saveSchedule(currentSchedule);
+  const manualSaved = store.saveSchedule(currentSchedule);
   renderAll();
 
   // Auto-scroll to the grid so slots are immediately visible
@@ -2053,7 +2067,11 @@ function doCreateManualSchedule(): void {
     if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
-  showToast('שבצ"ק ריק נוצר — בחר משבצת ואז משתתף', { type: 'success' });
+  if (manualSaved) {
+    showToast('שבצ"ק ריק נוצר — בחר משבצת ואז משתתף', { type: 'success' });
+  } else {
+    showToast('השבצ"ק נוצר אך לא נשמר — נפח האחסון בדפדפן מלא.', { type: 'warning', duration: 8000 });
+  }
 }
 
 // ─── Interactive Handlers ────────────────────────────────────────────────────
@@ -2081,7 +2099,9 @@ function revalidateAndRefresh(): void {
 
   // Persist updated schedule
   if (currentSchedule) {
-    store.saveSchedule(currentSchedule);
+    if (!store.saveSchedule(currentSchedule)) {
+      showToast('השינוי בוצע אך לא נשמר — נפח האחסון מלא.', { type: 'warning', duration: 6000 });
+    }
   }
 
   renderAll();
@@ -2099,17 +2119,39 @@ async function handleSwap(assignmentId: string): Promise<void> {
   if (!task) return;
   const currentP = currentSchedule.participants.find(p => p.id === assignment.participantId);
 
-  const suggestions = currentSchedule.participants
-    .filter(p => p.id !== assignment.participantId)
-    .map(p => `${p.name} (${p.level}, ${p.group})`);
+  // Pre-filter to participants who are *actually* eligible for this slot, so
+  // the user doesn't have to guess-and-check through dozens of names and hit
+  // Hebrew constraint errors. getEligibleParticipantsForSlot already excludes
+  // the current participant (HC-7) and handles all HC-1..HC-14 rules.
+  const disabledHC = new Set(store.getAlgorithmSettings().disabledHardConstraints);
+  const categoryBreakMs = store.getCategoryBreakHours() * 3600000;
+  const eligible = getEligibleParticipantsForSlot(
+    task,
+    assignment.slotId,
+    currentSchedule.participants,
+    currentSchedule.assignments,
+    currentSchedule.tasks,
+    disabledHC,
+    categoryBreakMs,
+  ).filter(p => p.id !== assignment.participantId);
+
+  if (eligible.length === 0) {
+    await showAlert(
+      `אין משתתפים זמינים להחלפה ב-"${task.name}".\nכל שאר המשתתפים חסומים על-ידי אילוצים (דרגה, הסמכה, זמינות, חפיפה וכו').`,
+      { title: 'אין החלפה אפשרית', icon: 'ℹ️' },
+    );
+    return;
+  }
+
+  const suggestions = eligible.map(p => `${p.name} (${p.level}, ${p.group})`);
 
   const choice = await showPrompt(
-    `החלפה ב-"${task.name}".\nנוכחי: ${currentP?.name}`,
+    `החלפה ב-"${task.name}".\nנוכחי: ${currentP?.name}\nמוצגים ${eligible.length} משתתפים זמינים בלבד.`,
     { title: 'החלפת משתתף', suggestions }
   );
   if (!choice) return;
 
-  const newP = currentSchedule.participants.find(
+  const newP = eligible.find(
     p => choice.includes(p.name) || choice === p.id
   );
   if (!newP) { await showAlert('לא נמצא משתתף בשם הזה.', { icon: '⚠️' }); return; }
@@ -2719,7 +2761,9 @@ function _syncEngineDayStartHour(): void {
     const updated = engine.getSchedule();
     if (updated) {
       currentSchedule = updated;
-      store.saveSchedule(currentSchedule);
+      if (!store.saveSchedule(currentSchedule)) {
+        showToast('השינוי בוצע אך לא נשמר — נפח האחסון מלא.', { type: 'warning', duration: 6000 });
+      }
     }
   }
 }
@@ -2780,7 +2824,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8.2</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2923,7 +2967,9 @@ function doUndoRedo(action: 'undo' | 'redo'): void {
         engine.revalidateFull();
         currentSchedule = engine.getSchedule()!;
       }
-      store.saveSchedule(currentSchedule);
+      if (!store.saveSchedule(currentSchedule)) {
+        showToast('השינוי בוצע אך לא נשמר — נפח האחסון מלא.', { type: 'warning', duration: 6000 });
+      }
     } else {
       // No schedule existed before this mutation — clear it
       currentSchedule = null;
@@ -3111,6 +3157,16 @@ function wireSnapshotEvents(container: HTMLElement): void {
       }
       const algoSettings = store.getAlgorithmSettings();
       const result = store.saveScheduleAsSnapshot(currentSchedule, algoSettings, name, desc);
+      if (result === 'storage-full') {
+        const hasSnapshots = store.getAllSnapshots().length > 0;
+        _snapshotFormError = store.isStorageWedged()
+          ? (hasSnapshots
+              ? 'נפח האחסון בדפדפן מלא — מחק תמונות מצב ישנות ונסה שוב'
+              : 'נפח האחסון בדפדפן מלא — נסה לפנות מקום בהגדרות הדפדפן')
+          : 'שמירת תמונת המצב נכשלה — בדוק את לוג השגיאות במסוף הדפדפן (F12)';
+        renderAll();
+        return;
+      }
       if (!result) {
         _snapshotFormError = 'שם זה כבר תפוס או שהגעת למגבלת תמונות המצב';
         renderAll();
@@ -3186,6 +3242,8 @@ function wireSnapshotEvents(container: HTMLElement): void {
           _snapshotDirty = false;
           showToast('תמונת מצב עודכנה', { type: 'success' });
           renderAll();
+        } else {
+          showToast('עדכון תמונת מצב נכשל — נפח האחסון מלא.', { type: 'warning', duration: 6000 });
         }
         break;
       }
@@ -3202,8 +3260,10 @@ function wireSnapshotEvents(container: HTMLElement): void {
           store.setActiveSnapshotId(dup.id);
           showToast('תמונת מצב שוכפלה', { type: 'success' });
           renderAll();
-        } else {
+        } else if (store.getAllSnapshots().length >= store.getMaxSnapshots()) {
           await showAlert(`אי אפשר לשכפל: הגעת למגבלה של ${store.getMaxSnapshots()} תמונות מצב.`, { icon: '⚠️' });
+        } else {
+          showToast('שכפול נכשל — נפח האחסון בדפדפן מלא.', { type: 'warning', duration: 6000 });
         }
         break;
       }
@@ -3212,9 +3272,13 @@ function wireSnapshotEvents(container: HTMLElement): void {
         if (!snap) break;
         const ok = await showConfirm(`למחוק את תמונת המצב "${snap.name}"?`, { danger: true, title: 'מחיקת תמונת מצב' });
         if (ok) {
-          store.deleteSnapshot(snapId);
+          const deleted = store.deleteSnapshot(snapId);
           _snapshotFormMode = 'none';
-          showToast('תמונת מצב נמחקה', { type: 'success' });
+          if (deleted) {
+            showToast('תמונת מצב נמחקה', { type: 'success' });
+          } else {
+            showToast('מחיקה נכשלה — נפח האחסון בדפדפן מלא.', { type: 'warning', duration: 6000 });
+          }
           renderAll();
         }
         break;
@@ -3471,7 +3535,11 @@ function wireScheduleEvents(container: HTMLElement): void {
   if (sidebarToggle) {
     sidebarToggle.addEventListener('click', () => {
       _sidebarCollapsed = !_sidebarCollapsed;
-      localStorage.setItem('gm-sidebar-collapsed', _sidebarCollapsed ? '1' : '0');
+      try {
+        localStorage.setItem('gm-sidebar-collapsed', _sidebarCollapsed ? '1' : '0');
+      } catch (err) {
+        console.warn('[app] Failed to persist sidebar-collapsed:', err);
+      }
       renderAll();
     });
   }
@@ -4476,8 +4544,21 @@ function init(): void {
 
   store.initStore();
   store.subscribe(onStoreChanged);
-  store.setSaveErrorHandler(() => {
-    showToast('שמירת נתונים נכשלה — ייתכן שהדפדפן חסם אחסון מקומי', { type: 'error', duration: 5000 });
+  store.subscribeAlgorithmChange(() => {
+    if (currentSchedule) _scheduleDirty = true;
+  });
+  store.setSaveErrorHandler((_err, info) => {
+    // reportSaveError() in config-store already throttles invocations to at
+    // most once per ~15s, so this is safe to call directly. Use a distinct
+    // message for quota-exceeded so the user knows what action to take.
+    if (info.isQuota) {
+      showToast(
+        'נפח האחסון בדפדפן מלא — מחק תמונות-מצב או סטים ישנים כדי להמשיך לשמור.',
+        { type: 'error', duration: 8000 },
+      );
+    } else {
+      showToast('שמירת נתונים נכשלה — ייתכן שהדפדפן חסם אחסון מקומי', { type: 'error', duration: 5000 });
+    }
   });
 
   // Restore persisted schedule (if any) so it survives page reloads

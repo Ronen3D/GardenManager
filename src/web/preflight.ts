@@ -65,7 +65,7 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[], 
       const eligible = participants.filter(p => participantMatchesSlot(p, slot));
       if (eligible.length === 0) {
         // Build a human-readable requirement string
-        const levelStr = slot.acceptableLevels.map(l => `דרגה ${l}`).join('/');
+        const levelStr = slot.acceptableLevels.map(l => `דרגה ${l.level}`).join('/');
         const certStr = slot.requiredCertifications.length > 0
           ? ` + ${slot.requiredCertifications.join(', ')}`
           : '';
@@ -94,7 +94,7 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[], 
     for (const slot of allSlots) {
       const eligible = participants.filter(p => participantMatchesSlot(p, slot));
       if (eligible.length === 0) {
-        const levelStr = slot.acceptableLevels.map(l => `דרגה ${l}`).join('/');
+        const levelStr = slot.acceptableLevels.map(l => `דרגה ${l.level}`).join('/');
         const certStr = slot.requiredCertifications.length > 0
           ? ` + ${slot.requiredCertifications.join(', ')}`
           : '';

@@ -146,7 +146,13 @@ export function getCurrentTheme(): 'dark' | 'light' {
 
 export function setTheme(theme: 'dark' | 'light'): void {
   // Write to localStorage immediately so subsequent renders read the correct value.
-  localStorage.setItem(THEME_STORAGE_KEY, theme);
+  // Swallow quota / access errors so the theme toggle still flips the UI —
+  // a missing persisted theme is a far smaller problem than a broken click handler.
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch (err) {
+    console.warn('[ui-helpers] Failed to persist theme:', err);
+  }
 
   const commitSwitch = () => {
     applyTheme(theme);

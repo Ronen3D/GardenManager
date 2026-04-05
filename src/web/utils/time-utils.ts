@@ -184,6 +184,7 @@ export function generateShiftBlocks(
   shiftDurationHours: number,
   shiftCount: number,
 ): TimeBlock[] {
+  if (shiftCount < 1 || shiftDurationHours <= 0) return [];
   const shifts: TimeBlock[] = [];
   let cursor = baseStart;
   for (let i = 0; i < shiftCount; i++) {

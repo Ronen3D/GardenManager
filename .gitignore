@@ -5,6 +5,7 @@ node_modules/
 dist/
 dist-web/
 dist-electron/
+NUL.css
 
 # Electron release builds
 release/
@@ -40,3 +41,4 @@ build/
 
 # Artifacts
 artifacts/
+.gitignore

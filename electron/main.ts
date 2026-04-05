@@ -18,7 +18,7 @@ function createWindow(): void {
   win.setMenuBarVisibility(false);
 
   if (isDev) {
-    win.loadURL('http://localhost:5173');
+    win.loadURL('http://localhost:5174');
   } else {
     win.loadFile(path.join(__dirname, '..', 'dist-web', 'index.html'));
   }

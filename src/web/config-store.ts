@@ -54,12 +54,112 @@ function uid(prefix: string): string {
 
 export { uid };
 
-// ─── Save Error Handler ─────────────────────────────────────────────────────
+// ─── Save Error Handler / Storage Health ────────────────────────────────────
 
-/** Optional callback for reporting persistence errors to the UI. */
-let _onSaveError: ((err: unknown) => void) | null = null;
-export function setSaveErrorHandler(handler: (err: unknown) => void): void {
+/**
+ * Persistence errors are funnelled through `reportSaveError()` so the UI sees
+ * them at most once per `SAVE_ERROR_TOAST_COOLDOWN_MS`, and so that a single
+ * quota failure latches `_storageWedged = true`. While wedged, the **debounced
+ * auto-save** (`saveToStorage()` via `debouncedSave()`) is skipped — preventing
+ * the toast flood that used to fire on every downstream mutation once the
+ * quota was exhausted.
+ *
+ * Explicit user-triggered writes (saveSchedule, _saveSnapshots, _savePresets,
+ * …) are still attempted regardless of the wedge, because they may be *smaller*
+ * than the blob they replace (e.g., a snapshot delete) and would succeed,
+ * clearing the wedge via `onSaveSuccess()`.
+ */
+let _onSaveError: ((err: unknown, info: { isQuota: boolean }) => void) | null = null;
+export function setSaveErrorHandler(handler: (err: unknown, info: { isQuota: boolean }) => void): void {
   _onSaveError = handler;
+}
+
+const SAVE_ERROR_TOAST_COOLDOWN_MS = 15_000;
+let _lastSaveErrorAt = 0;
+let _storageWedged = false;
+
+/**
+ * True if the last persistence attempt exhausted the browser's localStorage
+ * quota. While wedged, `debouncedSave()` is a no-op until a save succeeds
+ * (e.g., after the user deletes snapshots). UI code can call this to surface
+ * a prominent banner.
+ */
+export function isStorageWedged(): boolean {
+  return _storageWedged;
+}
+
+/**
+ * Recognise a "quota exceeded" error across browsers:
+ *  - Chrome / modern Safari: `DOMException` with `name === 'QuotaExceededError'` (code 22)
+ *  - Firefox:                `DOMException` with `name === 'NS_ERROR_DOM_QUOTA_REACHED'` (code 1014)
+ *  - Old WebKit:             `name === 'QUOTA_EXCEEDED_ERR'`
+ *  - Safari private mode:    plain `Error` whose message contains "quota"
+ */
+function isQuotaExceededError(err: unknown): boolean {
+  if (!err) return false;
+  if (typeof DOMException !== 'undefined' && err instanceof DOMException) {
+    if (err.code === 22 || err.code === 1014) return true;
+    if (
+      err.name === 'QuotaExceededError' ||
+      err.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+      err.name === 'QUOTA_EXCEEDED_ERR'
+    ) return true;
+  }
+  const msg = (err as { message?: unknown })?.message;
+  if (typeof msg === 'string' && /quota|storage/i.test(msg)) return true;
+  return false;
+}
+
+function reportSaveError(err: unknown): void {
+  const isQuota = isQuotaExceededError(err);
+  if (isQuota) _storageWedged = true;
+
+  const now = Date.now();
+  if (now - _lastSaveErrorAt < SAVE_ERROR_TOAST_COOLDOWN_MS) return;
+  _lastSaveErrorAt = now;
+  _onSaveError?.(err, { isQuota });
+}
+
+function onSaveSuccess(): void {
+  if (_storageWedged) {
+    _storageWedged = false;
+    console.log('[Store] Storage quota recovered — resuming persistence.');
+  }
+}
+
+/**
+ * Diagnostic: returns the approximate byte size of every persistence key this
+ * module owns, plus the grand total. Useful for an in-app "storage usage"
+ * inspector or for debugging the "storage full" symptom.
+ */
+export function getStorageUsage(): { key: string; bytes: number }[] & { total: number } {
+  const keys = [
+    STORAGE_KEY_STATE,
+    STORAGE_KEY_SCHEDULE,
+    STORAGE_KEY_LIVE_MODE,
+    STORAGE_KEY_ALGORITHM,
+    STORAGE_KEY_PRESETS,
+    STORAGE_KEY_ACTIVE_PRESET,
+    STORAGE_KEY_SNAPSHOTS,
+    STORAGE_KEY_ACTIVE_SNAPSHOT,
+    STORAGE_KEY_PSETS,
+    STORAGE_KEY_ACTIVE_PSET,
+    STORAGE_KEY_TASK_SETS,
+    STORAGE_KEY_ACTIVE_TASK_SET,
+  ];
+  const rows = keys.map(key => {
+    let bytes = 0;
+    try {
+      const raw = localStorage.getItem(key);
+      // UTF-16 code units ≈ 2 bytes each; approximate since most chars are ASCII.
+      if (raw) bytes = key.length + raw.length;
+    } catch {
+      bytes = 0;
+    }
+    return { key, bytes };
+  }) as { key: string; bytes: number }[] & { total: number };
+  rows.total = rows.reduce((s, r) => s + r.bytes, 0);
+  return rows;
 }
 
 // ─── Listener System ─────────────────────────────────────────────────────────
@@ -78,6 +178,26 @@ function notify(): void {
   }
   // Auto-persist state to localStorage (debounced)
   debouncedSave();
+}
+
+// ─── Algorithm-change listeners (lightweight — no undo/reconciliation) ───────
+
+const _algoListeners: Set<Listener> = new Set();
+
+/**
+ * Subscribe to algorithm-setting mutations (weights, HC toggles, presets).
+ * Unlike the main `subscribe()`, this does NOT trigger schedule reconciliation
+ * or undo snapshots — it only lets the UI mark the schedule as stale.
+ */
+export function subscribeAlgorithmChange(fn: Listener): () => void {
+  _algoListeners.add(fn);
+  return () => _algoListeners.delete(fn);
+}
+
+function notifyAlgorithmChanged(): void {
+  for (const fn of _algoListeners) {
+    try { fn(); } catch (err) { console.error('[Store] Algorithm listener threw:', err); }
+  }
 }
 
 // ─── Undo / Redo System ──────────────────────────────────────────────────────
@@ -576,6 +696,17 @@ function recalcAllAvailability(): void {
   }
 }
 
+/** Case-insensitive trimmed name duplicate check for participants. */
+export function isParticipantNameTaken(name: string, excludeId?: string): boolean {
+  const norm = name.trim().toLowerCase();
+  if (!norm) return false;
+  for (const p of participants.values()) {
+    if (p.id === excludeId) continue;
+    if (p.name.trim().toLowerCase() === norm) return true;
+  }
+  return false;
+}
+
 export function addParticipant(data: {
   name: string; level?: Level;
   certifications?: string[]; pakalIds?: string[]; group: string;
@@ -819,15 +950,51 @@ export function setTaskNamePreference(pid: string, preferred?: string, lessPrefe
 
 const taskTemplates: Map<string, TaskTemplate> = new Map();
 
+/**
+ * Clamp task-template numeric fields to valid ranges.
+ * Returns a sanitized shallow copy of only the numeric fields present in `raw`.
+ *   durationHours  → 0.5 … 24   (NaN → 8)
+ *   shiftsPerDay   → 1 … 12     (NaN → 1, rounded to integer)
+ *   startHour      → 0 … 23     (NaN → 6, rounded to integer)
+ *   eveningStartHour → 0 … 23   (NaN → 17, rounded to integer)
+ */
+export function sanitizeTemplateNumericFields<
+  T extends Partial<Pick<TaskTemplate, 'durationHours' | 'shiftsPerDay' | 'startHour' | 'eveningStartHour'>>,
+>(raw: T): T {
+  const out = { ...raw };
+  if (out.durationHours !== undefined) {
+    let v = Number(out.durationHours);
+    if (Number.isNaN(v)) v = 8;
+    out.durationHours = Math.max(0.5, Math.min(24, v));
+  }
+  if (out.shiftsPerDay !== undefined) {
+    let v = Number(out.shiftsPerDay);
+    if (Number.isNaN(v)) v = 1;
+    out.shiftsPerDay = Math.max(1, Math.min(12, Math.round(v)));
+  }
+  if (out.startHour !== undefined) {
+    let v = Number(out.startHour);
+    if (Number.isNaN(v)) v = 6;
+    out.startHour = Math.max(0, Math.min(23, Math.round(v)));
+  }
+  if (out.eveningStartHour !== undefined) {
+    let v = Number(out.eveningStartHour);
+    if (Number.isNaN(v)) v = 17;
+    out.eveningStartHour = Math.max(0, Math.min(23, Math.round(v)));
+  }
+  return out;
+}
+
 export function addTaskTemplate(tpl: Omit<TaskTemplate, 'id'>): TaskTemplate {
   pushSnapshot();
   const id = uid('tpl');
+  const sanitized = sanitizeTemplateNumericFields(tpl);
   const full: TaskTemplate = {
-    ...tpl,
+    ...sanitized,
     id,
-    color: tpl.color || getNextAvailableColor(),
-    baseLoadWeight: tpl.isLight ? 0 : (tpl.baseLoadWeight ?? 1),
-    loadWindows: (tpl.loadWindows || []).map(w => ({ ...w })),
+    color: sanitized.color || getNextAvailableColor(),
+    baseLoadWeight: sanitized.isLight ? 0 : (sanitized.baseLoadWeight ?? 1),
+    loadWindows: (sanitized.loadWindows || []).map(w => ({ ...w })),
   };
   taskTemplates.set(id, full);
   notify();
@@ -838,6 +1005,8 @@ export function updateTaskTemplate(id: string, patch: Partial<Omit<TaskTemplate,
   const tpl = taskTemplates.get(id);
   if (!tpl) return;
   pushSnapshot();
+  const sanitized = sanitizeTemplateNumericFields(patch);
+  patch = sanitized;
   Object.assign(tpl, patch);
   if (patch.loadWindows) {
     tpl.loadWindows = patch.loadWindows.map((w) => ({ ...w }));
@@ -1523,22 +1692,57 @@ export function setLiveModeEnabled(enabled: boolean): void {
   liveModeState.enabled = enabled;
   // Always refresh timestamp to "now" so the day picker reflects the current day
   liveModeState.currentTimestamp = new Date();
-  // Only persist — don't fire general notify() which would falsely mark the schedule
-  // as dirty. The live-mode checkbox handler in app.ts already calls renderAll().
-  debouncedSave();
+  // Persist to the dedicated tiny key rather than rewriting the full state
+  // blob. The live-mode checkbox handler in app.ts already calls renderAll().
+  _saveLiveMode();
 }
 
 export function setLiveModeTimestamp(timestamp: Date): void {
   liveModeState.currentTimestamp = timestamp;
-  // Only persist — don't fire general notify() which would falsely mark the schedule
-  // as dirty. The caller already triggers renderAll() when needed.
-  debouncedSave();
+  // Persist to the dedicated tiny key rather than rewriting the full state
+  // blob. The caller already triggers renderAll() when needed.
+  _saveLiveMode();
+}
+
+/**
+ * Persist live-mode state to its own small localStorage key.
+ * Kept separate from `saveToStorage()` so that live-mode ticks (which can
+ * happen every few seconds) don't rewrite the much larger full-state blob.
+ */
+function _saveLiveMode(): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_LIVE_MODE, JSON.stringify({
+      enabled: liveModeState.enabled,
+      currentTimestamp: liveModeState.currentTimestamp.toISOString(),
+    }));
+    onSaveSuccess();
+  } catch (err) {
+    console.warn('[Store] Failed to save live mode:', err);
+    reportSaveError(err);
+  }
+}
+
+function _loadLiveMode(): LiveModeState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_LIVE_MODE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { enabled?: unknown; currentTimestamp?: unknown };
+    const ts = typeof parsed.currentTimestamp === 'string' ? new Date(parsed.currentTimestamp) : new Date();
+    return {
+      enabled: !!parsed.enabled,
+      currentTimestamp: Number.isNaN(ts.getTime()) ? new Date() : ts,
+    };
+  } catch (err) {
+    console.warn('[Store] Failed to load live mode:', err);
+    return null;
+  }
 }
 
 // ─── localStorage Persistence ────────────────────────────────────────────────
 
 const STORAGE_KEY_STATE = 'gardenmanager_state';
 const STORAGE_KEY_SCHEDULE = 'gardenmanager_schedule';
+const STORAGE_KEY_LIVE_MODE = 'gardenmanager_live_mode';
 
 let _saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const SAVE_DEBOUNCE_MS = 500;
@@ -1586,16 +1790,18 @@ function jsonDeserialize<T>(json: string): T {
  * Called automatically (debounced) after every store mutation.
  */
 export function saveToStorage(): void {
+  // If the quota is currently exhausted, skip this save rather than flooding
+  // the UI with "storage full" toasts on every downstream mutation. The wedge
+  // is cleared automatically when any subsequent save succeeds.
+  if (_storageWedged) return;
   try {
     const state = {
       version: 7,
       scheduleDate: scheduleDate.toISOString(),
       scheduleDays,
       categoryBreakHours: _categoryBreakHours,
-      liveMode: {
-        enabled: liveModeState.enabled,
-        currentTimestamp: liveModeState.currentTimestamp.toISOString(),
-      },
+      // Live mode is persisted separately via STORAGE_KEY_LIVE_MODE; keeping
+      // it out of the big blob means clock ticks don't rewrite everything.
       pakalDefinitions,
       certificationDefinitions,
       // Omit inline dateUnavailability from participant serialization —
@@ -1626,9 +1832,10 @@ export function saveToStorage(): void {
       })),
     };
     localStorage.setItem(STORAGE_KEY_STATE, JSON.stringify(state));
+    onSaveSuccess();
   } catch (err) {
     console.warn('[Store] Failed to save to localStorage:', err);
-    _onSaveError?.(err);
+    reportSaveError(err);
   }
 }
 
@@ -1664,8 +1871,13 @@ export function loadFromStorage(): boolean {
       scheduleDate = defaultScheduleDate();
     }
 
-    // Restore live mode state
-    if (state.liveMode) {
+    // Restore live mode state — prefer the dedicated key (written by
+    // _saveLiveMode); fall back to the legacy inlined value for users whose
+    // state blob was persisted before the split.
+    const dedicatedLive = _loadLiveMode();
+    if (dedicatedLive) {
+      liveModeState = dedicatedLive;
+    } else if (state.liveMode) {
       liveModeState = {
         enabled: state.liveMode.enabled || false,
         currentTimestamp: new Date(state.liveMode.currentTimestamp),
@@ -1763,11 +1975,15 @@ export function loadFromStorage(): boolean {
  * Save a full Schedule object to localStorage.
  * Called after generation, swaps, locks, and rescue-apply operations.
  */
-export function saveSchedule(schedule: Schedule): void {
+export function saveSchedule(schedule: Schedule): boolean {
   try {
     localStorage.setItem(STORAGE_KEY_SCHEDULE, jsonSerialize(schedule));
+    onSaveSuccess();
+    return true;
   } catch (err) {
     console.warn('[Store] Failed to save schedule to localStorage:', err);
+    reportSaveError(err);
+    return false;
   }
 }
 
@@ -1815,6 +2031,7 @@ export function factoryReset(): void {
   try {
     localStorage.removeItem(STORAGE_KEY_STATE);
     localStorage.removeItem(STORAGE_KEY_SCHEDULE);
+    localStorage.removeItem(STORAGE_KEY_LIVE_MODE);
     localStorage.removeItem(STORAGE_KEY_ALGORITHM);
     localStorage.removeItem(STORAGE_KEY_PRESETS);
     localStorage.removeItem(STORAGE_KEY_ACTIVE_PRESET);
@@ -1824,6 +2041,8 @@ export function factoryReset(): void {
     localStorage.removeItem(STORAGE_KEY_ACTIVE_PSET);
     localStorage.removeItem(STORAGE_KEY_TASK_SETS);
     localStorage.removeItem(STORAGE_KEY_ACTIVE_TASK_SET);
+    // A factory reset frees space, so clear the wedge latch to resume saves.
+    onSaveSuccess();
   } catch (err) {
     console.warn('[Store] Failed to clear localStorage:', err);
   }
@@ -1925,6 +2144,7 @@ export function getAlgorithmSettings(): AlgorithmSettings {
 /**
  * Update algorithm settings (partial merge). Persists immediately.
  * Does NOT fire notify() — changes take effect on next generate/revalidate.
+ * Fires notifyAlgorithmChanged() so the UI can mark the schedule as stale.
  */
 export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
   const current = getAlgorithmSettings();
@@ -1938,6 +2158,7 @@ export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
       : current.dayStartHour,
   };
   _saveAlgorithmSettings();
+  notifyAlgorithmChanged();
 }
 
 /**
@@ -1955,6 +2176,7 @@ export function resetAlgorithmSettings(): void {
   _initPresets(); // ensure loaded
   _activePresetId = DEFAULT_PRESET.id;
   _saveActivePresetId();
+  notifyAlgorithmChanged();
 }
 
 /**
@@ -1974,12 +2196,16 @@ export function getDisabledHCSet(): Set<string> {
 }
 
 
-function _saveAlgorithmSettings(): void {
-  if (!_algorithmSettings) return;
+function _saveAlgorithmSettings(): boolean {
+  if (!_algorithmSettings) return false;
   try {
     localStorage.setItem(STORAGE_KEY_ALGORITHM, JSON.stringify(_algorithmSettings));
+    onSaveSuccess();
+    return true;
   } catch (err) {
     console.warn('[Store] Failed to save algorithm settings:', err);
+    reportSaveError(err);
+    return false;
   }
 }
 
@@ -2047,24 +2273,32 @@ function _deepCopyPreset(p: AlgorithmPreset): AlgorithmPreset {
   };
 }
 
-function _savePresets(): void {
-  if (!_presets) return;
+function _savePresets(): boolean {
+  if (!_presets) return false;
   try {
     localStorage.setItem(STORAGE_KEY_PRESETS, JSON.stringify(_presets));
+    onSaveSuccess();
+    return true;
   } catch (err) {
     console.warn('[Store] Failed to save algorithm presets:', err);
+    reportSaveError(err);
+    return false;
   }
 }
 
-function _saveActivePresetId(): void {
+function _saveActivePresetId(): boolean {
   try {
     if (_activePresetId) {
       localStorage.setItem(STORAGE_KEY_ACTIVE_PRESET, _activePresetId);
     } else {
       localStorage.removeItem(STORAGE_KEY_ACTIVE_PRESET);
     }
+    onSaveSuccess();
+    return true;
   } catch (err) {
     console.warn('[Store] Failed to save active preset id:', err);
+    reportSaveError(err);
+    return false;
   }
 }
 
@@ -2121,6 +2355,7 @@ export function loadPreset(id: string): void {
   _saveAlgorithmSettings();
   _activePresetId = id;
   _saveActivePresetId();
+  notifyAlgorithmChanged();
 }
 
 /**
@@ -2142,11 +2377,17 @@ export function saveCurrentAsPreset(name: string, description: string): Algorith
   };
 
   const presets = _initPresets();
+  const prevActiveId = _activePresetId;
   presets.push(preset);
-  _savePresets();
+  if (!_savePresets()) {
+    presets.pop(); // rollback — keep in-memory and disk in sync
+    return null;
+  }
 
   _activePresetId = preset.id;
-  _saveActivePresetId();
+  if (!_saveActivePresetId()) {
+    _activePresetId = prevActiveId; // partial rollback
+  }
 
   return _deepCopyPreset(preset);
 }
@@ -2162,8 +2403,12 @@ export function updatePreset(id: string): boolean {
   if (idx === -1) return false;
   if (presets[idx].builtIn) return false;
 
+  const prevSettings = presets[idx].settings;
   presets[idx].settings = getAlgorithmSettings(); // deep copy via getter
-  _savePresets();
+  if (!_savePresets()) {
+    presets[idx].settings = prevSettings; // rollback
+    return false;
+  }
   return true;
 }
 
@@ -2180,9 +2425,15 @@ export function renamePreset(id: string, name: string, description: string): str
   if (!trimmed) return 'השם לא יכול להיות ריק';
   if (_isPresetNameTaken(trimmed, id)) return 'פריסט עם שם זה כבר קיים';
 
+  const prevName = preset.name;
+  const prevDesc = preset.description;
   preset.name = trimmed;
   preset.description = description.trim();
-  _savePresets();
+  if (!_savePresets()) {
+    preset.name = prevName; // rollback
+    preset.description = prevDesc;
+    return 'שמירה נכשלה — נפח האחסון בדפדפן מלא';
+  }
   return null;
 }
 
@@ -2210,7 +2461,10 @@ export function duplicatePreset(id: string): AlgorithmPreset | null {
     createdAt: Date.now(),
   };
   presets.push(dup);
-  _savePresets();
+  if (!_savePresets()) {
+    presets.pop(); // rollback
+    return null;
+  }
   return _deepCopyPreset(dup);
 }
 
@@ -2224,8 +2478,11 @@ export function deletePreset(id: string): boolean {
   if (idx === -1) return false;
   if (presets[idx].builtIn) return false;
 
-  presets.splice(idx, 1);
-  _savePresets();
+  const [removed] = presets.splice(idx, 1);
+  if (!_savePresets()) {
+    presets.splice(idx, 0, removed); // rollback
+    return false;
+  }
 
   if (_activePresetId === id) {
     loadPreset(DEFAULT_PRESET.id);
@@ -2283,29 +2540,38 @@ function _initSnapshots(): ScheduleSnapshot[] {
   return _snapshots;
 }
 
-function _saveSnapshots(): void {
-  if (!_snapshots) return;
+function _saveSnapshots(): boolean {
+  if (!_snapshots) return false;
   try {
-    localStorage.setItem(STORAGE_KEY_SNAPSHOTS, jsonSerialize(_snapshots));
+    const blob = jsonSerialize(_snapshots);
+    console.log(`[Store] Persisting ${_snapshots.length} snapshot(s), ${(blob.length / 1024).toFixed(1)} KB`);
+    localStorage.setItem(STORAGE_KEY_SNAPSHOTS, blob);
+    onSaveSuccess();
+    return true;
   } catch (err: unknown) {
-    // Handle localStorage quota exceeded
-    if (err instanceof DOMException && err.name === 'QuotaExceededError') {
+    if (isQuotaExceededError(err)) {
       console.warn('[Store] localStorage quota exceeded for snapshots. Consider deleting old snapshots.');
     } else {
-      console.warn('[Store] Failed to save schedule snapshots:', err);
+      console.error('[Store] Failed to save schedule snapshots:', err);
     }
+    reportSaveError(err);
+    return false;
   }
 }
 
-function _saveActiveSnapshotId(): void {
+function _saveActiveSnapshotId(): boolean {
   try {
     if (_activeSnapshotId) {
       localStorage.setItem(STORAGE_KEY_ACTIVE_SNAPSHOT, _activeSnapshotId);
     } else {
       localStorage.removeItem(STORAGE_KEY_ACTIVE_SNAPSHOT);
     }
+    onSaveSuccess();
+    return true;
   } catch (err) {
     console.warn('[Store] Failed to save active snapshot id:', err);
+    reportSaveError(err);
+    return false;
   }
 }
 
@@ -2349,14 +2615,15 @@ export function setActiveSnapshotId(id: string | null): void {
 
 /**
  * Save a schedule as a new named snapshot.
- * Returns the new snapshot, or null if the name is taken or limit reached.
+ * Returns the new snapshot, or null if the name is taken or limit reached,
+ * or 'storage-full' if localStorage quota was exceeded.
  */
 export function saveScheduleAsSnapshot(
   schedule: Schedule,
   algorithmSettings: AlgorithmSettings,
   name: string,
   description: string,
-): ScheduleSnapshot | null {
+): ScheduleSnapshot | 'storage-full' | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
   if (_isSnapshotNameTaken(trimmed)) return null;
@@ -2367,11 +2634,25 @@ export function saveScheduleAsSnapshot(
     return null;
   }
 
+  // Deep-copy the schedule via JSON round-trip. This can fail if the
+  // schedule contains invalid Dates (toISOString → RangeError) or other
+  // non-serializable values. Catch and report rather than crashing.
+  let deepCopiedSchedule: Schedule;
+  try {
+    const serialized = jsonSerialize(schedule);
+    console.log(`[Store] Snapshot schedule serialized: ${(serialized.length / 1024).toFixed(1)} KB`);
+    deepCopiedSchedule = jsonDeserialize<Schedule>(serialized);
+  } catch (err) {
+    console.error('[Store] Failed to deep-copy schedule for snapshot — serialization error:', err);
+    reportSaveError(err);
+    return 'storage-full';
+  }
+
   const snapshot: ScheduleSnapshot = {
     id: uid('snap'),
     name: trimmed,
     description: description.trim(),
-    schedule: jsonDeserialize<Schedule>(jsonSerialize(schedule)), // deep copy
+    schedule: deepCopiedSchedule,
     algorithmSettings: {
       config: { ...algorithmSettings.config },
       disabledHardConstraints: [...algorithmSettings.disabledHardConstraints],
@@ -2381,7 +2662,10 @@ export function saveScheduleAsSnapshot(
   };
 
   snapshots.push(snapshot);
-  _saveSnapshots();
+  if (!_saveSnapshots()) {
+    snapshots.pop(); // rollback
+    return 'storage-full';
+  }
 
   _activeSnapshotId = snapshot.id;
   _saveActiveSnapshotId();
@@ -2399,13 +2683,20 @@ export function updateSnapshot(id: string, schedule: Schedule, algorithmSettings
   if (idx === -1) return false;
   if (snapshots[idx].builtIn) return false;
 
+  const oldSchedule = snapshots[idx].schedule;
+  const oldSettings = snapshots[idx].algorithmSettings;
+
   snapshots[idx].schedule = jsonDeserialize<Schedule>(jsonSerialize(schedule));
   snapshots[idx].algorithmSettings = {
     config: { ...algorithmSettings.config },
     disabledHardConstraints: [...algorithmSettings.disabledHardConstraints],
     dayStartHour: algorithmSettings.dayStartHour,
   };
-  _saveSnapshots();
+  if (!_saveSnapshots()) {
+    snapshots[idx].schedule = oldSchedule; // rollback
+    snapshots[idx].algorithmSettings = oldSettings;
+    return false;
+  }
   return true;
 }
 
@@ -2422,9 +2713,15 @@ export function renameSnapshot(id: string, name: string, description: string): s
   if (!trimmed) return 'השם לא יכול להיות ריק';
   if (_isSnapshotNameTaken(trimmed, id)) return 'תמונת מצב עם שם זה כבר קיימת';
 
+  const oldName = snapshot.name;
+  const oldDesc = snapshot.description;
   snapshot.name = trimmed;
   snapshot.description = description.trim();
-  _saveSnapshots();
+  if (!_saveSnapshots()) {
+    snapshot.name = oldName; // rollback
+    snapshot.description = oldDesc;
+    return 'שמירה נכשלה — נפח האחסון בדפדפן מלא';
+  }
   return null;
 }
 
@@ -2455,7 +2752,10 @@ export function duplicateSnapshot(id: string): ScheduleSnapshot | null {
     createdAt: Date.now(),
   };
   snapshots.push(dup);
-  _saveSnapshots();
+  if (!_saveSnapshots()) {
+    snapshots.pop(); // rollback
+    return null;
+  }
   return _deepCopySnapshot(dup);
 }
 
@@ -2469,8 +2769,11 @@ export function deleteSnapshot(id: string): boolean {
   if (idx === -1) return false;
   if (snapshots[idx].builtIn) return false;
 
-  snapshots.splice(idx, 1);
-  _saveSnapshots();
+  const [removed] = snapshots.splice(idx, 1);
+  if (!_saveSnapshots()) {
+    snapshots.splice(idx, 0, removed); // rollback
+    return false;
+  }
 
   if (_activeSnapshotId === id) {
     _activeSnapshotId = null;
@@ -2606,28 +2909,36 @@ function _seedBuiltInParticipantSet(): void {
   _saveParticipantSets();
 }
 
-function _saveParticipantSets(): void {
-  if (!_participantSets) return;
+function _saveParticipantSets(): boolean {
+  if (!_participantSets) return false;
   try {
     localStorage.setItem(STORAGE_KEY_PSETS, JSON.stringify(_participantSets));
+    onSaveSuccess();
+    return true;
   } catch (err: unknown) {
-    if (err instanceof DOMException && err.name === 'QuotaExceededError') {
+    if (isQuotaExceededError(err)) {
       console.warn('[Store] localStorage quota exceeded for participant sets.');
     } else {
       console.warn('[Store] Failed to save participant sets:', err);
     }
+    reportSaveError(err);
+    return false;
   }
 }
 
-function _saveActiveParticipantSetId(): void {
+function _saveActiveParticipantSetId(): boolean {
   try {
     if (_activeParticipantSetId) {
       localStorage.setItem(STORAGE_KEY_ACTIVE_PSET, _activeParticipantSetId);
     } else {
       localStorage.removeItem(STORAGE_KEY_ACTIVE_PSET);
     }
+    onSaveSuccess();
+    return true;
   } catch (err) {
     console.warn('[Store] Failed to save active participant set id:', err);
+    reportSaveError(err);
+    return false;
   }
 }
 
@@ -2693,11 +3004,17 @@ export function saveCurrentAsParticipantSet(name: string, description: string): 
     createdAt: Date.now(),
   };
 
+  const prevActiveId = _activeParticipantSetId;
   sets.push(pset);
-  _saveParticipantSets();
+  if (!_saveParticipantSets()) {
+    sets.pop(); // rollback
+    return null;
+  }
 
   _activeParticipantSetId = pset.id;
-  _saveActiveParticipantSetId();
+  if (!_saveActiveParticipantSetId()) {
+    _activeParticipantSetId = prevActiveId;
+  }
 
   return _deepCopyPSet(pset);
 }
@@ -2795,10 +3112,18 @@ export function updateParticipantSet(id: string): boolean {
   if (sets[idx].builtIn) return false;
 
   const participantsSnapshot = _snapshotCurrentParticipants();
+  const prevParticipants = sets[idx].participants;
+  const prevPakal = sets[idx].pakalCatalog;
+  const prevCerts = sets[idx].certificationCatalog;
   sets[idx].participants = participantsSnapshot;
   sets[idx].pakalCatalog = _snapshotCurrentPakalCatalog(participantsSnapshot);
   sets[idx].certificationCatalog = _snapshotCurrentCertificationCatalog(participantsSnapshot);
-  _saveParticipantSets();
+  if (!_saveParticipantSets()) {
+    sets[idx].participants = prevParticipants; // rollback
+    sets[idx].pakalCatalog = prevPakal;
+    sets[idx].certificationCatalog = prevCerts;
+    return false;
+  }
   return true;
 }
 
@@ -2815,9 +3140,15 @@ export function renameParticipantSet(id: string, name: string, description: stri
   if (!trimmed) return 'השם לא יכול להיות ריק';
   if (_isPSetNameTaken(trimmed, id)) return 'סט עם שם זה כבר קיים';
 
+  const prevName = pset.name;
+  const prevDesc = pset.description;
   pset.name = trimmed;
   pset.description = description.trim();
-  _saveParticipantSets();
+  if (!_saveParticipantSets()) {
+    pset.name = prevName; // rollback
+    pset.description = prevDesc;
+    return 'שמירה נכשלה — נפח האחסון בדפדפן מלא';
+  }
   return null;
 }
 
@@ -2848,7 +3179,10 @@ export function duplicateParticipantSet(id: string): ParticipantSet | null {
     createdAt: Date.now(),
   };
   sets.push(dup);
-  _saveParticipantSets();
+  if (!_saveParticipantSets()) {
+    sets.pop(); // rollback
+    return null;
+  }
   return _deepCopyPSet(dup);
 }
 
@@ -2862,8 +3196,11 @@ export function deleteParticipantSet(id: string): boolean {
   if (idx === -1) return false;
   if (sets[idx].builtIn) return false;
 
-  sets.splice(idx, 1);
-  _saveParticipantSets();
+  const [removed] = sets.splice(idx, 1);
+  if (!_saveParticipantSets()) {
+    sets.splice(idx, 0, removed); // rollback
+    return false;
+  }
 
   if (_activeParticipantSetId === id) {
     _activeParticipantSetId = null;
@@ -2975,28 +3312,36 @@ function _seedBuiltInTaskSet(): void {
   _saveTaskSets();
 }
 
-function _saveTaskSets(): void {
-  if (!_taskSets) return;
+function _saveTaskSets(): boolean {
+  if (!_taskSets) return false;
   try {
     localStorage.setItem(STORAGE_KEY_TASK_SETS, JSON.stringify(_taskSets));
+    onSaveSuccess();
+    return true;
   } catch (err: unknown) {
-    if (err instanceof DOMException && err.name === 'QuotaExceededError') {
+    if (isQuotaExceededError(err)) {
       console.warn('[Store] localStorage quota exceeded for task sets.');
     } else {
       console.warn('[Store] Failed to save task sets:', err);
     }
+    reportSaveError(err);
+    return false;
   }
 }
 
-function _saveActiveTaskSetId(): void {
+function _saveActiveTaskSetId(): boolean {
   try {
     if (_activeTaskSetId) {
       localStorage.setItem(STORAGE_KEY_ACTIVE_TASK_SET, _activeTaskSetId);
     } else {
       localStorage.removeItem(STORAGE_KEY_ACTIVE_TASK_SET);
     }
+    onSaveSuccess();
+    return true;
   } catch (err) {
     console.warn('[Store] Failed to save active task set id:', err);
+    reportSaveError(err);
+    return false;
   }
 }
 
@@ -3059,11 +3404,17 @@ export function saveCurrentAsTaskSet(name: string, description: string): TaskSet
     createdAt: Date.now(),
   };
 
+  const prevActiveId = _activeTaskSetId;
   sets.push(tset);
-  _saveTaskSets();
+  if (!_saveTaskSets()) {
+    sets.pop(); // rollback
+    return null;
+  }
 
   _activeTaskSetId = tset.id;
-  _saveActiveTaskSetId();
+  if (!_saveActiveTaskSetId()) {
+    _activeTaskSetId = prevActiveId;
+  }
 
   return _deepCopyTaskSet(tset);
 }
@@ -3117,10 +3468,18 @@ export function updateTaskSet(id: string): boolean {
   if (sets[idx].builtIn) return false;
 
   const snapshot = _snapshotCurrentTaskSetState();
+  const prevTemplates = sets[idx].templates;
+  const prevOneTime = sets[idx].oneTimeTasks;
+  const prevBreak = sets[idx].categoryBreakHours;
   sets[idx].templates = snapshot.templates;
   sets[idx].oneTimeTasks = snapshot.oneTimeTasks;
   sets[idx].categoryBreakHours = snapshot.categoryBreakHours;
-  _saveTaskSets();
+  if (!_saveTaskSets()) {
+    sets[idx].templates = prevTemplates; // rollback
+    sets[idx].oneTimeTasks = prevOneTime;
+    sets[idx].categoryBreakHours = prevBreak;
+    return false;
+  }
   return true;
 }
 
@@ -3137,9 +3496,15 @@ export function renameTaskSet(id: string, name: string, description: string): st
   if (!trimmed) return 'השם לא יכול להיות ריק';
   if (_isTaskSetNameTaken(trimmed, id)) return 'סט עם שם זה כבר קיים';
 
+  const prevName = tset.name;
+  const prevDesc = tset.description;
   tset.name = trimmed;
   tset.description = description.trim();
-  _saveTaskSets();
+  if (!_saveTaskSets()) {
+    tset.name = prevName; // rollback
+    tset.description = prevDesc;
+    return 'שמירה נכשלה — נפח האחסון בדפדפן מלא';
+  }
   return null;
 }
 
@@ -3170,7 +3535,10 @@ export function duplicateTaskSet(id: string): TaskSet | null {
     createdAt: Date.now(),
   };
   sets.push(dup);
-  _saveTaskSets();
+  if (!_saveTaskSets()) {
+    sets.pop(); // rollback
+    return null;
+  }
   return _deepCopyTaskSet(dup);
 }
 
@@ -3184,8 +3552,11 @@ export function deleteTaskSet(id: string): boolean {
   if (idx === -1) return false;
   if (sets[idx].builtIn) return false;
 
-  sets.splice(idx, 1);
-  _saveTaskSets();
+  const [removed] = sets.splice(idx, 1);
+  if (!_saveTaskSets()) {
+    sets.splice(idx, 0, removed); // rollback
+    return false;
+  }
 
   if (_activeTaskSetId === id) {
     _activeTaskSetId = null;

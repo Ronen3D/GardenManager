@@ -25,6 +25,30 @@ import { escHtml } from './ui-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+const FIELD_LABELS: Record<string, string> = {
+  durationHours: 'משך',
+  shiftsPerDay: 'משמרות/יום',
+  startHour: 'שעת התחלה',
+  eveningStartHour: 'שעת ערב',
+};
+
+/** Show a warning toast if any numeric field was clamped by sanitization. */
+function notifyIfClamped(
+  raw: Record<string, number | undefined>,
+  sanitized: Record<string, number | undefined>,
+): void {
+  const corrections: string[] = [];
+  for (const key of Object.keys(raw)) {
+    const r = raw[key], s = sanitized[key];
+    if (r !== undefined && s !== undefined && r !== s) {
+      corrections.push(`${FIELD_LABELS[key] || key}: ${r} → ${s}`);
+    }
+  }
+  if (corrections.length) {
+    showToast(`ערכים לא תקינים תוקנו: ${corrections.join(', ')}`, { type: 'warning', duration: 5000 });
+  }
+}
+
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
 function getCertOptions(): CertificationDefinition[] {
   return store.getCertificationDefinitions();
@@ -724,8 +748,11 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const togethernessRelevant = (body.querySelector('[data-tpl-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
         const requiresCategoryBreak = (body.querySelector('[data-tpl-field="requiresCategoryBreak"]') as HTMLInputElement)?.checked || false;
 
+        const sanitized = store.sanitizeTemplateNumericFields({ durationHours: dur, shiftsPerDay: shifts, startHour: startH });
+        notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
+
         store.updateTaskTemplate(tid, {
-          durationHours: dur, shiftsPerDay: shifts, startHour: startH,
+          durationHours: sanitized.durationHours, shiftsPerDay: sanitized.shiftsPerDay, startHour: sanitized.startHour,
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
           sameGroupRequired: sameGroup, isLight, blocksConsecutive, togethernessRelevant, requiresCategoryBreak,
         });
@@ -944,13 +971,16 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const isLight = (form.querySelector('[data-field="tpl-light"]') as HTMLInputElement)?.checked || false;
         const desc = (form.querySelector('[data-field="tpl-desc"]') as HTMLInputElement)?.value.trim();
 
+        const sanitized = store.sanitizeTemplateNumericFields({ durationHours: dur, shiftsPerDay: shifts, startHour: startH });
+        notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
+
         const displayCategory = name.toLowerCase();
 
         store.addTaskTemplate({
           name,
-          durationHours: dur,
-          shiftsPerDay: shifts,
-          startHour: startH,
+          durationHours: sanitized.durationHours,
+          shiftsPerDay: sanitized.shiftsPerDay,
+          startHour: sanitized.startHour,
           sameGroupRequired: sameGroup,
           isLight,
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
@@ -987,9 +1017,9 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const schedDate = store.getScheduleDate();
         const scheduledDate = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate() + dayNum - 1);
 
-        const startHour = parseInt((form.querySelector('[data-field="ot-start-hour"]') as HTMLInputElement)?.value || '6');
-        const startMinute = parseInt((form.querySelector('[data-field="ot-start-minute"]') as HTMLInputElement)?.value || '0');
-        const dur = parseFloat((form.querySelector('[data-field="ot-duration"]') as HTMLInputElement)?.value || '4');
+        const rawStartHour = parseInt((form.querySelector('[data-field="ot-start-hour"]') as HTMLInputElement)?.value || '6');
+        const rawStartMinute = parseInt((form.querySelector('[data-field="ot-start-minute"]') as HTMLInputElement)?.value || '0');
+        const rawDur = parseFloat((form.querySelector('[data-field="ot-duration"]') as HTMLInputElement)?.value || '4');
         const baseLoad = parseFloat((form.querySelector('[data-field="ot-base-load"]') as HTMLInputElement)?.value || '1');
         const sameGroup = (form.querySelector('[data-field="ot-samegroup"]') as HTMLInputElement)?.checked || false;
         const isLight = (form.querySelector('[data-field="ot-light"]') as HTMLInputElement)?.checked || false;
@@ -997,12 +1027,19 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const desc = (form.querySelector('[data-field="ot-desc"]') as HTMLInputElement)?.value.trim();
         const displayCategory = name.toLowerCase();
 
+        const otSanitized = store.sanitizeTemplateNumericFields({ durationHours: rawDur, startHour: rawStartHour });
+        const startMinute = Math.max(0, Math.min(59, Math.round(Number.isNaN(rawStartMinute) ? 0 : rawStartMinute)));
+        notifyIfClamped(
+          { durationHours: rawDur, startHour: rawStartHour },
+          { durationHours: otSanitized.durationHours, startHour: otSanitized.startHour },
+        );
+
         store.addOneTimeTask({
           name,
           scheduledDate,
-          startHour,
+          startHour: otSanitized.startHour,
           startMinute,
-          durationHours: dur,
+          durationHours: otSanitized.durationHours,
           sameGroupRequired: sameGroup,
           isLight,
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
