@@ -566,20 +566,30 @@ section h2 {
 .score-card.inline-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 14px;
-  font-size: 0.85rem;
+  gap: 6px;
+  padding: 3px 12px;
+  font-size: 0.8rem;
+  border-radius: 20px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  border-width: 1.5px;
+  vertical-align: middle;
 }
 .score-card.inline-badge .score-value {
-  font-size: 0.95rem;
+  font-size: 0.8rem;
+  font-weight: 700;
   margin-bottom: 0;
 }
 .score-card.inline-badge .score-label {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   margin: 0;
+  opacity: 0.7;
 }
 .score-card.inline-badge:hover {
   transform: none;
+  box-shadow: none;
 }
 
 /* ─── Alerts ──────────────────────────────────────────── */
