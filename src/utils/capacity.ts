@@ -66,10 +66,17 @@ export function computeParticipantCapacity(
 
   // Iterate over each operational day in the schedule window.
   // An operational day starts at dayStartHour on a calendar date and runs 24 hours.
+  // If scheduleStart falls before today's dayStartHour (e.g. a task stamped at
+  // 05:00 on day 1 with dayStartHour=6), that timestamp belongs to the previous
+  // calendar day's operational period — the cursor must start there so the map
+  // key aligns with operationalDateKey() for such tasks.
   const cursor = new Date(
     scheduleStart.getFullYear(), scheduleStart.getMonth(), scheduleStart.getDate(),
     dayStartHour, 0, 0, 0,
   );
+  if (cursor.getTime() > scheduleStart.getTime()) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
   const endMs = scheduleEnd.getTime();
 
   while (cursor.getTime() < endMs) {

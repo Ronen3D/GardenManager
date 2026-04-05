@@ -1513,10 +1513,12 @@ function loadScheduleSnapshot(snapshotId: string): void {
   const snapshot = store.getSnapshotById(snapshotId);
   if (!snapshot) return;
 
-  // 1. Restore algorithm settings
+  // 1. Restore algorithm settings (including the operational day boundary so
+  //    day grouping, scoring, and the engine all match what was saved).
   store.setAlgorithmSettings({
     config: snapshot.algorithmSettings.config,
     disabledHardConstraints: snapshot.algorithmSettings.disabledHardConstraints,
+    dayStartHour: snapshot.algorithmSettings.dayStartHour,
   });
 
   // 2. Reconcile with current participants
@@ -2701,6 +2703,27 @@ function scrollToNow(storeRef: typeof store, scroll = true): void {
   }
 }
 
+/**
+ * Passive repair: if the operational day boundary in settings has drifted
+ * from the engine's cached value (e.g., the user changed `dayStartHour`
+ * while a schedule is loaded), update the engine and re-validate so the
+ * score, soft warnings, and all downstream display are consistent with
+ * the new boundary.
+ */
+function _syncEngineDayStartHour(): void {
+  if (!engine || !currentSchedule) return;
+  const storeDsh = store.getDayStartHour();
+  if (engine.getDayStartHour() !== storeDsh) {
+    engine.setDayStartHour(storeDsh);
+    engine.revalidateFull();
+    const updated = engine.getSchedule();
+    if (updated) {
+      currentSchedule = updated;
+      store.saveSchedule(currentSchedule);
+    }
+  }
+}
+
 function renderAll(): void {
   const app = document.getElementById('app')!;
 
@@ -2708,6 +2731,9 @@ function renderAll(): void {
   hideTooltip();
   hideTaskTooltip();
   hideAvailabilityPopover();
+
+  // Keep engine in sync with the configured day boundary hour
+  _syncEngineDayStartHour();
 
   // ── Profile View: completely different layout, no re-optimization ──
   if (_viewMode === 'PROFILE_VIEW' && _profileParticipantId && currentSchedule) {
@@ -2754,7 +2780,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4480,6 +4506,7 @@ function init(): void {
       algoSettings.config,
       store.getDisabledHCSet(),
       store.getCategoryBreakHours() * 3600000,
+      store.getDayStartHour(),
     );
     engine.addParticipants(reconciledParticipants);
     engine.addTasks(savedSchedule.tasks);

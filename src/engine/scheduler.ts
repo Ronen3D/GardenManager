@@ -54,6 +54,21 @@ export class SchedulingEngine {
     resetAssignmentCounter();
   }
 
+  /** Operational day boundary hour currently used by this engine instance. */
+  getDayStartHour(): number {
+    return this.dayStartHour;
+  }
+
+  /**
+   * Update the operational day boundary hour. Derived state (capacities,
+   * score context) is rebuilt on demand, so no further bookkeeping is
+   * needed beyond updating the cached value — callers should follow this
+   * with `revalidateFull()` to refresh the schedule's score/warnings.
+   */
+  setDayStartHour(hour: number): void {
+    this.dayStartHour = hour;
+  }
+
   /** Build a ScoreContext with pre-computed capacities for proportional scoring */
   private _buildScoreCtx(tasks: Task[], participants: Participant[]): ScoreContext {
     let schedStart = tasks[0]?.timeBlock.start ?? new Date();
