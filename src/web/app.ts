@@ -1486,11 +1486,11 @@ function renderSnapshotPanel(): string {
       const dateStr = date.toLocaleDateString('he-IL', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
       html += `<div class="snapshot-item ${isActive ? 'snapshot-item-active' : ''}" data-snap-id="${snap.id}">
         <div class="snapshot-item-main">
-          <span class="snapshot-item-name">${snap.name}</span>
+          <span class="snapshot-item-name">${escHtml(snap.name)}</span>
           ${isActive && _snapshotDirty ? '<span class="snapshot-dirty-badge">שונה</span>' : ''}
           <span class="snapshot-item-date text-muted">${dateStr}</span>
         </div>
-        ${snap.description ? `<div class="snapshot-item-desc text-muted">${snap.description}</div>` : ''}
+        ${snap.description ? `<div class="snapshot-item-desc text-muted">${escHtml(snap.description)}</div>` : ''}
         <div class="snapshot-item-actions">
           <button class="btn-xs btn-primary" data-snap-action="load" data-snap-id="${snap.id}" title="טען תמונת מצב זו">▶ טען</button>
           ${isActive && _snapshotDirty ? `<button class="btn-xs btn-outline" data-snap-action="update" data-snap-id="${snap.id}" title="עדכן עם השבצ\\"ק הנוכחי">עדכן</button>` : ''}
@@ -2780,7 +2780,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8.1</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

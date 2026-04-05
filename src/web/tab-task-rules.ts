@@ -32,7 +32,7 @@ function getCertOptions(): CertificationDefinition[] {
 
 function templateBadge(tpl: { color?: string; name: string }): string {
   const color = tpl.color || '#7f8c8d';
-  return `<span class="badge" style="background:${color}">${tpl.name}</span>`;
+  return `<span class="badge" style="background:${color}">${escHtml(tpl.name)}</span>`;
 }
 
 function levelBadge(level: Level): string {
@@ -289,7 +289,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
     <div class="template-header" data-action="toggle-template" data-tid="${tpl.id}">
       <div class="template-title">
         ${templateBadge(tpl)}
-        <strong>${tpl.name}</strong>
+        <strong>${escHtml(tpl.name)}</strong>
         <span class="text-muted"> · ${tpl.shiftsPerDay} משמרות × ${tpl.durationHours} שע׳ — ${totalPeople} איש/יום</span>
         ${hasCritical ? '<span class="badge badge-sm" style="background:var(--danger)">!</span>' : ''}
         ${hasWarning && !hasCritical ? '<span class="badge badge-sm" style="background:var(--warning)">⚠</span>' : ''}
@@ -307,7 +307,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
   if (isExpanded) {
     html += `<div class="template-body">`;
     if (tpl.description) {
-      html += `<p class="text-muted" style="margin-bottom:12px;">${tpl.description}</p>`;
+      html += `<p class="text-muted" style="margin-bottom:12px;">${escHtml(tpl.description!)}</p>`;
     }
 
     // Template properties
@@ -401,7 +401,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
 function renderSubTeam(templateId: string, st: SubTeamTemplate, pf: PreflightResult): string {
   let html = `<div class="subteam-card">
     <div class="subteam-header">
-      <strong>${st.name}</strong>
+      <strong>${escHtml(st.name)}</strong>
       <span class="text-muted">(${st.slots.length} משבצות)</span>
       <button class="btn-sm btn-outline" data-action="add-slot-subteam" data-tid="${templateId}" data-stid="${st.id}">+ משבצת</button>
       <button class="btn-sm btn-danger-outline" data-action="remove-subteam" data-tid="${templateId}" data-stid="${st.id}">✕</button>
@@ -433,7 +433,7 @@ function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: s
     const forbiddenCerts = slot.forbiddenCertifications ?? [];
 
     html += `<tr>
-      <td>${stripLevelText(slot.label)}</td>
+      <td>${escHtml(stripLevelText(slot.label))}</td>
       <td>${slot.acceptableLevels.map(e => levelBadge(e.level) + (e.lowPriority ? '<sup style="color:#e67e22;font-size:0.6rem">LP</sup>' : '')).join(' ')}</td>
       <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map(c => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${forbiddenCerts.length > 0 ? forbiddenCerts.map(c => forbiddenCertBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>

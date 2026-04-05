@@ -896,6 +896,19 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         }
         break;
       }
+
+      // ── Accordion toggle ──
+      case 'settings-accordion-toggle': {
+        const id = btn.dataset.accordion;
+        if (!id) break;
+        if (_openAccordions.has(id)) {
+          _openAccordions.delete(id);
+        } else {
+          _openAccordions.add(id);
+        }
+        rerender();
+        break;
+      }
     }
   });
 

@@ -431,7 +431,7 @@ export function renderParticipantsTab(): string {
       <div class="filter-pills">
         <button class="pill ${filterGroup === '' ? 'pill-active' : ''}" data-action="filter-group" data-group="">הכל</button>
         ${groups.map(g =>
-          `<button class="pill ${filterGroup === g ? 'pill-active' : ''}" data-action="filter-group" data-group="${g}">${g}</button>`
+          `<button class="pill ${filterGroup === g ? 'pill-active' : ''}" data-action="filter-group" data-group="${escHtml(g)}">${escHtml(g)}</button>`
         ).join('')}
       </div>
     </div>
@@ -475,7 +475,7 @@ export function renderParticipantsTab(): string {
       html += `<tr data-participant-id="${p.id}" class="${isSelected ? 'row-selected' : ''}">
         <td class="col-select"><input type="checkbox" class="cb-select-participant" data-pid="${p.id}" ${isSelected ? 'checked' : ''} /></td>
         <td class="col-index">${i + 1}</td>
-        <td class="col-name" title="${p.name}"><strong>${p.name}</strong></td>
+        <td class="col-name" title="${escHtml(p.name)}"><strong>${escHtml(p.name)}</strong></td>
         <td class="col-group">${groupBadge(p.group, true)}</td>
         <td class="col-level">${levelBadge(p.level)}</td>
         <td class="col-certs">${certBadges(p.certifications)}</td>
@@ -539,10 +539,10 @@ function renderEditRow(p: Participant, idx: number): string {
   return `<tr class="row-editing" data-participant-id="${p.id}">
     <td class="col-select"></td>
     <td class="col-index">${idx}</td>
-    <td class="col-name"><input class="input-sm" type="text" data-field="name" value="${p.name}" /></td>
+    <td class="col-name"><input class="input-sm" type="text" data-field="name" value="${escHtml(p.name)}" /></td>
     <td class="col-group">
       <select class="input-sm" data-field="group" data-group-select>
-        ${groups.map(g => `<option value="${g}" ${p.group === g ? 'selected' : ''}>${g}</option>`).join('')}
+        ${groups.map(g => `<option value="${escHtml(g)}" ${p.group === g ? 'selected' : ''}>${escHtml(g)}</option>`).join('')}
         <option value="__new__">+ קבוצה חדשה…</option>
       </select>
       <input class="input-sm hidden" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
@@ -704,7 +704,7 @@ function renderAddForm(groups: string[]): string {
       <label>שם <input class="input-sm" type="text" data-field="new-name" placeholder="שם" /></label>
       <label>קבוצה
         <select class="input-sm" data-field="new-group" data-group-select>
-          ${groups.map(g => `<option value="${g}">${g}</option>`).join('')}
+          ${groups.map(g => `<option value="${escHtml(g)}">${escHtml(g)}</option>`).join('')}
           <option value="__new__">+ קבוצה חדשה…</option>
         </select>
         <input class="input-sm hidden" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
