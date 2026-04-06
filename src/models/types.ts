@@ -749,3 +749,52 @@ export interface PreflightResult {
     utilizationPercent: number;
   };
 }
+
+// ─── Data Transfer (Export / Import) ────────────────────────────────────────
+
+export type ExportType = 'algorithm' | 'taskSet' | 'participantSet' | 'scheduleSnapshot' | 'fullBackup';
+
+/** Unified envelope for every GardenManager export file. */
+export interface GardenManagerExport {
+  _format: 'gardenmanager-export';
+  schemaVersion: 1;
+  exportedAt: string;
+  exportType: ExportType;
+  payload: AlgorithmExportPayload | TaskSetExportPayload | ParticipantSetExportPayload | ScheduleSnapshotExportPayload | FullBackupPayload;
+}
+
+export interface AlgorithmExportPayload {
+  currentSettings: AlgorithmSettings;
+  presets: AlgorithmPreset[];
+  activePresetId: string | null;
+}
+
+export interface TaskSetExportPayload {
+  taskSet: TaskSet;
+}
+
+export interface ParticipantSetExportPayload {
+  participantSet: ParticipantSet;
+}
+
+export interface ScheduleSnapshotExportPayload {
+  snapshot: ScheduleSnapshot;
+  certificationCatalog: CertificationDefinition[];
+  pakalCatalog: PakalDefinition[];
+}
+
+export interface FullBackupPayload {
+  storageEntries: Record<string, string>;
+}
+
+export interface ImportValidationResult {
+  ok: boolean;
+  exportType?: ExportType;
+  summary?: string;
+  error?: string;
+}
+
+export interface ImportResult {
+  ok: boolean;
+  error?: string;
+}

@@ -501,14 +501,14 @@ function normalizePakalLabel(raw: string): string {
   return raw.trim().replace(/\s+/g, ' ');
 }
 
-function ensurePakalDefinitions(definitions: PakalDefinition[]): void {
+export function ensurePakalDefinitions(definitions: PakalDefinition[]): void {
   pakalDefinitions = normalizePakalDefinitions([...pakalDefinitions, ...definitions]);
   for (const participant of participants.values()) {
     participant.pakalIds = sanitizePakalIds(participant.pakalIds, pakalDefinitions);
   }
 }
 
-function ensureCertificationDefinitions(definitions: CertificationDefinition[]): void {
+export function ensureCertificationDefinitions(definitions: CertificationDefinition[]): void {
   certificationDefinitions = normalizeCertificationDefinitions([...certificationDefinitions, ...definitions]);
 }
 
@@ -1769,7 +1769,7 @@ const SAVE_DEBOUNCE_MS = 500;
  * paths are intentionally separate — do not unify without updating both
  * the save and load sides.
  */
-function jsonSerialize(obj: unknown): string {
+export function jsonSerialize(obj: unknown): string {
   // Must use a regular function (not arrow) so `this` is the holder object.
   // JSON.stringify calls Date.toJSON() *before* the replacer sees the value,
   // so `value` is already a string for Dates.  `this[key]` gives the raw Date.
@@ -1786,7 +1786,7 @@ function jsonSerialize(obj: unknown): string {
  * Deep-deserialize ISO date strings back to Date objects.
  * Uses a reviver function that matches the serialization format.
  */
-function jsonDeserialize<T>(json: string): T {
+export function jsonDeserialize<T>(json: string): T {
   return JSON.parse(json, (_key, value) => {
     if (value && typeof value === 'object' && '__date__' in value) {
       return new Date(value.__date__);
@@ -3592,4 +3592,115 @@ export function isTaskSetDirty(): boolean {
   if (JSON.stringify(currentOts) !== JSON.stringify(tset.oneTimeTasks)) return true;
   if (_categoryBreakHours !== tset.categoryBreakHours) return true;
   return false;
+}
+
+// ─── Data Transfer Helpers ──────────────────────────────────────────────────
+
+const ALL_STORAGE_KEYS = [
+  STORAGE_KEY_STATE,
+  STORAGE_KEY_SCHEDULE,
+  STORAGE_KEY_LIVE_MODE,
+  STORAGE_KEY_ALGORITHM,
+  STORAGE_KEY_PRESETS,
+  STORAGE_KEY_ACTIVE_PRESET,
+  STORAGE_KEY_SNAPSHOTS,
+  STORAGE_KEY_ACTIVE_SNAPSHOT,
+  STORAGE_KEY_PSETS,
+  STORAGE_KEY_ACTIVE_PSET,
+  STORAGE_KEY_TASK_SETS,
+  STORAGE_KEY_ACTIVE_TASK_SET,
+];
+
+/** Return the 12 localStorage key names used by the app. */
+export function getAllStorageKeys(): string[] {
+  return [...ALL_STORAGE_KEYS];
+}
+
+/** Import a pre-built TaskSet directly (bypassing snapshot-from-current). */
+export function importTaskSetDirect(tset: TaskSet): boolean {
+  const sets = _initTaskSets();
+  if (sets.length >= MAX_TASK_SETS) return false;
+  // Restore OneTimeTask scheduledDate from string to Date if needed
+  for (const ot of tset.oneTimeTasks) {
+    if (typeof ot.scheduledDate === 'string') {
+      ot.scheduledDate = new Date(ot.scheduledDate as unknown as string);
+    }
+  }
+  sets.push(tset);
+  if (!_saveTaskSets()) {
+    sets.pop(); // rollback
+    return false;
+  }
+  return true;
+}
+
+/** Import a pre-built ParticipantSet directly. */
+export function importParticipantSetDirect(pset: ParticipantSet): boolean {
+  const sets = _initParticipantSets();
+  if (sets.length >= MAX_PARTICIPANT_SETS) return false;
+  const normalized = _normalizeParticipantSet(pset);
+  sets.push(normalized);
+  if (!_saveParticipantSets()) {
+    sets.pop(); // rollback
+    return false;
+  }
+  return true;
+}
+
+/** Import a pre-built ScheduleSnapshot directly. */
+export function importSnapshotDirect(snap: ScheduleSnapshot): boolean {
+  const snapshots = _initSnapshots();
+  if (snapshots.length >= MAX_SNAPSHOTS) return false;
+  snapshots.push(snap);
+  if (!_saveSnapshots()) {
+    snapshots.pop(); // rollback
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Replace current algorithm settings and all user presets in one operation.
+ * The built-in Default preset is always preserved.
+ */
+export function replaceAlgorithmSettingsAndPresets(
+  settings: AlgorithmSettings,
+  presets: AlgorithmPreset[],
+  activeId: string | null,
+): boolean {
+  // Replace working copy
+  _algorithmSettings = {
+    config: { ...settings.config },
+    disabledHardConstraints: [...settings.disabledHardConstraints],
+    dayStartHour: settings.dayStartHour,
+  };
+  if (!_saveAlgorithmSettings()) return false;
+
+  // Replace presets: keep built-in Default, replace everything else
+  const current = _initPresets();
+  const builtIn = current.filter(p => p.builtIn);
+  const imported = presets.filter(p => !p.builtIn);
+  _presets = [...builtIn, ...imported];
+  // Ensure Default always exists
+  if (!_presets.find(p => p.id === DEFAULT_PRESET.id)) {
+    _presets.unshift(_deepCopyPreset(DEFAULT_PRESET));
+  }
+  if (!_savePresets()) return false;
+
+  // Set active preset
+  _activePresetId = activeId && _presets.find(p => p.id === activeId) ? activeId : DEFAULT_PRESET.id;
+  _saveActivePresetId();
+  notifyAlgorithmChanged();
+  return true;
+}
+
+/** Add a single algorithm preset directly. */
+export function addAlgorithmPresetDirect(preset: AlgorithmPreset): boolean {
+  const presets = _initPresets();
+  presets.push(preset);
+  if (!_savePresets()) {
+    presets.pop(); // rollback
+    return false;
+  }
+  return true;
 }

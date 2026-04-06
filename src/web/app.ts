@@ -54,6 +54,7 @@ import { renderParticipantsTab, wireParticipantsEvents, clearParticipantSelectio
 import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
 import { renderProfileView, wireProfileEvents, ProfileContext } from './tab-profile';
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
+import { wireDataTransferEvents } from './data-transfer-ui';
 import { computeTaskBreakdown } from './workload-utils';
 import { exportWeeklyOverview, exportDailyDetail } from './pdf-export';
 import {
@@ -2855,7 +2856,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8.8</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8.9/span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2946,6 +2947,7 @@ function renderAll(): void {
     wireScheduleEvents(content);
   } else if (currentTab === 'algorithm') {
     wireAlgorithmEvents(content, renderAll);
+    wireDataTransferEvents();
   }
 
   // Run KPI count-up animations when on schedule tab

@@ -653,7 +653,7 @@ export interface BottomSheetOptions {
 export function showBottomSheet(
   content: string,
   opts?: BottomSheetOptions,
-): { close: () => void } {
+): { close: () => void; el: HTMLElement } {
   const title = opts?.title || '';
 
   const backdrop = document.createElement('div');
@@ -736,6 +736,6 @@ export function showBottomSheet(
   // Focus the close button for accessibility
   (backdrop.querySelector('.gm-bs-close') as HTMLElement).focus();
 
-  return { close };
+  return { close, el: sheet };
 }
 

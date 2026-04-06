@@ -22,6 +22,7 @@ import {
 import * as store from './config-store';
 import { showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
 import { escHtml, SVG_ICONS, getStoredTheme, setTheme, getCurrentTheme } from './ui-helpers';
+import { renderDataTransferContent } from './data-transfer-ui';
 
 // ─── Weight field metadata ───────────────────────────────────────────────────
 
@@ -568,6 +569,15 @@ export function renderAlgorithmTab(): string {
     title: 'הגדרות נוספות',
     summary: getDisplaySummary(),
     body: renderDisplayContent() + renderDangerContent(),
+  });
+
+  // ── Section 4: Data Transfer ──
+  html += renderAccordion({
+    id: 'acc-transfer',
+    icon: '📦',
+    title: 'העברת נתונים',
+    summary: 'ייבוא / ייצוא נתונים בין מכשירים',
+    body: renderDataTransferContent(),
   });
 
   return html;
