@@ -199,6 +199,7 @@ const CERT_COLOR_PALETTE = [
 ];
 
 let _selectedCertColor = '';
+let _certColorEditId: string | null = null;
 
 // Old renderCertificationSection / renderPakalSection removed —
 // replaced by renderCertificationContent() / renderPakalContent() above.
@@ -393,11 +394,18 @@ function renderCertificationContent(): string {
   for (const def of defs) {
     const usage = store.getCertificationUsage(def.id);
     const usageText = `${usage.participantCount} משתתפים, ${usage.slotCount} משבצות`;
+    const isEditingColor = _certColorEditId === def.id;
     html += `
-      <div class="cert-def-item">
-        <span class="badge" style="background:${def.color}">${escHtml(def.label)}</span>
-        <span class="cert-usage-count">${usageText}</span>
-        <button class="btn-icon btn-sm" data-action="cert-remove" data-cert-id="${def.id}" title="הסר הסמכה">✕</button>
+      <div class="cert-def-item-wrapper">
+        <div class="cert-def-item">
+          <button class="cert-color-indicator" data-action="cert-change-color" data-cert-id="${def.id}" style="background:${def.color}" title="שנה צבע"></button>
+          <span class="badge" style="background:${def.color}">${escHtml(def.label)}</span>
+          <span class="cert-usage-count">${usageText}</span>
+          <button class="btn-icon btn-sm" data-action="cert-remove" data-cert-id="${def.id}" title="הסר הסמכה">✕</button>
+        </div>
+        ${isEditingColor ? `<div class="cert-color-edit-palette">${CERT_COLOR_PALETTE.map(c =>
+          `<button type="button" class="cert-color-swatch${c === def.color ? ' selected' : ''}" data-action="cert-pick-color" data-cert-id="${def.id}" data-color="${c}" style="background:${c}" title="${c}"></button>`
+        ).join('')}</div>` : ''}
       </div>`;
   }
   html += `
@@ -834,6 +842,22 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
       }
       case 'cert-select-color': {
         _selectedCertColor = btn.dataset.color || CERT_COLOR_PALETTE[0];
+        rerender();
+        break;
+      }
+      case 'cert-change-color': {
+        const certId = btn.dataset.certId;
+        _certColorEditId = _certColorEditId === certId ? null : (certId ?? null);
+        rerender();
+        break;
+      }
+      case 'cert-pick-color': {
+        const certId = btn.dataset.certId;
+        const color = btn.dataset.color;
+        if (certId && color) {
+          store.updateCertificationColor(certId, color);
+        }
+        _certColorEditId = null;
         rerender();
         break;
       }

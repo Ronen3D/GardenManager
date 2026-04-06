@@ -460,6 +460,16 @@ export function addCertification(label: string, color: string): CertificationDef
   return { ...def };
 }
 
+export function updateCertificationColor(id: string, color: string): void {
+  if (!color || !/^#[0-9a-fA-F]{6}$/.test(color)) throw new Error('Invalid hex color');
+  const def = certificationDefinitions.find(d => d.id === id && !d.deleted);
+  if (!def) return;
+  if (def.color === color) return;
+  pushSnapshot();
+  def.color = color;
+  notify();
+}
+
 export function removeCertification(id: string): void {
   const def = certificationDefinitions.find(d => d.id === id && !d.deleted);
   if (!def) return;

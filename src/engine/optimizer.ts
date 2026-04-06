@@ -55,6 +55,13 @@ const SA_REHEAT_THRESHOLD = 500;
 /** Probability of attempting an unfilled-slot insert move per iteration. */
 const SA_INSERT_PROBABILITY = 0.2;
 
+/**
+ * Reusable scratch buffer for HC-12/HC-14 checks inside isSwapFeasible.
+ * Avoids per-call .map().filter() array allocations on the hot path.
+ * Safe because isSwapFeasible is only called synchronously from the SA loop.
+ */
+const _hcScratch: Task[] = [];
+
 /** Check if a participant holds any certification forbidden by the slot. */
 function hasForbiddenCertification(p: Participant, slot: SlotRequirement): boolean {
   if (!slot.forbiddenCertifications?.length) return false;
@@ -983,19 +990,23 @@ function isSwapFeasible(
   }
 
   // HC-12: No consecutive blocking tasks for both affected participants
+  // Uses module-level _hcScratch to avoid per-call .map().filter() allocations.
   if (!disabledHC?.has('HC-12')) {
     const checkConsecutiveHighLoad = (pid: string): boolean => {
-      const pAssignments = (byParticipant.get(pid) || [])
-        .map(a => ({ assignment: a, task: taskMap.get(a.taskId) }))
-        .filter((x): x is { assignment: Assignment; task: Task } => x.task != null)
-        .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
-      for (let x = 0; x < pAssignments.length - 1; x++) {
-        const cur = pAssignments[x];
-        const nxt = pAssignments[x + 1];
-        if (cur.task.id === nxt.task.id) continue;
-        const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
+      const raw = byParticipant.get(pid) || [];
+      _hcScratch.length = 0;
+      for (let i = 0; i < raw.length; i++) {
+        const task = taskMap.get(raw[i].taskId);
+        if (task != null) _hcScratch.push(task);
+      }
+      _hcScratch.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
+      for (let x = 0; x < _hcScratch.length - 1; x++) {
+        const cur = _hcScratch[x];
+        const nxt = _hcScratch[x + 1];
+        if (cur.id === nxt.id) continue;
+        const gap = nxt.timeBlock.start.getTime() - cur.timeBlock.end.getTime();
         if (gap > 0) continue;
-        if (effectivelyBlocksAt(cur.task, 'end') && effectivelyBlocksAt(nxt.task, 'start')) return false;
+        if (effectivelyBlocksAt(cur, 'end') && effectivelyBlocksAt(nxt, 'start')) return false;
       }
       return true;
     };
@@ -1003,18 +1014,22 @@ function isSwapFeasible(
   }
 
   // HC-14: Category break — minimum gap between category-flagged tasks
+  // Uses module-level _hcScratch to avoid per-call .map().filter() allocations.
   if (!disabledHC?.has('HC-14')) {
     const breakMs = categoryBreakMs ?? CATEGORY_BREAK_MS;
     const checkCatBreak = (pid: string): boolean => {
-      const pAssignments = (byParticipant.get(pid) || [])
-        .map(a => ({ assignment: a, task: taskMap.get(a.taskId) }))
-        .filter((x): x is { assignment: Assignment; task: Task } => x.task != null && !!x.task.requiresCategoryBreak)
-        .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
-      for (let x = 0; x < pAssignments.length - 1; x++) {
-        const cur = pAssignments[x];
-        const nxt = pAssignments[x + 1];
-        if (cur.task.id === nxt.task.id) continue;
-        const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
+      const raw = byParticipant.get(pid) || [];
+      _hcScratch.length = 0;
+      for (let i = 0; i < raw.length; i++) {
+        const task = taskMap.get(raw[i].taskId);
+        if (task != null && task.requiresCategoryBreak) _hcScratch.push(task);
+      }
+      _hcScratch.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
+      for (let x = 0; x < _hcScratch.length - 1; x++) {
+        const cur = _hcScratch[x];
+        const nxt = _hcScratch[x + 1];
+        if (cur.id === nxt.id) continue;
+        const gap = nxt.timeBlock.start.getTime() - cur.timeBlock.end.getTime();
         if (gap < breakMs) return false;
       }
       return true;
