@@ -35,6 +35,11 @@ results/
 # Build assets (large icons)
 build/
 
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
 # IDE & tool settings
 .vscode/
 .claude/
