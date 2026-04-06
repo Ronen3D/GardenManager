@@ -2947,7 +2947,7 @@ function renderAll(): void {
     wireScheduleEvents(content);
   } else if (currentTab === 'algorithm') {
     wireAlgorithmEvents(content, renderAll);
-    wireDataTransferEvents();
+    wireDataTransferEvents(content);
   }
 
   // Run KPI count-up animations when on schedule tab

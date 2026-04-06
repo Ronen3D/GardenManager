@@ -35,8 +35,8 @@ export function renderDataTransferContent(): string {
 // ─── Event Wiring ───────────────────────────────────────────────────────────
 
 /** Wire click handlers for the export/import buttons. */
-export function wireDataTransferEvents(): void {
-  document.addEventListener('click', (e) => {
+export function wireDataTransferEvents(container: HTMLElement): void {
+  container.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (!btn) return;
     const action = btn.dataset.action;
