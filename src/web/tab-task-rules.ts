@@ -458,7 +458,7 @@ function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: s
 
     html += `<tr>
       <td>${escHtml(stripLevelText(slot.label))}</td>
-      <td>${slot.acceptableLevels.map(e => levelBadge(e.level) + (e.lowPriority ? '<sup style="color:#e67e22;font-size:0.6rem">LP</sup>' : '')).join(' ')}</td>
+      <td>${slot.acceptableLevels.map(e => levelBadge(e.level) + (e.lowPriority ? '<sup class="lp-badge" title="מוצא אחרון – הדרגה מותרת אך לא מועדפת">⚠</sup>' : '')).join(' ')}</td>
       <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map(c => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${forbiddenCerts.length > 0 ? forbiddenCerts.map(c => forbiddenCertBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${statusHtml}</td>
@@ -878,7 +878,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const next = cur === 'normal' ? 'lowPriority' : cur === 'lowPriority' ? 'off' : 'normal';
         btn.dataset.state = next;
         const lvl = parseInt(btn.dataset.slotLevel!) as Level;
-        const lpSup = '<sup class="lp-badge">LP</sup>';
+        const lpSup = '<sup class="lp-badge" title="מוצא אחרון – הדרגה מותרת אך לא מועדפת">⚠</sup>';
         btn.innerHTML = next === 'off' ? `<span class="text-muted">L${lvl}</span>`
           : levelBadge(lvl) + (next === 'lowPriority' ? lpSup : '');
         break;

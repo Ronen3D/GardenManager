@@ -1020,8 +1020,7 @@ select.input-sm {
 .level-toggle .badge { pointer-events: none; }
 .level-toggle .lp-badge {
   color: #e67e22;
-  font-size: 0.6rem;
-  font-weight: 700;
+  font-size: 0.75rem;
   margin-inline-start: 2px;
   pointer-events: none;
 }
