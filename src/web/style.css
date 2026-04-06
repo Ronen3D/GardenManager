@@ -4293,7 +4293,6 @@ tr.now-row-animate > td.time-cell {
 }
 .preset-panel-header .count {
   font-size: 0.8rem;
-  color: var(--text-muted, #a6adc8);
   margin-inline-start: 4px;
 }
 
