@@ -2507,7 +2507,7 @@ export function isPresetDirty(): boolean {
 
 const STORAGE_KEY_SNAPSHOTS = 'gardenmanager_schedule_snapshots';
 const STORAGE_KEY_ACTIVE_SNAPSHOT = 'gardenmanager_active_snapshot_id';
-const MAX_SNAPSHOTS = 30;
+const MAX_SNAPSHOTS = 15;
 
 let _snapshots: ScheduleSnapshot[] | null = null;
 let _activeSnapshotId: string | null | undefined = undefined; // undefined = not yet loaded
@@ -2626,6 +2626,7 @@ export function saveScheduleAsSnapshot(
 ): ScheduleSnapshot | 'storage-full' | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
+  if (trimmed.length > 100) return null;
   if (_isSnapshotNameTaken(trimmed)) return null;
 
   const snapshots = _initSnapshots();
@@ -2711,6 +2712,7 @@ export function renameSnapshot(id: string, name: string, description: string): s
 
   const trimmed = name.trim();
   if (!trimmed) return 'השם לא יכול להיות ריק';
+  if (trimmed.length > 100) return 'השם ארוך מדי (עד 100 תווים)';
   if (_isSnapshotNameTaken(trimmed, id)) return 'תמונת מצב עם שם זה כבר קיימת';
 
   const oldName = snapshot.name;

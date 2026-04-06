@@ -69,13 +69,40 @@ import { buildPhantomContext } from '../engine/phantom';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
-let currentTab: 'participants' | 'task-rules' | 'schedule' | 'algorithm' = 'participants';
+type TabId = 'participants' | 'task-rules' | 'schedule' | 'algorithm';
+const VALID_TABS = new Set<TabId>(['participants', 'task-rules', 'schedule', 'algorithm']);
+
+let currentTab: TabId = 'participants';
 let engine: SchedulingEngine | null = null;
 let currentSchedule: Schedule | null = null;
 let scheduleElapsed = 0;
 let scheduleActualAttempts = 0;
 /** Currently viewed day (1–7). Always a specific day when schedule is shown. */
 let currentDay = 1;
+
+// ─── URL hash ↔ tab/day sync ────────────────────────────────────────────────
+
+function pushHash(replace = false): void {
+  const day = currentTab === 'schedule' ? `/${currentDay}` : '';
+  const hash = `#${currentTab}${day}`;
+  if (location.hash === hash) return;
+  if (replace) {
+    history.replaceState(null, '', hash);
+  } else {
+    history.pushState(null, '', hash);
+  }
+}
+
+function readHash(): void {
+  const raw = location.hash.replace(/^#/, '');
+  if (!raw) return;
+  const [tabPart, dayPart] = raw.split('/');
+  if (VALID_TABS.has(tabPart as TabId)) currentTab = tabPart as TabId;
+  if (dayPart) {
+    const d = parseInt(dayPart, 10);
+    if (d >= 1 && d <= 7) currentDay = d;
+  }
+}
 /** True while multi-attempt optimization is running */
 let _isOptimizing = false;
 /** True while undo/redo is executing — prevents onStoreChanged from reconciling */
@@ -1455,7 +1482,7 @@ function renderSnapshotPanel(): string {
   if (_snapshotFormMode === 'save-as') {
     html += `<div class="snapshot-inline-form" id="snap-form">
       <div class="snapshot-form-row">
-        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" placeholder="לדוגמה: טיוטה 1" autofocus${nameFieldInvalid} /></label>
+        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" placeholder="לדוגמה: טיוטה 1" maxlength="100" autofocus${nameFieldInvalid} /></label>
         <label>תיאור: <input class="snapshot-desc-input" type="text" id="snap-desc" placeholder="אופציונלי" /></label>
         <button class="btn-sm btn-primary" id="btn-snap-confirm-save">שמור</button>
         <button class="btn-sm btn-outline" id="btn-snap-cancel">ביטול</button>
@@ -1466,7 +1493,7 @@ function renderSnapshotPanel(): string {
     const active = snapshots.find(s => s.id === activeId);
     html += `<div class="snapshot-inline-form" id="snap-form">
       <div class="snapshot-form-row">
-        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" value="${active?.name || ''}"${nameFieldInvalid} /></label>
+        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" value="${active?.name || ''}" maxlength="100"${nameFieldInvalid} /></label>
         <label>תיאור: <input class="snapshot-desc-input" type="text" id="snap-desc" value="${active?.description || ''}" /></label>
         <button class="btn-sm btn-primary" id="btn-snap-confirm-rename">שמור</button>
         <button class="btn-sm btn-outline" id="btn-snap-cancel">ביטול</button>
@@ -1562,6 +1589,7 @@ function loadScheduleSnapshot(snapshotId: string): void {
 
   // 5. Re-validate
   engine.revalidateFull();
+  closeRescueModal();
   currentSchedule = engine.getSchedule()!;
   currentDay = 1;
   _scheduleDirty = false;
@@ -1902,6 +1930,7 @@ async function doGenerate(): Promise<void> {
 
   // Switch to schedule tab and show overlay (keep old schedule visible behind it)
   currentTab = 'schedule';
+  pushHash();
   _isOptimizing = true;
   _optimProgress = {
     attempt: 0,
@@ -1942,6 +1971,7 @@ async function doGenerate(): Promise<void> {
     );
 
     // ── Atomic commit: update state in one go, then render once ──
+    closeRescueModal();
     currentSchedule = schedule;
     scheduleElapsed = Math.round(performance.now() - t0);
     scheduleActualAttempts = schedule.actualAttempts ?? OPTIM_ATTEMPTS;
@@ -2042,6 +2072,7 @@ function doCreateManualSchedule(): void {
 
   engine.importSchedule(emptySchedule);
   engine.revalidateFull();
+  closeRescueModal();
   currentSchedule = engine.getSchedule()!;
 
   currentDay = 1;
@@ -2824,7 +2855,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8.3</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.8.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2934,6 +2965,7 @@ function wireTabNav(container: HTMLElement): void {
           clearParticipantSelection();
         }
         currentTab = tab;
+        pushHash();
         renderAll();
       }
     });
@@ -3304,6 +3336,8 @@ function wireScheduleEvents(container: HTMLElement): void {
         store.setScheduleDays(val);
         if (currentDay > val) currentDay = 1;
         renderAll();
+      } else {
+        daysInput.value = String(store.getScheduleDays());
       }
     });
   }
@@ -3317,6 +3351,7 @@ function wireScheduleEvents(container: HTMLElement): void {
       const day = parseInt((btn as HTMLElement).dataset.day || '1', 10);
       if (day !== currentDay && day >= 1) {
         currentDay = day;
+        pushHash(true);
         renderAll();
       }
     });
@@ -4527,6 +4562,7 @@ function onStoreChanged(): void {
   };
 
   // Revalidate violations/score after reconciliation
+  closeRescueModal();
   if (engine) {
     engine.importSchedule(currentSchedule);
     engine.addParticipants(refreshedParticipants);
@@ -4560,6 +4596,9 @@ function init(): void {
       showToast('שמירת נתונים נכשלה — ייתכן שהדפדפן חסם אחסון מקומי', { type: 'error', duration: 5000 });
     }
   });
+
+  // Restore tab/day from URL hash so mid-work reloads keep context
+  readHash();
 
   // Restore persisted schedule (if any) so it survives page reloads
   const savedSchedule = store.loadSchedule();
@@ -4611,6 +4650,9 @@ function init(): void {
     const el = document.getElementById('live-clock');
     if (el) el.textContent = formatLiveClock();
   }, 30_000);
+
+  // Sync tab/day when user navigates with browser back/forward
+  window.addEventListener('popstate', () => { readHash(); renderAll(); });
 
   // Flush any pending debounced save on page unload to prevent data loss
   window.addEventListener('beforeunload', (e) => {

@@ -4710,6 +4710,10 @@ tr.now-row-animate > td.time-cell {
   font-weight: 600;
   font-size: 0.88rem;
   color: var(--text, #cdd6f4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 .snapshot-item-date {
   font-size: 0.76rem;

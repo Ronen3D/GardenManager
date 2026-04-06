@@ -278,6 +278,24 @@ export function runPreflight(): PreflightResult {
     return otDay >= windowStart && otDay < windowEnd;
   });
 
+  // ── Zero-templates guard ──
+  if (templates.length === 0 && inRangeOts.length === 0) {
+    return {
+      canGenerate: false,
+      findings: [{
+        severity: PreflightSeverity.Critical,
+        category: 'NoTasks',
+        message: 'יש להגדיר משימות לפני יצירת שבצ"ק.',
+      }],
+      utilizationSummary: {
+        totalRequiredSlots: 0,
+        totalAvailableParticipantHours: 0,
+        totalRequiredHours: 0,
+        utilizationPercent: 0,
+      },
+    };
+  }
+
   const skillGapFindings = checkSkillGaps(participants, templates, inRangeOts);
   const capacityResult = checkCapacity(participants, templates, inRangeOts);
   const groupFindings = checkGroupIntegrity(participants, templates, inRangeOts);

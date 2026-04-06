@@ -963,6 +963,11 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const form = container.querySelector('#add-template-form')!;
         const name = (form.querySelector('[data-field="tpl-name"]') as HTMLInputElement)?.value.trim();
         if (!name) return;
+        const existingNames = store.getAllTaskTemplates().map(t => t.name.trim().toLowerCase());
+        if (existingNames.includes(name.toLowerCase())) {
+          showToast(`משימה בשם "${name}" כבר קיימת`, { type: 'error' });
+          return;
+        }
         const dur = parseFloat((form.querySelector('[data-field="tpl-duration"]') as HTMLInputElement)?.value || '8');
         const shifts = parseInt((form.querySelector('[data-field="tpl-shifts"]') as HTMLInputElement)?.value || '1');
         const startH = parseInt((form.querySelector('[data-field="tpl-start"]') as HTMLInputElement)?.value || '6');
