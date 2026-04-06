@@ -5304,6 +5304,10 @@ tr.now-row-animate > td.time-cell {
   justify-content: flex-start;
 }
 
+.gm-save-confirm-actions {
+  flex-wrap: wrap;
+}
+
 .gm-modal-btn-danger {
   background: var(--danger) !important;
 }

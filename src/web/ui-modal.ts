@@ -195,6 +195,56 @@ export function showConfirm(message: string, opts?: ConfirmOptions): Promise<boo
   });
 }
 
+// ─── Save-Confirm (3-button) Modal ────────────────────────────────────────
+
+export type SaveConfirmResult = 'save' | 'continue' | 'discard';
+
+/**
+ * Show a 3-button confirmation dialog for unsaved changes.
+ * Returns 'save' | 'continue' | 'discard'.
+ */
+export function showSaveConfirm(): Promise<SaveConfirmResult> {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'gm-modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="gm-modal-dialog" role="alertdialog" aria-modal="true">
+        <div class="gm-modal-header">
+          <span class="gm-modal-icon">💾</span>
+          <span class="gm-modal-title">האם לשמור את השינויים?</span>
+        </div>
+        <div class="gm-modal-actions gm-save-confirm-actions">
+          <button class="btn-primary gm-modal-btn-save">שמור</button>
+          <button class="btn-sm btn-outline gm-modal-btn-continue">המשך עריכה</button>
+          <button class="btn-sm btn-outline gm-modal-btn-discard" style="color:var(--danger)">בטל שינויים</button>
+        </div>
+      </div>`;
+
+    lockBodyScroll();
+    let resolved = false;
+    const close = (val: SaveConfirmResult) => {
+      if (resolved) return;
+      resolved = true;
+      backdrop.remove();
+      unlockBodyScroll();
+      resolve(val);
+    };
+
+    backdrop.querySelector('.gm-modal-btn-save')!.addEventListener('click', () => close('save'));
+    backdrop.querySelector('.gm-modal-btn-continue')!.addEventListener('click', () => close('continue'));
+    backdrop.querySelector('.gm-modal-btn-discard')!.addEventListener('click', () => close('discard'));
+    // Clicking the backdrop itself → treat as "continue editing"
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close('continue'); });
+
+    document.addEventListener('keydown', function onKey(e) {
+      if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close('continue'); }
+    });
+
+    document.body.appendChild(backdrop);
+    (backdrop.querySelector('.gm-modal-btn-save') as HTMLElement).focus();
+  });
+}
+
 // ─── Time Picker Modal ─────────────────────────────────────────────────────
 
 export interface TimePickerOptions {

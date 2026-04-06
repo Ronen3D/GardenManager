@@ -1170,6 +1170,35 @@
     flex-basis: 100%;
     min-width: 0;
   }
+
+  /* ── Top row: Name + Rank side by side ──────────────────────────────── */
+  .table-participants tbody tr.row-editing .col-name {
+    order: 1;
+    flex: 1 1 0% !important;
+    flex-basis: 0% !important;
+    min-width: 80px;
+  }
+  .table-participants tbody tr.row-editing .col-level {
+    order: 2;
+    flex: 0 0 auto !important;
+    flex-basis: auto !important;
+  }
+  .table-participants tbody tr.row-editing .col-level label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+  /* Force remaining fields after name+rank row to wrap onto new lines */
+  .table-participants tbody tr.row-editing .col-group   { order: 3; }
+  .table-participants tbody tr.row-editing .col-certs   { order: 4; }
+  .table-participants tbody tr.row-editing .col-pakals  { order: 5; }
+  .table-participants tbody tr.row-editing .col-prefs   { order: 6; }
+  .table-participants tbody tr.row-editing .col-notwith { order: 7; }
+  .table-participants tbody tr.row-editing .col-avail   { order: 8; }
+  .table-participants tbody tr.row-editing .col-unavail { order: 9; }
+  .table-participants tbody tr.row-editing .col-actions { order: 10; }
   .table-participants tbody tr.row-editing .pakal-checkboxes,
   .table-participants tbody tr.row-editing .cert-checkboxes {
     gap: 4px 8px;
@@ -1341,6 +1370,15 @@
 
   .gm-modal-actions button {
     min-height: 44px;
+  }
+
+  /* ── Save-confirm 3-button modal ─────────────────────────────────────── */
+  .gm-save-confirm-actions {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .gm-save-confirm-actions button {
+    width: 100%;
   }
 
   /* ── Rescue modal full-screen on phone ───────────────────────────────── */

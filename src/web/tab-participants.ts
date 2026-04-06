@@ -13,7 +13,7 @@ import {
   DateUnavailability,
 } from '../models/types';
 import * as store from './config-store';
-import { showConfirm, showToast } from './ui-modal';
+import { showConfirm, showToast, showSaveConfirm } from './ui-modal';
 import { levelBadge, certBadges, groupBadge, groupColor, SVG_ICONS, escHtml } from './ui-helpers';
 import { getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
 import { HEBREW_DAYS, fmtTime } from '../utils/date-utils';
@@ -276,6 +276,60 @@ let _lastClickedId: string | null = null;
 let _bulkDialogOpen = false;
 /** When true the bulk delete confirmation dialog is open */
 let _bulkDeleteDialogOpen = false;
+
+/** Check whether the editing form has unsaved changes compared to the stored participant. */
+function hasEditingChanges(row: Element, pid: string): boolean {
+  const p = store.getParticipant(pid);
+  if (!p) return false;
+
+  const name = (row.querySelector('[data-field="name"]') as HTMLInputElement)?.value.trim() || '';
+  if (name !== p.name) return true;
+
+  const group = (row.querySelector('[data-field="group"]') as HTMLSelectElement)?.value || '';
+  if (group === '__new__') {
+    const newGroupVal = (row.querySelector('[data-field="new-group-name"]') as HTMLInputElement)?.value.trim() || '';
+    if (newGroupVal) return true;
+  } else if (group !== p.group) {
+    return true;
+  }
+
+  const level = parseInt((row.querySelector('[data-field="level"]') as HTMLSelectElement)?.value || '0') as Level;
+  if (level !== p.level) return true;
+
+  const certs: string[] = [];
+  row.querySelectorAll<HTMLInputElement>('[data-cert]').forEach(cb => {
+    if (cb.checked && cb.dataset.cert) certs.push(cb.dataset.cert);
+  });
+  const origCerts = [...p.certifications].sort();
+  const newCerts = [...certs].sort();
+  if (origCerts.length !== newCerts.length || origCerts.some((c, i) => c !== newCerts[i])) return true;
+
+  const pakalIds = collectPakalIds(row, '[data-pakal]');
+  const origPakals = [...(p.pakalIds || [])].sort();
+  const newPakals = [...pakalIds].sort();
+  if (origPakals.length !== newPakals.length || origPakals.some((c, i) => c !== newPakals[i])) return true;
+
+  if (showNotWithColumn) {
+    const notWithRaw = (row.querySelector('[data-field="notWith"]') as HTMLInputElement)?.value || '';
+    const origNotWith = store.getNotWithIds(pid).map(id => {
+      const partner = store.getParticipant(id);
+      return partner ? partner.name : '';
+    }).filter(Boolean).sort().join(', ');
+    const newNotWith = notWithRaw.split(',').map(n => n.trim()).filter(Boolean).sort().join(', ');
+    if (origNotWith !== newNotWith) return true;
+  }
+
+  const prefVal = (row.querySelector('[data-field="preferredTask"]') as HTMLSelectElement)?.value || '';
+  if (prefVal !== (p.preferredTaskName || '')) return true;
+
+  const lessPrefVal = (row.querySelector('[data-field="lessPreferredTask"]') as HTMLSelectElement)?.value || '';
+  if (lessPrefVal !== (p.lessPreferredTaskName || '')) return true;
+
+  return false;
+}
+
+/** Flag to prevent re-entrant outside-click handling. */
+let _outsideClickBusy = false;
 
 function getVisibleParticipants(allParticipants: Participant[] = store.getAllParticipants()): Participant[] {
   const filtered = filterGroup
@@ -857,6 +911,59 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       if (scope) recheckAllPrefWarnings(scope, isAdd);
     }
   });
+
+  // ─── Outside-click: close editing panel (with save confirmation if dirty) ──
+  if (editingId) {
+    const editRow = container.querySelector('tr.row-editing') as HTMLElement | null;
+    if (editRow) {
+      const onOutsideClick = async (e: MouseEvent) => {
+        // Ignore if already handling an outside click, or if a modal is open
+        if (_outsideClickBusy) return;
+        if (document.querySelector('.gm-modal-backdrop')) return;
+
+        const target = e.target as HTMLElement;
+        // Click inside the editing row — do nothing
+        if (editRow.contains(target)) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        const pid = editingId;
+        if (!pid) return;
+
+        if (!hasEditingChanges(editRow, pid)) {
+          // No changes — close immediately
+          document.removeEventListener('click', onOutsideClick, true);
+          editingId = null;
+          rerender();
+          return;
+        }
+
+        // Has unsaved changes — show 3-button confirmation
+        _outsideClickBusy = true;
+        try {
+          const result = await showSaveConfirm();
+          document.removeEventListener('click', onOutsideClick, true);
+          if (result === 'save') {
+            // Trigger the save button click
+            const saveBtn = editRow.querySelector('[data-action="save-participant"]') as HTMLElement | null;
+            if (saveBtn) saveBtn.click();
+          } else if (result === 'discard') {
+            editingId = null;
+            rerender();
+          }
+          // 'continue' → do nothing, keep panel open (re-attach listener)
+          if (result === 'continue') {
+            document.addEventListener('click', onOutsideClick, true);
+          }
+        } finally {
+          _outsideClickBusy = false;
+        }
+      };
+      // Use capture phase so we intercept before other click handlers
+      document.addEventListener('click', onOutsideClick, true);
+    }
+  }
 
   // ─── Easter egg: triple-tap on count badge toggles "אי התאמה" column ──
   const countBadge = container.querySelector('.tab-toolbar h2 .count') as HTMLElement | null;
