@@ -1113,7 +1113,7 @@ function renderParticipantWarehouse(schedule: Schedule): string {
   return `<section class="manual-warehouse" id="manual-warehouse">
     <div class="warehouse-header">
       <h3>מאגר משתתפים</h3>
-      <input type="search" class="warehouse-filter" id="warehouse-filter" placeholder="חיפוש שם..." value="${escHtml(_warehouseFilter)}" />
+      <input type="search" class="warehouse-filter" id="warehouse-filter" placeholder="🔍 חפש..." value="${escHtml(_warehouseFilter)}" />
     </div>
     ${renderPool(l0Pool, 'דרגה 0')}
     ${renderPool(seniorPool, 'סגל (L2-L4)')}
@@ -1178,7 +1178,7 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
 
   return `${header}
     <div class="warehouse-sheet-filter">
-      <input type="search" class="warehouse-sheet-search" id="warehouse-sheet-search" placeholder="🔍 חיפוש שם..." autocomplete="off" />
+      <input type="search" class="warehouse-sheet-search" id="warehouse-sheet-search" placeholder="🔍 חפש..." autocomplete="off" />
     </div>
     <div class="warehouse-sheet-cards">${cards}</div>`;
 }
@@ -1476,7 +1476,7 @@ function renderSnapshotPanel(): string {
   // ── Header row ──
   html += `<div class="snapshot-panel-header">
     <h3>💾 תמונות מצב שמורות <span class="count">${snapshots.length}/${maxSnaps}</span></h3>
-    <button class="btn-sm btn-outline" id="btn-snap-close" title="סגור">✕</button>
+    <button class="btn-xs btn-outline" id="btn-snap-close" title="סגור">✕</button>
   </div>`;
 
   // ── Save-as form / rename form ──
@@ -1531,7 +1531,7 @@ function renderSnapshotPanel(): string {
           ${isActive && _snapshotDirty ? `<button class="btn-xs btn-outline" data-snap-action="update" data-snap-id="${snap.id}" title="עדכן עם השבצ\\"ק הנוכחי">עדכן</button>` : ''}
           <button class="btn-xs btn-outline" data-snap-action="rename" data-snap-id="${snap.id}" title="שנה שם">✎</button>
           <button class="btn-xs btn-outline" data-snap-action="duplicate" data-snap-id="${snap.id}" title="שכפל">⧉</button>
-          <button class="btn-xs btn-danger-outline" data-snap-action="delete" data-snap-id="${snap.id}" title="מחק">✕</button>
+          <button class="btn-xs btn-danger-outline" data-snap-action="delete" data-snap-id="${snap.id}" title="מחק">${SVG_ICONS.trash}</button>
         </div>
       </div>`;
     }
@@ -2856,7 +2856,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.9.3</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.9.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

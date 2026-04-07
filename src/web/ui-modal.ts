@@ -79,7 +79,7 @@ export function showPrompt(message: string, opts?: PromptOptions): Promise<strin
     let suggestionsHtml = '';
     if (suggestions.length > 0) {
       suggestionsHtml = `
-        <input type="text" class="gm-modal-input gm-modal-search" placeholder="🔍 חפש ברשימה…" />
+        <input type="text" class="gm-modal-input gm-modal-search" placeholder="🔍 חפש..." />
         <div class="gm-modal-suggestions">
           ${suggestions.map(s => `<button class="gm-modal-suggestion" data-value="${escAttr(s)}">${escHtml(s)}</button>`).join('')}
         </div>`;
@@ -216,7 +216,7 @@ export function showSaveConfirm(): Promise<SaveConfirmResult> {
         <div class="gm-modal-actions gm-save-confirm-actions">
           <button class="btn-primary gm-modal-btn-save">שמור</button>
           <button class="btn-sm btn-outline gm-modal-btn-continue">המשך עריכה</button>
-          <button class="btn-sm btn-outline gm-modal-btn-discard" style="color:var(--danger)">בטל שינויים</button>
+          <button class="btn-sm btn-danger-outline gm-modal-btn-discard">בטל שינויים</button>
         </div>
       </div>`;
 
@@ -405,7 +405,7 @@ export function renderCustomSelect(cfg: CustomSelectConfig): string {
         <span class="gm-select-chevron">▾</span>
       </button>
       <div class="gm-select-dropdown">
-        ${cfg.searchable ? '<input type="text" class="gm-select-search" placeholder="🔍 חפש…" />' : ''}
+        ${cfg.searchable ? '<input type="text" class="gm-select-search" placeholder="🔍 חפש..." />' : ''}
         <div class="gm-select-options">
           ${cfg.options.map(o => `
             <button class="gm-select-option ${o.selected ? 'selected' : ''}"

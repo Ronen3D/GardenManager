@@ -21,7 +21,7 @@ import {
 import * as store from './config-store';
 import { showPrompt, showConfirm, showToast } from './ui-modal';
 import { runPreflight } from './preflight';
-import { escHtml } from './ui-helpers';
+import { escHtml, SVG_ICONS } from './ui-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -238,7 +238,7 @@ export function renderTaskRulesTab(): string {
             </td>
             <td style="padding:8px; text-align:center;">
               <button class="btn-xs btn-outline" data-action="save-rest-rule" data-rr-id="${r.id}" title="שמור">✓</button>
-              <button class="btn-xs btn-outline" data-action="delete-rest-rule" data-rr-id="${r.id}" title="מחק" style="color:var(--danger);">✕</button>
+              <button class="btn-xs btn-danger-outline" data-action="delete-rest-rule" data-rr-id="${r.id}" title="מחק">✕</button>
             </td>
           </tr>
         `).join('')}</tbody>
@@ -271,8 +271,8 @@ function renderTaskSetPanel(): string {
       <div class="preset-form-row">
         <label>שם: <input type="text" class="preset-name-input" data-field="tset-saveas-name" maxlength="60" placeholder="הסט שלי" autofocus${nameFieldInvalid} /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="tset-saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
-        <button class="btn btn-sm btn-primary" data-action="tset-saveas-confirm">שמור</button>
-        <button class="btn btn-sm btn-outline" data-action="tset-form-cancel">ביטול</button>
+        <button class="btn-sm btn-primary" data-action="tset-saveas-confirm">שמור</button>
+        <button class="btn-sm btn-outline" data-action="tset-form-cancel">ביטול</button>
       </div>
       <div class="preset-validation-error" id="tset-form-error">${_taskSetFormError}</div>
     </div>`;
@@ -283,8 +283,8 @@ function renderTaskSetPanel(): string {
       <div class="preset-form-row">
         <label>שם: <input type="text" class="preset-name-input" data-field="tset-rename-name" maxlength="60" value="${escHtml(target?.name ?? '')}"${nameFieldInvalid} /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="tset-rename-desc" maxlength="200" value="${escHtml(target?.description ?? '')}" /></label>
-        <button class="btn btn-sm btn-primary" data-action="tset-rename-confirm">שמור</button>
-        <button class="btn btn-sm btn-outline" data-action="tset-form-cancel">ביטול</button>
+        <button class="btn-sm btn-primary" data-action="tset-rename-confirm">שמור</button>
+        <button class="btn-sm btn-outline" data-action="tset-form-cancel">ביטול</button>
       </div>
       <div class="preset-validation-error" id="tset-form-error">${_taskSetFormError}</div>
     </div>`;
@@ -316,7 +316,7 @@ function renderTaskSetPanel(): string {
           ${isActive && dirty && !isBuiltIn ? `<button class="btn-xs btn-outline" data-tset-action="update" data-tset-id="${s.id}" title="עדכן עם התבניות הנוכחיות">עדכן</button>` : ''}
           ${!isBuiltIn ? `<button class="btn-xs btn-outline" data-tset-action="rename" data-tset-id="${s.id}" title="שנה שם">✎</button>` : ''}
           <button class="btn-xs btn-outline" data-tset-action="duplicate" data-tset-id="${s.id}" title="שכפל">⧉</button>
-          ${!isBuiltIn ? `<button class="btn-xs btn-danger-outline" data-tset-action="delete" data-tset-id="${s.id}" title="מחק">✕</button>` : ''}
+          ${!isBuiltIn ? `<button class="btn-xs btn-danger-outline" data-tset-action="delete" data-tset-id="${s.id}" title="מחק">${SVG_ICONS.trash}</button>` : ''}
         </div>
       </div>`;
     }
@@ -791,7 +791,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const rrId = actionButton?.dataset.rrId;
         if (!rrId) break;
         const rule = store.getRestRuleById(rrId);
-        const confirmed = await showConfirm(`למחוק את הכלל "${rule?.label ?? rrId}"? משימות המשויכות אליו ייראו עם אזהרת יתום.`);
+        const confirmed = await showConfirm(`למחוק את הכלל "${rule?.label ?? rrId}"? משימות המשויכות אליו ייראו עם אזהרת יתום.`, { danger: true, confirmLabel: 'מחק' });
         if (!confirmed) break;
         store.removeRestRule(rrId);
         showToast('הכלל נמחק', { type: 'success' });

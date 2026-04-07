@@ -410,8 +410,8 @@ function renderSetsPanel(): string {
       <div class="preset-form-row">
         <label>שם: <input type="text" class="preset-name-input" data-field="pset-saveas-name" maxlength="60" placeholder="סט המשתתפים שלי" autofocus /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="pset-saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
-        <button class="btn btn-sm btn-primary" data-action="pset-saveas-confirm">שמור</button>
-        <button class="btn btn-sm btn-outline" data-action="pset-form-cancel">ביטול</button>
+        <button class="btn-sm btn-primary" data-action="pset-saveas-confirm">שמור</button>
+        <button class="btn-sm btn-outline" data-action="pset-form-cancel">ביטול</button>
       </div>
       <div class="preset-validation-error" id="pset-form-error">${_setsFormError}</div>
     </div>`;
@@ -422,8 +422,8 @@ function renderSetsPanel(): string {
       <div class="preset-form-row">
         <label>שם: <input type="text" class="preset-name-input" data-field="pset-rename-name" maxlength="60" value="${escHtml(target?.name ?? '')}" /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="pset-rename-desc" maxlength="200" value="${escHtml(target?.description ?? '')}" /></label>
-        <button class="btn btn-sm btn-primary" data-action="pset-rename-confirm">שמור</button>
-        <button class="btn btn-sm btn-outline" data-action="pset-form-cancel">ביטול</button>
+        <button class="btn-sm btn-primary" data-action="pset-rename-confirm">שמור</button>
+        <button class="btn-sm btn-outline" data-action="pset-form-cancel">ביטול</button>
       </div>
       <div class="preset-validation-error" id="pset-form-error">${_setsFormError}</div>
     </div>`;
@@ -455,7 +455,7 @@ function renderSetsPanel(): string {
           ${isActive && dirty && !isBuiltIn ? `<button class="btn-xs btn-outline" data-pset-action="update" data-pset-id="${s.id}" title="עדכן עם המשתתפים הנוכחיים">עדכן</button>` : ''}
           ${!isBuiltIn ? `<button class="btn-xs btn-outline" data-pset-action="rename" data-pset-id="${s.id}" title="שנה שם">✎</button>` : ''}
           <button class="btn-xs btn-outline" data-pset-action="duplicate" data-pset-id="${s.id}" title="שכפל">⧉</button>
-          ${!isBuiltIn ? `<button class="btn-xs btn-danger-outline" data-pset-action="delete" data-pset-id="${s.id}" title="מחק">✕</button>` : ''}
+          ${!isBuiltIn ? `<button class="btn-xs btn-danger-outline" data-pset-action="delete" data-pset-id="${s.id}" title="מחק">${SVG_ICONS.trash}</button>` : ''}
         </div>
       </div>`;
     }
@@ -856,8 +856,8 @@ function renderBulkDeleteDialog(): string {
         לא ניתן לבטל פעולה זו.
       </p>
       <div class="bulk-dialog-footer">
+        <button class="btn-sm btn-danger-outline" data-action="bulk-delete-confirm">אישור מחיקה</button>
         <button class="btn-sm btn-outline" data-action="bulk-delete-cancel">ביטול</button>
-        <button class="btn-danger btn-sm" data-action="bulk-delete-confirm">אישור מחיקה</button>
       </div>
     </div>
   </div>`;

@@ -520,7 +520,7 @@ export function renderAlgorithmTab(): string {
         className: 'preset-select',
       })}
       ${dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
-      <button class="btn btn-sm ${_presetPanelOpen ? 'btn-primary' : 'btn-outline'}" data-action="algo-preset-panel-toggle" title="ניהול הגדרות שמורות">💾${presetCount > 0 ? ` (${presetCount})` : ''}</button>
+      <button class="btn-sm ${_presetPanelOpen ? 'btn-primary' : 'btn-outline'}" data-action="algo-preset-panel-toggle" title="ניהול הגדרות שמורות">💾${presetCount > 0 ? ` (${presetCount})` : ''}</button>
     </div>
     ${_presetPanelOpen ? renderPresetPanel(presets, activeId, dirty, isBuiltIn) : ''}
     ${renderNestedAccordion({
@@ -606,8 +606,8 @@ function renderPresetPanel(
       <div class="preset-form-row">
         <label>שם: <input type="text" class="preset-name-input" data-field="saveas-name" maxlength="60" placeholder="התבנית שלי" autofocus${nameFieldInvalid} /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="saveas-desc" maxlength="200" placeholder="תיאור אופציונלי" /></label>
-        <button class="btn btn-sm btn-primary" data-action="algo-preset-saveas-confirm">שמור</button>
-        <button class="btn btn-sm btn-outline" data-action="algo-preset-form-cancel">ביטול</button>
+        <button class="btn-sm btn-primary" data-action="algo-preset-saveas-confirm">שמור</button>
+        <button class="btn-sm btn-outline" data-action="algo-preset-form-cancel">ביטול</button>
       </div>
       <div class="preset-validation-error" id="preset-form-error">${_presetFormError}</div>
     </div>`;
@@ -618,8 +618,8 @@ function renderPresetPanel(
       <div class="preset-form-row">
         <label>שם: <input type="text" class="preset-name-input" data-field="rename-name" maxlength="60" value="${escHtml(target?.name ?? '')}"${nameFieldInvalid} /></label>
         <label>תיאור: <input type="text" class="preset-desc-input" data-field="rename-desc" maxlength="200" value="${escHtml(target?.description ?? '')}" /></label>
-        <button class="btn btn-sm btn-primary" data-action="algo-preset-rename-confirm">שמור</button>
-        <button class="btn btn-sm btn-outline" data-action="algo-preset-form-cancel">ביטול</button>
+        <button class="btn-sm btn-primary" data-action="algo-preset-rename-confirm">שמור</button>
+        <button class="btn-sm btn-outline" data-action="algo-preset-form-cancel">ביטול</button>
       </div>
       <div class="preset-validation-error" id="preset-form-error">${_presetFormError}</div>
     </div>`;
@@ -640,7 +640,7 @@ function renderPresetPanel(
       html += `<div class="preset-item ${isActive ? 'preset-item-active' : ''}" data-preset-id="${p.id}">
         <div class="preset-item-main">
           <span class="preset-item-name">${escHtml(p.name)}</span>
-          ${isBuiltIn ? '<span class="preset-builtin-badge">מובנית</span>' : ''}
+          ${isBuiltIn ? '<span class="preset-builtin-badge">מובנה</span>' : ''}
           ${isActive && dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
         </div>
         ${p.description ? `<div class="preset-item-desc text-muted">${escHtml(p.description)}</div>` : ''}
@@ -649,7 +649,7 @@ function renderPresetPanel(
           ${isActive && dirty && !isBuiltIn ? `<button class="btn-xs btn-outline" data-preset-action="update" data-preset-id="${p.id}" title="עדכן עם ההגדרות הנוכחיות">עדכן</button>` : ''}
           ${!isBuiltIn ? `<button class="btn-xs btn-outline" data-preset-action="rename" data-preset-id="${p.id}" title="שנה שם">✎</button>` : ''}
           <button class="btn-xs btn-outline" data-preset-action="duplicate" data-preset-id="${p.id}" title="שכפל">⧉</button>
-          ${!isBuiltIn ? `<button class="btn-xs btn-danger-outline" data-preset-action="delete" data-preset-id="${p.id}" title="מחק">✕</button>` : ''}
+          ${!isBuiltIn ? `<button class="btn-xs btn-danger-outline" data-preset-action="delete" data-preset-id="${p.id}" title="מחק">${SVG_ICONS.trash}</button>` : ''}
         </div>
       </div>`;
     }
