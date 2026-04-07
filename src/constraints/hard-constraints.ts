@@ -313,13 +313,20 @@ export function checkGroupFeasibility(
   // Track which participants have been "claimed" by a slot (greedy matching)
   const claimed = new Set<string>();
 
-  for (const slot of task.slots) {
+  // Sort slots most-constrained-first (same as optimizer) so greedy matching
+  // doesn't falsely claim a flexible slot leaves a strict one unfillable.
+  const sortedSlots = [...task.slots].sort(
+    (a, b) => Math.min(...b.acceptableLevels.map(e => e.level)) - Math.min(...a.acceptableLevels.map(e => e.level)),
+  );
+
+  for (const slot of sortedSlots) {
     const match = groupParticipants.find(p => {
       if (claimed.has(p.id)) return false;
       if (!slot.acceptableLevels.some(e => e.level === p.level)) return false;
       for (const cert of slot.requiredCertifications) {
         if (!p.certifications.includes(cert)) return false;
       }
+      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) return false;
       return true;
     });
     if (match) {

@@ -11,7 +11,7 @@ Garden Manager is a constraint-based scheduling system for garden teams. It gene
 ## Build & Run Commands
 
 ```bash
-npm run dev              # Vite dev server with HMR (http://localhost:5173)
+npm run dev              # Vite dev server with HMR (http://localhost:5174)
 npm run build:web        # Build web bundle → dist-web/
 npm run build:node       # Compile Node backend (tsc) → dist/
 npm run test             # Run test suite (ts-node src/test.ts)
