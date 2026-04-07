@@ -4,7 +4,7 @@
  * When generating a new schedule, the user may provide a snapshot from the
  * previous schedule's final day.  The system converts this into "phantom"
  * assignments so that HC-5 (double-booking), HC-12 (consecutive high-load),
- * and HC-14 (5-hour category break) are enforced across the boundary.
+ * and HC-14 (rest-rule minimum gap) are enforced across the boundary.
  */
 
 // ─── Snapshot Envelope ──────────────────────────────────────────────────────
@@ -54,8 +54,10 @@ export interface ContinuityAssignment {
   };
   /** HC-12: does this task block consecutive placement? */
   blocksConsecutive: boolean;
-  /** HC-14: does this task require a 5-hour category break? */
-  requiresCategoryBreak: boolean;
+  /** HC-14: rest rule ID (if any) for minimum-gap enforcement. */
+  restRuleId?: string;
+  /** HC-14: snapshotted rule duration in hours (for cross-schedule phantom resolution). */
+  restRuleDurationHours?: number;
   /** Is this a light task (Karovit)? */
   isLight: boolean;
   /** Base load weight outside hot windows (0..1). */

@@ -13,6 +13,9 @@ import {
   ContinuityLoadWindow,
 } from '../models/continuity-schema';
 
+/** Module-level lookup for rest rule hours — populated by exportDaySnapshot(). */
+const _restRuleHoursLookup = new Map<string, number>();
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -28,7 +31,13 @@ export function exportDaySnapshot(
   dayIndex: number,
   scheduleBaseDate: Date,
   dayStartHour: number,
+  restRuleMap?: Map<string, number>,
 ): ContinuitySnapshot {
+  // Build hours lookup for snapshotting rest rule durations
+  _restRuleHoursLookup.clear();
+  if (restRuleMap) {
+    for (const [id, ms] of restRuleMap) _restRuleHoursLookup.set(id, ms / 3600000);
+  }
   // Compute day window — same formula as getDayWindow() in app.ts
   const dayStart = new Date(
     scheduleBaseDate.getFullYear(),
@@ -117,7 +126,8 @@ function taskToContinuityAssignment(task: Task): ContinuityAssignment {
       end: task.timeBlock.end.toISOString(),
     },
     blocksConsecutive: task.blocksConsecutive,
-    requiresCategoryBreak: task.requiresCategoryBreak ?? false,
+    restRuleId: task.restRuleId,
+    restRuleDurationHours: task.restRuleId ? _restRuleHoursLookup.get(task.restRuleId) : undefined,
     isLight: task.isLight,
     baseLoadWeight: task.baseLoadWeight,
     loadWindows: loadWindows?.length ? loadWindows : undefined,

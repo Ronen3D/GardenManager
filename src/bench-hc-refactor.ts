@@ -6,7 +6,7 @@
 interface TimeBlock { start: Date; end: Date; }
 interface Task {
   id: string; name: string; timeBlock: TimeBlock;
-  blocksConsecutive: boolean; requiresCategoryBreak?: boolean;
+  blocksConsecutive: boolean; restRuleId?: string;
   loadWindows?: { weight: number }[];
   [key: string]: unknown;
 }
@@ -43,7 +43,7 @@ function oldHC12(pid: string, byP: Map<string, Assignment[]>, tm: Map<string, Ta
 function oldHC14(pid: string, byP: Map<string, Assignment[]>, tm: Map<string, Task>, breakMs: number): boolean {
   const pAssignments = (byP.get(pid) || [])
     .map(a => ({ assignment: a, task: tm.get(a.taskId) }))
-    .filter((x): x is { assignment: Assignment; task: Task } => x.task != null && !!x.task.requiresCategoryBreak)
+    .filter((x): x is { assignment: Assignment; task: Task } => x.task != null && !!x.task.restRuleId)
     .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
   for (let x = 0; x < pAssignments.length - 1; x++) {
     const cur = pAssignments[x]; const nxt = pAssignments[x + 1];
@@ -81,7 +81,7 @@ function newHC14(pid: string, byP: Map<string, Assignment[]>, tm: Map<string, Ta
   _hcScratch.length = 0;
   for (let i = 0; i < raw.length; i++) {
     const task = tm.get(raw[i].taskId);
-    if (task != null && task.requiresCategoryBreak) _hcScratch.push(task);
+    if (task != null && task.restRuleId) _hcScratch.push(task);
   }
   _hcScratch.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
   for (let x = 0; x < _hcScratch.length - 1; x++) {
@@ -110,7 +110,7 @@ for (let ti = 0; ti < TASK_COUNT; ti++) {
     name: `Task${ti}`,
     timeBlock: { start: new Date(BASE + startH * HOUR), end: new Date(BASE + (startH + dur) * HOUR) },
     blocksConsecutive: Math.random() < 0.4,
-    requiresCategoryBreak: Math.random() < 0.3,
+    restRuleId: Math.random() < 0.3 ? 'bench-rule' : undefined,
   };
   tasks.push(t);
   taskMap.set(t.id, t);

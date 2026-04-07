@@ -222,7 +222,7 @@ interface RescueContext {
     extraAssignments?: Array<{ slotId: string; participantId: string }>,
   ) => Assignment[];
   disabledHC?: Set<string>;
-  categoryBreakMs?: number;
+  restRuleMap?: Map<string, number>;
   dayStartHour: number;
 }
 
@@ -241,7 +241,7 @@ function generateDepth1Plans(ctx: RescueContext): CandidatePlan[] {
       taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, vacatedExclude),
       participantMap: ctx.participantMap,
       disabledHC: ctx.disabledHC,
-      categoryBreakMs: ctx.categoryBreakMs,
+      restRuleMap: ctx.restRuleMap,
     })) continue;
 
     const swap = { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id };
@@ -297,7 +297,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
         taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, d2VacatedExclude),
         participantMap: ctx.participantMap,
         disabledHC: ctx.disabledHC,
-        categoryBreakMs: ctx.categoryBreakMs,
+        restRuleMap: ctx.restRuleMap,
       })) continue;
 
       for (const q of ctx.schedule.participants) {
@@ -315,7 +315,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
           taskAssignments: ctx.taskAssignmentsFor(donorTask.id, d2DonorExclude, d2DonorExtra),
           participantMap: ctx.participantMap,
           disabledHC: ctx.disabledHC,
-          categoryBreakMs: ctx.categoryBreakMs,
+          restRuleMap: ctx.restRuleMap,
         })) continue;
 
         const swapSet = [
@@ -418,7 +418,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
         taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, d3VacatedExclude),
         participantMap: ctx.participantMap,
         disabledHC: ctx.disabledHC,
-        categoryBreakMs: ctx.categoryBreakMs,
+        restRuleMap: ctx.restRuleMap,
       })) continue;
 
       for (const q of ctx.schedule.participants) {
@@ -451,7 +451,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
             taskAssignments: ctx.taskAssignmentsFor(donorPTask.id, d3DonorPExclude, d3DonorPExtra.length > 0 ? d3DonorPExtra : undefined),
             participantMap: ctx.participantMap,
             disabledHC: ctx.disabledHC,
-            categoryBreakMs: ctx.categoryBreakMs,
+            restRuleMap: ctx.restRuleMap,
           })) continue;
 
           for (const r of ctx.schedule.participants) {
@@ -472,7 +472,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
               taskAssignments: ctx.taskAssignmentsFor(donorQTask.id, d3DonorQExclude, d3DonorQExtra.length > 0 ? d3DonorQExtra : undefined),
               participantMap: ctx.participantMap,
               disabledHC: ctx.disabledHC,
-              categoryBreakMs: ctx.categoryBreakMs,
+              restRuleMap: ctx.restRuleMap,
             })) continue;
 
             const swapSet = [
@@ -549,7 +549,7 @@ export function generateRescuePlans(
   page: number = 0,
   maxPlans?: number,
   disabledHC?: Set<string>,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
 ): RescueResult {
   // Validate page parameter
@@ -630,7 +630,7 @@ export function generateRescuePlans(
     baseDayStdDevs, baseWeeklyStdDev,
     anchor, taskAssignmentsFor,
     disabledHC,
-    categoryBreakMs,
+    restRuleMap,
     dayStartHour,
   };
 
@@ -661,7 +661,7 @@ export function generateRescuePlans(
       if (sw) return { ...a, participantId: sw.toParticipantId };
       return a;
     });
-    const validation = validateHardConstraints(schedule.tasks, schedule.participants, tempAssignments, disabledHC, categoryBreakMs);
+    const validation = validateHardConstraints(schedule.tasks, schedule.participants, tempAssignments, disabledHC, restRuleMap);
     if (validation.valid) {
       validPlans.push({ ...cp, violations: [] });
     }

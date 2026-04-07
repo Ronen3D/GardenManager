@@ -31,7 +31,7 @@ import {
   ParticipantSnapshot,
   TaskSet,
   OneTimeTask,
-  DEFAULT_CATEGORY_BREAK_HOURS,
+  RestRule,
 } from '../models/types';
 import {
   DEFAULT_PAKAL_DEFINITIONS,
@@ -209,6 +209,7 @@ interface StoreSnapshot {
   notWithPairs: Array<[string, string[]]>;
   pakalDefinitions: PakalDefinition[];
   certificationDefinitions: CertificationDefinition[];
+  restRules: RestRule[];
 }
 
 const MAX_HISTORY = 80;
@@ -278,6 +279,7 @@ function captureSnapshot(): StoreSnapshot {
     notWithPairs: nwPairs,
     pakalDefinitions: clonePakalDefinitions(pakalDefinitions),
     certificationDefinitions: certificationDefinitions.map(d => ({ ...d })),
+    restRules: _restRules.map(r => ({ ...r })),
   };
 }
 
@@ -372,6 +374,8 @@ function restoreSnapshot(snap: StoreSnapshot): void {
       });
     }
   }
+
+  _restRules = (snap.restRules || []).map(r => ({ ...r }));
 }
 
 /**
@@ -623,17 +627,54 @@ export function setScheduleDays(n: number): void {
   notify();
 }
 
-// ─── HC-14 Category Break Hours ─────────────────────────────────────────────
+// ─── HC-14 Rest Rules ───────────────────────────────────────────────────────
 
-let _categoryBreakHours: number = DEFAULT_CATEGORY_BREAK_HOURS;
+let _restRules: RestRule[] = [];
 
-export function getCategoryBreakHours(): number { return _categoryBreakHours; }
-export function setCategoryBreakHours(hours: number): void {
-  const clamped = Math.max(0.5, Math.min(24, hours));
-  if (clamped === _categoryBreakHours) return;
+/** Return all non-deleted rest rules. */
+export function getRestRules(): RestRule[] { return _restRules.filter(r => !r.deleted); }
+
+/** Return all rest rules including soft-deleted tombstones (for orphan display). */
+export function getAllRestRules(): RestRule[] { return _restRules; }
+
+/** Look up a rest rule by ID (includes tombstones). */
+export function getRestRuleById(id: string): RestRule | undefined { return _restRules.find(r => r.id === id); }
+
+/** Create a new rest rule. Returns the created rule. */
+export function addRestRule(label: string, durationHours: number): RestRule {
   pushSnapshot();
-  _categoryBreakHours = clamped;
+  const rule: RestRule = { id: uid('rr'), label: label.trim(), durationHours: Math.max(0.5, Math.min(24, durationHours)) };
+  _restRules.push(rule);
   notify();
+  return rule;
+}
+
+/** Update an existing non-deleted rest rule. */
+export function updateRestRule(id: string, updates: { label?: string; durationHours?: number }): void {
+  const rule = _restRules.find(r => r.id === id && !r.deleted);
+  if (!rule) return;
+  pushSnapshot();
+  if (updates.label !== undefined) rule.label = updates.label.trim();
+  if (updates.durationHours !== undefined) rule.durationHours = Math.max(0.5, Math.min(24, updates.durationHours));
+  notify();
+}
+
+/** Soft-delete a rest rule. Tasks referencing it become orphans. */
+export function removeRestRule(id: string): void {
+  const rule = _restRules.find(r => r.id === id && !r.deleted);
+  if (!rule) return;
+  pushSnapshot();
+  rule.deleted = true;
+  notify();
+}
+
+/** Build a Map<ruleId, durationMs> for non-deleted rules (engine consumption). */
+export function buildRestRuleMap(): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const r of _restRules) {
+    if (!r.deleted) map.set(r.id, r.durationHours * 3600000);
+  }
+  return map;
 }
 
 function getDefaultAvailability(): AvailabilityWindow[] {
@@ -1415,6 +1456,10 @@ export function seedDefaultParticipants(): void {
 }
 
 export function seedDefaultTaskTemplates(): void {
+  // Seed default rest rule (HC-14) — 5-hour minimum gap
+  const defaultRestRule: RestRule = { id: uid('rr'), label: 'הפסקה מינימלית', durationHours: 5 };
+  _restRules.push(defaultRestRule);
+
   // Adanit
   addTaskTemplate({
     name: 'אדנית',
@@ -1445,7 +1490,7 @@ export function seedDefaultTaskTemplates(): void {
       },
     ],
     slots: [],
-    requiresCategoryBreak: true,
+    restRuleId: defaultRestRule.id,
     displayCategory: 'patrol',
     color: '#4A90D9',
     displayOrder: 0,
@@ -1493,7 +1538,7 @@ export function seedDefaultTaskTemplates(): void {
       { id: uid('slot'), label: 'משתתף בשמש', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
       { id: uid('slot'), label: 'משתתף בשמש', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
     ],
-    requiresCategoryBreak: true,
+    restRuleId: defaultRestRule.id,
     displayCategory: 'shemesh',
     color: '#F39C12',
     displayOrder: 4,
@@ -1809,7 +1854,7 @@ export function saveToStorage(): void {
       version: 7,
       scheduleDate: scheduleDate.toISOString(),
       scheduleDays,
-      categoryBreakHours: _categoryBreakHours,
+      restRules: _restRules,
       // Live mode is persisted separately via STORAGE_KEY_LIVE_MODE; keeping
       // it out of the big blob means clock ticks don't rewrite everything.
       pakalDefinitions,
@@ -1864,7 +1909,7 @@ export function loadFromStorage(): boolean {
     // Restore schedule date/days
     scheduleDate = new Date(state.scheduleDate);
     scheduleDays = state.scheduleDays || 7;
-    _categoryBreakHours = typeof state.categoryBreakHours === 'number' ? state.categoryBreakHours : DEFAULT_CATEGORY_BREAK_HOURS;
+    _restRules = Array.isArray(state.restRules) ? state.restRules : [];
 
     // Reset stale schedule dates to the next upcoming Sunday:
     // (a) Non-Sunday dates can result from continuity replanning ("generate from
@@ -2074,7 +2119,7 @@ export function factoryReset(): void {
   _activeParticipantSetId = undefined;
   _taskSets = null;
   _activeTaskSetId = undefined;
-  _categoryBreakHours = DEFAULT_CATEGORY_BREAK_HOURS;
+  _restRules = [];
   scheduleDate = defaultScheduleDate();
   scheduleDays = 7;
   liveModeState = { enabled: false, currentTimestamp: new Date() };
@@ -3262,11 +3307,11 @@ function _deepCopyTaskSet(s: TaskSet): TaskSet {
   return JSON.parse(JSON.stringify(s)) as TaskSet;
 }
 
-function _snapshotCurrentTaskSetState(): Pick<TaskSet, 'templates' | 'oneTimeTasks' | 'categoryBreakHours'> {
+function _snapshotCurrentTaskSetState(): Pick<TaskSet, 'templates' | 'oneTimeTasks' | 'restRules'> {
   return {
     templates: _snapshotCurrentTaskTemplates(),
     oneTimeTasks: _snapshotCurrentOneTimeTasks(),
-    categoryBreakHours: _categoryBreakHours,
+    restRules: _restRules.map(r => ({ ...r })),
   };
 }
 
@@ -3459,7 +3504,7 @@ export function loadTaskSet(id: string): void {
       oneTimeTasks.set(restored.id, restored);
     }
 
-    _categoryBreakHours = tset.categoryBreakHours;
+    _restRules = Array.isArray(tset.restRules) ? tset.restRules.map(r => ({ ...r })) : [];
   } finally {
     _suppressSnapshot = false;
   }
@@ -3482,14 +3527,14 @@ export function updateTaskSet(id: string): boolean {
   const snapshot = _snapshotCurrentTaskSetState();
   const prevTemplates = sets[idx].templates;
   const prevOneTime = sets[idx].oneTimeTasks;
-  const prevBreak = sets[idx].categoryBreakHours;
+  const prevRules = sets[idx].restRules;
   sets[idx].templates = snapshot.templates;
   sets[idx].oneTimeTasks = snapshot.oneTimeTasks;
-  sets[idx].categoryBreakHours = snapshot.categoryBreakHours;
+  sets[idx].restRules = snapshot.restRules;
   if (!_saveTaskSets()) {
     sets[idx].templates = prevTemplates; // rollback
     sets[idx].oneTimeTasks = prevOneTime;
-    sets[idx].categoryBreakHours = prevBreak;
+    sets[idx].restRules = prevRules;
     return false;
   }
   return true;
@@ -3542,7 +3587,7 @@ export function duplicateTaskSet(id: string): TaskSet | null {
     description: source.description,
     templates: source.templates, // already deep-copied by getTaskSetById
     oneTimeTasks: source.oneTimeTasks, // already deep-copied by getTaskSetById
-    categoryBreakHours: source.categoryBreakHours,
+    restRules: source.restRules,
     builtIn: false,
     createdAt: Date.now(),
   };
@@ -3590,7 +3635,7 @@ export function isTaskSetDirty(): boolean {
   if (JSON.stringify(currentTemplates) !== JSON.stringify(tset.templates)) return true;
   const currentOts = _snapshotCurrentOneTimeTasks();
   if (JSON.stringify(currentOts) !== JSON.stringify(tset.oneTimeTasks)) return true;
-  if (_categoryBreakHours !== tset.categoryBreakHours) return true;
+  if (JSON.stringify(_restRules) !== JSON.stringify(tset.restRules || [])) return true;
   return false;
 }
 

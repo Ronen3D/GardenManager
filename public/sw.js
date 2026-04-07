@@ -24,7 +24,7 @@ self.addEventListener('install', (event) => {
 
         // Also cache known static assets
         const staticAssets = [
-          './favicon.svg',
+          './favicon.png',
           './icon.png',
           './fonts/Rubik-VariableFont.ttf',
           './manifest.json'

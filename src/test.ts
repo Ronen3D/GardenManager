@@ -61,7 +61,7 @@ function createShemeshTask(timeBlock: TimeBlock): Task {
       { slotId: _nextSlotId('shemesh'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בשמש' },
       { slotId: _nextSlotId('shemesh'), acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'משתתף בשמש' },
     ],
-    isLight: false, sameGroupRequired: false, blocksConsecutive: true, requiresCategoryBreak: true,
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true, restRuleId: 'test-rest-rule',
   };
 }
 
@@ -132,7 +132,7 @@ function createAdanitTasks(baseDate: Date): Task[] {
     slots.push({ slotId: _nextSlotId(prefix), acceptableLevels: [{ level: Level.L2 }], requiredCertifications: ['Nitzan'], label: 'בכיר בסגול ב\'' });
     return {
       id: _nextTaskId('adanit'), name: `משמרת אדנית ${i + 1}`, sourceName: 'אדנית', timeBlock: block,
-      requiredCount: 6, slots, isLight: false, sameGroupRequired: true, blocksConsecutive: true, requiresCategoryBreak: true,
+      requiredCount: 6, slots, isLight: false, sameGroupRequired: true, blocksConsecutive: true, restRuleId: 'test-rest-rule',
     };
   });
 }
@@ -147,7 +147,7 @@ import {
   checkSlotsFilled,
   checkUniqueParticipantsPerTask,
   checkGroupFeasibility,
-  checkCategoryBreak,
+  checkRestRules,
 } from './constraints/hard-constraints';
 import { workloadImbalanceSplit, dailyWorkloadImbalance, collectSoftWarnings } from './constraints/soft-constraints';
 
@@ -1422,7 +1422,7 @@ console.log('\n── One-Time Task Integration ──────────�
   // Test 3: Constraint flags carry through
   const heavyOt = makeOneTimeTask({
     blocksConsecutive: true,
-    requiresCategoryBreak: true,
+    restRuleId: 'test-rest-rule',
     isLight: false,
     sameGroupRequired: true,
     schedulingPriority: 5,
@@ -1431,7 +1431,7 @@ console.log('\n── One-Time Task Integration ──────────�
     baseLoadWeight: 0.5,
   });
   assert(heavyOt.blocksConsecutive === true, 'Constraint: blocksConsecutive');
-  assert(heavyOt.requiresCategoryBreak === true, 'Constraint: requiresCategoryBreak');
+  assert(heavyOt.restRuleId === 'test-rest-rule', 'Constraint: restRuleId');
   assert(heavyOt.sameGroupRequired === true, 'Constraint: sameGroupRequired');
   assert(heavyOt.schedulingPriority === 5, 'Constraint: schedulingPriority');
   assert(heavyOt.displayCategory === 'patrol', 'Constraint: displayCategory');
@@ -2052,7 +2052,7 @@ console.log('\n── Hard Constraints: Individual Functions ──');
   assert(v4.length === 1, 'HC-8: group L2 missing cert → violation');
 }
 
-// ── HC-14: checkCategoryBreak ──────────────────────────────────────────────
+// ── HC-14: checkRestRules ──────────────────────────────────────────────────
 
 console.log('\n── Category Break (HC-14) ──────────────');
 
@@ -2068,21 +2068,24 @@ console.log('\n── Category Break (HC-14) ───────────�
     id: 'hc14-t1', name: 'Cat Task 1',
     timeBlock: createTimeBlockFromHours(baseDate, 6, 10),
     requiredCount: 1, slots: [{ slotId: 'hc14-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false, sameGroupRequired: false, blocksConsecutive: true, requiresCategoryBreak: true,
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true, restRuleId: 'test-rest-rule',
   };
   const catTask2: Task = {
     id: 'hc14-t2', name: 'Cat Task 2',
     timeBlock: createTimeBlockFromHours(baseDate, 13, 17),
     requiredCount: 1, slots: [{ slotId: 'hc14-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false, sameGroupRequired: false, blocksConsecutive: true, requiresCategoryBreak: true,
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true, restRuleId: 'test-rest-rule',
   };
   const tMap14 = new Map([[ catTask1.id, catTask1 ], [ catTask2.id, catTask2 ]]);
   const assigns14: Assignment[] = [
     { id: 'hc14-a1', taskId: catTask1.id, slotId: 'hc14-s1', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
     { id: 'hc14-a2', taskId: catTask2.id, slotId: 'hc14-s2', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const v1 = checkCategoryBreak(catP.id, assigns14, tMap14);
-  assert(v1.length === 1, 'HC-14: 3h gap between category tasks → violation');
+  // Rest rule map: 'test-rest-rule' → 5 hours
+  const restRuleMap14 = new Map([['test-rest-rule', 5 * 3600000]]);
+
+  const v1 = checkRestRules(catP.id, assigns14, tMap14, restRuleMap14);
+  assert(v1.length === 1, 'HC-14: 3h gap between rest-rule tasks → violation');
   assert(v1[0].code === 'CATEGORY_BREAK_VIOLATION', 'HC-14: violation code = CATEGORY_BREAK_VIOLATION');
 
   // 6h gap → no violation
@@ -2095,20 +2098,20 @@ console.log('\n── Category Break (HC-14) ───────────�
     { id: 'hc14-a3', taskId: catTask1.id, slotId: 'hc14-s1', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
     { id: 'hc14-a4', taskId: catTask3.id, slotId: 'hc14-s2', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const v2 = checkCategoryBreak(catP.id, assigns14b, tMap14b);
-  assert(v2.length === 0, 'HC-14: 6h gap between category tasks → no violation');
+  const v2 = checkRestRules(catP.id, assigns14b, tMap14b, restRuleMap14);
+  assert(v2.length === 0, 'HC-14: 6h gap between rest-rule tasks → no violation');
 
-  // One task without requiresCategoryBreak → no violation
+  // One task without restRuleId → no violation
   const catTask4: Task = {
-    ...catTask2, id: 'hc14-t4', requiresCategoryBreak: false,
+    ...catTask2, id: 'hc14-t4', restRuleId: undefined,
   };
   const tMap14c = new Map([[ catTask1.id, catTask1 ], [ catTask4.id, catTask4 ]]);
   const assigns14c: Assignment[] = [
     { id: 'hc14-a5', taskId: catTask1.id, slotId: 'hc14-s1', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
     { id: 'hc14-a6', taskId: catTask4.id, slotId: 'hc14-s2', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const v3 = checkCategoryBreak(catP.id, assigns14c, tMap14c);
-  assert(v3.length === 0, 'HC-14: one task without category flag → no violation');
+  const v3 = checkRestRules(catP.id, assigns14c, tMap14c, restRuleMap14);
+  assert(v3.length === 0, 'HC-14: one task without rest rule → no violation');
 
   // Exactly 5h gap → no violation (equal to minimum)
   const catTask5: Task = {
@@ -2120,12 +2123,12 @@ console.log('\n── Category Break (HC-14) ───────────�
     { id: 'hc14-a7', taskId: catTask1.id, slotId: 'hc14-s1', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
     { id: 'hc14-a8', taskId: catTask5.id, slotId: 'hc14-s2', participantId: catP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
   ];
-  const v4 = checkCategoryBreak(catP.id, assigns14d, tMap14d);
+  const v4 = checkRestRules(catP.id, assigns14d, tMap14d, restRuleMap14);
   assert(v4.length === 0, 'HC-14: exactly 5h gap → no violation');
 
   // validateHardConstraints integration with HC-14
-  const r14 = validateHardConstraints([catTask1, catTask2], [catP], assigns14);
-  assert(r14.violations.some(v => v.code === 'CATEGORY_BREAK_VIOLATION'), 'HC-14: full validation catches category break');
+  const r14 = validateHardConstraints([catTask1, catTask2], [catP], assigns14, undefined, restRuleMap14);
+  assert(r14.violations.some(v => v.code === 'CATEGORY_BREAK_VIOLATION'), 'HC-14: full validation catches rest rule violation');
 }
 
 // ── disabledHC parameter ───────────────────────────────────────────────────

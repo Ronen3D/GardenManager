@@ -96,7 +96,7 @@ export function createAdanitTasks(baseDate: Date): Task[] {
       isLight: false,
       sameGroupRequired: true,
       blocksConsecutive: true,
-      requiresCategoryBreak: true,
+      restRuleId: 'demo-rest-rule',
     };
   });
 }
@@ -151,7 +151,7 @@ export function createShemeshTask(timeBlock: TimeBlock): Task {
     isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
-    requiresCategoryBreak: true,
+    restRuleId: 'demo-rest-rule',
   };
 }
 

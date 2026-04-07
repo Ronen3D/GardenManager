@@ -328,6 +328,21 @@ function regenerateTaskSetIds(tset: TaskSet): TaskSet {
       }
     }
   }
+  // Remap rest rule IDs and update template references
+  const ruleIdMap = new Map<string, string>();
+  if (Array.isArray(clone.restRules)) {
+    for (const rule of clone.restRules) {
+      const oldId = rule.id;
+      rule.id = store.uid('rr');
+      ruleIdMap.set(oldId, rule.id);
+    }
+    // Update template restRuleId references
+    for (const tpl of clone.templates) {
+      if (tpl.restRuleId && ruleIdMap.has(tpl.restRuleId)) {
+        tpl.restRuleId = ruleIdMap.get(tpl.restRuleId);
+      }
+    }
+  }
   for (const ot of clone.oneTimeTasks) {
     ot.id = store.uid('ot');
     for (const slot of ot.slots) {
@@ -343,6 +358,9 @@ function regenerateTaskSetIds(tset: TaskSet): TaskSet {
       for (const lw of ot.loadWindows) {
         lw.id = store.uid('lw');
       }
+    }
+    if (ot.restRuleId && ruleIdMap.has(ot.restRuleId)) {
+      ot.restRuleId = ruleIdMap.get(ot.restRuleId);
     }
   }
   return clone;

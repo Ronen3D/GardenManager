@@ -2,7 +2,8 @@
  * Phantom Context — converts a ContinuitySnapshot into synthetic Task and
  * Assignment objects that the optimizer seeds into its constraint-checking
  * indexes (taskMap, assignmentsByParticipant) so HC-5, HC-12, and HC-14
- * are enforced across schedule boundaries.
+ * are enforced across schedule boundaries.  Phantom rest rule durations
+ * are collected so HC-14 can resolve cross-schedule rule thresholds.
  *
  * Phantom tasks/assignments are NEVER added to the output Schedule — they
  * exist only in the optimizer's internal indexes during generation.
@@ -29,6 +30,8 @@ export interface PhantomContext {
   phantomAssignments: Assignment[];
   /** Set of phantom task IDs for easy identification/filtering. */
   phantomTaskIds: Set<string>;
+  /** Snapshotted rest rule durations from the previous schedule (ruleId → durationMs). */
+  phantomRestRules: Map<string, number>;
 }
 
 // ─── Builder ────────────────────────────────────────────────────────────────
@@ -47,6 +50,7 @@ export function buildPhantomContext(
   const phantomTasks: Task[] = [];
   const phantomAssignments: Assignment[] = [];
   const phantomTaskIds = new Set<string>();
+  const phantomRestRules = new Map<string, number>();
 
   // Build name → new-participant lookup
   const byName = new Map<string, Participant>();
@@ -69,6 +73,11 @@ export function buildPhantomContext(
       phantomTasks.push(task);
       phantomTaskIds.add(taskId);
 
+      // Collect snapshotted rest rule durations for cross-schedule HC-14
+      if (ca.restRuleId && ca.restRuleDurationHours != null && !phantomRestRules.has(ca.restRuleId)) {
+        phantomRestRules.set(ca.restRuleId, ca.restRuleDurationHours * 3600000);
+      }
+
       phantomAssignments.push({
         id: asgnId,
         taskId,
@@ -80,7 +89,7 @@ export function buildPhantomContext(
     }
   }
 
-  return { phantomTasks, phantomAssignments, phantomTaskIds };
+  return { phantomTasks, phantomAssignments, phantomTaskIds, phantomRestRules };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -109,7 +118,24 @@ function continuityAssignmentToTask(taskId: string, ca: ContinuityAssignment): T
     })),
     sameGroupRequired: false,
     blocksConsecutive: ca.blocksConsecutive,
-    requiresCategoryBreak: ca.requiresCategoryBreak,
+    restRuleId: ca.restRuleId,
     color: ca.color || '#95A5A6',
   };
+}
+
+/**
+ * Merge snapshotted rest rule durations from phantom context into the
+ * active rest rule map.  Only adds entries for rule IDs that are NOT
+ * already present — the current schedule's rules take precedence.
+ */
+export function mergePhantomRules(
+  baseMap: Map<string, number>,
+  context: PhantomContext,
+): Map<string, number> {
+  if (context.phantomRestRules.size === 0) return baseMap;
+  const merged = new Map(baseMap);
+  for (const [ruleId, durationMs] of context.phantomRestRules) {
+    if (!merged.has(ruleId)) merged.set(ruleId, durationMs);
+  }
+  return merged;
 }

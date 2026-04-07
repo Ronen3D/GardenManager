@@ -16,7 +16,7 @@ import {
   LoadWindow,
   TaskSet,
   OneTimeTask,
-  DEFAULT_CATEGORY_BREAK_HOURS,
+  RestRule,
 } from '../models/types';
 import * as store from './config-store';
 import { showPrompt, showConfirm, showToast } from './ui-modal';
@@ -84,6 +84,26 @@ function forbiddenCertBadge(certId: string): string {
     return `<span class="badge badge-sm badge-orphan" title="הסמכה אסורה שנמחקה: ${escHtml(def.label)}" style="text-decoration:line-through">⚠ ${escHtml(def.label)}</span>`;
   }
   return `<span class="badge badge-sm" style="background:#c0392b;text-decoration:line-through">${escHtml(def.label)}</span>`;
+}
+
+/** Badge for a rest rule assignment (header display). */
+function _restRuleBadge(restRuleId?: string): string {
+  if (!restRuleId) return '';
+  const rule = store.getRestRuleById(restRuleId);
+  if (!rule) return `<span class="badge badge-sm badge-orphan" title="כלל מרווח שנמחק">⚠ כלל חסר</span>`;
+  if (rule.deleted) return `<span class="badge badge-sm badge-orphan" title="כלל מרווח שנמחק: ${escHtml(rule.label)}">⚠ ${escHtml(rule.label)}</span>`;
+  return `<span class="badge badge-sm badge-outline">${escHtml(rule.label)} ${rule.durationHours} שע׳</span>`;
+}
+
+/** Inline orphan warning if a task references a deleted/missing rest rule. */
+function _restRuleOrphanNote(restRuleId?: string): string {
+  if (!restRuleId) return '';
+  const rule = store.getRestRuleById(restRuleId);
+  if (!rule || rule.deleted) {
+    const label = rule ? rule.label : restRuleId;
+    return ` <span class="badge-orphan-label" style="font-size:0.78rem;">⚠ כלל "${escHtml(label)}" נמחק — המרווח לא פעיל</span>`;
+  }
+  return '';
 }
 
 /** Strip English level references (L0, L3/L4, (L2+), etc.) from a slot label. */
@@ -183,30 +203,46 @@ export function renderTaskRulesTab(): string {
     html += '</div>';
   }
 
-  // ── Global Task Settings ──
-  const cbh = store.getCategoryBreakHours();
+  // ── Rest Rules Management ──
+  const restRules = store.getRestRules();
   html += `
   <div class="tab-toolbar" style="margin-top:24px; border-top:1px solid var(--border); padding-top:16px;">
     <div class="toolbar-left">
       <h2 style="display:flex; align-items:center; gap:8px;">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        מרווחים מינימליים
+        כללי מרווחים מינימליים
+        <span class="count">${restRules.length}</span>
       </h2>
+    </div>
+    <div class="toolbar-right">
+      <button class="btn-sm btn-primary" data-action="add-rest-rule">+ הוסף כלל</button>
     </div>
   </div>
   <div class="template-card global-settings-card" style="margin-top:8px;">
-    <div style="padding:18px 22px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
-        <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-width:0;">
-          <label for="category-break-hours" style="font-size:0.92rem; font-weight:500;">מרווח מינימלי בין משימות בעלות ההגדרה</label>
-          <span style="font-size:0.78rem; color:var(--text-muted);">משימות עם ההגדרה הזו לא ישובצו ברצף — תישמר הפסקה של לפחות X שעות ביניהן</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-          <input id="category-break-hours" type="number" min="0.5" max="24" step="0.5" value="${cbh}"
-                 data-action="set-category-break" style="width:60px; text-align:center; font-size:1rem; font-weight:600;" />
-          <span style="font-size:0.82rem; color:var(--text-muted);">שעות</span>
-        </div>
-      </div>
+    <div style="padding:14px 18px;">
+      <span style="font-size:0.78rem; color:var(--text-muted);">משימות המשויכות לאותו כלל (או לכללים שונים) לא ישובצו ברצף — תישמר הפסקה מינימלית ביניהן</span>
+      ${restRules.length === 0 ? '<div style="padding:12px 0; color:var(--text-muted); font-size:0.88rem; text-align:center;">אין כללים מוגדרים. לחץ "הוסף כלל" ליצירת כלל חדש.</div>' : `
+      <table style="width:100%; margin-top:10px; border-collapse:collapse;">
+        <thead><tr style="border-bottom:1px solid var(--border);">
+          <th style="text-align:right; padding:6px 8px; font-size:0.82rem; font-weight:500;">שם</th>
+          <th style="text-align:center; padding:6px 8px; font-size:0.82rem; font-weight:500; width:90px;">שעות</th>
+          <th style="width:80px;"></th>
+        </tr></thead>
+        <tbody>${restRules.map(r => `
+          <tr data-rest-rule-id="${r.id}" style="border-bottom:1px solid var(--border-light, var(--border));">
+            <td style="padding:8px;">
+              <input type="text" class="input-sm" data-rr-field="label" value="${escHtml(r.label)}" style="width:100%;" />
+            </td>
+            <td style="padding:8px; text-align:center;">
+              <input type="number" class="input-sm" data-rr-field="durationHours" value="${r.durationHours}" min="0.5" max="24" step="0.5" style="width:60px; text-align:center;" />
+            </td>
+            <td style="padding:8px; text-align:center;">
+              <button class="btn-xs btn-outline" data-action="save-rest-rule" data-rr-id="${r.id}" title="שמור">✓</button>
+              <button class="btn-xs btn-outline" data-action="delete-rest-rule" data-rr-id="${r.id}" title="מחק" style="color:var(--danger);">✕</button>
+            </td>
+          </tr>
+        `).join('')}</tbody>
+      </table>`}
     </div>
   </div>`;
 
@@ -292,7 +328,7 @@ function renderTaskSetPanel(): string {
 }
 
 function buildTaskSetLoadConfirmMessage(taskSet: TaskSet): string {
-  return `טעינת הסט תחליף את תבניות המשימות, את המשימות החד-פעמיות השמורות בו, ואת הגדרת ההפסקה המינימלית בין משימות קטגוריה. להמשיך?`;
+  return `טעינת הסט תחליף את תבניות המשימות, את המשימות החד-פעמיות, ואת כללי המרווחים המינימליים. להמשיך?`;
 }
 
 
@@ -323,7 +359,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         ${tpl.isLight ? '<span class="badge badge-sm badge-outline">קלה</span>' : ''}
         ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">ניתן לשבץ ברצף</span>'}
         ${tpl.togethernessRelevant ? '<span class="badge badge-sm badge-outline">אי התאמה</span>' : ''}
-        ${tpl.requiresCategoryBreak ? `<span class="badge badge-sm badge-outline">מרווח מינימלי ${store.getCategoryBreakHours()} שע׳</span>` : ''}
+        ${_restRuleBadge(tpl.restRuleId)}
         <span class="expand-arrow">${isExpanded ? '▼' : '▶'}</span>
       </div>
     </div>`;
@@ -344,7 +380,10 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חוסם רצף משימות</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="requiresCategoryBreak" data-tid="${tpl.id}" ${tpl.requiresCategoryBreak ? 'checked' : ''} /> מרווח מינימלי (${store.getCategoryBreakHours()} שע׳)</label>
+      <label>כלל מרווח: <select class="input-sm" data-tpl-field="restRuleId" data-tid="${tpl.id}">
+        <option value=""${!tpl.restRuleId ? ' selected' : ''}>ללא</option>
+        ${store.getRestRules().map(r => `<option value="${r.id}"${tpl.restRuleId === r.id ? ' selected' : ''}>${escHtml(r.label)} (${r.durationHours} שע׳)</option>`).join('')}
+      </select></label>${_restRuleOrphanNote(tpl.restRuleId)}
       <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
     </div>`;
 
@@ -553,6 +592,10 @@ function renderAddOneTimeForm(): string {
       <label class="checkbox-label"><input type="checkbox" data-field="ot-samegroup" /> נדרשת אותה קבוצה</label>
       <label class="checkbox-label"><input type="checkbox" data-field="ot-light" /> משימה קלה</label>
       <label class="checkbox-label"><input type="checkbox" data-field="ot-blocks-consecutive" checked /> חוסמת רצף</label>
+      <label>כלל מרווח: <select class="input-sm" data-field="ot-rest-rule">
+        <option value="">ללא</option>
+        ${store.getRestRules().map(r => `<option value="${r.id}">${escHtml(r.label)} (${r.durationHours} שע׳)</option>`).join('')}
+      </select></label>
     </div>
     <div class="form-row">
       <label>תיאור: <input class="input-sm" type="text" data-field="ot-desc" placeholder="אופציונלי" style="width:300px;" /></label>
@@ -599,6 +642,7 @@ function renderOneTimeCard(ot: OneTimeTask): string {
     <div class="template-meta">
       <span class="meta-item">${totalSlots} משבצות</span>
       ${flags.length > 0 ? `<span class="meta-item text-muted">${flags.join(' · ')}</span>` : ''}
+      ${_restRuleBadge(ot.restRuleId)}
       ${ot.description ? `<span class="meta-item text-muted">${escHtml(ot.description)}</span>` : ''}
     </div>
   </div>`;
@@ -623,13 +667,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       const customInput = container.querySelector<HTMLInputElement>('[data-field="tpl-display-category-custom"]');
       if (customInput) customInput.style.display = (target as HTMLSelectElement).value === '' ? 'inline-block' : 'none';
     }
-    if ((target as HTMLInputElement).dataset.action === 'set-category-break') {
-      const val = parseFloat((target as HTMLInputElement).value);
-      if (!isNaN(val)) {
-        store.setCategoryBreakHours(val);
-        rerender();
-      }
-    }
+    // (rest rule inline edits are saved via button action, not change event)
   });
 
   container.addEventListener('click', async (e) => {
@@ -728,6 +766,39 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
 
+      // ─── Rest Rule actions ──────────────────────────────────────────
+      case 'add-rest-rule': {
+        const rule = store.addRestRule('כלל חדש', 5);
+        showToast(`כלל "${rule.label}" נוצר`, { type: 'success' });
+        rerender();
+        break;
+      }
+      case 'save-rest-rule': {
+        const rrId = actionButton?.dataset.rrId;
+        if (!rrId) break;
+        const row = container.querySelector<HTMLElement>(`[data-rest-rule-id="${rrId}"]`);
+        if (!row) break;
+        const label = (row.querySelector('[data-rr-field="label"]') as HTMLInputElement)?.value?.trim();
+        const dur = parseFloat((row.querySelector('[data-rr-field="durationHours"]') as HTMLInputElement)?.value);
+        if (!label) { showToast('שם הכלל לא יכול להיות ריק', { type: 'error' }); break; }
+        if (isNaN(dur) || dur < 0.5) { showToast('משך לא תקין (מינימום 0.5 שעות)', { type: 'error' }); break; }
+        store.updateRestRule(rrId, { label, durationHours: dur });
+        showToast('הכלל עודכן', { type: 'success' });
+        rerender();
+        break;
+      }
+      case 'delete-rest-rule': {
+        const rrId = actionButton?.dataset.rrId;
+        if (!rrId) break;
+        const rule = store.getRestRuleById(rrId);
+        const confirmed = await showConfirm(`למחוק את הכלל "${rule?.label ?? rrId}"? משימות המשויכות אליו ייראו עם אזהרת יתום.`);
+        if (!confirmed) break;
+        store.removeRestRule(rrId);
+        showToast('הכלל נמחק', { type: 'success' });
+        rerender();
+        break;
+      }
+
       case 'toggle-template': {
         const tid = actionButton?.closest('[data-tid]')?.getAttribute('data-tid') || actionButton?.dataset.tid!;
         expandedTemplateId = expandedTemplateId === tid ? null : tid;
@@ -746,7 +817,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const isLight = (body.querySelector('[data-tpl-field="isLight"]') as HTMLInputElement)?.checked || false;
         const blocksConsecutive = (body.querySelector('[data-tpl-field="blocksConsecutive"]') as HTMLInputElement)?.checked || false;
         const togethernessRelevant = (body.querySelector('[data-tpl-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
-        const requiresCategoryBreak = (body.querySelector('[data-tpl-field="requiresCategoryBreak"]') as HTMLInputElement)?.checked || false;
+        const restRuleId = (body.querySelector('[data-tpl-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
 
         const sanitized = store.sanitizeTemplateNumericFields({ durationHours: dur, shiftsPerDay: shifts, startHour: startH });
         notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
@@ -754,7 +825,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         store.updateTaskTemplate(tid, {
           durationHours: sanitized.durationHours, shiftsPerDay: sanitized.shiftsPerDay, startHour: sanitized.startHour,
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
-          sameGroupRequired: sameGroup, isLight, blocksConsecutive, togethernessRelevant, requiresCategoryBreak,
+          sameGroupRequired: sameGroup, isLight, blocksConsecutive, togethernessRelevant, restRuleId,
         });
         rerender();
         break;
@@ -992,7 +1063,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           loadWindows: [],
           blocksConsecutive: !isLight,
           togethernessRelevant: false,
-          requiresCategoryBreak: false,
+          restRuleId: undefined,
           displayCategory,
           subTeams: [],
           slots: [],
@@ -1030,6 +1101,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const isLight = (form.querySelector('[data-field="ot-light"]') as HTMLInputElement)?.checked || false;
         const blocksConsecutive = (form.querySelector('[data-field="ot-blocks-consecutive"]') as HTMLInputElement)?.checked ?? true;
         const desc = (form.querySelector('[data-field="ot-desc"]') as HTMLInputElement)?.value.trim();
+        const otRestRuleId = (form.querySelector('[data-field="ot-rest-rule"]') as HTMLSelectElement)?.value || undefined;
         const displayCategory = name.toLowerCase();
 
         const otSanitized = store.sanitizeTemplateNumericFields({ durationHours: rawDur, startHour: rawStartHour });
@@ -1051,7 +1123,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           loadWindows: [],
           blocksConsecutive,
           togethernessRelevant: false,
-          requiresCategoryBreak: false,
+          restRuleId: otRestRuleId,
           displayCategory,
           subTeams: [],
           slots: [],

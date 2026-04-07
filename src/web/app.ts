@@ -486,7 +486,7 @@ function generateTasksFromTemplates(): Task[] {
           blocksConsecutive: tpl.blocksConsecutive ?? !tpl.isLight,
           schedulingPriority: tpl.schedulingPriority,
           togethernessRelevant: tpl.togethernessRelevant,
-          requiresCategoryBreak: tpl.requiresCategoryBreak,
+          restRuleId: tpl.restRuleId,
           displayCategory: tpl.displayCategory,
           color: tpl.color || v?.color || '#7f8c8d',
         });
@@ -557,7 +557,7 @@ function generateTasksFromTemplates(): Task[] {
       blocksConsecutive: ot.blocksConsecutive ?? !ot.isLight,
       schedulingPriority: ot.schedulingPriority,
       togethernessRelevant: ot.togethernessRelevant,
-      requiresCategoryBreak: ot.requiresCategoryBreak,
+      restRuleId: ot.restRuleId,
       displayCategory: ot.displayCategory,
       color: ot.color || '#7f8c8d',
     });
@@ -1210,7 +1210,7 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
 
   const allTasks = currentSchedule.tasks;
   const disabledHC = engine ? new Set(store.getAlgorithmSettings().disabledHardConstraints) : undefined;
-  const eligible = getEligibleParticipantsForSlot(task, slotId, currentSchedule.participants, currentSchedule.assignments, allTasks, disabledHC, store.getCategoryBreakHours() * 3600000);
+  const eligible = getEligibleParticipantsForSlot(task, slotId, currentSchedule.participants, currentSchedule.assignments, allTasks, disabledHC, store.buildRestRuleMap());
   _eligibleForSelectedSlot = new Set(eligible.map(p => p.id));
 
   if (isSmallScreen) {
@@ -1253,7 +1253,7 @@ async function handleManualParticipantClick(participantId: string): Promise<bool
     taskAssignments,
     participantMap: pMap,
     disabledHC,
-    categoryBreakMs: store.getCategoryBreakHours() * 3600000,
+    restRuleMap: store.buildRestRuleMap(),
   });
 
   if (reason) {
@@ -1579,7 +1579,7 @@ function loadScheduleSnapshot(snapshotId: string): void {
   engine = new SchedulingEngine(
     algoSettings.config,
     store.getDisabledHCSet(),
-    store.getCategoryBreakHours() * 3600000,
+    store.buildRestRuleMap(),
     store.getDayStartHour(),
   );
 
@@ -1910,7 +1910,7 @@ async function doGenerate(): Promise<void> {
   engine = new SchedulingEngine(
     algoSettings.config,
     store.getDisabledHCSet(),
-    store.getCategoryBreakHours() * 3600000,
+    store.buildRestRuleMap(),
     store.getDayStartHour(),
   );
   engine.addParticipants(participants);
@@ -2041,7 +2041,7 @@ function doCreateManualSchedule(): void {
   engine = new SchedulingEngine(
     algoSettings.config,
     store.getDisabledHCSet(),
-    store.getCategoryBreakHours() * 3600000,
+    store.buildRestRuleMap(),
     store.getDayStartHour(),
   );
   engine.addParticipants(participants);
@@ -2156,7 +2156,7 @@ async function handleSwap(assignmentId: string): Promise<void> {
   // Hebrew constraint errors. getEligibleParticipantsForSlot already excludes
   // the current participant (HC-7) and handles all HC-1..HC-14 rules.
   const disabledHC = new Set(store.getAlgorithmSettings().disabledHardConstraints);
-  const categoryBreakMs = store.getCategoryBreakHours() * 3600000;
+  const restRuleMap = store.buildRestRuleMap();
   const eligible = getEligibleParticipantsForSlot(
     task,
     assignment.slotId,
@@ -2164,7 +2164,7 @@ async function handleSwap(assignmentId: string): Promise<void> {
     currentSchedule.assignments,
     currentSchedule.tasks,
     disabledHC,
-    categoryBreakMs,
+    restRuleMap,
   ).filter(p => p.id !== assignment.participantId);
 
   if (eligible.length === 0) {
@@ -2288,7 +2288,7 @@ function openRescueModal(assignmentId: string): void {
 
   _rescuePage = 0;
   _rescueAssignmentId = assignmentId;
-  _rescueResult = generateRescuePlans(currentSchedule, request, liveMode.currentTimestamp, _rescuePage, undefined, store.getDisabledHCSet(), store.getCategoryBreakHours() * 3600000, store.getDayStartHour());
+  _rescueResult = generateRescuePlans(currentSchedule, request, liveMode.currentTimestamp, _rescuePage, undefined, store.getDisabledHCSet(), store.buildRestRuleMap(), store.getDayStartHour());
   showRescueModal();
 }
 
@@ -2555,7 +2555,7 @@ function wireRescueModalEvents(): void {
     _rescuePage++;
     const liveMode = store.getLiveModeState();
     const wantTotal = (_rescuePage + 1) * 3; // PAGE_SIZE = 3
-    const result = generateRescuePlans(currentSchedule, _rescueResult.request, liveMode.currentTimestamp, 0, wantTotal, store.getDisabledHCSet(), store.getCategoryBreakHours() * 3600000, store.getDayStartHour());
+    const result = generateRescuePlans(currentSchedule, _rescueResult.request, liveMode.currentTimestamp, 0, wantTotal, store.getDisabledHCSet(), store.buildRestRuleMap(), store.getDayStartHour());
     // Ranks are already sequential from the engine (1-based per returned plan)
     _rescueResult = result;
     showRescueModal();
@@ -2856,7 +2856,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.9</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.9.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3396,7 +3396,7 @@ function wireScheduleEvents(container: HTMLElement): void {
   if (exportDayBtn && currentSchedule) {
     exportDayBtn.addEventListener('click', () => {
       if (!currentSchedule) return;
-      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), store.getDayStartHour());
+      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), store.getDayStartHour(), store.buildRestRuleMap());
       const json = JSON.stringify(snapshot, null, 2);
       navigator.clipboard.writeText(json).then(() => {
         showToast(`יום ${currentDay} הועתק ללוח — הדבק בשבצ"ק הבא`, { type: 'success' });
@@ -3419,7 +3419,7 @@ function wireScheduleEvents(container: HTMLElement): void {
       if (remainingDays < 1) return;
 
       // 1. Export snapshot for the current day
-      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), store.getDayStartHour());
+      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), store.getDayStartHour(), store.buildRestRuleMap());
       _continuityJson = JSON.stringify(snapshot, null, 2);
 
       // 2. Update schedule start date to end of current day
@@ -4627,7 +4627,7 @@ function init(): void {
     engine = new SchedulingEngine(
       algoSettings.config,
       store.getDisabledHCSet(),
-      store.getCategoryBreakHours() * 3600000,
+      store.buildRestRuleMap(),
       store.getDayStartHour(),
     );
     engine.addParticipants(reconciledParticipants);

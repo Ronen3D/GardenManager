@@ -152,8 +152,9 @@ function validateAssignmentEntry(a: unknown, participantName: string, index: num
   if (typeof obj.blocksConsecutive !== 'boolean') {
     return `${participantName}, שיבוץ #${index + 1}: שדה "blocksConsecutive" חסר.`;
   }
-  if (typeof obj.requiresCategoryBreak !== 'boolean') {
-    return `${participantName}, שיבוץ #${index + 1}: שדה "requiresCategoryBreak" חסר.`;
+  // restRuleId is optional (string or absent); restRuleDurationHours is optional (number or absent)
+  if (obj.restRuleId !== undefined && typeof obj.restRuleId !== 'string') {
+    return `${participantName}, שיבוץ #${index + 1}: שדה "restRuleId" לא תקין.`;
   }
   if (typeof obj.isLight !== 'boolean') {
     return `${participantName}, שיבוץ #${index + 1}: שדה "isLight" חסר.`;

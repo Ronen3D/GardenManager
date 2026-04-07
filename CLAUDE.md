@@ -76,7 +76,7 @@ Foundation
 
 ### Key Design Rules
 
-- **No hardcoded task types.** The engine and constraints must never reference specific task names (Adanit, Hamama, etc.). All task behavior is driven by template properties: `sameGroupRequired`, `blocksConsecutive`, `isLight`, `requiresCategoryBreak`, slot `acceptableLevels`, `requiredCertifications`, `forbiddenCertifications`, `subTeamId`, etc. Comments may mention task names as examples, but code must not branch on them.
+- **No hardcoded task types.** The engine and constraints must never reference specific task names (Adanit, Hamama, etc.). All task behavior is driven by template properties: `sameGroupRequired`, `blocksConsecutive`, `isLight`, `restRuleId`, slot `acceptableLevels`, `requiredCertifications`, `forbiddenCertifications`, `subTeamId`, etc. Comments may mention task names as examples, but code must not branch on them.
 - **Task instantiation path (web):** `generateTasksFromTemplates()` in `app.ts` iterates `getAllTaskTemplates()`, builds shifts from `shiftsPerDay`/`durationHours`/`startHour`, and converts `SlotTemplate` → `SlotRequirement`. One-time tasks (`OneTimeTask`) are also supported for non-recurring events.
 - **Operational day boundary.** A "day" in the system runs from a configurable hour (default 05:00) to the same hour the next calendar day. The boundary is stored in `AlgorithmSettings.dayStartHour` and accessed via `store.getDayStartHour()`. When grouping tasks or timestamps by day in the engine layer, always use `operationalDateKey()` from `date-utils.ts` — never `calendarDateKey()`, which uses midnight boundaries. `calendarDateKey()` exists only for calendar-date formatting in UI/export contexts.
 

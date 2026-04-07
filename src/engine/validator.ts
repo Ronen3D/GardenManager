@@ -17,7 +17,7 @@ import {
   TaskTemplate,
   SlotTemplate,
 } from '../models/types';
-import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt, CATEGORY_BREAK_MS } from '../constraints/hard-constraints';
+import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
 
@@ -37,9 +37,9 @@ export function fullValidate(
   participants: Participant[],
   assignments: Assignment[],
   disabledHC?: Set<string>,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
 ): FullValidationResult {
-  const hard = validateHardConstraints(tasks, participants, assignments, disabledHC, categoryBreakMs);
+  const hard = validateHardConstraints(tasks, participants, assignments, disabledHC, restRuleMap);
   const warnings = collectSoftWarnings(tasks, participants, assignments);
 
   const hardCount = hard.violations.length;
@@ -70,7 +70,7 @@ export function previewSwap(
   participants: Participant[],
   assignments: Assignment[],
   swap: SwapRequest,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
 ): FullValidationResult {
   // Create a temporary copy with the swap applied
   const tempAssignments = assignments.map((a) => {
@@ -80,7 +80,7 @@ export function previewSwap(
     return { ...a };
   });
 
-  return fullValidate(tasks, participants, tempAssignments, undefined, categoryBreakMs);
+  return fullValidate(tasks, participants, tempAssignments, undefined, restRuleMap);
 }
 
 // ─── R8: Rejection Reason Codes ──────────────────────────────────────────────
@@ -107,8 +107,8 @@ export interface EligibilityOpts {
   participantMap?: Map<string, Participant>;
   /** Hard constraints that are disabled (skip those checks) */
   disabledHC?: Set<string>;
-  /** HC-14 category break threshold in ms (defaults to CATEGORY_BREAK_MS) */
-  categoryBreakMs?: number;
+  /** HC-14 rest rule map: ruleId → durationMs */
+  restRuleMap?: Map<string, number>;
 }
 
 /**
@@ -186,21 +186,26 @@ function checkEligibility(
     }
   }
 
-  // HC-14: Category break — minimum gap between category-flagged tasks
+  // HC-14: Rest rules — minimum gap between rest-rule-tagged tasks
   // Note: for overlapping tasks, gap is negative so HC-14 fires,
   // but HC-5 (double-booking) is checked first and rejects before reaching here.
-  if (!disabled?.has('HC-14') && task.requiresCategoryBreak) {
-    const breakMs = opts?.categoryBreakMs ?? CATEGORY_BREAK_MS;
+  if (!disabled?.has('HC-14') && task.restRuleId && opts?.restRuleMap?.has(task.restRuleId)) {
+    const ruleMap = opts.restRuleMap;
+    const taskDuration = ruleMap.get(task.restRuleId)!;
     const taskStart = task.timeBlock.start.getTime();
     const taskEnd = task.timeBlock.end.getTime();
     for (const a of participantAssignments) {
       const otherTask = taskMap.get(a.taskId);
-      if (!otherTask?.requiresCategoryBreak) continue;
+      if (!otherTask?.restRuleId || !ruleMap.has(otherTask.restRuleId)) continue;
+      // Same rule → that rule's duration; different rules → min of both
+      const threshold = otherTask.restRuleId === task.restRuleId
+        ? taskDuration
+        : Math.min(taskDuration, ruleMap.get(otherTask.restRuleId)!);
       const gap = Math.max(
         taskStart - otherTask.timeBlock.end.getTime(),
         otherTask.timeBlock.start.getTime() - taskEnd,
       );
-      if (gap < breakMs) return 'HC-14';
+      if (gap < threshold) return 'HC-14';
     }
   }
 
@@ -249,7 +254,7 @@ export function getEligibleParticipantsForSlot(
   currentAssignments: Assignment[],
   tasks: Task[],
   disabledHC?: Set<string>,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
 ): Participant[] {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) return [];
@@ -272,7 +277,7 @@ export function getEligibleParticipantsForSlot(
       taskAssignments,
       participantMap: pMap,
       disabledHC,
-      categoryBreakMs,
+      restRuleMap,
     });
   });
 }

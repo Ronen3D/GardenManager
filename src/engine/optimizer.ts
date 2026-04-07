@@ -31,7 +31,7 @@ import {
   SlotRequirement,
 } from '../models/types';
 import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
-import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt, CATEGORY_BREAK_MS } from '../constraints/hard-constraints';
+import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt } from '../constraints/hard-constraints';
 import { computeScheduleScore, ScoreContext, IncrementalScorer } from '../constraints/soft-constraints';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { isEligible, getRejectionReason } from './validator';
@@ -152,17 +152,17 @@ function isEligibleForSlot(
   participantAssignments: Assignment[],
   taskMap: Map<string, Task>,
   disabledHC?: Set<string>,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
 ): boolean {
   if (_diagnosticLogging) {
-    const code = getRejectionReason(participant, task, slot, participantAssignments, taskMap, { disabledHC, categoryBreakMs });
+    const code = getRejectionReason(participant, task, slot, participantAssignments, taskMap, { disabledHC, restRuleMap });
     if (code) {
       const _tag = `${participant.name} → ${task.name} [${describeSlot(slot.label, task.timeBlock)}]`;
       console.log(`[Elig] REJECT: ${_tag} — ${code}`);
     }
     return code === null;
   }
-  return isEligible(participant, task, slot, participantAssignments, taskMap, { disabledHC, categoryBreakMs });
+  return isEligible(participant, task, slot, participantAssignments, taskMap, { disabledHC, restRuleMap });
 }
 
 /**
@@ -181,11 +181,11 @@ function getEligibleCandidates(
    *  participants from groups with fewer eligible members are deprioritised
    *  (tie-break only) to keep tight groups available for same-group duties. */
   sameGroupEligibleCount?: Map<string, number>,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
   dayStartHour?: number,
 ): Participant[] {
   const eligible = participants.filter((p) =>
-    isEligibleForSlot(p, task, slot, assignmentsByParticipant.get(p.id) || [], taskMap, disabledHC, categoryBreakMs),
+    isEligibleForSlot(p, task, slot, assignmentsByParticipant.get(p.id) || [], taskMap, disabledHC, restRuleMap),
   );
 
   // Operational day of the task being assigned
@@ -379,7 +379,7 @@ export function greedyAssign(
   disabledHC?: Set<string>,
   taskOrderJitter: number = 0,
   phantomContext?: PhantomContext,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
 ): { assignments: Assignment[]; unfilledSlots: { taskId: string; slotId: string; reason: string }[] } {
   const taskMap = new Map<string, Task>();
@@ -480,7 +480,7 @@ export function greedyAssign(
   for (const task of sortedTasks) {
     // For same-group tasks (Adanit), we need special handling
     if (task.sameGroupRequired) {
-      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant, dailyWorkload, disabledHC, categoryBreakMs, dayStartHour);
+      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant, dailyWorkload, disabledHC, restRuleMap, dayStartHour);
       if (!assigned) {
         // Mark all slots as unfilled with specific reasons
         for (const slot of task.slots) {
@@ -520,7 +520,7 @@ export function greedyAssign(
         dailyWorkload,
         disabledHC,
         sameGroupEligibleCount,
-        categoryBreakMs,
+        restRuleMap,
         dayStartHour,
       );
 
@@ -564,7 +564,7 @@ export function greedyAssign(
 
           // Already eligible (shouldn't happen since candidates was empty, but guard)
           const pAssigns = assignmentsByParticipant.get(p.id) || [];
-          if (isEligibleForSlot(p, task, slot, pAssigns, taskMap, disabledHC, categoryBreakMs)) continue;
+          if (isEligibleForSlot(p, task, slot, pAssigns, taskMap, disabledHC, restRuleMap)) continue;
 
           // Find which of p's current assignments blocks them from this slot
           // (must overlap in time — HC-5 conflict)
@@ -589,13 +589,13 @@ export function greedyAssign(
               // Replacement must not already be assigned to the task being stolen from (HC-7)
               const rAssigns = assignmentsByParticipant.get(replacement.id) || [];
               if (rAssigns.some(a => a.taskId === blockingAssign.taskId)) continue;
-              if (!isEligibleForSlot(replacement, blockingTask, blockingSlot, rAssigns, taskMap, disabledHC, categoryBreakMs)) continue;
+              if (!isEligibleForSlot(replacement, blockingTask, blockingSlot, rAssigns, taskMap, disabledHC, restRuleMap)) continue;
 
               // Would the replacement be eligible for the blocking slot AND
               // would p then become eligible for the target slot once unblocked?
               // Simulate: remove blockingAssign from p, check eligibility
               const pAssignsWithout = pAssigns.filter(a => a.id !== blockingAssign.id);
-              if (!isEligibleForSlot(p, task, slot, pAssignsWithout, taskMap, disabledHC, categoryBreakMs)) continue;
+              if (!isEligibleForSlot(p, task, slot, pAssignsWithout, taskMap, disabledHC, restRuleMap)) continue;
 
               swapPlan = { p, blockingAssign, blockingTask, replacement };
               break;
@@ -680,7 +680,7 @@ export function greedyAssign(
           const rejectionCounts = new Map<string, number>();
           for (const p of participants) {
             const pAssigns = assignmentsByParticipant.get(p.id) || [];
-            const code = getRejectionReason(p, task, slot, pAssigns, taskMap, { disabledHC, categoryBreakMs });
+            const code = getRejectionReason(p, task, slot, pAssigns, taskMap, { disabledHC, restRuleMap });
             if (code) {
               rejectionCounts.set(code, (rejectionCounts.get(code) || 0) + 1);
             }
@@ -743,7 +743,7 @@ function assignSameGroupTask(
   assignmentsByParticipant: Map<string, Assignment[]>,
   dailyWorkload?: Map<string, Map<string, number>>,
   disabledHC?: Set<string>,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
 ): boolean {
   // Already have some locked assignments for this task?
@@ -820,7 +820,7 @@ function assignSameGroupTask(
         dailyWorkload,
         disabledHC,
         undefined,
-        categoryBreakMs,
+        restRuleMap,
         dayStartHour,
       );
 
@@ -906,7 +906,7 @@ function isSwapFeasible(
   /** P1: Pre-built per-task assignment index for the candidate */
   byTask: Map<string, Assignment[]>,
   disabledHC?: Set<string>,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
 ): boolean {
   const aI = candidate[idxI];
   const aJ = candidate[idxJ];
@@ -1013,28 +1013,52 @@ function isSwapFeasible(
     if (!checkConsecutiveHighLoad(pI.id) || !checkConsecutiveHighLoad(pJ.id)) return false;
   }
 
-  // HC-14: Category break — minimum gap between category-flagged tasks
-  // Uses module-level _hcScratch to avoid per-call .map().filter() allocations.
-  if (!disabledHC?.has('HC-14')) {
-    const breakMs = categoryBreakMs ?? CATEGORY_BREAK_MS;
-    const checkCatBreak = (pid: string): boolean => {
+  // HC-14: Rest rules — minimum gap between rest-rule-tagged tasks
+  // Uses module-level _hcScratch to avoid per-call allocations.
+  if (!disabledHC?.has('HC-14') && restRuleMap && restRuleMap.size > 0) {
+    const checkRestRules = (pid: string): boolean => {
       const raw = byParticipant.get(pid) || [];
       _hcScratch.length = 0;
       for (let i = 0; i < raw.length; i++) {
         const task = taskMap.get(raw[i].taskId);
-        if (task != null && task.requiresCategoryBreak) _hcScratch.push(task);
+        if (task != null && task.restRuleId && restRuleMap.has(task.restRuleId)) _hcScratch.push(task);
       }
+      if (_hcScratch.length < 2) return true;
       _hcScratch.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
-      for (let x = 0; x < _hcScratch.length - 1; x++) {
-        const cur = _hcScratch[x];
-        const nxt = _hcScratch[x + 1];
-        if (cur.id === nxt.id) continue;
-        const gap = nxt.timeBlock.start.getTime() - cur.timeBlock.end.getTime();
-        if (gap < breakMs) return false;
+
+      // Phase 1: Same-rule adjacent pairs (group by rule)
+      const ruleGroups = new Map<string, Task[]>();
+      for (const t of _hcScratch) {
+        let list = ruleGroups.get(t.restRuleId!);
+        if (!list) { list = []; ruleGroups.set(t.restRuleId!, list); }
+        list.push(t);
+      }
+      for (const [rid, tasks] of ruleGroups) {
+        if (tasks.length < 2) continue;
+        const dur = restRuleMap.get(rid)!;
+        // tasks are already sorted (subset of sorted _hcScratch)
+        for (let x = 0; x < tasks.length - 1; x++) {
+          if (tasks[x].id === tasks[x + 1].id) continue;
+          const gap = tasks[x + 1].timeBlock.start.getTime() - tasks[x].timeBlock.end.getTime();
+          if (gap < dur) return false;
+        }
+      }
+
+      // Phase 2: Cross-rule adjacent pairs
+      if (ruleGroups.size > 1) {
+        for (let x = 0; x < _hcScratch.length - 1; x++) {
+          const cur = _hcScratch[x];
+          const nxt = _hcScratch[x + 1];
+          if (cur.id === nxt.id) continue;
+          if (cur.restRuleId === nxt.restRuleId) continue;
+          const dur = Math.min(restRuleMap.get(cur.restRuleId!)!, restRuleMap.get(nxt.restRuleId!)!);
+          const gap = nxt.timeBlock.start.getTime() - cur.timeBlock.end.getTime();
+          if (gap < dur) return false;
+        }
       }
       return true;
     };
-    if (!checkCatBreak(pI.id) || !checkCatBreak(pJ.id)) return false;
+    if (!checkRestRules(pI.id) || !checkRestRules(pJ.id)) return false;
   }
 
   return true;
@@ -1069,7 +1093,7 @@ export function localSearchOptimize(
   disabledHC?: Set<string>,
   unfilledSlots?: { taskId: string; slotId: string; reason: string }[],
   phantomContext?: PhantomContext,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
 ): { assignments: Assignment[]; filledSlots: string[] } {
   const current = [...assignments.map((a) => ({ ...a }))];
@@ -1204,7 +1228,7 @@ export function localSearchOptimize(
           }
           for (const p of pOrder) {
             const pAssigns = byParticipant.get(p.id) || [];
-            if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, categoryBreakMs)) continue;
+            if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, restRuleMap)) continue;
             // Also check HC-7: no duplicate participant in the same task
             const taskAssigns = byTask.get(uf.taskId) || [];
             if (taskAssigns.some(a => a.participantId === p.id)) continue;
@@ -1330,7 +1354,7 @@ export function localSearchOptimize(
         // byTask: no change needed — same object references, same taskIds
 
         // 3. Delta validation with patched indices
-        if (!isSwapFeasible(current, i, j, taskMap, pMap, byParticipant, byTask, disabledHC, categoryBreakMs)) {
+        if (!isSwapFeasible(current, i, j, taskMap, pMap, byParticipant, byTask, disabledHC, restRuleMap)) {
           // Undo in-place swap
           ai.participantId = oldPidI;
           aj.participantId = oldPidJ;
@@ -1419,7 +1443,7 @@ export function localSearchOptimize(
 
       for (const p of participants) {
         const pAssigns = sweepByParticipant.get(p.id) || [];
-        if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, categoryBreakMs)) continue;
+        if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, restRuleMap)) continue;
         // HC-7: no duplicate participant in same task
         const taskAssigns = sweepByTask.get(uf.taskId) || [];
         if (taskAssigns.some(a => a.participantId === p.id)) continue;
@@ -1469,13 +1493,13 @@ export function optimize(
   disabledHC?: Set<string>,
   taskOrderJitter: number = 0,
   phantomContext?: PhantomContext,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
 ): OptimizationResult {
   const startTime = Date.now();
 
   // Phase 1: Greedy construction
-  const greedy = greedyAssign(tasks, participants, lockedAssignments, disabledHC, taskOrderJitter, phantomContext, categoryBreakMs, dayStartHour);
+  const greedy = greedyAssign(tasks, participants, lockedAssignments, disabledHC, taskOrderJitter, phantomContext, restRuleMap, dayStartHour);
 
   // Phase 2: Local search improvement (also tries to fill unfilled slots)
   const lsResult = localSearchOptimize(
@@ -1486,7 +1510,7 @@ export function optimize(
     disabledHC,
     greedy.unfilledSlots,
     phantomContext,
-    categoryBreakMs,
+    restRuleMap,
     dayStartHour,
   );
 
@@ -1595,7 +1619,7 @@ export function optimizeMultiAttempt(
   onProgress?: MultiAttemptProgressCallback,
   disabledHC?: Set<string>,
   phantomContext?: PhantomContext,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
   const totalStart = Date.now();
@@ -1628,7 +1652,7 @@ export function optimizeMultiAttempt(
 
     // Task-order jitter: 0 for first attempt, 0.3 for subsequent
     const jitter = i === 0 ? 0 : 0.3;
-    const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter, phantomContext, categoryBreakMs);
+    const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter, phantomContext, restRuleMap);
 
     const improved = best === null || isBetterResult(result, best);
     if (improved) {
@@ -1696,7 +1720,7 @@ export function optimizeMultiAttemptAsync(
   onProgress?: MultiAttemptProgressCallback,
   disabledHC?: Set<string>,
   phantomContext?: PhantomContext,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
 ): Promise<OptimizationResult> {
   return new Promise((resolve, reject) => {
@@ -1733,7 +1757,7 @@ export function optimizeMultiAttemptAsync(
 
         // Task-order jitter: 0 for first attempt, 0.3 for subsequent
         const jitter = i === 0 ? 0 : 0.3;
-        const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter, phantomContext, categoryBreakMs, dayStartHour);
+        const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter, phantomContext, restRuleMap, dayStartHour);
 
         const improved = best === null || isBetterResult(result, best);
         if (improved) {

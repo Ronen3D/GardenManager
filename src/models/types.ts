@@ -183,8 +183,8 @@ export interface Task {
   schedulingPriority?: number;
   /** Whether "not with" togetherness preferences apply to this task */
   togethernessRelevant?: boolean;
-  /** HC-14: Enforces minimum 5h gap between this and other category-break tasks for the same participant. */
-  requiresCategoryBreak?: boolean;
+  /** HC-14: Rest rule ID — when set, enforces a minimum gap between this and other tasks sharing a rest rule. */
+  restRuleId?: string;
   /** Display section for schedule grid/PDF layout. */
   displayCategory?: string;
   /** Display color propagated from template (hex, e.g. '#4A90D9'). */
@@ -364,12 +364,9 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-14': 'הפסקה מינימלית בין משימות קטגוריה',
 };
 
-/** Default minimum hours for HC-14 category break. */
-export const DEFAULT_CATEGORY_BREAK_HOURS = 5;
-
-/** Build the HC-14 label with the current break hours value. */
-export function getHC14Label(hours: number): string {
-  return `הפסקה מינימלית בין משימות קטגוריה (${hours} שעות)`;
+/** Build the HC-14 label (generic — rest rules are now per-rule). */
+export function getHC14Label(): string {
+  return 'הפסקה מינימלית בין משימות קטגוריה';
 }
 
 /** All hard constraint codes in display order */
@@ -462,6 +459,17 @@ export interface ParticipantSet {
   createdAt: number;
 }
 
+/** A named rest rule for HC-14 minimum-gap enforcement between tasks. */
+export interface RestRule {
+  id: string;
+  /** User-visible name (e.g. 'הפסקת לילה'). */
+  label: string;
+  /** Minimum gap in hours between tasks sharing this rule. */
+  durationHours: number;
+  /** Soft-delete tombstone — tasks referencing a deleted rule show an orphan warning. */
+  deleted?: boolean;
+}
+
 /** A named, saveable collection of task templates */
 export interface TaskSet {
   id: string;
@@ -473,8 +481,8 @@ export interface TaskSet {
   oneTimeTasks: OneTimeTask[];
   /** If true the set cannot be deleted or renamed */
   builtIn?: boolean;
-  /** Minimum hours between category-break tasks (HC-14). Defaults to 5. */
-  categoryBreakHours: number;
+  /** Named rest rules for HC-14 minimum-gap enforcement. */
+  restRules: RestRule[];
   /** Epoch ms — used for ordering */
   createdAt: number;
 }
@@ -589,8 +597,8 @@ export interface TaskTemplate {
   schedulingPriority?: number;
   /** Whether "not with" togetherness preferences apply to this task template */
   togethernessRelevant?: boolean;
-  /** HC-14: Enforces minimum 5h gap between category-break tasks for same participant. */
-  requiresCategoryBreak?: boolean;
+  /** HC-14: Rest rule ID — when set, enforces a minimum gap between this and other tasks sharing a rest rule. */
+  restRuleId?: string;
   /** Display section for schedule grid/PDF layout. */
   displayCategory?: string;
   /** Display color for UI rendering (hex, e.g. '#4A90D9'). Auto-assigned if unset. */
@@ -631,8 +639,8 @@ export interface OneTimeTask {
   schedulingPriority?: number;
   /** Whether "not with" togetherness preferences apply. */
   togethernessRelevant?: boolean;
-  /** HC-14: Enforces minimum 5h gap between category-break tasks. */
-  requiresCategoryBreak?: boolean;
+  /** HC-14: Rest rule ID — when set, enforces a minimum gap between this and other tasks sharing a rest rule. */
+  restRuleId?: string;
   /** Display section for schedule grid/PDF layout. */
   displayCategory?: string;
   /** Display color for UI rendering (hex, e.g. '#4A90D9'). Auto-assigned if unset. */

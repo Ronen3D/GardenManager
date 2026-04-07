@@ -419,52 +419,95 @@ export function checkNoConsecutiveHighLoad(
   return violations;
 }
 
-// ─── HC-14: Category Break ──────────────────────────────────────────────────
-
-/** Default minimum gap (ms) between two category-break tasks. */
-export const CATEGORY_BREAK_MS = 5 * 60 * 60 * 1000; // 5 hours
+// ─── HC-14: Rest Rules ──────────────────────────────────────────────────────
 
 /**
- * HC-14: A participant must have at least `categoryBreakMs` between any two
- * tasks where both have requiresCategoryBreak=true.
+ * HC-14: A participant must have a minimum gap between any two tasks that
+ * both reference a rest rule.
  *
- * Because tasks are sorted by start time, checking only adjacent pairs
- * of category-flagged tasks is sufficient: if A→B gap >= threshold, then
- * A→C gap is necessarily >= threshold as well.
+ * - Same rule → that rule's duration
+ * - Different rules → min of both durations
+ * - One or neither has a rule → HC-14 does not apply
+ *
+ * Two-phase algorithm:
+ * Phase 1: Within each rule group, adjacent pairs (sorted by time) are
+ *   sufficient because all pairs share the same threshold.
+ * Phase 2: Across rule groups, adjacent pairs in the global sorted list
+ *   (only checking cross-rule pairs) are sufficient because the min-threshold
+ *   is constant for any pair from the same two rules.
  */
-export function checkCategoryBreak(
+export function checkRestRules(
   participantId: string,
   assignments: Assignment[],
   taskMap: Map<string, Task>,
+  restRuleMap: Map<string, number>,
   participantName?: string,
-  categoryBreakMs: number = CATEGORY_BREAK_MS,
 ): ConstraintViolation[] {
+  if (restRuleMap.size === 0) return [];
+
   const violations: ConstraintViolation[] = [];
   const displayName = participantName || participantId;
-  const requiredHours = categoryBreakMs / 3600000;
 
-  const categoryAssignments = assignments
-    .filter(a => a.participantId === participantId)
-    .map(a => ({ assignment: a, task: taskMap.get(a.taskId)! }))
-    .filter(x => x.task != null && x.task.requiresCategoryBreak)
-    .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+  // Collect tasks with a valid rest rule
+  const tagged: Array<{ assignment: Assignment; task: Task }> = [];
+  for (const a of assignments) {
+    if (a.participantId !== participantId) continue;
+    const task = taskMap.get(a.taskId);
+    if (!task || !task.restRuleId || !restRuleMap.has(task.restRuleId)) continue;
+    tagged.push({ assignment: a, task });
+  }
+  if (tagged.length < 2) return [];
 
-  for (let i = 0; i < categoryAssignments.length - 1; i++) {
-    const cur = categoryAssignments[i];
-    const nxt = categoryAssignments[i + 1];
-    if (cur.task.id === nxt.task.id) continue;
+  // Phase 1: Same-rule adjacent pairs
+  const byRule = new Map<string, typeof tagged>();
+  for (const entry of tagged) {
+    const rid = entry.task.restRuleId!;
+    let list = byRule.get(rid);
+    if (!list) { list = []; byRule.set(rid, list); }
+    list.push(entry);
+  }
+  const violatedPairs = new Set<string>(); // "taskIdA|taskIdB" to avoid duplicates across phases
 
-    const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
-    if (gap < categoryBreakMs) {
-      violations.push(
-        violation(
+  for (const [ruleId, entries] of byRule) {
+    if (entries.length < 2) continue;
+    const durationMs = restRuleMap.get(ruleId)!;
+    entries.sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+    for (let i = 0; i < entries.length - 1; i++) {
+      const cur = entries[i];
+      const nxt = entries[i + 1];
+      if (cur.task.id === nxt.task.id) continue;
+      const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
+      if (gap < durationMs) {
+        const pairKey = cur.task.id < nxt.task.id ? `${cur.task.id}|${nxt.task.id}` : `${nxt.task.id}|${cur.task.id}`;
+        violatedPairs.add(pairKey);
+        violations.push(violation(
           'CATEGORY_BREAK_VIOLATION',
-          `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות ${requiredHours} שעות לפחות)`,
-          nxt.task.id,
-          undefined,
-          participantId,
-        ),
-      );
+          `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות ${(durationMs / 3600000).toFixed(1)} שעות לפחות)`,
+          nxt.task.id, undefined, participantId,
+        ));
+      }
+    }
+  }
+
+  // Phase 2: Cross-rule adjacent pairs
+  if (byRule.size > 1) {
+    tagged.sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+    for (let i = 0; i < tagged.length - 1; i++) {
+      const cur = tagged[i];
+      const nxt = tagged[i + 1];
+      if (cur.task.id === nxt.task.id) continue;
+      if (cur.task.restRuleId === nxt.task.restRuleId) continue; // same-rule handled in phase 1
+      const pairKey = cur.task.id < nxt.task.id ? `${cur.task.id}|${nxt.task.id}` : `${nxt.task.id}|${cur.task.id}`;
+      if (violatedPairs.has(pairKey)) continue;
+      const durationMs = Math.min(restRuleMap.get(cur.task.restRuleId!)!, restRuleMap.get(nxt.task.restRuleId!)!);
+      const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
+      if (gap < durationMs) {
+        violations.push(violation(
+          'CATEGORY_BREAK_VIOLATION',
+          `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות ${(durationMs / 3600000).toFixed(1)} שעות לפחות)`,
+          nxt.task.id, undefined, participantId,
+        ));
+      }
     }
   }
 
@@ -485,7 +528,7 @@ export function validateHardConstraints(
   participants: Participant[],
   assignments: Assignment[],
   disabledHC?: Set<string>,
-  categoryBreakMs?: number,
+  restRuleMap?: Map<string, number>,
 ): ValidationResult {
   const allViolations: ConstraintViolation[] = [];
   const pMap = buildParticipantMap(participants);
@@ -669,12 +712,12 @@ export function validateHardConstraints(
     }
   }
 
-  // HC-14: Category break — minimum gap between category-flagged tasks
-  if (!disabledHC?.has('HC-14')) {
+  // HC-14: Rest rules — minimum gap between rest-rule-tagged tasks
+  if (!disabledHC?.has('HC-14') && restRuleMap && restRuleMap.size > 0) {
     for (const p of participants) {
       const pAssigns = assignmentsByParticipant.get(p.id) || [];
       if (pAssigns.length < 2) continue;
-      allViolations.push(...checkCategoryBreak(p.id, pAssigns, tMap, p.name, categoryBreakMs));
+      allViolations.push(...checkRestRules(p.id, pAssigns, tMap, restRuleMap, p.name));
     }
   }
 
