@@ -19,7 +19,7 @@ import {
 } from '../models/types';
 import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
-import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
+import { isFullyCovered, blocksOverlap, isBlockedByDateUnavailability } from '../web/utils/time-utils';
 
 
 export interface FullValidationResult extends ValidationResult {
@@ -149,8 +149,11 @@ function checkEligibility(
     }
   }
 
-  // HC-3: Availability check
-  if (!disabled?.has('HC-3') && !isFullyCovered(task.timeBlock, participant.availability)) return 'HC-3';
+  // HC-3: Availability check (windows + recurring dateUnavailability rules)
+  if (!disabled?.has('HC-3') && (
+    !isFullyCovered(task.timeBlock, participant.availability) ||
+    isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability)
+  )) return 'HC-3';
 
   // HC-4: Same-group check (optional — only validator uses this inline)
   if (!disabled?.has('HC-4') && opts?.checkSameGroup && task.sameGroupRequired && opts.taskAssignments && opts.participantMap) {

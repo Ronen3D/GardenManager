@@ -15,7 +15,7 @@ import {
   SlotRequirement,
   ValidationResult,
 } from '../models/types';
-import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
+import { isFullyCovered, blocksOverlap, isBlockedByDateUnavailability } from '../web/utils/time-utils';
 import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
 import { describeSlot } from '../utils/date-utils';
 
@@ -120,6 +120,15 @@ export function checkAvailability(
   task: Task,
 ): ConstraintViolation | null {
   if (!isFullyCovered(task.timeBlock, participant.availability)) {
+    return violation(
+      'AVAILABILITY_VIOLATION',
+      `משתתף ${participant.name} לא זמין למשך הזמן המלא של ${task.name}`,
+      task.id,
+      undefined,
+      participant.id,
+    );
+  }
+  if (isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability)) {
     return violation(
       'AVAILABILITY_VIOLATION',
       `משתתף ${participant.name} לא זמין למשך הזמן המלא של ${task.name}`,

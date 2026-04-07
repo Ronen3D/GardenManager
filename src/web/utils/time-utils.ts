@@ -20,7 +20,7 @@ import {
   parseISO,
 } from 'date-fns';
 
-import { TimeBlock, AvailabilityWindow } from '../../models/types';
+import { TimeBlock, AvailabilityWindow, DateUnavailability } from '../../models/types';
 
 /**
  * Create a TimeBlock, automatically adjusting end to next day if it appears
@@ -103,6 +103,53 @@ export function isFullyCovered(
       return true;
     }
   }
+  return false;
+}
+
+/**
+ * Check whether a task's time block is blocked by any recurring dateUnavailability rule.
+ * Returns true if the task overlaps with any unavailability window.
+ */
+export function isBlockedByDateUnavailability(
+  taskBlock: TimeBlock,
+  rules: DateUnavailability[],
+): boolean {
+  if (!rules || rules.length === 0) return false;
+
+  const taskStartMs = taskBlock.start.getTime();
+  const taskEndMs = taskBlock.end.getTime();
+
+  // Iterate through each calendar day the task touches
+  let cursor = startOfDay(taskBlock.start);
+  while (cursor.getTime() < taskEndMs) {
+    const dow = cursor.getDay();
+    for (const rule of rules) {
+      if (rule.dayOfWeek !== dow) continue;
+
+      let blockStartMs: number;
+      let blockEndMs: number;
+
+      if (rule.allDay) {
+        blockStartMs = cursor.getTime();
+        blockEndMs = addDays(cursor, 1).getTime();
+      } else {
+        const y = cursor.getFullYear();
+        const m = cursor.getMonth();
+        const d = cursor.getDate();
+        blockStartMs = new Date(y, m, d, rule.startHour, 0).getTime();
+        blockEndMs = rule.endHour <= rule.startHour
+          ? new Date(y, m, d + 1, rule.endHour, 0).getTime()
+          : new Date(y, m, d, rule.endHour, 0).getTime();
+      }
+
+      // Overlap check: task overlaps unavailability window
+      if (taskStartMs < blockEndMs && blockStartMs < taskEndMs) {
+        return true;
+      }
+    }
+    cursor = addDays(cursor, 1);
+  }
+
   return false;
 }
 

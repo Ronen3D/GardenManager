@@ -3084,26 +3084,21 @@ console.log('\n── HC-3: dateUnavailability ───────────
     isLight: false, sameGroupRequired: false, blocksConsecutive: true,
   };
 
-  // Check eligibility — dateUnavailability should block this participant
+  // Check eligibility — dateUnavailability must block this participant
   const tMap = new Map([[duTask.id, duTask]]);
   const eligible = isEligible(duP, duTask, duTask.slots[0], [], tMap);
-  // Note: dateUnavailability may be checked at the optimizer level (not in isEligible),
-  // so we also test via validateHardConstraints
+  assert(eligible === false, 'HC-3: dateUnavailability blocks isEligible on matching day');
+
+  // Also verify via validateHardConstraints
   const duAssigns: Assignment[] = [{
     id: 'du-a1', taskId: duTask.id, slotId: 'du-s1',
     participantId: duP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
   }];
   const duResult = validateHardConstraints([duTask], [duP], duAssigns);
   const hasDateViolation = duResult.violations.some(v =>
-    v.code === 'AVAILABILITY_VIOLATION' || v.code === 'DATE_UNAVAILABLE'
+    v.code === 'AVAILABILITY_VIOLATION'
   );
-  // FINDING: dateUnavailability is NOT enforced by the engine's hard constraints or
-  // isEligible — it is only applied at the UI layer (config-store merges it into
-  // availability windows before passing to the engine). This means if someone calls
-  // the engine API directly, dateUnavailability rules are silently ignored.
-  // The test below documents the current behavior:
-  assert(eligible === true, 'dateUnavailability: NOT enforced by isEligible (UI-only pre-processing)');
-  assert(!hasDateViolation, 'dateUnavailability: NOT enforced by validateHardConstraints (UI-only pre-processing)');
+  assert(hasDateViolation, 'HC-3: dateUnavailability produces AVAILABILITY_VIOLATION in validateHardConstraints');
 
   // Participant available on a different day (Monday=1) → should be eligible
   const monTask: Task = {
@@ -3117,6 +3112,24 @@ console.log('\n── HC-3: dateUnavailability ───────────
   };
   const eligMon = isEligible(monAvail, monTask, monTask.slots[0], [], tMap2);
   assert(eligMon === true, 'HC-3: dateUnavailability on Sunday does not block Monday');
+
+  // Partial-day unavailability: unavailable Sunday 10:00–14:00
+  const partialP: Participant = {
+    ...duP, id: 'du-p3',
+    dateUnavailability: [{ id: 'du-u2', dayOfWeek: 0, startHour: 10, endHour: 14, allDay: false }],
+  };
+  // Task 06:00–14:00 overlaps with 10:00–14:00 → blocked
+  const eligPartialOverlap = isEligible(partialP, duTask, duTask.slots[0], [], tMap);
+  assert(eligPartialOverlap === false, 'HC-3: partial-day unavailability blocks overlapping task');
+
+  // Task 06:00–10:00 does NOT overlap with 10:00–14:00 (endpoint-exclusive) → eligible
+  const earlyTask: Task = {
+    ...duTask, id: 'du-t3',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 10),
+  };
+  const tMap3 = new Map([[earlyTask.id, earlyTask]]);
+  const eligEarly = isEligible(partialP, earlyTask, earlyTask.slots[0], [], tMap3);
+  assert(eligEarly === true, 'HC-3: task ending at unavailability start is not blocked');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3257,6 +3270,474 @@ console.log('\n── dailyWorkloadImbalance ───────────�
   const singleDay = dailyWorkloadImbalance([p1], balAssigns.slice(0, 1), [t1]);
   assert(singleDay.dailyPerParticipantStdDev === 0, 'dailyImbalance: single day → per-participant stdDev = 0');
   assert(singleDay.dailyGlobalStdDev === 0, 'dailyImbalance: single day → global stdDev = 0');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Phantom Context (buildPhantomContext, mergePhantomRules)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { buildPhantomContext, mergePhantomRules } from './engine/phantom';
+import type { ContinuitySnapshot } from './models/continuity-schema';
+
+console.log('\n── Phantom Context ─────────────────────');
+
+{
+  // Build a valid ContinuitySnapshot with 2 participants, one matching the new schedule
+  const snapshot: ContinuitySnapshot = {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    dayIndex: 1,
+    dayWindow: { start: '2026-02-15T05:00:00', end: '2026-02-16T05:00:00' },
+    participants: [
+      {
+        name: 'Alice',
+        level: 0,
+        certifications: ['Nitzan'],
+        group: 'A',
+        assignments: [
+          {
+            sourceName: 'חממה', taskName: 'חממה D1',
+            timeBlock: { start: '2026-02-15T06:00:00', end: '2026-02-15T14:00:00' },
+            blocksConsecutive: true, isLight: false, baseLoadWeight: 1,
+            restRuleId: 'rest-A', restRuleDurationHours: 5,
+          },
+          {
+            sourceName: 'ממטרה', taskName: 'ממטרה D1',
+            timeBlock: { start: '2026-02-15T20:00:00', end: '2026-02-16T04:00:00' },
+            blocksConsecutive: true, isLight: false, baseLoadWeight: 1,
+            restRuleId: 'rest-A', restRuleDurationHours: 5,
+          },
+        ],
+      },
+      {
+        name: 'UnknownPerson',
+        level: 0,
+        certifications: [],
+        group: 'B',
+        assignments: [
+          {
+            sourceName: 'x', taskName: 'x',
+            timeBlock: { start: '2026-02-15T06:00:00', end: '2026-02-15T14:00:00' },
+            blocksConsecutive: false, isLight: true, baseLoadWeight: 0.3,
+          },
+        ],
+      },
+    ],
+  };
+
+  const newParticipants: Participant[] = [
+    { id: 'ph-alice', name: 'Alice', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] },
+    { id: 'ph-bob', name: 'Bob', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] },
+  ];
+
+  const ctx = buildPhantomContext(snapshot, newParticipants);
+
+  // Only Alice matches → 2 phantom tasks (her 2 assignments); UnknownPerson ignored
+  assert(ctx.phantomTasks.length === 2, 'phantom: matched participant produces phantom tasks');
+  assert(ctx.phantomAssignments.length === 2, 'phantom: one phantom assignment per phantom task');
+  assert(ctx.phantomTaskIds.size === 2, 'phantom: phantomTaskIds tracks all phantom tasks');
+
+  // Phantom assignments link to new participant ID
+  assert(ctx.phantomAssignments.every(a => a.participantId === 'ph-alice'), 'phantom: assignments map to matched participant ID');
+
+  // Rest rules: both assignments have restRuleId='rest-A' → only 1 unique rule stored
+  assert(ctx.phantomRestRules.size === 1, 'phantom: duplicate restRuleId stored only once');
+  assert(ctx.phantomRestRules.get('rest-A') === 5 * 3600000, 'phantom: rest rule duration converted to ms');
+
+  // Phantom task fields
+  const pTask = ctx.phantomTasks[0];
+  assert(pTask.requiredCount === 0, 'phantom: phantom tasks have requiredCount=0');
+  assert(pTask.slots.length === 0, 'phantom: phantom tasks have empty slots');
+  assert(pTask.blocksConsecutive === true, 'phantom: blocksConsecutive propagated from snapshot');
+
+  // Empty snapshot → empty context
+  const emptySnap: ContinuitySnapshot = {
+    schemaVersion: 1, exportedAt: '', dayIndex: 1,
+    dayWindow: { start: '', end: '' }, participants: [],
+  };
+  const emptyCtx = buildPhantomContext(emptySnap, newParticipants);
+  assert(emptyCtx.phantomTasks.length === 0, 'phantom: empty snapshot → empty context');
+}
+
+// mergePhantomRules
+{
+  const base = new Map<string, number>([['rule-1', 10000]]);
+  const phantomRules = new Map<string, number>([['rule-1', 99999], ['rule-2', 20000]]);
+  const ctx = { phantomTasks: [], phantomAssignments: [], phantomTaskIds: new Set<string>(), phantomRestRules: phantomRules };
+
+  const merged = mergePhantomRules(base, ctx);
+  assert(merged.get('rule-1') === 10000, 'mergePhantom: base rules take precedence');
+  assert(merged.get('rule-2') === 20000, 'mergePhantom: phantom rules fill gaps');
+  assert(merged.size === 2, 'mergePhantom: merged map has all unique rules');
+
+  // Empty phantom rules → returns same base map reference
+  const emptyPh = { phantomTasks: [], phantomAssignments: [], phantomTaskIds: new Set<string>(), phantomRestRules: new Map<string, number>() };
+  const same = mergePhantomRules(base, emptyPh);
+  assert(same === base, 'mergePhantom: empty phantom → returns same base map');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Rescue Plans (generateRescuePlans)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { generateRescuePlans } from './engine/rescue';
+import type { RescueRequest, ScheduleScore } from './models/types';
+
+console.log('\n── Rescue Plans ────────────────────────');
+
+{
+  // Set up a future anchor so tasks are modifiable
+  const rescueBase = new Date(2026, 5, 1); // June 1, 2026
+  const anchor = new Date(2026, 4, 30); // anchor in the past → tasks are future
+  const rescueBlock = createTimeBlockFromHours(rescueBase, 6, 14);
+  const rescueBlock2 = createTimeBlockFromHours(rescueBase, 18, 22); // non-overlapping
+
+  // Task with 2 slots (L0, Nitzan)
+  const rTask: Task = {
+    id: 'rsc-t1', name: 'Rescue Task', timeBlock: rescueBlock, requiredCount: 2,
+    slots: [
+      { slotId: 'rsc-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
+      { slotId: 'rsc-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
+    ],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+
+  // Second task (for testing depth-2 chains)
+  const rTask2: Task = {
+    id: 'rsc-t2', name: 'Other Task', timeBlock: rescueBlock2, requiredCount: 1,
+    slots: [
+      { slotId: 'rsc-s3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'C' },
+    ],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+
+  const rescueAvail = [{ start: new Date(2026, 4, 29), end: new Date(2026, 5, 3) }];
+  const rP1: Participant = { id: 'rsc-p1', name: 'R1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescueAvail, dateUnavailability: [] };
+  const rP2: Participant = { id: 'rsc-p2', name: 'R2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescueAvail, dateUnavailability: [] };
+  const rP3: Participant = { id: 'rsc-p3', name: 'R3', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescueAvail, dateUnavailability: [] };
+
+  const dummyScore: ScheduleScore = {
+    minRestHours: 0, avgRestHours: 0, restStdDev: 0,
+    totalPenalty: 0, compositeScore: 0,
+    l0StdDev: 0, l0AvgEffective: 0,
+    seniorStdDev: 0, seniorAvgEffective: 0,
+    dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0,
+  };
+
+  // Current assignments: p1→slot1, p2→slot2
+  const rAssigns: Assignment[] = [
+    { id: 'rsc-a1', taskId: 'rsc-t1', slotId: 'rsc-s1', participantId: 'rsc-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'rsc-a2', taskId: 'rsc-t1', slotId: 'rsc-s2', participantId: 'rsc-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'rsc-a3', taskId: 'rsc-t2', slotId: 'rsc-s3', participantId: 'rsc-p3', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+
+  const schedule: Schedule = {
+    id: 'rsc-sched', tasks: [rTask, rTask2], participants: [rP1, rP2, rP3],
+    assignments: rAssigns, feasible: true, score: dummyScore,
+    violations: [], generatedAt: new Date(),
+  };
+
+  // Vacate p1's slot → p3 is the only eligible replacement (p2 already in the task → HC-7)
+  const request: RescueRequest = {
+    vacatedAssignmentId: 'rsc-a1', taskId: 'rsc-t1', slotId: 'rsc-s1', vacatedBy: 'rsc-p1',
+  };
+
+  const result = generateRescuePlans(schedule, request, anchor);
+  assert(result.plans.length > 0, 'rescue: generates at least one plan for valid vacancy');
+  assert(result.page === 0, 'rescue: default page is 0');
+
+  // Depth-1 plan should have exactly 1 swap
+  const depth1Plan = result.plans.find(p => p.swaps.length === 1);
+  assert(depth1Plan !== undefined, 'rescue: produces a depth-1 (single swap) plan');
+  assert(depth1Plan!.swaps[0].toParticipantId === 'rsc-p3', 'rescue: depth-1 replaces with the only eligible participant');
+
+  // Plans are sorted by impactScore ascending
+  if (result.plans.length >= 2) {
+    assert(result.plans[0].impactScore <= result.plans[1].impactScore, 'rescue: plans sorted by impactScore ascending');
+  }
+
+  // Vacated assignment not found → empty plans
+  const badRequest: RescueRequest = { vacatedAssignmentId: 'nonexistent', taskId: 'rsc-t1', slotId: 'rsc-s1', vacatedBy: 'rsc-p1' };
+  const emptyResult = generateRescuePlans(schedule, badRequest, anchor);
+  assert(emptyResult.plans.length === 0, 'rescue: nonexistent assignment → empty plans');
+
+  // Task in the past → empty plans
+  const futureAnchor = new Date(2026, 6, 1); // anchor AFTER task
+  const pastResult = generateRescuePlans(schedule, request, futureAnchor);
+  assert(pastResult.plans.length === 0, 'rescue: past task → empty plans');
+
+  // No eligible participants → empty plans
+  const noEligSched: Schedule = {
+    ...schedule,
+    // p1 vacated, p2 already in task (HC-7), p3 lacks cert
+    participants: [rP1, rP2, { ...rP3, certifications: [] }],
+  };
+  const noEligResult = generateRescuePlans(noEligSched, request, anchor);
+  assert(noEligResult.plans.length === 0, 'rescue: no eligible participants → empty plans');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Optimizer (greedyAssign, optimize — invariant-based)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { greedyAssign, optimize, optimizeMultiAttempt } from './engine/optimizer';
+import type { SchedulerConfig } from './models/types';
+
+console.log('\n── Optimizer ───────────────────────────');
+
+{
+  // ── Shared test fixtures ──
+
+  const optBase = new Date(2026, 3, 1); // April 1, 2026
+  const optWindow = [{ start: new Date(2026, 2, 31), end: new Date(2026, 3, 3) }];
+  const fastConfig: SchedulerConfig = { ...DEFAULT_CONFIG, maxIterations: 500, maxSolverTimeMs: 2000 };
+
+  // Simple non-overlapping tasks
+  const optBlock1 = createTimeBlockFromHours(optBase, 6, 14);   // 06:00–14:00
+  const optBlock2 = createTimeBlockFromHours(optBase, 14, 22);  // 14:00–22:00
+
+  const optT1: Task = {
+    id: 'opt-t1', name: 'T1', timeBlock: optBlock1, requiredCount: 1,
+    slots: [{ slotId: 'opt-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const optT2: Task = {
+    id: 'opt-t2', name: 'T2', timeBlock: optBlock2, requiredCount: 1,
+    slots: [{ slotId: 'opt-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+
+  const mkParticipant = (id: string, name: string, level: Level, certs: string[], group: string): Participant => ({
+    id, name, level, certifications: certs, group, availability: optWindow, dateUnavailability: [],
+  });
+
+  const optP1 = mkParticipant('opt-p1', 'P1', Level.L0, ['Nitzan'], 'A');
+  const optP2 = mkParticipant('opt-p2', 'P2', Level.L0, ['Nitzan'], 'A');
+  const optP3 = mkParticipant('opt-p3', 'P3', Level.L0, ['Nitzan'], 'A');
+
+  // ── greedyAssign: basic feasibility ──
+
+  const greedy = greedyAssign([optT1, optT2], [optP1, optP2, optP3]);
+  assert(greedy.unfilledSlots.length === 0, 'greedy: all slots filled with sufficient participants');
+  assert(greedy.assignments.length === 2, 'greedy: one assignment per slot');
+
+  // ── greedyAssign: HC-7 no duplicate per task ──
+
+  const multiSlotTask: Task = {
+    id: 'opt-ms', name: 'MultiSlot', timeBlock: optBlock1, requiredCount: 2,
+    slots: [
+      { slotId: 'opt-ms-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'X' },
+      { slotId: 'opt-ms-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'Y' },
+    ],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const msGreedy = greedyAssign([multiSlotTask], [optP1, optP2, optP3]);
+  const msTaskAssigns = msGreedy.assignments.filter(a => a.taskId === 'opt-ms');
+  const msParticipants = msTaskAssigns.map(a => a.participantId);
+  assert(new Set(msParticipants).size === msParticipants.length, 'greedy: HC-7 no participant appears twice in same task');
+
+  // ── greedyAssign: HC-5 no double-booking ──
+
+  const overlapBlock = createTimeBlockFromHours(optBase, 10, 18); // overlaps with optBlock1
+  const overlapTask: Task = {
+    id: 'opt-ol', name: 'Overlap', timeBlock: overlapBlock, requiredCount: 1,
+    slots: [{ slotId: 'opt-ol-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'Z' }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const olGreedy = greedyAssign([optT1, overlapTask], [optP1, optP2]);
+  // Both tasks should be filled (2 participants, 2 non-overlapping-for-each tasks)
+  assert(olGreedy.unfilledSlots.length === 0, 'greedy: HC-5 can fill overlapping tasks with distinct participants');
+  // No participant should be in both overlapping tasks
+  const t1Pid = olGreedy.assignments.find(a => a.taskId === 'opt-t1')?.participantId;
+  const olPid = olGreedy.assignments.find(a => a.taskId === 'opt-ol')?.participantId;
+  assert(t1Pid !== olPid, 'greedy: HC-5 no participant double-booked in overlapping tasks');
+
+  // ── greedyAssign: certification gating (HC-2) ──
+
+  const certTask: Task = {
+    id: 'opt-cert', name: 'CertTask', timeBlock: optBlock2, requiredCount: 1,
+    slots: [{ slotId: 'opt-cert-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Hamama'], label: 'H' }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  // Only Nitzan-certified participants → can't fill Hamama slot
+  const certGreedy = greedyAssign([certTask], [optP1, optP2]);
+  assert(certGreedy.unfilledSlots.length === 1, 'greedy: HC-2 unfills slot when no participant has required cert');
+
+  // ── greedyAssign: level gating (HC-1) ──
+
+  const l2Task: Task = {
+    id: 'opt-l2', name: 'L2Task', timeBlock: optBlock1, requiredCount: 1,
+    slots: [{ slotId: 'opt-l2-s1', acceptableLevels: [{ level: Level.L2 }], requiredCertifications: [], label: 'L' }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const l2Greedy = greedyAssign([l2Task], [optP1, optP2]); // only L0 participants
+  assert(l2Greedy.unfilledSlots.length === 1, 'greedy: HC-1 unfills slot when no participant has required level');
+
+  // ── greedyAssign: same-group integrity (HC-4) ──
+
+  const sgTask: Task = {
+    id: 'opt-sg', name: 'SGTask', timeBlock: optBlock1, requiredCount: 2,
+    slots: [
+      { slotId: 'opt-sg-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: '1' },
+      { slotId: 'opt-sg-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: '2' },
+    ],
+    isLight: false, sameGroupRequired: true, blocksConsecutive: true,
+  };
+  const sgPa = mkParticipant('opt-sg-a1', 'SGA1', Level.L0, [], 'Alpha');
+  const sgPa2 = mkParticipant('opt-sg-a2', 'SGA2', Level.L0, [], 'Alpha');
+  const sgPb = mkParticipant('opt-sg-b1', 'SGB1', Level.L0, [], 'Beta');
+  const sgGreedy = greedyAssign([sgTask], [sgPa, sgPa2, sgPb]);
+  const sgAssigned = sgGreedy.assignments.filter(a => a.taskId === 'opt-sg');
+  if (sgAssigned.length === 2) {
+    const groups = sgAssigned.map(a => [sgPa, sgPa2, sgPb].find(p => p.id === a.participantId)!.group);
+    assert(new Set(groups).size === 1, 'greedy: HC-4 same-group task assigns from one group only');
+  } else {
+    assert(false, 'greedy: HC-4 same-group task should fill both slots');
+  }
+
+  // ── greedyAssign: locked assignments preserved ──
+
+  const locked: Assignment[] = [
+    { id: 'opt-lock1', taskId: 'opt-t1', slotId: 'opt-s1', participantId: 'opt-p1', status: AssignmentStatus.Locked, updatedAt: new Date() },
+  ];
+  const lockGreedy = greedyAssign([optT1, optT2], [optP1, optP2, optP3], locked);
+  const lockKept = lockGreedy.assignments.find(a => a.id === 'opt-lock1');
+  assert(lockKept !== undefined, 'greedy: locked assignment present in output');
+  assert(lockKept!.participantId === 'opt-p1', 'greedy: locked assignment participant unchanged');
+  assert(lockKept!.slotId === 'opt-s1', 'greedy: locked assignment slot unchanged');
+
+  // ── optimize: constraint closure ──
+
+  console.log('\n── Optimizer: optimize() ────────────────');
+
+  const optResult = optimize([optT1, optT2], [optP1, optP2, optP3], fastConfig);
+  assert(optResult.feasible === true, 'optimize: feasible with sufficient participants');
+  assert(optResult.unfilledSlots.length === 0, 'optimize: no unfilled slots');
+
+  // Re-validate output against hard constraints (THE key invariant)
+  const reValidation = validateHardConstraints([optT1, optT2], [optP1, optP2, optP3], optResult.assignments);
+  assert(reValidation.valid === true, 'optimize: output passes independent hard constraint re-validation');
+
+  // Verify no double-booking in output
+  const optByParticipant = new Map<string, Task[]>();
+  for (const a of optResult.assignments) {
+    const task = [optT1, optT2].find(t => t.id === a.taskId)!;
+    const list = optByParticipant.get(a.participantId) || [];
+    list.push(task);
+    optByParticipant.set(a.participantId, list);
+  }
+  let noOverlap = true;
+  for (const [, tasks] of optByParticipant) {
+    for (let i = 0; i < tasks.length; i++) {
+      for (let j = i + 1; j < tasks.length; j++) {
+        if (blocksOverlap(tasks[i].timeBlock, tasks[j].timeBlock)) noOverlap = false;
+      }
+    }
+  }
+  assert(noOverlap, 'optimize: HC-5 no participant double-booked in output');
+
+  // Score fields populated
+  assert(typeof optResult.score.compositeScore === 'number', 'optimize: compositeScore is a number');
+  assert(typeof optResult.score.totalPenalty === 'number', 'optimize: totalPenalty is a number');
+  assert(optResult.durationMs >= 0, 'optimize: durationMs is non-negative');
+
+  // ── optimize: infeasible scenario ──
+
+  const infeasible = optimize(
+    [optT1, { ...optT1, id: 'opt-t1-dup', slots: [{ ...optT1.slots[0], slotId: 'opt-dup-s1' }] }],
+    [optP1], // 1 participant, 2 overlapping tasks
+    fastConfig,
+  );
+  assert(infeasible.feasible === false, 'optimize: infeasible when 1 participant cannot fill overlapping tasks');
+  assert(infeasible.unfilledSlots.length > 0, 'optimize: reports unfilled slots on infeasible input');
+
+  // ── optimize: empty input ──
+
+  const emptyOpt = optimize([], [], fastConfig);
+  assert(emptyOpt.feasible === true, 'optimize: empty input is trivially feasible');
+  assert(emptyOpt.assignments.length === 0, 'optimize: empty input produces no assignments');
+
+  // ── optimize: locked preservation through full pipeline ──
+
+  const optLocked: Assignment[] = [
+    { id: 'opt-pipe-lock', taskId: 'opt-t1', slotId: 'opt-s1', participantId: 'opt-p1', status: AssignmentStatus.Locked, updatedAt: new Date() },
+  ];
+  const lockResult = optimize([optT1, optT2], [optP1, optP2, optP3], fastConfig, optLocked);
+  const pipeLockedFound = lockResult.assignments.find(a => a.id === 'opt-pipe-lock');
+  assert(pipeLockedFound !== undefined, 'optimize: locked assignment survives full pipeline');
+  assert(pipeLockedFound!.participantId === 'opt-p1', 'optimize: locked assignment participant not reassigned');
+
+  // ── optimize: score consistency (re-scoring produces same result) ──
+
+  const rescored = computeScheduleScore([optT1, optT2], [optP1, optP2, optP3], optResult.assignments, fastConfig);
+  assert(
+    Math.abs(rescored.compositeScore - optResult.score.compositeScore) < 0.01,
+    'optimize: re-scoring output produces same compositeScore',
+  );
+
+  // ── optimize: feasibility definition ──
+
+  // feasible === true means both: no HC violations AND no unfilled slots
+  if (optResult.feasible) {
+    const fVal = validateHardConstraints([optT1, optT2], [optP1, optP2, optP3], optResult.assignments);
+    assert(fVal.valid === true && optResult.unfilledSlots.length === 0,
+      'optimize: feasible=true ⟺ no HC violations AND zero unfilled');
+  }
+
+  // ── optimize: multi-attempt is at least as good as single ──
+
+  console.log('\n── Optimizer: multi-attempt ─────────────');
+
+  const multiResult = optimizeMultiAttempt(
+    [optT1, optT2], [optP1, optP2, optP3], fastConfig, [], 3,
+  );
+  assert(multiResult.feasible === true, 'multiAttempt: feasible on solvable input');
+  assert(multiResult.unfilledSlots.length <= optResult.unfilledSlots.length,
+    'multiAttempt: unfilled slots ≤ single attempt');
+  assert(multiResult.actualAttempts >= 1, 'multiAttempt: ran at least 1 attempt');
+
+  // Re-validate multi-attempt output
+  const multiVal = validateHardConstraints([optT1, optT2], [optP1, optP2, optP3], multiResult.assignments);
+  assert(multiVal.valid === true, 'multiAttempt: output passes hard constraint re-validation');
+
+  // ── optimize: certification-gated slot with mixed participants ──
+
+  const hamamaP = mkParticipant('opt-ham', 'HamP', Level.L0, ['Nitzan', 'Hamama'], 'A');
+  const hTask: Task = {
+    id: 'opt-ht', name: 'HT', timeBlock: optBlock1, requiredCount: 1,
+    slots: [{ slotId: 'opt-ht-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Hamama'], label: 'H' }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const hResult = optimize([hTask], [optP1, hamamaP], fastConfig); // p1 has no Hamama
+  assert(hResult.feasible === true, 'optimize: fills cert-gated slot with certified participant');
+  const hAssign = hResult.assignments.find(a => a.taskId === 'opt-ht');
+  assert(hAssign?.participantId === 'opt-ham', 'optimize: cert-gated slot assigned to only eligible participant');
+
+  // ── optimize: HC-12 consecutive blocking enforced ──
+
+  const consBlock1 = createTimeBlockFromHours(optBase, 6, 14);
+  const consBlock2 = createTimeBlockFromHours(optBase, 14, 22); // back-to-back
+  const consT1: Task = {
+    id: 'opt-cons1', name: 'Cons1', timeBlock: consBlock1, requiredCount: 1,
+    slots: [{ slotId: 'opt-cons1-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'C1' }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const consT2: Task = {
+    id: 'opt-cons2', name: 'Cons2', timeBlock: consBlock2, requiredCount: 1,
+    slots: [{ slotId: 'opt-cons2-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'C2' }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const consP1 = mkParticipant('opt-cons-p1', 'CP1', Level.L0, [], 'A');
+  const consP2 = mkParticipant('opt-cons-p2', 'CP2', Level.L0, [], 'A');
+  const consResult = optimize([consT1, consT2], [consP1, consP2], fastConfig);
+  // With 2 participants and 2 back-to-back blocking tasks, each gets one
+  assert(consResult.feasible === true, 'optimize: HC-12 solvable with enough participants');
+  const consReVal = validateHardConstraints([consT1, consT2], [consP1, consP2], consResult.assignments);
+  assert(consReVal.valid === true, 'optimize: HC-12 output passes re-validation');
+  // The two tasks should be assigned to different participants
+  const cons1Pid = consResult.assignments.find(a => a.taskId === 'opt-cons1')?.participantId;
+  const cons2Pid = consResult.assignments.find(a => a.taskId === 'opt-cons2')?.participantId;
+  assert(cons1Pid !== cons2Pid, 'optimize: HC-12 assigns back-to-back blocking tasks to different participants');
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
