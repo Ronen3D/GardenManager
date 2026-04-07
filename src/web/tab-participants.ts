@@ -165,7 +165,7 @@ function updatePrefWarning(
   // Eligible if ANY template with this name has a fillable slot
   let bestResult: TemplateEligibilityResult = { eligible: false, reasons: [] };
   for (const tpl of templates) {
-    const result = checkTemplateEligibility(level, certs, tpl);
+    const result = checkTemplateEligibility(level, certs, tpl, store.getCertLabel);
     if (result.eligible) { bestResult = result; break; }
     if (bestResult.reasons.length === 0) bestResult = result;
   }

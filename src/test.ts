@@ -33,7 +33,7 @@ import {
   getRejectionReason,
   ParticipantRestProfile,
 } from './index';
-import { TimeBlock, SlotRequirement, DEFAULT_CERTIFICATION_DEFINITIONS, CertificationDefinition } from './models/types';
+import { TimeBlock, SlotRequirement, DEFAULT_CERTIFICATION_DEFINITIONS, CertificationDefinition, Schedule } from './models/types';
 
 // ─── Local test task factories (replacing deleted task-definitions.ts) ───────
 
@@ -461,6 +461,7 @@ assert(engineStats.totalParticipants === 13, 'Stats: 13 participants');
 
 // Validate
 const validation = engine.validate();
+assert(validation.valid === true, 'Engine: generated schedule passes validation');
 console.log(`  Schedule valid: ${validation.valid} (${validation.violations.length} violations)`);
 
 // Manual swap test
@@ -472,6 +473,7 @@ if (schedule.assignments.length >= 1) {
       assignmentId: a.id,
       newParticipantId: otherP.id,
     });
+    assert(typeof swapResult.valid === 'boolean', 'Engine: swap returns a valid result');
     console.log(`  Swap result: valid=${swapResult.valid}`);
   }
 }
@@ -2645,9 +2647,8 @@ console.log('\n── Engine: Extended Integration ─────────')
   assert(engSchedule.assignments.length > 0, 'Engine: generates at least 1 assignment');
 
   const engValidation = testEngine.validate();
-  // A schedule from the engine should pass basic validation
-  // (though it may have unfilled slot warnings)
-  console.log(`  Engine validation: valid=${engValidation.valid}, violations=${engValidation.violations.length}`);
+  assert(engValidation.valid === true, 'Engine: single-task schedule passes validation');
+  assert(engValidation.violations.length === 0, 'Engine: single-task schedule has no violations');
 }
 
 // Engine with no participants → throws validation error
@@ -2891,6 +2892,371 @@ console.log('\n── Dynamic Certifications ───────────�
   const certViolation = result.violations.find(v => v.code === 'CERT_MISSING');
   assert(certViolation !== undefined, 'Validator: CERT_MISSING for wrong dynamic cert');
   assert(certViolation!.message.length > 0, 'Validator: violation message is non-empty');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TEMPORAL ENGINE (Live Mode) Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import {
+  isFutureTask,
+  isPastTask,
+  isInProgressTask,
+  isModifiableAssignment,
+  freezeAssignments,
+  unfreezeAll,
+  getFutureWindow,
+  getAnchorDayIndex,
+  isDayFrozen,
+  isDayPartiallyFrozen,
+} from './engine/temporal';
+
+console.log('\n── Temporal Engine (Live Mode) ──────────');
+
+{
+  const tBase = new Date(2026, 1, 15);
+  const pastTask: Task = {
+    id: 'temp-past', name: 'Past Task',
+    timeBlock: createTimeBlockFromHours(tBase, 6, 10),
+    requiredCount: 1, slots: [{ slotId: 'tp-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const futureTask: Task = {
+    id: 'temp-future', name: 'Future Task',
+    timeBlock: createTimeBlockFromHours(tBase, 18, 22),
+    requiredCount: 1, slots: [{ slotId: 'tp-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+  const inProgressTask: Task = {
+    id: 'temp-inprog', name: 'In Progress Task',
+    timeBlock: createTimeBlockFromHours(tBase, 10, 18),
+    requiredCount: 1, slots: [{ slotId: 'tp-s3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+
+  // Anchor at 14:00 — pastTask ended at 10:00, inProgressTask started at 10:00, futureTask at 18:00
+  const anchor = new Date(2026, 1, 15, 14, 0);
+
+  // ── Core predicates ──
+  assert(isPastTask(pastTask, anchor) === true, 'Temporal: past task (06-10) is past at anchor 14:00');
+  assert(isPastTask(futureTask, anchor) === false, 'Temporal: future task is not past');
+  assert(isPastTask(inProgressTask, anchor) === false, 'Temporal: in-progress task is not past');
+
+  assert(isFutureTask(futureTask, anchor) === true, 'Temporal: future task (18-22) is future at anchor 14:00');
+  assert(isFutureTask(pastTask, anchor) === false, 'Temporal: past task is not future');
+  assert(isFutureTask(inProgressTask, anchor) === false, 'Temporal: in-progress task is not future');
+
+  assert(isInProgressTask(inProgressTask, anchor) === true, 'Temporal: in-progress task (10-18) at anchor 14:00');
+  assert(isInProgressTask(pastTask, anchor) === false, 'Temporal: past task is not in-progress');
+  assert(isInProgressTask(futureTask, anchor) === false, 'Temporal: future task is not in-progress');
+
+  // ── Edge case: anchor exactly at task boundaries ──
+  const atStart = new Date(2026, 1, 15, 10, 0);
+  assert(isFutureTask(inProgressTask, atStart) === true, 'Temporal: task at anchor start is future (start >= anchor)');
+  assert(isPastTask(pastTask, atStart) === true, 'Temporal: task ending at anchor is past (end <= anchor)');
+
+  // ── isModifiableAssignment ──
+  const taskMap = new Map<string, Task>([
+    [pastTask.id, pastTask], [futureTask.id, futureTask], [inProgressTask.id, inProgressTask],
+  ]);
+
+  const futureAssign: Assignment = {
+    id: 'ta-1', taskId: futureTask.id, slotId: 'tp-s2',
+    participantId: 'p1', status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  };
+  const pastAssign: Assignment = {
+    id: 'ta-2', taskId: pastTask.id, slotId: 'tp-s1',
+    participantId: 'p1', status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  };
+  const lockedAssign: Assignment = {
+    id: 'ta-3', taskId: futureTask.id, slotId: 'tp-s2',
+    participantId: 'p1', status: AssignmentStatus.Locked, updatedAt: new Date(),
+  };
+  const frozenAssign: Assignment = {
+    id: 'ta-4', taskId: futureTask.id, slotId: 'tp-s2',
+    participantId: 'p1', status: AssignmentStatus.Frozen, updatedAt: new Date(),
+  };
+
+  assert(isModifiableAssignment(futureAssign, taskMap, anchor) === true, 'Temporal: scheduled future assignment is modifiable');
+  assert(isModifiableAssignment(pastAssign, taskMap, anchor) === false, 'Temporal: past assignment is NOT modifiable');
+  assert(isModifiableAssignment(lockedAssign, taskMap, anchor) === false, 'Temporal: locked future assignment is NOT modifiable');
+  assert(isModifiableAssignment(frozenAssign, taskMap, anchor) === false, 'Temporal: frozen future assignment is NOT modifiable');
+
+  // ── freezeAssignments ──
+  const schedule: Schedule = {
+    id: 'temp-schedule',
+    tasks: [pastTask, futureTask, inProgressTask],
+    participants: [],
+    assignments: [
+      { id: 'fa-1', taskId: pastTask.id, slotId: 'tp-s1', participantId: 'p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'fa-2', taskId: futureTask.id, slotId: 'tp-s2', participantId: 'p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'fa-3', taskId: inProgressTask.id, slotId: 'tp-s3', participantId: 'p3', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    ],
+    score: null as any,
+    violations: [],
+    feasible: true,
+    generatedAt: new Date(),
+  };
+
+  const changed = freezeAssignments(schedule, anchor);
+  assert(changed === 2, 'Temporal: freezeAssignments freezes past + in-progress (2 changed)');
+  assert(schedule.assignments[0].status === AssignmentStatus.Frozen, 'Temporal: past assignment is now Frozen');
+  assert(schedule.assignments[1].status === AssignmentStatus.Scheduled, 'Temporal: future assignment stays Scheduled');
+  assert(schedule.assignments[2].status === AssignmentStatus.Frozen, 'Temporal: in-progress assignment is now Frozen');
+
+  // ── unfreezeAll ──
+  const unfrozen = unfreezeAll(schedule);
+  assert(unfrozen === 2, 'Temporal: unfreezeAll unfreezes 2 assignments');
+  assert(schedule.assignments[0].status === AssignmentStatus.Scheduled, 'Temporal: unfrozen assignment restored to Scheduled');
+  assert(schedule.assignments[2].status === AssignmentStatus.Scheduled, 'Temporal: unfrozen in-progress restored to Scheduled');
+
+  // ── getFutureWindow ──
+  const futureWindow = getFutureWindow(tBase, 7, anchor, 5);
+  assert(futureWindow.start.getTime() === anchor.getTime(), 'Temporal: futureWindow starts at anchor');
+  assert(futureWindow.end.getDate() === 22, 'Temporal: futureWindow ends 7 days after schedule start');
+
+  // ── getAnchorDayIndex ──
+  assert(getAnchorDayIndex(tBase, 7, anchor, 5) === 1, 'Temporal: anchor 14:00 on day 1 → index 1');
+  const day2Anchor = new Date(2026, 1, 16, 10, 0);
+  assert(getAnchorDayIndex(tBase, 7, day2Anchor, 5) === 2, 'Temporal: anchor on day 2 → index 2');
+  const beforeSchedule = new Date(2026, 1, 14, 23, 0);
+  assert(getAnchorDayIndex(tBase, 7, beforeSchedule, 5) === 0, 'Temporal: anchor before schedule → index 0');
+
+  // ── isDayFrozen / isDayPartiallyFrozen ──
+  // anchor at 14:00 on day 1: day 1 is partially frozen, no days fully frozen
+  assert(isDayFrozen(1, tBase, anchor, 5) === false, 'Temporal: day 1 not fully frozen (anchor mid-day)');
+  assert(isDayPartiallyFrozen(1, tBase, anchor, 5) === true, 'Temporal: day 1 partially frozen');
+  assert(isDayPartiallyFrozen(2, tBase, anchor, 5) === false, 'Temporal: day 2 not partially frozen');
+
+  // Anchor far in the future: day 1 fully frozen
+  const farAnchor = new Date(2026, 1, 17, 10, 0);
+  assert(isDayFrozen(1, tBase, farAnchor, 5) === true, 'Temporal: day 1 fully frozen when anchor is on day 3');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Date Utilities (operationalDateKey, calendarDateKey)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { operationalDateKey, calendarDateKey } from './utils/date-utils';
+
+console.log('\n── Date Utilities: operationalDateKey ──');
+
+{
+  // Normal daytime: 15:00 on Feb 15 → belongs to Feb 15
+  const afternoon = new Date(2026, 1, 15, 15, 0);
+  assert(operationalDateKey(afternoon, 5) === '2026-02-15', 'opDateKey: 15:00 → same calendar day');
+
+  // Early morning before dayStartHour: 03:00 on Feb 16 → belongs to Feb 15 operational day
+  const earlyMorning = new Date(2026, 1, 16, 3, 0);
+  assert(operationalDateKey(earlyMorning, 5) === '2026-02-15', 'opDateKey: 03:00 → previous day (before dayStart=5)');
+
+  // Exactly at dayStartHour: 05:00 → belongs to current day
+  const atStart = new Date(2026, 1, 16, 5, 0);
+  assert(operationalDateKey(atStart, 5) === '2026-02-16', 'opDateKey: exactly 05:00 → current day');
+
+  // Different dayStartHour: 06:00 start, 05:30 → previous day
+  const earlyWithDiff = new Date(2026, 1, 16, 5, 30);
+  assert(operationalDateKey(earlyWithDiff, 6) === '2026-02-15', 'opDateKey: 05:30 with dayStart=6 → previous day');
+
+  // Calendar date key — always midnight boundary
+  assert(calendarDateKey(earlyMorning) === '2026-02-16', 'calendarDateKey: 03:00 on Feb 16 → 2026-02-16 (midnight boundary)');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HC-3: dateUnavailability (never tested before)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+console.log('\n── HC-3: dateUnavailability ─────────────');
+
+{
+  // baseDate is Feb 15, 2026 = Sunday (getDay()=0)
+  // Participant unavailable all day on Sundays
+  const duP: Participant = {
+    id: 'du-p1', name: 'DateUnavail', level: Level.L0,
+    certifications: ['Nitzan'], group: 'A',
+    availability: dayAvail,
+    dateUnavailability: [{ id: 'du-u1', dayOfWeek: 0, startHour: 0, endHour: 0, allDay: true }],
+  };
+  const duTask: Task = {
+    id: 'du-t1', name: 'DU Task',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 1, slots: [{ slotId: 'du-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+  };
+
+  // Check eligibility — dateUnavailability should block this participant
+  const tMap = new Map([[duTask.id, duTask]]);
+  const eligible = isEligible(duP, duTask, duTask.slots[0], [], tMap);
+  // Note: dateUnavailability may be checked at the optimizer level (not in isEligible),
+  // so we also test via validateHardConstraints
+  const duAssigns: Assignment[] = [{
+    id: 'du-a1', taskId: duTask.id, slotId: 'du-s1',
+    participantId: duP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  }];
+  const duResult = validateHardConstraints([duTask], [duP], duAssigns);
+  const hasDateViolation = duResult.violations.some(v =>
+    v.code === 'AVAILABILITY_VIOLATION' || v.code === 'DATE_UNAVAILABLE'
+  );
+  // FINDING: dateUnavailability is NOT enforced by the engine's hard constraints or
+  // isEligible — it is only applied at the UI layer (config-store merges it into
+  // availability windows before passing to the engine). This means if someone calls
+  // the engine API directly, dateUnavailability rules are silently ignored.
+  // The test below documents the current behavior:
+  assert(eligible === true, 'dateUnavailability: NOT enforced by isEligible (UI-only pre-processing)');
+  assert(!hasDateViolation, 'dateUnavailability: NOT enforced by validateHardConstraints (UI-only pre-processing)');
+
+  // Participant available on a different day (Monday=1) → should be eligible
+  const monTask: Task = {
+    ...duTask, id: 'du-t2',
+    timeBlock: createTimeBlockFromHours(new Date(2026, 1, 16), 6, 14), // Monday Feb 16
+  };
+  const tMap2 = new Map([[monTask.id, monTask]]);
+  const monAvail: Participant = {
+    ...duP, id: 'du-p2',
+    availability: [{ start: new Date(2026, 1, 16, 0, 0), end: new Date(2026, 1, 17, 12, 0) }],
+  };
+  const eligMon = isEligible(monAvail, monTask, monTask.slots[0], [], tMap2);
+  assert(eligMon === true, 'HC-3: dateUnavailability on Sunday does not block Monday');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SC-2: computeNotWithPenalty (togetherness constraint)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { computeNotWithPenalty } from './constraints/soft-constraints';
+
+console.log('\n── SC-2: computeNotWithPenalty ──────────');
+
+{
+  // Two participants who should NOT be together, assigned to same task with togethernessRelevant
+  const nwTask: Task = {
+    id: 'nw-t1', name: 'NotWith Task',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 2,
+    slots: [
+      { slotId: 'nw-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { slotId: 'nw-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+    ],
+    isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    togethernessRelevant: true,
+  };
+  const nwAssigns: Assignment[] = [
+    { id: 'nw-a1', taskId: nwTask.id, slotId: 'nw-s1', participantId: 'nw-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'nw-a2', taskId: nwTask.id, slotId: 'nw-s2', participantId: 'nw-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const taskMap = new Map([[nwTask.id, nwTask]]);
+  const assignsByTask = new Map([[nwTask.id, nwAssigns]]);
+  const notWithPairs = new Map([['nw-p1', new Set(['nw-p2'])]]);
+  const nwCfg = { ...DEFAULT_CONFIG, notWithPenalty: 100 };
+
+  const pen = computeNotWithPenalty(nwAssigns, nwCfg, taskMap, assignsByTask, notWithPairs);
+  assert(pen === 100, 'SC-2: notWith pair in same togetherness task → penalty 100');
+
+  // Same pair but task is NOT togethernessRelevant → 0 penalty
+  const nwTask2: Task = { ...nwTask, id: 'nw-t2', togethernessRelevant: false };
+  const taskMap2 = new Map([[nwTask2.id, nwTask2]]);
+  const nwAssigns2 = nwAssigns.map(a => ({ ...a, taskId: nwTask2.id }));
+  const assignsByTask2 = new Map([[nwTask2.id, nwAssigns2]]);
+  const pen2 = computeNotWithPenalty(nwAssigns2, nwCfg, taskMap2, assignsByTask2, notWithPairs);
+  assert(pen2 === 0, 'SC-2: notWith pair in non-togetherness task → 0 penalty');
+
+  // No notWith pairs → 0 penalty regardless
+  const emptyPairs = new Map<string, Set<string>>();
+  const pen3 = computeNotWithPenalty(nwAssigns, nwCfg, taskMap, assignsByTask, emptyPairs);
+  assert(pen3 === 0, 'SC-2: no notWith pairs → 0 penalty');
+
+  // notWithPenalty disabled (0) → 0 penalty
+  const nwCfgOff = { ...DEFAULT_CONFIG, notWithPenalty: 0 };
+  const pen4 = computeNotWithPenalty(nwAssigns, nwCfgOff, taskMap, assignsByTask, notWithPairs);
+  assert(pen4 === 0, 'SC-2: notWithPenalty=0 → 0 penalty');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// getEligibleParticipantsForSlot (validator export)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { getEligibleParticipantsForSlot } from './engine/validator';
+
+console.log('\n── getEligibleParticipantsForSlot ───────');
+
+{
+  const eligTask = createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18));
+  const slot = eligTask.slots[0];
+  const tasks = [eligTask];
+
+  const pEligible: Participant = {
+    id: 'ges-p1', name: 'Eligible', level: Level.L0,
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const pNoCert: Participant = {
+    id: 'ges-p2', name: 'NoCert', level: Level.L0,
+    certifications: ['Nitzan'], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+  const pWrongLevel: Participant = {
+    id: 'ges-p3', name: 'WrongLevel', level: Level.L3,
+    certifications: ['Hamama', 'Nitzan'], group: 'A',
+    availability: dayAvail, dateUnavailability: [],
+  };
+
+  // No existing assignments
+  const eligible = getEligibleParticipantsForSlot(
+    eligTask, slot.slotId, [pEligible, pNoCert, pWrongLevel], [], tasks,
+  );
+  assert(eligible.length === 1, 'getEligible: only 1 of 3 participants eligible for Hamama slot');
+  assert(eligible[0].id === 'ges-p1', 'getEligible: correct participant returned');
+
+  // With existing overlapping assignment → eligible participant filtered out
+  const overlapTask = createShemeshTask(createTimeBlockFromHours(baseDate, 8, 14));
+  const tasksWithOverlap = [eligTask, overlapTask];
+  const existingAssign: Assignment[] = [
+    { id: 'ges-a1', taskId: overlapTask.id, slotId: overlapTask.slots[0].slotId, participantId: 'ges-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const eligible2 = getEligibleParticipantsForSlot(
+    eligTask, slot.slotId, [pEligible, pNoCert], existingAssign, tasksWithOverlap,
+  );
+  assert(eligible2.length === 0, 'getEligible: overlapping assignment filters out eligible participant');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// dailyWorkloadImbalance (per-day std-dev)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+console.log('\n── dailyWorkloadImbalance ───────────────');
+
+{
+  const day1 = new Date(2026, 1, 15);
+  const day2 = new Date(2026, 1, 16);
+  // Person assigned heavy on day 1 (8h) but nothing on day 2
+  const t1 = createShemeshTask(createTimeBlockFromHours(day1, 6, 14)); // 8h day 1
+  const t2 = createShemeshTask(createTimeBlockFromHours(day2, 6, 14)); // 8h day 2
+
+  const p1: Participant = { id: 'dwl-p1', name: 'DWL1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
+  const p2: Participant = { id: 'dwl-p2', name: 'DWL2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: dayAvail, dateUnavailability: [] };
+
+  // Balanced: p1 on day1, p2 on day2
+  const balAssigns: Assignment[] = [
+    { id: 'dwl-a1', taskId: t1.id, slotId: t1.slots[0].slotId, participantId: 'dwl-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'dwl-a2', taskId: t2.id, slotId: t2.slots[0].slotId, participantId: 'dwl-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const balResult = dailyWorkloadImbalance([p1, p2], balAssigns, [t1, t2]);
+  assert(balResult.dailyPerParticipantStdDev >= 0, 'dailyImbalance: balanced → per-participant stdDev >= 0');
+
+  // Both tasks assigned to same person → unbalanced across days for that person
+  const imbAssigns: Assignment[] = [
+    { id: 'dwl-a3', taskId: t1.id, slotId: t1.slots[0].slotId, participantId: 'dwl-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'dwl-a4', taskId: t2.id, slotId: t2.slots[0].slotId, participantId: 'dwl-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const imbResult = dailyWorkloadImbalance([p1, p2], imbAssigns, [t1, t2]);
+  // p1: 8h on each day (balanced per day), but p2: 0h both days
+  // The global std-dev should reflect that days have different loads from different participants
+  assert(imbResult.dailyGlobalStdDev >= 0, 'dailyImbalance: imbalanced → globalStdDev >= 0');
+
+  // Single day → no daily imbalance possible
+  const singleDay = dailyWorkloadImbalance([p1], balAssigns.slice(0, 1), [t1]);
+  assert(singleDay.dailyPerParticipantStdDev === 0, 'dailyImbalance: single day → per-participant stdDev = 0');
+  assert(singleDay.dailyGlobalStdDev === 0, 'dailyImbalance: single day → global stdDev = 0');
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

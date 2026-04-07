@@ -290,18 +290,18 @@ export interface TemplateEligibilityResult {
   reasons: string[];
 }
 
-import { getCertLabel } from '../web/config-store';
-
 /**
  * Check whether a participant (by level + certifications) can fill ANY slot
  * in a task template. Only static constraints are checked (HC-1, HC-2, HC-11).
  *
  * Used by the preference-selection UI to warn when a preference can never be satisfied.
+ * @param labelResolver optional function to map cert ID → display label (defaults to identity)
  */
 export function checkTemplateEligibility(
   level: Level,
   certifications: string[],
   template: TaskTemplate,
+  labelResolver: (certId: string) => string = (id) => id,
 ): TemplateEligibilityResult {
   // Collect all slots: top-level + sub-team slots
   const allSlots: SlotTemplate[] = [
@@ -337,7 +337,7 @@ export function checkTemplateEligibility(
         if (!certifications.includes(c)) missingCerts.add(c);
       }
     }
-    const names = [...missingCerts].map(c => getCertLabel(c)).join(', ');
+    const names = [...missingCerts].map(c => labelResolver(c)).join(', ');
     reasons.push(`חסרה הסמכה נדרשת (${names}) לכל המשבצות במשימה הזו`);
   }
   if (blockedBy.has('HC-11')) {
@@ -347,7 +347,7 @@ export function checkTemplateEligibility(
         if (certifications.includes(c)) forbidden.add(c);
       }
     }
-    const names = [...forbidden].map(c => getCertLabel(c)).join(', ');
+    const names = [...forbidden].map(c => labelResolver(c)).join(', ');
     reasons.push(`יש לך הסמכה אסורה (${names}) במשימה הזו`);
   }
 
