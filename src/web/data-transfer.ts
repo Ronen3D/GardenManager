@@ -169,20 +169,24 @@ export function openFilePicker(): Promise<string | null> {
     input.type = 'file';
     input.accept = '.json,.gm.json,application/json';
     let resolved = false;
+    const cleanup = () => input.remove();
     input.onchange = () => {
       const file = input.files?.[0];
       if (!file) {
         resolved = true;
+        cleanup();
         resolve(null);
         return;
       }
       const reader = new FileReader();
       reader.onload = () => {
         resolved = true;
+        cleanup();
         resolve(reader.result as string);
       };
       reader.onerror = () => {
         resolved = true;
+        cleanup();
         resolve(null);
       };
       reader.readAsText(file);
@@ -195,12 +199,14 @@ export function openFilePicker(): Promise<string | null> {
         setTimeout(() => {
           if (!resolved) {
             resolved = true;
+            cleanup();
             resolve(null);
           }
         }, 500);
       },
       { once: true },
     );
+    document.body.appendChild(input);
     input.click();
   });
 }

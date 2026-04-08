@@ -21,7 +21,7 @@
 
 import { addDays } from 'date-fns';
 import { jsPDF } from 'jspdf';
-import autoTable, { type CellDef, type UserOptions } from 'jspdf-autotable';
+import autoTable, { __createTable, __drawTable, type CellDef, type UserOptions } from 'jspdf-autotable';
 import type { Schedule, Task } from '../models/types';
 import { fmtTime, HEBREW_DAYS } from '../utils/date-utils';
 import {
@@ -450,16 +450,18 @@ function renderSectionTablePdf(
   for (let i = 0; i < columns.length; i++) colStyles[i] = { cellWidth: dataColW };
   colStyles[columns.length] = { cellWidth: timeW };
 
-  autoTable(doc, {
+  const tableOpts = {
     ...tblDefaults(doc, tableY, fontSize),
     head: [head],
     body,
     tableWidth: region.width,
     margin: { left: region.x, right: doc.internal.pageSize.getWidth() - region.x - region.width },
     columnStyles: colStyles,
-  });
+  };
+  const table = __createTable(doc, tableOpts);
+  __drawTable(doc, table);
 
-  return (doc as any).lastAutoTable.finalY;
+  return table.finalY ?? tableY;
 }
 
 // ─── Daily Detail Export (Grid Layout) ───────────────────────────────────────

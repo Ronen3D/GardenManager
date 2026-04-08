@@ -504,6 +504,7 @@ export function getCertColor(certId: string): string {
 export function addCertification(label: string, color: string): CertificationDefinition {
   const trimmed = label.trim();
   if (!trimmed) throw new Error('Certification label cannot be empty');
+  if (trimmed.length > 100) throw new Error('Certification label too long (max 50 characters)');
   if (!color || !/^#[0-9a-fA-F]{6}$/.test(color)) throw new Error('Invalid hex color');
   if (certificationDefinitions.some((d) => !d.deleted && d.label === trimmed)) {
     throw new Error(`Certification "${trimmed}" already exists`);

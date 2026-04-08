@@ -162,7 +162,7 @@ let _availabilityInlineTimeMs: number | null = null;
 let _continuityJson = '';
 let _availabilityInspectorDay: number | null = null;
 let _availabilityInspectorTime = '05:00';
-const _availabilityMobileOpen = false;
+let _liveClockInterval: ReturnType<typeof setInterval> | null = null;
 
 // ─── View Router ─────────────────────────────────────────────────────────────
 
@@ -2772,7 +2772,7 @@ function wireRescueModalEvents(): void {
 function showRescueError(message: string): void {
   const errorBanner = document.createElement('div');
   errorBanner.className = 'rescue-error-banner';
-  errorBanner.innerHTML = `<span>${message}</span>
+  errorBanner.innerHTML = `<span>${escHtml(message)}</span>
     <button class="rescue-error-dismiss">✕</button>`;
   errorBanner.querySelector('.rescue-error-dismiss')?.addEventListener('click', () => errorBanner.remove());
   const modal = document.querySelector('.rescue-modal');
@@ -2978,7 +2978,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.9.5</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.9.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4888,7 +4888,8 @@ function init(): void {
     renderAll();
 
     // Update the live clock every 30 seconds without a full re-render
-    setInterval(() => {
+    if (_liveClockInterval) clearInterval(_liveClockInterval);
+    _liveClockInterval = setInterval(() => {
       const el = document.getElementById('live-clock');
       if (el) el.textContent = formatLiveClock();
     }, 30_000);
