@@ -7,15 +7,9 @@
  * Usage: npx ts-node src/priority-simulation.ts
  */
 
-import {
-  Participant,
-  Level,
-  Task,
-  DEFAULT_CONFIG,
-  SchedulerConfig,
-} from './models/types';
+import { greedyAssign, optimize, resetAssignmentCounter } from './engine/optimizer';
+import { DEFAULT_CONFIG, Level, type Participant, type SchedulerConfig, type Task } from './models/types';
 import { generateDailyTasks, resetSlotCounter, resetTaskCounter } from './tasks/cli-task-factory';
-import { optimize, greedyAssign, resetAssignmentCounter } from './engine/optimizer';
 
 // ─── Participant Pool (same as demo.ts — 24 people across 3 groups) ──────────
 
@@ -23,12 +17,11 @@ const BASE_DATE = new Date(2026, 1, 15);
 const DAY_START = new Date(2026, 1, 15, 0, 0);
 const DAY_END = new Date(2026, 1, 16, 12, 0);
 
-function createP(
-  id: string, name: string, level: Level,
-  certs: string[], group: string,
-): Participant {
+function createP(id: string, name: string, level: Level, certs: string[], group: string): Participant {
   return {
-    id, name, level,
+    id,
+    name,
+    level,
     certifications: certs,
     group,
     availability: [{ start: DAY_START, end: DAY_END }],
@@ -76,8 +69,7 @@ type PriorityFn = (task: Task) => number;
 function v0_current(task: Task): number {
   if (task.sameGroupRequired) return 0;
   let score = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   score -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
@@ -94,8 +86,7 @@ function v0_current(task: Task): number {
 function v1_strongerLevelWeight(task: Task): number {
   if (task.sameGroupRequired) return 0;
   let score = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   score -= (5 - avgLevels) * 8; // ← 8 instead of 5
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
@@ -111,8 +102,7 @@ function v1_strongerLevelWeight(task: Task): number {
 function v2_strongerCertWeight(task: Task): number {
   if (task.sameGroupRequired) return 0;
   let score = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   score -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 6; // ← 6 instead of 3
@@ -128,8 +118,7 @@ function v2_strongerCertWeight(task: Task): number {
 function v3_strongerSlotWeight(task: Task): number {
   if (task.sameGroupRequired) return 0;
   let score = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   score -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
@@ -145,8 +134,7 @@ function v3_strongerSlotWeight(task: Task): number {
 function v4_noLightBonus(task: Task): number {
   if (task.sameGroupRequired) return 0;
   let score = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   score -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
@@ -169,11 +157,11 @@ function v5_candidatePoolBased(task: Task): number {
     let eligible = 0;
     for (const p of allParticipants) {
       // Level check
-      if (!slot.acceptableLevels.some(e => e.level === p.level)) continue;
+      if (!slot.acceptableLevels.some((e) => e.level === p.level)) continue;
       // Certification check
-      if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
+      if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
       // Excluded cert check
-      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) continue;
       eligible++;
     }
     totalEligible += eligible;
@@ -195,8 +183,7 @@ function v6_hybrid(task: Task): number {
 
   // Structural component (same as v0)
   let structural = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   structural -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   structural -= totalCerts * 3;
@@ -208,9 +195,9 @@ function v6_hybrid(task: Task): number {
   for (const slot of task.slots) {
     let eligible = 0;
     for (const p of allParticipants) {
-      if (!slot.acceptableLevels.some(e => e.level === p.level)) continue;
-      if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
-      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (!slot.acceptableLevels.some((e) => e.level === p.level)) continue;
+      if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) continue;
       eligible++;
     }
     totalEligible += eligible;
@@ -229,8 +216,7 @@ function v6_hybrid(task: Task): number {
 function v7_durationAware(task: Task): number {
   if (task.sameGroupRequired) return 0;
   let score = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   score -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
@@ -254,9 +240,9 @@ function v8_minSlotBottleneck(task: Task): number {
   for (const slot of task.slots) {
     let eligible = 0;
     for (const p of allParticipants) {
-      if (!slot.acceptableLevels.some(e => e.level === p.level)) continue;
-      if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
-      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (!slot.acceptableLevels.some((e) => e.level === p.level)) continue;
+      if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) continue;
       eligible++;
     }
     minEligible = Math.min(minEligible, eligible);
@@ -279,8 +265,7 @@ function v9_optimizedBlend(task: Task): number {
 
   let score = 50;
   // Stronger level restriction (×7)
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   score -= (5 - avgLevels) * 7;
   // Stronger cert weight (×5)
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
@@ -295,15 +280,15 @@ function v9_optimizedBlend(task: Task): number {
   for (const slot of task.slots) {
     let eligible = 0;
     for (const p of allParticipants) {
-      if (!slot.acceptableLevels.some(e => e.level === p.level)) continue;
-      if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
-      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (!slot.acceptableLevels.some((e) => e.level === p.level)) continue;
+      if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) continue;
       eligible++;
     }
     minEligible = Math.min(minEligible, eligible);
   }
   if (isFinite(minEligible)) {
-    score -= Math.max(0, (6 - minEligible)) * 2; // penalty if <6 eligible for bottleneck slot
+    score -= Math.max(0, 6 - minEligible) * 2; // penalty if <6 eligible for bottleneck slot
   }
   // Reduced light bonus (+10 instead of +20)
   if (task.isLight) score += 10;
@@ -346,7 +331,15 @@ interface RunResult {
   feasible: boolean;
 }
 
-function stats(values: number[]): { mean: number; stdDev: number; min: number; max: number; median: number; p10: number; p90: number } {
+function stats(values: number[]): {
+  mean: number;
+  stdDev: number;
+  min: number;
+  max: number;
+  median: number;
+  p10: number;
+  p90: number;
+} {
   const sorted = [...values].sort((a, b) => a - b);
   const n = sorted.length;
   const mean = sorted.reduce((a, b) => a + b, 0) / n;
@@ -382,8 +375,8 @@ function shuffle<T>(arr: T[]): T[] {
 function runVariant(variant: { name: string; fn: PriorityFn; description: string }): VariantResult {
   const config: SchedulerConfig = {
     ...DEFAULT_CONFIG,
-    maxIterations: 5000,    // Reduced for simulation speed (still enough for convergence)
-    maxSolverTimeMs: 3000,  // 3s per run
+    maxIterations: 5000, // Reduced for simulation speed (still enough for convergence)
+    maxSolverTimeMs: 3000, // 3s per run
   };
 
   const priorityMap = new Map<string, number>();
@@ -441,7 +434,14 @@ console.log('── Current Task Set Priority Map (V0) ────────�
   resetSlotCounter();
   resetTaskCounter();
   const tasks = generateDailyTasks(BASE_DATE);
-  const rows: { task: string; type: string; slots: number; priority: number; v5_pool: number; v8_bottleneck: number }[] = [];
+  const rows: {
+    task: string;
+    type: string;
+    slots: number;
+    priority: number;
+    v5_pool: number;
+    v8_bottleneck: number;
+  }[] = [];
   for (const t of tasks) {
     rows.push({
       task: t.name,
@@ -486,18 +486,18 @@ console.log('── 1. FEASIBILITY (Unfilled Slots) ─────────�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const unfilledValues = r.runs.map(run => run.unfilled);
-    const feasibleCount = r.runs.filter(run => run.feasible).length;
+    const unfilledValues = r.runs.map((run) => run.unfilled);
+    const feasibleCount = r.runs.filter((run) => run.feasible).length;
     const s = stats(unfilledValues);
     rows.push({
       variant: r.name,
       'feasible%': ((feasibleCount / ITERATIONS) * 100).toFixed(1) + '%',
-      'unfilled_mean': s.mean.toFixed(2),
-      'unfilled_median': s.median.toFixed(1),
-      'unfilled_min': s.min,
-      'unfilled_max': s.max,
-      'unfilled_stdDev': s.stdDev.toFixed(2),
-      'zero_unfilled%': ((unfilledValues.filter(v => v === 0).length / ITERATIONS) * 100).toFixed(1) + '%',
+      unfilled_mean: s.mean.toFixed(2),
+      unfilled_median: s.median.toFixed(1),
+      unfilled_min: s.min,
+      unfilled_max: s.max,
+      unfilled_stdDev: s.stdDev.toFixed(2),
+      'zero_unfilled%': ((unfilledValues.filter((v) => v === 0).length / ITERATIONS) * 100).toFixed(1) + '%',
     });
   }
   console.table(rows);
@@ -508,7 +508,7 @@ console.log('── 2. COMPOSITE SCORE (higher = better) ───────�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const values = r.runs.map(run => run.compositeScore);
+    const values = r.runs.map((run) => run.compositeScore);
     const s = stats(values);
     rows.push({
       variant: r.name,
@@ -529,7 +529,7 @@ console.log('── 3. L0 FAIRNESS — Workload StdDev (lower = fairer) ──�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const values = r.runs.map(run => run.l0StdDev);
+    const values = r.runs.map((run) => run.l0StdDev);
     const s = stats(values);
     rows.push({
       variant: r.name,
@@ -548,7 +548,7 @@ console.log('── 4. SENIOR FAIRNESS — Workload StdDev (lower = fairer) ─�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const values = r.runs.map(run => run.seniorStdDev);
+    const values = r.runs.map((run) => run.seniorStdDev);
     const s = stats(values);
     rows.push({
       variant: r.name,
@@ -567,8 +567,8 @@ console.log('── 5. MIN REST HOURS (higher = better) ────────
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const values = r.runs.map(run => run.minRestHours);
-    const finiteValues = values.filter(v => isFinite(v));
+    const values = r.runs.map((run) => run.minRestHours);
+    const finiteValues = values.filter((v) => isFinite(v));
     if (finiteValues.length === 0) {
       rows.push({ variant: r.name, mean: 'N/A' });
       continue;
@@ -591,7 +591,7 @@ console.log('── 6. DAILY BALANCE — Per-Participant StdDev (lower = more ev
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const values = r.runs.map(run => run.dailyPerParticipantStdDev);
+    const values = r.runs.map((run) => run.dailyPerParticipantStdDev);
     const s = stats(values);
     rows.push({
       variant: r.name,
@@ -610,7 +610,7 @@ console.log('── 7. TOTAL PENALTY (lower = better) ────────�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const values = r.runs.map(run => run.totalPenalty);
+    const values = r.runs.map((run) => run.totalPenalty);
     const s = stats(values);
     rows.push({
       variant: r.name,
@@ -628,16 +628,16 @@ console.log('── 8. STABILITY — Score Coefficient of Variation (lower = mor
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const scoreVals = r.runs.map(run => run.compositeScore);
-    const unfilledVals = r.runs.map(run => run.unfilled);
+    const scoreVals = r.runs.map((run) => run.compositeScore);
+    const unfilledVals = r.runs.map((run) => run.unfilled);
     const scoreS = stats(scoreVals);
     const unfilledS = stats(unfilledVals);
     const scoreCv = scoreS.mean !== 0 ? (scoreS.stdDev / Math.abs(scoreS.mean)) * 100 : 0;
     rows.push({
       variant: r.name,
       'score_CV%': scoreCv.toFixed(2) + '%',
-      'score_stdDev': scoreS.stdDev.toFixed(2),
-      'unfilled_stdDev': unfilledS.stdDev.toFixed(2),
+      score_stdDev: scoreS.stdDev.toFixed(2),
+      unfilled_stdDev: unfilledS.stdDev.toFixed(2),
     });
   }
   console.table(rows);
@@ -652,15 +652,15 @@ console.log();
   // Rank each variant across dimensions (lower rank = better)
   const dimensions = ['feasibility', 'compositeScore', 'l0Fairness', 'seniorFairness', 'penalty', 'stability'] as const;
 
-  type DimValues = Record<typeof dimensions[number], number>;
+  type DimValues = Record<(typeof dimensions)[number], number>;
   const variantValues = new Map<string, DimValues>();
 
   for (const r of allResults) {
-    const feasCount = r.runs.filter(run => run.feasible).length;
-    const scoreS = stats(r.runs.map(run => run.compositeScore));
-    const l0S = stats(r.runs.map(run => run.l0StdDev));
-    const srS = stats(r.runs.map(run => run.seniorStdDev));
-    const penS = stats(r.runs.map(run => run.totalPenalty));
+    const feasCount = r.runs.filter((run) => run.feasible).length;
+    const scoreS = stats(r.runs.map((run) => run.compositeScore));
+    const l0S = stats(r.runs.map((run) => run.l0StdDev));
+    const srS = stats(r.runs.map((run) => run.seniorStdDev));
+    const penS = stats(r.runs.map((run) => run.totalPenalty));
     const scoreCv = scoreS.mean !== 0 ? scoreS.stdDev / Math.abs(scoreS.mean) : 0;
 
     variantValues.set(r.name, {
@@ -674,12 +674,11 @@ console.log();
   }
 
   // Rank per dimension
-  const ranks = new Map<string, Record<typeof dimensions[number], number>>();
+  const ranks = new Map<string, Record<(typeof dimensions)[number], number>>();
   for (const dim of dimensions) {
-    const sorted = [...variantValues.entries()]
-      .sort((a, b) => a[1][dim] - b[1][dim]);
+    const sorted = [...variantValues.entries()].sort((a, b) => a[1][dim] - b[1][dim]);
     sorted.forEach(([name], idx) => {
-      if (!ranks.has(name)) ranks.set(name, {} as Record<typeof dimensions[number], number>);
+      if (!ranks.has(name)) ranks.set(name, {} as Record<(typeof dimensions)[number], number>);
       ranks.get(name)![dim] = idx + 1;
     });
   }
@@ -690,13 +689,13 @@ console.log();
     const avgRank = dimensions.reduce((s, d) => s + rk[d], 0) / dimensions.length;
     rows.push({
       variant: r.name,
-      'rank_feasibility': rk.feasibility,
-      'rank_score': rk.compositeScore,
-      'rank_l0Fair': rk.l0Fairness,
-      'rank_srFair': rk.seniorFairness,
-      'rank_penalty': rk.penalty,
-      'rank_stability': rk.stability,
-      'AVG_RANK': avgRank.toFixed(2),
+      rank_feasibility: rk.feasibility,
+      rank_score: rk.compositeScore,
+      rank_l0Fair: rk.l0Fairness,
+      rank_srFair: rk.seniorFairness,
+      rank_penalty: rk.penalty,
+      rank_stability: rk.stability,
+      AVG_RANK: avgRank.toFixed(2),
     });
   }
   // Sort by average rank

@@ -1,4 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page, test } from '@playwright/test';
 
 /**
  * Mobile manual schedule creation flow test.
@@ -40,7 +40,7 @@ test.describe('Manual schedule creation on mobile', () => {
 
     // Step 3: Check toolbar overflow on mobile — is the toolbar usable?
     const toolbar = page.locator('.schedule-toolbar');
-    if (await toolbar.count() > 0) {
+    if ((await toolbar.count()) > 0) {
       const toolbarBox = await toolbar.boundingBox();
       console.log(`Toolbar bounding box: ${JSON.stringify(toolbarBox)}`);
       if (toolbarBox) {
@@ -84,7 +84,7 @@ test.describe('Manual schedule creation on mobile', () => {
 
     // Step 6: Check grid compactness
     const gridCompact = page.locator('.schedule-grid-compact');
-    const isCompact = await gridCompact.count() > 0;
+    const isCompact = (await gridCompact.count()) > 0;
     console.log(`Grid has compact class: ${isCompact}`);
 
     // Step 7: Check manual build strip
@@ -117,11 +117,10 @@ test.describe('Manual schedule creation on mobile', () => {
     await page.screenshot({ path: 'test-results/mobile-manual-05-scrolled-down.png' });
 
     // Step 10: Try to click on the first empty slot
-    const firstEmptySlot = emptySlotCount > 0
-      ? emptySlots.first()
-      : page.locator('.assignment-card[data-slot-id]').first();
+    const firstEmptySlot =
+      emptySlotCount > 0 ? emptySlots.first() : page.locator('.assignment-card[data-slot-id]').first();
 
-    if (await firstEmptySlot.count() > 0) {
+    if ((await firstEmptySlot.count()) > 0) {
       // Scroll into view first
       await firstEmptySlot.scrollIntoViewIfNeeded();
       await page.waitForTimeout(300);
@@ -198,7 +197,7 @@ test.describe('Manual schedule creation on mobile', () => {
 
             // Check toast
             const toast = page.locator('.toast');
-            if (await toast.count() > 0) {
+            if ((await toast.count()) > 0) {
               const toastText = await toast.textContent();
               console.log(`Toast message: ${toastText}`);
             }
@@ -217,14 +216,14 @@ test.describe('Manual schedule creation on mobile', () => {
 
     // Step 14: Check day navigation
     const dayNav = page.locator('.day-navigator');
-    if (await dayNav.count() > 0) {
+    if ((await dayNav.count()) > 0) {
       const dayNavBox = await dayNav.boundingBox();
       console.log(`Day navigator box: ${JSON.stringify(dayNavBox)}`);
       await page.screenshot({ path: 'test-results/mobile-manual-10-day-nav.png' });
 
       // Try navigating to day 2
       const day2Btn = page.locator('.day-btn[data-day="2"]');
-      if (await day2Btn.count() > 0) {
+      if ((await day2Btn.count()) > 0) {
         await day2Btn.click();
         await page.waitForTimeout(500);
         await page.screenshot({ path: 'test-results/mobile-manual-11-day2.png' });
@@ -233,7 +232,7 @@ test.describe('Manual schedule creation on mobile', () => {
 
     // Step 15: Check undo button
     const undoBtn = page.locator('#btn-manual-undo');
-    if (await undoBtn.count() > 0) {
+    if ((await undoBtn.count()) > 0) {
       const undoBox = await undoBtn.boundingBox();
       console.log(`Undo button box: ${JSON.stringify(undoBox)}`);
     }
@@ -246,7 +245,9 @@ test.describe('Manual schedule creation on mobile', () => {
     // Step 17: Measure total scrollable height
     const scrollHeight = await page.evaluate(() => document.documentElement.scrollHeight);
     const viewportHeight = viewport!.height;
-    console.log(`Total scroll height: ${scrollHeight}px, viewport: ${viewportHeight}px, ratio: ${(scrollHeight / viewportHeight).toFixed(1)}`);
+    console.log(
+      `Total scroll height: ${scrollHeight}px, viewport: ${viewportHeight}px, ratio: ${(scrollHeight / viewportHeight).toFixed(1)}`,
+    );
     if (scrollHeight > viewportHeight * 6) {
       console.log('ISSUE: Page is very long — user needs to scroll >6x viewport to see everything');
     }
@@ -266,7 +267,9 @@ test.describe('Manual schedule creation on mobile', () => {
       const box = await btn.boundingBox();
       const text = await btn.textContent();
       if (box) {
-        console.log(`Button "${text?.trim()}" — ${box.width.toFixed(0)}x${box.height.toFixed(0)} at (${box.x.toFixed(0)}, ${box.y.toFixed(0)})`);
+        console.log(
+          `Button "${text?.trim()}" — ${box.width.toFixed(0)}x${box.height.toFixed(0)} at (${box.x.toFixed(0)}, ${box.y.toFixed(0)})`,
+        );
         if (box.height < 36) {
           console.log(`  ISSUE: Button too short for touch target (${box.height.toFixed(0)}px < 36px)`);
         }
@@ -315,7 +318,7 @@ test.describe('Manual schedule creation on mobile', () => {
     let sheet = page.locator('.gm-bottom-sheet');
     if (await sheet.isVisible().catch(() => false)) {
       const eligible = page.locator('.gm-bottom-sheet .warehouse-card:not(.warehouse-card-ineligible)');
-      if (await eligible.count() > 0) {
+      if ((await eligible.count()) > 0) {
         await eligible.first().click();
         await page.waitForTimeout(500);
       }

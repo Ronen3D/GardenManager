@@ -9,17 +9,8 @@
  * exist only in the optimizer's internal indexes during generation.
  */
 
-import {
-  Task,
-  Assignment,
-  Participant,
-  AssignmentStatus,
-} from '../models/types';
-import {
-  ContinuitySnapshot,
-  ContinuityParticipant,
-  ContinuityAssignment,
-} from '../models/continuity-schema';
+import { type ContinuityAssignment, ContinuityParticipant, type ContinuitySnapshot } from '../models/continuity-schema';
+import { type Assignment, AssignmentStatus, type Participant, type Task } from '../models/types';
 
 // ─── Public Types ───────────────────────────────────────────────────────────
 
@@ -43,10 +34,7 @@ export interface PhantomContext {
  * Matching is by exact participant name.  Participants in the snapshot
  * but absent from `participants` are silently ignored.
  */
-export function buildPhantomContext(
-  snapshot: ContinuitySnapshot,
-  participants: Participant[],
-): PhantomContext {
+export function buildPhantomContext(snapshot: ContinuitySnapshot, participants: Participant[]): PhantomContext {
   const phantomTasks: Task[] = [];
   const phantomAssignments: Assignment[] = [];
   const phantomTaskIds = new Set<string>();
@@ -108,7 +96,7 @@ function continuityAssignmentToTask(taskId: string, ca: ContinuityAssignment): T
     slots: [],
     isLight: ca.isLight,
     baseLoadWeight: ca.baseLoadWeight,
-    loadWindows: ca.loadWindows?.map(lw => ({
+    loadWindows: ca.loadWindows?.map((lw) => ({
       id: lw.id,
       startHour: lw.startHour,
       startMinute: lw.startMinute,
@@ -128,10 +116,7 @@ function continuityAssignmentToTask(taskId: string, ca: ContinuityAssignment): T
  * active rest rule map.  Only adds entries for rule IDs that are NOT
  * already present — the current schedule's rules take precedence.
  */
-export function mergePhantomRules(
-  baseMap: Map<string, number>,
-  context: PhantomContext,
-): Map<string, number> {
+export function mergePhantomRules(baseMap: Map<string, number>, context: PhantomContext): Map<string, number> {
   if (context.phantomRestRules.size === 0) return baseMap;
   const merged = new Map(baseMap);
   for (const [ruleId, durationMs] of context.phantomRestRules) {

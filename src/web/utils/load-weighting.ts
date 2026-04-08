@@ -1,4 +1,4 @@
-import { Task, LoadWindow } from '../../models/types';
+import type { LoadWindow, Task } from '../../models/types';
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -61,8 +61,13 @@ function isTimeInsideWindow(time: Date, window: LoadWindow): boolean {
   const dayStart = new Date(time.getFullYear(), time.getMonth(), time.getDate());
 
   const wStartMs = new Date(
-    dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate(),
-    window.startHour, window.startMinute, 0, 0,
+    dayStart.getFullYear(),
+    dayStart.getMonth(),
+    dayStart.getDate(),
+    window.startHour,
+    window.startMinute,
+    0,
+    0,
   ).getTime();
 
   const crossesMidnight =
@@ -70,9 +75,13 @@ function isTimeInsideWindow(time: Date, window: LoadWindow): boolean {
     (window.endHour === window.startHour && window.endMinute <= window.startMinute);
 
   const wEndMs = new Date(
-    dayStart.getFullYear(), dayStart.getMonth(),
+    dayStart.getFullYear(),
+    dayStart.getMonth(),
     dayStart.getDate() + (crossesMidnight ? 1 : 0),
-    window.endHour, window.endMinute, 0, 0,
+    window.endHour,
+    window.endMinute,
+    0,
+    0,
   ).getTime();
 
   const t = time.getTime();
@@ -112,9 +121,7 @@ export function isHighLoadAtBoundary(task: Task, edge: 'start' | 'end'): boolean
   const cached = cache.get(task);
   if (cached !== undefined) return cached;
 
-  const time = edge === 'start'
-    ? task.timeBlock.start
-    : new Date(task.timeBlock.end.getTime() - 1);
+  const time = edge === 'start' ? task.timeBlock.start : new Date(task.timeBlock.end.getTime() - 1);
   const weight = getLoadWeightAtTime(task, time);
   const result = weight >= 1.0;
   cache.set(task, result);
@@ -152,8 +159,8 @@ function computeWindowOverlapHours(task: Task, window: LoadWindow): number {
       0,
     );
     const crossesMidnight =
-      window.endHour < window.startHour
-      || (window.endHour === window.startHour && window.endMinute <= window.startMinute);
+      window.endHour < window.startHour ||
+      (window.endHour === window.startHour && window.endMinute <= window.startMinute);
 
     const wEnd = new Date(
       cursor.getFullYear(),

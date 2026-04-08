@@ -12,61 +12,77 @@
 
 import './style.css';
 import './style-mobile.css';
-import { initResponsive, isTouchDevice, isSmallScreen } from './responsive';
-
-import {
-  SchedulingEngine,
-  Participant,
-  Level,
-  AssignmentStatus,
-  ViolationSeverity,
-  Schedule,
-  Task,
-  Assignment,
-  SlotRequirement,
-  RescueResult,
-  RescuePlan,
-  RescueRequest,
-  LiveModeState,
-  ConstraintViolation,
-  AlgorithmSettings,
-  RejectionCode,
-} from '../index';
-import { getRejectionReason, getEligibleParticipantsForSlot } from '../engine/validator';
-import { hebrewDayName } from '../utils/date-utils';
-import { scheduleToGantt } from '../ui/gantt-bridge';
-import { renderScheduleGrid } from './schedule-grid-view';
-import { generateShiftBlocks } from './utils/time-utils';
-import { computeWeeklyWorkloads } from './workload-utils';
+import { buildPhantomContext } from '../engine/phantom';
+import { generateRescuePlans } from '../engine/rescue';
 import {
   freezeAssignments,
-  unfreezeAll,
-  isFutureTask,
-  isModifiableAssignment,
   isDayFrozen,
   isDayPartiallyFrozen,
+  isFutureTask,
+  isModifiableAssignment,
+  unfreezeAll,
 } from '../engine/temporal';
-import { generateRescuePlans } from '../engine/rescue';
-
-import * as store from './config-store';
-import { runPreflight } from './preflight';
-import { renderParticipantsTab, wireParticipantsEvents, clearParticipantSelection } from './tab-participants';
-import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
-import { renderProfileView, wireProfileEvents, ProfileContext } from './tab-profile';
-import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
-import { wireDataTransferEvents } from './data-transfer-ui';
-import { computeTaskBreakdown } from './workload-utils';
-import { exportWeeklyOverview, exportDailyDetail } from './pdf-export';
+import { getEligibleParticipantsForSlot, getRejectionReason } from '../engine/validator';
 import {
-  LEVEL_COLORS,
-  fmt, levelBadge, certBadge, certBadges, groupBadge, groupColor, taskBadge, SVG_ICONS, escHtml,
-  applyTheme, getStoredTheme,
-} from './ui-helpers';
-import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
-import { showAlert, showPrompt, showConfirm, showToast, showBottomSheet, showContinuityImport, showTimePicker, renderCustomSelect, wireCustomSelect } from './ui-modal';
+  AlgorithmSettings,
+  type Assignment,
+  AssignmentStatus,
+  type ConstraintViolation,
+  Level,
+  LiveModeState,
+  type Participant,
+  type RejectionCode,
+  type RescuePlan,
+  type RescueRequest,
+  type RescueResult,
+  type Schedule,
+  SchedulingEngine,
+  type SlotRequirement,
+  type Task,
+  ViolationSeverity,
+} from '../index';
+import { scheduleToGantt } from '../ui/gantt-bridge';
+import { hebrewDayName } from '../utils/date-utils';
+import * as store from './config-store';
 import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
-import { buildPhantomContext } from '../engine/phantom';
+import { wireDataTransferEvents } from './data-transfer-ui';
+import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
+import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
+import { runPreflight } from './preflight';
+import { initResponsive, isSmallScreen, isTouchDevice } from './responsive';
+import { renderScheduleGrid } from './schedule-grid-view';
+import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
+import { clearParticipantSelection, renderParticipantsTab, wireParticipantsEvents } from './tab-participants';
+import { type ProfileContext, renderProfileView, wireProfileEvents } from './tab-profile';
+import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
+import {
+  applyTheme,
+  certBadge,
+  certBadges,
+  escHtml,
+  fmt,
+  getStoredTheme,
+  groupBadge,
+  groupColor,
+  LEVEL_COLORS,
+  levelBadge,
+  SVG_ICONS,
+  taskBadge,
+} from './ui-helpers';
+import {
+  renderCustomSelect,
+  showAlert,
+  showBottomSheet,
+  showConfirm,
+  showContinuityImport,
+  showPrompt,
+  showTimePicker,
+  showToast,
+  wireCustomSelect,
+} from './ui-modal';
+import { generateShiftBlocks } from './utils/time-utils';
+import { computeTaskBreakdown, computeWeeklyWorkloads } from './workload-utils';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
@@ -109,7 +125,10 @@ let _isOptimizing = false;
 /** True while undo/redo is executing — prevents onStoreChanged from reconciling */
 let _undoRedoInProgress = false;
 /** Parallel schedule snapshots kept in sync with the store's undo/redo stacks */
-interface ScheduleSnapshot { schedule: Schedule | null; dirty: boolean }
+interface ScheduleSnapshot {
+  schedule: Schedule | null;
+  dirty: boolean;
+}
 const _scheduleUndoStack: ScheduleSnapshot[] = [];
 const _scheduleRedoStack: ScheduleSnapshot[] = [];
 /**
@@ -128,8 +147,11 @@ let _snapshotFormError = '';
 let _snapshotPanelOpen = false;
 /** Whether the workload sidebar is collapsed */
 let _sidebarCollapsed = (() => {
-  try { return localStorage.getItem('gm-sidebar-collapsed') === '1'; }
-  catch { return false; }
+  try {
+    return localStorage.getItem('gm-sidebar-collapsed') === '1';
+  } catch {
+    return false;
+  }
 })();
 let _availabilityPopoverEl: HTMLElement | null = null;
 let _availabilityPopoverKeyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -140,7 +162,7 @@ let _availabilityInlineTimeMs: number | null = null;
 let _continuityJson = '';
 let _availabilityInspectorDay: number | null = null;
 let _availabilityInspectorTime = '05:00';
-let _availabilityMobileOpen = false;
+const _availabilityMobileOpen = false;
 
 // ─── View Router ─────────────────────────────────────────────────────────────
 
@@ -193,12 +215,12 @@ let _warehouseFilter = '';
 
 /** HC rejection code → Hebrew user-facing message */
 const REJECTION_MESSAGES: Record<RejectionCode, string> = {
-  'HC-1':  'הדרגה לא מתאימה למשבצת הזו',
-  'HC-2':  'חסרה הסמכה נדרשת',
-  'HC-3':  'המשתתף לא זמין בשעות המשימה',
-  'HC-4':  'המשתתפים חייבים להיות מאותה קבוצה',
-  'HC-5':  'המשתתף כבר משובץ במשימה חופפת',
-  'HC-7':  'המשתתף כבר משובץ במשימה הזו',
+  'HC-1': 'הדרגה לא מתאימה למשבצת הזו',
+  'HC-2': 'חסרה הסמכה נדרשת',
+  'HC-3': 'המשתתף לא זמין בשעות המשימה',
+  'HC-4': 'המשתתפים חייבים להיות מאותה קבוצה',
+  'HC-5': 'המשתתף כבר משובץ במשימה חופפת',
+  'HC-7': 'המשתתף כבר משובץ במשימה הזו',
   'HC-11': 'למשתתף הסמכה אסורה למשבצת הזו',
   'HC-12': 'לא ניתן לשבץ למשימות כבדות רצופות',
   'HC-14': 'נדרשת הפסקה של 5 שעות לפחות ממשימת קטגוריה',
@@ -235,23 +257,16 @@ function resolveLogicalDayTimestamp(dayIndex: number, timeValue: string): Date |
   if (!parsed) return null;
   const base = store.getScheduleDate();
   const dayOffset = parsed.hours < store.getDayStartHour() ? dayIndex : dayIndex - 1;
-  return new Date(
-    base.getFullYear(),
-    base.getMonth(),
-    base.getDate() + dayOffset,
-    parsed.hours,
-    parsed.minutes,
-    0,
-    0,
-  );
+  return new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayOffset, parsed.hours, parsed.minutes, 0, 0);
 }
 
 function renderAvailabilityInspectorInline(): string {
   const numDays = store.getScheduleDays();
   const baseDate = store.getScheduleDate();
-  const selectedDay = _availabilityInspectorDay && _availabilityInspectorDay >= 1 && _availabilityInspectorDay <= numDays
-    ? _availabilityInspectorDay
-    : currentDay;
+  const selectedDay =
+    _availabilityInspectorDay && _availabilityInspectorDay >= 1 && _availabilityInspectorDay <= numDays
+      ? _availabilityInspectorDay
+      : currentDay;
   _availabilityInspectorDay = selectedDay;
 
   const dayOptions: { value: string; label: string; selected: boolean }[] = [];
@@ -305,10 +320,18 @@ function renderAvailabilityStrip(): string {
 
 function statusBadge(status: AssignmentStatus): string {
   const colors: Record<string, string> = {
-    Scheduled: '#27ae60', Locked: '#2980b9', Manual: '#f39c12', Conflict: '#e74c3c', Frozen: '#00bcd4'
+    Scheduled: '#27ae60',
+    Locked: '#2980b9',
+    Manual: '#f39c12',
+    Conflict: '#e74c3c',
+    Frozen: '#00bcd4',
   };
   const labels: Record<string, string> = {
-    Scheduled: 'משובץ', Locked: 'נעול', Manual: 'ידני', Conflict: 'התנגשות', Frozen: 'מוקפא'
+    Scheduled: 'משובץ',
+    Locked: 'נעול',
+    Manual: 'ידני',
+    Conflict: 'התנגשות',
+    Frozen: 'מוקפא',
   };
   return `<span class="badge badge-sm" style="background:${colors[status] || '#7f8c8d'}">${labels[status] || status}</span>`;
 }
@@ -316,26 +339,26 @@ function statusBadge(status: AssignmentStatus): string {
 // ─── Violation Code → Hebrew Label ──────────────────────────────────────────
 
 const violationCodeLabels: Record<string, string> = {
-  'SLOT_NOT_FOUND':            'משבצת חסרה',
-  'LEVEL_MISMATCH':            'אי-התאמת דרגה',
-  'CERT_MISSING':              'הסמכה חסרה',
-  'AVAILABILITY_VIOLATION':    'חוסר זמינות',
-  'GROUP_MISMATCH':            'ערבוב קבוצות',
-  'EXCLUDED_CERTIFICATION':    'הסמכה אסורה',
-  'DOUBLE_BOOKING':            'שיבוץ כפול',
-  'SLOT_UNFILLED':             'משבצת ריקה',
-  'SLOT_OVERBOOKED':           'עודף שיבוצים',
-  'DUPLICATE_IN_TASK':         'משתתף כפול במשימה',
-  'GROUP_INSUFFICIENT':        'קבוצה לא מספקת',
-  'CONSECUTIVE_HIGH_LOAD':     'עומס רצוף',
-  'CATEGORY_BREAK_VIOLATION':  'הפסקה לא מספקת',
-  'PARTICIPANT_NOT_FOUND':     'משתתף לא נמצא',
-  'INFEASIBLE_SLOT':           'שיבוץ בלתי אפשרי',
-  'SENIOR_HARD_BLOCK':         'חסימת סגל',
-  'SENIOR_IN_JUNIOR_PREFERRED': 'סגל בכיר במשימת צעירים',
-  'LESS_PREFERRED_ASSIGNMENT':  'משימה לא מועדפת',
-  'PREFERRED_TYPE_UNAVAILABLE': 'סוג מועדף לא קיים',
-  'PREFERRED_NOT_SATISFIED':    'העדפה לא מומשה',
+  SLOT_NOT_FOUND: 'משבצת חסרה',
+  LEVEL_MISMATCH: 'אי-התאמת דרגה',
+  CERT_MISSING: 'הסמכה חסרה',
+  AVAILABILITY_VIOLATION: 'חוסר זמינות',
+  GROUP_MISMATCH: 'ערבוב קבוצות',
+  EXCLUDED_CERTIFICATION: 'הסמכה אסורה',
+  DOUBLE_BOOKING: 'שיבוץ כפול',
+  SLOT_UNFILLED: 'משבצת ריקה',
+  SLOT_OVERBOOKED: 'עודף שיבוצים',
+  DUPLICATE_IN_TASK: 'משתתף כפול במשימה',
+  GROUP_INSUFFICIENT: 'קבוצה לא מספקת',
+  CONSECUTIVE_HIGH_LOAD: 'עומס רצוף',
+  CATEGORY_BREAK_VIOLATION: 'הפסקה לא מספקת',
+  PARTICIPANT_NOT_FOUND: 'משתתף לא נמצא',
+  INFEASIBLE_SLOT: 'שיבוץ בלתי אפשרי',
+  SENIOR_HARD_BLOCK: 'חסימת סגל',
+  SENIOR_IN_JUNIOR_PREFERRED: 'סגל בכיר במשימת צעירים',
+  LESS_PREFERRED_ASSIGNMENT: 'משימה לא מועדפת',
+  PREFERRED_TYPE_UNAVAILABLE: 'סוג מועדף לא קיים',
+  PREFERRED_NOT_SATISFIED: 'העדפה לא מומשה',
 };
 
 function violationLabel(code: string): string {
@@ -352,7 +375,7 @@ function violationLabel(code: string): string {
 function filterVisibleViolations(violations: ConstraintViolation[]): ConstraintViolation[] {
   const disabledHC = store.getDisabledHCSet();
   if (disabledHC.size === 0) return violations;
-  return violations.filter(v => !disabledHC.has(v.code));
+  return violations.filter((v) => !disabledHC.has(v.code));
 }
 
 /**
@@ -361,7 +384,13 @@ function filterVisibleViolations(violations: ConstraintViolation[]): ConstraintV
  */
 function getDayWindow(dayIndex: number): { start: Date; end: Date } {
   const base = store.getScheduleDate();
-  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex - 1, store.getDayStartHour(), 0);
+  const start = new Date(
+    base.getFullYear(),
+    base.getMonth(),
+    base.getDate() + dayIndex - 1,
+    store.getDayStartHour(),
+    0,
+  );
   const end = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex, store.getDayStartHour(), 0);
   return { start, end };
 }
@@ -371,8 +400,7 @@ function getDayWindow(dayIndex: number): { start: Date; end: Date } {
  */
 function taskIntersectsDay(task: Task, dayIndex: number): boolean {
   const { start, end } = getDayWindow(dayIndex);
-  return task.timeBlock.start.getTime() < end.getTime() &&
-         task.timeBlock.end.getTime() > start.getTime();
+  return task.timeBlock.start.getTime() < end.getTime() && task.timeBlock.end.getTime() > start.getTime();
 }
 
 /**
@@ -412,7 +440,9 @@ function generateTasksFromTemplates(): Task[] {
 
     for (const tpl of templates) {
       if (tpl.shiftsPerDay < 1 || tpl.durationHours <= 0) {
-        console.warn(`Template "${tpl.name}" has invalid shiftsPerDay (${tpl.shiftsPerDay}) or durationHours (${tpl.durationHours}) — skipping`);
+        console.warn(
+          `Template "${tpl.name}" has invalid shiftsPerDay (${tpl.shiftsPerDay}) or durationHours (${tpl.durationHours}) — skipping`,
+        );
         continue;
       }
       const startDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tpl.startHour, 0);
@@ -500,11 +530,7 @@ function generateTasksFromTemplates(): Task[] {
   const windowEnd = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + numDays);
 
   for (const ot of allOneTimeTasks) {
-    const otDay = new Date(
-      ot.scheduledDate.getFullYear(),
-      ot.scheduledDate.getMonth(),
-      ot.scheduledDate.getDate(),
-    );
+    const otDay = new Date(ot.scheduledDate.getFullYear(), ot.scheduledDate.getMonth(), ot.scheduledDate.getDate());
 
     // Range filter: skip if outside scheduling window
     if (otDay < windowStart || otDay >= windowEnd) continue;
@@ -512,8 +538,7 @@ function generateTasksFromTemplates(): Task[] {
     const dayIdx = Math.round((otDay.getTime() - windowStart.getTime()) / 86400000);
     const dayLabel = `D${dayIdx + 1}`;
 
-    const start = new Date(otDay.getFullYear(), otDay.getMonth(), otDay.getDate(),
-                           ot.startHour, ot.startMinute || 0);
+    const start = new Date(otDay.getFullYear(), otDay.getMonth(), otDay.getDate(), ot.startHour, ot.startMinute || 0);
     const end = new Date(start.getTime() + ot.durationHours * 3600000);
 
     // Build slots (same logic as template slot building above)
@@ -570,13 +595,13 @@ function generateTasksFromTemplates(): Task[] {
 
 /** Get tasks that intersect the current day's 05:00–05:00 window */
 function getFilteredTasks(schedule: Schedule): Task[] {
-  return schedule.tasks.filter(t => taskIntersectsDay(t, currentDay));
+  return schedule.tasks.filter((t) => taskIntersectsDay(t, currentDay));
 }
 
 /** Get assignments for tasks visible in the current day */
 function getFilteredAssignments(schedule: Schedule): Assignment[] {
-  const filteredTaskIds = new Set(getFilteredTasks(schedule).map(t => t.id));
-  return schedule.assignments.filter(a => filteredTaskIds.has(a.taskId));
+  const filteredTaskIds = new Set(getFilteredTasks(schedule).map((t) => t.id));
+  return schedule.assignments.filter((a) => filteredTaskIds.has(a.taskId));
 }
 
 /**
@@ -597,7 +622,7 @@ function computePerDayHours(
   const result = new Map<number, number>();
   for (let d = 1; d <= numDays; d++) result.set(d, 0);
 
-  const tMap = taskMap ?? new Map<string, Task>(schedule.tasks.map(t => [t.id, t]));
+  const tMap = taskMap ?? new Map<string, Task>(schedule.tasks.map((t) => [t.id, t]));
 
   for (const a of schedule.assignments) {
     if (a.participantId !== participantId) continue;
@@ -639,16 +664,15 @@ function renderDayNavigator(): string {
     let taskCount = 0;
     let violationCount = 0;
     if (currentSchedule) {
-      taskCount = currentSchedule.tasks.filter(t => taskIntersectsDay(t, d)).length;
-      const dayTaskIds = new Set(currentSchedule.tasks.filter(t => taskIntersectsDay(t, d)).map(t => t.id));
-      violationCount = filterVisibleViolations(currentSchedule.violations).filter(v =>
-        v.severity === ViolationSeverity.Error && v.taskId && dayTaskIds.has(v.taskId)
+      taskCount = currentSchedule.tasks.filter((t) => taskIntersectsDay(t, d)).length;
+      const dayTaskIds = new Set(currentSchedule.tasks.filter((t) => taskIntersectsDay(t, d)).map((t) => t.id));
+      violationCount = filterVisibleViolations(currentSchedule.violations).filter(
+        (v) => v.severity === ViolationSeverity.Error && v.taskId && dayTaskIds.has(v.taskId),
       ).length;
     }
 
-    const violationDot = violationCount > 0
-      ? `<span class="day-violation-dot" title="${violationCount} הפרות">!</span>`
-      : '';
+    const violationDot =
+      violationCount > 0 ? `<span class="day-violation-dot" title="${violationCount} הפרות">!</span>` : '';
 
     let frozenTag = '';
     let frozenClass = '';
@@ -682,18 +706,18 @@ function renderWeeklyDashboard(schedule: Schedule): string {
   const score = schedule.score;
   const numDays = store.getScheduleDays();
   const visibleViolations = filterVisibleViolations(schedule.violations);
-  const totalViolations = visibleViolations.filter(v => v.severity === ViolationSeverity.Error).length;
-  const warnings = visibleViolations.filter(v => v.severity === ViolationSeverity.Warning).length;
+  const totalViolations = visibleViolations.filter((v) => v.severity === ViolationSeverity.Error).length;
+  const warnings = visibleViolations.filter((v) => v.severity === ViolationSeverity.Warning).length;
   const feasibleClass = schedule.feasible ? 'kpi-ok' : 'kpi-error';
   const feasibleText = schedule.feasible ? '✓ ישים' : '✗ לא ישים';
 
   // Per-day task counts
   let dayDots = '';
   for (let d = 1; d <= numDays; d++) {
-    const count = schedule.tasks.filter(t => taskIntersectsDay(t, d)).length;
-    const dayViolations = filterVisibleViolations(schedule.violations).filter(v => {
+    const count = schedule.tasks.filter((t) => taskIntersectsDay(t, d)).length;
+    const dayViolations = filterVisibleViolations(schedule.violations).filter((v) => {
       if (v.severity !== ViolationSeverity.Error || !v.taskId) return false;
-      const task = schedule.tasks.find(t => t.id === v.taskId);
+      const task = schedule.tasks.find((t) => t.id === v.taskId);
       return task ? taskIntersectsDay(task, d) : false;
     }).length;
     const dotClass = dayViolations > 0 ? 'dot-error' : count > 0 ? 'dot-ok' : 'dot-empty';
@@ -726,9 +750,11 @@ function renderWeeklyDashboard(schedule: Schedule): string {
       </div>
     </div>
     <div class="dashboard-meta">
-      ${scheduleActualAttempts > 0
-        ? `התוצאה הטובה ביותר מתוך ${scheduleActualAttempts} ניסיונות, בזמן חישוב של ${(scheduleElapsed / 1000).toFixed(1)} שניות.`
-        : 'שבצ"ק נבנה ידנית.'}
+      ${
+        scheduleActualAttempts > 0
+          ? `התוצאה הטובה ביותר מתוך ${scheduleActualAttempts} ניסיונות, בזמן חישוב של ${(scheduleElapsed / 1000).toFixed(1)} שניות.`
+          : 'שבצ"ק נבנה ידנית.'
+      }
     </div>
   </div>`;
 }
@@ -737,7 +763,12 @@ function renderWeeklyDashboard(schedule: Schedule): string {
 
 /** Build a single sidebar entry's HTML */
 function renderSidebarEntry(
-  entry: { p: Participant; w: { totalHours: number; effectiveHours: number; hotHours: number; coldHours: number; nonLightCount: number }; pctOfPeriod: number; perDay: Map<number, number> },
+  entry: {
+    p: Participant;
+    w: { totalHours: number; effectiveHours: number; hotHours: number; coldHours: number; nonLightCount: number };
+    pctOfPeriod: number;
+    perDay: Map<number, number>;
+  },
   totalPeriodHours: number,
 ): string {
   const p = entry.p;
@@ -747,7 +778,7 @@ function renderSidebarEntry(
   const underloaded = entry.pctOfPeriod < 5;
   const barClass = overloaded ? 'wbar-over' : underloaded ? 'wbar-under' : 'wbar-normal';
 
-  let tooltipParts: string[] = [];
+  const tooltipParts: string[] = [];
   for (let d = 1; d <= store.getScheduleDays(); d++) {
     const dayHrs = entry.perDay.get(d) || 0;
     const ttBase = store.getScheduleDate();
@@ -758,7 +789,8 @@ function renderSidebarEntry(
   const todayRatio = totalPeriodHours > 0 ? todayHrs / totalPeriodHours : 0;
   const todayBarWidth = Math.min(todayRatio * 100 * (100 / 30), barWidth);
 
-  const diagTooltip = `שעות עומס: ${entry.w.effectiveHours.toFixed(1)} (${entry.pctOfPeriod.toFixed(1)}%)\n` +
+  const diagTooltip =
+    `שעות עומס: ${entry.w.effectiveHours.toFixed(1)} (${entry.pctOfPeriod.toFixed(1)}%)\n` +
     `משימות כבדות: ${entry.w.nonLightCount}\n` +
     tooltipParts.join('\n');
 
@@ -790,10 +822,10 @@ function renderParticipantSidebar(schedule: Schedule): string {
   const numDays = store.getScheduleDays();
   const totalPeriodHours = numDays * 24;
 
-  const sidebarTaskMap = new Map<string, Task>(schedule.tasks.map(t => [t.id, t]));
+  const sidebarTaskMap = new Map<string, Task>(schedule.tasks.map((t) => [t.id, t]));
 
   // Build all entries
-  const allEntries = schedule.participants.map(p => {
+  const allEntries = schedule.participants.map((p) => {
     const w = workloads.get(p.id) || { totalHours: 0, effectiveHours: 0, hotHours: 0, coldHours: 0, nonLightCount: 0 };
     const pctOfPeriod = totalPeriodHours > 0 ? (w.effectiveHours / totalPeriodHours) * 100 : 0;
     const perDay = computePerDayHours(p.id, schedule, sidebarTaskMap);
@@ -802,24 +834,26 @@ function renderParticipantSidebar(schedule: Schedule): string {
 
   // Split into L0 and Senior pools
   const l0Entries = allEntries
-    .filter(e => e.p.level === Level.L0)
+    .filter((e) => e.p.level === Level.L0)
     .sort((a, b) => b.w.effectiveHours - a.w.effectiveHours);
   const seniorEntries = allEntries
-    .filter(e => e.p.level !== Level.L0)
+    .filter((e) => e.p.level !== Level.L0)
     .sort((a, b) => b.w.effectiveHours - a.w.effectiveHours);
 
   // L0 stats
   const l0Total = l0Entries.reduce((s, e) => s + e.w.effectiveHours, 0);
   const l0Avg = l0Entries.length > 0 ? l0Total / l0Entries.length : 0;
-  const l0Var = l0Entries.length > 0
-    ? l0Entries.reduce((s, e) => s + (e.w.effectiveHours - l0Avg) ** 2, 0) / l0Entries.length : 0;
+  const l0Var =
+    l0Entries.length > 0 ? l0Entries.reduce((s, e) => s + (e.w.effectiveHours - l0Avg) ** 2, 0) / l0Entries.length : 0;
   const l0Sigma = Math.sqrt(l0Var);
 
   // Senior stats
   const seniorTotal = seniorEntries.reduce((s, e) => s + e.w.effectiveHours, 0);
   const seniorAvg = seniorEntries.length > 0 ? seniorTotal / seniorEntries.length : 0;
-  const seniorVar = seniorEntries.length > 0
-    ? seniorEntries.reduce((s, e) => s + (e.w.effectiveHours - seniorAvg) ** 2, 0) / seniorEntries.length : 0;
+  const seniorVar =
+    seniorEntries.length > 0
+      ? seniorEntries.reduce((s, e) => s + (e.w.effectiveHours - seniorAvg) ** 2, 0) / seniorEntries.length
+      : 0;
   const seniorSigma = Math.sqrt(seniorVar);
 
   // ── L0 Section (always visible) ──
@@ -833,7 +867,8 @@ function renderParticipantSidebar(schedule: Schedule): string {
     html += `<div class="sidebar-mini">`;
     for (const entry of l0Entries) {
       const pct = entry.w.effectiveHours / totalPeriodHours;
-      const cls = pct > WORKLOAD_OVER_THRESHOLD ? 'mini-over' : pct < WORKLOAD_UNDER_THRESHOLD ? 'mini-under' : 'mini-normal';
+      const cls =
+        pct > WORKLOAD_OVER_THRESHOLD ? 'mini-over' : pct < WORKLOAD_UNDER_THRESHOLD ? 'mini-under' : 'mini-normal';
       html += `<div class="sidebar-mini-bar ${cls}" title="${entry.p.name}: ${entry.w.effectiveHours.toFixed(1)} שעות עומס"></div>`;
     }
     html += `</div></div>`;
@@ -895,14 +930,26 @@ function renderScheduleTab(): string {
       let selected = false;
       if (liveMode.enabled) {
         const anchor = liveMode.currentTimestamp;
-        const dayStart = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1, store.getDayStartHour(), 0);
-        const dayEnd = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d, store.getDayStartHour(), 0);
+        const dayStart = new Date(
+          baseDate.getFullYear(),
+          baseDate.getMonth(),
+          baseDate.getDate() + d - 1,
+          store.getDayStartHour(),
+          0,
+        );
+        const dayEnd = new Date(
+          baseDate.getFullYear(),
+          baseDate.getMonth(),
+          baseDate.getDate() + d,
+          store.getDayStartHour(),
+          0,
+        );
         selected = anchor.getTime() >= dayStart.getTime() && anchor.getTime() < dayEnd.getTime();
       }
       daySelectOpts.push({ value: String(d), label, selected });
     }
     // Fallback: if no day matched (anchor outside schedule range), select day 1
-    if (liveMode.enabled && !daySelectOpts.some(o => o.selected) && daySelectOpts.length > 0) {
+    if (liveMode.enabled && !daySelectOpts.some((o) => o.selected) && daySelectOpts.length > 0) {
       daySelectOpts[0].selected = true;
     }
 
@@ -918,13 +965,17 @@ function renderScheduleTab(): string {
           <input type="checkbox" id="chk-live-mode" ${liveMode.enabled ? 'checked' : ''} />
           <span class="live-toggle-label">🔴 מצב חי</span>
         </label>
-        ${liveMode.enabled ? `
+        ${
+          liveMode.enabled
+            ? `
           <div class="live-mode-picker">
             <span class="live-picker-label">זמן נוכחי:</span>
             ${renderCustomSelect({ id: 'gm-live-day', options: daySelectOpts, className: 'input-sm' })}
             ${renderCustomSelect({ id: 'gm-live-hour', options: hourSelectOpts, className: 'input-sm' })}
           </div>
-        ` : ''}
+        `
+            : ''
+        }
       </div>`;
   }
 
@@ -935,7 +986,7 @@ function renderScheduleTab(): string {
     <div class="toolbar-right">
       ${liveModeControls}
       <span class="toolbar-group toolbar-group--generate">
-        <label class="scenarios-label" for="input-days" title="מספר ימים בשבצ\"ק">ימים
+        <label class="scenarios-label" for="input-days" title="מספר ימים בשבצ"ק">ימים
           <input type="number" id="input-days" class="input-scenarios" min="1" max="7" step="1" value="${numDays}" ${_isOptimizing ? 'disabled' : ''} />
         </label>
         <label class="scenarios-label" for="input-scenarios" title="מספר ניסיונות אופטימיזציה לבדיקה">ניסיונות
@@ -945,18 +996,18 @@ function renderScheduleTab(): string {
           ${!preflight.canGenerate ? 'title="תקן בעיות קריטיות בכללי המשימות תחילה"' : ''}>
           ${_isOptimizing ? '⏳ מייעל…' : currentSchedule ? '🔄 צור מחדש' : '⚡ צור שבצ"ק'}
         </button>
-        ${!currentSchedule && preflight.canGenerate && !_isOptimizing ? `<button class="btn-sm btn-outline" id="btn-create-manual" title="צור שבצ\"ק ריק לבנייה ידנית">✏️ בנייה ידנית</button>` : ''}
+        ${!currentSchedule && preflight.canGenerate && !_isOptimizing ? `<button class="btn-sm btn-outline" id="btn-create-manual" title="צור שבצ"ק ריק לבנייה ידנית">✏️ בנייה ידנית</button>` : ''}
       </span>
       <span class="toolbar-group toolbar-group--state">
-        ${currentSchedule ? `<button class="btn-sm ${_manualBuildActive ? 'btn-primary' : 'btn-outline'}" id="btn-manual-build" title="${_manualBuildActive ? 'יציאה ממצב בנייה ידנית' : 'בנייה ידנית של שבצ\"ק'}">${_manualBuildActive ? '✕ יציאה מבנייה ידנית' : '✏️ בנייה ידנית'}</button>` : ''}
+        ${currentSchedule ? `<button class="btn-sm ${_manualBuildActive ? 'btn-primary' : 'btn-outline'}" id="btn-manual-build" title="${_manualBuildActive ? 'יציאה ממצב בנייה ידנית' : 'בנייה ידנית של שבצ"ק'}">${_manualBuildActive ? '✕ יציאה מבנייה ידנית' : '✏️ בנייה ידנית'}</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
         <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾 שמירת שבצקים${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
         ${renderContinuityChip()}
-        ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="ייבוא נתוני המשכיות מהשבצ\"ק הקודם">📋 ייבוא המשכיות</button>` : ''}
+        ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="ייבוא נתוני המשכיות מהשבצ"ק הקודם">📋 ייבוא המשכיות</button>` : ''}
       </span>
       <span class="toolbar-group toolbar-group--day-actions">
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
-        ${currentSchedule && currentDay < store.getScheduleDays() ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ\"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
+        ${currentSchedule && currentDay < store.getScheduleDays() ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא PDF">📤 ייצוא</button>` : ''}
       </span>
     </div>
@@ -972,10 +1023,10 @@ function renderScheduleTab(): string {
   }
 
   if (!preflight.canGenerate) {
-    const crits = preflight.findings.filter(f => f.severity === 'Critical');
+    const crits = preflight.findings.filter((f) => f.severity === 'Critical');
     html += `<div class="alert alert-error">
       <strong>לא ניתן ליצור שיבוץ - נמצאו ${crits.length} בעיות קריטיות:</strong>
-      <ul>${crits.map(f => `<li>${f.message}</li>`).join('')}</ul>
+      <ul>${crits.map((f) => `<li>${f.message}</li>`).join('')}</ul>
       <p>עבור ל<strong>מסך פירוט משימות</strong> כדי לתקן אותן.</p>
     </div>`;
   }
@@ -986,7 +1037,7 @@ function renderScheduleTab(): string {
         <div class="empty-icon">${SVG_ICONS.tasks}</div>
         <p>טרם נוצר שבצ"ק.</p>
         <p class="text-muted">הגדר משתתפים ומשימות, ואז לחץ על "צור שבצ"ק" או בנה ידנית.</p>
-        <button class="btn-sm btn-outline" id="btn-create-manual-empty" title="צור שבצ\"ק ריק לבנייה ידנית" style="margin-top:12px">✏️ התחל בנייה ידנית</button>
+        <button class="btn-sm btn-outline" id="btn-create-manual-empty" title="צור שבצ"ק ריק לבנייה ידנית" style="margin-top:12px">✏️ התחל בנייה ידנית</button>
       </div>`;
     }
     return html;
@@ -1012,7 +1063,11 @@ function renderScheduleTab(): string {
   }
 
   // Main layout: content + sidebar
-  const manualCtx = { active: _manualBuildActive, selectedTaskId: _manualSelectedTaskId ?? undefined, selectedSlotId: _manualSelectedSlotId ?? undefined };
+  const manualCtx = {
+    active: _manualBuildActive,
+    selectedTaskId: _manualSelectedTaskId ?? undefined,
+    selectedSlotId: _manualSelectedSlotId ?? undefined,
+  };
   html += `<div class="schedule-layout">`;
   html += `<div class="schedule-main">`;
   html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState(), manualCtx, store.getDayStartHour())}</section>`;
@@ -1057,15 +1112,19 @@ function renderScheduleTab(): string {
 
 function renderParticipantWarehouse(schedule: Schedule): string {
   const participants = schedule.participants;
-  const l0Pool = participants.filter(p => p.level === Level.L0);
-  const seniorPool = participants.filter(p => p.level !== Level.L0);
+  const l0Pool = participants.filter((p) => p.level === Level.L0);
+  const seniorPool = participants.filter((p) => p.level !== Level.L0);
 
   // Count current-day assignments per participant
   const { start: dayStart, end: dayEnd } = getDayWindow(currentDay);
-  const dayTaskIds = new Set(schedule.tasks.filter(t => {
-    const s = new Date(t.timeBlock.start).getTime();
-    return s >= dayStart.getTime() && s < dayEnd.getTime();
-  }).map(t => t.id));
+  const dayTaskIds = new Set(
+    schedule.tasks
+      .filter((t) => {
+        const s = new Date(t.timeBlock.start).getTime();
+        return s >= dayStart.getTime() && s < dayEnd.getTime();
+      })
+      .map((t) => t.id),
+  );
   const dayAssignmentCounts = new Map<string, number>();
   for (const a of schedule.assignments) {
     if (dayTaskIds.has(a.taskId)) {
@@ -1078,7 +1137,7 @@ function renderParticipantWarehouse(schedule: Schedule): string {
   function renderPool(pool: Participant[], label: string): string {
     let filtered = pool;
     if (filterText) {
-      filtered = pool.filter(p => p.name.toLowerCase().includes(filterText));
+      filtered = pool.filter((p) => p.name.toLowerCase().includes(filterText));
     }
 
     // Sort: eligible first (if slot selected), then by name
@@ -1091,18 +1150,20 @@ function renderParticipantWarehouse(schedule: Schedule): string {
       });
     }
 
-    const cards = filtered.map(p => {
-      const dayCount = dayAssignmentCounts.get(p.id) || 0;
-      let cardClass = 'warehouse-card';
-      if (_eligibleForSelectedSlot) {
-        cardClass += _eligibleForSelectedSlot.has(p.id) ? ' wc-eligible' : ' wc-ineligible';
-      }
-      return `<div class="${cardClass}" data-pid="${p.id}" role="button" tabindex="0">
+    const cards = filtered
+      .map((p) => {
+        const dayCount = dayAssignmentCounts.get(p.id) || 0;
+        let cardClass = 'warehouse-card';
+        if (_eligibleForSelectedSlot) {
+          cardClass += _eligibleForSelectedSlot.has(p.id) ? ' wc-eligible' : ' wc-ineligible';
+        }
+        return `<div class="${cardClass}" data-pid="${p.id}" role="button" tabindex="0">
         <span class="wc-name" style="color:${groupColor(p.group)}">${escHtml(p.name)}</span>
         <span class="wc-badges">${levelBadge(p.level)} ${certBadges(p.certifications, '')}</span>
         ${dayCount > 0 ? `<span class="wc-load" title="${dayCount} שיבוצים היום">${dayCount}</span>` : ''}
       </div>`;
-    }).join('');
+      })
+      .join('');
 
     return `<div class="warehouse-pool">
       <div class="warehouse-pool-header">${label} (${filtered.length})</div>
@@ -1125,19 +1186,19 @@ function renderParticipantWarehouse(schedule: Schedule): string {
  * Includes a header with slot context and a remove button if the slot is filled.
  */
 function buildWarehouseSheetContent(schedule: Schedule): string {
-  const task = schedule.tasks.find(t => t.id === _manualSelectedTaskId);
+  const task = schedule.tasks.find((t) => t.id === _manualSelectedTaskId);
   if (!task || !_manualSelectedSlotId) return '';
-  const slot = task.slots.find(s => s.slotId === _manualSelectedSlotId);
+  const slot = task.slots.find((s) => s.slotId === _manualSelectedSlotId);
   if (!slot) return '';
 
   const existingAssignment = schedule.assignments.find(
-    a => a.taskId === task.id && a.slotId === _manualSelectedSlotId
+    (a) => a.taskId === task.id && a.slotId === _manualSelectedSlotId,
   );
   const existingParticipant = existingAssignment
-    ? schedule.participants.find(p => p.id === existingAssignment.participantId)
+    ? schedule.participants.find((p) => p.id === existingAssignment.participantId)
     : undefined;
 
-  const levels = slot.acceptableLevels.map(l => l.level).join('/');
+  const levels = slot.acceptableLevels.map((l) => l.level).join('/');
   const cleanTaskName = (task.sourceName || task.name).replace(/^D\d+\s+/, '');
   const slotLabel = slot.label ? ` — ${slot.label}` : '';
   const timeRange = `${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}`;
@@ -1153,7 +1214,9 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
   // Render participant cards
   const participants = schedule.participants;
   const filterText = _warehouseFilter.trim().toLowerCase();
-  let filtered = filterText ? participants.filter(p => p.name.toLowerCase().includes(filterText)) : [...participants];
+  const filtered = filterText
+    ? participants.filter((p) => p.name.toLowerCase().includes(filterText))
+    : [...participants];
 
   // Sort eligible first
   if (_eligibleForSelectedSlot) {
@@ -1165,16 +1228,18 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
     });
   }
 
-  const cards = filtered.map(p => {
-    let cardClass = 'warehouse-card warehouse-card-sheet';
-    if (_eligibleForSelectedSlot) {
-      cardClass += _eligibleForSelectedSlot.has(p.id) ? ' wc-eligible' : ' wc-ineligible';
-    }
-    return `<div class="${cardClass}" data-pid="${p.id}" role="button" tabindex="0">
+  const cards = filtered
+    .map((p) => {
+      let cardClass = 'warehouse-card warehouse-card-sheet';
+      if (_eligibleForSelectedSlot) {
+        cardClass += _eligibleForSelectedSlot.has(p.id) ? ' wc-eligible' : ' wc-ineligible';
+      }
+      return `<div class="${cardClass}" data-pid="${p.id}" role="button" tabindex="0">
       <span class="wc-name" style="color:${groupColor(p.group)}">${escHtml(p.name)}</span>
       <span class="wc-badges">${levelBadge(p.level)} ${certBadges(p.certifications, '')}</span>
     </div>`;
-  }).join('');
+    })
+    .join('');
 
   return `${header}
     <div class="warehouse-sheet-filter">
@@ -1196,7 +1261,7 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
   }
 
   // Check if the slot is frozen
-  const task = currentSchedule.tasks.find(t => t.id === taskId);
+  const task = currentSchedule.tasks.find((t) => t.id === taskId);
   if (!task) return;
   const lm = store.getLiveModeState();
   if (lm.enabled && !isFutureTask(task, lm.currentTimestamp)) {
@@ -1210,8 +1275,16 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
 
   const allTasks = currentSchedule.tasks;
   const disabledHC = engine ? new Set(store.getAlgorithmSettings().disabledHardConstraints) : undefined;
-  const eligible = getEligibleParticipantsForSlot(task, slotId, currentSchedule.participants, currentSchedule.assignments, allTasks, disabledHC, store.buildRestRuleMap());
-  _eligibleForSelectedSlot = new Set(eligible.map(p => p.id));
+  const eligible = getEligibleParticipantsForSlot(
+    task,
+    slotId,
+    currentSchedule.participants,
+    currentSchedule.assignments,
+    allTasks,
+    disabledHC,
+    store.buildRestRuleMap(),
+  );
+  _eligibleForSelectedSlot = new Set(eligible.map((p) => p.id));
 
   if (isSmallScreen) {
     openWarehouseSheet();
@@ -1223,18 +1296,18 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
 async function handleManualParticipantClick(participantId: string): Promise<boolean> {
   if (!currentSchedule || !engine || !_manualSelectedTaskId || !_manualSelectedSlotId) return false;
 
-  const task = currentSchedule.tasks.find(t => t.id === _manualSelectedTaskId);
+  const task = currentSchedule.tasks.find((t) => t.id === _manualSelectedTaskId);
   if (!task) return false;
-  const slot = task.slots.find(s => s.slotId === _manualSelectedSlotId);
+  const slot = task.slots.find((s) => s.slotId === _manualSelectedSlotId);
   if (!slot) return false;
-  const participant = currentSchedule.participants.find(p => p.id === participantId);
+  const participant = currentSchedule.participants.find((p) => p.id === participantId);
   if (!participant) return false;
 
   // Build assignment context for eligibility check
-  const taskMap = new Map(currentSchedule.tasks.map(t => [t.id, t]));
-  const pMap = new Map(currentSchedule.participants.map(p => [p.id, p]));
+  const taskMap = new Map(currentSchedule.tasks.map((t) => [t.id, t]));
+  const pMap = new Map(currentSchedule.participants.map((p) => [p.id, p]));
   const existingAssignment = currentSchedule.assignments.find(
-    a => a.taskId === task.id && a.slotId === _manualSelectedSlotId
+    (a) => a.taskId === task.id && a.slotId === _manualSelectedSlotId,
   );
 
   // Build participant's current assignments, excluding assignments to this task
@@ -1242,10 +1315,10 @@ async function handleManualParticipantClick(participantId: string): Promise<bool
   // must match the filter in getEligibleParticipantsForSlot (validator.ts)
   // which also uses `a.taskId !== task.id`.
   const pAssignments = currentSchedule.assignments.filter(
-    a => a.participantId === participantId && a.taskId !== task.id
+    (a) => a.participantId === participantId && a.taskId !== task.id,
   );
 
-  const taskAssignments = currentSchedule.assignments.filter(a => a.taskId === task.id);
+  const taskAssignments = currentSchedule.assignments.filter((a) => a.taskId === task.id);
   const disabledHC = new Set(store.getAlgorithmSettings().disabledHardConstraints);
 
   const reason = getRejectionReason(participant, task, slot, pAssignments, taskMap, {
@@ -1263,13 +1336,11 @@ async function handleManualParticipantClick(participantId: string): Promise<bool
 
   // Check if participant is already assigned elsewhere (not in target slot)
   const otherAssignment = currentSchedule.assignments.find(
-    a => a.participantId === participantId && !(a.taskId === task.id && a.slotId === _manualSelectedSlotId)
+    (a) => a.participantId === participantId && !(a.taskId === task.id && a.slotId === _manualSelectedSlotId),
   );
   if (otherAssignment) {
-    const otherTask = currentSchedule.tasks.find(t => t.id === otherAssignment.taskId);
-    const confirmed = await showConfirm(
-      `${participant.name} משובץ כרגע ב-"${otherTask?.name || '?'}". להעביר לכאן?`
-    );
+    const otherTask = currentSchedule.tasks.find((t) => t.id === otherAssignment.taskId);
+    const confirmed = await showConfirm(`${participant.name} משובץ כרגע ב-"${otherTask?.name || '?'}". להעביר לכאן?`);
     if (!confirmed) return false;
   }
 
@@ -1285,11 +1356,11 @@ function executeManualAssignment(
   if (!currentSchedule || !engine) return;
 
   // Push undo snapshot
-  _manualUndoStack.push(currentSchedule.assignments.map(a => ({ ...a })));
+  _manualUndoStack.push(currentSchedule.assignments.map((a) => ({ ...a })));
 
   // Remove from source slot if moving
   if (moveFrom) {
-    currentSchedule.assignments = currentSchedule.assignments.filter(a => a.id !== moveFrom.id);
+    currentSchedule.assignments = currentSchedule.assignments.filter((a) => a.id !== moveFrom.id);
   }
 
   if (existingInSlot) {
@@ -1310,8 +1381,8 @@ function executeManualAssignment(
   }
 
   // Capture info for feedback before clearing selection
-  const assignedParticipant = currentSchedule.participants.find(p => p.id === participantId);
-  const assignedTask = currentSchedule.tasks.find(t => t.id === _manualSelectedTaskId);
+  const assignedParticipant = currentSchedule.participants.find((p) => p.id === participantId);
+  const assignedTask = currentSchedule.tasks.find((t) => t.id === _manualSelectedTaskId);
   const assignedSlotId = _manualSelectedSlotId;
 
   engine.importSchedule(currentSchedule);
@@ -1326,7 +1397,9 @@ function executeManualAssignment(
   // Highlight the just-assigned slot with a pulse animation
   if (assignedTask && assignedSlotId) {
     requestAnimationFrame(() => {
-      const card = document.querySelector(`.assignment-card[data-task-id="${assignedTask.id}"][data-slot-id="${assignedSlotId}"]`);
+      const card = document.querySelector(
+        `.assignment-card[data-task-id="${assignedTask.id}"][data-slot-id="${assignedSlotId}"]`,
+      );
       if (card) {
         card.classList.add('assignment-flash');
         card.addEventListener('animationend', () => card.classList.remove('assignment-flash'), { once: true });
@@ -1337,7 +1410,7 @@ function executeManualAssignment(
 
 function handleManualRemove(assignmentId: string): void {
   if (!currentSchedule || !engine) return;
-  const a = currentSchedule.assignments.find(a => a.id === assignmentId);
+  const a = currentSchedule.assignments.find((a) => a.id === assignmentId);
   if (!a) return;
 
   if (a.status === AssignmentStatus.Frozen) {
@@ -1346,9 +1419,9 @@ function handleManualRemove(assignmentId: string): void {
   }
 
   // Push undo snapshot
-  _manualUndoStack.push(currentSchedule.assignments.map(a => ({ ...a })));
+  _manualUndoStack.push(currentSchedule.assignments.map((a) => ({ ...a })));
 
-  currentSchedule.assignments = currentSchedule.assignments.filter(x => x.id !== assignmentId);
+  currentSchedule.assignments = currentSchedule.assignments.filter((x) => x.id !== assignmentId);
   engine.importSchedule(currentSchedule);
   clearManualSelection();
   revalidateAndRefresh();
@@ -1385,7 +1458,7 @@ function openWarehouseSheet(): void {
       searchInput.addEventListener('input', () => {
         const query = searchInput.value.trim().toLowerCase();
         const cards = sheetBody.querySelectorAll('.warehouse-card[data-pid]');
-        cards.forEach(card => {
+        cards.forEach((card) => {
           const name = card.querySelector('.wc-name')?.textContent?.toLowerCase() || '';
           (card as HTMLElement).style.display = name.includes(query) ? '' : 'none';
         });
@@ -1491,7 +1564,7 @@ function renderSnapshotPanel(): string {
       <div class="snapshot-validation-error" id="snap-error">${_snapshotFormError}</div>
     </div>`;
   } else if (_snapshotFormMode === 'rename' && activeId) {
-    const active = snapshots.find(s => s.id === activeId);
+    const active = snapshots.find((s) => s.id === activeId);
     html += `<div class="snapshot-inline-form" id="snap-form">
       <div class="snapshot-form-row">
         <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" value="${active?.name || ''}" maxlength="100"${nameFieldInvalid} /></label>
@@ -1518,7 +1591,12 @@ function renderSnapshotPanel(): string {
     for (const snap of snapshots) {
       const isActive = snap.id === activeId;
       const date = new Date(snap.createdAt);
-      const dateStr = date.toLocaleDateString('he-IL', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      const dateStr = date.toLocaleDateString('he-IL', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
       html += `<div class="snapshot-item ${isActive ? 'snapshot-item-active' : ''}" data-snap-id="${snap.id}">
         <div class="snapshot-item-main">
           <span class="snapshot-item-name">${escHtml(snap.name)}</span>
@@ -1558,14 +1636,12 @@ function loadScheduleSnapshot(snapshotId: string): void {
 
   // 2. Reconcile with current participants
   const currentParticipants = store.getAllParticipants();
-  const storeIds = new Set(currentParticipants.map(p => p.id));
-  const storeMap = new Map(currentParticipants.map(p => [p.id, p]));
+  const storeIds = new Set(currentParticipants.map((p) => p.id));
+  const storeMap = new Map(currentParticipants.map((p) => [p.id, p]));
 
-  const reconciledAssignments = snapshot.schedule.assignments.filter(
-    a => storeIds.has(a.participantId),
-  );
-  const reconciledParticipants = currentParticipants.filter(
-    p => snapshot.schedule.participants.some(sp => sp.id === p.id),
+  const reconciledAssignments = snapshot.schedule.assignments.filter((a) => storeIds.has(a.participantId));
+  const reconciledParticipants = currentParticipants.filter((p) =>
+    snapshot.schedule.participants.some((sp) => sp.id === p.id),
   );
 
   const reconciledSchedule: Schedule = {
@@ -1616,20 +1692,20 @@ function loadScheduleSnapshot(snapshotId: string): void {
 
 function renderViolations(schedule: Schedule): string {
   const visible = filterVisibleViolations(schedule.violations);
-  const hard = visible.filter(v => v.severity === ViolationSeverity.Error);
-  const warn = visible.filter(v => v.severity === ViolationSeverity.Warning);
+  const hard = visible.filter((v) => v.severity === ViolationSeverity.Error);
+  const warn = visible.filter((v) => v.severity === ViolationSeverity.Warning);
 
   if (hard.length === 0 && warn.length === 0) {
     return `<div class="alert alert-ok">✓ אין הפרות אילוצים בכל ${store.getScheduleDays()} הימים.</div>`;
   }
 
   // Separate into current-day and other-day violations
-  const dayTaskIds = new Set(getFilteredTasks(schedule).map(t => t.id));
+  const dayTaskIds = new Set(getFilteredTasks(schedule).map((t) => t.id));
 
   let html = '';
   if (hard.length > 0) {
-    const today = hard.filter(v => v.taskId && dayTaskIds.has(v.taskId));
-    const other = hard.filter(v => !v.taskId || !dayTaskIds.has(v.taskId));
+    const today = hard.filter((v) => v.taskId && dayTaskIds.has(v.taskId));
+    const other = hard.filter((v) => !v.taskId || !dayTaskIds.has(v.taskId));
 
     html += `<div class="alert alert-error"><strong>הפרות חמורות (${hard.length})</strong>`;
     if (today.length > 0) {
@@ -1786,7 +1862,7 @@ function renderGanttChart(schedule: Schedule): string {
       const width = (block.durationMs / totalMs) * 100;
 
       // Cross-day indicator on gantt blocks
-      const task = filteredTasks.find(t => t.id === block.taskId);
+      const task = filteredTasks.find((t) => t.id === block.taskId);
       const crossFrom = task && taskStartsBefore(task, currentDay);
       const crossTo = task && taskEndsAfter(task, currentDay);
       const crossClass = crossFrom ? 'gantt-cross-from' : crossTo ? 'gantt-cross-to' : '';
@@ -1874,7 +1950,8 @@ function updateOverlay(): void {
     const fill = overlay.querySelector('.optim-progress-fill') as HTMLElement | null;
     if (fill) fill.style.width = `${pct}%`;
     const status = overlay.querySelector('.optim-status') as HTMLElement | null;
-    if (status) status.innerHTML = `ניסיון <strong>${attempt}</strong> / ${totalAttempts} ${lastImproved ? '<span class="optim-improved">★ שיפור!</span>' : ''}`;
+    if (status)
+      status.innerHTML = `ניסיון <strong>${attempt}</strong> / ${totalAttempts} ${lastImproved ? '<span class="optim-improved">★ שיפור!</span>' : ''}`;
     const scoreVal = overlay.querySelector('.optim-metric-value') as HTMLElement | null;
     if (scoreVal) scoreVal.textContent = bestScore.toFixed(1);
     const unfilledVal = overlay.querySelectorAll('.optim-metric-value')[1] as HTMLElement | null;
@@ -1955,21 +2032,18 @@ async function doGenerate(): Promise<void> {
   let scheduleSaved = false;
 
   try {
-    const schedule = await engine.generateScheduleAsync(
-      OPTIM_ATTEMPTS,
-      (info) => {
-        // Update progress state (in-memory only, no DOM thrash on renderAll)
-        _optimProgress = {
-          attempt: info.attempt,
-          totalAttempts: info.totalAttempts,
-          bestScore: info.currentBestScore,
-          bestUnfilled: info.currentBestUnfilled,
-          lastImproved: info.improved,
-        };
-        // Surgically update just the overlay
-        updateOverlay();
-      },
-    );
+    const schedule = await engine.generateScheduleAsync(OPTIM_ATTEMPTS, (info) => {
+      // Update progress state (in-memory only, no DOM thrash on renderAll)
+      _optimProgress = {
+        attempt: info.attempt,
+        totalAttempts: info.totalAttempts,
+        bestScore: info.currentBestScore,
+        bestUnfilled: info.currentBestUnfilled,
+        lastImproved: info.improved,
+      };
+      // Surgically update just the overlay
+      updateOverlay();
+    });
 
     // ── Atomic commit: update state in one go, then render once ──
     closeRescueModal();
@@ -2021,7 +2095,10 @@ async function doGenerate(): Promise<void> {
   if (scheduleSaved) {
     showToast(`שבצ"ק נוצר בהצלחה (${(scheduleElapsed / 1000).toFixed(1)} שניות)`, { type: 'success' });
   } else {
-    showToast('השבצ"ק נוצר אך לא נשמר — נפח האחסון בדפדפן מלא. בטעינה מחדש הוא יאבד.', { type: 'warning', duration: 8000 });
+    showToast('השבצ"ק נוצר אך לא נשמר — נפח האחסון בדפדפן מלא. בטעינה מחדש הוא יאבד.', {
+      type: 'warning',
+      duration: 8000,
+    });
   }
 }
 
@@ -2141,15 +2218,15 @@ function revalidateAndRefresh(): void {
 
 async function handleSwap(assignmentId: string): Promise<void> {
   if (!currentSchedule || !engine) return;
-  const assignment = currentSchedule.assignments.find(a => a.id === assignmentId);
+  const assignment = currentSchedule.assignments.find((a) => a.id === assignmentId);
   if (!assignment) return;
   if (assignment.status === AssignmentStatus.Frozen) {
     await showAlert('השיבוץ הזה מוקפא כי הוא בעבר. אי אפשר לשנות אותו.', { icon: '🧊' });
     return;
   }
-  const task = currentSchedule.tasks.find(t => t.id === assignment.taskId);
+  const task = currentSchedule.tasks.find((t) => t.id === assignment.taskId);
   if (!task) return;
-  const currentP = currentSchedule.participants.find(p => p.id === assignment.participantId);
+  const currentP = currentSchedule.participants.find((p) => p.id === assignment.participantId);
 
   // Pre-filter to participants who are *actually* eligible for this slot, so
   // the user doesn't have to guess-and-check through dozens of names and hit
@@ -2165,7 +2242,7 @@ async function handleSwap(assignmentId: string): Promise<void> {
     currentSchedule.tasks,
     disabledHC,
     restRuleMap,
-  ).filter(p => p.id !== assignment.participantId);
+  ).filter((p) => p.id !== assignment.participantId);
 
   if (eligible.length === 0) {
     await showAlert(
@@ -2175,24 +2252,25 @@ async function handleSwap(assignmentId: string): Promise<void> {
     return;
   }
 
-  const suggestions = eligible.map(p => `${p.name} (${p.level}, ${p.group})`);
+  const suggestions = eligible.map((p) => `${p.name} (${p.level}, ${p.group})`);
 
   const choice = await showPrompt(
     `החלפה ב-"${task.name}".\nנוכחי: ${currentP?.name}\nמוצגים ${eligible.length} משתתפים זמינים בלבד.`,
-    { title: 'החלפת משתתף', suggestions }
+    { title: 'החלפת משתתף', suggestions },
   );
   if (!choice) return;
 
-  const newP = eligible.find(
-    p => choice.includes(p.name) || choice === p.id
-  );
-  if (!newP) { await showAlert('לא נמצא משתתף בשם הזה.', { icon: '⚠️' }); return; }
+  const newP = eligible.find((p) => choice.includes(p.name) || choice === p.id);
+  if (!newP) {
+    await showAlert('לא נמצא משתתף בשם הזה.', { icon: '⚠️' });
+    return;
+  }
 
   const result = engine.swapParticipant({ assignmentId, newParticipantId: newP.id });
   currentSchedule = engine.getSchedule();
 
   if (!result.valid) {
-    const msgs = result.violations.map(v => `[${v.code}] ${v.message}`).join('\n');
+    const msgs = result.violations.map((v) => `[${v.code}] ${v.message}`).join('\n');
     await showAlert(`ההחלפה יוצרת הפרות בשבצ"ק:\n\n${msgs}`, { title: 'הפרות', icon: '⚠️' });
   } else {
     showToast('החלפה בוצעה בהצלחה', { type: 'success' });
@@ -2203,7 +2281,7 @@ async function handleSwap(assignmentId: string): Promise<void> {
 
 async function handleLock(assignmentId: string): Promise<void> {
   if (!currentSchedule || !engine) return;
-  const a = currentSchedule.assignments.find(a => a.id === assignmentId);
+  const a = currentSchedule.assignments.find((a) => a.id === assignmentId);
   if (!a) return;
 
   if (a.status === AssignmentStatus.Frozen) {
@@ -2224,9 +2302,9 @@ async function handleLock(assignmentId: string): Promise<void> {
 
 async function handleProfileSos(assignmentId: string): Promise<void> {
   if (!currentSchedule) return;
-  const assignment = currentSchedule.assignments.find(a => a.id === assignmentId);
+  const assignment = currentSchedule.assignments.find((a) => a.id === assignmentId);
   if (!assignment) return;
-  const task = currentSchedule.tasks.find(t => t.id === assignment.taskId);
+  const task = currentSchedule.tasks.find((t) => t.id === assignment.taskId);
   if (!task) return;
 
   const lm = store.getLiveModeState();
@@ -2248,10 +2326,13 @@ async function handleProfileSos(assignmentId: string): Promise<void> {
     hours.push({ value: String(h), label: `${String(h).padStart(2, '0')}:00` });
   }
 
-  const result = await showTimePicker(
-    'כדי להפעיל חילוץ, יש להגדיר את הזמן הנוכחי במצב חי.',
-    { title: 'הפעלת מצב חי', days, hours, defaultDay: '1', defaultHour: '5' },
-  );
+  const result = await showTimePicker('כדי להפעיל חילוץ, יש להגדיר את הזמן הנוכחי במצב חי.', {
+    title: 'הפעלת מצב חי',
+    days,
+    hours,
+    defaultDay: '1',
+    defaultHour: '5',
+  });
   if (!result) return;
 
   const dayIdx = parseInt(result.day, 10);
@@ -2259,7 +2340,10 @@ async function handleProfileSos(assignmentId: string): Promise<void> {
   const ts = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dayIdx - 1, hour, 0);
 
   if (!isFutureTask(task, ts)) {
-    await showAlert('הזמן שנבחר הופך את המשימה למוקפאת (בעבר). לא ניתן להפעיל חילוץ על משימה שכבר חלפה.', { title: 'לא ניתן להמשיך', icon: '⚠️' });
+    await showAlert('הזמן שנבחר הופך את המשימה למוקפאת (בעבר). לא ניתן להפעיל חילוץ על משימה שכבר חלפה.', {
+      title: 'לא ניתן להמשיך',
+      icon: '⚠️',
+    });
     return;
   }
 
@@ -2272,9 +2356,9 @@ async function handleProfileSos(assignmentId: string): Promise<void> {
 
 function openRescueModal(assignmentId: string): void {
   if (!currentSchedule) return;
-  const assignment = currentSchedule.assignments.find(a => a.id === assignmentId);
+  const assignment = currentSchedule.assignments.find((a) => a.id === assignmentId);
   if (!assignment) return;
-  const task = currentSchedule.tasks.find(t => t.id === assignment.taskId);
+  const task = currentSchedule.tasks.find((t) => t.id === assignment.taskId);
   if (!task) return;
 
   const liveMode = store.getLiveModeState();
@@ -2288,7 +2372,16 @@ function openRescueModal(assignmentId: string): void {
 
   _rescuePage = 0;
   _rescueAssignmentId = assignmentId;
-  _rescueResult = generateRescuePlans(currentSchedule, request, liveMode.currentTimestamp, _rescuePage, undefined, store.getDisabledHCSet(), store.buildRestRuleMap(), store.getDayStartHour());
+  _rescueResult = generateRescuePlans(
+    currentSchedule,
+    request,
+    liveMode.currentTimestamp,
+    _rescuePage,
+    undefined,
+    store.getDisabledHCSet(),
+    store.buildRestRuleMap(),
+    store.getDayStartHour(),
+  );
   showRescueModal();
 }
 
@@ -2424,7 +2517,10 @@ function getRescueTooltipEl(): HTMLElement {
   el.style.display = 'none';
   document.body.appendChild(el);
   el.addEventListener('mouseenter', () => {
-    if (_rescueTooltipHideTimer) { clearTimeout(_rescueTooltipHideTimer); _rescueTooltipHideTimer = null; }
+    if (_rescueTooltipHideTimer) {
+      clearTimeout(_rescueTooltipHideTimer);
+      _rescueTooltipHideTimer = null;
+    }
   });
   el.addEventListener('mouseleave', () => {
     el.style.display = 'none';
@@ -2484,7 +2580,7 @@ function computePostSwapTasks(
   tasks.sort((a, b) => a.start.getTime() - b.start.getTime());
 
   // Find the reference task index; fall back to earliest swap task
-  let refIdx = tasks.findIndex(t => t.isReference);
+  let refIdx = tasks.findIndex((t) => t.isReference);
   if (refIdx === -1) {
     // Fallback: find the earliest swap task's start time
     let anchorTime = Infinity;
@@ -2496,7 +2592,7 @@ function computePostSwapTasks(
       }
     }
     if (anchorTime !== Infinity) {
-      refIdx = tasks.findIndex(t => t.start.getTime() >= anchorTime);
+      refIdx = tasks.findIndex((t) => t.start.getTime() >= anchorTime);
     }
     if (refIdx === -1) refIdx = 0;
   }
@@ -2555,18 +2651,27 @@ function wireRescueModalEvents(): void {
     _rescuePage++;
     const liveMode = store.getLiveModeState();
     const wantTotal = (_rescuePage + 1) * 3; // PAGE_SIZE = 3
-    const result = generateRescuePlans(currentSchedule, _rescueResult.request, liveMode.currentTimestamp, 0, wantTotal, store.getDisabledHCSet(), store.buildRestRuleMap(), store.getDayStartHour());
+    const result = generateRescuePlans(
+      currentSchedule,
+      _rescueResult.request,
+      liveMode.currentTimestamp,
+      0,
+      wantTotal,
+      store.getDisabledHCSet(),
+      store.buildRestRuleMap(),
+      store.getDayStartHour(),
+    );
     // Ranks are already sequential from the engine (1-based per returned plan)
     _rescueResult = result;
     showRescueModal();
   });
 
   // Apply plan buttons
-  backdrop.querySelectorAll('.btn-apply-plan').forEach(btn => {
+  backdrop.querySelectorAll('.btn-apply-plan').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       const planId = (e.target as HTMLElement).dataset.planId;
       if (!planId || !_rescueResult || !currentSchedule || !engine) return;
-      const plan = _rescueResult.plans.find(p => p.id === planId);
+      const plan = _rescueResult.plans.find((p) => p.id === planId);
       if (!plan) return;
       applyRescuePlan(plan);
     });
@@ -2593,9 +2698,12 @@ function wireRescueModalEvents(): void {
       const existing = backdrop.querySelector('.rescue-inline-preview');
       if (existing) existing.remove();
 
-      if (_expandedRescuePid === pid) { _expandedRescuePid = null; return; }
+      if (_expandedRescuePid === pid) {
+        _expandedRescuePid = null;
+        return;
+      }
 
-      const plan = _rescueResult.plans.find(p => p.id === planId);
+      const plan = _rescueResult.plans.find((p) => p.id === planId);
       if (!plan) return;
       const participant = pMap.get(pid);
       if (!participant) return;
@@ -2616,12 +2724,15 @@ function wireRescueModalEvents(): void {
       const planId = target.dataset.planId;
       if (!pid || !planId || !_rescueResult || !currentSchedule) return;
 
-      const plan = _rescueResult.plans.find(p => p.id === planId);
+      const plan = _rescueResult.plans.find((p) => p.id === planId);
       if (!plan) return;
       const participant = pMap.get(pid);
       if (!participant) return;
 
-      if (_rescueTooltipHideTimer) { clearTimeout(_rescueTooltipHideTimer); _rescueTooltipHideTimer = null; }
+      if (_rescueTooltipHideTimer) {
+        clearTimeout(_rescueTooltipHideTimer);
+        _rescueTooltipHideTimer = null;
+      }
 
       const nextTasks = computePostSwapTasks(pid, plan, currentSchedule, _rescueResult.request.taskId);
       const tooltip = getRescueTooltipEl();
@@ -2675,7 +2786,7 @@ function applyRescuePlan(plan: RescuePlan): void {
 
   // Staleness check: verify all assignments still match the expected state
   for (const sw of plan.swaps) {
-    const a = currentSchedule.assignments.find(a => a.id === sw.assignmentId);
+    const a = currentSchedule.assignments.find((a) => a.id === sw.assignmentId);
     if (!a) {
       showRescueError('תוכנית ההחלפה מיושנת — השיבוץ לא נמצא. נסו שוב.');
       return;
@@ -2691,7 +2802,7 @@ function applyRescuePlan(plan: RescuePlan): void {
   }
 
   // Apply all swaps atomically via the chain method
-  const requests = plan.swaps.map(sw => ({
+  const requests = plan.swaps.map((sw) => ({
     assignmentId: sw.assignmentId,
     newParticipantId: sw.toParticipantId,
   }));
@@ -2716,9 +2827,15 @@ function closeRescueModal(): void {
   _rescueAssignmentId = null;
   _rescuePage = 0;
   // Remove Escape key handler
-  if (_rescueEscHandler) { document.removeEventListener('keydown', _rescueEscHandler); _rescueEscHandler = null; }
+  if (_rescueEscHandler) {
+    document.removeEventListener('keydown', _rescueEscHandler);
+    _rescueEscHandler = null;
+  }
   // Hide rescue tooltip if visible
-  if (_rescueTooltipHideTimer) { clearTimeout(_rescueTooltipHideTimer); _rescueTooltipHideTimer = null; }
+  if (_rescueTooltipHideTimer) {
+    clearTimeout(_rescueTooltipHideTimer);
+    _rescueTooltipHideTimer = null;
+  }
   if (_rescueTooltipEl) _rescueTooltipEl.style.display = 'none';
 }
 
@@ -2747,7 +2864,7 @@ function scrollToNow(storeRef: typeof store, scroll = true): void {
   if (rows.length === 0) return;
 
   // Remove previous now-row highlights
-  container.querySelectorAll('.now-row, .now-row-animate').forEach(el => {
+  container.querySelectorAll('.now-row, .now-row-animate').forEach((el) => {
     el.classList.remove('now-row', 'now-row-animate');
   });
 
@@ -2755,7 +2872,7 @@ function scrollToNow(storeRef: typeof store, scroll = true): void {
   let bestRow: HTMLTableRowElement | null = null;
   let bestTime = -Infinity;
 
-  rows.forEach(row => {
+  rows.forEach((row) => {
     const t = Number(row.dataset.time);
     if (t <= target && t > bestTime) {
       bestTime = t;
@@ -2767,7 +2884,7 @@ function scrollToNow(storeRef: typeof store, scroll = true): void {
   if (!bestRow) bestRow = rows[0];
 
   // Highlight all rows with the same time across all tables
-  container.querySelectorAll<HTMLTableRowElement>(`tr[data-time="${bestRow.dataset.time}"]`).forEach(r => {
+  container.querySelectorAll<HTMLTableRowElement>(`tr[data-time="${bestRow.dataset.time}"]`).forEach((r) => {
     r.classList.add('now-row', 'now-row-animate');
   });
 
@@ -2813,14 +2930,15 @@ function renderAll(): void {
 
   // ── Profile View: completely different layout, no re-optimization ──
   if (_viewMode === 'PROFILE_VIEW' && _profileParticipantId && currentSchedule) {
-
-    const p = currentSchedule.participants.find(pp => pp.id === _profileParticipantId);
-    if (!p) { _viewMode = 'SCHEDULE_VIEW'; _profileParticipantId = null; /* fall through */ }
-    else {
+    const p = currentSchedule.participants.find((pp) => pp.id === _profileParticipantId);
+    if (!p) {
+      _viewMode = 'SCHEDULE_VIEW';
+      _profileParticipantId = null; /* fall through */
+    } else {
       const lmProfile = store.getLiveModeState();
       const frozenIds = new Set<string>();
       if (lmProfile.enabled) {
-        const tMap = new Map(currentSchedule.tasks.map(t => [t.id, t]));
+        const tMap = new Map(currentSchedule.tasks.map((t) => [t.id, t]));
         for (const a of currentSchedule.assignments) {
           const t = tMap.get(a.taskId);
           if (t && !isFutureTask(t, lmProfile.currentTimestamp)) frozenIds.add(a.id);
@@ -2836,13 +2954,17 @@ function renderAll(): void {
 
       app.innerHTML = `<div class="profile-view-root">${renderProfileView(ctx)}</div>`;
       const root = app.querySelector('.profile-view-root') as HTMLElement;
-      wireProfileEvents(root, () => {
-        // Back to schedule: restore scroll position
-        _viewMode = 'SCHEDULE_VIEW';
-        _profileParticipantId = null;
-        _restoreScheduleScroll = true;
-        renderAll();
-      }, handleProfileSos);
+      wireProfileEvents(
+        root,
+        () => {
+          // Back to schedule: restore scroll position
+          _viewMode = 'SCHEDULE_VIEW';
+          _profileParticipantId = null;
+          _restoreScheduleScroll = true;
+          renderAll();
+        },
+        handleProfileSos,
+      );
       // Wire task tooltip in profile view too
       wireTaskTooltip(root);
       return;
@@ -2856,7 +2978,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.9.4</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.9.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2918,9 +3040,7 @@ function renderAll(): void {
 
   // Preserve scroll position during schedule re-renders (manual build,
   // returning from profile view, or any re-render while on schedule tab)
-  const shouldPreserveScroll =
-    (currentTab === 'schedule' && _manualBuildActive) ||
-    _restoreScheduleScroll;
+  const shouldPreserveScroll = (currentTab === 'schedule' && _manualBuildActive) || _restoreScheduleScroll;
   if (currentTab === 'schedule' && _manualBuildActive) {
     _scheduleScrollY = window.scrollY;
   }
@@ -2954,11 +3074,10 @@ function renderAll(): void {
   if (currentTab === 'schedule' && currentSchedule) {
     requestAnimationFrame(runKpiAnimations);
   }
-
 }
 
 function wireTabNav(container: HTMLElement): void {
-  container.querySelectorAll('.tab-btn').forEach(btn => {
+  container.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const tab = (btn as HTMLElement).dataset.tab as typeof currentTab;
       if (tab && tab !== currentTab) {
@@ -3033,7 +3152,7 @@ function animateCountUp(el: HTMLElement, target: number, decimals: number, durat
     const elapsed = now - start;
     const progress = Math.min(elapsed / duration, 1);
     // ease-out cubic
-    const eased = 1 - Math.pow(1 - progress, 3);
+    const eased = 1 - (1 - progress) ** 3;
     const current = from + (target - from) * eased;
     el.textContent = decimals > 0 ? current.toFixed(decimals) : Math.round(current).toString();
     if (progress < 1) requestAnimationFrame(step);
@@ -3084,19 +3203,19 @@ function wireFactoryReset(container: HTMLElement): void {
     btn.addEventListener('click', async () => {
       const ok = await showConfirm(
         'פעולה זו תמחק את כל הנתונים במערכת:\n' +
-        '• כל המשתתפים והגדרותיהם\n' +
-        '• כל המשימות והשיבוצים\n' +
-        '• כל הגדרות האלגוריתם והפריסטים\n' +
-        '• כל תמונות המצב השמורות\n' +
-        '• כל סטי המשתתפים וסטי המשימות\n\n' +
-        'המערכת תחזור למצב ההתחלתי כאילו הותקנה מחדש.\n' +
-        'לא ניתן לבטל פעולה זו!',
+          '• כל המשתתפים והגדרותיהם\n' +
+          '• כל המשימות והשיבוצים\n' +
+          '• כל הגדרות האלגוריתם והפריסטים\n' +
+          '• כל תמונות המצב השמורות\n' +
+          '• כל סטי המשתתפים וסטי המשימות\n\n' +
+          'המערכת תחזור למצב ההתחלתי כאילו הותקנה מחדש.\n' +
+          'לא ניתן לבטל פעולה זו!',
         {
           danger: true,
           title: '⚠ איפוס מערכת מלא',
           confirmLabel: 'כן, אפס הכל',
           cancelLabel: 'ביטול',
-        }
+        },
       );
       if (ok) {
         store.factoryReset();
@@ -3194,9 +3313,9 @@ function wireSnapshotEvents(container: HTMLElement): void {
       if (result === 'storage-full') {
         const hasSnapshots = store.getAllSnapshots().length > 0;
         _snapshotFormError = store.isStorageWedged()
-          ? (hasSnapshots
-              ? 'נפח האחסון בדפדפן מלא — מחק תמונות מצב ישנות ונסה שוב'
-              : 'נפח האחסון בדפדפן מלא — נסה לפנות מקום בהגדרות הדפדפן')
+          ? hasSnapshots
+            ? 'נפח האחסון בדפדפן מלא — מחק תמונות מצב ישנות ונסה שוב'
+            : 'נפח האחסון בדפדפן מלא — נסה לפנות מקום בהגדרות הדפדפן'
           : 'שמירת תמונת המצב נכשלה — בדוק את לוג השגיאות במסוף הדפדפן (F12)';
         renderAll();
         return;
@@ -3261,7 +3380,9 @@ function wireSnapshotEvents(container: HTMLElement): void {
     switch (action) {
       case 'load': {
         if (_snapshotDirty && currentSchedule) {
-          const ok = await showConfirm('השיבוץ הנוכחי השתנה. לטעון את תמונת המצב ולאבד את השינויים?', { title: 'טעינת תמונת מצב' });
+          const ok = await showConfirm('השיבוץ הנוכחי השתנה. לטעון את תמונת המצב ולאבד את השינויים?', {
+            title: 'טעינת תמונת מצב',
+          });
           if (!ok) return;
         }
         loadScheduleSnapshot(snapId);
@@ -3348,7 +3469,7 @@ function wireScheduleEvents(container: HTMLElement): void {
   wireSnapshotEvents(container);
 
   // Day navigator tabs
-  container.querySelectorAll('.day-tab').forEach(btn => {
+  container.querySelectorAll('.day-tab').forEach((btn) => {
     btn.addEventListener('click', () => {
       const day = parseInt((btn as HTMLElement).dataset.day || '1', 10);
       if (day !== currentDay && day >= 1) {
@@ -3396,16 +3517,25 @@ function wireScheduleEvents(container: HTMLElement): void {
   if (exportDayBtn && currentSchedule) {
     exportDayBtn.addEventListener('click', () => {
       if (!currentSchedule) return;
-      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), store.getDayStartHour(), store.buildRestRuleMap());
+      const snapshot = exportDaySnapshot(
+        currentSchedule,
+        currentDay,
+        store.getScheduleDate(),
+        store.getDayStartHour(),
+        store.buildRestRuleMap(),
+      );
       const json = JSON.stringify(snapshot, null, 2);
-      navigator.clipboard.writeText(json).then(() => {
-        showToast(`יום ${currentDay} הועתק ללוח — הדבק בשבצ"ק הבא`, { type: 'success' });
-      }).catch(() => {
-        // Fallback: populate via import modal
-        _continuityJson = json;
-        showToast('לא ניתן להעתיק ללוח — הנתונים נשמרו בזיכרון', { type: 'warning' });
-        renderAll();
-      });
+      navigator.clipboard
+        .writeText(json)
+        .then(() => {
+          showToast(`יום ${currentDay} הועתק ללוח — הדבק בשבצ"ק הבא`, { type: 'success' });
+        })
+        .catch(() => {
+          // Fallback: populate via import modal
+          _continuityJson = json;
+          showToast('לא ניתן להעתיק ללוח — הנתונים נשמרו בזיכרון', { type: 'warning' });
+          renderAll();
+        });
     });
   }
 
@@ -3419,7 +3549,13 @@ function wireScheduleEvents(container: HTMLElement): void {
       if (remainingDays < 1) return;
 
       // 1. Export snapshot for the current day
-      const snapshot = exportDaySnapshot(currentSchedule, currentDay, store.getScheduleDate(), store.getDayStartHour(), store.buildRestRuleMap());
+      const snapshot = exportDaySnapshot(
+        currentSchedule,
+        currentDay,
+        store.getScheduleDate(),
+        store.getDayStartHour(),
+        store.buildRestRuleMap(),
+      );
       _continuityJson = JSON.stringify(snapshot, null, 2);
 
       // 2. Update schedule start date to end of current day
@@ -3654,14 +3790,24 @@ function wireScheduleEvents(container: HTMLElement): void {
       window.scrollTo(0, savedScrollY);
     });
   };
-  wireCustomSelect(container, 'gm-live-day', (v) => { _liveDayVal = v; updateLiveTimestamp(); });
-  wireCustomSelect(container, 'gm-live-hour', (v) => { _liveHourVal = v; updateLiveTimestamp(); });
+  wireCustomSelect(container, 'gm-live-day', (v) => {
+    _liveDayVal = v;
+    updateLiveTimestamp();
+  });
+  wireCustomSelect(container, 'gm-live-hour', (v) => {
+    _liveHourVal = v;
+    updateLiveTimestamp();
+  });
 
   // ── Reset storage button ──
   const resetBtn = container.querySelector('#btn-reset-storage');
   if (resetBtn) {
     resetBtn.addEventListener('click', async () => {
-      const ok = await showConfirm('למחוק את כל הנתונים השמורים ולטעון מחדש? לא ניתן לבטל פעולה זו.', { danger: true, title: 'איפוס נתונים', confirmLabel: 'אפס הכל' });
+      const ok = await showConfirm('למחוק את כל הנתונים השמורים ולטעון מחדש? לא ניתן לבטל פעולה זו.', {
+        danger: true,
+        title: 'איפוס נתונים',
+        confirmLabel: 'אפס הכל',
+      });
       if (ok) {
         store.clearStorage();
         location.reload();
@@ -3833,7 +3979,7 @@ function wireExportModalEvents(): void {
   const dayPicker = backdrop.querySelector('#export-day-picker') as HTMLElement;
   const radios = backdrop.querySelectorAll('input[name="export-mode"]');
 
-  radios.forEach(r => {
+  radios.forEach((r) => {
     r.addEventListener('change', () => {
       const mode = (r as HTMLInputElement).value;
       optWeekly.classList.toggle('selected', mode === 'weekly');
@@ -3884,7 +4030,10 @@ let _tooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Hide the global tooltip immediately (used when switching to profile view). */
 function hideTooltip(): void {
-  if (_tooltipHideTimer) { clearTimeout(_tooltipHideTimer); _tooltipHideTimer = null; }
+  if (_tooltipHideTimer) {
+    clearTimeout(_tooltipHideTimer);
+    _tooltipHideTimer = null;
+  }
   if (_tooltipEl) _tooltipEl.style.display = 'none';
 }
 
@@ -3909,7 +4058,10 @@ function getTooltipEl(): HTMLElement {
   document.body.appendChild(el);
   // Keep tooltip visible while hovering over the tooltip itself
   el.addEventListener('mouseenter', () => {
-    if (_tooltipHideTimer) { clearTimeout(_tooltipHideTimer); _tooltipHideTimer = null; }
+    if (_tooltipHideTimer) {
+      clearTimeout(_tooltipHideTimer);
+      _tooltipHideTimer = null;
+    }
   });
   el.addEventListener('mouseleave', () => {
     el.style.display = 'none';
@@ -3938,44 +4090,72 @@ function getTooltipEl(): HTMLElement {
 }
 
 /** Build tooltip HTML content for a participant. */
-function buildParticipantTooltipContent(p: Participant, slotCtx?: { assignmentId: string; taskId: string; isFrozen: boolean; isLocked: boolean } | null): string {
+function buildParticipantTooltipContent(
+  p: Participant,
+  slotCtx?: { assignmentId: string; taskId: string; isFrozen: boolean; isLocked: boolean } | null,
+): string {
   // Workload data
   const numDays = store.getScheduleDays();
   const totalPeriodHours = numDays * 24;
 
   // Build breakdown using shared utility (R1)
-  let bd = { heavyHours: 0, heavyCount: 0, effectiveHeavyHours: 0, hotHours: 0, coldHours: 0, lightHours: 0, lightCount: 0, sourceHours: {} as Record<string,number>, sourceEffectiveHours: {} as Record<string,number>, sourceCounts: {} as Record<string,number>, sourceColors: {} as Record<string,string> };
+  let bd = {
+    heavyHours: 0,
+    heavyCount: 0,
+    effectiveHeavyHours: 0,
+    hotHours: 0,
+    coldHours: 0,
+    lightHours: 0,
+    lightCount: 0,
+    sourceHours: {} as Record<string, number>,
+    sourceEffectiveHours: {} as Record<string, number>,
+    sourceCounts: {} as Record<string, number>,
+    sourceColors: {} as Record<string, string>,
+  };
   if (currentSchedule) {
     const taskMap = new Map<string, Task>();
     for (const t of currentSchedule.tasks) taskMap.set(t.id, t);
     const myItems = currentSchedule.assignments
-      .filter(a => a.participantId === p.id)
-      .map(a => ({ task: taskMap.get(a.taskId)! }))
-      .filter(x => x.task);
+      .filter((a) => a.participantId === p.id)
+      .map((a) => ({ task: taskMap.get(a.taskId)! }))
+      .filter((x) => x.task);
     bd = computeTaskBreakdown(myItems);
   }
-  const { heavyHours, effectiveHeavyHours, heavyCount, lightCount, sourceHours, sourceEffectiveHours, sourceCounts, sourceColors } = bd;
+  const {
+    heavyHours,
+    effectiveHeavyHours,
+    heavyCount,
+    lightCount,
+    sourceHours,
+    sourceEffectiveHours,
+    sourceCounts,
+    sourceColors,
+  } = bd;
 
   // R7: Use effectiveHeavyHours for workload %, consistent with sidebar & profile
   const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
 
-  const certsHtml = p.certifications.length > 0
-    ? p.certifications.map((c: string) => {
-        return `<span class="tt-cert" style="background:${store.getCertColor(c)}">${escHtml(store.getCertLabel(c))}</span>`;
-      }).join(' ')
-    : '<span class="tt-dim">אין</span>';
+  const certsHtml =
+    p.certifications.length > 0
+      ? p.certifications
+          .map((c: string) => {
+            return `<span class="tt-cert" style="background:${store.getCertColor(c)}">${escHtml(store.getCertLabel(c))}</span>`;
+          })
+          .join(' ')
+      : '<span class="tt-dim">אין</span>';
   const pakalHtml = renderPakalBadges(p, store.getAllPakalDefinitionsIncludeDeleted(), 'אין');
 
   // Build per-task breakdown rows (only show sources with count > 0)
   const breakdownRows = Object.keys(sourceCounts)
-    .filter(key => sourceCounts[key] > 0)
-    .map(key => {
+    .filter((key) => sourceCounts[key] > 0)
+    .map((key) => {
       const color = sourceColors[key] || '#7f8c8d';
       return `<div class="tt-row">
         <span class="tt-label"><span style="color:${color};font-weight:600">${key}</span></span>
         <span class="tt-value">${sourceCounts[key]}× · ${sourceEffectiveHours[key].toFixed(1)} שע' אפקטיביות</span>
       </div>`;
-    }).join('');
+    })
+    .join('');
 
   // Build action buttons for the Group row (if we have slot context)
   let actionsHtml = '';
@@ -4022,7 +4202,7 @@ function hideAvailabilityPopover(): void {
 }
 
 function getAvailableParticipantsAtTime(schedule: Schedule, timeMs: number): Participant[] {
-  const taskMap = new Map(schedule.tasks.map(task => [task.id, task]));
+  const taskMap = new Map(schedule.tasks.map((task) => [task.id, task]));
   const occupied = new Set<string>();
   for (const assignment of schedule.assignments) {
     const task = taskMap.get(assignment.taskId);
@@ -4033,7 +4213,7 @@ function getAvailableParticipantsAtTime(schedule: Schedule, timeMs: number): Par
       occupied.add(assignment.participantId);
     }
   }
-  return schedule.participants.filter(participant => !occupied.has(participant.id));
+  return schedule.participants.filter((participant) => !occupied.has(participant.id));
 }
 
 function buildAvailabilityPopoverContent(timeMs: number): string {
@@ -4042,19 +4222,19 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
   const definitions = store.getPakalDefinitions();
   const available = getAvailableParticipantsAtTime(currentSchedule, timeMs);
   const pakalimByParticipantId = new Map(
-    available.map(participant => [participant.id, getEffectivePakalDefinitions(participant, definitions)])
+    available.map((participant) => [participant.id, getEffectivePakalDefinitions(participant, definitions)]),
   );
 
   const summarizeParticipants = (participants: Participant[]): string => {
     if (participants.length === 0) return 'אין פנויים כרגע';
-    const leadingNames = participants.slice(0, 2).map(participant => participant.name);
+    const leadingNames = participants.slice(0, 2).map((participant) => participant.name);
     const remaining = participants.length - leadingNames.length;
     return remaining > 0 ? `${leadingNames.join(', ')} +${remaining}` : leadingNames.join(', ');
   };
 
-  const buckets = definitions.map(def => {
-    const participants = available.filter(participant =>
-      (pakalimByParticipantId.get(participant.id) || []).some(item => item.id === def.id)
+  const buckets = definitions.map((def) => {
+    const participants = available.filter((participant) =>
+      (pakalimByParticipantId.get(participant.id) || []).some((item) => item.id === def.id),
     );
     return {
       label: def.label,
@@ -4065,8 +4245,12 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
     };
   });
 
-  const noPakalParticipants = available.filter(participant => (pakalimByParticipantId.get(participant.id)?.length ?? 0) === 0);
-  const multiPakalParticipants = available.filter(participant => (pakalimByParticipantId.get(participant.id)?.length ?? 0) > 1);
+  const noPakalParticipants = available.filter(
+    (participant) => (pakalimByParticipantId.get(participant.id)?.length ?? 0) === 0,
+  );
+  const multiPakalParticipants = available.filter(
+    (participant) => (pakalimByParticipantId.get(participant.id)?.length ?? 0) > 1,
+  );
   const totalWithPakal = available.length - noPakalParticipants.length;
   const noPakalBucket = {
     label: 'ללא שיוך לפק"ל',
@@ -4076,22 +4260,28 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
     className: 'availability-bucket availability-bucket-none',
   };
   const visibleBuckets = buckets
-    .filter(bucket => bucket.count > 0)
+    .filter((bucket) => bucket.count > 0)
     .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, 'he'));
-  const emptyBuckets = buckets.filter(bucket => bucket.count === 0);
+  const emptyBuckets = buckets.filter((bucket) => bucket.count === 0);
   const displayBuckets = [...visibleBuckets, noPakalBucket, ...emptyBuckets];
 
   const renderParticipantList = (participants: Participant[]): string => {
     if (participants.length === 0) return '<div class="availability-empty">כרגע אין פנויים בקבוצה הזאת.</div>';
-    return `<div class="availability-name-list">${participants.map(participant => {
-      const pakalCount = pakalimByParticipantId.get(participant.id)?.length ?? 0;
-      return `<div class="availability-name-row"><span class="participant-hover" data-pid="${participant.id}">${escHtml(participant.name)}</span>${pakalCount > 1 ? `<span class="badge badge-sm availability-multi-tag">${pakalCount} פק"לים</span>` : ''}</div>`;
-    }).join('')}</div>`;
+    return `<div class="availability-name-list">${participants
+      .map((participant) => {
+        const pakalCount = pakalimByParticipantId.get(participant.id)?.length ?? 0;
+        return `<div class="availability-name-row"><span class="participant-hover" data-pid="${participant.id}">${escHtml(participant.name)}</span>${pakalCount > 1 ? `<span class="badge badge-sm availability-multi-tag">${pakalCount} פק"לים</span>` : ''}</div>`;
+      })
+      .join('')}</div>`;
   };
 
-  const renderBucket = (
-    bucket: { label: string; participants: Participant[]; count: number; preview: string; className: string },
-  ): string => {
+  const renderBucket = (bucket: {
+    label: string;
+    participants: Participant[];
+    count: number;
+    preview: string;
+    className: string;
+  }): string => {
     const bucketLabel = escHtml(bucket.label);
     const preview = escHtml(bucket.preview);
     if (bucket.count === 0) {
@@ -4127,7 +4317,7 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
           </div>
         </div>
         <div class="availability-quick-stats">
-          ${quickStats.map(stat => `<div class="availability-quick-stat"><span class="availability-quick-stat-value">${stat.value}</span><span class="availability-quick-stat-label">${stat.label}</span></div>`).join('')}
+          ${quickStats.map((stat) => `<div class="availability-quick-stat"><span class="availability-quick-stat-value">${stat.value}</span><span class="availability-quick-stat-label">${stat.label}</span></div>`).join('')}
         </div>
       </div>
       <div class="availability-summary-note">למטה מופיע פירוט לפי פק"ל. משתתף עם יותר מפק"ל אחד יכול להופיע ביותר מקבוצה אחת.</div>
@@ -4135,15 +4325,18 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
       <div class="availability-bucket-list">
         ${displayBuckets.map(renderBucket).join('')}
       </div>
-      ${multiPakalParticipants.length > 0 ? `<details class="availability-overlap">
+      ${
+        multiPakalParticipants.length > 0
+          ? `<details class="availability-overlap">
         <summary><span class="availability-bucket-main"><span class="availability-bucket-label">מופיעים בכמה פק"לים</span><span class="availability-bucket-preview">כדאי לבדוק אותם קודם</span></span><span class="availability-bucket-count">${multiPakalParticipants.length}</span></summary>
         <div class="availability-overlap-note">המשתתפים כאן כבר נספרו בפירוט שלמעלה. הרשימה הזאת רק עוזרת לזהות במהירות חפיפות בין פק"לים.</div>
         ${renderParticipantList(multiPakalParticipants)}
-      </details>` : ''}
+      </details>`
+          : ''
+      }
     </div>
   `;
 }
-
 
 /** Wire event-delegated tooltip for .participant-hover elements. */
 function wireParticipantTooltip(container: HTMLElement): void {
@@ -4157,27 +4350,44 @@ function wireParticipantTooltip(container: HTMLElement): void {
     let _longPressTimer: ReturnType<typeof setTimeout> | null = null;
     let _longPressFired = false;
 
-    container.addEventListener('touchstart', (e) => {
-      const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
-      if (!target) return;
-      _longPressFired = false;
-      _longPressTimer = setTimeout(() => {
-        _longPressFired = true;
-        const pid = target.dataset.pid;
-        if (pid) navigateToProfile(pid);
-      }, 500);
-    }, { passive: true });
+    container.addEventListener(
+      'touchstart',
+      (e) => {
+        const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
+        if (!target) return;
+        _longPressFired = false;
+        _longPressTimer = setTimeout(() => {
+          _longPressFired = true;
+          const pid = target.dataset.pid;
+          if (pid) navigateToProfile(pid);
+        }, 500);
+      },
+      { passive: true },
+    );
 
     container.addEventListener('touchend', () => {
-      if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+      if (_longPressTimer) {
+        clearTimeout(_longPressTimer);
+        _longPressTimer = null;
+      }
     });
 
-    container.addEventListener('touchmove', () => {
-      if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
-    }, { passive: true });
+    container.addEventListener(
+      'touchmove',
+      () => {
+        if (_longPressTimer) {
+          clearTimeout(_longPressTimer);
+          _longPressTimer = null;
+        }
+      },
+      { passive: true },
+    );
 
     container.addEventListener('click', (e) => {
-      if (_longPressFired) { _longPressFired = false; return; }
+      if (_longPressFired) {
+        _longPressFired = false;
+        return;
+      }
       const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
       if (!target) return;
       const pid = target.dataset.pid;
@@ -4238,7 +4448,10 @@ function wireParticipantTooltip(container: HTMLElement): void {
     const p = pMap.get(pid);
     if (!p) return;
 
-    if (_tooltipHideTimer) { clearTimeout(_tooltipHideTimer); _tooltipHideTimer = null; }
+    if (_tooltipHideTimer) {
+      clearTimeout(_tooltipHideTimer);
+      _tooltipHideTimer = null;
+    }
 
     // Build slot context from data attributes on the participant-hover span
     const slotCtx = target.dataset.assignmentId
@@ -4291,7 +4504,10 @@ let _taskTooltipEl: HTMLElement | null = null;
 let _taskTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
 
 function hideTaskTooltip(): void {
-  if (_taskTooltipHideTimer) { clearTimeout(_taskTooltipHideTimer); _taskTooltipHideTimer = null; }
+  if (_taskTooltipHideTimer) {
+    clearTimeout(_taskTooltipHideTimer);
+    _taskTooltipHideTimer = null;
+  }
   if (_taskTooltipEl) _taskTooltipEl.style.display = 'none';
 }
 
@@ -4302,7 +4518,10 @@ function getTaskTooltipEl(): HTMLElement {
   el.style.display = 'none';
   document.body.appendChild(el);
   el.addEventListener('mouseenter', () => {
-    if (_taskTooltipHideTimer) { clearTimeout(_taskTooltipHideTimer); _taskTooltipHideTimer = null; }
+    if (_taskTooltipHideTimer) {
+      clearTimeout(_taskTooltipHideTimer);
+      _taskTooltipHideTimer = null;
+    }
   });
   el.addEventListener('mouseleave', () => {
     el.style.display = 'none';
@@ -4328,7 +4547,7 @@ function buildTaskTooltipContent(taskId: string): string {
   const hrs = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
 
   // Find all assignments for this task
-  const taskAssignments = currentSchedule.assignments.filter(a => a.taskId === taskId);
+  const taskAssignments = currentSchedule.assignments.filter((a) => a.taskId === taskId);
 
   // Build teammates list
   let teammatesHtml = '';
@@ -4339,13 +4558,17 @@ function buildTaskTooltipContent(taskId: string): string {
     for (const a of taskAssignments) {
       const p = pMap.get(a.participantId);
       if (!p) continue;
-      const slot = task.slots.find(s => s.slotId === a.slotId);
+      const slot = task.slots.find((s) => s.slotId === a.slotId);
       const levelColors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
-      const certsHtml = p.certifications.length > 0
-        ? p.certifications.map(c =>
-            `<span class="ttt-cert" style="background:${store.getCertColor(c)}">${escHtml(store.getCertLabel(c))}</span>`
-          ).join('')
-        : '';
+      const certsHtml =
+        p.certifications.length > 0
+          ? p.certifications
+              .map(
+                (c) =>
+                  `<span class="ttt-cert" style="background:${store.getCertColor(c)}">${escHtml(store.getCertLabel(c))}</span>`,
+              )
+              .join('')
+          : '';
       teammatesHtml += `<div class="ttt-mate">
         <div class="ttt-mate-main">
           <span class="ttt-mate-name">${p.name}</span>
@@ -4395,7 +4618,10 @@ function wireTaskTooltip(container: HTMLElement): void {
       if (existing) existing.remove();
 
       // If same task tapped again, just collapse
-      if (_expandedTaskId === taskId) { _expandedTaskId = null; return; }
+      if (_expandedTaskId === taskId) {
+        _expandedTaskId = null;
+        return;
+      }
 
       const content = buildTaskTooltipContent(taskId);
       if (!content) return;
@@ -4412,7 +4638,10 @@ function wireTaskTooltip(container: HTMLElement): void {
       const target = (e.target as HTMLElement).closest('.task-tooltip-hover[data-task-id]');
       if (target) return; // handled above
       const existing = container.querySelector('.task-inline-detail');
-      if (existing) { existing.remove(); _expandedTaskId = null; }
+      if (existing) {
+        existing.remove();
+        _expandedTaskId = null;
+      }
     });
     return;
   }
@@ -4424,7 +4653,10 @@ function wireTaskTooltip(container: HTMLElement): void {
     const taskId = target.dataset.taskId;
     if (!taskId) return;
 
-    if (_taskTooltipHideTimer) { clearTimeout(_taskTooltipHideTimer); _taskTooltipHideTimer = null; }
+    if (_taskTooltipHideTimer) {
+      clearTimeout(_taskTooltipHideTimer);
+      _taskTooltipHideTimer = null;
+    }
 
     const content = buildTaskTooltipContent(taskId);
     if (!content) return;
@@ -4493,16 +4725,14 @@ function onStoreChanged(): void {
 
   // ── 1. Refresh participants ──────────────────────────────────────────────
   const currentParticipants = store.getAllParticipants();
-  const storeIds = new Set(currentParticipants.map(p => p.id));
-  const storeMap = new Map(currentParticipants.map(p => [p.id, p]));
+  const storeIds = new Set(currentParticipants.map((p) => p.id));
+  const storeMap = new Map(currentParticipants.map((p) => [p.id, p]));
 
-  let cleanedAssignments = currentSchedule.assignments.filter(
-    a => storeIds.has(a.participantId),
-  );
+  let cleanedAssignments = currentSchedule.assignments.filter((a) => storeIds.has(a.participantId));
 
   const refreshedParticipants = currentSchedule.participants
-    .filter(p => storeIds.has(p.id))
-    .map(p => storeMap.get(p.id)!);
+    .filter((p) => storeIds.has(p.id))
+    .map((p) => storeMap.get(p.id)!);
 
   // ── 2. Sync tasks with current templates ─────────────────────────────────
   // Regenerate tasks from current template definitions so added/removed
@@ -4510,13 +4740,13 @@ function onStoreChanged(): void {
   const freshTasks = generateTasksFromTemplates();
 
   // Build a lookup: old task name → old task (names are stable across edits)
-  const oldTaskByName = new Map(currentSchedule.tasks.map(t => [t.name, t]));
+  const oldTaskByName = new Map(currentSchedule.tasks.map((t) => [t.name, t]));
 
   // Build a lookup: old slotId → assignment  (for remapping)
-  const assignBySlot = new Map(cleanedAssignments.map(a => [a.slotId, a]));
+  const assignBySlot = new Map(cleanedAssignments.map((a) => [a.slotId, a]));
 
   const remappedAssignments: typeof cleanedAssignments = [];
-  const newTasks: Task[] = freshTasks.map(freshTask => {
+  const newTasks: Task[] = freshTasks.map((freshTask) => {
     const oldTask = oldTaskByName.get(freshTask.name);
     if (!oldTask) return freshTask; // brand-new task, no assignments to carry
 
@@ -4531,7 +4761,7 @@ function onStoreChanged(): void {
     }
 
     // For each new slot, try to find a matching old slot and carry its assignment
-    const mappedSlots = freshTask.slots.map(newSlot => {
+    const mappedSlots = freshTask.slots.map((newSlot) => {
       const key = oldSlotKey(newSlot);
       const candidates = oldSlotsByKey.get(key);
       if (candidates && candidates.length > 0) {
@@ -4574,97 +4804,117 @@ function onStoreChanged(): void {
 }
 
 function init(): void {
-  // Set .touch-device / .pointer-device on <html> before first render
-  initResponsive();
+  // --- Global error safety net ---
+  window.onerror = (_msg, _src, _line, _col, err) => {
+    console.error('Unhandled error:', err ?? _msg);
+    showToast('שגיאה לא צפויה — נסה לרענן את הדף', { type: 'error', duration: 6000 });
+  };
 
-  // Apply saved theme before first render to prevent flash
-  applyTheme(getStoredTheme());
-
-  store.initStore();
-  store.subscribe(onStoreChanged);
-  store.subscribeAlgorithmChange(() => {
-    if (currentSchedule) _scheduleDirty = true;
+  window.addEventListener('unhandledrejection', (e) => {
+    console.error('Unhandled promise rejection:', e.reason);
+    showToast('שגיאה לא צפויה — נסה לרענן את הדף', { type: 'error', duration: 6000 });
   });
-  store.setSaveErrorHandler((_err, info) => {
-    // reportSaveError() in config-store already throttles invocations to at
-    // most once per ~15s, so this is safe to call directly. Use a distinct
-    // message for quota-exceeded so the user knows what action to take.
-    if (info.isQuota) {
-      showToast(
-        'נפח האחסון בדפדפן מלא — מחק תמונות-מצב או סטים ישנים כדי להמשיך לשמור.',
-        { type: 'error', duration: 8000 },
+
+  try {
+    // Set .touch-device / .pointer-device on <html> before first render
+    initResponsive();
+
+    // Apply saved theme before first render to prevent flash
+    applyTheme(getStoredTheme());
+
+    store.initStore();
+    store.subscribe(onStoreChanged);
+    store.subscribeAlgorithmChange(() => {
+      if (currentSchedule) _scheduleDirty = true;
+    });
+    store.setSaveErrorHandler((_err, info) => {
+      // reportSaveError() in config-store already throttles invocations to at
+      // most once per ~15s, so this is safe to call directly. Use a distinct
+      // message for quota-exceeded so the user knows what action to take.
+      if (info.isQuota) {
+        showToast('נפח האחסון בדפדפן מלא — מחק תמונות-מצב או סטים ישנים כדי להמשיך לשמור.', {
+          type: 'error',
+          duration: 8000,
+        });
+      } else {
+        showToast('שמירת נתונים נכשלה — ייתכן שהדפדפן חסם אחסון מקומי', { type: 'error', duration: 5000 });
+      }
+    });
+
+    // Restore tab/day from URL hash so mid-work reloads keep context
+    readHash();
+
+    // Restore persisted schedule (if any) so it survives page reloads
+    const savedSchedule = store.loadSchedule();
+    if (savedSchedule) {
+      const algoSettings = store.getAlgorithmSettings();
+      const currentParticipants = store.getAllParticipants();
+
+      // Reconcile with current participant roster (participants may have been
+      // added/removed since the schedule was saved)
+      const storeIds = new Set(currentParticipants.map((p) => p.id));
+      const reconciledAssignments = savedSchedule.assignments.filter((a) => storeIds.has(a.participantId));
+      const reconciledParticipants = currentParticipants.filter((p) =>
+        savedSchedule.participants.some((sp) => sp.id === p.id),
       );
-    } else {
-      showToast('שמירת נתונים נכשלה — ייתכן שהדפדפן חסם אחסון מקומי', { type: 'error', duration: 5000 });
+
+      const reconciledSchedule: Schedule = {
+        ...savedSchedule,
+        participants: reconciledParticipants,
+        assignments: reconciledAssignments,
+      };
+
+      engine = new SchedulingEngine(
+        algoSettings.config,
+        store.getDisabledHCSet(),
+        store.buildRestRuleMap(),
+        store.getDayStartHour(),
+      );
+      engine.addParticipants(reconciledParticipants);
+      engine.addTasks(savedSchedule.tasks);
+      engine.importSchedule(reconciledSchedule);
+      engine.revalidateFull();
+      currentSchedule = engine.getSchedule()!;
+      currentDay = 1;
+      _scheduleDirty = false;
+
+      // Apply live mode freeze if active
+      const liveMode = store.getLiveModeState();
+      if (liveMode.enabled) {
+        freezeAssignments(currentSchedule, liveMode.currentTimestamp);
+      }
     }
-  });
 
-  // Restore tab/day from URL hash so mid-work reloads keep context
-  readHash();
+    renderAll();
 
-  // Restore persisted schedule (if any) so it survives page reloads
-  const savedSchedule = store.loadSchedule();
-  if (savedSchedule) {
-    const algoSettings = store.getAlgorithmSettings();
-    const currentParticipants = store.getAllParticipants();
+    // Update the live clock every 30 seconds without a full re-render
+    setInterval(() => {
+      const el = document.getElementById('live-clock');
+      if (el) el.textContent = formatLiveClock();
+    }, 30_000);
 
-    // Reconcile with current participant roster (participants may have been
-    // added/removed since the schedule was saved)
-    const storeIds = new Set(currentParticipants.map(p => p.id));
-    const reconciledAssignments = savedSchedule.assignments.filter(
-      a => storeIds.has(a.participantId),
-    );
-    const reconciledParticipants = currentParticipants.filter(
-      p => savedSchedule.participants.some(sp => sp.id === p.id),
-    );
+    // Sync tab/day when user navigates with browser back/forward
+    window.addEventListener('popstate', () => {
+      readHash();
+      renderAll();
+    });
 
-    const reconciledSchedule: Schedule = {
-      ...savedSchedule,
-      participants: reconciledParticipants,
-      assignments: reconciledAssignments,
-    };
-
-    engine = new SchedulingEngine(
-      algoSettings.config,
-      store.getDisabledHCSet(),
-      store.buildRestRuleMap(),
-      store.getDayStartHour(),
-    );
-    engine.addParticipants(reconciledParticipants);
-    engine.addTasks(savedSchedule.tasks);
-    engine.importSchedule(reconciledSchedule);
-    engine.revalidateFull();
-    currentSchedule = engine.getSchedule()!;
-    currentDay = 1;
-    _scheduleDirty = false;
-
-    // Apply live mode freeze if active
-    const liveMode = store.getLiveModeState();
-    if (liveMode.enabled) {
-      freezeAssignments(currentSchedule, liveMode.currentTimestamp);
+    // Flush any pending debounced save on page unload to prevent data loss
+    window.addEventListener('beforeunload', (e) => {
+      store.flushPendingSave();
+      if (_isOptimizing) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+  } catch (err) {
+    console.error('Init failed:', err);
+    const app = document.getElementById('app');
+    if (app) {
+      app.innerHTML =
+        '<div style="text-align:center;padding:2rem;font-size:1.2rem;color:#b00">שגיאה באתחול האפליקציה — נסה לרענן את הדף</div>';
     }
   }
-
-  renderAll();
-
-  // Update the live clock every 30 seconds without a full re-render
-  setInterval(() => {
-    const el = document.getElementById('live-clock');
-    if (el) el.textContent = formatLiveClock();
-  }, 30_000);
-
-  // Sync tab/day when user navigates with browser back/forward
-  window.addEventListener('popstate', () => { readHash(); renderAll(); });
-
-  // Flush any pending debounced save on page unload to prevent data loss
-  window.addEventListener('beforeunload', (e) => {
-    store.flushPendingSave();
-    if (_isOptimizing) {
-      e.preventDefault();
-      e.returnValue = '';
-    }
-  });
-
 }
 
 document.addEventListener('DOMContentLoaded', init);

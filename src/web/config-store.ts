@@ -7,43 +7,40 @@
  */
 
 import {
-  Participant,
+  type AlgorithmPreset,
+  type AlgorithmSettings,
+  type AvailabilityWindow,
+  type CertificationDefinition,
+  type DateUnavailability,
+  DEFAULT_ALGORITHM_SETTINGS,
+  DEFAULT_CERTIFICATION_DEFINITIONS,
+  DEFAULT_PRESET,
+  type HardConstraintCode,
   Level,
   LevelEntry,
-  CertificationDefinition,
-  DEFAULT_CERTIFICATION_DEFINITIONS,
-  PakalDefinition,
-  TaskTemplate,
-  SlotTemplate,
-  SubTeamTemplate,
-  AvailabilityWindow,
-  DateUnavailability,
-  LiveModeState,
-  Schedule,
-  AlgorithmSettings,
-  DEFAULT_ALGORITHM_SETTINGS,
-  HardConstraintCode,
+  type LiveModeState,
+  type OneTimeTask,
+  type PakalDefinition,
+  type Participant,
+  type ParticipantSet,
+  type ParticipantSnapshot,
+  type RestRule,
+  type Schedule,
   SchedulerConfig,
-  AlgorithmPreset,
-  DEFAULT_PRESET,
-  ScheduleSnapshot,
-  ParticipantSet,
-  ParticipantSnapshot,
-  TaskSet,
-  OneTimeTask,
-  RestRule,
+  type ScheduleSnapshot,
+  type SlotTemplate,
+  type SubTeamTemplate,
+  type TaskSet,
+  type TaskTemplate,
 } from '../models/types';
+import { normalizeCertificationDefinitions, sanitizeCertificationIds } from './certification-utils';
 import {
+  clonePakalDefinitions,
   DEFAULT_PAKAL_DEFINITIONS,
   HORESH_PAKAL_ID,
-  clonePakalDefinitions,
   normalizePakalDefinitions,
   sanitizePakalIds,
 } from './pakal-utils';
-import {
-  normalizeCertificationDefinitions,
-  sanitizeCertificationIds,
-} from './certification-utils';
 
 // ─── ID Generation ───────────────────────────────────────────────────────────
 
@@ -103,7 +100,8 @@ function isQuotaExceededError(err: unknown): boolean {
       err.name === 'QuotaExceededError' ||
       err.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
       err.name === 'QUOTA_EXCEEDED_ERR'
-    ) return true;
+    )
+      return true;
   }
   const msg = (err as { message?: unknown })?.message;
   if (typeof msg === 'string' && /quota|storage/i.test(msg)) return true;
@@ -147,7 +145,7 @@ export function getStorageUsage(): { key: string; bytes: number }[] & { total: n
     STORAGE_KEY_TASK_SETS,
     STORAGE_KEY_ACTIVE_TASK_SET,
   ];
-  const rows = keys.map(key => {
+  const rows = keys.map((key) => {
     let bytes = 0;
     try {
       const raw = localStorage.getItem(key);
@@ -174,7 +172,11 @@ export function subscribe(fn: Listener): () => void {
 
 function notify(): void {
   for (const fn of listeners) {
-    try { fn(); } catch (err) { console.error('[Store] Listener threw:', err); }
+    try {
+      fn();
+    } catch (err) {
+      console.error('[Store] Listener threw:', err);
+    }
   }
   // Auto-persist state to localStorage (debounced)
   debouncedSave();
@@ -196,7 +198,11 @@ export function subscribeAlgorithmChange(fn: Listener): () => void {
 
 function notifyAlgorithmChanged(): void {
   for (const fn of _algoListeners) {
-    try { fn(); } catch (err) { console.error('[Store] Algorithm listener threw:', err); }
+    try {
+      fn();
+    } catch (err) {
+      console.error('[Store] Algorithm listener threw:', err);
+    }
   }
 }
 
@@ -234,38 +240,59 @@ function captureSnapshot(): StoreSnapshot {
       : {
           ...p,
           certifications: [...p.certifications],
-          availability: p.availability.map(w => ({ start: new Date(w.start.getTime()), end: new Date(w.end.getTime()) })),
-          dateUnavailability: [...(p.dateUnavailability || [])].map(r => ({ ...r })),
+          availability: p.availability.map((w) => ({
+            start: new Date(w.start.getTime()),
+            end: new Date(w.end.getTime()),
+          })),
+          dateUnavailability: [...(p.dateUnavailability || [])].map((r) => ({ ...r })),
         };
     const rawDus = dateUnavailabilities.get(id) || [];
     ps.push({
       p: clonedP,
-      dateUnavails: useStructured
-        ? structuredClone(rawDus)
-        : rawDus.map(r => ({ ...r })),
+      dateUnavails: useStructured ? structuredClone(rawDus) : rawDus.map((r) => ({ ...r })),
     });
   }
   const tpls: TaskTemplate[] = useStructured
     ? structuredClone([...taskTemplates.values()])
-    : [...taskTemplates.values()].map(tpl => ({
+    : [...taskTemplates.values()].map((tpl) => ({
         ...tpl,
-        loadWindows: (tpl.loadWindows || []).map(w => ({ ...w })),
-        slots: tpl.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
-        subTeams: tpl.subTeams.map(st => ({
+        loadWindows: (tpl.loadWindows || []).map((w) => ({ ...w })),
+        slots: tpl.slots.map((s) => ({
+          ...s,
+          acceptableLevels: [...s.acceptableLevels],
+          requiredCertifications: [...s.requiredCertifications],
+          forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
+        })),
+        subTeams: tpl.subTeams.map((st) => ({
           ...st,
-          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
+          slots: st.slots.map((s) => ({
+            ...s,
+            acceptableLevels: [...s.acceptableLevels],
+            requiredCertifications: [...s.requiredCertifications],
+            forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
+          })),
         })),
       }));
   const ots: OneTimeTask[] = useStructured
     ? structuredClone([...oneTimeTasks.values()])
-    : [...oneTimeTasks.values()].map(ot => ({
+    : [...oneTimeTasks.values()].map((ot) => ({
         ...ot,
         scheduledDate: new Date(ot.scheduledDate.getTime()),
-        loadWindows: (ot.loadWindows || []).map(w => ({ ...w })),
-        slots: ot.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
-        subTeams: ot.subTeams.map(st => ({
+        loadWindows: (ot.loadWindows || []).map((w) => ({ ...w })),
+        slots: ot.slots.map((s) => ({
+          ...s,
+          acceptableLevels: [...s.acceptableLevels],
+          requiredCertifications: [...s.requiredCertifications],
+          forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
+        })),
+        subTeams: ot.subTeams.map((st) => ({
           ...st,
-          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
+          slots: st.slots.map((s) => ({
+            ...s,
+            acceptableLevels: [...s.acceptableLevels],
+            requiredCertifications: [...s.requiredCertifications],
+            forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
+          })),
         })),
       }));
   const nwPairs: Array<[string, string[]]> = [];
@@ -278,8 +305,8 @@ function captureSnapshot(): StoreSnapshot {
     oneTimeTasks: ots,
     notWithPairs: nwPairs,
     pakalDefinitions: clonePakalDefinitions(pakalDefinitions),
-    certificationDefinitions: certificationDefinitions.map(d => ({ ...d })),
-    restRules: _restRules.map(r => ({ ...r })),
+    certificationDefinitions: certificationDefinitions.map((d) => ({ ...d })),
+    restRules: _restRules.map((r) => ({ ...r })),
   };
 }
 
@@ -297,17 +324,21 @@ function restoreSnapshot(snap: StoreSnapshot): void {
       : {
           ...entry.p,
           certifications: [...entry.p.certifications],
-          availability: entry.p.availability.map(w => ({ start: new Date(w.start.getTime()), end: new Date(w.end.getTime()) })),
-          dateUnavailability: (entry.dateUnavails || []).map(r => ({ ...r })),
+          availability: entry.p.availability.map((w) => ({
+            start: new Date(w.start.getTime()),
+            end: new Date(w.end.getTime()),
+          })),
+          dateUnavailability: (entry.dateUnavails || []).map((r) => ({ ...r })),
         };
     if (!useStructured) {
-      p.dateUnavailability = (entry.dateUnavails || []).map(r => ({ ...r }));
+      p.dateUnavailability = (entry.dateUnavails || []).map((r) => ({ ...r }));
     }
     participants.set(p.id, p);
     if (entry.dateUnavails && entry.dateUnavails.length > 0) {
-      dateUnavailabilities.set(p.id, useStructured
-        ? structuredClone(entry.dateUnavails)
-        : entry.dateUnavails.map(r => ({ ...r })));
+      dateUnavailabilities.set(
+        p.id,
+        useStructured ? structuredClone(entry.dateUnavails) : entry.dateUnavails.map((r) => ({ ...r })),
+      );
     }
   }
 
@@ -326,7 +357,7 @@ function restoreSnapshot(snap: StoreSnapshot): void {
   syncNotWithToParticipants();
 
   pakalDefinitions = normalizePakalDefinitions(snap.pakalDefinitions);
-  certificationDefinitions = snap.certificationDefinitions.map(d => ({ ...d }));
+  certificationDefinitions = snap.certificationDefinitions.map((d) => ({ ...d }));
   for (const p of participants.values()) {
     p.pakalIds = sanitizePakalIds(p.pakalIds, pakalDefinitions);
   }
@@ -345,11 +376,21 @@ function restoreSnapshot(snap: StoreSnapshot): void {
     for (const tpl of snap.taskTemplates) {
       taskTemplates.set(tpl.id, {
         ...tpl,
-        loadWindows: (tpl.loadWindows || []).map(w => ({ ...w })),
-        slots: tpl.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
-        subTeams: tpl.subTeams.map(st => ({
+        loadWindows: (tpl.loadWindows || []).map((w) => ({ ...w })),
+        slots: tpl.slots.map((s) => ({
+          ...s,
+          acceptableLevels: [...s.acceptableLevels],
+          requiredCertifications: [...s.requiredCertifications],
+          forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
+        })),
+        subTeams: tpl.subTeams.map((st) => ({
           ...st,
-          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
+          slots: st.slots.map((s) => ({
+            ...s,
+            acceptableLevels: [...s.acceptableLevels],
+            requiredCertifications: [...s.requiredCertifications],
+            forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
+          })),
         })),
       });
     }
@@ -357,25 +398,35 @@ function restoreSnapshot(snap: StoreSnapshot): void {
 
   oneTimeTasks.clear();
   if (useStructured) {
-    for (const ot of (snap.oneTimeTasks || [])) {
+    for (const ot of snap.oneTimeTasks || []) {
       oneTimeTasks.set(ot.id, structuredClone(ot));
     }
   } else {
-    for (const ot of (snap.oneTimeTasks || [])) {
+    for (const ot of snap.oneTimeTasks || []) {
       oneTimeTasks.set(ot.id, {
         ...ot,
         scheduledDate: new Date(ot.scheduledDate.getTime()),
-        loadWindows: (ot.loadWindows || []).map(w => ({ ...w })),
-        slots: ot.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
-        subTeams: ot.subTeams.map(st => ({
+        loadWindows: (ot.loadWindows || []).map((w) => ({ ...w })),
+        slots: ot.slots.map((s) => ({
+          ...s,
+          acceptableLevels: [...s.acceptableLevels],
+          requiredCertifications: [...s.requiredCertifications],
+          forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
+        })),
+        subTeams: ot.subTeams.map((st) => ({
           ...st,
-          slots: st.slots.map(s => ({ ...s, acceptableLevels: [...s.acceptableLevels], requiredCertifications: [...s.requiredCertifications], forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined })),
+          slots: st.slots.map((s) => ({
+            ...s,
+            acceptableLevels: [...s.acceptableLevels],
+            requiredCertifications: [...s.requiredCertifications],
+            forbiddenCertifications: s.forbiddenCertifications ? [...s.forbiddenCertifications] : undefined,
+          })),
         })),
       });
     }
   }
 
-  _restRules = (snap.restRules || []).map(r => ({ ...r }));
+  _restRules = (snap.restRules || []).map((r) => ({ ...r }));
 }
 
 /**
@@ -431,30 +482,30 @@ let pakalDefinitions: PakalDefinition[] = clonePakalDefinitions(DEFAULT_PAKAL_DE
 
 // ─── Certification Definitions ──────────────────────────────────────────────
 
-let certificationDefinitions: CertificationDefinition[] = DEFAULT_CERTIFICATION_DEFINITIONS.map(d => ({ ...d }));
+let certificationDefinitions: CertificationDefinition[] = DEFAULT_CERTIFICATION_DEFINITIONS.map((d) => ({ ...d }));
 
 export function getCertificationDefinitions(): CertificationDefinition[] {
-  return certificationDefinitions.filter(d => !d.deleted).map(d => ({ ...d }));
+  return certificationDefinitions.filter((d) => !d.deleted).map((d) => ({ ...d }));
 }
 
 export function getCertificationById(id: string): CertificationDefinition | undefined {
-  const def = certificationDefinitions.find(d => d.id === id);
+  const def = certificationDefinitions.find((d) => d.id === id);
   return def ? { ...def } : undefined;
 }
 
 export function getCertLabel(certId: string): string {
-  return certificationDefinitions.find(d => d.id === certId)?.label ?? certId;
+  return certificationDefinitions.find((d) => d.id === certId)?.label ?? certId;
 }
 
 export function getCertColor(certId: string): string {
-  return certificationDefinitions.find(d => d.id === certId)?.color ?? '#7f8c8d';
+  return certificationDefinitions.find((d) => d.id === certId)?.color ?? '#7f8c8d';
 }
 
 export function addCertification(label: string, color: string): CertificationDefinition {
   const trimmed = label.trim();
   if (!trimmed) throw new Error('Certification label cannot be empty');
   if (!color || !/^#[0-9a-fA-F]{6}$/.test(color)) throw new Error('Invalid hex color');
-  if (certificationDefinitions.some(d => !d.deleted && d.label === trimmed)) {
+  if (certificationDefinitions.some((d) => !d.deleted && d.label === trimmed)) {
     throw new Error(`Certification "${trimmed}" already exists`);
   }
   pushSnapshot();
@@ -466,7 +517,7 @@ export function addCertification(label: string, color: string): CertificationDef
 
 export function updateCertificationColor(id: string, color: string): void {
   if (!color || !/^#[0-9a-fA-F]{6}$/.test(color)) throw new Error('Invalid hex color');
-  const def = certificationDefinitions.find(d => d.id === id && !d.deleted);
+  const def = certificationDefinitions.find((d) => d.id === id && !d.deleted);
   if (!def) return;
   if (def.color === color) return;
   pushSnapshot();
@@ -475,7 +526,7 @@ export function updateCertificationColor(id: string, color: string): void {
 }
 
 export function removeCertification(id: string): void {
-  const def = certificationDefinitions.find(d => d.id === id && !d.deleted);
+  const def = certificationDefinitions.find((d) => d.id === id && !d.deleted);
   if (!def) return;
   pushSnapshot();
   def.deleted = true;
@@ -489,12 +540,12 @@ export function getCertificationUsage(id: string): { participantCount: number; s
     if (p.certifications.includes(id)) participantCount++;
   }
   for (const tpl of taskTemplates.values()) {
-    for (const s of [...tpl.slots, ...tpl.subTeams.flatMap(st => st.slots)]) {
+    for (const s of [...tpl.slots, ...tpl.subTeams.flatMap((st) => st.slots)]) {
       if (s.requiredCertifications.includes(id) || s.forbiddenCertifications?.includes(id)) slotCount++;
     }
   }
   for (const ot of oneTimeTasks.values()) {
-    for (const s of [...ot.slots, ...ot.subTeams.flatMap(st => st.slots)]) {
+    for (const s of [...ot.slots, ...ot.subTeams.flatMap((st) => st.slots)]) {
       if (s.requiredCertifications.includes(id) || s.forbiddenCertifications?.includes(id)) slotCount++;
     }
   }
@@ -517,7 +568,7 @@ export function ensureCertificationDefinitions(definitions: CertificationDefinit
 }
 
 export function getPakalDefinitions(): PakalDefinition[] {
-  return clonePakalDefinitions(pakalDefinitions.filter(d => !d.deleted));
+  return clonePakalDefinitions(pakalDefinitions.filter((d) => !d.deleted));
 }
 
 export function getAllPakalDefinitionsIncludeDeleted(): PakalDefinition[] {
@@ -525,18 +576,20 @@ export function getAllPakalDefinitionsIncludeDeleted(): PakalDefinition[] {
 }
 
 export function getPakalById(id: string): PakalDefinition | undefined {
-  const def = pakalDefinitions.find(d => d.id === id);
+  const def = pakalDefinitions.find((d) => d.id === id);
   return def ? { ...def } : undefined;
 }
 
 export function getPakalLabel(pakalId: string): string {
-  return pakalDefinitions.find(d => d.id === pakalId)?.label ?? pakalId;
+  return pakalDefinitions.find((d) => d.id === pakalId)?.label ?? pakalId;
 }
 
 export function addPakal(label: string): { definition?: PakalDefinition; error?: string } {
   const normalizedLabel = normalizePakalLabel(label);
   if (!normalizedLabel) return { error: 'שם פק"ל לא יכול להיות ריק' };
-  const duplicate = pakalDefinitions.find(def => !def.deleted && def.label.toLowerCase() === normalizedLabel.toLowerCase());
+  const duplicate = pakalDefinitions.find(
+    (def) => !def.deleted && def.label.toLowerCase() === normalizedLabel.toLowerCase(),
+  );
   if (duplicate) return { error: 'פק"ל כזה כבר קיים' };
 
   pushSnapshot();
@@ -552,10 +605,12 @@ export function addPakal(label: string): { definition?: PakalDefinition; error?:
 export function renamePakal(id: string, label: string): string | null {
   const normalizedLabel = normalizePakalLabel(label);
   if (!normalizedLabel) return 'שם פק"ל לא יכול להיות ריק';
-  const definition = pakalDefinitions.find(def => def.id === id && !def.deleted);
+  const definition = pakalDefinitions.find((def) => def.id === id && !def.deleted);
   if (!definition) return 'פק"ל לא נמצא';
 
-  const duplicate = pakalDefinitions.find(def => def.id !== id && !def.deleted && def.label.toLowerCase() === normalizedLabel.toLowerCase());
+  const duplicate = pakalDefinitions.find(
+    (def) => def.id !== id && !def.deleted && def.label.toLowerCase() === normalizedLabel.toLowerCase(),
+  );
   if (duplicate) return 'פק"ל כזה כבר קיים';
 
   pushSnapshot();
@@ -574,7 +629,7 @@ export function getPakalUsageCount(id: string): number {
 }
 
 export function removePakal(id: string): void {
-  const def = pakalDefinitions.find(d => d.id === id && !d.deleted);
+  const def = pakalDefinitions.find((d) => d.id === id && !d.deleted);
   if (!def) return;
   pushSnapshot();
   def.deleted = true;
@@ -612,8 +667,12 @@ function defaultScheduleDate(): Date {
 let scheduleDate: Date = defaultScheduleDate();
 let scheduleDays: number = 7;
 
-export function getScheduleDate(): Date { return scheduleDate; }
-export function getScheduleDays(): number { return scheduleDays; }
+export function getScheduleDate(): Date {
+  return scheduleDate;
+}
+export function getScheduleDays(): number {
+  return scheduleDays;
+}
 export function setScheduleDate(d: Date): void {
   pushSnapshot();
   scheduleDate = d;
@@ -632,18 +691,28 @@ export function setScheduleDays(n: number): void {
 let _restRules: RestRule[] = [];
 
 /** Return all non-deleted rest rules. */
-export function getRestRules(): RestRule[] { return _restRules.filter(r => !r.deleted); }
+export function getRestRules(): RestRule[] {
+  return _restRules.filter((r) => !r.deleted);
+}
 
 /** Return all rest rules including soft-deleted tombstones (for orphan display). */
-export function getAllRestRules(): RestRule[] { return _restRules; }
+export function getAllRestRules(): RestRule[] {
+  return _restRules;
+}
 
 /** Look up a rest rule by ID (includes tombstones). */
-export function getRestRuleById(id: string): RestRule | undefined { return _restRules.find(r => r.id === id); }
+export function getRestRuleById(id: string): RestRule | undefined {
+  return _restRules.find((r) => r.id === id);
+}
 
 /** Create a new rest rule. Returns the created rule. */
 export function addRestRule(label: string, durationHours: number): RestRule {
   pushSnapshot();
-  const rule: RestRule = { id: uid('rr'), label: label.trim(), durationHours: Math.max(0.5, Math.min(24, durationHours)) };
+  const rule: RestRule = {
+    id: uid('rr'),
+    label: label.trim(),
+    durationHours: Math.max(0.5, Math.min(24, durationHours)),
+  };
   _restRules.push(rule);
   notify();
   return rule;
@@ -651,7 +720,7 @@ export function addRestRule(label: string, durationHours: number): RestRule {
 
 /** Update an existing non-deleted rest rule. */
 export function updateRestRule(id: string, updates: { label?: string; durationHours?: number }): void {
-  const rule = _restRules.find(r => r.id === id && !r.deleted);
+  const rule = _restRules.find((r) => r.id === id && !r.deleted);
   if (!rule) return;
   pushSnapshot();
   if (updates.label !== undefined) rule.label = updates.label.trim();
@@ -661,7 +730,7 @@ export function updateRestRule(id: string, updates: { label?: string; durationHo
 
 /** Soft-delete a rest rule. Tasks referencing it become orphans. */
 export function removeRestRule(id: string): void {
-  const rule = _restRules.find(r => r.id === id && !r.deleted);
+  const rule = _restRules.find((r) => r.id === id && !r.deleted);
   if (!rule) return;
   pushSnapshot();
   rule.deleted = true;
@@ -680,10 +749,12 @@ export function buildRestRuleMap(): Map<string, number> {
 function getDefaultAvailability(): AvailabilityWindow[] {
   const d = scheduleDate;
   // Cover the full multi-day window plus buffer for overnight tasks
-  return [{
-    start: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0),
-    end: new Date(d.getFullYear(), d.getMonth(), d.getDate() + scheduleDays, 12, 0),
-  }];
+  return [
+    {
+      start: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0),
+      end: new Date(d.getFullYear(), d.getMonth(), d.getDate() + scheduleDays, 12, 0),
+    },
+  ];
 }
 
 function computeAvailability(participantId: string): AvailabilityWindow[] {
@@ -704,9 +775,11 @@ function computeAvailability(participantId: string): AvailabilityWindow[] {
             end: new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1, 0, 0),
           });
         } else {
-          let endH = rule.endHour;
+          const endH = rule.endHour;
           let endDay = dayDate.getDate();
-          if (endH < rule.startHour) { endDay += 1; } // crosses midnight
+          if (endH < rule.startHour) {
+            endDay += 1;
+          } // crosses midnight
           expandedBlackouts.push({
             start: new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), rule.startHour, 0),
             end: new Date(dayDate.getFullYear(), dayDate.getMonth(), endDay, endH, 0),
@@ -759,12 +832,15 @@ export function isParticipantNameTaken(name: string, excludeId?: string): boolea
 }
 
 export function addParticipant(data: {
-  name: string; level?: Level;
-  certifications?: string[]; pakalIds?: string[]; group: string;
+  name: string;
+  level?: Level;
+  certifications?: string[];
+  pakalIds?: string[];
+  group: string;
 }): Participant {
   pushSnapshot();
   const id = uid('p');
-  const firstActiveId = certificationDefinitions.find(d => !d.deleted)?.id;
+  const firstActiveId = certificationDefinitions.find((d) => !d.deleted)?.id;
   const certs = data.certifications ?? (firstActiveId ? [firstActiveId] : []);
   const pIds = sanitizePakalIds(data.pakalIds, pakalDefinitions);
   const p: Participant = {
@@ -787,6 +863,7 @@ export function updateParticipant(id: string, patch: Partial<Omit<Participant, '
   if (!p) return;
   pushSnapshot();
   const nextPatch = { ...patch };
+  // biome-ignore lint/suspicious/noPrototypeBuiltins: ES2020 target doesn't support Object.hasOwn
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'pakalIds')) {
     nextPatch.pakalIds = sanitizePakalIds(nextPatch.pakalIds, pakalDefinitions);
   }
@@ -867,7 +944,7 @@ export function addDateUnavailability(
 export function removeDateUnavailability(participantId: string, ruleId: string): void {
   const arr = dateUnavailabilities.get(participantId);
   if (!arr) return;
-  const idx = arr.findIndex(r => r.id === ruleId);
+  const idx = arr.findIndex((r) => r.id === ruleId);
   if (idx < 0) return;
   pushSnapshot();
   arr.splice(idx, 1);
@@ -887,13 +964,10 @@ export function getDateUnavailabilities(participantId: string): DateUnavailabili
  * Add the same DateUnavailability rule to multiple participants in one
  * undo-able action.  Returns the count of successfully added entries.
  */
-export function addDateUnavailabilityBulk(
-  participantIds: string[],
-  rule: Omit<DateUnavailability, 'id'>,
-): number {
+export function addDateUnavailabilityBulk(participantIds: string[], rule: Omit<DateUnavailability, 'id'>): number {
   const normalized = normalizeDateUnavailabilityRule(rule);
   if (!normalized) return 0;
-  const validIds = participantIds.filter(id => participants.has(id));
+  const validIds = participantIds.filter((id) => participants.has(id));
   if (validIds.length === 0) return 0;
   pushSnapshot();
   _suppressSnapshot = true;
@@ -1045,7 +1119,7 @@ export function addTaskTemplate(tpl: Omit<TaskTemplate, 'id'>): TaskTemplate {
     id,
     color: sanitized.color || getNextAvailableColor(),
     baseLoadWeight: sanitized.isLight ? 0 : (sanitized.baseLoadWeight ?? 1),
-    loadWindows: (sanitized.loadWindows || []).map(w => ({ ...w })),
+    loadWindows: (sanitized.loadWindows || []).map((w) => ({ ...w })),
   };
   taskTemplates.set(id, full);
   notify();
@@ -1089,7 +1163,18 @@ export function getAllTaskTemplates(): TaskTemplate[] {
 // ─── Config-Derived Helpers (task-name-agnostic) ───────────────────────────
 
 /** Auto-palette for templates that lack an explicit color. */
-const AUTO_PALETTE = ['#3498db', '#e74c3c', '#f39c12', '#27ae60', '#8e44ad', '#1abc9c', '#e67e22', '#34495e', '#16a085', '#c0392b'];
+const AUTO_PALETTE = [
+  '#3498db',
+  '#e74c3c',
+  '#f39c12',
+  '#27ae60',
+  '#8e44ad',
+  '#1abc9c',
+  '#e67e22',
+  '#34495e',
+  '#16a085',
+  '#c0392b',
+];
 
 /**
  * Return the next available unique color for a new task.
@@ -1112,7 +1197,7 @@ export function getNextAvailableColor(): string {
   }
 
   // Palette exhausted — generate a distinct HSL color
-  const usedHues = [...usedColors].map(hex => hexToHue(hex));
+  const usedHues = [...usedColors].map((hex) => hexToHue(hex));
   let bestHue = 0;
   let bestDist = -1;
   for (let h = 0; h < 360; h += 5) {
@@ -1132,7 +1217,8 @@ function hexToHue(hex: string): number {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
   const b = parseInt(hex.slice(5, 7), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b);
   const d = max - min;
   if (d === 0) return 0;
   let h = 0;
@@ -1143,12 +1229,15 @@ function hexToHue(hex: string): number {
 }
 
 function hslToHex(h: number, s: number, l: number): string {
-  s /= 100; l /= 100;
+  s /= 100;
+  l /= 100;
   const a = s * Math.min(l, 1 - l);
   const f = (n: number) => {
     const k = (n + h / 30) % 12;
     const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-    return Math.round(255 * color).toString(16).padStart(2, '0');
+    return Math.round(255 * color)
+      .toString(16)
+      .padStart(2, '0');
   };
   return `#${f(0)}${f(8)}${f(4)}`;
 }
@@ -1189,7 +1278,10 @@ export function getCategoryColorMap(): Record<string, string> {
  * Keyed by template `name` (= `sourceName` on Task), not by taskType.
  * Replaces all type-keyed map functions.
  */
-export function getTemplateVisualMap(): Record<string, { color: string; displayOrder: number; displayCategory: string }> {
+export function getTemplateVisualMap(): Record<
+  string,
+  { color: string; displayOrder: number; displayCategory: string }
+> {
   const map: Record<string, { color: string; displayOrder: number; displayCategory: string }> = {};
   let autoIdx = 0;
   for (const tpl of taskTemplates.values()) {
@@ -1216,7 +1308,7 @@ export function addOneTimeTask(task: Omit<OneTimeTask, 'id'>): OneTimeTask {
     id,
     color: task.color || getNextAvailableColor(),
     baseLoadWeight: task.isLight ? 0 : (task.baseLoadWeight ?? 1),
-    loadWindows: (task.loadWindows || []).map(w => ({ ...w })),
+    loadWindows: (task.loadWindows || []).map((w) => ({ ...w })),
   };
   oneTimeTasks.set(id, full);
   notify();
@@ -1269,7 +1361,7 @@ export function removeSlotFromTemplate(templateId: string, slotId: string): void
   const tpl = taskTemplates.get(templateId);
   if (!tpl) return;
   pushSnapshot();
-  tpl.slots = tpl.slots.filter(s => s.id !== slotId);
+  tpl.slots = tpl.slots.filter((s) => s.id !== slotId);
   notify();
 }
 
@@ -1288,14 +1380,14 @@ export function removeSubTeamFromTemplate(templateId: string, subTeamId: string)
   const tpl = taskTemplates.get(templateId);
   if (!tpl) return;
   pushSnapshot();
-  tpl.subTeams = tpl.subTeams.filter(s => s.id !== subTeamId);
+  tpl.subTeams = tpl.subTeams.filter((s) => s.id !== subTeamId);
   notify();
 }
 
 export function addSlotToSubTeam(templateId: string, subTeamId: string, slot: Omit<SlotTemplate, 'id'>): void {
   const tpl = taskTemplates.get(templateId);
   if (!tpl) return;
-  const st = tpl.subTeams.find(s => s.id === subTeamId);
+  const st = tpl.subTeams.find((s) => s.id === subTeamId);
   if (!st) return;
   pushSnapshot();
   st.slots.push({ ...slot, id: uid('slot') });
@@ -1305,47 +1397,121 @@ export function addSlotToSubTeam(templateId: string, subTeamId: string, slot: Om
 export function removeSlotFromSubTeam(templateId: string, subTeamId: string, slotId: string): void {
   const tpl = taskTemplates.get(templateId);
   if (!tpl) return;
-  const st = tpl.subTeams.find(s => s.id === subTeamId);
+  const st = tpl.subTeams.find((s) => s.id === subTeamId);
   if (!st) return;
   pushSnapshot();
-  st.slots = st.slots.filter(s => s.id !== slotId);
+  st.slots = st.slots.filter((s) => s.id !== slotId);
   notify();
 }
 
 // ─── Seed Default Data ───────────────────────────────────────────────────────
 
 const defaultNames: string[] = [
-  'איתי לוין', 'נועה אברהמי', 'עידו כהן', 'מאיה ישראלי',
-  'יונתן רפאלי', 'עדי מזרחי', 'רועי שפירא', 'מיכל אשכנזי',
-  'עומר דרוקר', 'ענבר חזן', 'אורי גבאי', 'טל בן-דור',
-  'דניאל וייס', 'שירה אדרי', 'אסף גרינברג', 'ליאור פלד',
-  'נדב הראל', 'רוני סגל', 'גיא מור', 'יעל שלום',
-  'אלון ברק', 'הילה חדד', 'מתן אלוני', 'שחר עמר',
-  'איתן דהן', 'עמית מלכה', 'יובל קליין', 'נטע לביא',
-  'דורון פרידמן', 'קרן אורן', 'אריאל נחום', 'דנה צור',
-  'אביב סוויסה', 'גלית שדה', 'תומר גולן', 'ספיר מלמד',
-  'אופיר ביטון', 'נועם פרץ', 'אייל רוזנפלד', 'ליהי כץ',
-  'בועז נאמן', 'תמר יוספי', 'יואב פולק', 'סיון ריבלין',
-  'אוהד שטרן', 'רותם גנות', 'ברק אוריון', 'נעמה שקד',
+  'איתי לוין',
+  'נועה אברהמי',
+  'עידו כהן',
+  'מאיה ישראלי',
+  'יונתן רפאלי',
+  'עדי מזרחי',
+  'רועי שפירא',
+  'מיכל אשכנזי',
+  'עומר דרוקר',
+  'ענבר חזן',
+  'אורי גבאי',
+  'טל בן-דור',
+  'דניאל וייס',
+  'שירה אדרי',
+  'אסף גרינברג',
+  'ליאור פלד',
+  'נדב הראל',
+  'רוני סגל',
+  'גיא מור',
+  'יעל שלום',
+  'אלון ברק',
+  'הילה חדד',
+  'מתן אלוני',
+  'שחר עמר',
+  'איתן דהן',
+  'עמית מלכה',
+  'יובל קליין',
+  'נטע לביא',
+  'דורון פרידמן',
+  'קרן אורן',
+  'אריאל נחום',
+  'דנה צור',
+  'אביב סוויסה',
+  'גלית שדה',
+  'תומר גולן',
+  'ספיר מלמד',
+  'אופיר ביטון',
+  'נועם פרץ',
+  'אייל רוזנפלד',
+  'ליהי כץ',
+  'בועז נאמן',
+  'תמר יוספי',
+  'יואב פולק',
+  'סיון ריבלין',
+  'אוהד שטרן',
+  'רותם גנות',
+  'ברק אוריון',
+  'נעמה שקד',
 ];
 
 const DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP: Record<string, string[]> = {
   //                    L0idx: 0             1              2             3                4                5               6              7(unused)
   // Horesh cert at L0 indices 3,4 (template 8,9) — must align with HORESH_PAKAL_ID positions
-  'קבוצה 1': ['pakal-matol', 'pakal-negev', 'pakal-kala', HORESH_PAKAL_ID, HORESH_PAKAL_ID, 'pakal-rahpan', 'pakal-matol', 'pakal-negev'],
+  'קבוצה 1': [
+    'pakal-matol',
+    'pakal-negev',
+    'pakal-kala',
+    HORESH_PAKAL_ID,
+    HORESH_PAKAL_ID,
+    'pakal-rahpan',
+    'pakal-matol',
+    'pakal-negev',
+  ],
   // Horesh cert at L0 index 3 (template 8)
-  'קבוצה 2': ['pakal-matol', 'pakal-negev', 'pakal-kala', HORESH_PAKAL_ID, 'pakal-mag', 'pakal-matol', 'pakal-kala', 'pakal-til-lao'],
+  'קבוצה 2': [
+    'pakal-matol',
+    'pakal-negev',
+    'pakal-kala',
+    HORESH_PAKAL_ID,
+    'pakal-mag',
+    'pakal-matol',
+    'pakal-kala',
+    'pakal-til-lao',
+  ],
   // Horesh cert at L0 index 3 (template 8)
-  'קבוצה 3': ['pakal-matol', 'pakal-negev', 'pakal-kala', HORESH_PAKAL_ID, 'pakal-matol', 'pakal-negev', 'pakal-mag', 'pakal-matol'],
+  'קבוצה 3': [
+    'pakal-matol',
+    'pakal-negev',
+    'pakal-kala',
+    HORESH_PAKAL_ID,
+    'pakal-matol',
+    'pakal-negev',
+    'pakal-mag',
+    'pakal-matol',
+  ],
   // No Horesh cert
-  'קבוצה 4': ['pakal-matol', 'pakal-negev', 'pakal-kala', 'pakal-rahpan', 'pakal-til-lao', 'pakal-matol', 'pakal-kala', 'pakal-matol'],
+  'קבוצה 4': [
+    'pakal-matol',
+    'pakal-negev',
+    'pakal-kala',
+    'pakal-rahpan',
+    'pakal-til-lao',
+    'pakal-matol',
+    'pakal-kala',
+    'pakal-matol',
+  ],
 };
 
 function isDefaultParticipantRoster(entries: Array<{ name: string }>): boolean {
   return entries.length === defaultNames.length && entries.every((entry, index) => entry.name === defaultNames[index]);
 }
 
-function hasDesiredDefaultL0PakalSeed(entries: Array<{ name: string; level: Level; group: string; pakalIds?: string[] }>): boolean {
+function hasDesiredDefaultL0PakalSeed(
+  entries: Array<{ name: string; level: Level; group: string; pakalIds?: string[] }>,
+): boolean {
   if (!isDefaultParticipantRoster(entries)) return false;
 
   const groupIndices = new Map<string, number>();
@@ -1365,14 +1531,18 @@ function hasDesiredDefaultL0PakalSeed(entries: Array<{ name: string; level: Leve
   return true;
 }
 
-function needsDefaultL0PakalSeed(entries: Array<{ name: string; level: Level; group: string; pakalIds?: string[] }>): boolean {
+function needsDefaultL0PakalSeed(
+  entries: Array<{ name: string; level: Level; group: string; pakalIds?: string[] }>,
+): boolean {
   return isDefaultParticipantRoster(entries) && !hasDesiredDefaultL0PakalSeed(entries);
 }
 
-function applyDefaultL0PakalSeed<T extends { name: string; level: Level; group: string; pakalIds?: string[] }>(entries: T[]): T[] {
+function applyDefaultL0PakalSeed<T extends { name: string; level: Level; group: string; pakalIds?: string[] }>(
+  entries: T[],
+): T[] {
   const groupIndices = new Map<string, number>();
 
-  return entries.map(entry => {
+  return entries.map((entry) => {
     if (entry.level !== Level.L0) return entry;
     const nextIndex = groupIndices.get(entry.group) ?? 0;
     const pakalId = DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP[entry.group]?.[nextIndex];
@@ -1403,7 +1573,11 @@ export function seedDefaultParticipants(): void {
 
   const deptNames = ['קבוצה 1', 'קבוצה 2', 'קבוצה 3', 'קבוצה 4'];
 
-  interface MemberSpec { level: Level; certs: string[]; tag: string }
+  interface MemberSpec {
+    level: Level;
+    certs: string[];
+    tag: string;
+  }
   const template: MemberSpec[] = [
     { level: Level.L4, certs: ['Nitzan', 'Hamama'], tag: 'L4' },
     { level: Level.L3, certs: ['Nitzan', 'Hamama'], tag: 'L3' },
@@ -1421,9 +1595,9 @@ export function seedDefaultParticipants(): void {
 
   // Horesh certification per department: set of template indices
   const horeshByDept: Record<string, Set<number>> = {
-    'קבוצה 1': new Set([8, 9]),  // 2 standard L0 participants
-    'קבוצה 2': new Set([8]),     // 1 standard L0 participant
-    'קבוצה 3': new Set([8]),     // 1 standard L0 participant
+    'קבוצה 1': new Set([8, 9]), // 2 standard L0 participants
+    'קבוצה 2': new Set([8]), // 1 standard L0 participant
+    'קבוצה 3': new Set([8]), // 1 standard L0 participant
   };
 
   let nameIdx = 0;
@@ -1435,9 +1609,7 @@ export function seedDefaultParticipants(): void {
       const certs = [...spec.certs];
       if (horeshIndices?.has(i)) certs.push('Horesh');
       const nextL0Index = l0PakalIndexByDept.get(dept) ?? 0;
-      const pakalId = spec.level === Level.L0
-        ? DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP[dept]?.[nextL0Index]
-        : undefined;
+      const pakalId = spec.level === Level.L0 ? DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP[dept]?.[nextL0Index] : undefined;
       if (spec.level === Level.L0) l0PakalIndexByDept.set(dept, nextL0Index + 1);
       const p: Participant = {
         id,
@@ -1475,17 +1647,51 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 0,
     subTeams: [
       {
-        id: uid('st'), name: 'סגול ראשי', slots: [
-          { id: uid('slot'), label: 'משתתף בסגול א', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
-          { id: uid('slot'), label: 'משתתף בסגול א', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
-          { id: uid('slot'), label: 'סגל בסגול א', acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }], requiredCertifications: ['Nitzan'] },
+        id: uid('st'),
+        name: 'סגול ראשי',
+        slots: [
+          {
+            id: uid('slot'),
+            label: 'משתתף בסגול א',
+            acceptableLevels: [{ level: Level.L0 }],
+            requiredCertifications: ['Nitzan'],
+          },
+          {
+            id: uid('slot'),
+            label: 'משתתף בסגול א',
+            acceptableLevels: [{ level: Level.L0 }],
+            requiredCertifications: ['Nitzan'],
+          },
+          {
+            id: uid('slot'),
+            label: 'סגל בסגול א',
+            acceptableLevels: [{ level: Level.L3 }, { level: Level.L4 }],
+            requiredCertifications: ['Nitzan'],
+          },
         ],
       },
       {
-        id: uid('st'), name: 'סגול משני', slots: [
-          { id: uid('slot'), label: 'משתתף בסגול ב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
-          { id: uid('slot'), label: 'משתתף בסגול ב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
-          { id: uid('slot'), label: 'בכיר בסגול ב\'', acceptableLevels: [{ level: Level.L2 }], requiredCertifications: ['Nitzan'] },
+        id: uid('st'),
+        name: 'סגול משני',
+        slots: [
+          {
+            id: uid('slot'),
+            label: 'משתתף בסגול ב',
+            acceptableLevels: [{ level: Level.L0 }],
+            requiredCertifications: ['Nitzan'],
+          },
+          {
+            id: uid('slot'),
+            label: 'משתתף בסגול ב',
+            acceptableLevels: [{ level: Level.L0 }],
+            requiredCertifications: ['Nitzan'],
+          },
+          {
+            id: uid('slot'),
+            label: "בכיר בסגול ב'",
+            acceptableLevels: [{ level: Level.L2 }],
+            requiredCertifications: ['Nitzan'],
+          },
         ],
       },
     ],
@@ -1512,7 +1718,12 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 1,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'חממה מפעיל', acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }], requiredCertifications: ['Hamama'] },
+      {
+        id: uid('slot'),
+        label: 'חממה מפעיל',
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
+        requiredCertifications: ['Hamama'],
+      },
     ],
     displayCategory: 'hamama',
     color: '#E74C3C',
@@ -1535,8 +1746,18 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 6,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'משתתף בשמש', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
-      { id: uid('slot'), label: 'משתתף בשמש', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      {
+        id: uid('slot'),
+        label: 'משתתף בשמש',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף בשמש',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
     ],
     restRuleId: defaultRestRule.id,
     displayCategory: 'shemesh',
@@ -1560,8 +1781,20 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 2,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'משתתף בממטרה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: ['Horesh'] },
-      { id: uid('slot'), label: 'משתתף בממטרה', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], forbiddenCertifications: ['Horesh'] },
+      {
+        id: uid('slot'),
+        label: 'משתתף בממטרה',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: [],
+        forbiddenCertifications: ['Horesh'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף בממטרה',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: [],
+        forbiddenCertifications: ['Horesh'],
+      },
     ],
     displayCategory: 'mamtera',
     color: '#27AE60',
@@ -1601,15 +1834,36 @@ export function seedDefaultTaskTemplates(): void {
     ],
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'מפקד כרוב (דרגה 2/3/4)', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: ['Nitzan'] },
-      { id: uid('slot'), label: 'נהג כרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Salsala', 'Nitzan'] },
-      { id: uid('slot'), label: 'משתתף בכרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
-      { id: uid('slot'), label: 'משתתף בקרוב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      {
+        id: uid('slot'),
+        label: 'מפקד כרוב (דרגה 2/3/4)',
+        acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'נהג כרוב',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Salsala', 'Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף בכרוב',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף בקרוב',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
     ],
     displayCategory: 'patrol',
     color: '#8E44AD',
     displayOrder: 0,
-    description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. דורש ניצן. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
+    description:
+      'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. דורש ניצן. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
   });
 
   // Karovit
@@ -1627,10 +1881,30 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 5,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'סגל כרובית', acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }], requiredCertifications: ['Nitzan'] },
-      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
-      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
-      { id: uid('slot'), label: 'משתתף בכרובית', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      {
+        id: uid('slot'),
+        label: 'סגל כרובית',
+        acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף בכרובית',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף בכרובית',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף בכרובית',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
     ],
     displayCategory: 'patrol',
     color: '#BDC3C7',
@@ -1653,8 +1927,18 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 4,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'משתתף בערוגת בוקר', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
-      { id: uid('slot'), label: 'משתתף בערוגת בוקר', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      {
+        id: uid('slot'),
+        label: 'משתתף בערוגת בוקר',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף בערוגת בוקר',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
     ],
     displayCategory: 'aruga',
     color: '#1ABC9C',
@@ -1677,8 +1961,18 @@ export function seedDefaultTaskTemplates(): void {
     schedulingPriority: 4,
     subTeams: [],
     slots: [
-      { id: uid('slot'), label: 'משתתף בערוגת ערב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
-      { id: uid('slot'), label: 'משתתף בערוגת ערב', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] },
+      {
+        id: uid('slot'),
+        label: 'משתתף בערוגת ערב',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף בערוגת ערב',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
     ],
     displayCategory: 'aruga',
     color: '#1ABC9C',
@@ -1766,10 +2060,13 @@ export function setLiveModeTimestamp(timestamp: Date): void {
  */
 function _saveLiveMode(): void {
   try {
-    localStorage.setItem(STORAGE_KEY_LIVE_MODE, JSON.stringify({
-      enabled: liveModeState.enabled,
-      currentTimestamp: liveModeState.currentTimestamp.toISOString(),
-    }));
+    localStorage.setItem(
+      STORAGE_KEY_LIVE_MODE,
+      JSON.stringify({
+        enabled: liveModeState.enabled,
+        currentTimestamp: liveModeState.currentTimestamp.toISOString(),
+      }),
+    );
     onSaveSuccess();
   } catch (err) {
     console.warn('[Store] Failed to save live mode:', err);
@@ -1862,11 +2159,11 @@ export function saveToStorage(): void {
       // Omit inline dateUnavailability from participant serialization —
       // the dateUnavailabilities Map is the single source of truth
       // (serialized separately below).
-      participants: Array.from(participants.values()).map(p => {
+      participants: Array.from(participants.values()).map((p) => {
         const { dateUnavailability: _, ...rest } = p;
         return {
           ...rest,
-          availability: p.availability.map(w => ({
+          availability: p.availability.map((w) => ({
             start: w.start.toISOString(),
             end: w.end.toISOString(),
           })),
@@ -1877,7 +2174,7 @@ export function saveToStorage(): void {
         rules: rules.map(({ id: _, ...rest }) => rest),
       })),
       taskTemplates: Array.from(taskTemplates.values()),
-      oneTimeTasks: Array.from(oneTimeTasks.values()).map(ot => ({
+      oneTimeTasks: Array.from(oneTimeTasks.values()).map((ot) => ({
         ...ot,
         scheduledDate: ot.scheduledDate.toISOString(),
       })),
@@ -1917,7 +2214,8 @@ export function loadFromStorage(): boolean {
     //     is cleared on every app restart, this mid-week date is no longer relevant.
     // (b) Schedule dates whose entire window has elapsed are also outdated.
     const schedEndForStaleness = new Date(
-      scheduleDate.getFullYear(), scheduleDate.getMonth(),
+      scheduleDate.getFullYear(),
+      scheduleDate.getMonth(),
       scheduleDate.getDate() + scheduleDays,
     );
     const todayMidnight = new Date();
@@ -1945,9 +2243,11 @@ export function loadFromStorage(): boolean {
     pakalDefinitions = state.pakalDefinitions?.length
       ? normalizePakalDefinitions(state.pakalDefinitions)
       : clonePakalDefinitions(DEFAULT_PAKAL_DEFINITIONS);
-    certificationDefinitions = (state.certificationDefinitions?.length ? state.certificationDefinitions : DEFAULT_CERTIFICATION_DEFINITIONS).map((d: CertificationDefinition) => ({ ...d }));
+    certificationDefinitions = (
+      state.certificationDefinitions?.length ? state.certificationDefinitions : DEFAULT_CERTIFICATION_DEFINITIONS
+    ).map((d: CertificationDefinition) => ({ ...d }));
 
-    for (const pData of (state.participants || [])) {
+    for (const pData of state.participants || []) {
       const p: Participant = {
         ...pData,
         pakalIds: sanitizePakalIds(pData.pakalIds, pakalDefinitions),
@@ -1961,7 +2261,7 @@ export function loadFromStorage(): boolean {
     }
 
     // Restore date unavailabilities
-    for (const entry of (state.dateUnavailabilities || [])) {
+    for (const entry of state.dateUnavailabilities || []) {
       const rules: DateUnavailability[] = (entry.rules || [])
         .map((rule: Partial<Omit<DateUnavailability, 'id'>>) => normalizeDateUnavailabilityRule(rule))
         .filter((rule: Omit<DateUnavailability, 'id'> | null): rule is Omit<DateUnavailability, 'id'> => !!rule)
@@ -1979,13 +2279,13 @@ export function loadFromStorage(): boolean {
 
     // Restore task templates
     taskTemplates.clear();
-    for (const tpl of (state.taskTemplates || [])) {
+    for (const tpl of state.taskTemplates || []) {
       taskTemplates.set(tpl.id, tpl);
     }
 
     // Restore one-time tasks
     oneTimeTasks.clear();
-    for (const ot of (state.oneTimeTasks || [])) {
+    for (const ot of state.oneTimeTasks || []) {
       oneTimeTasks.set(ot.id, {
         ...ot,
         scheduledDate: new Date(ot.scheduledDate),
@@ -2008,7 +2308,7 @@ export function loadFromStorage(): boolean {
 
     // Restore notWithPairs
     notWithPairs.clear();
-    for (const entry of (state.notWithPairs || [])) {
+    for (const entry of state.notWithPairs || []) {
       if (entry.pid && Array.isArray(entry.targets) && entry.targets.length > 0) {
         notWithPairs.set(entry.pid, new Set(entry.targets));
       }
@@ -2107,7 +2407,7 @@ export function factoryReset(): void {
   taskTemplates.clear();
   oneTimeTasks.clear();
   pakalDefinitions = clonePakalDefinitions(DEFAULT_PAKAL_DEFINITIONS);
-  certificationDefinitions = DEFAULT_CERTIFICATION_DEFINITIONS.map(d => ({ ...d }));
+  certificationDefinitions = DEFAULT_CERTIFICATION_DEFINITIONS.map((d) => ({ ...d }));
   undoStack.length = 0;
   redoStack.length = 0;
   _algorithmSettings = null;
@@ -2168,11 +2468,12 @@ export function getAlgorithmSettings(): AlgorithmSettings {
         _algorithmSettings = {
           config: { ...DEFAULT_ALGORITHM_SETTINGS.config, ...(parsed.config || {}) },
           disabledHardConstraints: Array.isArray(parsed.disabledHardConstraints)
-            ? parsed.disabledHardConstraints as HardConstraintCode[]
+            ? (parsed.disabledHardConstraints as HardConstraintCode[])
             : [],
-          dayStartHour: typeof parsed.dayStartHour === 'number'
-            ? Math.max(0, Math.min(23, Math.floor(parsed.dayStartHour)))
-            : DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
+          dayStartHour:
+            typeof parsed.dayStartHour === 'number'
+              ? Math.max(0, Math.min(23, Math.floor(parsed.dayStartHour)))
+              : DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
         };
       } else {
         _algorithmSettings = {
@@ -2205,12 +2506,11 @@ export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
   const current = getAlgorithmSettings();
   _algorithmSettings = {
     config: patch.config ? { ...current.config, ...patch.config } : current.config,
-    disabledHardConstraints: patch.disabledHardConstraints !== undefined
-      ? [...patch.disabledHardConstraints]
-      : current.disabledHardConstraints,
-    dayStartHour: patch.dayStartHour !== undefined
-      ? patch.dayStartHour
-      : current.dayStartHour,
+    disabledHardConstraints:
+      patch.disabledHardConstraints !== undefined
+        ? [...patch.disabledHardConstraints]
+        : current.disabledHardConstraints,
+    dayStartHour: patch.dayStartHour !== undefined ? patch.dayStartHour : current.dayStartHour,
   };
   _saveAlgorithmSettings();
   notifyAlgorithmChanged();
@@ -2250,7 +2550,6 @@ export function getDisabledHCSet(): Set<string> {
   return new Set(settings.disabledHardConstraints);
 }
 
-
 function _saveAlgorithmSettings(): boolean {
   if (!_algorithmSettings) return false;
   try {
@@ -2270,7 +2569,7 @@ const STORAGE_KEY_PRESETS = 'gardenmanager_algorithm_presets';
 const STORAGE_KEY_ACTIVE_PRESET = 'gardenmanager_active_preset_id';
 
 let _presets: AlgorithmPreset[] | null = null;
-let _activePresetId: string | null | undefined = undefined; // undefined = not yet loaded
+let _activePresetId: string | null | undefined; // undefined = not yet loaded
 
 /**
  * Hook for tab-algorithm to register its debounce-flush function.
@@ -2296,7 +2595,7 @@ function _initPresets(): AlgorithmPreset[] {
     try {
       _presets = JSON.parse(raw) as AlgorithmPreset[];
       // Ensure the built-in Default preset always exists
-      if (!_presets.find(p => p.id === DEFAULT_PRESET.id)) {
+      if (!_presets.find((p) => p.id === DEFAULT_PRESET.id)) {
         _presets.unshift(_deepCopyPreset(DEFAULT_PRESET));
       }
     } catch {
@@ -2361,7 +2660,7 @@ function _saveActivePresetId(): boolean {
 function _isPresetNameTaken(name: string, excludeId?: string): boolean {
   const norm = name.trim().toLowerCase();
   const presets = _initPresets();
-  return presets.some(p => p.name.trim().toLowerCase() === norm && p.id !== excludeId);
+  return presets.some((p) => p.name.trim().toLowerCase() === norm && p.id !== excludeId);
 }
 
 // ─── Preset Public API ──────────────────────────────────────────────────────
@@ -2376,13 +2675,13 @@ export function getAllPresets(): AlgorithmPreset[] {
       if (!a.builtIn && b.builtIn) return 1;
       return a.createdAt - b.createdAt;
     })
-    .map(p => _deepCopyPreset(p));
+    .map((p) => _deepCopyPreset(p));
 }
 
 /** Get a single preset by id */
 export function getPresetById(id: string): AlgorithmPreset | undefined {
   const presets = _initPresets();
-  const found = presets.find(p => p.id === id);
+  const found = presets.find((p) => p.id === id);
   return found ? _deepCopyPreset(found) : undefined;
 }
 
@@ -2403,9 +2702,10 @@ export function loadPreset(id: string): void {
   _algorithmSettings = {
     config: { ...preset.settings.config },
     disabledHardConstraints: [...preset.settings.disabledHardConstraints],
-    dayStartHour: typeof preset.settings.dayStartHour === 'number'
-      ? preset.settings.dayStartHour
-      : DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
+    dayStartHour:
+      typeof preset.settings.dayStartHour === 'number'
+        ? preset.settings.dayStartHour
+        : DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
   };
   _saveAlgorithmSettings();
   _activePresetId = id;
@@ -2454,7 +2754,7 @@ export function saveCurrentAsPreset(name: string, description: string): Algorith
 export function updatePreset(id: string): boolean {
   _flushWeights();
   const presets = _initPresets();
-  const idx = presets.findIndex(p => p.id === id);
+  const idx = presets.findIndex((p) => p.id === id);
   if (idx === -1) return false;
   if (presets[idx].builtIn) return false;
 
@@ -2472,7 +2772,7 @@ export function updatePreset(id: string): boolean {
  */
 export function renamePreset(id: string, name: string, description: string): string | null {
   const presets = _initPresets();
-  const preset = presets.find(p => p.id === id);
+  const preset = presets.find((p) => p.id === id);
   if (!preset) return 'פריסט לא נמצא';
   if (preset.builtIn) return 'לא ניתן לשנות שם של פריסט מובנה';
 
@@ -2529,7 +2829,7 @@ export function duplicatePreset(id: string): AlgorithmPreset | null {
  */
 export function deletePreset(id: string): boolean {
   const presets = _initPresets();
-  const idx = presets.findIndex(p => p.id === id);
+  const idx = presets.findIndex((p) => p.id === id);
   if (idx === -1) return false;
   if (presets[idx].builtIn) return false;
 
@@ -2565,7 +2865,7 @@ const STORAGE_KEY_ACTIVE_SNAPSHOT = 'gardenmanager_active_snapshot_id';
 const MAX_SNAPSHOTS = 15;
 
 let _snapshots: ScheduleSnapshot[] | null = null;
-let _activeSnapshotId: string | null | undefined = undefined; // undefined = not yet loaded
+let _activeSnapshotId: string | null | undefined; // undefined = not yet loaded
 
 /** Deep-copy a snapshot using JSON serialize round-trip (handles Dates). */
 function _deepCopySnapshot(s: ScheduleSnapshot): ScheduleSnapshot {
@@ -2634,7 +2934,7 @@ function _saveActiveSnapshotId(): boolean {
 function _isSnapshotNameTaken(name: string, excludeId?: string): boolean {
   const norm = name.trim().toLowerCase();
   const snapshots = _initSnapshots();
-  return snapshots.some(s => s.name.trim().toLowerCase() === norm && s.id !== excludeId);
+  return snapshots.some((s) => s.name.trim().toLowerCase() === norm && s.id !== excludeId);
 }
 
 // ─── Snapshot Public API ────────────────────────────────────────────────────
@@ -2645,13 +2945,13 @@ export function getAllSnapshots(): ScheduleSnapshot[] {
   return snapshots
     .slice()
     .sort((a, b) => b.createdAt - a.createdAt)
-    .map(s => _deepCopySnapshot(s));
+    .map((s) => _deepCopySnapshot(s));
 }
 
 /** Get a single snapshot by id */
 export function getSnapshotById(id: string): ScheduleSnapshot | undefined {
   const snapshots = _initSnapshots();
-  const found = snapshots.find(s => s.id === id);
+  const found = snapshots.find((s) => s.id === id);
   return found ? _deepCopySnapshot(found) : undefined;
 }
 
@@ -2735,7 +3035,7 @@ export function saveScheduleAsSnapshot(
  */
 export function updateSnapshot(id: string, schedule: Schedule, algorithmSettings: AlgorithmSettings): boolean {
   const snapshots = _initSnapshots();
-  const idx = snapshots.findIndex(s => s.id === id);
+  const idx = snapshots.findIndex((s) => s.id === id);
   if (idx === -1) return false;
   if (snapshots[idx].builtIn) return false;
 
@@ -2761,7 +3061,7 @@ export function updateSnapshot(id: string, schedule: Schedule, algorithmSettings
  */
 export function renameSnapshot(id: string, name: string, description: string): string | null {
   const snapshots = _initSnapshots();
-  const snapshot = snapshots.find(s => s.id === id);
+  const snapshot = snapshots.find((s) => s.id === id);
   if (!snapshot) return 'תמונת מצב לא נמצאה';
   if (snapshot.builtIn) return 'לא ניתן לשנות שם של תמונת מצב מובנית';
 
@@ -2822,7 +3122,7 @@ export function duplicateSnapshot(id: string): ScheduleSnapshot | null {
  */
 export function deleteSnapshot(id: string): boolean {
   const snapshots = _initSnapshots();
-  const idx = snapshots.findIndex(s => s.id === id);
+  const idx = snapshots.findIndex((s) => s.id === id);
   if (idx === -1) return false;
   if (snapshots[idx].builtIn) return false;
 
@@ -2851,7 +3151,7 @@ const STORAGE_KEY_ACTIVE_PSET = 'gardenmanager_active_participant_set_id';
 const MAX_PARTICIPANT_SETS = 30;
 
 let _participantSets: ParticipantSet[] | null = null;
-let _activeParticipantSetId: string | null | undefined = undefined; // undefined = not yet loaded
+let _activeParticipantSetId: string | null | undefined; // undefined = not yet loaded
 
 /** Deep-copy a ParticipantSet via JSON round-trip. */
 function _deepCopyPSet(s: ParticipantSet): ParticipantSet {
@@ -2861,7 +3161,7 @@ function _deepCopyPSet(s: ParticipantSet): ParticipantSet {
 function _normalizeParticipantSet(pset: ParticipantSet): ParticipantSet {
   const pakalCatalog = normalizePakalDefinitions(pset.pakalCatalog);
   const certificationCatalog = normalizeCertificationDefinitions(pset.certificationCatalog);
-  const participants = (pset.participants || []).map(snap => ({
+  const participants = (pset.participants || []).map((snap) => ({
     ...snap,
     pakalIds: sanitizePakalIds(snap.pakalIds, pakalCatalog),
     certifications: sanitizeCertificationIds(snap.certifications, certificationCatalog),
@@ -2871,9 +3171,10 @@ function _normalizeParticipantSet(pset: ParticipantSet): ParticipantSet {
     ...pset,
     pakalCatalog,
     certificationCatalog,
-    participants: pset.id === 'pset-default' && needsDefaultL0PakalSeed(participants)
-      ? applyDefaultL0PakalSeed(participants)
-      : participants,
+    participants:
+      pset.id === 'pset-default' && needsDefaultL0PakalSeed(participants)
+        ? applyDefaultL0PakalSeed(participants)
+        : participants,
   };
 }
 
@@ -2886,7 +3187,9 @@ function _initParticipantSets(): ParticipantSet[] {
     try {
       const parsed = JSON.parse(raw) as ParticipantSet[];
       _participantSets = Array.isArray(parsed) ? parsed.map(_normalizeParticipantSet) : [];
-      const shouldPersistMigration = Array.isArray(parsed) && parsed.some(pset => pset.id === 'pset-default' && needsDefaultL0PakalSeed(pset.participants || []));
+      const shouldPersistMigration =
+        Array.isArray(parsed) &&
+        parsed.some((pset) => pset.id === 'pset-default' && needsDefaultL0PakalSeed(pset.participants || []));
       if (shouldPersistMigration) _saveParticipantSets();
     } catch {
       _participantSets = [];
@@ -2910,7 +3213,7 @@ function _initParticipantSets(): ParticipantSet[] {
  *  comparisons work correctly (loaded rules get fresh IDs). */
 function _snapshotCurrentParticipants(): ParticipantSnapshot[] {
   const all = getAllParticipants();
-  return all.map(p => {
+  return all.map((p) => {
     const dateRules = getDateUnavailabilities(p.id);
     return {
       name: p.name,
@@ -2918,9 +3221,12 @@ function _snapshotCurrentParticipants(): ParticipantSnapshot[] {
       certifications: [...p.certifications],
       group: p.group,
       dateUnavailability: dateRules.map(({ id: _, ...rest }) => rest),
-      notWithIds: getNotWithIds(p.id).length > 0
-        ? getNotWithIds(p.id).map(id => participants.get(id)?.name).filter((n): n is string => !!n)
-        : undefined,
+      notWithIds:
+        getNotWithIds(p.id).length > 0
+          ? getNotWithIds(p.id)
+              .map((id) => participants.get(id)?.name)
+              .filter((n): n is string => !!n)
+          : undefined,
       pakalIds: sanitizePakalIds(p.pakalIds, pakalDefinitions),
       preferredTaskName: p.preferredTaskName,
       lessPreferredTaskName: p.lessPreferredTaskName,
@@ -2933,7 +3239,7 @@ function _snapshotCurrentPakalCatalog(participantSnapshots: ParticipantSnapshot[
   for (const snap of participantSnapshots) {
     for (const pakalId of snap.pakalIds || []) referencedIds.add(pakalId);
   }
-  return getPakalDefinitions().filter(def => referencedIds.has(def.id));
+  return getPakalDefinitions().filter((def) => referencedIds.has(def.id));
 }
 
 function _snapshotCurrentCertificationCatalog(participantSnapshots: ParticipantSnapshot[]): CertificationDefinition[] {
@@ -2941,15 +3247,13 @@ function _snapshotCurrentCertificationCatalog(participantSnapshots: ParticipantS
   for (const snap of participantSnapshots) {
     for (const certId of snap.certifications) referencedIds.add(certId);
   }
-  return certificationDefinitions
-    .filter(def => referencedIds.has(def.id))
-    .map(def => ({ ...def }));
+  return certificationDefinitions.filter((def) => referencedIds.has(def.id)).map((def) => ({ ...def }));
 }
 
 /** Create the built-in default set from whatever participants are currently loaded. */
 function _seedBuiltInParticipantSet(): void {
   const sets = _participantSets!;
-  if (sets.find(s => s.id === 'pset-default')) return;
+  if (sets.find((s) => s.id === 'pset-default')) return;
   const snap = _snapshotCurrentParticipants();
   const pakalCatalog = _snapshotCurrentPakalCatalog(snap);
   if (snap.length === 0) return; // don't seed empty
@@ -3003,7 +3307,7 @@ function _saveActiveParticipantSetId(): boolean {
 function _isPSetNameTaken(name: string, excludeId?: string): boolean {
   const norm = name.trim().toLowerCase();
   const sets = _initParticipantSets();
-  return sets.some(s => s.name.trim().toLowerCase() === norm && s.id !== excludeId);
+  return sets.some((s) => s.name.trim().toLowerCase() === norm && s.id !== excludeId);
 }
 
 // ─── Participant Sets Public API ─────────────────────────────────────────────
@@ -3018,13 +3322,13 @@ export function getAllParticipantSets(): ParticipantSet[] {
       if (!a.builtIn && b.builtIn) return 1;
       return a.createdAt - b.createdAt;
     })
-    .map(s => _deepCopyPSet(s));
+    .map((s) => _deepCopyPSet(s));
 }
 
 /** Get a single participant set by id */
 export function getParticipantSetById(id: string): ParticipantSet | undefined {
   const sets = _initParticipantSets();
-  const found = sets.find(s => s.id === id);
+  const found = sets.find((s) => s.id === id);
   return found ? _deepCopyPSet(found) : undefined;
 }
 
@@ -3115,9 +3419,9 @@ export function loadParticipantSet(id: string): void {
       // Restore date unavailabilities
       if (snap.dateUnavailability && snap.dateUnavailability.length > 0) {
         const rules: DateUnavailability[] = snap.dateUnavailability
-          .map(r => normalizeDateUnavailabilityRule(r))
+          .map((r) => normalizeDateUnavailabilityRule(r))
           .filter((rule): rule is Omit<DateUnavailability, 'id'> => !!rule)
-          .map(rule => ({
+          .map((rule) => ({
             ...rule,
             id: uid('du'),
           }));
@@ -3164,7 +3468,7 @@ export function loadParticipantSet(id: string): void {
  */
 export function updateParticipantSet(id: string): boolean {
   const sets = _initParticipantSets();
-  const idx = sets.findIndex(s => s.id === id);
+  const idx = sets.findIndex((s) => s.id === id);
   if (idx === -1) return false;
   if (sets[idx].builtIn) return false;
 
@@ -3189,7 +3493,7 @@ export function updateParticipantSet(id: string): boolean {
  */
 export function renameParticipantSet(id: string, name: string, description: string): string | null {
   const sets = _initParticipantSets();
-  const pset = sets.find(s => s.id === id);
+  const pset = sets.find((s) => s.id === id);
   if (!pset) return 'סט לא נמצא';
   if (pset.builtIn) return 'לא ניתן לשנות שם של סט מובנה';
 
@@ -3249,7 +3553,7 @@ export function duplicateParticipantSet(id: string): ParticipantSet | null {
  */
 export function deleteParticipantSet(id: string): boolean {
   const sets = _initParticipantSets();
-  const idx = sets.findIndex(s => s.id === id);
+  const idx = sets.findIndex((s) => s.id === id);
   if (idx === -1) return false;
   if (sets[idx].builtIn) return false;
 
@@ -3281,11 +3585,14 @@ export function isParticipantSetDirty(): boolean {
     pakalCatalog: _snapshotCurrentPakalCatalog(participantsSnapshot),
     certificationCatalog: _snapshotCurrentCertificationCatalog(participantsSnapshot),
   };
-  return JSON.stringify(current) !== JSON.stringify({
-    participants: pset.participants,
-    pakalCatalog: pset.pakalCatalog || normalizePakalDefinitions(undefined),
-    certificationCatalog: pset.certificationCatalog,
-  });
+  return (
+    JSON.stringify(current) !==
+    JSON.stringify({
+      participants: pset.participants,
+      pakalCatalog: pset.pakalCatalog || normalizePakalDefinitions(undefined),
+      certificationCatalog: pset.certificationCatalog,
+    })
+  );
 }
 
 /** Get the maximum number of participant sets allowed */
@@ -3300,7 +3607,7 @@ const STORAGE_KEY_ACTIVE_TASK_SET = 'gardenmanager_active_task_set_id';
 const MAX_TASK_SETS = 30;
 
 let _taskSets: TaskSet[] | null = null;
-let _activeTaskSetId: string | null | undefined = undefined; // undefined = not yet loaded
+let _activeTaskSetId: string | null | undefined; // undefined = not yet loaded
 
 /** Deep-copy a TaskSet via JSON round-trip. */
 function _deepCopyTaskSet(s: TaskSet): TaskSet {
@@ -3311,7 +3618,7 @@ function _snapshotCurrentTaskSetState(): Pick<TaskSet, 'templates' | 'oneTimeTas
   return {
     templates: _snapshotCurrentTaskTemplates(),
     oneTimeTasks: _snapshotCurrentOneTimeTasks(),
-    restRules: _restRules.map(r => ({ ...r })),
+    restRules: _restRules.map((r) => ({ ...r })),
   };
 }
 
@@ -3355,7 +3662,7 @@ function _snapshotCurrentOneTimeTasks(): OneTimeTask[] {
 /** Create the built-in default task set from whatever templates are currently loaded. */
 function _seedBuiltInTaskSet(): void {
   const sets = _taskSets!;
-  if (sets.find(s => s.id === 'tset-default')) return;
+  if (sets.find((s) => s.id === 'tset-default')) return;
   const snapshot = _snapshotCurrentTaskSetState();
   if (snapshot.templates.length === 0) return; // don't seed empty
   sets.unshift({
@@ -3406,7 +3713,7 @@ function _saveActiveTaskSetId(): boolean {
 function _isTaskSetNameTaken(name: string, excludeId?: string): boolean {
   const norm = name.trim().toLowerCase();
   const sets = _initTaskSets();
-  return sets.some(s => s.name.trim().toLowerCase() === norm && s.id !== excludeId);
+  return sets.some((s) => s.name.trim().toLowerCase() === norm && s.id !== excludeId);
 }
 
 // ─── Task Set Public API ─────────────────────────────────────────────────────
@@ -3421,13 +3728,13 @@ export function getAllTaskSets(): TaskSet[] {
       if (!a.builtIn && b.builtIn) return 1;
       return a.createdAt - b.createdAt;
     })
-    .map(s => _deepCopyTaskSet(s));
+    .map((s) => _deepCopyTaskSet(s));
 }
 
 /** Get a single task set by id */
 export function getTaskSetById(id: string): TaskSet | undefined {
   const sets = _initTaskSets();
-  const found = sets.find(s => s.id === id);
+  const found = sets.find((s) => s.id === id);
   return found ? _deepCopyTaskSet(found) : undefined;
 }
 
@@ -3504,7 +3811,7 @@ export function loadTaskSet(id: string): void {
       oneTimeTasks.set(restored.id, restored);
     }
 
-    _restRules = Array.isArray(tset.restRules) ? tset.restRules.map(r => ({ ...r })) : [];
+    _restRules = Array.isArray(tset.restRules) ? tset.restRules.map((r) => ({ ...r })) : [];
   } finally {
     _suppressSnapshot = false;
   }
@@ -3520,7 +3827,7 @@ export function loadTaskSet(id: string): void {
  */
 export function updateTaskSet(id: string): boolean {
   const sets = _initTaskSets();
-  const idx = sets.findIndex(s => s.id === id);
+  const idx = sets.findIndex((s) => s.id === id);
   if (idx === -1) return false;
   if (sets[idx].builtIn) return false;
 
@@ -3545,7 +3852,7 @@ export function updateTaskSet(id: string): boolean {
  */
 export function renameTaskSet(id: string, name: string, description: string): string | null {
   const sets = _initTaskSets();
-  const tset = sets.find(s => s.id === id);
+  const tset = sets.find((s) => s.id === id);
   if (!tset) return 'סט לא נמצא';
   if (tset.builtIn) return 'לא ניתן לשנות שם של סט מובנה';
 
@@ -3605,7 +3912,7 @@ export function duplicateTaskSet(id: string): TaskSet | null {
  */
 export function deleteTaskSet(id: string): boolean {
   const sets = _initTaskSets();
-  const idx = sets.findIndex(s => s.id === id);
+  const idx = sets.findIndex((s) => s.id === id);
   if (idx === -1) return false;
   if (sets[idx].builtIn) return false;
 
@@ -3723,17 +4030,17 @@ export function replaceAlgorithmSettingsAndPresets(
 
   // Replace presets: keep built-in Default, replace everything else
   const current = _initPresets();
-  const builtIn = current.filter(p => p.builtIn);
-  const imported = presets.filter(p => !p.builtIn);
+  const builtIn = current.filter((p) => p.builtIn);
+  const imported = presets.filter((p) => !p.builtIn);
   _presets = [...builtIn, ...imported];
   // Ensure Default always exists
-  if (!_presets.find(p => p.id === DEFAULT_PRESET.id)) {
+  if (!_presets.find((p) => p.id === DEFAULT_PRESET.id)) {
     _presets.unshift(_deepCopyPreset(DEFAULT_PRESET));
   }
   if (!_savePresets()) return false;
 
   // Set active preset
-  _activePresetId = activeId && _presets.find(p => p.id === activeId) ? activeId : DEFAULT_PRESET.id;
+  _activePresetId = activeId && _presets.find((p) => p.id === activeId) ? activeId : DEFAULT_PRESET.id;
   _saveActivePresetId();
   notifyAlgorithmChanged();
   return true;

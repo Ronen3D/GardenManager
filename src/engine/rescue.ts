@@ -17,27 +17,27 @@
  * No plan may touch frozen assignments.
  */
 
-import {
-  Schedule,
+import { validateHardConstraints } from '../constraints/hard-constraints';
+import type {
   Assignment,
-  Task,
   Participant,
   RescuePlan,
-  RescueSwap,
   RescueRequest,
   RescueResult,
+  RescueSwap,
+  Schedule,
+  Task,
 } from '../models/types';
-import { isEligible } from './validator';
-import { isFutureTask, isModifiableAssignment } from './temporal';
+import { describeSlot, operationalDateKey } from '../utils/date-utils';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
-import { validateHardConstraints } from '../constraints/hard-constraints';
-import { operationalDateKey, describeSlot } from '../utils/date-utils';
+import { isFutureTask, isModifiableAssignment } from './temporal';
+import { isEligible } from './validator';
 
 // ─── Scoring Weights ─────────────────────────────────────────────────────────
 
-const W_DAILY = 10;   // Primary: daily workload impact
-const W_WEEKLY = 3;    // Secondary: weekly workload impact
-const W_SWAPS = 1;     // Tiebreaker: number of swaps
+const W_DAILY = 10; // Primary: daily workload impact
+const W_WEEKLY = 3; // Secondary: weekly workload impact
+const W_SWAPS = 1; // Tiebreaker: number of swaps
 
 const PAGE_SIZE = 3;
 
@@ -184,7 +184,14 @@ function computeSwapImpact(
       // Cache for subsequent candidate evaluations at this depth
       baseDayStdDevs.set(day, baseDayStdDev);
     }
-    const newDayStdDev = computeDayLoadStdDev(day, participants, tempAssignments, taskMap, dayStartHour, tempByParticipant);
+    const newDayStdDev = computeDayLoadStdDev(
+      day,
+      participants,
+      tempAssignments,
+      taskMap,
+      dayStartHour,
+      tempByParticipant,
+    );
     totalDailyDelta += newDayStdDev - baseDayStdDev;
   }
 
@@ -236,30 +243,40 @@ function generateDepth1Plans(ctx: RescueContext): CandidatePlan[] {
 
     const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
     const vacatedExclude = new Set([ctx.vacatedAssignment.id]);
-    if (!isEligible(p, ctx.vacatedTask, ctx.vacatedSlot, pAssignments, ctx.taskMap, {
-      checkSameGroup: true,
-      taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, vacatedExclude),
-      participantMap: ctx.participantMap,
-      disabledHC: ctx.disabledHC,
-      restRuleMap: ctx.restRuleMap,
-    })) continue;
+    if (
+      !isEligible(p, ctx.vacatedTask, ctx.vacatedSlot, pAssignments, ctx.taskMap, {
+        checkSameGroup: true,
+        taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, vacatedExclude),
+        participantMap: ctx.participantMap,
+        disabledHC: ctx.disabledHC,
+        restRuleMap: ctx.restRuleMap,
+      })
+    )
+      continue;
 
     const swap = { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id };
     const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
-      ctx.schedule.assignments, [swap], ctx.taskMap, ctx.schedule.participants,
-      ctx.baseDayStdDevs, ctx.baseWeeklyStdDev, ctx.dayStartHour,
+      ctx.schedule.assignments,
+      [swap],
+      ctx.taskMap,
+      ctx.schedule.participants,
+      ctx.baseDayStdDevs,
+      ctx.baseWeeklyStdDev,
+      ctx.dayStartHour,
     );
     const impactScore = scorePlan(1, dailyLoadDelta, weeklyLoadDelta);
 
     plans.push({
-      swaps: [{
-        assignmentId: ctx.vacatedAssignment.id,
-        fromParticipantId: ctx.vacatedAssignment.participantId,
-        toParticipantId: p.id,
-        taskId: ctx.vacatedTask.id,
-        taskName: ctx.vacatedTask.name,
-        slotLabel: describeSlot(ctx.vacatedSlot.label, ctx.vacatedTask.timeBlock),
-      }],
+      swaps: [
+        {
+          assignmentId: ctx.vacatedAssignment.id,
+          fromParticipantId: ctx.vacatedAssignment.participantId,
+          toParticipantId: p.id,
+          taskId: ctx.vacatedTask.id,
+          taskName: ctx.vacatedTask.name,
+          slotLabel: describeSlot(ctx.vacatedSlot.label, ctx.vacatedTask.timeBlock),
+        },
+      ],
       impactScore,
       dailyLoadDelta,
       weeklyLoadDelta,
@@ -279,7 +296,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
     if (p.id === ctx.vacatedAssignment.participantId) continue;
 
     const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
-    const pFutureAssignments = pAssignments.filter(a => {
+    const pFutureAssignments = pAssignments.filter((a) => {
       const t = ctx.taskMap.get(a.taskId);
       return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
     });
@@ -287,18 +304,21 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
     for (const donorAssignment of pFutureAssignments) {
       const donorTask = ctx.taskMap.get(donorAssignment.taskId);
       if (!donorTask) continue;
-      const donorSlot = donorTask.slots.find(s => s.slotId === donorAssignment.slotId);
+      const donorSlot = donorTask.slots.find((s) => s.slotId === donorAssignment.slotId);
       if (!donorSlot) continue;
 
-      const pAssignmentsWithout = pAssignments.filter(a => a.id !== donorAssignment.id);
+      const pAssignmentsWithout = pAssignments.filter((a) => a.id !== donorAssignment.id);
       const d2VacatedExclude = new Set([ctx.vacatedAssignment.id]);
-      if (!isEligible(p, ctx.vacatedTask, ctx.vacatedSlot, pAssignmentsWithout, ctx.taskMap, {
-        checkSameGroup: true,
-        taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, d2VacatedExclude),
-        participantMap: ctx.participantMap,
-        disabledHC: ctx.disabledHC,
-        restRuleMap: ctx.restRuleMap,
-      })) continue;
+      if (
+        !isEligible(p, ctx.vacatedTask, ctx.vacatedSlot, pAssignmentsWithout, ctx.taskMap, {
+          checkSameGroup: true,
+          taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, d2VacatedExclude),
+          participantMap: ctx.participantMap,
+          disabledHC: ctx.disabledHC,
+          restRuleMap: ctx.restRuleMap,
+        })
+      )
+        continue;
 
       for (const q of ctx.schedule.participants) {
         if (q.id === p.id || q.id === ctx.vacatedAssignment.participantId) continue;
@@ -306,25 +326,32 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
         const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
         const d2DonorExclude = new Set([donorAssignment.id]);
 
-        const d2DonorExtra = donorTask.id === ctx.vacatedTask.id
-          ? [{ slotId: ctx.vacatedSlot.slotId, participantId: p.id }]
-          : undefined;
+        const d2DonorExtra =
+          donorTask.id === ctx.vacatedTask.id ? [{ slotId: ctx.vacatedSlot.slotId, participantId: p.id }] : undefined;
 
-        if (!isEligible(q, donorTask, donorSlot, qAssignments, ctx.taskMap, {
-          checkSameGroup: true,
-          taskAssignments: ctx.taskAssignmentsFor(donorTask.id, d2DonorExclude, d2DonorExtra),
-          participantMap: ctx.participantMap,
-          disabledHC: ctx.disabledHC,
-          restRuleMap: ctx.restRuleMap,
-        })) continue;
+        if (
+          !isEligible(q, donorTask, donorSlot, qAssignments, ctx.taskMap, {
+            checkSameGroup: true,
+            taskAssignments: ctx.taskAssignmentsFor(donorTask.id, d2DonorExclude, d2DonorExtra),
+            participantMap: ctx.participantMap,
+            disabledHC: ctx.disabledHC,
+            restRuleMap: ctx.restRuleMap,
+          })
+        )
+          continue;
 
         const swapSet = [
           { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id },
           { assignmentId: donorAssignment.id, newParticipantId: q.id },
         ];
         const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
-          ctx.schedule.assignments, swapSet, ctx.taskMap, ctx.schedule.participants,
-          ctx.baseDayStdDevs, ctx.baseWeeklyStdDev, ctx.dayStartHour,
+          ctx.schedule.assignments,
+          swapSet,
+          ctx.taskMap,
+          ctx.schedule.participants,
+          ctx.baseDayStdDevs,
+          ctx.baseWeeklyStdDev,
+          ctx.dayStartHour,
         );
         const impactScore = scorePlan(2, dailyLoadDelta, weeklyLoadDelta);
 
@@ -385,21 +412,18 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
     participantLoads.set(p.id, hours);
     totalLoad += hours;
   }
-  const avgLoad = ctx.schedule.participants.length > 0
-    ? totalLoad / ctx.schedule.participants.length
-    : 0;
-  const sortedParticipants = [...ctx.schedule.participants].sort((a, b) =>
-    Math.abs((participantLoads.get(a.id) || 0) - avgLoad) -
-    Math.abs((participantLoads.get(b.id) || 0) - avgLoad),
+  const avgLoad = ctx.schedule.participants.length > 0 ? totalLoad / ctx.schedule.participants.length : 0;
+  const sortedParticipants = [...ctx.schedule.participants].sort(
+    (a, b) =>
+      Math.abs((participantLoads.get(a.id) || 0) - avgLoad) - Math.abs((participantLoads.get(b.id) || 0) - avgLoad),
   );
 
-  outer:
-  for (const p of sortedParticipants) {
+  outer: for (const p of sortedParticipants) {
     if (p.id === ctx.vacatedAssignment.participantId) continue;
     const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
 
     const pDonors = pAssignments
-      .filter(a => {
+      .filter((a) => {
         const t = ctx.taskMap.get(a.taskId);
         return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
       })
@@ -408,25 +432,28 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
     for (const donorP of pDonors) {
       const donorPTask = ctx.taskMap.get(donorP.taskId);
       if (!donorPTask) continue;
-      const donorPSlot = donorPTask.slots.find(s => s.slotId === donorP.slotId);
+      const donorPSlot = donorPTask.slots.find((s) => s.slotId === donorP.slotId);
       if (!donorPSlot) continue;
 
-      const pWithout = pAssignments.filter(a => a.id !== donorP.id);
+      const pWithout = pAssignments.filter((a) => a.id !== donorP.id);
       const d3VacatedExclude = new Set([ctx.vacatedAssignment.id]);
-      if (!isEligible(p, ctx.vacatedTask, ctx.vacatedSlot, pWithout, ctx.taskMap, {
-        checkSameGroup: true,
-        taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, d3VacatedExclude),
-        participantMap: ctx.participantMap,
-        disabledHC: ctx.disabledHC,
-        restRuleMap: ctx.restRuleMap,
-      })) continue;
+      if (
+        !isEligible(p, ctx.vacatedTask, ctx.vacatedSlot, pWithout, ctx.taskMap, {
+          checkSameGroup: true,
+          taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, d3VacatedExclude),
+          participantMap: ctx.participantMap,
+          disabledHC: ctx.disabledHC,
+          restRuleMap: ctx.restRuleMap,
+        })
+      )
+        continue;
 
       for (const q of ctx.schedule.participants) {
         if (q.id === p.id || q.id === ctx.vacatedAssignment.participantId) continue;
         const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
 
         const qDonors = qAssignments
-          .filter(a => {
+          .filter((a) => {
             const t = ctx.taskMap.get(a.taskId);
             return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
           })
@@ -435,10 +462,10 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
         for (const donorQ of qDonors) {
           const donorQTask = ctx.taskMap.get(donorQ.taskId);
           if (!donorQTask) continue;
-          const donorQSlot = donorQTask.slots.find(s => s.slotId === donorQ.slotId);
+          const donorQSlot = donorQTask.slots.find((s) => s.slotId === donorQ.slotId);
           if (!donorQSlot) continue;
 
-          const qWithout = qAssignments.filter(a => a.id !== donorQ.id);
+          const qWithout = qAssignments.filter((a) => a.id !== donorQ.id);
           const d3DonorPExclude = new Set([donorP.id]);
 
           const d3DonorPExtra: Array<{ slotId: string; participantId: string }> = [];
@@ -446,13 +473,20 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
             d3DonorPExtra.push({ slotId: ctx.vacatedSlot.slotId, participantId: p.id });
           }
 
-          if (!isEligible(q, donorPTask, donorPSlot, qWithout, ctx.taskMap, {
-            checkSameGroup: true,
-            taskAssignments: ctx.taskAssignmentsFor(donorPTask.id, d3DonorPExclude, d3DonorPExtra.length > 0 ? d3DonorPExtra : undefined),
-            participantMap: ctx.participantMap,
-            disabledHC: ctx.disabledHC,
-            restRuleMap: ctx.restRuleMap,
-          })) continue;
+          if (
+            !isEligible(q, donorPTask, donorPSlot, qWithout, ctx.taskMap, {
+              checkSameGroup: true,
+              taskAssignments: ctx.taskAssignmentsFor(
+                donorPTask.id,
+                d3DonorPExclude,
+                d3DonorPExtra.length > 0 ? d3DonorPExtra : undefined,
+              ),
+              participantMap: ctx.participantMap,
+              disabledHC: ctx.disabledHC,
+              restRuleMap: ctx.restRuleMap,
+            })
+          )
+            continue;
 
           for (const r of ctx.schedule.participants) {
             if (r.id === p.id || r.id === q.id || r.id === ctx.vacatedAssignment.participantId) continue;
@@ -467,13 +501,20 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
               d3DonorQExtra.push({ slotId: donorPSlot.slotId, participantId: q.id });
             }
 
-            if (!isEligible(r, donorQTask, donorQSlot, rAssignments, ctx.taskMap, {
-              checkSameGroup: true,
-              taskAssignments: ctx.taskAssignmentsFor(donorQTask.id, d3DonorQExclude, d3DonorQExtra.length > 0 ? d3DonorQExtra : undefined),
-              participantMap: ctx.participantMap,
-              disabledHC: ctx.disabledHC,
-              restRuleMap: ctx.restRuleMap,
-            })) continue;
+            if (
+              !isEligible(r, donorQTask, donorQSlot, rAssignments, ctx.taskMap, {
+                checkSameGroup: true,
+                taskAssignments: ctx.taskAssignmentsFor(
+                  donorQTask.id,
+                  d3DonorQExclude,
+                  d3DonorQExtra.length > 0 ? d3DonorQExtra : undefined,
+                ),
+                participantMap: ctx.participantMap,
+                disabledHC: ctx.disabledHC,
+                restRuleMap: ctx.restRuleMap,
+              })
+            )
+              continue;
 
             const swapSet = [
               { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id },
@@ -481,8 +522,13 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
               { assignmentId: donorQ.id, newParticipantId: r.id },
             ];
             const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
-              ctx.schedule.assignments, swapSet, ctx.taskMap, ctx.schedule.participants,
-              ctx.baseDayStdDevs, ctx.baseWeeklyStdDev, ctx.dayStartHour,
+              ctx.schedule.assignments,
+              swapSet,
+              ctx.taskMap,
+              ctx.schedule.participants,
+              ctx.baseDayStdDevs,
+              ctx.baseWeeklyStdDev,
+              ctx.dayStartHour,
             );
             const impactScore = scorePlan(3, dailyLoadDelta, weeklyLoadDelta);
 
@@ -558,7 +604,7 @@ export function generateRescuePlans(
   const taskMap = new Map<string, Task>();
   for (const t of schedule.tasks) taskMap.set(t.id, t);
 
-  const participantMap = new Map<string, Participant>(schedule.participants.map(p => [p.id, p]));
+  const participantMap = new Map<string, Participant>(schedule.participants.map((p) => [p.id, p]));
 
   // Pre-index assignments by task for O(slots_per_task) lookups instead of O(A)
   const assignmentsByTaskIndex = new Map<string, Assignment[]>();
@@ -573,9 +619,7 @@ export function generateRescuePlans(
     excludeIds: Set<string>,
     extraAssignments?: Array<{ slotId: string; participantId: string }>,
   ): Assignment[] {
-    const base = (assignmentsByTaskIndex.get(taskId) || []).filter(
-      a => !excludeIds.has(a.id),
-    );
+    const base = (assignmentsByTaskIndex.get(taskId) || []).filter((a) => !excludeIds.has(a.id));
     if (extraAssignments) {
       for (const ea of extraAssignments) {
         base.push({ id: '__virtual__', taskId, slotId: ea.slotId, participantId: ea.participantId } as Assignment);
@@ -585,7 +629,7 @@ export function generateRescuePlans(
   }
 
   // Find the vacated assignment
-  const vacatedAssignment = schedule.assignments.find(a => a.id === request.vacatedAssignmentId);
+  const vacatedAssignment = schedule.assignments.find((a) => a.id === request.vacatedAssignmentId);
   if (!vacatedAssignment) {
     return { request, plans: [], hasMore: false, page };
   }
@@ -595,7 +639,7 @@ export function generateRescuePlans(
     return { request, plans: [], hasMore: false, page };
   }
 
-  const vacatedSlot = vacatedTask.slots.find(s => s.slotId === vacatedAssignment.slotId);
+  const vacatedSlot = vacatedTask.slots.find((s) => s.slotId === vacatedAssignment.slotId);
   if (!vacatedSlot) {
     return { request, plans: [], hasMore: false, page };
   }
@@ -611,7 +655,10 @@ export function generateRescuePlans(
   // Compute baseline metrics
   const affectedDayKey = operationalDateKey(vacatedTask.timeBlock.start, dayStartHour);
   const baseDayStdDevs = new Map<string, number>();
-  baseDayStdDevs.set(affectedDayKey, computeDayLoadStdDev(affectedDayKey, schedule.participants, schedule.assignments, taskMap, dayStartHour));
+  baseDayStdDevs.set(
+    affectedDayKey,
+    computeDayLoadStdDev(affectedDayKey, schedule.participants, schedule.assignments, taskMap, dayStartHour),
+  );
   const baseWeeklyStdDev = computeTotalLoadStdDev(schedule.participants, schedule.assignments, taskMap);
 
   // Build per-participant assignment index (excluding the vacated assignment)
@@ -624,11 +671,17 @@ export function generateRescuePlans(
   }
 
   const ctx: RescueContext = {
-    schedule, taskMap, participantMap,
-    vacatedAssignment, vacatedTask, vacatedSlot,
+    schedule,
+    taskMap,
+    participantMap,
+    vacatedAssignment,
+    vacatedTask,
+    vacatedSlot,
     assignmentsByParticipant,
-    baseDayStdDevs, baseWeeklyStdDev,
-    anchor, taskAssignmentsFor,
+    baseDayStdDevs,
+    baseWeeklyStdDev,
+    anchor,
+    taskAssignmentsFor,
     disabledHC,
     restRuleMap,
     dayStartHour,
@@ -639,14 +692,10 @@ export function generateRescuePlans(
   const needed = maxPlans ?? (page + 1) * PAGE_SIZE;
   const depth1Plans = generateDepth1Plans(ctx);
 
-  const depth2Plans = depth1Plans.length < needed * 2
-    ? generateDepth2Plans(ctx)
-    : [];
+  const depth2Plans = depth1Plans.length < needed * 2 ? generateDepth2Plans(ctx) : [];
 
   const totalSoFar = depth1Plans.length + depth2Plans.length;
-  const depth3Plans = totalSoFar < needed * 2
-    ? generateDepth3Plans(ctx)
-    : [];
+  const depth3Plans = totalSoFar < needed * 2 ? generateDepth3Plans(ctx) : [];
 
   // Assemble all plans in priority order: depth 1 → depth 2 → depth 3
   const allCandidates = [...depth1Plans, ...depth2Plans, ...depth3Plans];
@@ -656,12 +705,18 @@ export function generateRescuePlans(
   // them to the user is misleading.
   const validPlans: Array<CandidatePlan & { violations: import('../models/types').ConstraintViolation[] }> = [];
   for (const cp of allCandidates) {
-    const tempAssignments = schedule.assignments.map(a => {
-      const sw = cp.swaps.find(s => s.assignmentId === a.id);
+    const tempAssignments = schedule.assignments.map((a) => {
+      const sw = cp.swaps.find((s) => s.assignmentId === a.id);
       if (sw) return { ...a, participantId: sw.toParticipantId };
       return a;
     });
-    const validation = validateHardConstraints(schedule.tasks, schedule.participants, tempAssignments, disabledHC, restRuleMap);
+    const validation = validateHardConstraints(
+      schedule.tasks,
+      schedule.participants,
+      tempAssignments,
+      disabledHC,
+      restRuleMap,
+    );
     if (validation.valid) {
       validPlans.push({ ...cp, violations: [] });
     }

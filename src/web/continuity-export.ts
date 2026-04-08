@@ -5,13 +5,13 @@
  * future schedule can enforce HC-5, HC-12, and HC-14 across the boundary.
  */
 
-import { Schedule, Task } from '../models/types';
-import {
-  ContinuitySnapshot,
-  ContinuityParticipant,
+import type {
   ContinuityAssignment,
   ContinuityLoadWindow,
+  ContinuityParticipant,
+  ContinuitySnapshot,
 } from '../models/continuity-schema';
+import type { Schedule, Task } from '../models/types';
 
 /** Module-level lookup for rest rule hours — populated by exportDaySnapshot(). */
 const _restRuleHoursLookup = new Map<string, number>();
@@ -43,27 +43,28 @@ export function exportDaySnapshot(
     scheduleBaseDate.getFullYear(),
     scheduleBaseDate.getMonth(),
     scheduleBaseDate.getDate() + dayIndex - 1,
-    dayStartHour, 0,
+    dayStartHour,
+    0,
   );
   const dayEnd = new Date(
     scheduleBaseDate.getFullYear(),
     scheduleBaseDate.getMonth(),
     scheduleBaseDate.getDate() + dayIndex,
-    dayStartHour, 0,
+    dayStartHour,
+    0,
   );
 
   // Find tasks that intersect this day window
-  const dayTasks = schedule.tasks.filter(t =>
-    t.timeBlock.start.getTime() < dayEnd.getTime() &&
-    t.timeBlock.end.getTime() > dayStart.getTime(),
+  const dayTasks = schedule.tasks.filter(
+    (t) => t.timeBlock.start.getTime() < dayEnd.getTime() && t.timeBlock.end.getTime() > dayStart.getTime(),
   );
 
   // Build participant map
-  const pMap = new Map(schedule.participants.map(p => [p.id, p]));
+  const pMap = new Map(schedule.participants.map((p) => [p.id, p]));
 
   // Group assignments by participant for tasks on this day
-  const dayTaskIds = new Set(dayTasks.map(t => t.id));
-  const taskMap = new Map(dayTasks.map(t => [t.id, t]));
+  const dayTaskIds = new Set(dayTasks.map((t) => t.id));
+  const taskMap = new Map(dayTasks.map((t) => [t.id, t]));
 
   const participantAssignments = new Map<string, ContinuityAssignment[]>();
 
@@ -88,7 +89,7 @@ export function exportDaySnapshot(
     participants.push({
       name: p.name,
       level: p.level as number,
-      certifications: p.certifications.map(c => String(c)),
+      certifications: p.certifications.map((c) => String(c)),
       group: p.group,
       assignments,
     });
@@ -109,7 +110,7 @@ export function exportDaySnapshot(
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function taskToContinuityAssignment(task: Task): ContinuityAssignment {
-  const loadWindows: ContinuityLoadWindow[] | undefined = task.loadWindows?.map(lw => ({
+  const loadWindows: ContinuityLoadWindow[] | undefined = task.loadWindows?.map((lw) => ({
     id: lw.id,
     startHour: lw.startHour,
     startMinute: lw.startMinute,

@@ -11,15 +11,8 @@
  *   - computeLowPriorityLevelPenalty(): soft penalty for lowPriority slots
  */
 
-import {
-  Level,
-  Task,
-  SlotRequirement,
-  Assignment,
-  Participant,
-  SchedulerConfig,
-} from '../models/types';
 import { isAcceptedLevel, isLowPriority } from '../models/level-utils';
+import type { Assignment, Level, Participant, SchedulerConfig, SlotRequirement, Task } from '../models/types';
 
 // ─── Natural-role detection ──────────────────────────────────────────────────
 
@@ -32,11 +25,7 @@ import { isAcceptedLevel, isLowPriority } from '../models/level-utils';
  *  Listed at normal priority → natural
  *  Not listed at all → not natural (blocked by HC-1)
  */
-export function isNaturalRole(
-  level: Level,
-  _task: Task,
-  slot: SlotRequirement,
-): boolean {
+export function isNaturalRole(level: Level, _task: Task, slot: SlotRequirement): boolean {
   // A level listed as lowPriority is NOT a natural role — it's a last resort
   if (isLowPriority(slot.acceptableLevels, level)) return false;
 
@@ -63,8 +52,8 @@ export function computeLowPriorityLevelPenalty(
   prebuiltPMap?: Map<string, Participant>,
   prebuiltTMap?: Map<string, Task>,
 ): number {
-  const pMap = prebuiltPMap ?? new Map(participants.map(p => [p.id, p]));
-  const tMap = prebuiltTMap ?? new Map(tasks.map(t => [t.id, t]));
+  const pMap = prebuiltPMap ?? new Map(participants.map((p) => [p.id, p]));
+  const tMap = prebuiltTMap ?? new Map(tasks.map((t) => [t.id, t]));
 
   let totalPenalty = 0;
 
@@ -73,7 +62,7 @@ export function computeLowPriorityLevelPenalty(
     const task = tMap.get(a.taskId);
     if (!p || !task) continue;
 
-    const slot = task.slots.find(s => s.slotId === a.slotId);
+    const slot = task.slots.find((s) => s.slotId === a.slotId);
     if (!slot) continue;
 
     if (isLowPriority(slot.acceptableLevels, p.level)) {

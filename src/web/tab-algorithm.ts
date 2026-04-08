@@ -10,19 +10,19 @@
  */
 
 import {
-  SchedulerConfig,
-  DEFAULT_CONFIG,
-  DEFAULT_ALGORITHM_SETTINGS,
-  HardConstraintCode,
   ALL_HC_CODES,
-  HC_LABELS,
-  AlgorithmPreset,
+  type AlgorithmPreset,
+  DEFAULT_ALGORITHM_SETTINGS,
+  DEFAULT_CONFIG,
   getHC14Label,
+  type HardConstraintCode,
+  HC_LABELS,
+  type SchedulerConfig,
 } from '../models/types';
 import * as store from './config-store';
-import { showConfirm, showToast, renderCustomSelect, wireCustomSelect } from './ui-modal';
-import { escHtml, SVG_ICONS, getStoredTheme, setTheme, getCurrentTheme } from './ui-helpers';
 import { renderDataTransferContent } from './data-transfer-ui';
+import { escHtml, getCurrentTheme, getStoredTheme, SVG_ICONS, setTheme } from './ui-helpers';
+import { renderCustomSelect, showConfirm, showToast, wireCustomSelect } from './ui-modal';
 
 // ─── Weight field metadata ───────────────────────────────────────────────────
 
@@ -47,28 +47,39 @@ interface WeightGroup {
 const WEIGHT_GROUPS: WeightGroup[] = [
   {
     title: 'שוויון עומס',
-    description: 'עד כמה חשוב לאופטימייזר לחלק את העבודה באופן שוויוני בין המשתתפים. ערך גבוה יוביל לחלוקה מאוזנת יותר, אבל לפחות גמישות.',
+    description:
+      'עד כמה חשוב לאופטימייזר לחלק את העבודה באופן שוויוני בין המשתתפים. ערך גבוה יוביל לחלוקה מאוזנת יותר, אבל לפחות גמישות.',
     fields: [
       {
         key: 'l0FairnessWeight',
         label: 'משקל שיוויוניות כללי',
-        min: 0, max: 200, step: 1,
-        description: 'עד כמה חשוב לחלק את שעות העבודה באופן שווה בין משתתפים שאינם סגל. ערך גבוה = חלוקה שוויונית יותר.',
-        detail: 'אם משתתף א\' עובד 12 שעות אפקטיביות ומשתתף ב\' עובד 6, האופטימייזר מעניש פער זה. במשקל 40 (ברירת מחדל), שיוויון העומס של משתתפים שאינם סגל חשוב יותר מכמעט כל גורם אחר. הגדר 0 כדי להתעלם משיוויוניות זו לחלוטין.',
+        min: 0,
+        max: 200,
+        step: 1,
+        description:
+          'עד כמה חשוב לחלק את שעות העבודה באופן שווה בין משתתפים שאינם סגל. ערך גבוה = חלוקה שוויונית יותר.',
+        detail:
+          "אם משתתף א' עובד 12 שעות אפקטיביות ומשתתף ב' עובד 6, האופטימייזר מעניש פער זה. במשקל 40 (ברירת מחדל), שיוויון העומס של משתתפים שאינם סגל חשוב יותר מכמעט כל גורם אחר. הגדר 0 כדי להתעלם משיוויוניות זו לחלוטין.",
       },
       {
         key: 'seniorFairnessWeight',
         label: 'משקל שיוויוניות סגל',
-        min: 0, max: 200, step: 1,
+        min: 0,
+        max: 200,
+        step: 1,
         description: 'עד כמה שעות העבודה מתחלקות בשווה בין משתתפי סגל (L2–L4). עדיפות נמוכה יותר כי מאגר הסגל קטן.',
-        detail: 'לסגל יש פחות משימות מתאימות (בעיקר אדנית), ולכן טווח העומס שלהם מצומצם יותר. ברירת מחדל 6 נמוכה בכוונה בהשוואה לשיוויוניות L0 (40). הגדל אם אתה מבחין שעומס הסגל הופך לא מאוזן.',
+        detail:
+          'לסגל יש פחות משימות מתאימות (בעיקר אדנית), ולכן טווח העומס שלהם מצומצם יותר. ברירת מחדל 6 נמוכה בכוונה בהשוואה לשיוויוניות L0 (40). הגדל אם אתה מבחין שעומס הסגל הופך לא מאוזן.',
       },
       {
         key: 'dailyBalanceWeight',
         label: 'משקל האיזון היומי',
-        min: 0, max: 200, step: 1,
+        min: 0,
+        max: 200,
+        step: 1,
         description: 'מצמצם פערים בין ימים עמוסים לימים קלים — שואף לעומס עבודה יומי עקבי לכל אדם ולאורך כל הלו"ז.',
-        detail: 'שני מדדים משולבים: (1) שעות העבודה היומיות של כל משתתף צריכות להיות אחידות בקירוב, ו-(2) סה"כ השעות של כל המשתתפים ביום קלנדרי נתון צריך להיות אחיד בקירוב. ברירת מחדל 90 הופכת את האיזון היומי לאחד מגורמי הניקוד החזקים ביותר.',
+        detail:
+          'שני מדדים משולבים: (1) שעות העבודה היומיות של כל משתתף צריכות להיות אחידות בקירוב, ו-(2) סה"כ השעות של כל המשתתפים ביום קלנדרי נתון צריך להיות אחיד בקירוב. ברירת מחדל 90 הופכת את האיזון היומי לאחד מגורמי הניקוד החזקים ביותר.',
       },
     ],
   },
@@ -79,9 +90,12 @@ const WEIGHT_GROUPS: WeightGroup[] = [
       {
         key: 'minRestWeight',
         label: 'משקל מנוחה מינימלית',
-        min: 0, max: 200, step: 1,
+        min: 0,
+        max: 200,
+        step: 1,
         description: 'כמה חשוב לאופטימייזר לשמור על הפסקה בין משימות חוסמות. ערך גבוה = הפסקות ארוכות יותר.',
-        detail: 'רק פערים שבהם לשתי המשימות הצמודות מופעל "חוסם רצף" (HC-12) נספרים. לדוגמה, אדנית→שמש נספר, אבל כרוב→שמש לא. הנוסחה: minRestWeight × שעות מנוחה מינימליות. בברירת מחדל 10, כל שעת מנוחה נוספת = 10 נקודות.',
+        detail:
+          'רק פערים שבהם לשתי המשימות הצמודות מופעל "חוסם רצף" (HC-12) נספרים. לדוגמה, אדנית→שמש נספר, אבל כרוב→שמש לא. הנוסחה: minRestWeight × שעות מנוחה מינימליות. בברירת מחדל 10, כל שעת מנוחה נוספת = 10 נקודות.',
       },
     ],
   },
@@ -92,49 +106,66 @@ const WEIGHT_GROUPS: WeightGroup[] = [
       {
         key: 'lowPriorityLevelPenalty',
         label: 'עונש דרגה בעדיפות נמוכה',
-        min: 0, max: 50000, step: 100,
+        min: 0,
+        max: 50000,
+        step: 100,
         description: 'עונש כבד כשמשתתף משובץ במשבצת שבה דרגתו מסומנת כ"עדיפות נמוכה". מוצא אחרון בלבד.',
-        detail: 'בברירת מחדל 10,000, שיבוץ אחד של דרגה בעדיפות נמוכה עולה כמו 250 יחידות של חוסר שיוויון בעומס עבודה. האופטימייזר ינסה כל אפשרות אחרת לפני שיפנה לזה.',
+        detail:
+          'בברירת מחדל 10,000, שיבוץ אחד של דרגה בעדיפות נמוכה עולה כמו 250 יחידות של חוסר שיוויון בעומס עבודה. האופטימייזר ינסה כל אפשרות אחרת לפני שיפנה לזה.',
       },
     ],
   },
   {
     title: 'אי התאמה',
-    description: 'עונש כששני משתתפים עם העדפת "אי התאמה" משובצים יחד. אילוץ רך — האופטימייזר יעדיף להימנע, אך לא ישאיר משבצת ריקה.',
+    description:
+      'עונש כששני משתתפים עם העדפת "אי התאמה" משובצים יחד. אילוץ רך — האופטימייזר יעדיף להימנע, אך לא ישאיר משבצת ריקה.',
     fields: [
       {
         key: 'notWithPenalty',
         label: 'עונש "אי התאמה"',
-        min: 0, max: 5000, step: 50,
+        min: 0,
+        max: 5000,
+        step: 50,
         description: 'עונש לכל הפרה של העדפת "אי התאמה". ברירת מחדל 500.',
-        detail: 'ערך גבוה = האופטימייזר נמנע בתוקף רב יותר משיבוץ זוגות "אי התאמה" יחד באותו צוות משנה. ערך 0 מבטל את האילוץ. עונש נספר בנפרד לכל הפרה.',
+        detail:
+          'ערך גבוה = האופטימייזר נמנע בתוקף רב יותר משיבוץ זוגות "אי התאמה" יחד באותו צוות משנה. ערך 0 מבטל את האילוץ. עונש נספר בנפרד לכל הפרה.',
       },
     ],
   },
   {
     title: 'העדפות משימה',
-    description: 'העדפות אישיות של משתתפים למשימות מסוימות. אילוץ רך — האופטימייזר יעדיף לכבד העדפות אבל לא יפגע בכיסוי או שיוויון.',
+    description:
+      'העדפות אישיות של משתתפים למשימות מסוימות. אילוץ רך — האופטימייזר יעדיף לכבד העדפות אבל לא יפגע בכיסוי או שיוויון.',
     fields: [
       {
         key: 'taskNamePreferencePenalty',
         label: 'עונש אי-קיום העדפה',
-        min: 0, max: 1000, step: 10,
+        min: 0,
+        max: 1000,
+        step: 10,
         description: 'עונש כשמשתתף לא משובץ לאף משימה מהסוג המועדף עליו. ברירת מחדל 50.',
-        detail: 'עונש חד-פעמי למשתתף שיש לו סוג משימה מועדף אך לא שובץ אליו כלל. ערך נמוך מדי — העדפות יתעלמו. ערך גבוה מדי — יפגע בשיוויון עומס. הגדר 0 כדי לבטל.',
+        detail:
+          'עונש חד-פעמי למשתתף שיש לו סוג משימה מועדף אך לא שובץ אליו כלל. ערך נמוך מדי — העדפות יתעלמו. ערך גבוה מדי — יפגע בשיוויון עומס. הגדר 0 כדי לבטל.',
       },
       {
         key: 'taskNameAvoidancePenalty',
         label: 'עונש שיבוץ לא-מועדף',
-        min: 0, max: 2000, step: 10,
+        min: 0,
+        max: 2000,
+        step: 10,
         description: 'עונש לכל שיבוץ לסוג משימה שהמשתתף מעדיף להימנע ממנו. ברירת מחדל 80.',
-        detail: 'עונש מצטבר — כל שיבוץ לסוג הלא-מועדף מוסיף עונש. חזק יותר מהעדפה חיובית כי הימנעות ממשהו לא רצוי חשובה יותר. הגדר 0 כדי לבטל.',
+        detail:
+          'עונש מצטבר — כל שיבוץ לסוג הלא-מועדף מוסיף עונש. חזק יותר מהעדפה חיובית כי הימנעות ממשהו לא רצוי חשובה יותר. הגדר 0 כדי לבטל.',
       },
       {
         key: 'taskNamePreferenceBonus',
         label: 'בונוס שיבוץ מועדף',
-        min: 0, max: 500, step: 5,
+        min: 0,
+        max: 500,
+        step: 5,
         description: 'בונוס (הפחתת עונש) לכל שיבוץ לסוג משימה מועדף. ברירת מחדל 25.',
-        detail: 'בונוס מצטבר — כל שיבוץ לסוג המועדף מפחית את העונש הכולל. משלים את עונש אי-קיום ההעדפה: העונש מבטיח לפחות שיבוץ אחד, הבונוס מעודד עוד. הגדר 0 כדי לבטל.',
+        detail:
+          'בונוס מצטבר — כל שיבוץ לסוג המועדף מפחית את העונש הכולל. משלים את עונש אי-קיום ההעדפה: העונש מבטיח לפחות שיבוץ אחד, הבונוס מעודד עוד. הגדר 0 כדי לבטל.',
       },
     ],
   },
@@ -195,8 +226,16 @@ store.registerWeightFlush(flushPendingWeightUpdate);
 // ─── Certification Management ───────────────────────────────────────────────
 
 const CERT_COLOR_PALETTE = [
-  '#16a085', '#8e44ad', '#c0392b', '#27ae60', '#2980b9',
-  '#d35400', '#f39c12', '#1abc9c', '#e74c3c', '#34495e',
+  '#16a085',
+  '#8e44ad',
+  '#c0392b',
+  '#27ae60',
+  '#2980b9',
+  '#d35400',
+  '#f39c12',
+  '#1abc9c',
+  '#e74c3c',
+  '#34495e',
 ];
 
 let _selectedCertColor = '';
@@ -383,9 +422,9 @@ function renderHardConstraints(disabledHC: Set<HardConstraintCode>): string {
 
 function renderCertificationContent(): string {
   const defs = store.getCertificationDefinitions();
-  const usedColors = new Set(defs.map(d => d.color));
+  const usedColors = new Set(defs.map((d) => d.color));
   if (!_selectedCertColor || usedColors.has(_selectedCertColor)) {
-    _selectedCertColor = CERT_COLOR_PALETTE.find(c => !usedColors.has(c)) || CERT_COLOR_PALETTE[0];
+    _selectedCertColor = CERT_COLOR_PALETTE.find((c) => !usedColors.has(c)) || CERT_COLOR_PALETTE[0];
   }
 
   let html = `
@@ -404,9 +443,14 @@ function renderCertificationContent(): string {
           <span class="cert-usage-count">${usageText}</span>
           <button class="btn-icon btn-sm" data-action="cert-remove" data-cert-id="${def.id}" title="הסר הסמכה">✕</button>
         </div>
-        ${isEditingColor ? `<div class="cert-color-edit-palette">${CERT_COLOR_PALETTE.map(c =>
-          `<button type="button" class="cert-color-swatch${c === def.color ? ' selected' : ''}" data-action="cert-pick-color" data-cert-id="${def.id}" data-color="${c}" style="background:${c}" title="${c}"></button>`
-        ).join('')}</div>` : ''}
+        ${
+          isEditingColor
+            ? `<div class="cert-color-edit-palette">${CERT_COLOR_PALETTE.map(
+                (c) =>
+                  `<button type="button" class="cert-color-swatch${c === def.color ? ' selected' : ''}" data-action="cert-pick-color" data-cert-id="${def.id}" data-color="${c}" style="background:${c}" title="${c}"></button>`,
+              ).join('')}</div>`
+            : ''
+        }
       </div>`;
   }
   html += `
@@ -417,7 +461,7 @@ function renderCertificationContent(): string {
         <button class="btn-sm btn-primary" data-action="cert-add">+ הוסף</button>
       </div>
       <div class="cert-color-palette">
-        ${CERT_COLOR_PALETTE.map(c => {
+        ${CERT_COLOR_PALETTE.map((c) => {
           const inUse = usedColors.has(c);
           return `<button type="button" class="cert-color-swatch${c === _selectedCertColor ? ' selected' : ''}${inUse ? ' in-use' : ''}" data-action="cert-select-color" data-color="${c}" style="background:${c}" title="${c}${inUse ? ' (בשימוש)' : ''}"></button>`;
         }).join('')}
@@ -440,9 +484,11 @@ function renderPakalContent(): string {
     const editing = _pakalEditingId === def.id;
     html += `
       <div class="cert-def-item">
-        ${editing
-          ? `<input type="text" class="input-sm pakal-edit-input" data-field="pakal-edit-label" data-pakal-id="${def.id}" value="${escHtml(def.label)}" maxlength="40" />`
-          : `<span class="badge" style="background:#1f6feb">${escHtml(def.label)}</span>`}
+        ${
+          editing
+            ? `<input type="text" class="input-sm pakal-edit-input" data-field="pakal-edit-label" data-pakal-id="${def.id}" value="${escHtml(def.label)}" maxlength="40" />`
+            : `<span class="badge" style="background:#1f6feb">${escHtml(def.label)}</span>`
+        }
         <span class="cert-usage-count">${usageText}</span>
         <div class="cert-def-item-actions">
           ${!editing ? `<button class="btn-icon btn-sm" data-action="pakal-edit" data-pakal-id="${def.id}" title="ערוך">✎</button>` : ''}
@@ -498,7 +544,7 @@ export function renderAlgorithmTab(): string {
   const presets = store.getAllPresets();
   const activeId = store.getActivePresetId();
   const dirty = store.isPresetDirty();
-  const activePreset = activeId ? presets.find(p => p.id === activeId) : undefined;
+  const activePreset = activeId ? presets.find((p) => p.id === activeId) : undefined;
   const isBuiltIn = activePreset?.builtIn ?? false;
 
   // ── Tab Title ──
@@ -515,7 +561,11 @@ export function renderAlgorithmTab(): string {
     <div class="settings-preset-toolbar">
       ${renderCustomSelect({
         id: 'gm-preset-select',
-        options: presets.map(p => ({ value: p.id, label: `${escHtml(p.name)}${p.id === activeId && dirty ? ' (שונה)' : ''}`, selected: p.id === activeId })),
+        options: presets.map((p) => ({
+          value: p.id,
+          label: `${escHtml(p.name)}${p.id === activeId && dirty ? ' (שונה)' : ''}`,
+          selected: p.id === activeId,
+        })),
         searchable: presets.length > 5,
         className: 'preset-select',
       })}
@@ -684,11 +734,15 @@ function renderWeightInput(f: WeightField, value: number, defaultVal: number, is
                value="${value}" />
       </div>
       <p class="algo-weight-desc">${f.description}</p>
-      ${f.detail ? `
+      ${
+        f.detail
+          ? `
       <details class="algo-weight-details">
         <summary>למידע נוסף</summary>
         <p>${f.detail}</p>
-      </details>` : ''}
+      </details>`
+          : ''
+      }
     </div>`;
 }
 
@@ -843,7 +897,12 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
           showConfirm(
             `הסמכה "${label}" נמצאת בשימוש (${usage.participantCount} משתתפים, ${usage.slotCount} משבצות). למחוק בכל זאת? אזהרה תוצג על משתתפים ומשימות שעדיין משתמשים בה.`,
             { danger: true, title: 'מחיקת הסמכה', confirmLabel: 'מחק' },
-          ).then(ok => { if (ok) { store.removeCertification(certId); rerender(); } });
+          ).then((ok) => {
+            if (ok) {
+              store.removeCertification(certId);
+              rerender();
+            }
+          });
         } else {
           store.removeCertification(certId);
           rerender();
@@ -901,7 +960,9 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
       }
       case 'pakal-save': {
         const pakalId = btn.dataset.pakalId || '';
-        const input = container.querySelector<HTMLInputElement>(`[data-field="pakal-edit-label"][data-pakal-id="${pakalId}"]`);
+        const input = container.querySelector<HTMLInputElement>(
+          `[data-field="pakal-edit-label"][data-pakal-id="${pakalId}"]`,
+        );
         const error = store.renamePakal(pakalId, input?.value || '');
         if (error) {
           _pakalError = error;
@@ -923,7 +984,12 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
           showConfirm(
             `פק"ל "${label}" נמצא בשימוש (${usageCount} משתתפים). למחוק בכל זאת? אזהרה תוצג על משתתפים שעדיין משתמשים בו.`,
             { danger: true, title: 'מחיקת פק"ל', confirmLabel: 'מחק' },
-          ).then(ok => { if (ok) { store.removePakal(pakalId); rerender(); } });
+          ).then((ok) => {
+            if (ok) {
+              store.removePakal(pakalId);
+              rerender();
+            }
+          });
         } else {
           store.removePakal(pakalId);
           rerender();
@@ -970,7 +1036,8 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         const code = (el as HTMLInputElement).dataset.code as HardConstraintCode;
         const settings = store.getAlgorithmSettings();
         const set = new Set(settings.disabledHardConstraints);
-        if ((el as HTMLInputElement).checked) set.delete(code); else set.add(code);
+        if ((el as HTMLInputElement).checked) set.delete(code);
+        else set.add(code);
         store.setAlgorithmSettings({ disabledHardConstraints: [...set] });
         rerender();
         break;
@@ -1005,14 +1072,15 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
       // Clamp to declared range — type="number" doesn't enforce min/max on typed input
       const lo = parseFloat(el.min);
       const hi = parseFloat(el.max);
-      const clamped = (!isNaN(lo) && !isNaN(hi)) ? Math.min(hi, Math.max(lo, numVal)) : numVal;
+      const clamped = !isNaN(lo) && !isNaN(hi) ? Math.min(hi, Math.max(lo, numVal)) : numVal;
 
       // Sync the paired control (slider ↔ number input)
       const card = el.closest('.algo-weight-card');
       if (card) {
-        const sibling = action === 'algo-weight-slider'
-          ? card.querySelector<HTMLInputElement>('[data-action="algo-weight-input"]')
-          : card.querySelector<HTMLInputElement>('[data-action="algo-weight-slider"]');
+        const sibling =
+          action === 'algo-weight-slider'
+            ? card.querySelector<HTMLInputElement>('[data-action="algo-weight-input"]')
+            : card.querySelector<HTMLInputElement>('[data-action="algo-weight-slider"]');
         if (sibling) sibling.value = String(clamped);
       }
 
@@ -1068,7 +1136,11 @@ async function _handlePresetItemAction(btn: HTMLElement, rerender: () => void): 
     case 'delete': {
       const preset = store.getPresetById(id);
       if (!preset || preset.builtIn) return;
-      const ok = await showConfirm(`למחוק את התבנית "${preset.name}"? לא ניתן לבטל פעולה זו.`, { danger: true, title: 'מחיקת תבנית', confirmLabel: 'מחק' });
+      const ok = await showConfirm(`למחוק את התבנית "${preset.name}"? לא ניתן לבטל פעולה זו.`, {
+        danger: true,
+        title: 'מחיקת תבנית',
+        confirmLabel: 'מחק',
+      });
       if (!ok) return;
       store.deletePreset(id);
       _presetFormMode = 'none';
@@ -1080,4 +1152,3 @@ async function _handlePresetItemAction(btn: HTMLElement, rerender: () => void): 
     }
   }
 }
-

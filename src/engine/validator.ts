@@ -4,23 +4,22 @@
  * Used after every manual override to verify schedule integrity.
  */
 
-import {
-  Task,
-  Assignment,
-  Participant,
-  SlotRequirement,
-  ValidationResult,
-  ConstraintViolation,
-  ViolationSeverity,
-  SwapRequest,
-  Level,
-  TaskTemplate,
-  SlotTemplate,
-} from '../models/types';
-import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt } from '../constraints/hard-constraints';
+import { effectivelyBlocksAt, isLevelSatisfied, validateHardConstraints } from '../constraints/hard-constraints';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
-import { isFullyCovered, blocksOverlap, isBlockedByDateUnavailability } from '../web/utils/time-utils';
-
+import {
+  type Assignment,
+  type ConstraintViolation,
+  type Level,
+  type Participant,
+  type SlotRequirement,
+  type SlotTemplate,
+  type SwapRequest,
+  type Task,
+  type TaskTemplate,
+  type ValidationResult,
+  ViolationSeverity,
+} from '../models/types';
+import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../web/utils/time-utils';
 
 export interface FullValidationResult extends ValidationResult {
   /** Soft constraint warnings (non-fatal) */
@@ -87,14 +86,14 @@ export function previewSwap(
 
 /** Constraint code identifying why a participant was rejected for a slot. */
 export type RejectionCode =
-  | 'HC-1'   // Level mismatch
-  | 'HC-2'   // Missing certification
-  | 'HC-3'   // Availability gap
-  | 'HC-4'   // Same-group conflict
-  | 'HC-5'   // Double-booking
-  | 'HC-7'   // Already assigned to this task
-  | 'HC-11'  // Forbidden certification (per-slot)
-  | 'HC-12'  // Consecutive high-load tasks
+  | 'HC-1' // Level mismatch
+  | 'HC-2' // Missing certification
+  | 'HC-3' // Availability gap
+  | 'HC-4' // Same-group conflict
+  | 'HC-5' // Double-booking
+  | 'HC-7' // Already assigned to this task
+  | 'HC-11' // Forbidden certification (per-slot)
+  | 'HC-12' // Consecutive high-load tasks
   | 'HC-14'; // Category break (5h minimum)
 
 /** Optional context for eligibility / rejection checks. */
@@ -137,7 +136,8 @@ function checkEligibility(
   const disabled = opts?.disabledHC;
 
   // HC-11: Forbidden certification check (per-slot)
-  if (!disabled?.has('HC-11') && slot.forbiddenCertifications?.some(c => participant.certifications.includes(c))) return 'HC-11';
+  if (!disabled?.has('HC-11') && slot.forbiddenCertifications?.some((c) => participant.certifications.includes(c)))
+    return 'HC-11';
 
   // HC-1: Level check — single source of truth in isLevelSatisfied()
   if (!disabled?.has('HC-1') && !isLevelSatisfied(participant.level, slot)) return 'HC-1';
@@ -150,14 +150,22 @@ function checkEligibility(
   }
 
   // HC-3: Availability check (windows + recurring dateUnavailability rules)
-  if (!disabled?.has('HC-3') && (
-    !isFullyCovered(task.timeBlock, participant.availability) ||
-    isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability)
-  )) return 'HC-3';
+  if (
+    !disabled?.has('HC-3') &&
+    (!isFullyCovered(task.timeBlock, participant.availability) ||
+      isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability))
+  )
+    return 'HC-3';
 
   // HC-4: Same-group check (optional — only validator uses this inline)
-  if (!disabled?.has('HC-4') && opts?.checkSameGroup && task.sameGroupRequired && opts.taskAssignments && opts.participantMap) {
-    const otherAssignments = opts.taskAssignments.filter(a => a.slotId !== slot.slotId);
+  if (
+    !disabled?.has('HC-4') &&
+    opts?.checkSameGroup &&
+    task.sameGroupRequired &&
+    opts.taskAssignments &&
+    opts.participantMap
+  ) {
+    const otherAssignments = opts.taskAssignments.filter((a) => a.slotId !== slot.slotId);
     for (const oa of otherAssignments) {
       const existingP = opts.participantMap.get(oa.participantId);
       if (existingP && existingP.group !== participant.group) return 'HC-4';
@@ -173,7 +181,7 @@ function checkEligibility(
   }
 
   // HC-7: Not already assigned to this task
-  if (!disabled?.has('HC-7') && participantAssignments.some(a => a.taskId === task.id)) return 'HC-7';
+  if (!disabled?.has('HC-7') && participantAssignments.some((a) => a.taskId === task.id)) return 'HC-7';
 
   // HC-12: No consecutive blocking tasks
   if (!disabled?.has('HC-12')) {
@@ -201,9 +209,10 @@ function checkEligibility(
       const otherTask = taskMap.get(a.taskId);
       if (!otherTask?.restRuleId || !ruleMap.has(otherTask.restRuleId)) continue;
       // Same rule → that rule's duration; different rules → min of both
-      const threshold = otherTask.restRuleId === task.restRuleId
-        ? taskDuration
-        : Math.min(taskDuration, ruleMap.get(otherTask.restRuleId)!);
+      const threshold =
+        otherTask.restRuleId === task.restRuleId
+          ? taskDuration
+          : Math.min(taskDuration, ruleMap.get(otherTask.restRuleId)!);
       const gap = Math.max(
         taskStart - otherTask.timeBlock.end.getTime(),
         otherTask.timeBlock.start.getTime() - taskEnd,
@@ -268,13 +277,11 @@ export function getEligibleParticipantsForSlot(
   const pMap = new Map<string, Participant>();
   for (const p of participants) pMap.set(p.id, p);
 
-  const taskAssignments = currentAssignments.filter(a => a.taskId === task.id);
+  const taskAssignments = currentAssignments.filter((a) => a.taskId === task.id);
 
   return participants.filter((p) => {
     // Build participant's assignments excluding this task
-    const pAssignments = currentAssignments.filter(
-      (a) => a.participantId === p.id && a.taskId !== task.id,
-    );
+    const pAssignments = currentAssignments.filter((a) => a.participantId === p.id && a.taskId !== task.id);
     return isEligible(p, task, slot, pAssignments, taskMap, {
       checkSameGroup: true,
       taskAssignments,
@@ -307,10 +314,7 @@ export function checkTemplateEligibility(
   labelResolver: (certId: string) => string = (id) => id,
 ): TemplateEligibilityResult {
   // Collect all slots: top-level + sub-team slots
-  const allSlots: SlotTemplate[] = [
-    ...template.slots,
-    ...template.subTeams.flatMap(st => st.slots),
-  ];
+  const allSlots: SlotTemplate[] = [...template.slots, ...template.subTeams.flatMap((st) => st.slots)];
 
   if (allSlots.length === 0) return { eligible: true, reasons: [] };
 
@@ -319,11 +323,20 @@ export function checkTemplateEligibility(
 
   for (const slot of allSlots) {
     // HC-11: Forbidden certifications
-    if (slot.forbiddenCertifications?.some(c => certifications.includes(c))) { blockedBy.add('HC-11'); continue; }
+    if (slot.forbiddenCertifications?.some((c) => certifications.includes(c))) {
+      blockedBy.add('HC-11');
+      continue;
+    }
     // HC-1: Level check (reuse existing isLevelSatisfied — works with SlotTemplate since it has acceptableLevels)
-    if (!isLevelSatisfied(level, slot as unknown as SlotRequirement)) { blockedBy.add('HC-1'); continue; }
+    if (!isLevelSatisfied(level, slot as unknown as SlotRequirement)) {
+      blockedBy.add('HC-1');
+      continue;
+    }
     // HC-2: Required certifications
-    if (slot.requiredCertifications.some(c => !certifications.includes(c))) { blockedBy.add('HC-2'); continue; }
+    if (slot.requiredCertifications.some((c) => !certifications.includes(c))) {
+      blockedBy.add('HC-2');
+      continue;
+    }
     // Passed all checks — eligible for this slot
     return { eligible: true, reasons: [] };
   }
@@ -340,7 +353,7 @@ export function checkTemplateEligibility(
         if (!certifications.includes(c)) missingCerts.add(c);
       }
     }
-    const names = [...missingCerts].map(c => labelResolver(c)).join(', ');
+    const names = [...missingCerts].map((c) => labelResolver(c)).join(', ');
     reasons.push(`חסרה הסמכה נדרשת (${names}) לכל המשבצות במשימה הזו`);
   }
   if (blockedBy.has('HC-11')) {
@@ -350,7 +363,7 @@ export function checkTemplateEligibility(
         if (certifications.includes(c)) forbidden.add(c);
       }
     }
-    const names = [...forbidden].map(c => labelResolver(c)).join(', ');
+    const names = [...forbidden].map((c) => labelResolver(c)).join(', ');
     reasons.push(`יש לך הסמכה אסורה (${names}) במשימה הזו`);
   }
 

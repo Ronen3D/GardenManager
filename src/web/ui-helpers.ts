@@ -8,7 +8,7 @@
 
 import { Level } from '../models/types';
 import { fmtTime } from '../utils/date-utils';
-import { getTemplateVisualMap, getCertLabel, getCertColor, getCertificationById } from './config-store';
+import { getCertColor, getCertificationById, getCertLabel, getTemplateVisualMap } from './config-store';
 
 // ─── SVG Icons ───────────────────────────────────────────────────────────────
 
@@ -62,7 +62,6 @@ export const LEVEL_COLORS: Record<Level, string> = {
   [Level.L4]: '#e74c3c',
 };
 
-
 // ─── Formatting Helpers ──────────────────────────────────────────────────────
 
 /** Format a Date as HH:MM (24h). Delegates to shared fmtTime. */
@@ -72,7 +71,12 @@ export function fmt(d: Date): string {
 
 /** Level badge HTML. */
 export function levelBadge(level: Level): string {
-  const labels: Record<Level, string> = { [Level.L0]: 'דרגה 0', [Level.L2]: 'דרגה 2', [Level.L3]: 'דרגה 3', [Level.L4]: 'דרגה 4' };
+  const labels: Record<Level, string> = {
+    [Level.L0]: 'דרגה 0',
+    [Level.L2]: 'דרגה 2',
+    [Level.L3]: 'דרגה 3',
+    [Level.L4]: 'דרגה 4',
+  };
   return `<span class="badge" style="background:${LEVEL_COLORS[level]}">${labels[level]}</span>`;
 }
 
@@ -91,7 +95,7 @@ export function certBadge(c: string): string {
 /** Multiple certification badges (returns dash when empty). */
 export function certBadges(certs: string[], emptyLabel = '—'): string {
   if (certs.length === 0) return `<span class="text-muted">${emptyLabel}</span>`;
-  return certs.map(c => certBadge(c)).join(' ');
+  return certs.map((c) => certBadge(c)).join(' ');
 }
 
 /** Group badge HTML. Optionally renders as a clickable filter badge. */
@@ -109,7 +113,6 @@ export function taskBadge(task: { color?: string; sourceName?: string; name?: st
   const label = task.sourceName || task.name || '';
   return `<span class="badge" style="background:${color}">${label}</span>`;
 }
-
 
 /** Escape a string for safe HTML interpolation. */
 export function escHtml(s: string): string {

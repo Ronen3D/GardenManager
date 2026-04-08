@@ -13,14 +13,7 @@
  * Usage: npx tsx src/stress-test-bulk-delete.ts
  */
 
-import {
-  Level,
-  Schedule,
-  Task,
-  Assignment,
-  AssignmentStatus,
-  Participant,
-} from './models/types';
+import { type Assignment, AssignmentStatus, Level, Participant, type Schedule, type Task } from './models/types';
 import * as store from './web/config-store';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -105,10 +98,22 @@ const fakeSchedule: Schedule = {
   generatedAt: new Date(),
   tasks,
   assignments,
-  participants: allParticipants.map(p => ({ ...p })),
+  participants: allParticipants.map((p) => ({ ...p })),
   violations: [],
   feasible: true,
-  score: { compositeScore: 50, minRestHours: 8, avgRestHours: 12, restStdDev: 1.2, totalPenalty: 0, l0StdDev: 1.0, l0AvgEffective: 20, seniorStdDev: 0.5, seniorAvgEffective: 10, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 },
+  score: {
+    compositeScore: 50,
+    minRestHours: 8,
+    avgRestHours: 12,
+    restStdDev: 1.2,
+    totalPenalty: 0,
+    l0StdDev: 1.0,
+    l0AvgEffective: 20,
+    seniorStdDev: 0.5,
+    seniorAvgEffective: 10,
+    dailyPerParticipantStdDev: 0,
+    dailyGlobalStdDev: 0,
+  },
 };
 
 // ─── Test 1: Measure captureSnapshot alone ───────────────────────────────────
@@ -127,7 +132,7 @@ ms('undo (captureSnapshot + restore)', () => {
 // ─── Test 2: removeParticipantsBulk without subscriber ───────────────────────
 
 console.log('\n── Phase 2: removeParticipantsBulk (no subscriber) ──');
-const idsToDelete = allParticipants.slice(0, 20).map(p => p.id);
+const idsToDelete = allParticipants.slice(0, 20).map((p) => p.id);
 console.log(`Deleting ${idsToDelete.length} participants out of ${store.getAllParticipants().length}...`);
 
 const t2 = ms('removeParticipantsBulk (no subscriber)', () => {
@@ -144,7 +149,7 @@ console.log(`Restored (undo): ${store.getAllParticipants().length} participants`
 
 console.log('\n── Phase 3: removeParticipantsBulk + subscriber (assignment strip) ──');
 
-let subscriberTimings = { calls: 0, totalMs: 0 };
+const subscriberTimings = { calls: 0, totalMs: 0 };
 let _testSchedule: Schedule | null = { ...fakeSchedule };
 
 const unsub = store.subscribe(() => {
@@ -153,14 +158,14 @@ const unsub = store.subscribe(() => {
 
   if (!_testSchedule) return;
 
-  const storeIds = new Set(store.getAllParticipants().map(p => p.id));
+  const storeIds = new Set(store.getAllParticipants().map((p) => p.id));
   const before = _testSchedule.assignments.length;
-  const cleaned = _testSchedule.assignments.filter(a => storeIds.has(a.participantId));
+  const cleaned = _testSchedule.assignments.filter((a) => storeIds.has(a.participantId));
   if (cleaned.length !== before) {
     _testSchedule = {
       ..._testSchedule,
       assignments: cleaned,
-      participants: _testSchedule.participants.filter(p => storeIds.has(p.id)),
+      participants: _testSchedule.participants.filter((p) => storeIds.has(p.id)),
     };
   }
 
@@ -173,7 +178,9 @@ const t3 = ms('removeParticipantsBulk + subscriber', () => {
 
 console.log(`  Subscriber calls: ${subscriberTimings.calls}`);
 console.log(`  Subscriber total: ${subscriberTimings.totalMs.toFixed(2)} ms`);
-console.log(`  Assignments after strip: ${_testSchedule?.assignments.length ?? 0} (was ${fakeSchedule.assignments.length})`);
+console.log(
+  `  Assignments after strip: ${_testSchedule?.assignments.length ?? 0} (was ${fakeSchedule.assignments.length})`,
+);
 console.log(`  Participants after strip: ${_testSchedule?.participants.length ?? 0}`);
 unsub();
 

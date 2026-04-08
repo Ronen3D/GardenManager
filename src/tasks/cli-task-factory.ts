@@ -7,13 +7,8 @@
  * used by the web app, which builds tasks from data-driven TaskTemplates.
  */
 
-import {
-  Task,
-  SlotRequirement,
-  Level,
-  TimeBlock,
-} from '../models/types';
-import { generateShiftBlocks, createTimeBlockFromHours } from '../web/utils/time-utils';
+import { Level, type SlotRequirement, type Task, type TimeBlock } from '../models/types';
+import { createTimeBlockFromHours, generateShiftBlocks } from '../web/utils/time-utils';
 
 let _slotCounter = 0;
 function nextSlotId(prefix: string): string {
@@ -26,9 +21,13 @@ function nextTaskId(prefix: string): string {
 }
 
 /** Reset slot counter — call at the start of each generation pass. */
-export function resetSlotCounter(): void { _slotCounter = 0; }
+export function resetSlotCounter(): void {
+  _slotCounter = 0;
+}
 /** Reset task counter — call at the start of each generation pass. */
-export function resetTaskCounter(): void { _taskCounter = 0; }
+export function resetTaskCounter(): void {
+  _taskCounter = 0;
+}
 
 // ─── Adanit ──────────────────────────────────────────────────────────────────
 
@@ -71,7 +70,7 @@ function buildAdanitSlots(): SlotRequirement[] {
     acceptableLevels: [{ level: Level.L2 }],
     requiredCertifications: ['Nitzan'],
     subTeamId: 'segol-secondary',
-    label: 'בכיר בסגול ב\'',
+    label: "בכיר בסגול ב'",
   });
 
   return slots;
@@ -353,21 +352,13 @@ export function generateDailyTasks(baseDate: Date, resetCounters: boolean = true
   tasks.push(createMamteraTask(d));
 
   // Karov: 3× 8h shifts starting 05:00
-  const karovShifts = generateShiftBlocks(
-    new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5, 0),
-    8,
-    3,
-  );
+  const karovShifts = generateShiftBlocks(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5, 0), 8, 3);
   for (const block of karovShifts) {
     tasks.push(createKarovTask(block));
   }
 
   // Karovit: 3× 8h shifts starting 05:00
-  const karovitShifts = generateShiftBlocks(
-    new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5, 0),
-    8,
-    3,
-  );
+  const karovitShifts = generateShiftBlocks(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5, 0), 8, 3);
   for (const block of karovitShifts) {
     tasks.push(createKarovitTask(block));
   }
@@ -391,11 +382,7 @@ export function generateWeeklyTasks(startDate: Date, numDays: number = 7): Task[
   const allTasks: Task[] = [];
 
   for (let day = 0; day < numDays; day++) {
-    const dayDate = new Date(
-      startDate.getFullYear(),
-      startDate.getMonth(),
-      startDate.getDate() + day,
-    );
+    const dayDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + day);
     const dayTasks = generateDailyTasks(dayDate, false);
 
     for (const t of dayTasks) {

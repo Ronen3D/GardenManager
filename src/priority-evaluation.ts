@@ -16,15 +16,9 @@
  * Usage: npx ts-node src/priority-evaluation.ts
  */
 
-import {
-  Participant,
-  Level,
-  Task,
-  DEFAULT_CONFIG,
-  SchedulerConfig,
-} from './models/types';
-import { generateDailyTasks, resetSlotCounter, resetTaskCounter } from './tasks/cli-task-factory';
 import { optimize, resetAssignmentCounter } from './engine/optimizer';
+import { DEFAULT_CONFIG, Level, type Participant, type SchedulerConfig, type Task } from './models/types';
+import { generateDailyTasks, resetSlotCounter, resetTaskCounter } from './tasks/cli-task-factory';
 
 // ─── Participant Pool (canonical 24-participant set) ──────────────────────────
 
@@ -32,12 +26,11 @@ const BASE_DATE = new Date(2026, 1, 15);
 const DAY_START = new Date(2026, 1, 15, 0, 0);
 const DAY_END = new Date(2026, 1, 16, 12, 0);
 
-function createP(
-  id: string, name: string, level: Level,
-  certs: string[], group: string,
-): Participant {
+function createP(id: string, name: string, level: Level, certs: string[], group: string): Participant {
   return {
-    id, name, level,
+    id,
+    name,
+    level,
     certifications: certs,
     group,
     availability: [{ start: DAY_START, end: DAY_END }],
@@ -77,7 +70,7 @@ const allParticipants: Participant[] = [
 
 /** Check if any slot in the task has a low-priority level entry (replaces preferJuniors). */
 function hasLowPriority(task: Task): boolean {
-  return task.slots.some(s => s.acceptableLevels.some(e => e.lowPriority));
+  return task.slots.some((s) => s.acceptableLevels.some((e) => e.lowPriority));
 }
 
 // ─── Pool Analysis Helper ───────────────────────────────────────────────────
@@ -89,9 +82,9 @@ function countEligiblePerSlot(task: Task): { avg: number; min: number; max: numb
   for (const slot of task.slots) {
     let eligible = 0;
     for (const p of allParticipants) {
-      if (!slot.acceptableLevels.some(e => e.level === p.level)) continue;
-      if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
-      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (!slot.acceptableLevels.some((e) => e.level === p.level)) continue;
+      if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) continue;
       eligible++;
     }
     total += eligible;
@@ -115,10 +108,11 @@ type PriorityFn = (task: Task) => number;
 function prod_current(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
@@ -146,14 +140,17 @@ function prod_current(task: Task): number {
 function a1_compressedTiers(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (hasLowPriority(task) || (allL0Only && hasCerts)) tier = 1; // Merge Hamama+Shemesh
-  else if (hasCerts || hasExclusion || (allL0Only && !task.isLight)) tier = 2; // Merge Karov+Mamtera+Aruga
+  if (hasLowPriority(task) || (allL0Only && hasCerts))
+    tier = 1; // Merge Hamama+Shemesh
+  else if (hasCerts || hasExclusion || (allL0Only && !task.isLight))
+    tier = 2; // Merge Karov+Mamtera+Aruga
   else tier = 3; // Light + fallback
 
   const { min } = countEligiblePerSlot(task);
@@ -169,21 +166,29 @@ function a1_compressedTiers(task: Task): number {
 function a2_expandedTiers(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
-  const hasMixedLevels = task.slots.some(s => s.acceptableLevels.length > 1) &&
-    task.slots.some(s => s.acceptableLevels.length === 1);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasMixedLevels =
+    task.slots.some((s) => s.acceptableLevels.length > 1) && task.slots.some((s) => s.acceptableLevels.length === 1);
 
   let tier: number;
-  if (hasLowPriority(task) && hasCerts) tier = 1;       // Hamama
-  else if (allL0Only && hasCerts) tier = 2;           // Shemesh
-  else if (hasMixedLevels && hasCerts) tier = 3;      // Karov (mixed levels + certs)
-  else if (hasExclusion) tier = 4;                    // Mamtera (exclusion)
-  else if (hasCerts) tier = 4;                        // Other cert tasks
-  else if (allL0Only && !task.isLight) tier = 5;      // Aruga
-  else if (task.isLight) tier = 6;                    // Karovit
+  if (hasLowPriority(task) && hasCerts)
+    tier = 1; // Hamama
+  else if (allL0Only && hasCerts)
+    tier = 2; // Shemesh
+  else if (hasMixedLevels && hasCerts)
+    tier = 3; // Karov (mixed levels + certs)
+  else if (hasExclusion)
+    tier = 4; // Mamtera (exclusion)
+  else if (hasCerts)
+    tier = 4; // Other cert tasks
+  else if (allL0Only && !task.isLight)
+    tier = 5; // Aruga
+  else if (task.isLight)
+    tier = 6; // Karovit
   else tier = 4;
 
   const { min } = countEligiblePerSlot(task);
@@ -198,10 +203,11 @@ function a2_expandedTiers(task: Task): number {
 function a3_tieredAvgPool(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
@@ -224,10 +230,11 @@ function a3_tieredAvgPool(task: Task): number {
 function a4_pureTiers(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
@@ -268,9 +275,9 @@ function b2_harmonicMean(task: Task): number {
   for (const slot of task.slots) {
     let eligible = 0;
     for (const p of allParticipants) {
-      if (!slot.acceptableLevels.some(e => e.level === p.level)) continue;
-      if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
-      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (!slot.acceptableLevels.some((e) => e.level === p.level)) continue;
+      if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) continue;
       eligible++;
     }
     reciprocalSum += 1 / Math.max(1, eligible);
@@ -291,7 +298,7 @@ function b3_constraintDensity(task: Task): number {
 
   let constraintFeatures = 0;
   for (const slot of task.slots) {
-    constraintFeatures += (5 - slot.acceptableLevels.length); // Fewer levels = more constrained
+    constraintFeatures += 5 - slot.acceptableLevels.length; // Fewer levels = more constrained
     constraintFeatures += slot.requiredCertifications.length * 2;
     constraintFeatures += (slot.forbiddenCertifications?.length ?? 0) * 2;
   }
@@ -335,10 +342,11 @@ function b4_slotWeightedBottleneck(task: Task): number {
 function c1_tierBoostedPenalty(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
@@ -363,10 +371,11 @@ function c1_tierBoostedPenalty(task: Task): number {
 function c2_tierContinuousBlend(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
@@ -394,8 +403,7 @@ function c2_tierContinuousBlend(task: Task): number {
 function c3_v0PenaltyBoosted(task: Task): number {
   if (task.sameGroupRequired) return 0;
   let score = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   score -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
@@ -412,10 +420,11 @@ function c3_v0PenaltyBoosted(task: Task): number {
 function c4_tierDuration(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
@@ -447,13 +456,15 @@ function c4_tierDuration(task: Task): number {
 function d1_lightFirst(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.isLight) tier = 1;                          // Light FIRST
+  if (task.isLight)
+    tier = 1; // Light FIRST
   else if (hasLowPriority(task) && hasCerts) tier = 2;
   else if (allL0Only && hasCerts) tier = 3;
   else if (hasCerts || hasExclusion) tier = 4;
@@ -483,10 +494,11 @@ function d2_flatPriority(task: Task): number {
 function d3_easyFirst(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   // Reverse tier ordering
   let tier: number;
@@ -511,8 +523,8 @@ function d3_easyFirst(task: Task): number {
 function d4_penaltyOnly(task: Task): number {
   if (task.sameGroupRequired) return 0;
   if (hasLowPriority(task)) return 5; // Hamama: top priority
-  if (task.isLight) return 40;      // Light: low priority
-  return 25;                         // Everything else: equal
+  if (task.isLight) return 40; // Light: low priority
+  return 25; // Everything else: equal
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -527,10 +539,11 @@ function e1_hamamaTier0(task: Task): number {
   if (task.sameGroupRequired) return 0;
   if (hasLowPriority(task)) return 1; // Hamama: just after group tasks
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (allL0Only && hasCerts) tier = 2;
@@ -551,10 +564,11 @@ function e1_hamamaTier0(task: Task): number {
 function e2_widerTierSpacing(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
@@ -577,15 +591,17 @@ function e2_widerTierSpacing(task: Task): number {
 function e3_arugaPromoted(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
-  else if (hasCerts || hasExclusion || (allL0Only && !task.isLight)) tier = 3; // Aruga promoted
+  else if (hasCerts || hasExclusion || (allL0Only && !task.isLight))
+    tier = 3; // Aruga promoted
   else if (task.isLight) tier = 5;
   else tier = 3;
 
@@ -601,10 +617,11 @@ function e3_arugaPromoted(task: Task): number {
 function e4_geometricTiebreak(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
@@ -628,10 +645,11 @@ function e4_geometricTiebreak(task: Task): number {
 function e5_mergedTier1(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
   // Merge: both preferJuniors+cert AND L0-only+cert go to tier 1
@@ -665,16 +683,36 @@ const VARIANTS: { name: string; fn: PriorityFn; description: string; family: str
   { name: 'B4_slotBneck', fn: b4_slotWeightedBottleneck, family: 'B:Pool', description: 'Slots × bottleneck scarcity' },
 
   // Family C: Hybrid
-  { name: 'C1_tierPen', fn: c1_tierBoostedPenalty, family: 'C:Hybrid', description: 'Tier + forced low sub-pri for preferJuniors' },
-  { name: 'C2_blend70', fn: c2_tierContinuousBlend, family: 'C:Hybrid', description: '70% tier + 30% bottleneck continuous' },
+  {
+    name: 'C1_tierPen',
+    fn: c1_tierBoostedPenalty,
+    family: 'C:Hybrid',
+    description: 'Tier + forced low sub-pri for preferJuniors',
+  },
+  {
+    name: 'C2_blend70',
+    fn: c2_tierContinuousBlend,
+    family: 'C:Hybrid',
+    description: '70% tier + 30% bottleneck continuous',
+  },
   { name: 'C3_v0Pen', fn: c3_v0PenaltyBoosted, family: 'C:Hybrid', description: 'V0 structural + Hamama -25 boost' },
   { name: 'C4_tierDur', fn: c4_tierDuration, family: 'C:Hybrid', description: 'Tier + duration boost for long tasks' },
 
   // Family D: Aggressive/unconventional
   { name: 'D1_lightFirst', fn: d1_lightFirst, family: 'D:Aggressive', description: 'Light tasks scheduled FIRST' },
-  { name: 'D2_flat', fn: d2_flatPriority, family: 'D:Aggressive', description: 'All non-group tasks equal (null hypothesis)' },
+  {
+    name: 'D2_flat',
+    fn: d2_flatPriority,
+    family: 'D:Aggressive',
+    description: 'All non-group tasks equal (null hypothesis)',
+  },
   { name: 'D3_easyFirst', fn: d3_easyFirst, family: 'D:Aggressive', description: 'Reverse priority: easy tasks first' },
-  { name: 'D4_penOnly', fn: d4_penaltyOnly, family: 'D:Aggressive', description: 'Only boost Hamama, everything else flat' },
+  {
+    name: 'D4_penOnly',
+    fn: d4_penaltyOnly,
+    family: 'D:Aggressive',
+    description: 'Only boost Hamama, everything else flat',
+  },
 
   // Family E: Fine-tuned
   { name: 'E1_hamT0', fn: e1_hamamaTier0, family: 'E:Refined', description: 'Hamama at priority 1 (near-Adanit)' },
@@ -720,10 +758,10 @@ function computeStats(values: number[]) {
     max: sorted[n - 1],
     median: n % 2 === 0 ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2 : sorted[Math.floor(n / 2)],
     p5: sorted[Math.floor(n * 0.05)],
-    p10: sorted[Math.floor(n * 0.10)],
+    p10: sorted[Math.floor(n * 0.1)],
     p25: sorted[Math.floor(n * 0.25)],
     p75: sorted[Math.floor(n * 0.75)],
-    p90: sorted[Math.floor(n * 0.90)],
+    p90: sorted[Math.floor(n * 0.9)],
     p95: sorted[Math.floor(n * 0.95)],
     cv: mean !== 0 ? (stdDev / Math.abs(mean)) * 100 : 0,
   };
@@ -737,7 +775,7 @@ function shuffle<T>(arr: T[]): T[] {
   return arr;
 }
 
-function runVariant(variant: typeof VARIANTS[number]): VariantResult {
+function runVariant(variant: (typeof VARIANTS)[number]): VariantResult {
   const config: SchedulerConfig = {
     ...DEFAULT_CONFIG,
     maxIterations: 5000,
@@ -840,10 +878,10 @@ console.log('  DETAILED RESULTS');
 console.log('══════════════════════════════════════════════════════════════════════════════\n');
 
 // Helper to compute difference from PROD baseline
-const prodResult = allResults.find(r => r.name === 'PROD')!;
+const prodResult = allResults.find((r) => r.name === 'PROD')!;
 function diffFromProd(variantRuns: RunResult[], metric: keyof RunResult, higherIsBetter: boolean): string {
-  const prodVals = prodResult.runs.map(r => r[metric] as number);
-  const varVals = variantRuns.map(r => r[metric] as number);
+  const prodVals = prodResult.runs.map((r) => r[metric] as number);
+  const varVals = variantRuns.map((r) => r[metric] as number);
   const prodMean = prodVals.reduce((a, b) => a + b, 0) / prodVals.length;
   const varMean = varVals.reduce((a, b) => a + b, 0) / varVals.length;
   const diff = varMean - prodMean;
@@ -859,9 +897,9 @@ console.log('── 1. FEASIBILITY (unfilled slots) ─────────�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.unfilled);
+    const vals = r.runs.map((run) => run.unfilled);
     const s = computeStats(vals);
-    const feasCount = r.runs.filter(run => run.feasible).length;
+    const feasCount = r.runs.filter((run) => run.feasible).length;
     rows.push({
       variant: r.name,
       family: r.family,
@@ -881,7 +919,7 @@ console.log('── 2. COMPOSITE SCORE (higher = better) ───────�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.compositeScore);
+    const vals = r.runs.map((run) => run.compositeScore);
     const s = computeStats(vals);
     rows.push({
       variant: r.name,
@@ -902,11 +940,11 @@ console.log('── 3. TOTAL PENALTY (lower = better) — key differentiator ─
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.totalPenalty);
+    const vals = r.runs.map((run) => run.totalPenalty);
     const s = computeStats(vals);
-    const zeroCount = vals.filter(v => v === 0).length;
-    const tenKCount = vals.filter(v => v >= 9000 && v <= 11000).length;
-    const twentyKPlus = vals.filter(v => v >= 19000).length;
+    const zeroCount = vals.filter((v) => v === 0).length;
+    const tenKCount = vals.filter((v) => v >= 9000 && v <= 11000).length;
+    const twentyKPlus = vals.filter((v) => v >= 19000).length;
     rows.push({
       variant: r.name,
       mean: s.mean.toFixed(0),
@@ -924,7 +962,7 @@ console.log('── 4. L0 FAIRNESS (workload stdDev — lower = fairer) ──�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.l0StdDev);
+    const vals = r.runs.map((run) => run.l0StdDev);
     const s = computeStats(vals);
     rows.push({
       variant: r.name,
@@ -943,7 +981,7 @@ console.log('── 5. SENIOR FAIRNESS (workload stdDev — lower = fairer) ─�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.seniorStdDev);
+    const vals = r.runs.map((run) => run.seniorStdDev);
     const s = computeStats(vals);
     rows.push({
       variant: r.name,
@@ -960,8 +998,11 @@ console.log('── 6. MIN REST HOURS (higher = better) ────────
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.minRestHours).filter(v => isFinite(v));
-    if (vals.length === 0) { rows.push({ variant: r.name, mean: 'N/A' }); continue; }
+    const vals = r.runs.map((run) => run.minRestHours).filter((v) => isFinite(v));
+    if (vals.length === 0) {
+      rows.push({ variant: r.name, mean: 'N/A' });
+      continue;
+    }
     const s = computeStats(vals);
     rows.push({
       variant: r.name,
@@ -980,7 +1021,7 @@ console.log('── 7. STABILITY (score CV% — lower = more consistent) ──�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const scoreVals = r.runs.map(run => run.compositeScore);
+    const scoreVals = r.runs.map((run) => run.compositeScore);
     const s = computeStats(scoreVals);
     const iqr = s.p75 - s.p25;
     rows.push({
@@ -1005,26 +1046,26 @@ console.log('══════════════════════�
 
 {
   const dims = ['feasibility', 'score', 'penalty', 'l0Fair', 'seniorFair', 'stability', 'rest'] as const;
-  const weights: Record<typeof dims[number], number> = {
+  const weights: Record<(typeof dims)[number], number> = {
     feasibility: 0.25,
-    score: 0.20,
-    penalty: 0.20,
-    l0Fair: 0.10,
+    score: 0.2,
+    penalty: 0.2,
+    l0Fair: 0.1,
     seniorFair: 0.05,
-    stability: 0.10,
-    rest: 0.10,
+    stability: 0.1,
+    rest: 0.1,
   };
 
-  type DimMap = Record<typeof dims[number], number>;
+  type DimMap = Record<(typeof dims)[number], number>;
   const raw = new Map<string, DimMap>();
 
   for (const r of allResults) {
-    const unf = computeStats(r.runs.map(run => run.unfilled));
-    const sc = computeStats(r.runs.map(run => run.compositeScore));
-    const l0 = computeStats(r.runs.map(run => run.l0StdDev));
-    const sr = computeStats(r.runs.map(run => run.seniorStdDev));
-    const pen = computeStats(r.runs.map(run => run.totalPenalty));
-    const finiteRest = r.runs.map(run => run.minRestHours).filter(v => isFinite(v));
+    const unf = computeStats(r.runs.map((run) => run.unfilled));
+    const sc = computeStats(r.runs.map((run) => run.compositeScore));
+    const l0 = computeStats(r.runs.map((run) => run.l0StdDev));
+    const sr = computeStats(r.runs.map((run) => run.seniorStdDev));
+    const pen = computeStats(r.runs.map((run) => run.totalPenalty));
+    const finiteRest = r.runs.map((run) => run.minRestHours).filter((v) => isFinite(v));
     const rst = computeStats(finiteRest.length > 0 ? finiteRest : [0]);
     const cv = sc.mean !== 0 ? sc.stdDev / Math.abs(sc.mean) : 0;
 
@@ -1040,11 +1081,11 @@ console.log('══════════════════════�
   }
 
   // Rank per dimension
-  const ranks = new Map<string, Record<typeof dims[number], number>>();
+  const ranks = new Map<string, Record<(typeof dims)[number], number>>();
   for (const dim of dims) {
     const sorted = [...raw.entries()].sort((a, b) => a[1][dim] - b[1][dim]);
     sorted.forEach(([name], idx) => {
-      if (!ranks.has(name)) ranks.set(name, {} as Record<typeof dims[number], number>);
+      if (!ranks.has(name)) ranks.set(name, {} as Record<(typeof dims)[number], number>);
       ranks.get(name)![dim] = idx + 1;
     });
   }
@@ -1071,7 +1112,9 @@ console.log('══════════════════════�
     });
   }
   rows.sort((a, b) => parseFloat(a['WEIGHTED'] as string) - parseFloat(b['WEIGHTED'] as string));
-  rows.forEach((r, i) => { r['#'] = i + 1; });
+  rows.forEach((r, i) => {
+    r['#'] = i + 1;
+  });
   console.table(rows);
 }
 
@@ -1085,41 +1128,43 @@ console.log('══════════════════════�
 
 {
   const prodS = {
-    unfilled: computeStats(prodResult.runs.map(r => r.unfilled)),
-    score: computeStats(prodResult.runs.map(r => r.compositeScore)),
-    penalty: computeStats(prodResult.runs.map(r => r.totalPenalty)),
-    l0: computeStats(prodResult.runs.map(r => r.l0StdDev)),
-    rest: computeStats(prodResult.runs.map(r => r.minRestHours).filter(v => isFinite(v))),
+    unfilled: computeStats(prodResult.runs.map((r) => r.unfilled)),
+    score: computeStats(prodResult.runs.map((r) => r.compositeScore)),
+    penalty: computeStats(prodResult.runs.map((r) => r.totalPenalty)),
+    l0: computeStats(prodResult.runs.map((r) => r.l0StdDev)),
+    rest: computeStats(prodResult.runs.map((r) => r.minRestHours).filter((v) => isFinite(v))),
   };
 
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
     const s = {
-      unfilled: computeStats(r.runs.map(run => run.unfilled)),
-      score: computeStats(r.runs.map(run => run.compositeScore)),
-      penalty: computeStats(r.runs.map(run => run.totalPenalty)),
-      l0: computeStats(r.runs.map(run => run.l0StdDev)),
-      rest: computeStats(r.runs.map(run => run.minRestHours).filter(v => isFinite(v))),
+      unfilled: computeStats(r.runs.map((run) => run.unfilled)),
+      score: computeStats(r.runs.map((run) => run.compositeScore)),
+      penalty: computeStats(r.runs.map((run) => run.totalPenalty)),
+      l0: computeStats(r.runs.map((run) => run.l0StdDev)),
+      rest: computeStats(r.runs.map((run) => run.minRestHours).filter((v) => isFinite(v))),
     };
 
-    const zeroPen = r.runs.filter(run => run.totalPenalty === 0).length;
-    const prodZeroPen = prodResult.runs.filter(run => run.totalPenalty === 0).length;
+    const zeroPen = r.runs.filter((run) => run.totalPenalty === 0).length;
+    const prodZeroPen = prodResult.runs.filter((run) => run.totalPenalty === 0).length;
 
     rows.push({
       variant: r.name,
-      'unfilled': s.unfilled.mean.toFixed(2),
-      'score': s.score.mean.toFixed(0),
-      'penalty': s.penalty.mean.toFixed(0),
+      unfilled: s.unfilled.mean.toFixed(2),
+      score: s.score.mean.toFixed(0),
+      penalty: s.penalty.mean.toFixed(0),
       'zeroPen%': ((zeroPen / ITERATIONS) * 100).toFixed(1) + '%',
-      'l0_sd': s.l0.mean.toFixed(3),
-      'rest_h': s.rest.mean.toFixed(2),
+      l0_sd: s.l0.mean.toFixed(3),
+      rest_h: s.rest.mean.toFixed(2),
       'CV%': s.score.cv.toFixed(1) + '%',
     });
   }
   console.table(rows);
 
   // Highlight PROD baseline
-  console.log(`  PROD baseline: unfilled=${prodS.unfilled.mean.toFixed(2)} score=${prodS.score.mean.toFixed(0)} penalty=${prodS.penalty.mean.toFixed(0)} zeroPen%=${((prodResult.runs.filter(r => r.totalPenalty === 0).length / ITERATIONS) * 100).toFixed(1)}%`);
+  console.log(
+    `  PROD baseline: unfilled=${prodS.unfilled.mean.toFixed(2)} score=${prodS.score.mean.toFixed(0)} penalty=${prodS.penalty.mean.toFixed(0)} zeroPen%=${((prodResult.runs.filter((r) => r.totalPenalty === 0).length / ITERATIONS) * 100).toFixed(1)}%`,
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1131,14 +1176,14 @@ console.log('  STATISTICAL SIGNIFICANCE vs PROD (composite score, two-tailed)');
 console.log('══════════════════════════════════════════════════════════════════════════════\n');
 
 {
-  const prodScores = prodResult.runs.map(r => r.compositeScore);
+  const prodScores = prodResult.runs.map((r) => r.compositeScore);
   const prodMean = prodScores.reduce((a, b) => a + b, 0) / prodScores.length;
   const prodVar = prodScores.reduce((s, v) => s + (v - prodMean) ** 2, 0) / prodScores.length;
 
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
     if (r.name === 'PROD') continue;
-    const varScores = r.runs.map(run => run.compositeScore);
+    const varScores = r.runs.map((run) => run.compositeScore);
     const varMean = varScores.reduce((a, b) => a + b, 0) / varScores.length;
     const varVar = varScores.reduce((s, v) => s + (v - varMean) ** 2, 0) / varScores.length;
 
@@ -1157,8 +1202,8 @@ console.log('══════════════════════�
       variant: r.name,
       mean_diff: (varMean - prodMean).toFixed(1),
       direction,
-      't_stat': t.toFixed(2),
-      'p_approx': p < 0.001 ? '<0.001' : p.toFixed(3),
+      t_stat: t.toFixed(2),
+      p_approx: p < 0.001 ? '<0.001' : p.toFixed(3),
       significance: sig,
     });
   }
@@ -1179,7 +1224,7 @@ function normalCDF(x: number): number {
   const sign = x < 0 ? -1 : 1;
   x = Math.abs(x) / Math.sqrt(2);
   const t = 1 / (1 + p * x);
-  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  const y = 1 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
   return 0.5 * (1 + sign * y);
 }
 
@@ -1188,24 +1233,29 @@ console.log('  FAMILY SUMMARY (best variant per family)');
 console.log('══════════════════════════════════════════════════════════════════════════════\n');
 
 {
-  const families = [...new Set(VARIANTS.map(v => v.family))];
+  const families = [...new Set(VARIANTS.map((v) => v.family))];
   for (const fam of families) {
-    const famResults = allResults.filter(r => r.family === fam);
+    const famResults = allResults.filter((r) => r.family === fam);
     // Pick best by composite score mean
     let best = famResults[0];
     let bestScore = -Infinity;
     for (const r of famResults) {
-      const mean = computeStats(r.runs.map(run => run.compositeScore)).mean;
-      if (mean > bestScore) { bestScore = mean; best = r; }
+      const mean = computeStats(r.runs.map((run) => run.compositeScore)).mean;
+      if (mean > bestScore) {
+        bestScore = mean;
+        best = r;
+      }
     }
     const s = {
-      score: computeStats(best.runs.map(r => r.compositeScore)),
-      unfilled: computeStats(best.runs.map(r => r.unfilled)),
-      penalty: computeStats(best.runs.map(r => r.totalPenalty)),
-      l0: computeStats(best.runs.map(r => r.l0StdDev)),
+      score: computeStats(best.runs.map((r) => r.compositeScore)),
+      unfilled: computeStats(best.runs.map((r) => r.unfilled)),
+      penalty: computeStats(best.runs.map((r) => r.totalPenalty)),
+      l0: computeStats(best.runs.map((r) => r.l0StdDev)),
     };
-    const zeroPen = best.runs.filter(r => r.totalPenalty === 0).length;
-    console.log(`  ${fam.padEnd(14)} Best: ${best.name.padEnd(14)} score=${s.score.mean.toFixed(0)} unfilled=${s.unfilled.mean.toFixed(2)} penalty=${s.penalty.mean.toFixed(0)} zeroPen=${((zeroPen/ITERATIONS)*100).toFixed(1)}% l0sd=${s.l0.mean.toFixed(3)}`);
+    const zeroPen = best.runs.filter((r) => r.totalPenalty === 0).length;
+    console.log(
+      `  ${fam.padEnd(14)} Best: ${best.name.padEnd(14)} score=${s.score.mean.toFixed(0)} unfilled=${s.unfilled.mean.toFixed(2)} penalty=${s.penalty.mean.toFixed(0)} zeroPen=${((zeroPen / ITERATIONS) * 100).toFixed(1)}% l0sd=${s.l0.mean.toFixed(3)}`,
+    );
   }
 }
 

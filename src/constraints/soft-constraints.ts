@@ -5,27 +5,27 @@
  * the optimizer toward better schedules without making them invalid.
  */
 
+import { isLowPriority } from '../models/level-utils';
 import {
-  Task,
-  Assignment,
-  Participant,
-  ParticipantCapacity,
+  type Assignment,
+  type ConstraintViolation,
   Level,
-  SchedulerConfig,
-  ScheduleScore,
-  ConstraintViolation,
+  type Participant,
+  type ParticipantCapacity,
+  type SchedulerConfig,
+  type ScheduleScore,
+  type Task,
   ViolationSeverity,
 } from '../models/types';
+import { describeSlot, operationalDateKey } from '../utils/date-utils';
+import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import {
   computeAllRestProfiles,
   computeRestFairness,
   computeRestFromAssignments,
   ParticipantRestProfile,
 } from '../web/utils/rest-calculator';
-import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { computeLowPriorityLevelPenalty } from './senior-policy';
-import { isLowPriority } from '../models/level-utils';
-import { operationalDateKey, describeSlot } from '../utils/date-utils';
 
 /**
  * SC-3: Workload balance — penalize uneven distribution of non-light assignments.
@@ -48,8 +48,16 @@ export function workloadImbalanceSplit(
   prebuiltTaskMap?: Map<string, Task>,
   assignmentsByParticipant?: Map<string, Assignment[]>,
   capacities?: Map<string, ParticipantCapacity>,
-): { l0Penalty: number; seniorPenalty: number; l0StdDev: number; l0Avg: number; seniorStdDev: number; seniorAvg: number; combinedStdDev: number } {
-  const taskMap = prebuiltTaskMap ?? new Map(tasks.map(t => [t.id, t]));
+): {
+  l0Penalty: number;
+  seniorPenalty: number;
+  l0StdDev: number;
+  l0Avg: number;
+  seniorStdDev: number;
+  seniorAvg: number;
+  combinedStdDev: number;
+} {
+  const taskMap = prebuiltTaskMap ?? new Map(tasks.map((t) => [t.id, t]));
 
   // Accumulate per-participant effective hours and capacity
   const l0Data: { hours: number; cap: number }[] = [];
@@ -100,9 +108,7 @@ export function workloadImbalanceSplit(
     let variance = 0;
     for (const d of data) {
       // Proportional target: each person's fair share scales with their capacity
-      const target = useProportional
-        ? totalLoad * (d.cap / totalCap)
-        : avg;
+      const target = useProportional ? totalLoad * (d.cap / totalCap) : avg;
       variance += (d.hours - target) ** 2;
     }
     variance /= data.length;
@@ -124,9 +130,7 @@ export function workloadImbalanceSplit(
 
     let sumSqDev = 0;
     for (const d of allData) {
-      const target = useProportional
-        ? totalLoad * (d.cap / totalCap)
-        : avg;
+      const target = useProportional ? totalLoad * (d.cap / totalCap) : avg;
       sumSqDev += (d.hours - target) ** 2;
     }
     combinedStdDev = Math.sqrt(sumSqDev / allData.length);
@@ -172,7 +176,7 @@ export function dailyWorkloadImbalance(
   capacities?: Map<string, ParticipantCapacity>,
   dayStartHour: number = 5,
 ): { dailyPerParticipantStdDev: number; dailyGlobalStdDev: number } {
-  const taskMap = prebuiltTaskMap ?? new Map(tasks.map(t => [t.id, t]));
+  const taskMap = prebuiltTaskMap ?? new Map(tasks.map((t) => [t.id, t]));
 
   // ── Collect all operational days present in the schedule ──
   const allDays = new Set<string>();
@@ -201,8 +205,8 @@ export function dailyWorkloadImbalance(
     const dailyLoad = new Float64Array(numDays); // zero-initialised
 
     const pAssignments = assignmentsByParticipant
-      ? (assignmentsByParticipant.get(p.id) || [])
-      : assignments.filter(a => a.participantId === p.id);
+      ? assignmentsByParticipant.get(p.id) || []
+      : assignments.filter((a) => a.participantId === p.id);
 
     for (const a of pAssignments) {
       const task = taskMap.get(a.taskId);
@@ -245,8 +249,7 @@ export function dailyWorkloadImbalance(
     participantCount++;
   }
 
-  const dailyPerParticipantStdDev =
-    participantCount > 0 ? sumOfParticipantStdDevs / participantCount : 0;
+  const dailyPerParticipantStdDev = participantCount > 0 ? sumOfParticipantStdDevs / participantCount : 0;
 
   // ── Global daily std-dev ──
   let gSum = 0;
@@ -279,9 +282,7 @@ export function collectSoftWarnings(
 
   for (const task of tasks) {
     const taskAssignments = assignments.filter((a) => a.taskId === task.id);
-    const assignedPs = taskAssignments
-      .map((a) => pMap.get(a.participantId))
-      .filter((p): p is Participant => !!p);
+    const assignedPs = taskAssignments.map((a) => pMap.get(a.participantId)).filter((p): p is Participant => !!p);
 
     // Low-priority level warning: warn when a participant is assigned to a
     // slot where their level is marked lowPriority (last resort).
@@ -290,7 +291,7 @@ export function collectSoftWarnings(
       for (const asgn of taskAssignments) {
         const p = pMap.get(asgn.participantId);
         if (!p) continue;
-        const slot = task.slots.find(s => s.slotId === asgn.slotId);
+        const slot = task.slots.find((s) => s.slotId === asgn.slotId);
         if (!slot) continue;
         if (isLowPriority(slot.acceptableLevels, p.level)) {
           warnings.push({
@@ -337,10 +338,13 @@ export function collectSoftWarnings(
   const assignmentsByPid = new Map<string, Assignment[]>();
   for (const a of assignments) {
     let arr = assignmentsByPid.get(a.participantId);
-    if (!arr) { arr = []; assignmentsByPid.set(a.participantId, arr); }
+    if (!arr) {
+      arr = [];
+      assignmentsByPid.set(a.participantId, arr);
+    }
     arr.push(a);
   }
-  const taskNameSet = new Set(tasks.map(t => t.sourceName).filter(Boolean));
+  const taskNameSet = new Set(tasks.map((t) => t.sourceName).filter(Boolean));
   for (const p of participants) {
     if (!p.preferredTaskName) continue;
     // Warn if the preferred name doesn't exist in the schedule at all
@@ -355,7 +359,7 @@ export function collectSoftWarnings(
       continue;
     }
     const pAssigns = assignmentsByPid.get(p.id) || [];
-    const hasPreferred = pAssigns.some(a => {
+    const hasPreferred = pAssigns.some((a) => {
       const task = tMap.get(a.taskId);
       return task != null && task.sourceName === p.preferredTaskName;
     });
@@ -385,10 +389,13 @@ function getTogetherGroups(task: Task, taskAssignments: Assignment[]): string[][
   if (!task.togethernessRelevant) return [];
   const groups = new Map<string, string[]>();
   for (const a of taskAssignments) {
-    const slot = task.slots.find(s => s.slotId === a.slotId);
+    const slot = task.slots.find((s) => s.slotId === a.slotId);
     const key = slot?.subTeamId ?? '__all__';
     let arr = groups.get(key);
-    if (!arr) { arr = []; groups.set(key, arr); }
+    if (!arr) {
+      arr = [];
+      groups.set(key, arr);
+    }
     arr.push(a.participantId);
   }
   return [...groups.values()];
@@ -455,7 +462,12 @@ export function computeTaskNamePreferencePenalty(
   taskMap: Map<string, Task>,
   assignmentsByParticipant: Map<string, Assignment[]>,
 ): number {
-  if (config.taskNamePreferencePenalty <= 0 && config.taskNameAvoidancePenalty <= 0 && config.taskNamePreferenceBonus <= 0) return 0;
+  if (
+    config.taskNamePreferencePenalty <= 0 &&
+    config.taskNameAvoidancePenalty <= 0 &&
+    config.taskNamePreferenceBonus <= 0
+  )
+    return 0;
 
   let penalty = 0;
   for (const p of participants) {
@@ -474,7 +486,7 @@ export function computeTaskNamePreferencePenalty(
 
     // Preference: binary penalty if no assignment to preferred name
     if (p.preferredTaskName && config.taskNamePreferencePenalty > 0) {
-      const hasPreferred = pAssigns.some(a => {
+      const hasPreferred = pAssigns.some((a) => {
         const task = taskMap.get(a.taskId);
         return task != null && task.sourceName === p.preferredTaskName;
       });
@@ -535,8 +547,8 @@ export function computeScheduleScore(
   ctx?: ScoreContext,
 ): ScheduleScore {
   // Reuse or build lookup maps
-  const taskMap = ctx?.taskMap ?? new Map(tasks.map(t => [t.id, t]));
-  const pMap = ctx?.pMap ?? new Map(participants.map(p => [p.id, p]));
+  const taskMap = ctx?.taskMap ?? new Map(tasks.map((t) => [t.id, t]));
+  const pMap = ctx?.pMap ?? new Map(participants.map((p) => [p.id, p]));
 
   // Reuse or build per-participant index
   let byParticipant: Map<string, Assignment[]>;
@@ -582,7 +594,6 @@ export function computeScheduleScore(
   // and seniorFairnessWeight * seniorStdDev in the composite formula — no
   // double-counting through totalPenalty.
 
-
   // SC-5 (back-to-back penalty) removed — redundant with minRestWeight and HC-12.
 
   // SC-6: Low-priority level penalty — pass pre-built maps
@@ -597,7 +608,15 @@ export function computeScheduleScore(
   totalPenalty += computeTaskNamePreferencePenalty(participants, config, taskMap, byParticipant);
 
   // SC-8: Daily workload balance — pass pre-built data + capacities
-  const dailyBalance = dailyWorkloadImbalance(participants, assignments, tasks, taskMap, byParticipant, ctx?.capacities, ctx?.dayStartHour ?? 5);
+  const dailyBalance = dailyWorkloadImbalance(
+    participants,
+    assignments,
+    tasks,
+    taskMap,
+    byParticipant,
+    ctx?.capacities,
+    ctx?.dayStartHour ?? 5,
+  );
 
   // Composite score
   const minRest = isFinite(fairness.globalMinRest) ? fairness.globalMinRest : 0;
@@ -632,7 +651,7 @@ export function computeScheduleScore(
  */
 interface ParticipantScoreData {
   effectiveHours: number;
-  minRest: number;  // min rest gap (Infinity if no blocking rest gaps)
+  minRest: number; // min rest gap (Infinity if no blocking rest gaps)
   dailyLoads: Map<string, number>; // operationalDateKey → effective hours
   dailyStdDev: number; // std-dev of this participant's daily loads
   isL0: boolean;
@@ -781,7 +800,7 @@ export class IncrementalScorer {
       for (const a of pAs) {
         const task = ctx.taskMap.get(a.taskId);
         if (!task) continue;
-        const slot = task.slots.find(s => s.slotId === a.slotId);
+        const slot = task.slots.find((s) => s.slotId === a.slotId);
         if (slot && isLowPriority(slot.acceptableLevels, p.level)) {
           pPenalty += config.lowPriorityLevelPenalty;
         }
@@ -801,7 +820,10 @@ export class IncrementalScorer {
       const byTask = new Map<string, Assignment[]>();
       for (const a of assignments) {
         let arr = byTask.get(a.taskId);
-        if (!arr) { arr = []; byTask.set(a.taskId, arr); }
+        if (!arr) {
+          arr = [];
+          byTask.set(a.taskId, arr);
+        }
         arr.push(a);
       }
       // For each participant, compute their not-with penalty
@@ -816,7 +838,11 @@ export class IncrementalScorer {
 
     // Compute per-participant task name preference penalty for O(1) delta updates.
     scorer._taskPrefPenalty = 0;
-    if (config.taskNamePreferencePenalty > 0 || config.taskNameAvoidancePenalty > 0 || config.taskNamePreferenceBonus > 0) {
+    if (
+      config.taskNamePreferencePenalty > 0 ||
+      config.taskNameAvoidancePenalty > 0 ||
+      config.taskNamePreferenceBonus > 0
+    ) {
       for (const p of participants) {
         const pPenalty = scorer.computeParticipantTaskPrefPenalty(p.id);
         if (pPenalty !== 0) {
@@ -850,14 +876,14 @@ export class IncrementalScorer {
       const task = this.taskMap.get(a.taskId);
       if (!task?.togethernessRelevant) continue;
       // Find my sub-team group
-      const mySlot = task.slots.find(s => s.slotId === a.slotId);
+      const mySlot = task.slots.find((s) => s.slotId === a.slotId);
       const myTeam = mySlot?.subTeamId ?? '__all__';
       // Check co-members in the same sub-team
       const taskAssigns = byTask.get(a.taskId) || [];
       for (const other of taskAssigns) {
         if (other.participantId <= pid) continue; // only count pid < partner to avoid double-counting
         if (!myNotWith.has(other.participantId)) continue;
-        const otherSlot = task.slots.find(s => s.slotId === other.slotId);
+        const otherSlot = task.slots.find((s) => s.slotId === other.slotId);
         const otherTeam = otherSlot?.subTeamId ?? '__all__';
         if (myTeam === otherTeam) {
           penalty += this.config.notWithPenalty;
@@ -892,7 +918,7 @@ export class IncrementalScorer {
 
     // Preference: binary penalty
     if (p.preferredTaskName && this.config.taskNamePreferencePenalty > 0) {
-      const hasPreferred = pAssigns.some(a => {
+      const hasPreferred = pAssigns.some((a) => {
         const task = this.taskMap.get(a.taskId);
         return task != null && task.sourceName === p.preferredTaskName;
       });
@@ -1024,8 +1050,7 @@ export class IncrementalScorer {
     const l0StdDev = this.computePoolStdDev(this.l0Sum, this.l0SumSq, this.l0Count, true);
     const seniorStdDev = this.computePoolStdDev(this.seniorSum, this.seniorSumSq, this.seniorCount, false);
 
-    const dailyPP = this._participantCount > 0
-      ? this._dailyPerParticipantStdDevSum / this._participantCount : 0;
+    const dailyPP = this._participantCount > 0 ? this._dailyPerParticipantStdDevSum / this._participantCount : 0;
     const dailyGlobal = this.computeGlobalDailyStdDev();
 
     return (
@@ -1105,7 +1130,7 @@ export class IncrementalScorer {
         for (const a of pAs) {
           const task = this.taskMap.get(a.taskId);
           if (!task) continue;
-          const slot = task.slots.find(s => s.slotId === a.slotId);
+          const slot = task.slots.find((s) => s.slotId === a.slotId);
           if (slot && isLowPriority(slot.acceptableLevels, p.level)) {
             penalty += this.config.lowPriorityLevelPenalty;
           }
@@ -1131,10 +1156,14 @@ export class IncrementalScorer {
       [pidB, this._perParticipantNotWithPenalty.get(pidB) || 0],
     ];
     if (this._notWithPairs.size > 0 && this.config.notWithPenalty > 0) {
-      const aInvolvesTogetherness = aAssigns.some(a => this.taskMap.get(a.taskId)?.togethernessRelevant);
-      const bInvolvesTogetherness = bAssigns.some(a => this.taskMap.get(a.taskId)?.togethernessRelevant);
-      if (aInvolvesTogetherness || bInvolvesTogetherness ||
-          this._savedNotWithEntries[0][1] > 0 || this._savedNotWithEntries[1][1] > 0) {
+      const aInvolvesTogetherness = aAssigns.some((a) => this.taskMap.get(a.taskId)?.togethernessRelevant);
+      const bInvolvesTogetherness = bAssigns.some((a) => this.taskMap.get(a.taskId)?.togethernessRelevant);
+      if (
+        aInvolvesTogetherness ||
+        bInvolvesTogetherness ||
+        this._savedNotWithEntries[0][1] > 0 ||
+        this._savedNotWithEntries[1][1] > 0
+      ) {
         // Build per-task index for the two participants' tasks
         const byTask = new Map<string, Assignment[]>();
         for (const a of [...aAssigns, ...bAssigns]) {
@@ -1158,7 +1187,7 @@ export class IncrementalScorer {
             const coPid = ta.participantId;
             if (coPid === pidA || coPid === pidB) continue;
             // pidC is affected if it has a notWith relationship with pidA or pidB
-            if ((aNotWith?.has(coPid)) || (bNotWith?.has(coPid))) {
+            if (aNotWith?.has(coPid) || bNotWith?.has(coPid)) {
               affectedCoParticipants.add(coPid);
             }
           }
@@ -1216,8 +1245,7 @@ export class IncrementalScorer {
     const pBObj = this.pMap.get(pidB);
     const aHasPrefs = !!(pAObj?.preferredTaskName || pAObj?.lessPreferredTaskName);
     const bHasPrefs = !!(pBObj?.preferredTaskName || pBObj?.lessPreferredTaskName);
-    if (aHasPrefs || bHasPrefs ||
-        this._savedTaskPrefEntries[0][1] !== 0 || this._savedTaskPrefEntries[1][1] !== 0) {
+    if (aHasPrefs || bHasPrefs || this._savedTaskPrefEntries[0][1] !== 0 || this._savedTaskPrefEntries[1][1] !== 0) {
       // Remove old contributions
       this._taskPrefPenalty -= this._savedTaskPrefEntries[0][1] + this._savedTaskPrefEntries[1][1];
       // Recompute for both

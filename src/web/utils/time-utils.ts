@@ -5,22 +5,22 @@
  */
 
 import {
-  differenceInMinutes,
-  differenceInHours,
-  isWithinInterval,
-  isBefore,
-  isAfter,
-  isEqual,
   addDays,
   addHours,
-  startOfDay,
   max as dateMax,
   min as dateMin,
+  differenceInHours,
+  differenceInMinutes,
   format,
+  isAfter,
+  isBefore,
+  isEqual,
+  isWithinInterval,
   parseISO,
+  startOfDay,
 } from 'date-fns';
 
-import { TimeBlock, AvailabilityWindow, DateUnavailability } from '../../models/types';
+import type { AvailabilityWindow, DateUnavailability, TimeBlock } from '../../models/types';
 
 /**
  * Create a TimeBlock, automatically adjusting end to next day if it appears
@@ -92,10 +92,7 @@ export function blocksOverlap(a: TimeBlock, b: TimeBlock): boolean {
  * isBefore(x,y)||isEqual(x,y) ≡ x.getTime() <= y.getTime()
  * isAfter(x,y)||isEqual(x,y)  ≡ x.getTime() >= y.getTime()
  */
-export function isFullyCovered(
-  taskBlock: TimeBlock,
-  availability: AvailabilityWindow[],
-): boolean {
+export function isFullyCovered(taskBlock: TimeBlock, availability: AvailabilityWindow[]): boolean {
   const tStart = taskBlock.start.getTime();
   const tEnd = taskBlock.end.getTime();
   for (const window of availability) {
@@ -110,10 +107,7 @@ export function isFullyCovered(
  * Check whether a task's time block is blocked by any recurring dateUnavailability rule.
  * Returns true if the task overlaps with any unavailability window.
  */
-export function isBlockedByDateUnavailability(
-  taskBlock: TimeBlock,
-  rules: DateUnavailability[],
-): boolean {
+export function isBlockedByDateUnavailability(taskBlock: TimeBlock, rules: DateUnavailability[]): boolean {
   if (!rules || rules.length === 0) return false;
 
   const taskStartMs = taskBlock.start.getTime();
@@ -137,9 +131,10 @@ export function isBlockedByDateUnavailability(
         const m = cursor.getMonth();
         const d = cursor.getDate();
         blockStartMs = new Date(y, m, d, rule.startHour, 0).getTime();
-        blockEndMs = rule.endHour <= rule.startHour
-          ? new Date(y, m, d + 1, rule.endHour, 0).getTime()
-          : new Date(y, m, d, rule.endHour, 0).getTime();
+        blockEndMs =
+          rule.endHour <= rule.startHour
+            ? new Date(y, m, d + 1, rule.endHour, 0).getTime()
+            : new Date(y, m, d, rule.endHour, 0).getTime();
       }
 
       // Overlap check: task overlaps unavailability window
@@ -226,11 +221,7 @@ export function isDateInBlock(date: Date, block: TimeBlock): boolean {
  * Generate N-hour shift blocks starting from a base time.
  * E.g., 3 shifts of 8h starting at 06:00.
  */
-export function generateShiftBlocks(
-  baseStart: Date,
-  shiftDurationHours: number,
-  shiftCount: number,
-): TimeBlock[] {
+export function generateShiftBlocks(baseStart: Date, shiftDurationHours: number, shiftCount: number): TimeBlock[] {
   if (shiftCount < 1 || shiftDurationHours <= 0) return [];
   const shifts: TimeBlock[] = [];
   let cursor = baseStart;

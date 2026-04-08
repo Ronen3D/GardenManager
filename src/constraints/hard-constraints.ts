@@ -6,18 +6,18 @@
  */
 
 import {
-  Task,
-  Assignment,
-  Participant,
-  ConstraintViolation,
+  type Assignment,
+  type ConstraintViolation,
+  type Level,
+  type Participant,
+  type SlotRequirement,
+  type Task,
+  type ValidationResult,
   ViolationSeverity,
-  Level,
-  SlotRequirement,
-  ValidationResult,
 } from '../models/types';
-import { isFullyCovered, blocksOverlap, isBlockedByDateUnavailability } from '../web/utils/time-utils';
-import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
 import { describeSlot } from '../utils/date-utils';
+import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
+import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../web/utils/time-utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ function violation(
  * acceptableLevels is the single source of truth for level eligibility.
  */
 export function isLevelSatisfied(level: Level, slot: SlotRequirement): boolean {
-  return slot.acceptableLevels.some(e => e.level === level);
+  return slot.acceptableLevels.some((e) => e.level === level);
 }
 
 /**
@@ -67,13 +67,7 @@ export function checkLevelRequirement(
 ): ConstraintViolation | null {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) {
-    return violation(
-      'SLOT_NOT_FOUND',
-      `משבצת ${slotId} לא נמצאה במשימה ${task.id}`,
-      task.id,
-      slotId,
-      participant.id,
-    );
+    return violation('SLOT_NOT_FOUND', `משבצת ${slotId} לא נמצאה במשימה ${task.id}`, task.id, slotId, participant.id);
   }
   if (!isLevelSatisfied(participant.level, slot)) {
     return violation(
@@ -115,10 +109,7 @@ export function checkCertificationRequirement(
 /**
  * HC-3: Availability — participant must be available for entire task duration.
  */
-export function checkAvailability(
-  participant: Participant,
-  task: Task,
-): ConstraintViolation | null {
+export function checkAvailability(participant: Participant, task: Task): ConstraintViolation | null {
   if (!isFullyCovered(task.timeBlock, participant.availability)) {
     return violation(
       'AVAILABILITY_VIOLATION',
@@ -143,10 +134,7 @@ export function checkAvailability(
 /**
  * HC-4: Same group constraint (Adanit) — all participants in task must share one group.
  */
-export function checkSameGroup(
-  task: Task,
-  assignedParticipants: Participant[],
-): ConstraintViolation[] {
+export function checkSameGroup(task: Task, assignedParticipants: Participant[]): ConstraintViolation[] {
   if (!task.sameGroupRequired || assignedParticipants.length === 0) return [];
 
   const groups = new Set(assignedParticipants.map((p) => p.group));
@@ -173,11 +161,11 @@ export function checkForbiddenCertifications(
 ): ConstraintViolation[] {
   const violations: ConstraintViolation[] = [];
   for (const a of taskAssignments) {
-    const slot = task.slots.find(s => s.slotId === a.slotId);
+    const slot = task.slots.find((s) => s.slotId === a.slotId);
     if (!slot?.forbiddenCertifications?.length) continue;
     const p = pMap.get(a.participantId);
     if (!p) continue;
-    const forbidden = slot.forbiddenCertifications.filter(c => p.certifications.includes(c));
+    const forbidden = slot.forbiddenCertifications.filter((c) => p.certifications.includes(c));
     if (forbidden.length > 0) {
       violations.push(
         violation(
@@ -243,10 +231,7 @@ export function checkNoDoubleBooking(
 /**
  * HC-6: Slot fill — every slot in a task must be assigned exactly one participant.
  */
-export function checkSlotsFilled(
-  task: Task,
-  assignments: Assignment[],
-): ConstraintViolation[] {
+export function checkSlotsFilled(task: Task, assignments: Assignment[]): ConstraintViolation[] {
   const violations: ConstraintViolation[] = [];
   const taskAssignments = assignments.filter((a) => a.taskId === task.id);
 
@@ -278,10 +263,7 @@ export function checkSlotsFilled(
 /**
  * HC-7: Unique participant per task — no participant assigned twice to the same task.
  */
-export function checkUniqueParticipantsPerTask(
-  task: Task,
-  assignments: Assignment[],
-): ConstraintViolation[] {
+export function checkUniqueParticipantsPerTask(task: Task, assignments: Assignment[]): ConstraintViolation[] {
   const violations: ConstraintViolation[] = [];
   const taskAssignments = assignments.filter((a) => a.taskId === task.id);
   const seen = new Set<string>();
@@ -312,10 +294,7 @@ export function checkUniqueParticipantsPerTask(
  * counts. For the default Adanit template (6 slots: 4×L0+Nitzan, 1×L2+Nitzan,
  * 1×L3/L4+Nitzan), this produces equivalent results to the previous hardcoded check.
  */
-export function checkGroupFeasibility(
-  task: Task,
-  groupParticipants: Participant[],
-): ConstraintViolation[] {
+export function checkGroupFeasibility(task: Task, groupParticipants: Participant[]): ConstraintViolation[] {
   if (!task.sameGroupRequired) return [];
 
   const violations: ConstraintViolation[] = [];
@@ -325,26 +304,24 @@ export function checkGroupFeasibility(
   // Sort slots most-constrained-first (same as optimizer) so greedy matching
   // doesn't falsely claim a flexible slot leaves a strict one unfillable.
   const sortedSlots = [...task.slots].sort(
-    (a, b) => Math.min(...b.acceptableLevels.map(e => e.level)) - Math.min(...a.acceptableLevels.map(e => e.level)),
+    (a, b) => Math.min(...b.acceptableLevels.map((e) => e.level)) - Math.min(...a.acceptableLevels.map((e) => e.level)),
   );
 
   for (const slot of sortedSlots) {
-    const match = groupParticipants.find(p => {
+    const match = groupParticipants.find((p) => {
       if (claimed.has(p.id)) return false;
-      if (!slot.acceptableLevels.some(e => e.level === p.level)) return false;
+      if (!slot.acceptableLevels.some((e) => e.level === p.level)) return false;
       for (const cert of slot.requiredCertifications) {
         if (!p.certifications.includes(cert)) return false;
       }
-      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) return false;
+      if (slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) return false;
       return true;
     });
     if (match) {
       claimed.add(match.id);
     } else {
-      const levelDesc = slot.acceptableLevels.map(e => `דרגה ${e.level}`).join('/');
-      const certDesc = slot.requiredCertifications.length > 0
-        ? ` + ${slot.requiredCertifications.join(', ')}`
-        : '';
+      const levelDesc = slot.acceptableLevels.map((e) => `דרגה ${e.level}`).join('/');
+      const certDesc = slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
       violations.push(
         violation(
           'GROUP_INSUFFICIENT',
@@ -472,7 +449,10 @@ export function checkRestRules(
   for (const entry of tagged) {
     const rid = entry.task.restRuleId!;
     let list = byRule.get(rid);
-    if (!list) { list = []; byRule.set(rid, list); }
+    if (!list) {
+      list = [];
+      byRule.set(rid, list);
+    }
     list.push(entry);
   }
   const violatedPairs = new Set<string>(); // "taskIdA|taskIdB" to avoid duplicates across phases
@@ -489,11 +469,15 @@ export function checkRestRules(
       if (gap < durationMs) {
         const pairKey = cur.task.id < nxt.task.id ? `${cur.task.id}|${nxt.task.id}` : `${nxt.task.id}|${cur.task.id}`;
         violatedPairs.add(pairKey);
-        violations.push(violation(
-          'CATEGORY_BREAK_VIOLATION',
-          `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות ${(durationMs / 3600000).toFixed(1)} שעות לפחות)`,
-          nxt.task.id, undefined, participantId,
-        ));
+        violations.push(
+          violation(
+            'CATEGORY_BREAK_VIOLATION',
+            `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות ${(durationMs / 3600000).toFixed(1)} שעות לפחות)`,
+            nxt.task.id,
+            undefined,
+            participantId,
+          ),
+        );
       }
     }
   }
@@ -511,11 +495,15 @@ export function checkRestRules(
       const durationMs = Math.min(restRuleMap.get(cur.task.restRuleId!)!, restRuleMap.get(nxt.task.restRuleId!)!);
       const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
       if (gap < durationMs) {
-        violations.push(violation(
-          'CATEGORY_BREAK_VIOLATION',
-          `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות ${(durationMs / 3600000).toFixed(1)} שעות לפחות)`,
-          nxt.task.id, undefined, participantId,
-        ));
+        violations.push(
+          violation(
+            'CATEGORY_BREAK_VIOLATION',
+            `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות ${(durationMs / 3600000).toFixed(1)} שעות לפחות)`,
+            nxt.task.id,
+            undefined,
+            participantId,
+          ),
+        );
       }
     }
   }
@@ -548,11 +536,17 @@ export function validateHardConstraints(
   const assignmentsByParticipant = new Map<string, Assignment[]>();
   for (const a of assignments) {
     let tList = assignmentsByTask.get(a.taskId);
-    if (!tList) { tList = []; assignmentsByTask.set(a.taskId, tList); }
+    if (!tList) {
+      tList = [];
+      assignmentsByTask.set(a.taskId, tList);
+    }
     tList.push(a);
 
     let pList = assignmentsByParticipant.get(a.participantId);
-    if (!pList) { pList = []; assignmentsByParticipant.set(a.participantId, pList); }
+    if (!pList) {
+      pList = [];
+      assignmentsByParticipant.set(a.participantId, pList);
+    }
     pList.push(a);
   }
 
@@ -562,19 +556,25 @@ export function validateHardConstraints(
     // HC-6: All slots filled — use pre-indexed task assignments
     if (!disabledHC?.has('HC-6')) {
       for (const slot of task.slots) {
-        const slotAssignments = taskAssignments.filter(a => a.slotId === slot.slotId);
+        const slotAssignments = taskAssignments.filter((a) => a.slotId === slot.slotId);
         if (slotAssignments.length === 0) {
-          allViolations.push(violation(
-            'SLOT_UNFILLED',
-            `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} לא משובץ משתתף`,
-            task.id, slot.slotId,
-          ));
+          allViolations.push(
+            violation(
+              'SLOT_UNFILLED',
+              `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} לא משובץ משתתף`,
+              task.id,
+              slot.slotId,
+            ),
+          );
         } else if (slotAssignments.length > 1) {
-          allViolations.push(violation(
-            'SLOT_OVERBOOKED',
-            `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} יש ${slotAssignments.length} משתתפים (צפוי 1)`,
-            task.id, slot.slotId,
-          ));
+          allViolations.push(
+            violation(
+              'SLOT_OVERBOOKED',
+              `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} יש ${slotAssignments.length} משתתפים (צפוי 1)`,
+              task.id,
+              slot.slotId,
+            ),
+          );
         }
       }
     }
@@ -585,11 +585,15 @@ export function validateHardConstraints(
       for (const a of taskAssignments) {
         if (seen.has(a.participantId)) {
           const pName = pMap.get(a.participantId)?.name || a.participantId;
-          allViolations.push(violation(
-            'DUPLICATE_IN_TASK',
-            `${pName} משובץ/ת מספר פעמים ב-${task.name}`,
-            task.id, a.slotId, a.participantId,
-          ));
+          allViolations.push(
+            violation(
+              'DUPLICATE_IN_TASK',
+              `${pName} משובץ/ת מספר פעמים ב-${task.name}`,
+              task.id,
+              a.slotId,
+              a.participantId,
+            ),
+          );
         }
         seen.add(a.participantId);
       }
@@ -645,11 +649,11 @@ export function validateHardConstraints(
 
     // HC-8: Group feasibility for sameGroupRequired tasks
     if (!disabledHC?.has('HC-8') && task.sameGroupRequired) {
-      const assignedPIds = new Set(taskAssignments.map(a => a.participantId));
-      const assignedParticipants = participants.filter(p => assignedPIds.has(p.id));
+      const assignedPIds = new Set(taskAssignments.map((a) => a.participantId));
+      const assignedParticipants = participants.filter((p) => assignedPIds.has(p.id));
       if (assignedParticipants.length > 0) {
         const group = assignedParticipants[0].group;
-        const groupMembers = participants.filter(p => p.group === group);
+        const groupMembers = participants.filter((p) => p.group === group);
         allViolations.push(...checkGroupFeasibility(task, groupMembers));
       }
     }
@@ -662,7 +666,7 @@ export function validateHardConstraints(
       if (pAssigns.length < 2) continue; // Can't double-book with 0-1 assignments
       // Sweep-line on pre-filtered, sorted assignments
       const sorted = pAssigns
-        .filter(a => tMap.has(a.taskId))
+        .filter((a) => tMap.has(a.taskId))
         .sort((a, b) => tMap.get(a.taskId)!.timeBlock.start.getTime() - tMap.get(b.taskId)!.timeBlock.start.getTime());
       if (sorted.length < 2) continue;
       // Prefix-max of end times for correct backward-walk early termination
@@ -682,11 +686,15 @@ export function validateHardConstraints(
             if (prefixMaxEnd[j] <= startMs) break;
             const prevTask = tMap.get(sorted[j].taskId)!;
             if (blocksOverlap(prevTask.timeBlock, task.timeBlock)) {
-              allViolations.push(violation(
-                'DOUBLE_BOOKING',
-                `${p.name} משובץ/ת בכפל: "${prevTask.name}" ו-"${task.name}" חופפים`,
-                prevTask.id, undefined, p.id,
-              ));
+              allViolations.push(
+                violation(
+                  'DOUBLE_BOOKING',
+                  `${p.name} משובץ/ת בכפל: "${prevTask.name}" ו-"${task.name}" חופפים`,
+                  prevTask.id,
+                  undefined,
+                  p.id,
+                ),
+              );
             }
           }
         }
@@ -701,8 +709,8 @@ export function validateHardConstraints(
       const pAssigns = assignmentsByParticipant.get(p.id) || [];
       if (pAssigns.length < 2) continue;
       const sorted = pAssigns
-        .map(a => ({ assignment: a, task: tMap.get(a.taskId)! }))
-        .filter(x => x.task != null)
+        .map((a) => ({ assignment: a, task: tMap.get(a.taskId)! }))
+        .filter((x) => x.task != null)
         .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
       for (let i = 0; i < sorted.length - 1; i++) {
         const cur = sorted[i];
@@ -711,11 +719,15 @@ export function validateHardConstraints(
         const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
         if (gap > 0) continue;
         if (effectivelyBlocksAt(cur.task, 'end') && effectivelyBlocksAt(nxt.task, 'start')) {
-          allViolations.push(violation(
-            'CONSECUTIVE_HIGH_LOAD',
-            `ל-${p.name} משימות עוקבות ללא הפסקה: "${cur.task.name}" ו-"${nxt.task.name}"`,
-            nxt.task.id, undefined, p.id,
-          ));
+          allViolations.push(
+            violation(
+              'CONSECUTIVE_HIGH_LOAD',
+              `ל-${p.name} משימות עוקבות ללא הפסקה: "${cur.task.name}" ו-"${nxt.task.name}"`,
+              nxt.task.id,
+              undefined,
+              p.id,
+            ),
+          );
         }
       }
     }

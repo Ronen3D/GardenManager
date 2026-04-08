@@ -1,4 +1,4 @@
-import { PakalDefinition, Participant } from '../models/types';
+import type { PakalDefinition, Participant } from '../models/types';
 import { escHtml } from './ui-helpers';
 
 export const HORESH_PAKAL_ID = 'pakal-horesh';
@@ -21,7 +21,7 @@ function isPakalLike(value: unknown): value is Partial<PakalDefinition> {
 }
 
 export function clonePakalDefinitions(definitions: PakalDefinition[]): PakalDefinition[] {
-  return definitions.map(def => ({ ...def }));
+  return definitions.map((def) => ({ ...def }));
 }
 
 /** Validate and deduplicate pakal definitions from raw data.
@@ -53,7 +53,7 @@ export function normalizePakalDefinitions(raw: unknown): PakalDefinition[] {
 
 export function sanitizePakalIds(raw: unknown, definitions: PakalDefinition[]): string[] {
   if (!Array.isArray(raw)) return [];
-  const validIds = new Set(definitions.filter(d => !d.deleted).map(def => def.id));
+  const validIds = new Set(definitions.filter((d) => !d.deleted).map((def) => def.id));
   const result: string[] = [];
   const seen = new Set<string>();
   for (const value of raw) {
@@ -68,30 +68,29 @@ export function sanitizePakalIds(raw: unknown, definitions: PakalDefinition[]): 
 
 export function getEffectivePakalIds(participant: Participant, definitions: PakalDefinition[]): string[] {
   const ids = new Set(sanitizePakalIds(participant.pakalIds || [], definitions));
-  return definitions.filter(def => !def.deleted && ids.has(def.id)).map(def => def.id);
+  return definitions.filter((def) => !def.deleted && ids.has(def.id)).map((def) => def.id);
 }
 
-export function getEffectivePakalDefinitions(participant: Participant, definitions: PakalDefinition[]): PakalDefinition[] {
-  const ids = new Set(getEffectivePakalIds(participant, definitions));
-  return definitions.filter(def => ids.has(def.id));
-}
-
-export function renderPakalBadges(
+export function getEffectivePakalDefinitions(
   participant: Participant,
   definitions: PakalDefinition[],
-  emptyLabel = '—',
-): string {
+): PakalDefinition[] {
+  const ids = new Set(getEffectivePakalIds(participant, definitions));
+  return definitions.filter((def) => ids.has(def.id));
+}
+
+export function renderPakalBadges(participant: Participant, definitions: PakalDefinition[], emptyLabel = '—'): string {
   const explicitIds = participant.pakalIds || [];
   if (explicitIds.length === 0) return `<span class="text-muted">${emptyLabel}</span>`;
 
-  const activeDefs = definitions.filter(d => !d.deleted);
+  const activeDefs = definitions.filter((d) => !d.deleted);
   const pakalim = getEffectivePakalDefinitions(participant, definitions);
 
   // Also show orphan badges for pakal IDs that no longer have an active definition
-  const activeIds = new Set(activeDefs.map(d => d.id));
-  const orphanIds = explicitIds.filter(id => !activeIds.has(id));
-  const orphanBadges = orphanIds.map(id => {
-    const tombstone = definitions.find(d => d.id === id && d.deleted);
+  const activeIds = new Set(activeDefs.map((d) => d.id));
+  const orphanIds = explicitIds.filter((id) => !activeIds.has(id));
+  const orphanBadges = orphanIds.map((id) => {
+    const tombstone = definitions.find((d) => d.id === id && d.deleted);
     const label = tombstone ? tombstone.label : id;
     return `<span class="badge badge-sm badge-orphan pakal-badge">⚠ ${escHtml(label)}</span>`;
   });
@@ -107,5 +106,5 @@ export function renderPakalBadges(
 }
 
 export function getPakalLabels(participant: Participant, definitions: PakalDefinition[]): string[] {
-  return getEffectivePakalDefinitions(participant, definitions).map(def => def.label);
+  return getEffectivePakalDefinitions(participant, definitions).map((def) => def.label);
 }

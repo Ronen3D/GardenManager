@@ -1,7 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 test.describe('Schedule view on mobile', () => {
-
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await page.waitForSelector('.tab-nav');
@@ -14,7 +13,7 @@ test.describe('Schedule view on mobile', () => {
 
     const sidebar = page.locator('.participant-sidebar');
     // On mobile, sidebar should be off-screen (translated down) by default
-    if (await sidebar.count() > 0) {
+    if ((await sidebar.count()) > 0) {
       const box = await sidebar.boundingBox();
       // Either not visible or translated off-screen
       if (box) {
@@ -31,7 +30,7 @@ test.describe('Schedule view on mobile', () => {
     const fab = page.locator('.sidebar-fab');
     // FAB may or may not be visible depending on whether schedule exists
     // Just verify it's in the DOM
-    if (await fab.count() > 0) {
+    if ((await fab.count()) > 0) {
       await expect(fab).toBeVisible();
     }
   });
@@ -40,8 +39,8 @@ test.describe('Schedule view on mobile', () => {
     if (!viewport || viewport.width > 768) test.skip();
 
     const dayNav = page.locator('.day-navigator');
-    if (await dayNav.count() > 0) {
-      const overflow = await dayNav.evaluate(el => {
+    if ((await dayNav.count()) > 0) {
+      const overflow = await dayNav.evaluate((el) => {
         const style = window.getComputedStyle(el);
         return style.overflowX;
       });
@@ -53,7 +52,7 @@ test.describe('Schedule view on mobile', () => {
     if (!viewport || viewport.width > 768) test.skip();
 
     const toggle = page.locator('.gantt-mobile-toggle');
-    if (await toggle.count() > 0) {
+    if ((await toggle.count()) > 0) {
       await expect(toggle).toBeVisible();
     }
   });
@@ -62,7 +61,7 @@ test.describe('Schedule view on mobile', () => {
     if (!viewport || viewport.width <= 768) test.skip();
 
     const toggle = page.locator('.gantt-mobile-toggle');
-    if (await toggle.count() > 0) {
+    if ((await toggle.count()) > 0) {
       await expect(toggle).not.toBeVisible();
     }
   });
@@ -72,14 +71,17 @@ test.describe('Schedule table column visibility on mobile', () => {
   async function generateSchedule(page: import('@playwright/test').Page) {
     await page.click('.tab-btn[data-tab="schedule"]');
     const input = page.locator('#input-scenarios');
-    if (await input.count() > 0) {
+    if ((await input.count()) > 0) {
       await input.fill('1');
     }
     await page.click('#btn-generate');
-    await page.waitForFunction(() => {
-      const btn = document.querySelector('#btn-generate') as HTMLButtonElement | null;
-      return btn && !btn.disabled && !btn.textContent?.includes('מייעל');
-    }, { timeout: 60000 });
+    await page.waitForFunction(
+      () => {
+        const btn = document.querySelector('#btn-generate') as HTMLButtonElement | null;
+        return btn && !btn.disabled && !btn.textContent?.includes('מייעל');
+      },
+      { timeout: 60000 },
+    );
     await page.waitForTimeout(500);
   }
 
@@ -120,11 +122,11 @@ test.describe('Schedule table column visibility on mobile', () => {
 
     for (let i = 0; i < count; i++) {
       const wrapper = wrappers.nth(i);
-      const overflowX = await wrapper.evaluate(el => window.getComputedStyle(el).overflowX);
+      const overflowX = await wrapper.evaluate((el) => window.getComputedStyle(el).overflowX);
       expect(overflowX).toBe('auto');
 
       // If content overflows, scrollWidth must be > clientWidth and scrolling must work
-      const { scrollWidth, clientWidth } = await wrapper.evaluate(el => ({
+      const { scrollWidth, clientWidth } = await wrapper.evaluate((el) => ({
         scrollWidth: el.scrollWidth,
         clientWidth: el.clientWidth,
       }));
@@ -133,7 +135,7 @@ test.describe('Schedule table column visibility on mobile', () => {
         // Verify the wrapper is actually scrollable by scrolling to the end
         // and checking that the last header becomes visible
         const lastHeader = wrapper.locator('thead th:last-child');
-        await lastHeader.evaluate(el => el.scrollIntoView({ inline: 'center' }));
+        await lastHeader.evaluate((el) => el.scrollIntoView({ inline: 'center' }));
         const box = await lastHeader.boundingBox();
         expect(box).toBeTruthy();
         expect(box!.width).toBeGreaterThan(0);
@@ -157,7 +159,7 @@ test.describe('Schedule table column visibility on mobile', () => {
       for (let h = 0; h < headerCount; h++) {
         const header = headers.nth(h);
         // Scroll the header into view within the wrapper
-        await header.evaluate(el => el.scrollIntoView({ inline: 'center' }));
+        await header.evaluate((el) => el.scrollIntoView({ inline: 'center' }));
         const box = await header.boundingBox();
         expect(box).toBeTruthy();
         // Header must be within the viewport horizontally

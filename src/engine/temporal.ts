@@ -9,13 +9,7 @@
  * action may alter it.
  */
 
-import {
-  Schedule,
-  Assignment,
-  Task,
-  AssignmentStatus,
-  TimeBlock,
-} from '../models/types';
+import { type Assignment, AssignmentStatus, type Schedule, type Task, type TimeBlock } from '../models/types';
 
 // ─── Core Temporal Predicates ────────────────────────────────────────────────
 
@@ -39,8 +33,7 @@ export function isPastTask(task: Task, anchor: Date): boolean {
  * (started before anchor but hasn't ended yet).
  */
 export function isInProgressTask(task: Task, anchor: Date): boolean {
-  return task.timeBlock.start.getTime() < anchor.getTime() &&
-         task.timeBlock.end.getTime() > anchor.getTime();
+  return task.timeBlock.start.getTime() < anchor.getTime() && task.timeBlock.end.getTime() > anchor.getTime();
 }
 
 /**
@@ -53,11 +46,7 @@ export function isInProgressTask(task: Task, anchor: Date): boolean {
  * Note: In-progress tasks (started but not ended) are treated as frozen
  * because they've already begun execution.
  */
-export function isModifiableAssignment(
-  assignment: Assignment,
-  taskMap: Map<string, Task>,
-  anchor: Date,
-): boolean {
+export function isModifiableAssignment(assignment: Assignment, taskMap: Map<string, Task>, anchor: Date): boolean {
   const task = taskMap.get(assignment.taskId);
   if (!task) return false;
 
@@ -65,8 +54,7 @@ export function isModifiableAssignment(
   if (!isFutureTask(task, anchor)) return false;
 
   // Status must allow modification
-  if (assignment.status === AssignmentStatus.Locked ||
-      assignment.status === AssignmentStatus.Frozen) {
+  if (assignment.status === AssignmentStatus.Locked || assignment.status === AssignmentStatus.Frozen) {
     return false;
   }
 
@@ -154,7 +142,8 @@ export function getFutureWindow(
     scheduleDate.getFullYear(),
     scheduleDate.getMonth(),
     scheduleDate.getDate() + scheduleDays,
-    dayStartHour, 0,
+    dayStartHour,
+    0,
   );
 
   return {
@@ -179,17 +168,18 @@ export function getAnchorDayIndex(
       scheduleDate.getFullYear(),
       scheduleDate.getMonth(),
       scheduleDate.getDate() + d - 1,
-      dayStartHour, 0,
+      dayStartHour,
+      0,
     );
     const dayEnd = new Date(
       scheduleDate.getFullYear(),
       scheduleDate.getMonth(),
       scheduleDate.getDate() + d,
-      dayStartHour, 0,
+      dayStartHour,
+      0,
     );
 
-    if (anchor.getTime() >= dayStart.getTime() &&
-        anchor.getTime() < dayEnd.getTime()) {
+    if (anchor.getTime() >= dayStart.getTime() && anchor.getTime() < dayEnd.getTime()) {
       return d;
     }
   }
@@ -199,7 +189,8 @@ export function getAnchorDayIndex(
     scheduleDate.getFullYear(),
     scheduleDate.getMonth(),
     scheduleDate.getDate(),
-    dayStartHour, 0,
+    dayStartHour,
+    0,
   );
   if (anchor.getTime() < firstDayStart.getTime()) return 0;
   return scheduleDays + 1;
@@ -208,18 +199,14 @@ export function getAnchorDayIndex(
 /**
  * Check whether a given day index is fully frozen (entirely before the anchor).
  */
-export function isDayFrozen(
-  dayIndex: number,
-  scheduleDate: Date,
-  anchor: Date,
-  dayStartHour: number,
-): boolean {
+export function isDayFrozen(dayIndex: number, scheduleDate: Date, anchor: Date, dayStartHour: number): boolean {
   // The end of this day = start of next day
   const dayEnd = new Date(
     scheduleDate.getFullYear(),
     scheduleDate.getMonth(),
     scheduleDate.getDate() + dayIndex,
-    dayStartHour, 0,
+    dayStartHour,
+    0,
   );
   return anchor.getTime() >= dayEnd.getTime();
 }
@@ -238,14 +225,15 @@ export function isDayPartiallyFrozen(
     scheduleDate.getFullYear(),
     scheduleDate.getMonth(),
     scheduleDate.getDate() + dayIndex - 1,
-    dayStartHour, 0,
+    dayStartHour,
+    0,
   );
   const dayEnd = new Date(
     scheduleDate.getFullYear(),
     scheduleDate.getMonth(),
     scheduleDate.getDate() + dayIndex,
-    dayStartHour, 0,
+    dayStartHour,
+    0,
   );
-  return anchor.getTime() > dayStart.getTime() &&
-         anchor.getTime() < dayEnd.getTime();
+  return anchor.getTime() > dayStart.getTime() && anchor.getTime() < dayEnd.getTime();
 }

@@ -8,7 +8,7 @@
 // ─── Device Detection ───────────────────────────────────────────────────────
 
 const coarseQuery = window.matchMedia('(pointer: coarse)');
-const smallQuery  = window.matchMedia('(max-width: 767px)');
+const smallQuery = window.matchMedia('(max-width: 767px)');
 
 /** True when the primary input is a coarse pointer (finger, stylus). */
 export let isTouchDevice = coarseQuery.matches;

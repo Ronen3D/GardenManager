@@ -5,31 +5,28 @@
  */
 
 import {
+  type AlgorithmExportPayload,
+  type AlgorithmPreset,
   AlgorithmSettings,
-  AlgorithmPreset,
-  TaskSet,
-  ParticipantSet,
-  ScheduleSnapshot,
   CertificationDefinition,
+  type ExportType,
+  type FullBackupPayload,
+  type GardenManagerExport,
+  type ImportResult,
+  type ImportValidationResult,
   PakalDefinition,
-  ExportType,
-  GardenManagerExport,
-  AlgorithmExportPayload,
-  TaskSetExportPayload,
-  ParticipantSetExportPayload,
-  ScheduleSnapshotExportPayload,
-  FullBackupPayload,
-  ImportValidationResult,
-  ImportResult,
+  type ParticipantSet,
+  type ParticipantSetExportPayload,
+  type ScheduleSnapshot,
+  type ScheduleSnapshotExportPayload,
+  type TaskSet,
+  type TaskSetExportPayload,
 } from '../models/types';
 import * as store from './config-store';
 
 // ─── Envelope Helpers ───────────────────────────────────────────────────────
 
-function buildEnvelope(
-  exportType: ExportType,
-  payload: GardenManagerExport['payload'],
-): GardenManagerExport {
+function buildEnvelope(exportType: ExportType, payload: GardenManagerExport['payload']): GardenManagerExport {
   return {
     _format: 'gardenmanager-export',
     schemaVersion: 1,
@@ -40,7 +37,10 @@ function buildEnvelope(
 }
 
 function sanitizeName(name: string): string {
-  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, '-').slice(0, 40);
+  return name
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+    .replace(/\s+/g, '-')
+    .slice(0, 40);
 }
 
 function dateStamp(): string {
@@ -113,8 +113,8 @@ export function exportScheduleSnapshot(snapshotId: string): string | null {
   // Fetch matching definitions from the app catalog
   const allCerts = store.getCertificationDefinitions();
   const allPakals = store.getPakalDefinitions();
-  const certCatalog = allCerts.filter(d => certIds.has(d.id));
-  const pakalCatalog = allPakals.filter(d => pakalIds.has(d.id));
+  const certCatalog = allCerts.filter((d) => certIds.has(d.id));
+  const pakalCatalog = allPakals.filter((d) => pakalIds.has(d.id));
 
   const payload: ScheduleSnapshotExportPayload = {
     snapshot: snap,
@@ -171,17 +171,36 @@ export function openFilePicker(): Promise<string | null> {
     let resolved = false;
     input.onchange = () => {
       const file = input.files?.[0];
-      if (!file) { resolved = true; resolve(null); return; }
+      if (!file) {
+        resolved = true;
+        resolve(null);
+        return;
+      }
       const reader = new FileReader();
-      reader.onload = () => { resolved = true; resolve(reader.result as string); };
-      reader.onerror = () => { resolved = true; resolve(null); };
+      reader.onload = () => {
+        resolved = true;
+        resolve(reader.result as string);
+      };
+      reader.onerror = () => {
+        resolved = true;
+        resolve(null);
+      };
       reader.readAsText(file);
     };
     // Detect cancellation via focus return
-    window.addEventListener('focus', function onFocus() {
-      window.removeEventListener('focus', onFocus);
-      setTimeout(() => { if (!resolved) { resolved = true; resolve(null); } }, 500);
-    }, { once: true });
+    window.addEventListener(
+      'focus',
+      function onFocus() {
+        window.removeEventListener('focus', onFocus);
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            resolve(null);
+          }
+        }, 500);
+      },
+      { once: true },
+    );
     input.click();
   });
 }
@@ -298,7 +317,7 @@ function parseEnvelope(json: string): GardenManagerExport {
 }
 
 function deduplicateName(name: string, existingNames: string[]): string {
-  const lowerNames = existingNames.map(n => n.toLowerCase());
+  const lowerNames = existingNames.map((n) => n.toLowerCase());
   if (!lowerNames.includes(name.toLowerCase())) return name;
   let i = 2;
   while (lowerNames.includes(`${name} (${i})`.toLowerCase())) i++;
@@ -391,11 +410,8 @@ export function importAlgorithm(json: string, mode: 'replace' | 'add-preset'): I
   }
 
   // mode === 'add-preset'
-  const existingNames = store.getAllPresets().map(p => p.name);
-  const name = deduplicateName(
-    payload.currentSettings ? 'הגדרות מיובאות' : 'פריסט מיובא',
-    existingNames,
-  );
+  const existingNames = store.getAllPresets().map((p) => p.name);
+  const name = deduplicateName(payload.currentSettings ? 'הגדרות מיובאות' : 'פריסט מיובא', existingNames);
   const preset: AlgorithmPreset = {
     id: store.uid('preset'),
     name,
@@ -412,11 +428,7 @@ export function importAlgorithm(json: string, mode: 'replace' | 'add-preset'): I
   return { ok: true };
 }
 
-export function importTaskSet(
-  json: string,
-  mode: 'add-new' | 'replace',
-  replaceId?: string,
-): ImportResult {
+export function importTaskSet(json: string, mode: 'add-new' | 'replace', replaceId?: string): ImportResult {
   const envelope = parseEnvelope(json);
   const payload = envelope.payload as TaskSetExportPayload;
   const tset = regenerateTaskSetIds(payload.taskSet);
@@ -426,26 +438,23 @@ export function importTaskSet(
     store.deleteTaskSet(replaceId);
   }
   // Deduplicate name against remaining sets (after deletion if applicable)
-  const existingTaskNames = store.getAllTaskSets().map(s => s.name);
+  const existingTaskNames = store.getAllTaskSets().map((s) => s.name);
   tset.name = deduplicateName(payload.taskSet.name, existingTaskNames);
 
   const ok = store.importTaskSetDirect(tset);
   if (!ok) {
     return {
       ok: false,
-      error: store.getAllTaskSets().length >= 30
-        ? 'הגעת למגבלת 30 סטי משימות. מחק סטים קיימים ונסה שוב.'
-        : 'שמירה נכשלה — ייתכן שאין מספיק מקום באחסון.',
+      error:
+        store.getAllTaskSets().length >= 30
+          ? 'הגעת למגבלת 30 סטי משימות. מחק סטים קיימים ונסה שוב.'
+          : 'שמירה נכשלה — ייתכן שאין מספיק מקום באחסון.',
     };
   }
   return { ok: true };
 }
 
-export function importParticipantSet(
-  json: string,
-  mode: 'add-new' | 'replace',
-  replaceId?: string,
-): ImportResult {
+export function importParticipantSet(json: string, mode: 'add-new' | 'replace', replaceId?: string): ImportResult {
   const envelope = parseEnvelope(json);
   const payload = envelope.payload as ParticipantSetExportPayload;
   const pset = { ...payload.participantSet };
@@ -457,16 +466,17 @@ export function importParticipantSet(
     store.deleteParticipantSet(replaceId);
   }
   // Deduplicate name against remaining sets (after deletion if applicable)
-  const existingPsetNames = store.getAllParticipantSets().map(s => s.name);
+  const existingPsetNames = store.getAllParticipantSets().map((s) => s.name);
   pset.name = deduplicateName(payload.participantSet.name, existingPsetNames);
 
   const ok = store.importParticipantSetDirect(pset);
   if (!ok) {
     return {
       ok: false,
-      error: store.getAllParticipantSets().length >= 30
-        ? 'הגעת למגבלת 30 סטי משתתפים. מחק סטים קיימים ונסה שוב.'
-        : 'שמירה נכשלה — ייתכן שאין מספיק מקום באחסון.',
+      error:
+        store.getAllParticipantSets().length >= 30
+          ? 'הגעת למגבלת 30 סטי משתתפים. מחק סטים קיימים ונסה שוב.'
+          : 'שמירה נכשלה — ייתכן שאין מספיק מקום באחסון.',
     };
   }
   return { ok: true };
@@ -481,7 +491,7 @@ export function importScheduleSnapshot(json: string): ImportResult {
   delete (snap as unknown as Record<string, unknown>).builtIn;
 
   // Deduplicate name
-  const existingNames = store.getAllSnapshots().map(s => s.name);
+  const existingNames = store.getAllSnapshots().map((s) => s.name);
   snap.name = deduplicateName(payload.snapshot.name, existingNames);
 
   // Merge any missing cert/pakal definitions into the app catalog
@@ -496,9 +506,10 @@ export function importScheduleSnapshot(json: string): ImportResult {
   if (!ok) {
     return {
       ok: false,
-      error: store.getAllSnapshots().length >= 15
-        ? 'הגעת למגבלת 15 תמונות מצב. מחק תמונות קיימות ונסה שוב.'
-        : 'שמירה נכשלה — ייתכן שאין מספיק מקום באחסון.',
+      error:
+        store.getAllSnapshots().length >= 15
+          ? 'הגעת למגבלת 15 תמונות מצב. מחק תמונות קיימות ונסה שוב.'
+          : 'שמירה נכשלה — ייתכן שאין מספיק מקום באחסון.',
     };
   }
   return { ok: true };

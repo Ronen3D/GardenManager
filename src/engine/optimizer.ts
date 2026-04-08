@@ -20,24 +20,24 @@
  * └─────────────────────────────────────────────────┘
  */
 
+import { effectivelyBlocksAt, isLevelSatisfied, validateHardConstraints } from '../constraints/hard-constraints';
+import { computeScheduleScore, IncrementalScorer, type ScoreContext } from '../constraints/soft-constraints';
 import {
-  Task,
-  Assignment,
-  Participant,
+  type Assignment,
   AssignmentStatus,
-  SchedulerConfig,
-  ScheduleScore,
   Level,
-  SlotRequirement,
+  type Participant,
+  type SchedulerConfig,
+  type ScheduleScore,
+  type SlotRequirement,
+  type Task,
 } from '../models/types';
-import { isFullyCovered, blocksOverlap } from '../web/utils/time-utils';
-import { validateHardConstraints, isLevelSatisfied, effectivelyBlocksAt } from '../constraints/hard-constraints';
-import { computeScheduleScore, ScoreContext, IncrementalScorer } from '../constraints/soft-constraints';
-import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
-import { isEligible, getRejectionReason } from './validator';
-import { operationalDateKey, describeSlot } from '../utils/date-utils';
 import { computeAllCapacities } from '../utils/capacity';
-import { PhantomContext } from './phantom';
+import { describeSlot, operationalDateKey } from '../utils/date-utils';
+import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
+import { blocksOverlap, isFullyCovered } from '../web/utils/time-utils';
+import type { PhantomContext } from './phantom';
+import { getRejectionReason, isEligible } from './validator';
 
 // ─── Simulated Annealing Constants ──────────────────────────────────────────
 // Extracted from localSearch() for readability. Values are calibrated for the
@@ -65,7 +65,7 @@ const _hcScratch: Task[] = [];
 /** Check if a participant holds any certification forbidden by the slot. */
 function hasForbiddenCertification(p: Participant, slot: SlotRequirement): boolean {
   if (!slot.forbiddenCertifications?.length) return false;
-  return slot.forbiddenCertifications.some(c => p.certifications.includes(c));
+  return slot.forbiddenCertifications.some((c) => p.certifications.includes(c));
 }
 
 /**
@@ -127,12 +127,12 @@ if (typeof globalThis !== 'undefined') {
 /** 🌻 The Garden Optimizer's spirit animal */
 export function gardenWisdom(): void {
   const wisdom = [
-    "🌱 A good schedule, like a good garden, needs room to breathe.",
-    "🌻 Every participant deserves their fair share of sunshine.",
-    "🍃 The best swap is the one that helps everyone grow.",
-    "🌿 Hard constraints are the fences that keep the garden safe.",
-    "🌸 Soft constraints are the trellises that help things flourish.",
-    "🐝 A busy scheduler is a happy scheduler.",
+    '🌱 A good schedule, like a good garden, needs room to breathe.',
+    '🌻 Every participant deserves their fair share of sunshine.',
+    '🍃 The best swap is the one that helps everyone grow.',
+    '🌿 Hard constraints are the fences that keep the garden safe.',
+    '🌸 Soft constraints are the trellises that help things flourish.',
+    '🐝 A busy scheduler is a happy scheduler.',
   ];
   console.log(wisdom[Math.floor(Math.random() * wisdom.length)]);
 }
@@ -155,7 +155,10 @@ function isEligibleForSlot(
   restRuleMap?: Map<string, number>,
 ): boolean {
   if (_diagnosticLogging) {
-    const code = getRejectionReason(participant, task, slot, participantAssignments, taskMap, { disabledHC, restRuleMap });
+    const code = getRejectionReason(participant, task, slot, participantAssignments, taskMap, {
+      disabledHC,
+      restRuleMap,
+    });
     if (code) {
       const _tag = `${participant.name} → ${task.name} [${describeSlot(slot.label, task.timeBlock)}]`;
       console.log(`[Elig] REJECT: ${_tag} — ${code}`);
@@ -203,8 +206,8 @@ function getEligibleCandidates(
   eligible.sort((a, b) => {
     if (task.sameGroupRequired) {
       // T1: exact level match vs overqualified
-      const aExact = slot.acceptableLevels.some(e => e.level === a.level) ? 0 : 1;
-      const bExact = slot.acceptableLevels.some(e => e.level === b.level) ? 0 : 1;
+      const aExact = slot.acceptableLevels.some((e) => e.level === a.level) ? 0 : 1;
+      const bExact = slot.acceptableLevels.some((e) => e.level === b.level) ? 0 : 1;
       if (aExact !== bExact) return aExact - bExact;
       // T2: blended workload score — flat (absolute hours).
       // Proportional fairness is handled by SC-3/SC-8 in the scoring phase;
@@ -239,8 +242,8 @@ function getEligibleCandidates(
     // Low-priority level sort: prefer normal-priority participants over
     // lowPriority ones for this slot. lowPriority participants are last resort.
     {
-      const aLow = slot.acceptableLevels.find(e => e.level === a.level)?.lowPriority ? 1 : 0;
-      const bLow = slot.acceptableLevels.find(e => e.level === b.level)?.lowPriority ? 1 : 0;
+      const aLow = slot.acceptableLevels.find((e) => e.level === a.level)?.lowPriority ? 1 : 0;
+      const bLow = slot.acceptableLevels.find((e) => e.level === b.level)?.lowPriority ? 1 : 0;
       if (aLow !== bLow) return aLow - bLow;
     }
 
@@ -256,8 +259,8 @@ function getEligibleCandidates(
     if (scoreA !== scoreB) return scoreA - scoreB;
 
     // Prefer exact level match
-    const aExact = slot.acceptableLevels.some(e => e.level === a.level) ? 0 : 1;
-    const bExact = slot.acceptableLevels.some(e => e.level === b.level) ? 0 : 1;
+    const aExact = slot.acceptableLevels.some((e) => e.level === a.level) ? 0 : 1;
+    const bExact = slot.acceptableLevels.some((e) => e.level === b.level) ? 0 : 1;
     if (aExact !== bExact) return aExact - bExact;
 
     // Level ascending — only for overqualified participants.
@@ -309,19 +312,25 @@ function getEligibleCandidates(
 function computeStructuralPriority(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
-  const hasLowPriority = task.slots.some(s => s.acceptableLevels.some(e => e.lowPriority));
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasLowPriority = task.slots.some((s) => s.acceptableLevels.some((e) => e.lowPriority));
 
   let tier: number;
-  if (hasLowPriority && hasCerts) tier = 1;           // Penalty-critical (e.g. Hamama)
-  else if (allL0Only && hasCerts) tier = 2;           // Shemesh: tight L0+cert pool
-  else if (hasCerts || hasExclusion) tier = 3;        // Karov, Mamtera: moderate
-  else if (allL0Only && !task.isLight) tier = 4;      // Aruga: wide L0 pool
-  else if (task.isLight) tier = 5;                    // Karovit: light tasks last
-  else tier = 3;                                      // Fallback
+  if (hasLowPriority && hasCerts)
+    tier = 1; // Penalty-critical (e.g. Hamama)
+  else if (allL0Only && hasCerts)
+    tier = 2; // Shemesh: tight L0+cert pool
+  else if (hasCerts || hasExclusion)
+    tier = 3; // Karov, Mamtera: moderate
+  else if (allL0Only && !task.isLight)
+    tier = 4; // Aruga: wide L0 pool
+  else if (task.isLight)
+    tier = 5; // Karovit: light tasks last
+  else tier = 3; // Fallback
 
   return tier * 10;
 }
@@ -419,14 +428,14 @@ export function greedyAssign(
       const eff = computeTaskEffectiveHours(task);
       const dailyEff = task.isLight ? Math.max(1, eff) : eff;
       if (!task.isLight) {
-        workload.set(
-          a.participantId,
-          (workload.get(a.participantId) || 0) + eff,
-        );
+        workload.set(a.participantId, (workload.get(a.participantId) || 0) + eff);
       }
       const dk = operationalDateKey(task.timeBlock.start, dayStartHour);
       let pDaily = dailyWorkload.get(a.participantId);
-      if (!pDaily) { pDaily = new Map(); dailyWorkload.set(a.participantId, pDaily); }
+      if (!pDaily) {
+        pDaily = new Map();
+        dailyWorkload.set(a.participantId, pDaily);
+      }
       pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
     }
   }
@@ -435,7 +444,7 @@ export function greedyAssign(
   // tasks. When multiple same-group tasks exist with different cert requirements,
   // we compute eligibility per unique cert set and take the minimum per group
   // (the tightest bottleneck). Used as a tie-breaker to protect tight groups.
-  const sameGroupTasks = tasks.filter(t => t.sameGroupRequired);
+  const sameGroupTasks = tasks.filter((t) => t.sameGroupRequired);
   let sameGroupEligibleCount: Map<string, number> | undefined;
   if (sameGroupTasks.length > 0) {
     // Collect unique cert requirement sets across all same-group tasks
@@ -446,7 +455,7 @@ export function greedyAssign(
         for (const c of s.requiredCertifications) certSet.add(c);
       }
       const sorted = [...certSet].sort();
-      if (!uniqueCertSets.some(ex => ex.length === sorted.length && ex.every((c, i) => c === sorted[i]))) {
+      if (!uniqueCertSets.some((ex) => ex.length === sorted.length && ex.every((c, i) => c === sorted[i]))) {
         uniqueCertSets.push(sorted);
       }
     }
@@ -456,7 +465,7 @@ export function greedyAssign(
     for (const certs of uniqueCertSets) {
       const groupCount = new Map<string, number>();
       for (const p of participants) {
-        if (certs.every(c => p.certifications.includes(c))) {
+        if (certs.every((c) => p.certifications.includes(c))) {
           groupCount.set(p.group, (groupCount.get(p.group) || 0) + 1);
         }
       }
@@ -468,9 +477,9 @@ export function greedyAssign(
       sameGroupEligibleCount = perSetCounts[0];
     } else {
       sameGroupEligibleCount = new Map<string, number>();
-      const allGroups = new Set<string>(participants.map(p => p.group));
+      const allGroups = new Set<string>(participants.map((p) => p.group));
       for (const g of allGroups) {
-        sameGroupEligibleCount.set(g, Math.min(...perSetCounts.map(m => m.get(g) ?? 0)));
+        sameGroupEligibleCount.set(g, Math.min(...perSetCounts.map((m) => m.get(g) ?? 0)));
       }
     }
   }
@@ -480,17 +489,26 @@ export function greedyAssign(
   for (const task of sortedTasks) {
     // For same-group tasks (Adanit), we need special handling
     if (task.sameGroupRequired) {
-      const assigned = assignSameGroupTask(task, participants, assignments, taskMap, workload, assignmentsByParticipant, dailyWorkload, disabledHC, restRuleMap, dayStartHour);
+      const assigned = assignSameGroupTask(
+        task,
+        participants,
+        assignments,
+        taskMap,
+        workload,
+        assignmentsByParticipant,
+        dailyWorkload,
+        disabledHC,
+        restRuleMap,
+        dayStartHour,
+      );
       if (!assigned) {
         // Mark all slots as unfilled with specific reasons
         for (const slot of task.slots) {
-          const alreadyFilled = assignments.some(
-            (a) => a.taskId === task.id && a.slotId === slot.slotId,
-          );
+          const alreadyFilled = assignments.some((a) => a.taskId === task.id && a.slotId === slot.slotId);
           if (!alreadyFilled) {
             const levelStr = slot.acceptableLevels.map((e) => 'L' + e.level).join('/');
-            const certStr = slot.requiredCertifications.length > 0
-              ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
+            const certStr =
+              slot.requiredCertifications.length > 0 ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
             const reason = `אף קבוצה לא יכולה למלא את כל העמדות ב${task.name}. חסר ${levelStr}${certStr} עבור ${task.name}`;
             unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason });
           }
@@ -501,13 +519,12 @@ export function greedyAssign(
 
     // Standard slot-by-slot assignment — fill most-constrained slots first
     const orderedSlots = [...task.slots].sort(
-      (a, b) => Math.min(...b.acceptableLevels.map(e => e.level)) - Math.min(...a.acceptableLevels.map(e => e.level)),
+      (a, b) =>
+        Math.min(...b.acceptableLevels.map((e) => e.level)) - Math.min(...a.acceptableLevels.map((e) => e.level)),
     );
     for (const slot of orderedSlots) {
       // Skip if already assigned (locked)
-      const existing = assignments.find(
-        (a) => a.taskId === task.id && a.slotId === slot.slotId,
-      );
+      const existing = assignments.find((a) => a.taskId === task.id && a.slotId === slot.slotId);
       if (existing) continue;
 
       const candidates = getEligibleCandidates(
@@ -544,7 +561,10 @@ export function greedyAssign(
         // Always update daily workload (light tasks get floor of 1h)
         const dk = operationalDateKey(task.timeBlock.start, dayStartHour);
         let pDaily = dailyWorkload.get(chosen.id);
-        if (!pDaily) { pDaily = new Map(); dailyWorkload.set(chosen.id, pDaily); }
+        if (!pDaily) {
+          pDaily = new Map();
+          dailyWorkload.set(chosen.id, pDaily);
+        }
         pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
       } else {
         // ── Backtracking: try depth-1 swap chains to free a participant ──
@@ -552,13 +572,18 @@ export function greedyAssign(
         // a current assignment (typically HC-5 double-booking). If we can
         // reassign their blocking assignment to someone else, we free them.
         let backtrackSuccess = false;
-        let swapPlan: { p: Participant, blockingAssign: Assignment, blockingTask: Task, replacement: Participant } | null = null;
+        let swapPlan: {
+          p: Participant;
+          blockingAssign: Assignment;
+          blockingTask: Task;
+          replacement: Participant;
+        } | null = null;
 
         for (const p of participants) {
           // Quick filter: skip if participant can't possibly fill this slot
           // (wrong level, missing cert, unavailable)
           if (!isLevelSatisfied(p.level, slot)) continue;
-          if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
+          if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
           if (!isFullyCovered(task.timeBlock, p.availability)) continue;
           if (hasForbiddenCertification(p, slot)) continue;
 
@@ -570,9 +595,12 @@ export function greedyAssign(
           // (must overlap in time — HC-5 conflict)
           const pAssignsCopy = [...pAssigns];
           for (const blockingAssign of pAssignsCopy) {
-            if (blockingAssign.status === AssignmentStatus.Locked ||
-                blockingAssign.status === AssignmentStatus.Manual ||
-                blockingAssign.status === AssignmentStatus.Frozen) continue;
+            if (
+              blockingAssign.status === AssignmentStatus.Locked ||
+              blockingAssign.status === AssignmentStatus.Manual ||
+              blockingAssign.status === AssignmentStatus.Frozen
+            )
+              continue;
 
             const blockingTask = taskMap.get(blockingAssign.taskId);
             if (!blockingTask) continue;
@@ -580,7 +608,7 @@ export function greedyAssign(
             // Don't steal from same-group tasks (Adanit) — too complex
             if (blockingTask.sameGroupRequired) continue;
 
-            const blockingSlot = blockingTask.slots.find(s => s.slotId === blockingAssign.slotId);
+            const blockingSlot = blockingTask.slots.find((s) => s.slotId === blockingAssign.slotId);
             if (!blockingSlot) continue;
 
             // Try to find a replacement for the blocking assignment
@@ -588,13 +616,16 @@ export function greedyAssign(
               if (replacement.id === p.id) continue;
               // Replacement must not already be assigned to the task being stolen from (HC-7)
               const rAssigns = assignmentsByParticipant.get(replacement.id) || [];
-              if (rAssigns.some(a => a.taskId === blockingAssign.taskId)) continue;
-              if (!isEligibleForSlot(replacement, blockingTask, blockingSlot, rAssigns, taskMap, disabledHC, restRuleMap)) continue;
+              if (rAssigns.some((a) => a.taskId === blockingAssign.taskId)) continue;
+              if (
+                !isEligibleForSlot(replacement, blockingTask, blockingSlot, rAssigns, taskMap, disabledHC, restRuleMap)
+              )
+                continue;
 
               // Would the replacement be eligible for the blocking slot AND
               // would p then become eligible for the target slot once unblocked?
               // Simulate: remove blockingAssign from p, check eligibility
-              const pAssignsWithout = pAssigns.filter(a => a.id !== blockingAssign.id);
+              const pAssignsWithout = pAssigns.filter((a) => a.id !== blockingAssign.id);
               if (!isEligibleForSlot(p, task, slot, pAssignsWithout, taskMap, disabledHC, restRuleMap)) continue;
 
               swapPlan = { p, blockingAssign, blockingTask, replacement };
@@ -642,7 +673,10 @@ export function greedyAssign(
               workload.set(replacement.id, (workload.get(replacement.id) || 0) + blockEff);
             }
             let rDaily = dailyWorkload.get(replacement.id);
-            if (!rDaily) { rDaily = new Map(); dailyWorkload.set(replacement.id, rDaily); }
+            if (!rDaily) {
+              rDaily = new Map();
+              dailyWorkload.set(replacement.id, rDaily);
+            }
             rDaily.set(blockDk, (rDaily.get(blockDk) || 0) + blockDailyEff);
 
             // 3. Assign p to the target slot
@@ -663,7 +697,10 @@ export function greedyAssign(
             }
             const targetDk = operationalDateKey(task.timeBlock.start, dayStartHour);
             let pDailyTarget = dailyWorkload.get(p.id);
-            if (!pDailyTarget) { pDailyTarget = new Map(); dailyWorkload.set(p.id, pDailyTarget); }
+            if (!pDailyTarget) {
+              pDailyTarget = new Map();
+              dailyWorkload.set(p.id, pDailyTarget);
+            }
             pDailyTarget.set(targetDk, (pDailyTarget.get(targetDk) || 0) + targetDailyEff);
 
             backtrackSuccess = true;
@@ -673,8 +710,8 @@ export function greedyAssign(
         if (!backtrackSuccess) {
           // R8: Build specific reason with constraint codes for diagnostics
           const levelStr = slot.acceptableLevels.map((e) => 'L' + e.level).join('/');
-          const certStr = slot.requiredCertifications.length > 0
-            ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
+          const certStr =
+            slot.requiredCertifications.length > 0 ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
 
           // Collect per-participant rejection codes to surface constraint conflicts
           const rejectionCounts = new Map<string, number>();
@@ -712,7 +749,7 @@ export function greedyAssign(
     const idleCount = participants.length - usedIds.size;
     console.log(
       `[Scheduler] Greedy done: ${filledCount}/${totalSlots} slots filled, ` +
-      `${unfilledSlots.length} unfilled, ${idleCount}/${participants.length} participants idle`,
+        `${unfilledSlots.length} unfilled, ${idleCount}/${participants.length} participants idle`,
     );
     if (unfilledSlots.length > 0) {
       const byTask = new Map<string, number>();
@@ -782,10 +819,8 @@ function assignSameGroupTask(
   const groupRng = new Map<string, number>();
   for (const g of groupsToTry) groupRng.set(g, Math.random());
   groupsToTry.sort((ga, gb) => {
-    const wa = (groupParticipantsMap.get(ga) || [])
-      .reduce((s, p) => s + (workload.get(p.id) || 0), 0);
-    const wb = (groupParticipantsMap.get(gb) || [])
-      .reduce((s, p) => s + (workload.get(p.id) || 0), 0);
+    const wa = (groupParticipantsMap.get(ga) || []).reduce((s, p) => s + (workload.get(p.id) || 0), 0);
+    const wb = (groupParticipantsMap.get(gb) || []).reduce((s, p) => s + (workload.get(p.id) || 0), 0);
     if (wa !== wb) return wa - wb;
     return (groupRng.get(ga) || 0) - (groupRng.get(gb) || 0);
   });
@@ -793,7 +828,10 @@ function assignSameGroupTask(
   // Sort slots: fill most-constrained first (highest min-level → fewest candidates)
   const slotsToFill = task.slots
     .filter((s) => !lockedSlotIds.has(s.slotId))
-    .sort((a, b) => Math.min(...b.acceptableLevels.map(e => e.level)) - Math.min(...a.acceptableLevels.map(e => e.level)));
+    .sort(
+      (a, b) =>
+        Math.min(...b.acceptableLevels.map((e) => e.level)) - Math.min(...a.acceptableLevels.map((e) => e.level)),
+    );
 
   // Track best partial result across groups
   let bestGroupAssignments: Assignment[] = [];
@@ -849,15 +887,15 @@ function assignSameGroupTask(
           const eff = computeTaskEffectiveHours(t);
           const dailyEff = t.isLight ? Math.max(1, eff) : eff;
           if (!t.isLight) {
-            workload.set(
-              a.participantId,
-              (workload.get(a.participantId) || 0) + eff,
-            );
+            workload.set(a.participantId, (workload.get(a.participantId) || 0) + eff);
           }
           if (dailyWorkload) {
             const dk = operationalDateKey(t.timeBlock.start, dayStartHour);
             let pDaily = dailyWorkload.get(a.participantId);
-            if (!pDaily) { pDaily = new Map(); dailyWorkload.set(a.participantId, pDaily); }
+            if (!pDaily) {
+              pDaily = new Map();
+              dailyWorkload.set(a.participantId, pDaily);
+            }
             pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
           }
         }
@@ -877,7 +915,7 @@ function assignSameGroupTask(
   if (bestFilledCount > 0 && _diagnosticLogging) {
     console.warn(
       `[Scheduler] ${task.name}: no group could fill all ${slotsToFill.length} slots. ` +
-      `Best group filled ${bestFilledCount}/${slotsToFill.length}. HC-4 forbids cross-group fill.`,
+        `Best group filled ${bestFilledCount}/${slotsToFill.length}. HC-4 forbids cross-group fill.`,
     );
   }
 
@@ -917,8 +955,8 @@ function isSwapFeasible(
   if (!pI || !pJ || !taskI || !taskJ) return false;
 
   // HC-1: Level check — single source of truth in isLevelSatisfied()
-  const slotI = taskI.slots.find(s => s.slotId === aI.slotId);
-  const slotJ = taskJ.slots.find(s => s.slotId === aJ.slotId);
+  const slotI = taskI.slots.find((s) => s.slotId === aI.slotId);
+  const slotJ = taskJ.slots.find((s) => s.slotId === aJ.slotId);
   if (!slotI || !slotJ) return false;
   if (!disabledHC?.has('HC-1')) {
     if (!isLevelSatisfied(pI.level, slotI) || !isLevelSatisfied(pJ.level, slotJ)) return false;
@@ -1030,7 +1068,10 @@ function isSwapFeasible(
       const ruleGroups = new Map<string, Task[]>();
       for (const t of _hcScratch) {
         let list = ruleGroups.get(t.restRuleId!);
-        if (!list) { list = []; ruleGroups.set(t.restRuleId!, list); }
+        if (!list) {
+          list = [];
+          ruleGroups.set(t.restRuleId!, list);
+        }
         list.push(t);
       }
       for (const [rid, tasks] of ruleGroups) {
@@ -1161,9 +1202,9 @@ export function localSearchOptimize(
     dayStartHour,
   };
 
-  let currentScore = computeScheduleScore(tasks, participants, current, config, scoreCtx);
+  const currentScore = computeScheduleScore(tasks, participants, current, config, scoreCtx);
   // Snapshot best independently — current is mutated in-place
-  let best = current.map(a => ({ ...a }));
+  let best = current.map((a) => ({ ...a }));
   let bestScore = currentScore;
 
   // Build incremental scorer for O(k) swap scoring
@@ -1218,7 +1259,7 @@ export function localSearchOptimize(
       const uf = remainingUnfilled[ufIdx];
       const ufTask = taskMap.get(uf.taskId);
       if (ufTask) {
-        const ufSlot = ufTask.slots.find(s => s.slotId === uf.slotId);
+        const ufSlot = ufTask.slots.find((s) => s.slotId === uf.slotId);
         if (ufSlot) {
           // Shuffle participant order for this attempt
           const pOrder = [...participants];
@@ -1231,7 +1272,7 @@ export function localSearchOptimize(
             if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, restRuleMap)) continue;
             // Also check HC-7: no duplicate participant in the same task
             const taskAssigns = byTask.get(uf.taskId) || [];
-            if (taskAssigns.some(a => a.participantId === p.id)) continue;
+            if (taskAssigns.some((a) => a.participantId === p.id)) continue;
 
             // Create new assignment and score
             const newA: Assignment = {
@@ -1283,7 +1324,7 @@ export function localSearchOptimize(
 
               // Track global best
               if (currentComposite > bestScore.compositeScore) {
-                best = current.map(a => ({ ...a }));
+                best = current.map((a) => ({ ...a }));
                 bestScore = { ...score, compositeScore: currentComposite };
               }
             } else {
@@ -1319,8 +1360,18 @@ export function localSearchOptimize(
         const aj = current[j];
 
         // Skip locked/manual/frozen assignments (don't count as iterations)
-        if (ai.status === AssignmentStatus.Locked || ai.status === AssignmentStatus.Manual || ai.status === AssignmentStatus.Frozen) continue;
-        if (aj.status === AssignmentStatus.Locked || aj.status === AssignmentStatus.Manual || aj.status === AssignmentStatus.Frozen) continue;
+        if (
+          ai.status === AssignmentStatus.Locked ||
+          ai.status === AssignmentStatus.Manual ||
+          ai.status === AssignmentStatus.Frozen
+        )
+          continue;
+        if (
+          aj.status === AssignmentStatus.Locked ||
+          aj.status === AssignmentStatus.Manual ||
+          aj.status === AssignmentStatus.Frozen
+        )
+          continue;
 
         // Skip if same participant (don't count as iterations)
         if (ai.participantId === aj.participantId) continue;
@@ -1345,8 +1396,8 @@ export function localSearchOptimize(
         const listPidJ = byParticipant.get(oldPidJ)!;
         const posI = posInfoI.idx;
         const posJ = posInfoJ.idx;
-        listPidI[posI] = aj;  // aj now belongs to oldPidI
-        listPidJ[posJ] = ai;  // ai now belongs to oldPidJ
+        listPidI[posI] = aj; // aj now belongs to oldPidI
+        listPidJ[posJ] = ai; // ai now belongs to oldPidJ
         // Update position map to reflect the swap
         assignmentPos.set(ai.id, { pid: oldPidJ, idx: posJ });
         assignmentPos.set(aj.id, { pid: oldPidI, idx: posI });
@@ -1391,7 +1442,7 @@ export function localSearchOptimize(
 
           // Track global best (snapshot since current is mutated in-place)
           if (newComposite > bestScore.compositeScore) {
-            best = current.map(a => ({ ...a }));
+            best = current.map((a) => ({ ...a }));
             bestScore = { ...bestScore, compositeScore: newComposite };
           }
         } else {
@@ -1438,7 +1489,7 @@ export function localSearchOptimize(
     for (const uf of [...remainingUnfilled]) {
       const ufTask = taskMap.get(uf.taskId);
       if (!ufTask) continue;
-      const ufSlot = ufTask.slots.find(s => s.slotId === uf.slotId);
+      const ufSlot = ufTask.slots.find((s) => s.slotId === uf.slotId);
       if (!ufSlot) continue;
 
       for (const p of participants) {
@@ -1446,7 +1497,7 @@ export function localSearchOptimize(
         if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, restRuleMap)) continue;
         // HC-7: no duplicate participant in same task
         const taskAssigns = sweepByTask.get(uf.taskId) || [];
-        if (taskAssigns.some(a => a.participantId === p.id)) continue;
+        if (taskAssigns.some((a) => a.participantId === p.id)) continue;
 
         const newA: Assignment = {
           id: nextAssignmentId(),
@@ -1499,7 +1550,16 @@ export function optimize(
   const startTime = Date.now();
 
   // Phase 1: Greedy construction
-  const greedy = greedyAssign(tasks, participants, lockedAssignments, disabledHC, taskOrderJitter, phantomContext, restRuleMap, dayStartHour);
+  const greedy = greedyAssign(
+    tasks,
+    participants,
+    lockedAssignments,
+    disabledHC,
+    taskOrderJitter,
+    phantomContext,
+    restRuleMap,
+    dayStartHour,
+  );
 
   // Phase 2: Local search improvement (also tries to fill unfilled slots)
   const lsResult = localSearchOptimize(
@@ -1515,9 +1575,7 @@ export function optimize(
   );
 
   // Remove slots that SA managed to fill
-  const remainingUnfilled = greedy.unfilledSlots.filter(
-    uf => !lsResult.filledSlots.includes(uf.slotId),
-  );
+  const remainingUnfilled = greedy.unfilledSlots.filter((uf) => !lsResult.filledSlots.includes(uf.slotId));
 
   // Validate final result
   const validation = validateHardConstraints(tasks, participants, lsResult.assignments, disabledHC);
@@ -1538,8 +1596,8 @@ export function optimize(
     }
   }
   const finalCtx: ScoreContext = {
-    taskMap: new Map(tasks.map(t => [t.id, t])),
-    pMap: new Map(participants.map(p => [p.id, p])),
+    taskMap: new Map(tasks.map((t) => [t.id, t])),
+    pMap: new Map(participants.map((p) => [p.id, p])),
     capacities: finalCapacities,
     notWithPairs: finalNotWithPairs,
     dayStartHour,
@@ -1623,7 +1681,14 @@ export function optimizeMultiAttempt(
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
   const totalStart = Date.now();
-  const diagRows: Array<{ '#': number; score: string; unfilled: number; stdDev: string; penalty: string; improved: string }> = [];
+  const diagRows: Array<{
+    '#': number;
+    score: string;
+    unfilled: number;
+    stdDev: string;
+    penalty: string;
+    improved: string;
+  }> = [];
 
   // Elite restart: periodically boost scheduling priority for tasks that
   // have unfilled slots in the current best result, so subsequent attempts
@@ -1634,25 +1699,35 @@ export function optimizeMultiAttempt(
   for (let i = 0; i < attempts; i++) {
     // Update elite boost set every ELITE_INTERVAL attempts
     if (best && i > 0 && i % ELITE_INTERVAL === 0 && best.unfilledSlots.length > 0) {
-      eliteBoostTaskIds = new Set(best.unfilledSlots.map(uf => uf.taskId));
+      eliteBoostTaskIds = new Set(best.unfilledSlots.map((uf) => uf.taskId));
     }
 
     // Shuffle participant order to create diversity
     // (first attempt uses original order for determinism)
-    const shuffledParticipants = i === 0
-      ? [...participants]
-      : shuffle([...participants]);
+    const shuffledParticipants = i === 0 ? [...participants] : shuffle([...participants]);
 
     // Apply elite boost: create task copies with reduced priority for unfilled tasks
-    const attemptTasks = eliteBoostTaskIds && i > 0
-      ? tasks.map(t => eliteBoostTaskIds!.has(t.id)
-          ? { ...t, schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t)) - 10) }
-          : t)
-      : tasks;
+    const attemptTasks =
+      eliteBoostTaskIds && i > 0
+        ? tasks.map((t) =>
+            eliteBoostTaskIds!.has(t.id)
+              ? { ...t, schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t)) - 10) }
+              : t,
+          )
+        : tasks;
 
     // Task-order jitter: 0 for first attempt, 0.3 for subsequent
     const jitter = i === 0 ? 0 : 0.3;
-    const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter, phantomContext, restRuleMap);
+    const result = optimize(
+      attemptTasks,
+      shuffledParticipants,
+      config,
+      lockedAssignments,
+      disabledHC,
+      jitter,
+      phantomContext,
+      restRuleMap,
+    );
 
     const improved = best === null || isBetterResult(result, best);
     if (improved) {
@@ -1680,7 +1755,6 @@ export function optimizeMultiAttempt(
         improved,
       });
     }
-
   }
 
   // Update total duration and actual attempts performed
@@ -1690,9 +1764,9 @@ export function optimizeMultiAttempt(
   if (_diagnosticLogging) {
     console.log(
       `[Scheduler] Multi-attempt done: ${attempts} attempts in ${best!.durationMs}ms. ` +
-      `Best score: ${best!.score.compositeScore.toFixed(2)}, ` +
-      `unfilled: ${best!.unfilledSlots.length}, ` +
-      `restStdDev: ${best!.score.restStdDev.toFixed(2)}`,
+        `Best score: ${best!.score.compositeScore.toFixed(2)}, ` +
+        `unfilled: ${best!.unfilledSlots.length}, ` +
+        `restStdDev: ${best!.score.restStdDev.toFixed(2)}`,
     );
     console.table(diagRows);
   }
@@ -1727,7 +1801,14 @@ export function optimizeMultiAttemptAsync(
     let best: OptimizationResult | null = null;
     let i = 0;
     const totalStart = Date.now();
-    const diagRows: Array<{ '#': number; score: string; unfilled: number; stdDev: string; penalty: string; improved: string }> = [];
+    const diagRows: Array<{
+      '#': number;
+      score: string;
+      unfilled: number;
+      stdDev: string;
+      penalty: string;
+      improved: string;
+    }> = [];
 
     // Elite restart state (same logic as sync version)
     const ELITE_INTERVAL = 200;
@@ -1737,76 +1818,89 @@ export function optimizeMultiAttemptAsync(
       try {
         const batchEnd = Math.min(i + ASYNC_BATCH_SIZE, attempts);
 
-      while (i < batchEnd) {
-        // Update elite boost set every ELITE_INTERVAL attempts
-        if (best && i > 0 && i % ELITE_INTERVAL === 0 && best.unfilledSlots.length > 0) {
-          eliteBoostTaskIds = new Set(best.unfilledSlots.map(uf => uf.taskId));
-        }
+        while (i < batchEnd) {
+          // Update elite boost set every ELITE_INTERVAL attempts
+          if (best && i > 0 && i % ELITE_INTERVAL === 0 && best.unfilledSlots.length > 0) {
+            eliteBoostTaskIds = new Set(best.unfilledSlots.map((uf) => uf.taskId));
+          }
 
-        // Shuffle participant order (first attempt uses original order)
-        const shuffledParticipants = i === 0
-          ? [...participants]
-          : shuffle([...participants]);
+          // Shuffle participant order (first attempt uses original order)
+          const shuffledParticipants = i === 0 ? [...participants] : shuffle([...participants]);
 
-        // Apply elite boost: create task copies with reduced priority for unfilled tasks
-        const attemptTasks = eliteBoostTaskIds && i > 0
-          ? tasks.map(t => eliteBoostTaskIds!.has(t.id)
-              ? { ...t, schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t)) - 10) }
-              : t)
-          : tasks;
+          // Apply elite boost: create task copies with reduced priority for unfilled tasks
+          const attemptTasks =
+            eliteBoostTaskIds && i > 0
+              ? tasks.map((t) =>
+                  eliteBoostTaskIds!.has(t.id)
+                    ? {
+                        ...t,
+                        schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t)) - 10),
+                      }
+                    : t,
+                )
+              : tasks;
 
-        // Task-order jitter: 0 for first attempt, 0.3 for subsequent
-        const jitter = i === 0 ? 0 : 0.3;
-        const result = optimize(attemptTasks, shuffledParticipants, config, lockedAssignments, disabledHC, jitter, phantomContext, restRuleMap, dayStartHour);
-
-        const improved = best === null || isBetterResult(result, best);
-        if (improved) {
-          best = result;
-        }
-
-        i++;
-
-        diagRows.push({
-          '#': i,
-          score: result.score.compositeScore.toFixed(4),
-          unfilled: result.unfilledSlots.length,
-          stdDev: result.score.restStdDev.toFixed(4),
-          penalty: result.score.totalPenalty.toFixed(2),
-          improved: improved ? '★ YES' : '',
-        });
-
-        if (onProgress) {
-          onProgress({
-            attempt: i,
-            totalAttempts: attempts,
-            currentBestScore: best!.score.compositeScore,
-            currentBestFeasible: best!.feasible,
-            currentBestUnfilled: best!.unfilledSlots.length,
-            attemptScore: result.score.compositeScore,
-            attemptFeasible: result.feasible,
-            improved,
-          });
-        }
-
-      }
-
-      if (i < attempts) {
-        // Yield to event loop so the UI can repaint between batches
-        setTimeout(runBatch, 0);
-      } else {
-        best!.durationMs = Date.now() - totalStart;
-        best!.actualAttempts = diagRows.length;
-        if (_diagnosticLogging) {
-          console.log(
-            `[Scheduler] Multi-attempt async done: ${attempts} attempts in ${best!.durationMs}ms. ` +
-            `Best score: ${best!.score.compositeScore.toFixed(2)}, ` +
-            `unfilled: ${best!.unfilledSlots.length}, ` +
-            `restStdDev: ${best!.score.restStdDev.toFixed(2)}`,
+          // Task-order jitter: 0 for first attempt, 0.3 for subsequent
+          const jitter = i === 0 ? 0 : 0.3;
+          const result = optimize(
+            attemptTasks,
+            shuffledParticipants,
+            config,
+            lockedAssignments,
+            disabledHC,
+            jitter,
+            phantomContext,
+            restRuleMap,
+            dayStartHour,
           );
-          console.table(diagRows);
+
+          const improved = best === null || isBetterResult(result, best);
+          if (improved) {
+            best = result;
+          }
+
+          i++;
+
+          diagRows.push({
+            '#': i,
+            score: result.score.compositeScore.toFixed(4),
+            unfilled: result.unfilledSlots.length,
+            stdDev: result.score.restStdDev.toFixed(4),
+            penalty: result.score.totalPenalty.toFixed(2),
+            improved: improved ? '★ YES' : '',
+          });
+
+          if (onProgress) {
+            onProgress({
+              attempt: i,
+              totalAttempts: attempts,
+              currentBestScore: best!.score.compositeScore,
+              currentBestFeasible: best!.feasible,
+              currentBestUnfilled: best!.unfilledSlots.length,
+              attemptScore: result.score.compositeScore,
+              attemptFeasible: result.feasible,
+              improved,
+            });
+          }
         }
-        resolve(best!);
-      }
+
+        if (i < attempts) {
+          // Yield to event loop so the UI can repaint between batches
+          setTimeout(runBatch, 0);
+        } else {
+          best!.durationMs = Date.now() - totalStart;
+          best!.actualAttempts = diagRows.length;
+          if (_diagnosticLogging) {
+            console.log(
+              `[Scheduler] Multi-attempt async done: ${attempts} attempts in ${best!.durationMs}ms. ` +
+                `Best score: ${best!.score.compositeScore.toFixed(2)}, ` +
+                `unfilled: ${best!.unfilledSlots.length}, ` +
+                `restStdDev: ${best!.score.restStdDev.toFixed(2)}`,
+            );
+            console.table(diagRows);
+          }
+          resolve(best!);
+        }
       } catch (err) {
         reject(err);
       }

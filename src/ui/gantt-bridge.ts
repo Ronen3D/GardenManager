@@ -4,17 +4,17 @@
  */
 
 import {
-  Schedule,
   Assignment,
-  Task,
-  Participant,
-  GanttData,
-  GanttRow,
-  GanttBlock,
   AssignmentStatus,
+  type GanttBlock,
+  type GanttData,
+  type GanttRow,
+  type Participant,
+  type Schedule,
+  type Task,
 } from '../models/types';
 import { describeSlot } from '../utils/date-utils';
-import { getTimelineBounds, blockDurationMinutes } from '../web/utils/time-utils';
+import { blockDurationMinutes, getTimelineBounds } from '../web/utils/time-utils';
 
 const STATUS_OPACITY: Record<AssignmentStatus, number> = {
   [AssignmentStatus.Scheduled]: 1.0,
@@ -104,9 +104,7 @@ export function scheduleToGantt(schedule: Schedule): GanttData {
 
   // Auto-scale: aim for ~1200px wide chart
   const targetPx = 1200;
-  const scaleMinPerPx = totalDurationMs > 0
-    ? (totalDurationMs / (1000 * 60)) / targetPx
-    : 1;
+  const scaleMinPerPx = totalDurationMs > 0 ? totalDurationMs / (1000 * 60) / targetPx : 1;
 
   const rows = [...rowMap.values()];
 
@@ -151,7 +149,7 @@ export function ganttToAscii(data: GanttData, widthChars: number = 120): string 
   for (let i = 0; i < chartWidth; i++) {
     const ms = data.timelineStartMs + i * msPerChar;
     const d = new Date(ms);
-    if (d.getMinutes() < (msPerChar / (1000 * 60))) {
+    if (d.getMinutes() < msPerChar / (1000 * 60)) {
       const h = d.getHours().toString().padStart(2, '0');
       headerLine += h;
       i++; // skip next char (we used 2)
@@ -188,9 +186,7 @@ export function ganttToAscii(data: GanttData, widthChars: number = 120): string 
       if (!block.isLight) taskNames.add(block.taskName);
     }
   }
-  const legend = [...taskNames]
-    .map(name => `${(name[0] || '?').toUpperCase()}=${name}`)
-    .join('  ');
+  const legend = [...taskNames].map((name) => `${(name[0] || '?').toUpperCase()}=${name}`).join('  ');
   lines.push(`Legend: ${legend}  ░=Light  ·=Free`);
 
   return lines.join('\n');
@@ -224,14 +220,22 @@ export function buildTaskSummary(schedule: Schedule): string {
     const start = task.timeBlock.start.toISOString().slice(11, 16);
     const end = task.timeBlock.end.toISOString().slice(11, 16);
 
-    lines.push(`║ ${task.name.padEnd(20)} ${start}-${end}  [${task.sourceName || task.name}]${task.isLight ? ' (Light)' : ''}`.padEnd(63) + '║');
+    lines.push(
+      `║ ${task.name.padEnd(20)} ${start}-${end}  [${task.sourceName || task.name}]${task.isLight ? ' (Light)' : ''}`.padEnd(
+        63,
+      ) + '║',
+    );
 
     for (const a of taskAssignments) {
       const p = pMap.get(a.participantId);
       const slot = task.slots.find((s) => s.slotId === a.slotId);
       if (p) {
         const status = a.status !== AssignmentStatus.Scheduled ? ` [${a.status}]` : '';
-        lines.push(`║   → ${p.name} (L${p.level}, ${p.group})${status}  <${describeSlot(slot?.label, task.timeBlock)}>`.padEnd(63) + '║');
+        lines.push(
+          `║   → ${p.name} (L${p.level}, ${p.group})${status}  <${describeSlot(slot?.label, task.timeBlock)}>`.padEnd(
+            63,
+          ) + '║',
+        );
       }
     }
     lines.push('║' + '─'.repeat(62) + '║');

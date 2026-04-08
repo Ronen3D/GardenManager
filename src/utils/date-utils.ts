@@ -20,10 +20,7 @@ export function fmtTime(d: Date): string {
  * When `slotLabel` is absent, returns only the time range — callers already
  * show `taskName` in the surrounding context so repeating it would be redundant.
  */
-export function describeSlot(
-  slotLabel: string | undefined,
-  timeBlock: { start: Date; end: Date },
-): string {
+export function describeSlot(slotLabel: string | undefined, timeBlock: { start: Date; end: Date }): string {
   const time = `${fmtTime(timeBlock.start)}–${fmtTime(timeBlock.end)}`;
   return slotLabel ? `${slotLabel} ${time}` : time;
 }

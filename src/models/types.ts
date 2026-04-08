@@ -29,10 +29,10 @@ export interface CertificationDefinition {
 
 /** Default certification definitions — the single source of initial config. */
 export const DEFAULT_CERTIFICATION_DEFINITIONS: CertificationDefinition[] = [
-  { id: 'Nitzan',  label: 'ניצן',   color: '#16a085' },
-  { id: 'Salsala', label: 'סלסלה',  color: '#8e44ad' },
-  { id: 'Hamama',  label: 'חממה',   color: '#c0392b' },
-  { id: 'Horesh',  label: 'חורש',   color: '#27ae60' },
+  { id: 'Nitzan', label: 'ניצן', color: '#16a085' },
+  { id: 'Salsala', label: 'סלסלה', color: '#8e44ad' },
+  { id: 'Hamama', label: 'חממה', color: '#c0392b' },
+  { id: 'Horesh', label: 'חורש', color: '#27ae60' },
 ];
 
 /** A level annotated with priority for a slot. */
@@ -46,15 +46,15 @@ export interface LevelEntry {
 /** Assignment status */
 export enum AssignmentStatus {
   Scheduled = 'Scheduled',
-  Locked = 'Locked',     // Locked by user or partial re-schedule
-  Manual = 'Manual',     // Manually overridden by user
+  Locked = 'Locked', // Locked by user or partial re-schedule
+  Manual = 'Manual', // Manually overridden by user
   Conflict = 'Conflict', // Hard constraint violation detected
-  Frozen = 'Frozen',     // Temporally locked — past the live-mode anchor
+  Frozen = 'Frozen', // Temporally locked — past the live-mode anchor
 }
 
 /** Severity for constraint violations */
 export enum ViolationSeverity {
-  Error = 'Error',     // Hard constraint → schedule invalid
+  Error = 'Error', // Hard constraint → schedule invalid
   Warning = 'Warning', // Soft constraint → penalized but allowed
 }
 
@@ -325,17 +325,17 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
 
 /** All hard constraint codes that can be toggled */
 export type HardConstraintCode =
-  | 'HC-1'   // Level requirement
-  | 'HC-2'   // Certification requirement
-  | 'HC-3'   // Availability check
-  | 'HC-4'   // Same-group (Adanit)
-  | 'HC-5'   // No double-booking
-  | 'HC-6'   // Slots filled
-  | 'HC-7'   // Unique participant per task
-  | 'HC-8'   // Adanit feasibility
-  | 'HC-11'  // Forbidden certification (per-slot)
-  | 'HC-12'  // No consecutive high-load
-  | 'HC-13'  // Senior policy (soft penalty only)
+  | 'HC-1' // Level requirement
+  | 'HC-2' // Certification requirement
+  | 'HC-3' // Availability check
+  | 'HC-4' // Same-group (Adanit)
+  | 'HC-5' // No double-booking
+  | 'HC-6' // Slots filled
+  | 'HC-7' // Unique participant per task
+  | 'HC-8' // Adanit feasibility
+  | 'HC-11' // Forbidden certification (per-slot)
+  | 'HC-12' // No consecutive high-load
+  | 'HC-13' // Senior policy (soft penalty only)
   | 'HC-14'; // Minimum category break (5h)
 
 /** Full algorithm settings: weights + constraint toggles */
@@ -371,7 +371,18 @@ export function getHC14Label(): string {
 
 /** All hard constraint codes in display order */
 export const ALL_HC_CODES: HardConstraintCode[] = [
-  'HC-1', 'HC-2', 'HC-3', 'HC-4', 'HC-5', 'HC-6', 'HC-7', 'HC-8', 'HC-11', 'HC-12', 'HC-13', 'HC-14',
+  'HC-1',
+  'HC-2',
+  'HC-3',
+  'HC-4',
+  'HC-5',
+  'HC-6',
+  'HC-7',
+  'HC-8',
+  'HC-11',
+  'HC-12',
+  'HC-13',
+  'HC-14',
 ];
 
 /** Factory default algorithm settings */
@@ -400,7 +411,12 @@ export const DEFAULT_PRESET: AlgorithmPreset = {
   id: 'preset-default',
   name: 'ברירת מחדל',
   description: 'הגדרות ברירת המחדל',
-  settings: { ...DEFAULT_ALGORITHM_SETTINGS, config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+  settings: {
+    ...DEFAULT_ALGORITHM_SETTINGS,
+    config: { ...DEFAULT_CONFIG },
+    disabledHardConstraints: [],
+    dayStartHour: 5,
+  },
   builtIn: true,
   createdAt: 0,
 };
@@ -768,7 +784,12 @@ export interface GardenManagerExport {
   schemaVersion: 1;
   exportedAt: string;
   exportType: ExportType;
-  payload: AlgorithmExportPayload | TaskSetExportPayload | ParticipantSetExportPayload | ScheduleSnapshotExportPayload | FullBackupPayload;
+  payload:
+    | AlgorithmExportPayload
+    | TaskSetExportPayload
+    | ParticipantSetExportPayload
+    | ScheduleSnapshotExportPayload
+    | FullBackupPayload;
 }
 
 export interface AlgorithmExportPayload {

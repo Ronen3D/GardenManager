@@ -5,7 +5,7 @@
  * and provides a reusable toast notification utility.
  */
 
-import { escHtml, escAttr } from './ui-helpers';
+import { escAttr, escHtml } from './ui-helpers';
 
 /** Cleanup callbacks for custom selects, keyed by select ID (stable across re-renders). */
 const _selectCleanups = new Map<string, () => void>();
@@ -52,12 +52,21 @@ export function showAlert(message: string, opts?: AlertOptions): Promise<void> {
       </div>`;
 
     lockBodyScroll();
-    const close = () => { backdrop.remove(); unlockBodyScroll(); resolve(); };
+    const close = () => {
+      backdrop.remove();
+      unlockBodyScroll();
+      resolve();
+    };
 
     backdrop.querySelector('.gm-modal-btn-ok')!.addEventListener('click', close);
-    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) close();
+    });
     document.addEventListener('keydown', function onKey(e) {
-      if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(); }
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', onKey);
+        close();
+      }
     });
 
     document.body.appendChild(backdrop);
@@ -81,7 +90,7 @@ export function showPrompt(message: string, opts?: PromptOptions): Promise<strin
       suggestionsHtml = `
         <input type="text" class="gm-modal-input gm-modal-search" placeholder="🔍 חפש..." />
         <div class="gm-modal-suggestions">
-          ${suggestions.map(s => `<button class="gm-modal-suggestion" data-value="${escAttr(s)}">${escHtml(s)}</button>`).join('')}
+          ${suggestions.map((s) => `<button class="gm-modal-suggestion" data-value="${escAttr(s)}">${escHtml(s)}</button>`).join('')}
         </div>`;
     }
 
@@ -105,7 +114,11 @@ export function showPrompt(message: string, opts?: PromptOptions): Promise<strin
 
     lockBodyScroll();
     const mainInput = backdrop.querySelector('.gm-modal-main-input') as HTMLInputElement;
-    const close = (val: string | null) => { backdrop.remove(); unlockBodyScroll(); resolve(val); };
+    const close = (val: string | null) => {
+      backdrop.remove();
+      unlockBodyScroll();
+      resolve(val);
+    };
 
     // OK / Cancel
     backdrop.querySelector('.gm-modal-btn-ok')!.addEventListener('click', () => {
@@ -113,15 +126,21 @@ export function showPrompt(message: string, opts?: PromptOptions): Promise<strin
       close(v || null);
     });
     backdrop.querySelector('.gm-modal-btn-cancel')!.addEventListener('click', () => close(null));
-    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(null); });
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) close(null);
+    });
 
     // Enter in input → OK
     mainInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); const v = mainInput.value.trim(); close(v || null); }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const v = mainInput.value.trim();
+        close(v || null);
+      }
     });
 
     // Suggestion click
-    backdrop.querySelectorAll('.gm-modal-suggestion').forEach(btn => {
+    backdrop.querySelectorAll('.gm-modal-suggestion').forEach((btn) => {
       btn.addEventListener('click', () => {
         const val = (btn as HTMLElement).dataset.value || '';
         close(val);
@@ -133,7 +152,7 @@ export function showPrompt(message: string, opts?: PromptOptions): Promise<strin
     if (searchInput) {
       searchInput.addEventListener('input', () => {
         const q = searchInput.value.trim().toLowerCase();
-        backdrop.querySelectorAll('.gm-modal-suggestion').forEach(btn => {
+        backdrop.querySelectorAll('.gm-modal-suggestion').forEach((btn) => {
           const text = (btn as HTMLElement).textContent?.toLowerCase() || '';
           (btn as HTMLElement).style.display = !q || text.includes(q) ? '' : 'none';
         });
@@ -142,7 +161,10 @@ export function showPrompt(message: string, opts?: PromptOptions): Promise<strin
 
     // Escape
     document.addEventListener('keydown', function onKey(e) {
-      if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(null); }
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', onKey);
+        close(null);
+      }
     });
 
     document.body.appendChild(backdrop);
@@ -179,15 +201,27 @@ export function showConfirm(message: string, opts?: ConfirmOptions): Promise<boo
       </div>`;
 
     lockBodyScroll();
-    const close = (val: boolean) => { backdrop.remove(); unlockBodyScroll(); resolve(val); };
+    const close = (val: boolean) => {
+      backdrop.remove();
+      unlockBodyScroll();
+      resolve(val);
+    };
 
     backdrop.querySelector('.gm-modal-btn-ok')!.addEventListener('click', () => close(true));
     backdrop.querySelector('.gm-modal-btn-cancel')!.addEventListener('click', () => close(false));
-    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(false); });
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) close(false);
+    });
 
     document.addEventListener('keydown', function onKey(e) {
-      if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(false); }
-      if (e.key === 'Enter') { document.removeEventListener('keydown', onKey); close(true); }
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', onKey);
+        close(false);
+      }
+      if (e.key === 'Enter') {
+        document.removeEventListener('keydown', onKey);
+        close(true);
+      }
     });
 
     document.body.appendChild(backdrop);
@@ -234,10 +268,15 @@ export function showSaveConfirm(): Promise<SaveConfirmResult> {
     backdrop.querySelector('.gm-modal-btn-continue')!.addEventListener('click', () => close('continue'));
     backdrop.querySelector('.gm-modal-btn-discard')!.addEventListener('click', () => close('discard'));
     // Clicking the backdrop itself → treat as "continue editing"
-    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close('continue'); });
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) close('continue');
+    });
 
     document.addEventListener('keydown', function onKey(e) {
-      if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close('continue'); }
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', onKey);
+        close('continue');
+      }
     });
 
     document.body.appendChild(backdrop);
@@ -263,12 +302,18 @@ export function showTimePicker(
   return new Promise((resolve) => {
     const title = opts.title || 'בחר זמן';
 
-    const dayOptions = opts.days.map(d =>
-      `<option value="${escAttr(d.value)}"${d.value === opts.defaultDay ? ' selected' : ''}>${escHtml(d.label)}</option>`
-    ).join('');
-    const hourOptions = opts.hours.map(h =>
-      `<option value="${escAttr(h.value)}"${h.value === opts.defaultHour ? ' selected' : ''}>${escHtml(h.label)}</option>`
-    ).join('');
+    const dayOptions = opts.days
+      .map(
+        (d) =>
+          `<option value="${escAttr(d.value)}"${d.value === opts.defaultDay ? ' selected' : ''}>${escHtml(d.label)}</option>`,
+      )
+      .join('');
+    const hourOptions = opts.hours
+      .map(
+        (h) =>
+          `<option value="${escAttr(h.value)}"${h.value === opts.defaultHour ? ' selected' : ''}>${escHtml(h.label)}</option>`,
+      )
+      .join('');
 
     const backdrop = document.createElement('div');
     backdrop.className = 'gm-modal-backdrop';
@@ -303,11 +348,19 @@ export function showTimePicker(
       close({ day: daySelect.value, hour: hourSelect.value });
     });
     backdrop.querySelector('.gm-modal-btn-cancel')!.addEventListener('click', () => close(null));
-    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(null); });
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) close(null);
+    });
 
     document.addEventListener('keydown', function onKey(e) {
-      if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(null); }
-      if (e.key === 'Enter') { document.removeEventListener('keydown', onKey); close({ day: daySelect.value, hour: hourSelect.value }); }
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', onKey);
+        close(null);
+      }
+      if (e.key === 'Enter') {
+        document.removeEventListener('keydown', onKey);
+        close({ day: daySelect.value, hour: hourSelect.value });
+      }
     });
 
     document.body.appendChild(backdrop);
@@ -395,7 +448,7 @@ export interface CustomSelectConfig {
 
 /** Render HTML for a custom select dropdown. */
 export function renderCustomSelect(cfg: CustomSelectConfig): string {
-  const selected = cfg.options.find(o => o.selected);
+  const selected = cfg.options.find((o) => o.selected);
   const displayLabel = selected?.label || cfg.placeholder || '';
 
   return `
@@ -407,23 +460,23 @@ export function renderCustomSelect(cfg: CustomSelectConfig): string {
       <div class="gm-select-dropdown">
         ${cfg.searchable ? '<input type="text" class="gm-select-search" placeholder="🔍 חפש..." />' : ''}
         <div class="gm-select-options">
-          ${cfg.options.map(o => `
+          ${cfg.options
+            .map(
+              (o) => `
             <button class="gm-select-option ${o.selected ? 'selected' : ''}"
                     data-value="${escAttr(o.value)}" type="button">
               ${escHtml(o.label)}
             </button>
-          `).join('')}
+          `,
+            )
+            .join('')}
         </div>
       </div>
     </div>`;
 }
 
 /** Wire event listeners for a custom select. Cleans up previous document listeners. */
-export function wireCustomSelect(
-  container: HTMLElement,
-  selectId: string,
-  onChange: (value: string) => void,
-): void {
+export function wireCustomSelect(container: HTMLElement, selectId: string, onChange: (value: string) => void): void {
   const wrapper = container.querySelector(`#${selectId}`) as HTMLElement | null;
   if (!wrapper) return;
 
@@ -440,7 +493,7 @@ export function wireCustomSelect(
     e.stopPropagation();
     const wasOpen = wrapper.classList.contains('open');
     // Close all other open selects first
-    document.querySelectorAll('.gm-select.open').forEach(el => el.classList.remove('open'));
+    document.querySelectorAll('.gm-select.open').forEach((el) => el.classList.remove('open'));
     if (!wasOpen) {
       // Measure trigger BEFORE opening (always accurate, no scroll offset issues)
       const triggerRect = trigger.getBoundingClientRect();
@@ -483,14 +536,18 @@ export function wireCustomSelect(
       dropdown.style.left = `${left}px`;
       dropdown.style.insetInlineStart = 'unset';
       dropdown.style.insetInlineEnd = 'unset';
-      if (searchInput) { searchInput.value = ''; searchInput.focus(); filterOptions(''); }
+      if (searchInput) {
+        searchInput.value = '';
+        searchInput.focus();
+        filterOptions('');
+      }
     }
   });
 
   // Filter options on search input
   const filterOptions = (q: string) => {
     const lower = q.toLowerCase();
-    wrapper.querySelectorAll('.gm-select-option').forEach(btn => {
+    wrapper.querySelectorAll('.gm-select-option').forEach((btn) => {
       const text = (btn as HTMLElement).textContent?.toLowerCase() || '';
       (btn as HTMLElement).style.display = !lower || text.includes(lower) ? '' : 'none';
     });
@@ -510,7 +567,7 @@ export function wireCustomSelect(
     const label = wrapper.querySelector('.gm-select-label') as HTMLElement;
     if (label) label.textContent = btn.textContent?.trim() || '';
     // Update selected class
-    wrapper.querySelectorAll('.gm-select-option').forEach(o => o.classList.remove('selected'));
+    wrapper.querySelectorAll('.gm-select-option').forEach((o) => o.classList.remove('selected'));
     btn.classList.add('selected');
     wrapper.classList.remove('open');
     onChange(value);
@@ -600,7 +657,11 @@ export function showContinuityImport(opts: ContinuityImportOptions): Promise<str
     const statusEl = backdrop.querySelector('.gm-continuity-status') as HTMLElement;
     const okBtn = backdrop.querySelector('.gm-modal-btn-ok') as HTMLButtonElement;
 
-    const close = (val: string | null) => { backdrop.remove(); unlockBodyScroll(); resolve(val); };
+    const close = (val: string | null) => {
+      backdrop.remove();
+      unlockBodyScroll();
+      resolve(val);
+    };
 
     const updateValidation = () => {
       const val = textarea.value.trim();
@@ -626,10 +687,15 @@ export function showContinuityImport(opts: ContinuityImportOptions): Promise<str
 
     okBtn.addEventListener('click', () => close(textarea.value.trim()));
     backdrop.querySelector('.gm-modal-btn-cancel')!.addEventListener('click', () => close(null));
-    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(null); });
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) close(null);
+    });
 
     document.addEventListener('keydown', function onKey(e) {
-      if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(null); }
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', onKey);
+        close(null);
+      }
     });
 
     document.body.appendChild(backdrop);
@@ -650,18 +716,13 @@ export interface BottomSheetOptions {
  * Show a bottom sheet (mobile-friendly overlay that slides up from the bottom).
  * Returns a handle with a `close()` function for programmatic dismissal.
  */
-export function showBottomSheet(
-  content: string,
-  opts?: BottomSheetOptions,
-): { close: () => void; el: HTMLElement } {
+export function showBottomSheet(content: string, opts?: BottomSheetOptions): { close: () => void; el: HTMLElement } {
   const title = opts?.title || '';
 
   const backdrop = document.createElement('div');
   backdrop.className = 'gm-bottom-sheet-backdrop';
 
-  const actionsHtml = opts?.actions
-    ? `<div class="gm-bs-actions">${opts.actions}</div>`
-    : '';
+  const actionsHtml = opts?.actions ? `<div class="gm-bs-actions">${opts.actions}</div>` : '';
 
   backdrop.innerHTML = `
     <div class="gm-bottom-sheet" role="dialog" aria-modal="true">
@@ -677,11 +738,15 @@ export function showBottomSheet(
 
   const close = () => {
     sheet.classList.add('gm-bs-closing');
-    sheet.addEventListener('animationend', () => {
-      backdrop.remove();
-      unlockBodyScroll();
-      opts?.onClose?.();
-    }, { once: true });
+    sheet.addEventListener(
+      'animationend',
+      () => {
+        backdrop.remove();
+        unlockBodyScroll();
+        opts?.onClose?.();
+      },
+      { once: true },
+    );
   };
 
   // Close on backdrop tap
@@ -694,7 +759,10 @@ export function showBottomSheet(
 
   // Escape key
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(); }
+    if (e.key === 'Escape') {
+      document.removeEventListener('keydown', onKey);
+      close();
+    }
   };
   document.addEventListener('keydown', onKey);
 
@@ -705,19 +773,27 @@ export function showBottomSheet(
 
   const dragHandle = backdrop.querySelector('.gm-bs-drag-handle') as HTMLElement;
 
-  dragHandle.addEventListener('touchstart', (e) => {
-    startY = e.touches[0].clientY;
-    currentY = startY;
-    dragging = true;
-    sheet.style.transition = 'none';
-  }, { passive: true });
+  dragHandle.addEventListener(
+    'touchstart',
+    (e) => {
+      startY = e.touches[0].clientY;
+      currentY = startY;
+      dragging = true;
+      sheet.style.transition = 'none';
+    },
+    { passive: true },
+  );
 
-  dragHandle.addEventListener('touchmove', (e) => {
-    if (!dragging) return;
-    currentY = e.touches[0].clientY;
-    const dy = Math.max(0, currentY - startY);
-    sheet.style.transform = `translateY(${dy}px)`;
-  }, { passive: true });
+  dragHandle.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!dragging) return;
+      currentY = e.touches[0].clientY;
+      const dy = Math.max(0, currentY - startY);
+      sheet.style.transform = `translateY(${dy}px)`;
+    },
+    { passive: true },
+  );
 
   dragHandle.addEventListener('touchend', () => {
     if (!dragging) return;
@@ -738,4 +814,3 @@ export function showBottomSheet(
 
   return { close, el: sheet };
 }
-

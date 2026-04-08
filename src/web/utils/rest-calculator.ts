@@ -11,7 +11,7 @@
  * but its gaps with adjacent tasks are not penalised by minRestWeight.
  */
 
-import { Task, Assignment, Participant, TimeBlock } from '../../models/types';
+import type { Assignment, Participant, Task, TimeBlock } from '../../models/types';
 import { gapHours, sortBlocksByStart } from './time-utils';
 
 /** A non-light time block tagged with its HC-12 blocking flag. */
@@ -71,11 +71,7 @@ function getNonLightBlocks(
 /**
  * Get all light TimeBlocks assigned to a participant.
  */
-function getLightBlocks(
-  participantId: string,
-  assignments: Assignment[],
-  taskMap: Map<string, Task>,
-): TimeBlock[] {
+function getLightBlocks(participantId: string, assignments: Assignment[], taskMap: Map<string, Task>): TimeBlock[] {
   const blocks: TimeBlock[] = [];
   for (const a of assignments) {
     if (a.participantId !== participantId) continue;
@@ -128,10 +124,7 @@ export function computeParticipantRest(
 
   const minRest = restGaps.length > 0 ? Math.min(...restGaps) : Infinity;
   const maxRest = restGaps.length > 0 ? Math.max(...restGaps) : Infinity;
-  const avgRest =
-    restGaps.length > 0
-      ? restGaps.reduce((a, b) => a + b, 0) / restGaps.length
-      : Infinity;
+  const avgRest = restGaps.length > 0 ? restGaps.reduce((a, b) => a + b, 0) / restGaps.length : Infinity;
 
   return {
     participantId,
@@ -177,10 +170,7 @@ export function computeRestFromAssignments(
 
   const minRest = restGaps.length > 0 ? Math.min(...restGaps) : Infinity;
   const maxRest = restGaps.length > 0 ? Math.max(...restGaps) : Infinity;
-  const avgRest =
-    restGaps.length > 0
-      ? restGaps.reduce((a, b) => a + b, 0) / restGaps.length
-      : Infinity;
+  const avgRest = restGaps.length > 0 ? restGaps.reduce((a, b) => a + b, 0) / restGaps.length : Infinity;
 
   return {
     participantId,
@@ -243,8 +233,7 @@ export function computeRestFairness(profiles: Map<string, ParticipantRestProfile
 
   const globalMin = Math.min(...minRests);
   const avg = minRests.reduce((a, b) => a + b, 0) / minRests.length;
-  const variance =
-    minRests.reduce((sum, v) => sum + (v - avg) ** 2, 0) / minRests.length;
+  const variance = minRests.reduce((sum, v) => sum + (v - avg) ** 2, 0) / minRests.length;
   const stdDev = Math.sqrt(variance);
 
   return {

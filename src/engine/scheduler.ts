@@ -6,33 +6,32 @@
  *  Stage 2: Optimal Generation — generate schedule, with manual overrides.
  */
 
+import { validateHardConstraints } from '../constraints/hard-constraints';
+import { collectSoftWarnings, computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
 import {
-  Participant,
-  Task,
-  Assignment,
-  Schedule,
-  SchedulerConfig,
-  DEFAULT_CONFIG,
-  ValidationResult,
-  ConstraintViolation,
-  SwapRequest,
-  ReScheduleRequest,
+  type Assignment,
   AssignmentStatus,
+  type ConstraintViolation,
+  DEFAULT_CONFIG,
+  type Participant,
+  type ReScheduleRequest,
+  type Schedule,
+  type SchedulerConfig,
+  type SwapRequest,
+  type Task,
+  type ValidationResult,
   ViolationSeverity,
 } from '../models/types';
-import { validateHardConstraints } from '../constraints/hard-constraints';
-import { computeScheduleScore, collectSoftWarnings, ScoreContext } from '../constraints/soft-constraints';
 import { computeAllCapacities } from '../utils/capacity';
+import { describeSlot } from '../utils/date-utils';
 import {
+  type MultiAttemptProgressCallback,
+  type OptimizationResult,
   optimize,
   optimizeMultiAttemptAsync,
-  OptimizationResult,
   resetAssignmentCounter,
-  MultiAttemptProgressCallback,
 } from './optimizer';
-
-import { PhantomContext, mergePhantomRules } from './phantom';
-import { describeSlot } from '../utils/date-utils';
+import { mergePhantomRules, type PhantomContext } from './phantom';
 
 export class SchedulingEngine {
   private participants: Map<string, Participant> = new Map();
@@ -45,7 +44,12 @@ export class SchedulingEngine {
   private restRuleMap?: Map<string, number>;
   private dayStartHour: number;
 
-  constructor(config: Partial<SchedulerConfig> = {}, disabledHC?: Set<string>, restRuleMap?: Map<string, number>, dayStartHour: number = 5) {
+  constructor(
+    config: Partial<SchedulerConfig> = {},
+    disabledHC?: Set<string>,
+    restRuleMap?: Map<string, number>,
+    dayStartHour: number = 5,
+  ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.disabledHC = disabledHC;
     this.restRuleMap = restRuleMap;
@@ -84,8 +88,8 @@ export class SchedulingEngine {
       }
     }
     return {
-      taskMap: new Map(tasks.map(t => [t.id, t])),
-      pMap: new Map(participants.map(p => [p.id, p])),
+      taskMap: new Map(tasks.map((t) => [t.id, t])),
+      pMap: new Map(participants.map((p) => [p.id, p])),
       capacities: computeAllCapacities(participants, schedStart, schedEnd, this.dayStartHour),
       notWithPairs,
       dayStartHour: this.dayStartHour,
@@ -199,11 +203,7 @@ export class SchedulingEngine {
    * builds the Schedule object, and commits it to engine state.
    * Eliminates duplication between generateSchedule / generateScheduleAsync.
    */
-  private _commitOptimizationResult(
-    tasks: Task[],
-    participants: Participant[],
-    result: OptimizationResult,
-  ): Schedule {
+  private _commitOptimizationResult(tasks: Task[], participants: Participant[], result: OptimizationResult): Schedule {
     // Compute week end from latest task
     let maxEnd = 0;
     for (const t of tasks) {
@@ -213,13 +213,16 @@ export class SchedulingEngine {
     this.weekEnd = maxEnd > 0 ? new Date(maxEnd) : new Date();
 
     // Collect all violations
-    const hardValidation = validateHardConstraints(tasks, participants, result.assignments, this.disabledHC, this.restRuleMap);
+    const hardValidation = validateHardConstraints(
+      tasks,
+      participants,
+      result.assignments,
+      this.disabledHC,
+      this.restRuleMap,
+    );
     const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.config);
 
-    const allViolations: ConstraintViolation[] = [
-      ...hardValidation.violations,
-      ...softWarnings,
-    ];
+    const allViolations: ConstraintViolation[] = [...hardValidation.violations, ...softWarnings];
 
     // Add infeasibility alerts for unfilled slots
     for (const { taskId, slotId, reason } of result.unfilledSlots) {
@@ -259,10 +262,10 @@ export class SchedulingEngine {
    */
   private _validateInputs(tasks: Task[], participants: Participant[]): void {
     if (tasks.length === 0) {
-      throw new Error('לא נרשמו משימות. יש להוסיף משימות לפני יצירת שבצ\"ק.');
+      throw new Error('לא נרשמו משימות. יש להוסיף משימות לפני יצירת שבצ"ק.');
     }
     if (participants.length === 0) {
-      throw new Error('לא נרשמו משתתפים. יש להוסיף משתתפים לפני יצירת שבצ\"ק.');
+      throw new Error('לא נרשמו משתתפים. יש להוסיף משתתפים לפני יצירת שבצ"ק.');
     }
   }
 
@@ -275,7 +278,17 @@ export class SchedulingEngine {
     const participants = this.getAllParticipants();
     this._validateInputs(tasks, participants);
 
-    const result: OptimizationResult = optimize(tasks, participants, this.config, [], this.disabledHC, 0, this.phantomContext ?? undefined, this.restRuleMap, this.dayStartHour);
+    const result: OptimizationResult = optimize(
+      tasks,
+      participants,
+      this.config,
+      [],
+      this.disabledHC,
+      0,
+      this.phantomContext ?? undefined,
+      this.restRuleMap,
+      this.dayStartHour,
+    );
     return this._commitOptimizationResult(tasks, participants, result);
   }
 
@@ -288,10 +301,7 @@ export class SchedulingEngine {
    * @param attempts Number of optimization attempts (default: 2000)
    * @param onProgress Callback fired after each attempt for progress UI
    */
-  async generateScheduleAsync(
-    attempts: number = 2000,
-    onProgress?: MultiAttemptProgressCallback,
-  ): Promise<Schedule> {
+  async generateScheduleAsync(attempts: number = 2000, onProgress?: MultiAttemptProgressCallback): Promise<Schedule> {
     const tasks = this.getAllTasks();
     const participants = this.getAllParticipants();
     this._validateInputs(tasks, participants);
@@ -347,7 +357,12 @@ export class SchedulingEngine {
    */
   validate(): ValidationResult {
     if (!this.currentSchedule) {
-      return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'טרם נוצר שבצ"ק.', taskId: '' }] };
+      return {
+        valid: false,
+        violations: [
+          { severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'טרם נוצר שבצ"ק.', taskId: '' },
+        ],
+      };
     }
     return validateHardConstraints(
       this.currentSchedule.tasks,
@@ -371,7 +386,13 @@ export class SchedulingEngine {
 
     const hard = validateHardConstraints(tasks, participants, assignments, this.disabledHC, this.restRuleMap);
     const soft = collectSoftWarnings(tasks, participants, assignments, this.config);
-    const score = computeScheduleScore(tasks, participants, assignments, this.config, this._buildScoreCtx(tasks, participants));
+    const score = computeScheduleScore(
+      tasks,
+      participants,
+      assignments,
+      this.config,
+      this._buildScoreCtx(tasks, participants),
+    );
 
     this.currentSchedule = {
       ...this.currentSchedule,
@@ -387,21 +408,26 @@ export class SchedulingEngine {
    */
   swapParticipant(request: SwapRequest): ValidationResult {
     if (!this.currentSchedule) {
-      return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'אין שבצ"ק לעריכה.', taskId: '' }] };
+      return {
+        valid: false,
+        violations: [
+          { severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'אין שבצ"ק לעריכה.', taskId: '' },
+        ],
+      };
     }
 
-    const assignment = this.currentSchedule.assignments.find(
-      (a) => a.id === request.assignmentId,
-    );
+    const assignment = this.currentSchedule.assignments.find((a) => a.id === request.assignmentId);
     if (!assignment) {
       return {
         valid: false,
-        violations: [{
-          severity: ViolationSeverity.Error,
-          code: 'ASSIGNMENT_NOT_FOUND',
-          message: `שיבוץ ${request.assignmentId} לא נמצא.`,
-          taskId: '',
-        }],
+        violations: [
+          {
+            severity: ViolationSeverity.Error,
+            code: 'ASSIGNMENT_NOT_FOUND',
+            message: `שיבוץ ${request.assignmentId} לא נמצא.`,
+            taskId: '',
+          },
+        ],
       };
     }
 
@@ -409,12 +435,14 @@ export class SchedulingEngine {
     if (!newParticipant) {
       return {
         valid: false,
-        violations: [{
-          severity: ViolationSeverity.Error,
-          code: 'PARTICIPANT_NOT_FOUND',
-          message: `משתתף ${request.newParticipantId} לא נמצא.`,
-          taskId: assignment.taskId,
-        }],
+        violations: [
+          {
+            severity: ViolationSeverity.Error,
+            code: 'PARTICIPANT_NOT_FOUND',
+            message: `משתתף ${request.newParticipantId} לא נמצא.`,
+            taskId: assignment.taskId,
+          },
+        ],
       };
     }
 
@@ -422,12 +450,14 @@ export class SchedulingEngine {
     if (assignment.status === AssignmentStatus.Frozen) {
       return {
         valid: false,
-        violations: [{
-          severity: ViolationSeverity.Error,
-          code: 'ASSIGNMENT_FROZEN',
-          message: `שיבוץ ${request.assignmentId} קפוא ולא ניתן לשינוי.`,
-          taskId: assignment.taskId,
-        }],
+        violations: [
+          {
+            severity: ViolationSeverity.Error,
+            code: 'ASSIGNMENT_FROZEN',
+            message: `שיבוץ ${request.assignmentId} קפוא ולא ניתן לשינוי.`,
+            taskId: assignment.taskId,
+          },
+        ],
       };
     }
 
@@ -483,7 +513,12 @@ export class SchedulingEngine {
    */
   swapParticipantChain(requests: SwapRequest[]): ValidationResult {
     if (!this.currentSchedule) {
-      return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'אין שבצ"ק לעריכה.', taskId: '' }] };
+      return {
+        valid: false,
+        violations: [
+          { severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'אין שבצ"ק לעריכה.', taskId: '' },
+        ],
+      };
     }
 
     if (requests.length === 0) {
@@ -500,15 +535,45 @@ export class SchedulingEngine {
     }> = [];
 
     for (const req of requests) {
-      const assignment = this.currentSchedule.assignments.find(a => a.id === req.assignmentId);
+      const assignment = this.currentSchedule.assignments.find((a) => a.id === req.assignmentId);
       if (!assignment) {
-        return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'ASSIGNMENT_NOT_FOUND', message: `שיבוץ ${req.assignmentId} לא נמצא.`, taskId: '' }] };
+        return {
+          valid: false,
+          violations: [
+            {
+              severity: ViolationSeverity.Error,
+              code: 'ASSIGNMENT_NOT_FOUND',
+              message: `שיבוץ ${req.assignmentId} לא נמצא.`,
+              taskId: '',
+            },
+          ],
+        };
       }
       if (assignment.status === AssignmentStatus.Frozen) {
-        return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'ASSIGNMENT_FROZEN', message: `שיבוץ ${req.assignmentId} קפוא ולא ניתן לשינוי.`, taskId: assignment.taskId }] };
+        return {
+          valid: false,
+          violations: [
+            {
+              severity: ViolationSeverity.Error,
+              code: 'ASSIGNMENT_FROZEN',
+              message: `שיבוץ ${req.assignmentId} קפוא ולא ניתן לשינוי.`,
+              taskId: assignment.taskId,
+            },
+          ],
+        };
       }
       if (!this.participants.has(req.newParticipantId)) {
-        return { valid: false, violations: [{ severity: ViolationSeverity.Error, code: 'PARTICIPANT_NOT_FOUND', message: `משתתף ${req.newParticipantId} לא נמצא.`, taskId: assignment.taskId }] };
+        return {
+          valid: false,
+          violations: [
+            {
+              severity: ViolationSeverity.Error,
+              code: 'PARTICIPANT_NOT_FOUND',
+              message: `משתתף ${req.newParticipantId} לא נמצא.`,
+              taskId: assignment.taskId,
+            },
+          ],
+        };
       }
       targets.push({
         assignment,
@@ -568,7 +633,7 @@ export class SchedulingEngine {
    */
   partialReSchedule(request: ReScheduleRequest): Schedule {
     if (!this.currentSchedule) {
-      throw new Error('אין שבצ\"ק לתזמון מחדש חלקי.');
+      throw new Error('אין שבצ"ק לתזמון מחדש חלקי.');
     }
 
     const { lockedAssignmentIds, unavailableParticipantIds } = request;
@@ -594,9 +659,7 @@ export class SchedulingEngine {
     }
 
     // Filter out unavailable participants
-    const availableParticipants = this.getAllParticipants().filter(
-      (p) => !unavailableSet.has(p.id),
-    );
+    const availableParticipants = this.getAllParticipants().filter((p) => !unavailableSet.has(p.id));
 
     // Re-optimize with locked assignments
     const result = optimize(

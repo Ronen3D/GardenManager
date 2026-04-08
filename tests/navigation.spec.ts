@@ -1,7 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 test.describe('Navigation across viewports', () => {
-
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await page.waitForSelector('.tab-nav');

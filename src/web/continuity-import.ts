@@ -3,11 +3,8 @@
  * and matches snapshot participants to the new schedule's participant list.
  */
 
-import { Participant } from '../models/types';
-import {
-  ContinuitySnapshot,
-  ContinuityParticipant,
-} from '../models/continuity-schema';
+import type { ContinuityParticipant, ContinuitySnapshot } from '../models/continuity-schema';
+import type { Participant } from '../models/types';
 
 // ─── Parse & Validate ───────────────────────────────────────────────────────
 
@@ -15,9 +12,7 @@ import {
  * Parse a JSON string into a validated ContinuitySnapshot.
  * Returns the snapshot on success, or an object with an `error` message.
  */
-export function parseContinuitySnapshot(
-  json: string,
-): ContinuitySnapshot | { error: string } {
+export function parseContinuitySnapshot(json: string): ContinuitySnapshot | { error: string } {
   let raw: unknown;
   try {
     raw = JSON.parse(json);

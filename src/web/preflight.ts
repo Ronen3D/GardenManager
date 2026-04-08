@@ -8,32 +8,31 @@
  */
 
 import {
-  Participant,
   Level,
-  TaskTemplate,
-  SlotTemplate,
-  OneTimeTask,
+  type OneTimeTask,
+  type Participant,
+  type PreflightFinding,
+  type PreflightResult,
   PreflightSeverity,
-  PreflightFinding,
-  PreflightResult,
+  type SlotTemplate,
+  type TaskTemplate,
 } from '../models/types';
+import { computeAllCapacities } from '../utils/capacity';
 import {
+  getAllOneTimeTasks,
   getAllParticipants,
   getAllTaskTemplates,
-  getAllOneTimeTasks,
+  getDayStartHour,
   getGroups,
   getScheduleDate,
   getScheduleDays,
-  getDayStartHour,
 } from './config-store';
-import { computeAllCapacities } from '../utils/capacity';
-
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function participantMatchesSlot(p: Participant, slot: SlotTemplate): boolean {
   // Level check
-  if (!slot.acceptableLevels.some(e => e.level === p.level)) return false;
+  if (!slot.acceptableLevels.some((e) => e.level === p.level)) return false;
   // Cert check
   for (const cert of slot.requiredCertifications) {
     if (!p.certifications.includes(cert)) return false;
@@ -55,20 +54,22 @@ function totalSlotsPerShift(tpl: TaskTemplate): number {
 
 // ─── Skill Gap Check ─────────────────────────────────────────────────────────
 
-function checkSkillGaps(participants: Participant[], templates: TaskTemplate[], oneTimeTasks: OneTimeTask[]): PreflightFinding[] {
+function checkSkillGaps(
+  participants: Participant[],
+  templates: TaskTemplate[],
+  oneTimeTasks: OneTimeTask[],
+): PreflightFinding[] {
   const findings: PreflightFinding[] = [];
 
   for (const tpl of templates) {
     const allSlots = collectAllSlots(tpl);
 
     for (const slot of allSlots) {
-      const eligible = participants.filter(p => participantMatchesSlot(p, slot));
+      const eligible = participants.filter((p) => participantMatchesSlot(p, slot));
       if (eligible.length === 0) {
         // Build a human-readable requirement string
-        const levelStr = slot.acceptableLevels.map(l => `דרגה ${l.level}`).join('/');
-        const certStr = slot.requiredCertifications.length > 0
-          ? ` + ${slot.requiredCertifications.join(', ')}`
-          : '';
+        const levelStr = slot.acceptableLevels.map((l) => `דרגה ${l.level}`).join('/');
+        const certStr = slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
         findings.push({
           severity: PreflightSeverity.Critical,
           code: 'SKILL_GAP',
@@ -92,12 +93,10 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[], 
   for (const ot of oneTimeTasks) {
     const allSlots = collectAllSlots(ot);
     for (const slot of allSlots) {
-      const eligible = participants.filter(p => participantMatchesSlot(p, slot));
+      const eligible = participants.filter((p) => participantMatchesSlot(p, slot));
       if (eligible.length === 0) {
-        const levelStr = slot.acceptableLevels.map(l => `דרגה ${l.level}`).join('/');
-        const certStr = slot.requiredCertifications.length > 0
-          ? ` + ${slot.requiredCertifications.join(', ')}`
-          : '';
+        const levelStr = slot.acceptableLevels.map((l) => `דרגה ${l.level}`).join('/');
+        const certStr = slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
         findings.push({
           severity: PreflightSeverity.Critical,
           code: 'SKILL_GAP',
@@ -118,7 +117,11 @@ function checkSkillGaps(participants: Participant[], templates: TaskTemplate[], 
 
 // ─── Capacity Check ──────────────────────────────────────────────────────────
 
-function checkCapacity(participants: Participant[], templates: TaskTemplate[], oneTimeTasks: OneTimeTask[]): {
+function checkCapacity(
+  participants: Participant[],
+  templates: TaskTemplate[],
+  oneTimeTasks: OneTimeTask[],
+): {
   findings: PreflightFinding[];
   totalRequiredSlots: number;
   totalAvailableParticipantHours: number;
@@ -157,9 +160,8 @@ function checkCapacity(participants: Participant[], templates: TaskTemplate[], o
     totalAvailableParticipantHours += cap.totalAvailableHours;
   }
 
-  const utilizationPercent = totalAvailableParticipantHours > 0
-    ? (totalRequiredHours / totalAvailableParticipantHours) * 100
-    : 100;
+  const utilizationPercent =
+    totalAvailableParticipantHours > 0 ? (totalRequiredHours / totalAvailableParticipantHours) * 100 : 100;
 
   if (utilizationPercent > 100) {
     findings.push({
@@ -180,14 +182,30 @@ function checkCapacity(participants: Participant[], templates: TaskTemplate[], o
 
 // ─── Group Integrity Check ───────────────────────────────────────────────────
 
-function checkGroupIntegrity(participants: Participant[], templates: TaskTemplate[], oneTimeTasks: OneTimeTask[]): PreflightFinding[] {
+function checkGroupIntegrity(
+  participants: Participant[],
+  templates: TaskTemplate[],
+  oneTimeTasks: OneTimeTask[],
+): PreflightFinding[] {
   const findings: PreflightFinding[] = [];
-  const groups = [...new Set(participants.map(p => p.group))];
+  const groups = [...new Set(participants.map((p) => p.group))];
 
   // Check both templates and one-time tasks that require same group
-  const items: Array<{ name: string; id?: string; sameGroupRequired: boolean; shiftsPerDay?: number; slots: SlotTemplate[] }> = [];
+  const items: Array<{
+    name: string;
+    id?: string;
+    sameGroupRequired: boolean;
+    shiftsPerDay?: number;
+    slots: SlotTemplate[];
+  }> = [];
   for (const tpl of templates) {
-    items.push({ name: tpl.name, id: tpl.id, sameGroupRequired: tpl.sameGroupRequired, shiftsPerDay: tpl.shiftsPerDay, slots: collectAllSlots(tpl) });
+    items.push({
+      name: tpl.name,
+      id: tpl.id,
+      sameGroupRequired: tpl.sameGroupRequired,
+      shiftsPerDay: tpl.shiftsPerDay,
+      slots: collectAllSlots(tpl),
+    });
   }
   for (const ot of oneTimeTasks) {
     items.push({ name: ot.name, sameGroupRequired: ot.sameGroupRequired, slots: collectAllSlots(ot) });
@@ -201,15 +219,13 @@ function checkGroupIntegrity(participants: Participant[], templates: TaskTemplat
     let anyGroupCanFill = false;
 
     for (const group of groups) {
-      const groupMembers = participants.filter(p => p.group === group);
+      const groupMembers = participants.filter((p) => p.group === group);
       let canFillAll = true;
 
       // Greedy check: try to assign each slot to a different member
       const used = new Set<string>();
       for (const slot of item.slots) {
-        const eligible = groupMembers.filter(
-          m => !used.has(m.id) && participantMatchesSlot(m, slot)
-        );
+        const eligible = groupMembers.filter((m) => !used.has(m.id) && participantMatchesSlot(m, slot));
         if (eligible.length === 0) {
           canFillAll = false;
           break;
@@ -234,14 +250,15 @@ function checkGroupIntegrity(participants: Participant[], templates: TaskTemplat
       // Check if ALL groups can fill (desirable for shift rotation)
       const insufficientGroups: string[] = [];
       for (const group of groups) {
-        const groupMembers = participants.filter(p => p.group === group);
+        const groupMembers = participants.filter((p) => p.group === group);
         const used = new Set<string>();
         let canFill = true;
         for (const slot of item.slots) {
-          const eligible = groupMembers.filter(
-            m => !used.has(m.id) && participantMatchesSlot(m, slot)
-          );
-          if (eligible.length === 0) { canFill = false; break; }
+          const eligible = groupMembers.filter((m) => !used.has(m.id) && participantMatchesSlot(m, slot));
+          if (eligible.length === 0) {
+            canFill = false;
+            break;
+          }
           used.add(eligible[0].id);
         }
         if (!canFill) insufficientGroups.push(group);
@@ -273,7 +290,7 @@ export function runPreflight(): PreflightResult {
   const windowStart = new Date(scheduleStart.getFullYear(), scheduleStart.getMonth(), scheduleStart.getDate());
   const windowEnd = new Date(scheduleStart.getFullYear(), scheduleStart.getMonth(), scheduleStart.getDate() + numDays);
   const allOts = getAllOneTimeTasks();
-  const inRangeOts = allOts.filter(ot => {
+  const inRangeOts = allOts.filter((ot) => {
     const otDay = new Date(ot.scheduledDate.getFullYear(), ot.scheduledDate.getMonth(), ot.scheduledDate.getDate());
     return otDay >= windowStart && otDay < windowEnd;
   });
@@ -282,11 +299,13 @@ export function runPreflight(): PreflightResult {
   if (templates.length === 0 && inRangeOts.length === 0) {
     return {
       canGenerate: false,
-      findings: [{
-        severity: PreflightSeverity.Critical,
-        category: 'NoTasks',
-        message: 'יש להגדיר משימות לפני יצירת שבצ"ק.',
-      }],
+      findings: [
+        {
+          severity: PreflightSeverity.Critical,
+          category: 'NoTasks',
+          message: 'יש להגדיר משימות לפני יצירת שבצ"ק.',
+        },
+      ],
       utilizationSummary: {
         totalRequiredSlots: 0,
         totalAvailableParticipantHours: 0,
@@ -299,13 +318,9 @@ export function runPreflight(): PreflightResult {
   const skillGapFindings = checkSkillGaps(participants, templates, inRangeOts);
   const capacityResult = checkCapacity(participants, templates, inRangeOts);
   const groupFindings = checkGroupIntegrity(participants, templates, inRangeOts);
-  const allFindings = [
-    ...skillGapFindings,
-    ...capacityResult.findings,
-    ...groupFindings,
-  ];
+  const allFindings = [...skillGapFindings, ...capacityResult.findings, ...groupFindings];
 
-  const hasCritical = allFindings.some(f => f.severity === PreflightSeverity.Critical);
+  const hasCritical = allFindings.some((f) => f.severity === PreflightSeverity.Critical);
 
   return {
     canGenerate: !hasCritical,

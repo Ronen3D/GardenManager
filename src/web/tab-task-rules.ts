@@ -6,22 +6,22 @@
  */
 
 import {
+  type CertificationDefinition,
   Level,
-  CertificationDefinition,
-  TaskTemplate,
-  SlotTemplate,
-  SubTeamTemplate,
+  type LoadWindow,
+  type OneTimeTask,
+  type PreflightResult,
   PreflightSeverity,
-  PreflightResult,
-  LoadWindow,
-  TaskSet,
-  OneTimeTask,
   RestRule,
+  type SlotTemplate,
+  type SubTeamTemplate,
+  type TaskSet,
+  type TaskTemplate,
 } from '../models/types';
 import * as store from './config-store';
-import { showPrompt, showConfirm, showToast } from './ui-modal';
 import { runPreflight } from './preflight';
 import { escHtml, SVG_ICONS } from './ui-helpers';
+import { showConfirm, showPrompt, showToast } from './ui-modal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -33,13 +33,11 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 /** Show a warning toast if any numeric field was clamped by sanitization. */
-function notifyIfClamped(
-  raw: Record<string, number | undefined>,
-  sanitized: Record<string, number | undefined>,
-): void {
+function notifyIfClamped(raw: Record<string, number | undefined>, sanitized: Record<string, number | undefined>): void {
   const corrections: string[] = [];
   for (const key of Object.keys(raw)) {
-    const r = raw[key], s = sanitized[key];
+    const r = raw[key],
+      s = sanitized[key];
     if (r !== undefined && s !== undefined && r !== s) {
       corrections.push(`${FIELD_LABELS[key] || key}: ${r} → ${s}`);
     }
@@ -91,7 +89,8 @@ function _restRuleBadge(restRuleId?: string): string {
   if (!restRuleId) return '';
   const rule = store.getRestRuleById(restRuleId);
   if (!rule) return `<span class="badge badge-sm badge-orphan" title="כלל מרווח שנמחק">⚠ כלל חסר</span>`;
-  if (rule.deleted) return `<span class="badge badge-sm badge-orphan" title="כלל מרווח שנמחק: ${escHtml(rule.label)}">⚠ ${escHtml(rule.label)}</span>`;
+  if (rule.deleted)
+    return `<span class="badge badge-sm badge-orphan" title="כלל מרווח שנמחק: ${escHtml(rule.label)}">⚠ ${escHtml(rule.label)}</span>`;
   return `<span class="badge badge-sm badge-outline">${escHtml(rule.label)} ${rule.durationHours} שע׳</span>`;
 }
 
@@ -108,7 +107,10 @@ function _restRuleOrphanNote(restRuleId?: string): string {
 
 /** Strip English level references (L0, L3/L4, (L2+), etc.) from a slot label. */
 function stripLevelText(label: string): string {
-  return label.replace(/\s*\(?L\d[\d/+L]*\)?\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  return label
+    .replace(/\s*\(?L\d[\d/+L]*\)?\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 function fmtHm(h: number, m: number): string {
@@ -145,7 +147,7 @@ export function renderTaskRulesTab(): string {
   const templates = store.getAllTaskTemplates();
   const preflight = runPreflight();
 
-  const criticals = preflight.findings.filter(f => f.severity === PreflightSeverity.Critical);
+  const criticals = preflight.findings.filter((f) => f.severity === PreflightSeverity.Critical);
 
   let html = `
   <div class="tab-toolbar">
@@ -221,14 +223,19 @@ export function renderTaskRulesTab(): string {
   <div class="template-card global-settings-card" style="margin-top:8px;">
     <div style="padding:14px 18px;">
       <span style="font-size:0.78rem; color:var(--text-muted);">משימות המשויכות לאותו כלל (או לכללים שונים) לא ישובצו ברצף — תישמר הפסקה מינימלית ביניהן</span>
-      ${restRules.length === 0 ? '<div style="padding:12px 0; color:var(--text-muted); font-size:0.88rem; text-align:center;">אין כללים מוגדרים. לחץ "הוסף כלל" ליצירת כלל חדש.</div>' : `
+      ${
+        restRules.length === 0
+          ? '<div style="padding:12px 0; color:var(--text-muted); font-size:0.88rem; text-align:center;">אין כללים מוגדרים. לחץ "הוסף כלל" ליצירת כלל חדש.</div>'
+          : `
       <table style="width:100%; margin-top:10px; border-collapse:collapse;">
         <thead><tr style="border-bottom:1px solid var(--border);">
           <th style="text-align:right; padding:6px 8px; font-size:0.82rem; font-weight:500;">שם</th>
           <th style="text-align:center; padding:6px 8px; font-size:0.82rem; font-weight:500; width:90px;">שעות</th>
           <th style="width:80px;"></th>
         </tr></thead>
-        <tbody>${restRules.map(r => `
+        <tbody>${restRules
+          .map(
+            (r) => `
           <tr data-rest-rule-id="${r.id}" style="border-bottom:1px solid var(--border-light, var(--border));">
             <td style="padding:8px;">
               <input type="text" class="input-sm" data-rr-field="label" value="${escHtml(r.label)}" style="width:100%;" />
@@ -241,8 +248,11 @@ export function renderTaskRulesTab(): string {
               <button class="btn-xs btn-danger-outline" data-action="delete-rest-rule" data-rr-id="${r.id}" title="מחק">✕</button>
             </td>
           </tr>
-        `).join('')}</tbody>
-      </table>`}
+        `,
+          )
+          .join('')}</tbody>
+      </table>`
+      }
     </div>
   </div>`;
 
@@ -331,12 +341,11 @@ function buildTaskSetLoadConfirmMessage(taskSet: TaskSet): string {
   return `טעינת הסט תחליף את תבניות המשימות, את המשימות החד-פעמיות, ואת כללי המרווחים המינימליים. להמשיך?`;
 }
 
-
 function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
   const isExpanded = expandedTemplateId === tpl.id;
-  const relatedFindings = pf.findings.filter(f => f.templateId === tpl.id);
-  const hasCritical = relatedFindings.some(f => f.severity === PreflightSeverity.Critical);
-  const hasWarning = relatedFindings.some(f => f.severity === PreflightSeverity.Warning);
+  const relatedFindings = pf.findings.filter((f) => f.templateId === tpl.id);
+  const hasCritical = relatedFindings.some((f) => f.severity === PreflightSeverity.Critical);
+  const hasWarning = relatedFindings.some((f) => f.severity === PreflightSeverity.Warning);
 
   const allSlots = [...tpl.slots];
   for (const st of tpl.subTeams) allSlots.push(...st.slots);
@@ -382,7 +391,13 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
       <label>כלל מרווח: <select class="input-sm" data-tpl-field="restRuleId" data-tid="${tpl.id}">
         <option value=""${!tpl.restRuleId ? ' selected' : ''}>ללא</option>
-        ${store.getRestRules().map(r => `<option value="${r.id}"${tpl.restRuleId === r.id ? ' selected' : ''}>${escHtml(r.label)} (${r.durationHours} שע׳)</option>`).join('')}
+        ${store
+          .getRestRules()
+          .map(
+            (r) =>
+              `<option value="${r.id}"${tpl.restRuleId === r.id ? ' selected' : ''}>${escHtml(r.label)} (${r.durationHours} שע׳)</option>`,
+          )
+          .join('')}
       </select></label>${_restRuleOrphanNote(tpl.restRuleId)}
       <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
     </div>`;
@@ -480,7 +495,12 @@ function renderSubTeam(templateId: string, st: SubTeamTemplate, pf: PreflightRes
   return html;
 }
 
-function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: string | undefined, pf: PreflightResult): string {
+function renderSlotTable(
+  templateId: string,
+  slots: SlotTemplate[],
+  subTeamId: string | undefined,
+  pf: PreflightResult,
+): string {
   if (slots.length === 0) return '<p class="text-muted" style="padding:4px 0;">אין משבצות מוגדרות.</p>';
 
   let html = `<div class="table-responsive"><table class="table table-slots">
@@ -488,7 +508,7 @@ function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: s
     <tbody>`;
 
   for (const slot of slots) {
-    const finding = pf.findings.find(f => f.slotId === slot.id);
+    const finding = pf.findings.find((f) => f.slotId === slot.id);
     const statusHtml = finding
       ? `<span class="${finding.severity === PreflightSeverity.Critical ? 'text-danger' : 'text-warn'}">${finding.severity === PreflightSeverity.Critical ? '✗' : '⚠'} ${finding.code}</span>`
       : '<span style="color:var(--success)">✓</span>';
@@ -497,9 +517,9 @@ function renderSlotTable(templateId: string, slots: SlotTemplate[], subTeamId: s
 
     html += `<tr>
       <td>${escHtml(stripLevelText(slot.label))}</td>
-      <td>${slot.acceptableLevels.map(e => levelBadge(e.level) + (e.lowPriority ? '<sup class="lp-badge" title="מוצא אחרון – הדרגה מותרת אך לא מועדפת">⚠</sup>' : '')).join(' ')}</td>
-      <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map(c => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
-      <td>${forbiddenCerts.length > 0 ? forbiddenCerts.map(c => forbiddenCertBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
+      <td>${slot.acceptableLevels.map((e) => levelBadge(e.level) + (e.lowPriority ? '<sup class="lp-badge" title="מוצא אחרון – הדרגה מותרת אך לא מועדפת">⚠</sup>' : '')).join(' ')}</td>
+      <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map((c) => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
+      <td>${forbiddenCerts.length > 0 ? forbiddenCerts.map((c) => forbiddenCertBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${statusHtml}</td>
       <td><button class="btn-sm btn-danger-outline" data-action="remove-slot" data-tid="${templateId}" ${subTeamId ? `data-stid="${subTeamId}"` : ''} data-slotid="${slot.id}">✕</button></td>
     </tr>`;
@@ -517,21 +537,28 @@ function renderAddSlotForm(templateId: string, subTeamId?: string): string {
     </div>
     <div class="form-row">
       <span>דרגות:</span>
-      ${LEVEL_OPTIONS.map(l =>
-        `<button type="button" class="level-toggle" data-action="cycle-level" data-slot-level="${l}" data-state="normal">${levelBadge(l)}</button>`
+      ${LEVEL_OPTIONS.map(
+        (l) =>
+          `<button type="button" class="level-toggle" data-action="cycle-level" data-slot-level="${l}" data-state="normal">${levelBadge(l)}</button>`,
       ).join('')}
     </div>
     <div class="form-row">
       <span>הסמכות נדרשות:</span>
-      ${getCertOptions().map(def =>
-        `<label class="checkbox-label"><input type="checkbox" data-slot-cert="${def.id}" /> ${escHtml(def.label)}</label>`
-      ).join('')}
+      ${getCertOptions()
+        .map(
+          (def) =>
+            `<label class="checkbox-label"><input type="checkbox" data-slot-cert="${def.id}" /> ${escHtml(def.label)}</label>`,
+        )
+        .join('')}
     </div>
     <div class="form-row">
       <span>הסמכות אסורות:</span>
-      ${getCertOptions().map(def =>
-        `<label class="checkbox-label"><input type="checkbox" data-slot-forbidden-cert="${def.id}" /> ${escHtml(def.label)}</label>`
-      ).join('')}
+      ${getCertOptions()
+        .map(
+          (def) =>
+            `<label class="checkbox-label"><input type="checkbox" data-slot-forbidden-cert="${def.id}" /> ${escHtml(def.label)}</label>`,
+        )
+        .join('')}
     </div>
     <div class="form-row">
       <button class="btn-sm btn-primary" data-action="confirm-add-slot" data-tid="${templateId}" ${subTeamId ? `data-stid="${subTeamId}"` : ''}>הוסף</button>
@@ -570,9 +597,9 @@ function renderAddOneTimeForm(): string {
   const numDays = store.getScheduleDays();
 
   // Build day options: יום 1, יום 2, ... יום N
-  const dayOptions = Array.from({ length: numDays }, (_, i) =>
-    `<option value="${i + 1}">יום ${i + 1}</option>`
-  ).join('');
+  const dayOptions = Array.from({ length: numDays }, (_, i) => `<option value="${i + 1}">יום ${i + 1}</option>`).join(
+    '',
+  );
 
   return `<div class="add-form" id="add-onetime-form">
     <h4>משימה חד-פעמית חדשה</h4>
@@ -594,7 +621,10 @@ function renderAddOneTimeForm(): string {
       <label class="checkbox-label"><input type="checkbox" data-field="ot-blocks-consecutive" checked /> חוסמת רצף</label>
       <label>כלל מרווח: <select class="input-sm" data-field="ot-rest-rule">
         <option value="">ללא</option>
-        ${store.getRestRules().map(r => `<option value="${r.id}">${escHtml(r.label)} (${r.durationHours} שע׳)</option>`).join('')}
+        ${store
+          .getRestRules()
+          .map((r) => `<option value="${r.id}">${escHtml(r.label)} (${r.durationHours} שע׳)</option>`)
+          .join('')}
       </select></label>
     </div>
     <div class="form-row">
@@ -780,8 +810,14 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         if (!row) break;
         const label = (row.querySelector('[data-rr-field="label"]') as HTMLInputElement)?.value?.trim();
         const dur = parseFloat((row.querySelector('[data-rr-field="durationHours"]') as HTMLInputElement)?.value);
-        if (!label) { showToast('שם הכלל לא יכול להיות ריק', { type: 'error' }); break; }
-        if (isNaN(dur) || dur < 0.5) { showToast('משך לא תקין (מינימום 0.5 שעות)', { type: 'error' }); break; }
+        if (!label) {
+          showToast('שם הכלל לא יכול להיות ריק', { type: 'error' });
+          break;
+        }
+        if (isNaN(dur) || dur < 0.5) {
+          showToast('משך לא תקין (מינימום 0.5 שעות)', { type: 'error' });
+          break;
+        }
         store.updateRestRule(rrId, { label, durationHours: dur });
         showToast('הכלל עודכן', { type: 'success' });
         rerender();
@@ -791,7 +827,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const rrId = actionButton?.dataset.rrId;
         if (!rrId) break;
         const rule = store.getRestRuleById(rrId);
-        const confirmed = await showConfirm(`למחוק את הכלל "${rule?.label ?? rrId}"? משימות המשויכות אליו ייראו עם אזהרת יתום.`, { danger: true, confirmLabel: 'מחק' });
+        const confirmed = await showConfirm(
+          `למחוק את הכלל "${rule?.label ?? rrId}"? משימות המשויכות אליו ייראו עם אזהרת יתום.`,
+          { danger: true, confirmLabel: 'מחק' },
+        );
         if (!confirmed) break;
         store.removeRestRule(rrId);
         showToast('הכלל נמחק', { type: 'success' });
@@ -809,23 +848,43 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'save-template-props': {
         const tid = actionButton?.dataset.tid!;
         const body = actionButton?.closest('.template-body')!;
-        const dur = parseFloat((body.querySelector('[data-tpl-field="durationHours"]') as HTMLInputElement)?.value || '8');
-        const shifts = parseInt((body.querySelector('[data-tpl-field="shiftsPerDay"]') as HTMLInputElement)?.value || '1');
+        const dur = parseFloat(
+          (body.querySelector('[data-tpl-field="durationHours"]') as HTMLInputElement)?.value || '8',
+        );
+        const shifts = parseInt(
+          (body.querySelector('[data-tpl-field="shiftsPerDay"]') as HTMLInputElement)?.value || '1',
+        );
         const startH = parseInt((body.querySelector('[data-tpl-field="startHour"]') as HTMLInputElement)?.value || '6');
-        const baseLoad = parseFloat((body.querySelector('[data-tpl-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1');
-        const sameGroup = (body.querySelector('[data-tpl-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
+        const baseLoad = parseFloat(
+          (body.querySelector('[data-tpl-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1',
+        );
+        const sameGroup =
+          (body.querySelector('[data-tpl-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
         const isLight = (body.querySelector('[data-tpl-field="isLight"]') as HTMLInputElement)?.checked || false;
-        const blocksConsecutive = (body.querySelector('[data-tpl-field="blocksConsecutive"]') as HTMLInputElement)?.checked || false;
-        const togethernessRelevant = (body.querySelector('[data-tpl-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
-        const restRuleId = (body.querySelector('[data-tpl-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
+        const blocksConsecutive =
+          (body.querySelector('[data-tpl-field="blocksConsecutive"]') as HTMLInputElement)?.checked || false;
+        const togethernessRelevant =
+          (body.querySelector('[data-tpl-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
+        const restRuleId =
+          (body.querySelector('[data-tpl-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
 
-        const sanitized = store.sanitizeTemplateNumericFields({ durationHours: dur, shiftsPerDay: shifts, startHour: startH });
+        const sanitized = store.sanitizeTemplateNumericFields({
+          durationHours: dur,
+          shiftsPerDay: shifts,
+          startHour: startH,
+        });
         notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
 
         store.updateTaskTemplate(tid, {
-          durationHours: sanitized.durationHours, shiftsPerDay: sanitized.shiftsPerDay, startHour: sanitized.startHour,
+          durationHours: sanitized.durationHours,
+          shiftsPerDay: sanitized.shiftsPerDay,
+          startHour: sanitized.startHour,
           baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
-          sameGroupRequired: sameGroup, isLight, blocksConsecutive, togethernessRelevant, restRuleId,
+          sameGroupRequired: sameGroup,
+          isLight,
+          blocksConsecutive,
+          togethernessRelevant,
+          restRuleId,
         });
         rerender();
         break;
@@ -839,7 +898,9 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
 
         const start = (block.querySelector('[data-field="lw-start"]') as HTMLInputElement | null)?.value || '05:00';
         const end = (block.querySelector('[data-field="lw-end"]') as HTMLInputElement | null)?.value || '06:30';
-        const weight = parseFloat((block.querySelector('[data-field="lw-weight"]') as HTMLInputElement | null)?.value || '1');
+        const weight = parseFloat(
+          (block.querySelector('[data-field="lw-weight"]') as HTMLInputElement | null)?.value || '1',
+        );
 
         const ps = parseHm(start);
         const pe = parseHm(end);
@@ -871,9 +932,15 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
 
         const body = actionButton?.closest('.template-body') as HTMLElement | null;
         if (!body) break;
-        const startInput = body.querySelector(`[data-field="lw-edit-start"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
-        const endInput = body.querySelector(`[data-field="lw-edit-end"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
-        const weightInput = body.querySelector(`[data-field="lw-edit-weight"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
+        const startInput = body.querySelector(
+          `[data-field="lw-edit-start"][data-lwid="${lwid}"]`,
+        ) as HTMLInputElement | null;
+        const endInput = body.querySelector(
+          `[data-field="lw-edit-end"][data-lwid="${lwid}"]`,
+        ) as HTMLInputElement | null;
+        const weightInput = body.querySelector(
+          `[data-field="lw-edit-weight"][data-lwid="${lwid}"]`,
+        ) as HTMLInputElement | null;
         if (!startInput || !endInput || !weightInput) break;
 
         const ps = parseHm(startInput.value);
@@ -923,7 +990,11 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'remove-subteam': {
         const tid = actionButton?.dataset.tid!;
         const stid = actionButton?.dataset.stid!;
-        const okSub = await showConfirm('למחוק את תת-הצוות הזה ואת כל המשבצות שלו?', { danger: true, title: 'מחיקת תת-צוות', confirmLabel: 'מחק' });
+        const okSub = await showConfirm('למחוק את תת-הצוות הזה ואת כל המשבצות שלו?', {
+          danger: true,
+          title: 'מחיקת תת-צוות',
+          confirmLabel: 'מחק',
+        });
         if (okSub) {
           store.removeSubTeamFromTemplate(tid, stid);
           rerender();
@@ -950,8 +1021,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         btn.dataset.state = next;
         const lvl = parseInt(btn.dataset.slotLevel!) as Level;
         const lpSup = '<sup class="lp-badge" title="מוצא אחרון – הדרגה מותרת אך לא מועדפת">⚠</sup>';
-        btn.innerHTML = next === 'off' ? `<span class="text-muted">L${lvl}</span>`
-          : levelBadge(lvl) + (next === 'lowPriority' ? lpSup : '');
+        btn.innerHTML =
+          next === 'off'
+            ? `<span class="text-muted">L${lvl}</span>`
+            : levelBadge(lvl) + (next === 'lowPriority' ? lpSup : '');
         break;
       }
       case 'confirm-add-slot': {
@@ -960,29 +1033,35 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const form = actionButton?.closest('.add-slot-form')!;
         const label = (form.querySelector('[data-field="slot-label"]') as HTMLInputElement)?.value.trim() || 'משבצת';
         const acceptableLevels: { level: Level; lowPriority?: boolean }[] = [];
-        form.querySelectorAll<HTMLElement>('[data-slot-level]').forEach(btn => {
+        form.querySelectorAll<HTMLElement>('[data-slot-level]').forEach((btn) => {
           const state = btn.dataset.state;
           if (state === 'normal') acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level });
-          else if (state === 'lowPriority') acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level, lowPriority: true });
+          else if (state === 'lowPriority')
+            acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level, lowPriority: true });
         });
         const certs: string[] = [];
-        form.querySelectorAll<HTMLInputElement>('[data-slot-cert]').forEach(cb => {
+        form.querySelectorAll<HTMLInputElement>('[data-slot-cert]').forEach((cb) => {
           if (cb.checked && cb.dataset.slotCert) certs.push(cb.dataset.slotCert);
         });
         const forbiddenCerts: string[] = [];
-        form.querySelectorAll<HTMLInputElement>('[data-slot-forbidden-cert]').forEach(cb => {
+        form.querySelectorAll<HTMLInputElement>('[data-slot-forbidden-cert]').forEach((cb) => {
           if (cb.checked && cb.dataset.slotForbiddenCert) forbiddenCerts.push(cb.dataset.slotForbiddenCert);
         });
 
         // Validate: same cert cannot be both required and forbidden
-        const overlap = certs.filter(c => forbiddenCerts.includes(c));
+        const overlap = certs.filter((c) => forbiddenCerts.includes(c));
         if (overlap.length > 0) {
-          showToast(`הסמכה לא יכולה להיות גם נדרשת וגם אסורה: ${overlap.map(c => store.getCertLabel(c)).join(', ')}`, { type: 'error' });
+          showToast(
+            `הסמכה לא יכולה להיות גם נדרשת וגם אסורה: ${overlap.map((c) => store.getCertLabel(c)).join(', ')}`,
+            { type: 'error' },
+          );
           break;
         }
 
         const slot: Omit<SlotTemplate, 'id'> = {
-          label, acceptableLevels, requiredCertifications: certs,
+          label,
+          acceptableLevels,
+          requiredCertifications: certs,
           forbiddenCertifications: forbiddenCerts.length > 0 ? forbiddenCerts : undefined,
         };
 
@@ -1016,7 +1095,11 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const tid = actionButton?.dataset.tid!;
         const tpl = store.getTaskTemplate(tid);
         if (tpl) {
-          const okTpl = await showConfirm(`למחוק את התבנית "${tpl.name}"?`, { danger: true, title: 'מחיקת תבנית', confirmLabel: 'מחק' });
+          const okTpl = await showConfirm(`למחוק את התבנית "${tpl.name}"?`, {
+            danger: true,
+            title: 'מחיקת תבנית',
+            confirmLabel: 'מחק',
+          });
           if (okTpl) {
             store.removeTaskTemplate(tid);
             if (expandedTemplateId === tid) expandedTemplateId = null;
@@ -1034,7 +1117,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const form = container.querySelector('#add-template-form')!;
         const name = (form.querySelector('[data-field="tpl-name"]') as HTMLInputElement)?.value.trim();
         if (!name) return;
-        const existingNames = store.getAllTaskTemplates().map(t => t.name.trim().toLowerCase());
+        const existingNames = store.getAllTaskTemplates().map((t) => t.name.trim().toLowerCase());
         if (existingNames.includes(name.toLowerCase())) {
           showToast(`משימה בשם "${name}" כבר קיימת`, { type: 'error' });
           return;
@@ -1042,12 +1125,18 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const dur = parseFloat((form.querySelector('[data-field="tpl-duration"]') as HTMLInputElement)?.value || '8');
         const shifts = parseInt((form.querySelector('[data-field="tpl-shifts"]') as HTMLInputElement)?.value || '1');
         const startH = parseInt((form.querySelector('[data-field="tpl-start"]') as HTMLInputElement)?.value || '6');
-        const baseLoad = parseFloat((form.querySelector('[data-field="tpl-base-load"]') as HTMLInputElement)?.value || '1');
+        const baseLoad = parseFloat(
+          (form.querySelector('[data-field="tpl-base-load"]') as HTMLInputElement)?.value || '1',
+        );
         const sameGroup = (form.querySelector('[data-field="tpl-samegroup"]') as HTMLInputElement)?.checked || false;
         const isLight = (form.querySelector('[data-field="tpl-light"]') as HTMLInputElement)?.checked || false;
         const desc = (form.querySelector('[data-field="tpl-desc"]') as HTMLInputElement)?.value.trim();
 
-        const sanitized = store.sanitizeTemplateNumericFields({ durationHours: dur, shiftsPerDay: shifts, startHour: startH });
+        const sanitized = store.sanitizeTemplateNumericFields({
+          durationHours: dur,
+          shiftsPerDay: shifts,
+          startHour: startH,
+        });
         notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
 
         const displayCategory = name.toLowerCase();
@@ -1093,15 +1182,23 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const schedDate = store.getScheduleDate();
         const scheduledDate = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate() + dayNum - 1);
 
-        const rawStartHour = parseInt((form.querySelector('[data-field="ot-start-hour"]') as HTMLInputElement)?.value || '6');
-        const rawStartMinute = parseInt((form.querySelector('[data-field="ot-start-minute"]') as HTMLInputElement)?.value || '0');
+        const rawStartHour = parseInt(
+          (form.querySelector('[data-field="ot-start-hour"]') as HTMLInputElement)?.value || '6',
+        );
+        const rawStartMinute = parseInt(
+          (form.querySelector('[data-field="ot-start-minute"]') as HTMLInputElement)?.value || '0',
+        );
         const rawDur = parseFloat((form.querySelector('[data-field="ot-duration"]') as HTMLInputElement)?.value || '4');
-        const baseLoad = parseFloat((form.querySelector('[data-field="ot-base-load"]') as HTMLInputElement)?.value || '1');
+        const baseLoad = parseFloat(
+          (form.querySelector('[data-field="ot-base-load"]') as HTMLInputElement)?.value || '1',
+        );
         const sameGroup = (form.querySelector('[data-field="ot-samegroup"]') as HTMLInputElement)?.checked || false;
         const isLight = (form.querySelector('[data-field="ot-light"]') as HTMLInputElement)?.checked || false;
-        const blocksConsecutive = (form.querySelector('[data-field="ot-blocks-consecutive"]') as HTMLInputElement)?.checked ?? true;
+        const blocksConsecutive =
+          (form.querySelector('[data-field="ot-blocks-consecutive"]') as HTMLInputElement)?.checked ?? true;
         const desc = (form.querySelector('[data-field="ot-desc"]') as HTMLInputElement)?.value.trim();
-        const otRestRuleId = (form.querySelector('[data-field="ot-rest-rule"]') as HTMLSelectElement)?.value || undefined;
+        const otRestRuleId =
+          (form.querySelector('[data-field="ot-rest-rule"]') as HTMLSelectElement)?.value || undefined;
         const displayCategory = name.toLowerCase();
 
         const otSanitized = store.sanitizeTemplateNumericFields({ durationHours: rawDur, startHour: rawStartHour });

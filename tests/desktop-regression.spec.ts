@@ -1,7 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 test.describe('Desktop regression checks', () => {
-
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await page.waitForSelector('.tab-nav');
@@ -13,10 +12,8 @@ test.describe('Desktop regression checks', () => {
     await page.click('.tab-btn[data-tab="schedule"]');
 
     const scheduleLayout = page.locator('.schedule-layout');
-    if (await scheduleLayout.count() > 0) {
-      const direction = await scheduleLayout.evaluate(el =>
-        window.getComputedStyle(el).flexDirection
-      );
+    if ((await scheduleLayout.count()) > 0) {
+      const direction = await scheduleLayout.evaluate((el) => window.getComputedStyle(el).flexDirection);
       expect(direction).toBe('row');
     }
   });
@@ -27,10 +24,8 @@ test.describe('Desktop regression checks', () => {
     await page.click('.tab-btn[data-tab="schedule"]');
 
     const sidebar = page.locator('.participant-sidebar');
-    if (await sidebar.count() > 0) {
-      const position = await sidebar.evaluate(el =>
-        window.getComputedStyle(el).position
-      );
+    if ((await sidebar.count()) > 0) {
+      const position = await sidebar.evaluate((el) => window.getComputedStyle(el).position);
       expect(position).toBe('sticky');
     }
   });
@@ -41,7 +36,7 @@ test.describe('Desktop regression checks', () => {
     await page.click('.tab-btn[data-tab="schedule"]');
 
     const fab = page.locator('.sidebar-fab');
-    if (await fab.count() > 0) {
+    if ((await fab.count()) > 0) {
       await expect(fab).not.toBeVisible();
     }
   });
@@ -50,9 +45,7 @@ test.describe('Desktop regression checks', () => {
     if (!viewport || viewport.width <= 768) test.skip();
 
     const tabNav = page.locator('.tab-nav');
-    const position = await tabNav.evaluate(el =>
-      window.getComputedStyle(el).position
-    );
+    const position = await tabNav.evaluate((el) => window.getComputedStyle(el).position);
     // On desktop, should NOT be fixed
     expect(position).not.toBe('fixed');
   });
@@ -76,14 +69,10 @@ test.describe('Desktop regression checks', () => {
   test('hover tooltips CSS is not suppressed on desktop', async ({ page, viewport }) => {
     if (!viewport || viewport.width <= 768) test.skip();
 
-    const hasPointerClass = await page.evaluate(() =>
-      document.documentElement.classList.contains('pointer-device')
-    );
+    const hasPointerClass = await page.evaluate(() => document.documentElement.classList.contains('pointer-device'));
     // On desktop without touch, pointer-device should be set
     // (touch-device should NOT be set, so hover suppression doesn't apply)
-    const hasTouchClass = await page.evaluate(() =>
-      document.documentElement.classList.contains('touch-device')
-    );
+    const hasTouchClass = await page.evaluate(() => document.documentElement.classList.contains('touch-device'));
 
     // At least one should be set
     expect(hasPointerClass || hasTouchClass).toBe(true);
@@ -102,7 +91,7 @@ test.describe('Desktop regression checks', () => {
       await expect(page.locator(`[data-tab="${tab}"].tab-active`)).toBeVisible();
       // Verify some content rendered for each tab
       const content = page.locator(selector);
-      if (await content.count() > 0) {
+      if ((await content.count()) > 0) {
         await expect(content.first()).toBeVisible();
       }
     }
@@ -180,7 +169,11 @@ test.describe('Desktop regression checks', () => {
     await expect(unsavedOneTimeTaskCard).toHaveCount(0);
     await expect(page.locator('#category-break-hours')).toHaveValue('5');
 
-    await page.locator('.preset-item').filter({ hasText: 'Full Snapshot Task Set' }).locator('[data-tset-action="load"]').click();
+    await page
+      .locator('.preset-item')
+      .filter({ hasText: 'Full Snapshot Task Set' })
+      .locator('[data-tset-action="load"]')
+      .click();
 
     const savedSetConfirmBody = page.locator('.gm-modal-body');
     await expect(savedSetConfirmBody).toContainText('תבניות המשימות');
@@ -199,7 +192,7 @@ test.describe('Desktop regression checks', () => {
     await page.click('.tab-btn[data-tab="schedule"]');
 
     const toggle = page.locator('.gantt-mobile-toggle');
-    if (await toggle.count() > 0) {
+    if ((await toggle.count()) > 0) {
       await expect(toggle).not.toBeVisible();
     }
   });

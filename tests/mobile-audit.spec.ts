@@ -6,7 +6,7 @@
  * This file actively interacts with the UI (not just CSS inspection)
  * to discover real usability issues on phone-sized screens.
  */
-import { test, expect, Page, Locator } from '@playwright/test';
+import { expect, Locator, type Page, test } from '@playwright/test';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -18,15 +18,18 @@ async function switchTab(page: Page, tab: string) {
 async function generateSchedule(page: Page) {
   await switchTab(page, 'schedule');
   const input = page.locator('#input-scenarios');
-  if (await input.count() > 0) {
+  if ((await input.count()) > 0) {
     await input.fill('1');
   }
   await page.click('#btn-generate');
   // Wait for optimization to finish (overlay disappears or generate button re-enables)
-  await page.waitForFunction(() => {
-    const btn = document.querySelector('#btn-generate') as HTMLButtonElement | null;
-    return btn && !btn.disabled && !btn.textContent?.includes('מייעל');
-  }, { timeout: 60000 });
+  await page.waitForFunction(
+    () => {
+      const btn = document.querySelector('#btn-generate') as HTMLButtonElement | null;
+      return btn && !btn.disabled && !btn.textContent?.includes('מייעל');
+    },
+    { timeout: 60000 },
+  );
   // Extra wait for DOM to stabilize
   await page.waitForTimeout(500);
 }
@@ -54,9 +57,7 @@ test.describe('1. Baseline checks', () => {
   });
 
   test('touch-device class is set', async ({ page }) => {
-    const hasClass = await page.evaluate(() =>
-      document.documentElement.classList.contains('touch-device')
-    );
+    const hasClass = await page.evaluate(() => document.documentElement.classList.contains('touch-device'));
     expect(hasClass).toBe(true);
   });
 
@@ -91,7 +92,7 @@ test.describe('2. Bottom navigation', () => {
 
   test('bottom nav is fixed at viewport bottom', async ({ page, viewport }) => {
     const tabNav = page.locator('.tab-nav');
-    const position = await tabNav.evaluate(el => window.getComputedStyle(el).position);
+    const position = await tabNav.evaluate((el) => window.getComputedStyle(el).position);
     expect(position).toBe('fixed');
 
     const box = await tabNav.boundingBox();
@@ -117,13 +118,9 @@ test.describe('2. Bottom navigation', () => {
     const buttons = page.locator('.tab-nav .tab-btn');
     const count = await buttons.count();
     for (let i = 0; i < count; i++) {
-      const isActive = await buttons.nth(i).evaluate(el =>
-        el.classList.contains('tab-active')
-      );
+      const isActive = await buttons.nth(i).evaluate((el) => el.classList.contains('tab-active'));
       const label = buttons.nth(i).locator('.tab-label');
-      const display = await label.evaluate(el =>
-        window.getComputedStyle(el).display
-      );
+      const display = await label.evaluate((el) => window.getComputedStyle(el).display);
       if (isActive) {
         // Active tab shows a small label
         expect(display).not.toBe('none');
@@ -142,9 +139,7 @@ test.describe('2. Bottom navigation', () => {
   });
 
   test('bottom nav z-index is high enough', async ({ page }) => {
-    const z = await page.locator('.tab-nav').evaluate(el =>
-      parseInt(window.getComputedStyle(el).zIndex, 10)
-    );
+    const z = await page.locator('.tab-nav').evaluate((el) => parseInt(window.getComputedStyle(el).zIndex, 10));
     expect(z).toBeGreaterThanOrEqual(50);
   });
 
@@ -172,30 +167,24 @@ test.describe('3. Header compact mode', () => {
 
   test('header credit is hidden on mobile', async ({ page }) => {
     const credit = page.locator('.header-credit');
-    if (await credit.count() > 0) {
-      const display = await credit.evaluate(el =>
-        window.getComputedStyle(el).display
-      );
+    if ((await credit.count()) > 0) {
+      const display = await credit.evaluate((el) => window.getComputedStyle(el).display);
       expect(display).toBe('none');
     }
   });
 
   test('beta badge is hidden on mobile', async ({ page }) => {
     const badge = page.locator('.beta-badge');
-    if (await badge.count() > 0) {
-      const display = await badge.evaluate(el =>
-        window.getComputedStyle(el).display
-      );
+    if ((await badge.count()) > 0) {
+      const display = await badge.evaluate((el) => window.getComputedStyle(el).display);
       expect(display).toBe('none');
     }
   });
 
   test('undo/redo group takes full width', async ({ page }) => {
     const group = page.locator('.undo-redo-group');
-    if (await group.count() > 0) {
-      const width = await group.evaluate(el =>
-        window.getComputedStyle(el).width
-      );
+    if ((await group.count()) > 0) {
+      const width = await group.evaluate((el) => window.getComputedStyle(el).width);
       // width: 100% means it should be near viewport width
       expect(parseInt(width, 10)).toBeGreaterThan(300);
     }
@@ -221,24 +210,18 @@ test.describe('4. Participants tab', () => {
 
   test('table thead is hidden (card layout)', async ({ page }) => {
     const thead = page.locator('.table-participants thead');
-    if (await thead.count() > 0) {
-      const display = await thead.evaluate(el =>
-        window.getComputedStyle(el).display
-      );
+    if ((await thead.count()) > 0) {
+      const display = await thead.evaluate((el) => window.getComputedStyle(el).display);
       expect(display).toBe('none');
     }
   });
 
   test('table body renders as flex column (cards)', async ({ page }) => {
     const tbody = page.locator('.table-participants tbody');
-    if (await tbody.count() > 0) {
-      const display = await tbody.evaluate(el =>
-        window.getComputedStyle(el).display
-      );
+    if ((await tbody.count()) > 0) {
+      const display = await tbody.evaluate((el) => window.getComputedStyle(el).display);
       expect(display).toBe('flex');
-      const dir = await tbody.evaluate(el =>
-        window.getComputedStyle(el).flexDirection
-      );
+      const dir = await tbody.evaluate((el) => window.getComputedStyle(el).flexDirection);
       expect(dir).toBe('column');
     }
   });
@@ -254,10 +237,8 @@ test.describe('4. Participants tab', () => {
 
   test('row number column is hidden on mobile', async ({ page }) => {
     const rowNum = page.locator('.table-participants tbody td:nth-child(2)').first();
-    if (await rowNum.count() > 0) {
-      const display = await rowNum.evaluate(el =>
-        window.getComputedStyle(el).display
-      );
+    if ((await rowNum.count()) > 0) {
+      const display = await rowNum.evaluate((el) => window.getComputedStyle(el).display);
       expect(display).toBe('none');
     }
   });
@@ -288,7 +269,7 @@ test.describe('4. Participants tab', () => {
 
   test('edit button triggers edit mode', async ({ page }) => {
     const editBtn = page.locator('[data-action="edit-participant"]').first();
-    if (await editBtn.count() > 0) {
+    if ((await editBtn.count()) > 0) {
       await editBtn.click();
       // Should enter edit mode — look for row-editing class or input fields
       await page.waitForTimeout(300);
@@ -300,15 +281,13 @@ test.describe('4. Participants tab', () => {
 
   test('delete button opens confirm modal', async ({ page }) => {
     const deleteBtn = page.locator('[data-action="remove-participant"]').first();
-    if (await deleteBtn.count() > 0) {
+    if ((await deleteBtn.count()) > 0) {
       await deleteBtn.click();
       // Should open confirm modal
       const modal = page.locator('.gm-modal-backdrop');
       await expect(modal).toBeVisible({ timeout: 3000 });
       // Modal should be at bottom (flex-end)
-      const align = await modal.evaluate(el =>
-        window.getComputedStyle(el).alignItems
-      );
+      const align = await modal.evaluate((el) => window.getComputedStyle(el).alignItems);
       expect(align).toBe('flex-end');
       // Dismiss
       await page.keyboard.press('Escape');
@@ -317,10 +296,8 @@ test.describe('4. Participants tab', () => {
 
   test('bulk selection checkbox meets touch target size', async ({ page }) => {
     const checkbox = page.locator('.cb-select-participant').first();
-    if (await checkbox.count() > 0) {
-      const minH = await checkbox.evaluate(el =>
-        parseInt(window.getComputedStyle(el).minHeight, 10)
-      );
+    if ((await checkbox.count()) > 0) {
+      const minH = await checkbox.evaluate((el) => parseInt(window.getComputedStyle(el).minHeight, 10));
       expect(minH).toBeGreaterThanOrEqual(44);
     }
   });
@@ -362,7 +339,7 @@ test.describe('5. Task rules tab', () => {
 
   test('expanding a template shows detail', async ({ page }) => {
     const header = page.locator('.template-header').first();
-    if (await header.count() > 0) {
+    if ((await header.count()) > 0) {
       await header.click();
       await page.waitForTimeout(300);
       // After clicking, template detail should be visible
@@ -381,9 +358,7 @@ test.describe('5. Task rules tab', () => {
     const buttons = page.locator('.tab-content .btn-sm');
     const count = await buttons.count();
     for (let i = 0; i < Math.min(count, 5); i++) {
-      const h = await buttons.nth(i).evaluate(el =>
-        parseInt(window.getComputedStyle(el).minHeight, 10)
-      );
+      const h = await buttons.nth(i).evaluate((el) => parseInt(window.getComputedStyle(el).minHeight, 10));
       expect(h).toBeGreaterThanOrEqual(44);
     }
   });
@@ -403,7 +378,7 @@ test.describe('6. Schedule tab — empty state', () => {
 
   test('empty state message is shown', async ({ page }) => {
     const empty = page.locator('.empty-state');
-    if (await empty.count() > 0) {
+    if ((await empty.count()) > 0) {
       await expect(empty).toBeVisible();
     }
   });
@@ -411,16 +386,14 @@ test.describe('6. Schedule tab — empty state', () => {
   test('generate button is visible and enabled', async ({ page }) => {
     const btn = page.locator('#btn-generate');
     await expect(btn).toBeVisible();
-    const disabled = await btn.evaluate(el => (el as HTMLButtonElement).disabled);
+    const disabled = await btn.evaluate((el) => (el as HTMLButtonElement).disabled);
     expect(disabled).toBe(false);
   });
 
   test('scenarios input is accessible', async ({ page }) => {
     const input = page.locator('#input-scenarios');
     await expect(input).toBeVisible();
-    const minH = await input.evaluate(el =>
-      parseInt(window.getComputedStyle(el).minHeight, 10)
-    );
+    const minH = await input.evaluate((el) => parseInt(window.getComputedStyle(el).minHeight, 10));
     expect(minH).toBeGreaterThanOrEqual(44);
   });
 
@@ -432,7 +405,7 @@ test.describe('6. Schedule tab — empty state', () => {
   test('ISSUE: toolbar-right overflows on phone — buttons do not wrap', async ({ page, viewport }) => {
     // The .toolbar-right has no flex-wrap, causing overflow with multiple buttons
     const toolbarRight = page.locator('.toolbar-right');
-    if (await toolbarRight.count() > 0) {
+    if ((await toolbarRight.count()) > 0) {
       const scrollW = await page.evaluate(() => document.documentElement.scrollWidth);
       const viewW = viewport!.width;
       // This test documents the overflow issue
@@ -464,11 +437,9 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('day navigator is present and horizontally scrollable', async ({ page }) => {
     const dayNav = page.locator('.day-navigator');
-    if (await dayNav.count() > 0) {
+    if ((await dayNav.count()) > 0) {
       await expect(dayNav).toBeVisible();
-      const overflow = await dayNav.evaluate(el =>
-        window.getComputedStyle(el).overflowX
-      );
+      const overflow = await dayNav.evaluate((el) => window.getComputedStyle(el).overflowX);
       expect(overflow).toBe('auto');
     }
   });
@@ -488,17 +459,15 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('schedule grid has sticky time column', async ({ page }) => {
     const colTime = page.locator('.col-time').first();
-    if (await colTime.count() > 0) {
-      const pos = await colTime.evaluate(el =>
-        window.getComputedStyle(el).position
-      );
+    if ((await colTime.count()) > 0) {
+      const pos = await colTime.evaluate((el) => window.getComputedStyle(el).position);
       expect(pos).toBe('sticky');
     }
   });
 
   test('gantt is collapsed by default on mobile', async ({ page }) => {
     const toggle = page.locator('.gantt-mobile-toggle');
-    if (await toggle.count() > 0) {
+    if ((await toggle.count()) > 0) {
       await expect(toggle).toBeVisible();
       const expanded = await toggle.getAttribute('aria-expanded');
       expect(expanded).toBe('false');
@@ -510,7 +479,7 @@ test.describe('7. Schedule tab — with generated schedule', () => {
     // Fixed by adding position:relative; z-index:2 to .gantt-section on mobile
     // and position:relative; z-index:1 to .schedule-table-wrapper.
     const toggle = page.locator('.gantt-mobile-toggle');
-    if (await toggle.count() > 0) {
+    if ((await toggle.count()) > 0) {
       await expect(toggle).toBeVisible();
       await toggle.scrollIntoViewIfNeeded();
       // Should succeed without force:true now
@@ -524,14 +493,14 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('gantt toggle works with force click (bypass interception)', async ({ page }) => {
     const toggle = page.locator('.gantt-mobile-toggle');
-    if (await toggle.count() > 0) {
+    if ((await toggle.count()) > 0) {
       // Use force:true to bypass the overlap and verify toggle logic works
       await toggle.click({ force: true });
       let expanded = await toggle.getAttribute('aria-expanded');
       expect(expanded).toBe('true');
 
       const content = page.locator('.gantt-section-content');
-      const display = await content.evaluate(el => el.style.display);
+      const display = await content.evaluate((el) => el.style.display);
       expect(display).not.toBe('none');
 
       await toggle.click({ force: true });
@@ -542,11 +511,11 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('gantt requires horizontal scroll (min-width 600px on 375px viewport)', async ({ page }) => {
     const toggle = page.locator('.gantt-mobile-toggle');
-    if (await toggle.count() > 0) {
+    if ((await toggle.count()) > 0) {
       await toggle.click({ force: true });
       const container = page.locator('.gantt-container');
-      if (await container.count() > 0) {
-        const { scrollW, clientW } = await container.evaluate(el => ({
+      if ((await container.count()) > 0) {
+        const { scrollW, clientW } = await container.evaluate((el) => ({
           scrollW: el.scrollWidth,
           clientW: el.clientWidth,
         }));
@@ -558,7 +527,7 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('FAB is visible and positioned correctly', async ({ page, viewport }) => {
     const fab = page.locator('.sidebar-fab');
-    if (await fab.count() > 0) {
+    if ((await fab.count()) > 0) {
       await expect(fab).toBeVisible();
       const box = await fab.boundingBox();
       expect(box).toBeTruthy();
@@ -572,7 +541,7 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('FAB opens sidebar drawer with backdrop', async ({ page }) => {
     const fab = page.locator('.sidebar-fab');
-    if (await fab.count() > 0) {
+    if ((await fab.count()) > 0) {
       await fab.click({ timeout: 5000 });
       await page.waitForTimeout(400);
 
@@ -586,12 +555,12 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('sidebar drawer closes on backdrop tap', async ({ page }) => {
     const fab = page.locator('.sidebar-fab');
-    if (await fab.count() > 0) {
+    if ((await fab.count()) > 0) {
       await fab.click({ timeout: 5000 });
       await page.waitForTimeout(400);
 
       const backdrop = page.locator('.sidebar-drawer-backdrop');
-      if (await backdrop.count() > 0) {
+      if ((await backdrop.count()) > 0) {
         // Click in the upper area of the screen (above the sidebar drawer)
         // since the sidebar (z-index:45) covers the backdrop (z-index:44) in the lower area
         await page.mouse.click(187, 50);
@@ -604,7 +573,7 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('participant tap shows bottom sheet (not desktop tooltip)', async ({ page }) => {
     const pHover = page.locator('.participant-hover[data-pid]').first();
-    if (await pHover.count() > 0) {
+    if ((await pHover.count()) > 0) {
       await pHover.scrollIntoViewIfNeeded();
       // Try natural click first; fall back to force if still intercepted
       await pHover.click({ timeout: 5000 }).catch(async () => {
@@ -619,7 +588,7 @@ test.describe('7. Schedule tab — with generated schedule', () => {
       await expect(bottomSheet).toBeVisible();
 
       const closeBtn = page.locator('.gm-bs-close');
-      if (await closeBtn.count() > 0) await closeBtn.click();
+      if ((await closeBtn.count()) > 0) await closeBtn.click();
     }
   });
 
@@ -628,7 +597,7 @@ test.describe('7. Schedule tab — with generated schedule', () => {
     // [data-action="goto-profile"] element. Fixed by adding a "view profile"
     // button for touch devices.
     const pHover = page.locator('.participant-hover[data-pid]').first();
-    if (await pHover.count() > 0) {
+    if ((await pHover.count()) > 0) {
       await pHover.scrollIntoViewIfNeeded();
       await pHover.click({ timeout: 5000 }).catch(async () => {
         await pHover.click({ force: true });
@@ -636,20 +605,20 @@ test.describe('7. Schedule tab — with generated schedule', () => {
       await page.waitForTimeout(500);
 
       const sheet = page.locator('.gm-bottom-sheet');
-      if (await sheet.count() > 0) {
+      if ((await sheet.count()) > 0) {
         const profileLink = sheet.locator('[data-action="goto-profile"]');
         const count = await profileLink.count();
         expect(count).toBeGreaterThan(0);
 
         const closeBtn = page.locator('.gm-bs-close');
-        if (await closeBtn.count() > 0) await closeBtn.click();
+        if ((await closeBtn.count()) > 0) await closeBtn.click();
       }
     }
   });
 
   test('snapshot toggle button is accessible', async ({ page }) => {
     const snapBtn = page.locator('#btn-snap-toggle');
-    if (await snapBtn.count() > 0) {
+    if ((await snapBtn.count()) > 0) {
       await expect(snapBtn).toBeVisible();
       const box = await snapBtn.boundingBox();
       expect(box).toBeTruthy();
@@ -658,13 +627,13 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('snapshot panel opens and is within viewport', async ({ page, viewport }) => {
     const snapBtn = page.locator('#btn-snap-toggle');
-    if (await snapBtn.count() > 0) {
+    if ((await snapBtn.count()) > 0) {
       await snapBtn.scrollIntoViewIfNeeded();
       await snapBtn.click({ force: true });
       await page.waitForTimeout(300);
 
       const panel = page.locator('.snapshot-panel');
-      if (await panel.count() > 0) {
+      if ((await panel.count()) > 0) {
         await expect(panel).toBeVisible();
         // Check for overflow
         const scrollW = await page.evaluate(() => document.documentElement.scrollWidth);
@@ -677,7 +646,7 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('export button is visible', async ({ page }) => {
     const exportBtn = page.locator('#btn-export-pdf');
-    if (await exportBtn.count() > 0) {
+    if ((await exportBtn.count()) > 0) {
       await expect(exportBtn).toBeVisible();
     }
   });
@@ -698,7 +667,7 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('ISSUE: live-mode controls add extra overflow', async ({ page, viewport }) => {
     const liveChk = page.locator('#chk-live-mode');
-    if (await liveChk.count() > 0) {
+    if ((await liveChk.count()) > 0) {
       await liveChk.scrollIntoViewIfNeeded();
       await liveChk.check({ force: true });
       await page.waitForTimeout(500);
@@ -714,10 +683,8 @@ test.describe('7. Schedule tab — with generated schedule', () => {
 
   test('weekly dashboard is sticky at top', async ({ page }) => {
     const dashboard = page.locator('.weekly-dashboard');
-    if (await dashboard.count() > 0) {
-      const pos = await dashboard.evaluate(el =>
-        window.getComputedStyle(el).position
-      );
+    if ((await dashboard.count()) > 0) {
+      const pos = await dashboard.evaluate((el) => window.getComputedStyle(el).position);
       expect(pos).toBe('sticky');
     }
   });
@@ -743,10 +710,8 @@ test.describe('8. Algorithm tab', () => {
 
   test('single-column toggle grid at 375px', async ({ page }) => {
     const grid = page.locator('.algo-toggle-grid');
-    if (await grid.count() > 0) {
-      const cols = await grid.first().evaluate(el =>
-        window.getComputedStyle(el).gridTemplateColumns
-      );
+    if ((await grid.count()) > 0) {
+      const cols = await grid.first().evaluate((el) => window.getComputedStyle(el).gridTemplateColumns);
       // At <=480px, should be 1fr (single column)
       // The computed value is a pixel width like "343px" for 1fr
       const colCount = cols.split(' ').length;
@@ -758,9 +723,7 @@ test.describe('8. Algorithm tab', () => {
     const inputs = page.locator('.algo-section input[type="number"]');
     const count = await inputs.count();
     for (let i = 0; i < Math.min(count, 5); i++) {
-      const h = await inputs.nth(i).evaluate(el =>
-        parseInt(window.getComputedStyle(el).minHeight, 10)
-      );
+      const h = await inputs.nth(i).evaluate((el) => parseInt(window.getComputedStyle(el).minHeight, 10));
       expect(h).toBeGreaterThanOrEqual(44);
     }
   });
@@ -786,7 +749,7 @@ test.describe('9. Profile view', () => {
   test('long-press on participant navigates to profile', async ({ page }) => {
     // Navigate to profile by simulating a long-press via raw CDP touch events
     const pHover = page.locator('.participant-hover[data-pid]').first();
-    if (await pHover.count() > 0) {
+    if ((await pHover.count()) > 0) {
       await pHover.scrollIntoViewIfNeeded();
       const box = await pHover.boundingBox();
       if (box) {
@@ -807,7 +770,7 @@ test.describe('9. Profile view', () => {
         await page.waitForTimeout(500);
 
         const profile = page.locator('.profile-view-root');
-        if (await profile.count() > 0) {
+        if ((await profile.count()) > 0) {
           await expect(profile).toBeVisible();
         }
       }
@@ -816,7 +779,7 @@ test.describe('9. Profile view', () => {
 
   test('profile view back button works', async ({ page }) => {
     const pHover = page.locator('.participant-hover[data-pid]').first();
-    if (await pHover.count() > 0) {
+    if ((await pHover.count()) > 0) {
       await pHover.scrollIntoViewIfNeeded();
       const box = await pHover.boundingBox();
       if (box) {
@@ -833,9 +796,9 @@ test.describe('9. Profile view', () => {
         await page.waitForTimeout(500);
 
         const profile = page.locator('.profile-view-root');
-        if (await profile.count() > 0) {
+        if ((await profile.count()) > 0) {
           const backBtn = page.locator('.btn-back');
-          if (await backBtn.count() > 0) {
+          if ((await backBtn.count()) > 0) {
             await backBtn.click();
             await page.waitForTimeout(500);
             expect(await page.locator('.profile-view-root').count()).toBe(0);
@@ -847,7 +810,7 @@ test.describe('9. Profile view', () => {
 
   test('profile view has no horizontal overflow', async ({ page }) => {
     const pHover = page.locator('.participant-hover[data-pid]').first();
-    if (await pHover.count() > 0) {
+    if ((await pHover.count()) > 0) {
       await pHover.scrollIntoViewIfNeeded();
       const box = await pHover.boundingBox();
       if (box) {
@@ -864,7 +827,7 @@ test.describe('9. Profile view', () => {
         await page.waitForTimeout(500);
 
         const profile = page.locator('.profile-view-root');
-        if (await profile.count() > 0) {
+        if ((await profile.count()) > 0) {
           const noOverflow = await checkNoHorizontalOverflow(page);
           expect(noOverflow).toBe(true);
         }
@@ -901,16 +864,14 @@ test.describe('10. Modals', () => {
   test('confirm modal opens from delete participant', async ({ page }) => {
     await switchTab(page, 'participants');
     const deleteBtn = page.locator('[data-action="remove-participant"]').first();
-    if (await deleteBtn.count() > 0) {
+    if ((await deleteBtn.count()) > 0) {
       await deleteBtn.click();
       const modal = page.locator('.gm-modal-backdrop');
       await expect(modal).toBeVisible({ timeout: 3000 });
 
       // Check modal dialog has rounded top corners (bottom sheet style)
       const dialog = page.locator('.gm-modal-dialog');
-      const radius = await dialog.evaluate(el =>
-        window.getComputedStyle(el).borderRadius
-      );
+      const radius = await dialog.evaluate((el) => window.getComputedStyle(el).borderRadius);
       expect(radius).toContain('16px');
 
       // Close via escape
@@ -923,7 +884,7 @@ test.describe('10. Modals', () => {
   test('modal closes on backdrop click', async ({ page }) => {
     await switchTab(page, 'participants');
     const deleteBtn = page.locator('[data-action="remove-participant"]').first();
-    if (await deleteBtn.count() > 0) {
+    if ((await deleteBtn.count()) > 0) {
       await deleteBtn.click();
       const backdrop = page.locator('.gm-modal-backdrop');
       await expect(backdrop).toBeVisible({ timeout: 3000 });
@@ -943,15 +904,13 @@ test.describe('10. Modals', () => {
   test('modal buttons meet 44px touch target', async ({ page }) => {
     await switchTab(page, 'participants');
     const deleteBtn = page.locator('[data-action="remove-participant"]').first();
-    if (await deleteBtn.count() > 0) {
+    if ((await deleteBtn.count()) > 0) {
       await deleteBtn.click();
       const modalBtns = page.locator('.gm-modal-actions button');
       await page.waitForTimeout(300);
       const count = await modalBtns.count();
       for (let i = 0; i < count; i++) {
-        const h = await modalBtns.nth(i).evaluate(el =>
-          parseInt(window.getComputedStyle(el).minHeight, 10)
-        );
+        const h = await modalBtns.nth(i).evaluate((el) => parseInt(window.getComputedStyle(el).minHeight, 10));
         expect(h).toBeGreaterThanOrEqual(44);
       }
       await page.keyboard.press('Escape');
@@ -961,11 +920,15 @@ test.describe('10. Modals', () => {
   test('bottom sheet CSS is properly defined', async ({ page }) => {
     const hasStyles = await page.evaluate(() => {
       const rules = Array.from(document.styleSheets)
-        .flatMap(s => {
-          try { return Array.from(s.cssRules); } catch { return []; }
+        .flatMap((s) => {
+          try {
+            return Array.from(s.cssRules);
+          } catch {
+            return [];
+          }
         })
-        .map(r => (r as CSSStyleRule).selectorText || '')
-        .filter(s => s.includes('gm-bottom-sheet'));
+        .map((r) => (r as CSSStyleRule).selectorText || '')
+        .filter((s) => s.includes('gm-bottom-sheet'));
       return rules.length > 0;
     });
     expect(hasStyles).toBe(true);
@@ -1048,11 +1011,14 @@ test.describe('12. Touch specifics', () => {
       el.className = 'btn-primary';
       document.body.appendChild(el);
       // Check touch-device hover rule
-      const rules = Array.from(document.styleSheets)
-        .flatMap(s => {
-          try { return Array.from(s.cssRules); } catch { return []; }
-        });
-      const hasSuppress = rules.some(r => {
+      const rules = Array.from(document.styleSheets).flatMap((s) => {
+        try {
+          return Array.from(s.cssRules);
+        } catch {
+          return [];
+        }
+      });
+      const hasSuppress = rules.some((r) => {
         const text = r.cssText || '';
         return text.includes('.touch-device') && text.includes('.btn-primary') && text.includes('hover');
       });
@@ -1065,21 +1031,22 @@ test.describe('12. Touch specifics', () => {
   test('input font-size is 16px (prevents iOS zoom)', async ({ page }) => {
     await switchTab(page, 'participants');
     const input = page.locator('input[type="text"]').first();
-    if (await input.count() > 0) {
-      const fontSize = await input.evaluate(el =>
-        window.getComputedStyle(el).fontSize
-      );
+    if ((await input.count()) > 0) {
+      const fontSize = await input.evaluate((el) => window.getComputedStyle(el).fontSize);
       expect(parseInt(fontSize, 10)).toBeGreaterThanOrEqual(16);
     }
   });
 
   test('interactive elements have touch-action: manipulation', async ({ page }) => {
     const hasTouchAction = await page.evaluate(() => {
-      const rules = Array.from(document.styleSheets)
-        .flatMap(s => {
-          try { return Array.from(s.cssRules); } catch { return []; }
-        });
-      return rules.some(r => {
+      const rules = Array.from(document.styleSheets).flatMap((s) => {
+        try {
+          return Array.from(s.cssRules);
+        } catch {
+          return [];
+        }
+      });
+      return rules.some((r) => {
         const text = r.cssText || '';
         return text.includes('.touch-device') && text.includes('touch-action') && text.includes('manipulation');
       });
@@ -1102,7 +1069,7 @@ test.describe('13. Availability inspector', () => {
 
   test('ISSUE: availability inspector inline controls may overflow', async ({ page, viewport }) => {
     const inline = page.locator('.availability-inline');
-    if (await inline.count() > 0) {
+    if ((await inline.count()) > 0) {
       const box = await inline.boundingBox();
       if (box && box.width > viewport!.width) {
         // ISSUE: availability inline controls overflow phone viewport
@@ -1113,7 +1080,7 @@ test.describe('13. Availability inspector', () => {
 
   test('day-window row wraps correctly on mobile', async ({ page, viewport }) => {
     const dayWindow = page.locator('.day-window-row, .day-window');
-    if (await dayWindow.count() > 0) {
+    if ((await dayWindow.count()) > 0) {
       const box = await dayWindow.first().boundingBox();
       if (box) {
         // Check if day window content is within viewport

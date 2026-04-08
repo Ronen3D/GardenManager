@@ -5,8 +5,8 @@
  * tooltip, profile metrics, and sidebar computations (R1).
  */
 
-import { Task, Participant, Assignment, ParticipantCapacity } from '../models/types';
-import { computeTaskEffectiveHours, computeTaskHotHours, computeTaskColdHours } from './utils/load-weighting';
+import type { Assignment, Participant, ParticipantCapacity, Task } from '../models/types';
+import { computeTaskColdHours, computeTaskEffectiveHours, computeTaskHotHours } from './utils/load-weighting';
 
 export interface TaskBreakdown {
   heavyHours: number;
@@ -35,9 +35,7 @@ export interface TaskBreakdown {
  * `{ assignment, task }` tuples used by tab-profile, or a plain
  * `{ task }` wrapper created from a filtered assignment loop).
  */
-export function computeTaskBreakdown(
-  items: Iterable<{ task: Task }>,
-): TaskBreakdown {
+export function computeTaskBreakdown(items: Iterable<{ task: Task }>): TaskBreakdown {
   const sourceHours: Record<string, number> = {};
   const sourceEffectiveHours: Record<string, number> = {};
   const sourceCounts: Record<string, number> = {};
@@ -132,9 +130,7 @@ export function computeWeeklyWorkloads(
 
     const cap = capacities?.get(p.id);
     const availableHours = cap?.totalAvailableHours;
-    const loadRatio = availableHours && availableHours > 0
-      ? effectiveHours / availableHours
-      : undefined;
+    const loadRatio = availableHours && availableHours > 0 ? effectiveHours / availableHours : undefined;
 
     result.set(p.id, { totalHours, effectiveHours, hotHours, coldHours, nonLightCount, availableHours, loadRatio });
   }

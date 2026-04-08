@@ -9,25 +9,14 @@
  * - Weekly workload metrics & per-task-type breakdown
  */
 
-import {
-  Participant,
-  Level,
-  Schedule,
-  Task,
-  Assignment,
-} from '../models/types';
-import * as store from './config-store';
+import { type Assignment, Level, type Participant, type Schedule, type Task } from '../models/types';
 import { hebrewDayName } from '../utils/date-utils';
-import { computeTaskBreakdown } from './workload-utils';
-import {
-  LEVEL_COLORS,
-  fmt, levelBadge, certBadge, groupBadge, taskBadge,
-} from './ui-helpers';
+import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
+import { certBadge, fmt, groupBadge, LEVEL_COLORS, levelBadge, taskBadge } from './ui-helpers';
+import { computeTaskBreakdown } from './workload-utils';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-
-
 
 // ─── Local Formatting Helpers ────────────────────────────────────────────────
 
@@ -54,8 +43,8 @@ export function renderProfileView(ctx: ProfileContext): string {
   for (const t of schedule.tasks) taskMap.set(t.id, t);
 
   // All assignments for this participant
-  const myAssignments = schedule.assignments.filter(a => a.participantId === p.id);
-  const myTasks = myAssignments.map(a => ({ assignment: a, task: taskMap.get(a.taskId)! })).filter(x => x.task);
+  const myAssignments = schedule.assignments.filter((a) => a.participantId === p.id);
+  const myTasks = myAssignments.map((a) => ({ assignment: a, task: taskMap.get(a.taskId)! })).filter((x) => x.task);
 
   let html = '';
 
@@ -67,7 +56,15 @@ export function renderProfileView(ctx: ProfileContext): string {
 
   // Left column: Agenda
   html += '<div class="profile-left">';
-  html += renderPersonalAgenda(p, myTasks, numDays, baseDate, ctx.frozenAssignmentIds, ctx.showSosButtons, store.getDayStartHour());
+  html += renderPersonalAgenda(
+    p,
+    myTasks,
+    numDays,
+    baseDate,
+    ctx.frozenAssignmentIds,
+    ctx.showSosButtons,
+    store.getDayStartHour(),
+  );
   html += '</div>';
 
   // Right column: Unavailability + Metrics
@@ -92,15 +89,16 @@ function renderTopBar(
   let statusText = 'זמין';
   let statusClass = 'status-available';
 
-  const groupTasks = myTasks.filter(x => x.task.sameGroupRequired);
+  const groupTasks = myTasks.filter((x) => x.task.sameGroupRequired);
   if (groupTasks.length > 0) {
     statusText = `משובץ ב${groupTasks[0].task.name.replace(/^D\d+\s*/, '')}`;
     statusClass = 'status-active';
   }
 
-  const certHtml = p.certifications.length > 0
-    ? p.certifications.map(c => certBadge(c)).join(' ')
-    : '<span class="text-muted">אין</span>';
+  const certHtml =
+    p.certifications.length > 0
+      ? p.certifications.map((c) => certBadge(c)).join(' ')
+      : '<span class="text-muted">אין</span>';
   const pakalHtml = renderPakalBadges(p, store.getAllPakalDefinitionsIncludeDeleted(), 'אין');
 
   return `
@@ -121,11 +119,11 @@ function renderTopBar(
     </div>
     <div class="profile-summary-kpis">
       <div class="profile-kpi">
-        <span class="profile-kpi-value">${myTasks.filter(x => !x.task.isLight).length}</span>
+        <span class="profile-kpi-value">${myTasks.filter((x) => !x.task.isLight).length}</span>
         <span class="profile-kpi-label">משימות כבדות</span>
       </div>
       <div class="profile-kpi">
-        <span class="profile-kpi-value">${myTasks.filter(x => x.task.isLight).length}</span>
+        <span class="profile-kpi-value">${myTasks.filter((x) => x.task.isLight).length}</span>
         <span class="profile-kpi-label">משימות קלות</span>
       </div>
       <div class="profile-kpi">
@@ -151,7 +149,6 @@ function renderPersonalAgenda(
   showSosButtons?: boolean,
   dayStartHour: number = 5,
 ): string {
-
   let html = `<div class="profile-card">
     <h3 class="profile-card-title">📅 לו"ז אישי</h3>
     <div class="agenda-days">`;
@@ -163,10 +160,12 @@ function renderPersonalAgenda(
 
     // Anchor each task to the day it STARTS in (no duplicates across days).
     // Cross-day tasks are displayed once, with a visual indicator.
-    const dayTasks = myTasks.filter(({ task }) =>
-      task.timeBlock.start.getTime() >= dayStart.getTime() &&
-      task.timeBlock.start.getTime() < dayEnd.getTime()
-    ).sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+    const dayTasks = myTasks
+      .filter(
+        ({ task }) =>
+          task.timeBlock.start.getTime() >= dayStart.getTime() && task.timeBlock.start.getTime() < dayEnd.getTime(),
+      )
+      .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
 
     const dayLabel = fmtDayLabel(dayDate);
     const isToday = d === 1; // Day 1 is "today" in context
@@ -187,7 +186,11 @@ function renderPersonalAgenda(
         // Detect cross-day tasks (end time extends past this day's boundary)
         const crossDay = task.timeBlock.end.getTime() > dayEnd.getTime();
         const endDayIdx = crossDay
-          ? Math.ceil((task.timeBlock.end.getTime() - new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0).getTime()) / 86400000)
+          ? Math.ceil(
+              (task.timeBlock.end.getTime() -
+                new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0).getTime()) /
+                86400000,
+            )
           : 0;
         const crossDayBadge = crossDay
           ? `<span class="badge badge-sm" style="background:#555;color:#ffc107" title="ממשיך ליום ${endDayIdx}">← יום ${endDayIdx}</span>`
@@ -232,7 +235,9 @@ function renderUnavailabilitySection(p: Participant): string {
     html += '<h4 class="profile-sub-title">כללים לפי יום בשבוע</h4><ul class="profile-list">';
     for (const r of dateRules) {
       const label = `כל ${hebrewDayName(new Date(2026, 0, 4 + r.dayOfWeek))}`;
-      const timeLabel = r.allDay ? 'כל היום' : `${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00`;
+      const timeLabel = r.allDay
+        ? 'כל היום'
+        : `${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00`;
       html += `<li>
         <strong>${label}</strong> — ${timeLabel}
         ${r.reason ? `<span class="text-muted"> · ${r.reason}</span>` : ''}
@@ -260,7 +265,17 @@ function renderMetrics(
   const totalPeriodHours = numDays * 24;
 
   // Shared breakdown utility (R1)
-  const { heavyHours, effectiveHeavyHours, hotHours, coldHours, lightHours, sourceHours, sourceEffectiveHours, sourceCounts, sourceColors } = computeTaskBreakdown(myTasks);
+  const {
+    heavyHours,
+    effectiveHeavyHours,
+    hotHours,
+    coldHours,
+    lightHours,
+    sourceHours,
+    sourceEffectiveHours,
+    sourceCounts,
+    sourceColors,
+  } = computeTaskBreakdown(myTasks);
 
   const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
   const workloadClass = pctOfPeriod > 25 ? 'metric-danger' : pctOfPeriod > 18 ? 'metric-warning' : 'metric-ok';

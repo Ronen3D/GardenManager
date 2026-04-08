@@ -5,19 +5,19 @@
  * group filtering, and blackout period management.
  */
 
+import { checkTemplateEligibility, type TemplateEligibilityResult } from '../engine/validator';
 import {
+  type CertificationDefinition,
+  type DateUnavailability,
   Level,
-  CertificationDefinition,
-  PakalDefinition,
-  Participant,
-  DateUnavailability,
+  type PakalDefinition,
+  type Participant,
 } from '../models/types';
+import { fmtTime, HEBREW_DAYS } from '../utils/date-utils';
 import * as store from './config-store';
-import { showConfirm, showToast, showSaveConfirm } from './ui-modal';
-import { levelBadge, certBadges, groupBadge, groupColor, SVG_ICONS, escHtml } from './ui-helpers';
 import { getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
-import { HEBREW_DAYS, fmtTime } from '../utils/date-utils';
-import { checkTemplateEligibility, TemplateEligibilityResult } from '../engine/validator';
+import { certBadges, escHtml, groupBadge, groupColor, levelBadge, SVG_ICONS } from './ui-helpers';
+import { showConfirm, showSaveConfirm, showToast } from './ui-modal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -28,35 +28,43 @@ function getCertOptions(): CertificationDefinition[] {
 
 function getNotWithNamesForEdit(pid: string): string {
   const ids = store.getNotWithIds(pid);
-  return ids.map(id => {
-    const p = store.getParticipant(id);
-    return p ? p.name : '';
-  }).filter(Boolean).join(', ');
+  return ids
+    .map((id) => {
+      const p = store.getParticipant(id);
+      return p ? p.name : '';
+    })
+    .filter(Boolean)
+    .join(', ');
 }
 
 function renderNotWithBadges(pid: string): string {
   const ids = store.getNotWithIds(pid);
   if (ids.length === 0) return '<span class="text-muted">—</span>';
-  return ids.map(id => {
-    const p = store.getParticipant(id);
-    return p ? `<span class="badge badge-sm" style="background:#e74c3c">${escHtml(p.name)}</span>` : '';
-  }).filter(Boolean).join(' ');
+  return ids
+    .map((id) => {
+      const p = store.getParticipant(id);
+      return p ? `<span class="badge badge-sm" style="background:#e74c3c">${escHtml(p.name)}</span>` : '';
+    })
+    .filter(Boolean)
+    .join(' ');
 }
 
 /** Compact inline summary of unavailability rules for mobile cards. */
 function formatUnavailSummary(rules: DateUnavailability[]): string {
-  return rules.map(r => {
-    const day = HEBREW_DAYS[r.dayOfWeek];
-    const time = r.allDay
-      ? 'כל היום'
-      : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00</span>`;
-    return `<small>${day} ${time}</small>`;
-  }).join('<br>');
+  return rules
+    .map((r) => {
+      const day = HEBREW_DAYS[r.dayOfWeek];
+      const time = r.allDay
+        ? 'כל היום'
+        : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00</span>`;
+      return `<small>${day} ${time}</small>`;
+    })
+    .join('<br>');
 }
 
 /** Get distinct task template names for preference dropdowns. */
 function getTaskNameOptions(): string[] {
-  return [...new Set(store.getAllTaskTemplates().map(t => t.name))];
+  return [...new Set(store.getAllTaskTemplates().map((t) => t.name))];
 }
 
 function renderPakalCheckboxes(
@@ -65,30 +73,37 @@ function renderPakalCheckboxes(
   _certifications: string[],
   attrName: string,
 ): string {
-  const effectiveIds = new Set(getEffectivePakalIds({
-    id: '',
-    name: '',
-    level: Level.L0,
-    certifications: _certifications,
-    group: '',
-    availability: [],
-    dateUnavailability: [],
-    pakalIds: explicitIds,
-  }, definitions));
+  const effectiveIds = new Set(
+    getEffectivePakalIds(
+      {
+        id: '',
+        name: '',
+        level: Level.L0,
+        certifications: _certifications,
+        group: '',
+        availability: [],
+        dateUnavailability: [],
+        pakalIds: explicitIds,
+      },
+      definitions,
+    ),
+  );
 
   return `<div class="pakal-checkboxes">
-    ${definitions.map(def => {
-      const checked = effectiveIds.has(def.id);
-      return `<label class="checkbox-label" title="${escHtml(def.label)}">
+    ${definitions
+      .map((def) => {
+        const checked = effectiveIds.has(def.id);
+        return `<label class="checkbox-label" title="${escHtml(def.label)}">
         <input type="checkbox" ${attrName}="${def.id}" ${checked ? 'checked' : ''} /> ${escHtml(def.label)}
       </label>`;
-    }).join('')}
+      })
+      .join('')}
   </div>`;
 }
 
 function collectPakalIds(scope: ParentNode, selector: string): string[] {
   const ids: string[] = [];
-  scope.querySelectorAll<HTMLInputElement>(selector).forEach(cb => {
+  scope.querySelectorAll<HTMLInputElement>(selector).forEach((cb) => {
     const pakalId = cb.getAttribute(selector.includes('new-pakal') ? 'data-new-pakal' : 'data-pakal');
     if (!pakalId || !cb.checked) return;
     ids.push(pakalId);
@@ -111,9 +126,7 @@ function renderTaskNameSelect(fieldName: string, value?: string): string {
   const options = getTaskNameOptions();
   return `<select class="input-sm" data-field="${fieldName}">
     <option value="">— ללא —</option>
-    ${options.map(name =>
-      `<option value="${name}" ${value === name ? 'selected' : ''}>${name}</option>`
-    ).join('')}
+    ${options.map((name) => `<option value="${name}" ${value === name ? 'selected' : ''}>${name}</option>`).join('')}
   </select>
   <div class="pref-eligibility-warning hidden" data-warning-for="${fieldName}">
     <span class="warn-icon">⚠</span>
@@ -124,16 +137,13 @@ function renderTaskNameSelect(fieldName: string, value?: string): string {
 // ─── Preference Eligibility Warning Helpers ─────────────────────────────────
 
 /** Read participant level + certs from an edit row or add form. */
-function readParticipantFromForm(
-  row: Element,
-  isAddForm: boolean,
-): { level: Level; certifications: string[] } {
+function readParticipantFromForm(row: Element, isAddForm: boolean): { level: Level; certifications: string[] } {
   const levelField = isAddForm ? 'new-level' : 'level';
   const levelSel = row.querySelector(`[data-field="${levelField}"]`) as HTMLSelectElement | null;
   const level = parseInt(levelSel?.value || '0') as Level;
   const certAttr = isAddForm ? 'data-new-cert' : 'data-cert';
   const certs: string[] = [];
-  row.querySelectorAll<HTMLInputElement>(`[${certAttr}]`).forEach(cb => {
+  row.querySelectorAll<HTMLInputElement>(`[${certAttr}]`).forEach((cb) => {
     if (cb.checked) {
       const val = isAddForm ? cb.dataset.newCert : cb.dataset.cert;
       if (val) certs.push(val);
@@ -159,14 +169,20 @@ function updatePrefWarning(
     return;
   }
 
-  const templates = store.getAllTaskTemplates().filter(t => t.name === taskName);
-  if (templates.length === 0) { warningEl.classList.add('hidden'); return; }
+  const templates = store.getAllTaskTemplates().filter((t) => t.name === taskName);
+  if (templates.length === 0) {
+    warningEl.classList.add('hidden');
+    return;
+  }
 
   // Eligible if ANY template with this name has a fillable slot
   let bestResult: TemplateEligibilityResult = { eligible: false, reasons: [] };
   for (const tpl of templates) {
     const result = checkTemplateEligibility(level, certs, tpl, store.getCertLabel);
-    if (result.eligible) { bestResult = result; break; }
+    if (result.eligible) {
+      bestResult = result;
+      break;
+    }
     if (bestResult.reasons.length === 0) bestResult = result;
   }
 
@@ -193,12 +209,15 @@ function recheckAllPrefWarnings(container: Element, isAddForm: boolean): void {
 
 const FORBIDDEN_GROUP_PATTERNS = [
   /^new\s*group$/i,
-  /^group\s*\w$/i,       // "Group A", "Group X", "Group 1"
+  /^group\s*\w$/i, // "Group A", "Group X", "Group 1"
   /^untitled/i,
   /^default/i,
 ];
 
-interface GroupValidation { valid: boolean; error: string }
+interface GroupValidation {
+  valid: boolean;
+  error: string;
+}
 
 function setAriaInvalid(field: HTMLElement | null, invalid: boolean): void {
   if (!field) return;
@@ -229,7 +248,7 @@ function validateGroupName(raw: string, existingGroups: string[]): GroupValidati
   }
   // Check for near-duplicates (case-insensitive)
   const lower = name.toLowerCase();
-  const dup = existingGroups.find(g => g.toLowerCase() === lower && g !== name);
+  const dup = existingGroups.find((g) => g.toLowerCase() === lower && g !== name);
   if (dup) return { valid: false, error: `קבוצה דומה "${dup}" כבר קיימת. השתמש בה.` };
   return { valid: true, error: '' };
 }
@@ -253,10 +272,9 @@ function resolveGroupInput(
   }
   syncGroupValidationState(newGroupInput, errorSpan, result);
   // Normalize: if exact match exists already, use it
-  const existing = store.getGroups().find(g => g.toLowerCase() === raw.trim().toLowerCase());
+  const existing = store.getGroups().find((g) => g.toLowerCase() === raw.trim().toLowerCase());
   return existing ?? raw.trim();
 }
-
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -297,7 +315,7 @@ function hasEditingChanges(row: Element, pid: string): boolean {
   if (level !== p.level) return true;
 
   const certs: string[] = [];
-  row.querySelectorAll<HTMLInputElement>('[data-cert]').forEach(cb => {
+  row.querySelectorAll<HTMLInputElement>('[data-cert]').forEach((cb) => {
     if (cb.checked && cb.dataset.cert) certs.push(cb.dataset.cert);
   });
   const origCerts = [...p.certifications].sort();
@@ -311,11 +329,21 @@ function hasEditingChanges(row: Element, pid: string): boolean {
 
   if (showNotWithColumn) {
     const notWithRaw = (row.querySelector('[data-field="notWith"]') as HTMLInputElement)?.value || '';
-    const origNotWith = store.getNotWithIds(pid).map(id => {
-      const partner = store.getParticipant(id);
-      return partner ? partner.name : '';
-    }).filter(Boolean).sort().join(', ');
-    const newNotWith = notWithRaw.split(',').map(n => n.trim()).filter(Boolean).sort().join(', ');
+    const origNotWith = store
+      .getNotWithIds(pid)
+      .map((id) => {
+        const partner = store.getParticipant(id);
+        return partner ? partner.name : '';
+      })
+      .filter(Boolean)
+      .sort()
+      .join(', ');
+    const newNotWith = notWithRaw
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean)
+      .sort()
+      .join(', ');
     if (origNotWith !== newNotWith) return true;
   }
 
@@ -332,14 +360,12 @@ function hasEditingChanges(row: Element, pid: string): boolean {
 let _outsideClickBusy = false;
 
 function getVisibleParticipants(allParticipants: Participant[] = store.getAllParticipants()): Participant[] {
-  const filtered = filterGroup
-    ? allParticipants.filter(p => p.group === filterGroup)
-    : allParticipants;
+  const filtered = filterGroup ? allParticipants.filter((p) => p.group === filterGroup) : allParticipants;
   return sortParticipants(filtered);
 }
 
 function reconcileSelection(visibleParticipants: Participant[] = getVisibleParticipants()): void {
-  const visibleIds = new Set(visibleParticipants.map(p => p.id));
+  const visibleIds = new Set(visibleParticipants.map((p) => p.id));
 
   for (const id of Array.from(selectedIds)) {
     if (!visibleIds.has(id)) selectedIds.delete(id);
@@ -376,10 +402,14 @@ function sortParticipants(list: Participant[]): Participant[] {
   const dir = sortDirection === 'asc' ? 1 : -1;
   return [...list].sort((a, b) => {
     switch (sortColumn) {
-      case 'name': return dir * a.name.localeCompare(b.name);
-      case 'group': return dir * a.group.localeCompare(b.group) || a.name.localeCompare(b.name);
-      case 'level': return dir * (a.level - b.level) || a.name.localeCompare(b.name);
-      default: return 0;
+      case 'name':
+        return dir * a.name.localeCompare(b.name);
+      case 'group':
+        return dir * a.group.localeCompare(b.group) || a.name.localeCompare(b.name);
+      case 'level':
+        return dir * (a.level - b.level) || a.name.localeCompare(b.name);
+      default:
+        return 0;
     }
   });
 }
@@ -484,9 +514,12 @@ export function renderParticipantsTab(): string {
       <h2>משתתפים <span class="count">${allParticipants.length}</span></h2>
       <div class="filter-pills">
         <button class="pill ${filterGroup === '' ? 'pill-active' : ''}" data-action="filter-group" data-group="">הכל</button>
-        ${groups.map(g =>
-          `<button class="pill ${filterGroup === g ? 'pill-active' : ''}" data-action="filter-group" data-group="${escHtml(g)}">${escHtml(g)}</button>`
-        ).join('')}
+        ${groups
+          .map(
+            (g) =>
+              `<button class="pill ${filterGroup === g ? 'pill-active' : ''}" data-action="filter-group" data-group="${escHtml(g)}">${escHtml(g)}</button>`,
+          )
+          .join('')}
       </div>
     </div>
     <div class="toolbar-right">
@@ -537,7 +570,7 @@ export function renderParticipantsTab(): string {
         ${showNotWithColumn ? `<td class="col-notwith notwith-cell">${renderNotWithBadges(p.id)}</td>` : ''}
         <td class="col-prefs">${renderPreferenceBadges(p)}</td>
         <td class="col-avail avail-cell">
-          <span class="mobile-label">זמינות: </span>${p.availability.map(w => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
+          <span class="mobile-label">זמינות: </span>${p.availability.map((w) => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
         </td>
         <td class="col-unavail unavail-cell${totalRules === 0 ? ' unavail-empty' : ''}">
           <button class="btn-sm btn-outline btn-icon" data-action="toggle-blackouts" data-pid="${p.id}" title="ניהול אי-זמינות">
@@ -596,7 +629,7 @@ function renderEditRow(p: Participant, idx: number): string {
     <td class="col-name"><input class="input-sm" type="text" data-field="name" value="${escHtml(p.name)}" /></td>
     <td class="col-group">
       <select class="input-sm" data-field="group" data-group-select>
-        ${groups.map(g => `<option value="${escHtml(g)}" ${p.group === g ? 'selected' : ''}>${escHtml(g)}</option>`).join('')}
+        ${groups.map((g) => `<option value="${escHtml(g)}" ${p.group === g ? 'selected' : ''}>${escHtml(g)}</option>`).join('')}
         <option value="__new__">+ קבוצה חדשה…</option>
       </select>
       <input class="input-sm hidden" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
@@ -605,44 +638,57 @@ function renderEditRow(p: Participant, idx: number): string {
     <td class="col-level">
       <label style="font-size:0.75rem;margin:0">דרגה
       <select class="input-sm" data-field="level">
-        ${LEVEL_OPTIONS.map(l => `<option value="${l}" ${p.level === l ? 'selected' : ''}>${l}</option>`).join('')}
+        ${LEVEL_OPTIONS.map((l) => `<option value="${l}" ${p.level === l ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
     </td>
     <td class="col-certs">
       <div class="cert-checkboxes">
-        ${getCertOptions().map(def =>
-          `<label class="checkbox-label">
+        ${getCertOptions()
+          .map(
+            (def) =>
+              `<label class="checkbox-label">
             <input type="checkbox" data-cert="${def.id}" ${p.certifications.includes(def.id) ? 'checked' : ''} /> ${escHtml(def.label)}
-          </label>`
-        ).join('')}
+          </label>`,
+          )
+          .join('')}
         ${(() => {
-          const activeIds = new Set(getCertOptions().map(d => d.id));
-          return p.certifications.filter(c => !activeIds.has(c)).map(c => {
-            const tomb = store.getCertificationById(c);
-            const label = tomb ? tomb.label : c;
-            return `<label class="checkbox-label badge-orphan-label">
+          const activeIds = new Set(getCertOptions().map((d) => d.id));
+          return p.certifications
+            .filter((c) => !activeIds.has(c))
+            .map((c) => {
+              const tomb = store.getCertificationById(c);
+              const label = tomb ? tomb.label : c;
+              return `<label class="checkbox-label badge-orphan-label">
               <input type="checkbox" data-cert="${c}" checked /> ⚠ ${escHtml(label)}
             </label>`;
-          }).join('');
+            })
+            .join('');
         })()}
       </div>
     </td>
     <td class="col-pakals">
       ${renderPakalCheckboxes(pakalDefs, p.pakalIds || [], p.certifications, 'data-pakal')}
       ${(() => {
-        const activeIds = new Set(pakalDefs.map(d => d.id));
-        return (p.pakalIds || []).filter(id => !activeIds.has(id)).map(id => {
-          const tomb = store.getPakalById(id);
-          const label = tomb ? tomb.label : id;
-          return `<label class="checkbox-label badge-orphan-label">
+        const activeIds = new Set(pakalDefs.map((d) => d.id));
+        return (p.pakalIds || [])
+          .filter((id) => !activeIds.has(id))
+          .map((id) => {
+            const tomb = store.getPakalById(id);
+            const label = tomb ? tomb.label : id;
+            return `<label class="checkbox-label badge-orphan-label">
             <input type="checkbox" data-pakal="${id}" checked /> ⚠ ${escHtml(label)}
           </label>`;
-        }).join('');
+          })
+          .join('');
       })()}
     </td>
-    ${showNotWithColumn ? `<td class="col-notwith">
+    ${
+      showNotWithColumn
+        ? `<td class="col-notwith">
       <input class="input-sm" type="text" data-field="notWith" value="${getNotWithNamesForEdit(p.id)}" placeholder="הקלד שמות, מופרדים בפסיקים" title="שמות משתתפים מופרדים בפסיק" />
-    </td>` : ''}
+    </td>`
+        : ''
+    }
     <td class="col-prefs">
       <div style="display:flex;flex-direction:column;gap:4px">
         <label style="font-size:0.75rem;margin:0">משימה מועדפת</label>
@@ -652,7 +698,7 @@ function renderEditRow(p: Participant, idx: number): string {
       </div>
     </td>
     <td class="col-avail avail-cell">
-      <span class="mobile-label">זמינות: </span>${p.availability.map(w => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
+      <span class="mobile-label">זמינות: </span>${p.availability.map((w) => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
     </td>
     <td class="col-unavail unavail-cell">
       ${renderInlineUnavailEditor(p.id)}
@@ -673,7 +719,9 @@ function renderInlineUnavailEditor(pid: string): string {
     html += '<ul class="inline-unavail-list">';
     for (const r of dateRules) {
       const label = HEBREW_DAYS[r.dayOfWeek];
-      const timeLabel = r.allDay ? 'כל היום' : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00</span>`;
+      const timeLabel = r.allDay
+        ? 'כל היום'
+        : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00</span>`;
       html += `<li>${label} ${timeLabel}${r.reason ? ` (${r.reason})` : ''} <button class="btn-inline-remove" data-action="remove-date-unavail" data-pid="${pid}" data-rid="${r.id}">✕</button></li>`;
     }
     html += '</ul>';
@@ -697,8 +745,6 @@ function renderInlineUnavailEditor(pid: string): string {
   return html;
 }
 
-
-
 function renderBlackoutRow(pid: string): string {
   const dateRules = store.getDateUnavailabilities(pid);
 
@@ -714,7 +760,9 @@ function renderBlackoutRow(pid: string): string {
     html += '<ul>';
     for (const r of dateRules) {
       const label = `כל ${HEBREW_DAYS[r.dayOfWeek]}`;
-      const timeLabel = r.allDay ? 'כל היום' : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00</span>`;
+      const timeLabel = r.allDay
+        ? 'כל היום'
+        : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00</span>`;
       html += `<li>
         <span class="constraint-type">יום קבוע</span>
         <strong>${label}</strong> — <span>${timeLabel}</span>
@@ -758,7 +806,7 @@ function renderAddForm(groups: string[]): string {
       <label>שם <input class="input-sm" type="text" data-field="new-name" placeholder="שם" /></label>
       <label>קבוצה
         <select class="input-sm" data-field="new-group" data-group-select>
-          ${groups.map(g => `<option value="${escHtml(g)}">${escHtml(g)}</option>`).join('')}
+          ${groups.map((g) => `<option value="${escHtml(g)}">${escHtml(g)}</option>`).join('')}
           <option value="__new__">+ קבוצה חדשה…</option>
         </select>
         <input class="input-sm hidden" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
@@ -766,17 +814,20 @@ function renderAddForm(groups: string[]): string {
       </label>
       <label>דרגה
         <select class="input-sm" data-field="new-level">
-          ${LEVEL_OPTIONS.map(l => `<option value="${l}" ${l === Level.L0 ? 'selected' : ''}>${l}</option>`).join('')}
+          ${LEVEL_OPTIONS.map((l) => `<option value="${l}" ${l === Level.L0 ? 'selected' : ''}>${l}</option>`).join('')}
         </select>
       </label>
     </div>
     <div class="form-row">
       <span>הסמכות:</span>
-      ${getCertOptions().map((def, i) =>
-        `<label class="checkbox-label">
+      ${getCertOptions()
+        .map(
+          (def, i) =>
+            `<label class="checkbox-label">
           <input type="checkbox" data-new-cert="${def.id}" ${i === 0 ? 'checked' : ''} /> ${escHtml(def.label)}
-        </label>`
-      ).join('')}
+        </label>`,
+        )
+        .join('')}
     </div>
     <div class="form-row form-row-pakalim">
       <span>פק"לים:</span>
@@ -798,7 +849,6 @@ function renderAddForm(groups: string[]): string {
 // ─── Bulk Unavailability Dialog ──────────────────────────────────────────────
 
 function renderBulkUnavailDialog(): string {
-
   return `<div class="bulk-dialog-backdrop" data-action="bulk-dialog-dismiss">
     <div class="bulk-dialog">
       <h3>הוסף חוסר זמינות עבור ${selectedIds.size} משתתפים</h3>
@@ -867,7 +917,7 @@ function renderBulkDeleteDialog(): string {
 
 export function wireParticipantsEvents(container: HTMLElement, rerender: () => void): void {
   // ─── Preference eligibility warnings: show on edit open if prefs already set ─
-  container.querySelectorAll<HTMLElement>('tr.row-editing').forEach(row => {
+  container.querySelectorAll<HTMLElement>('tr.row-editing').forEach((row) => {
     recheckAllPrefWarnings(row, false);
   });
   const addForm = container.querySelector('#add-participant-form') as HTMLElement | null;
@@ -883,9 +933,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     // Preference select changed → update just that warning
     if (['preferredTask', 'lessPreferredTask', 'new-preferredTask', 'new-lessPreferredTask'].includes(field)) {
       const isAdd = field.startsWith('new-');
-      const scope = isAdd
-        ? target.closest('#add-participant-form')
-        : target.closest('tr.row-editing');
+      const scope = isAdd ? target.closest('#add-participant-form') : target.closest('tr.row-editing');
       if (!scope) return;
       const { level, certifications } = readParticipantFromForm(scope, isAdd);
       updatePrefWarning(scope, field, (target as HTMLSelectElement).value, level, certifications);
@@ -895,9 +943,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     // Level changed → recheck both preference warnings in the same row/form
     if (field === 'level' || field === 'new-level') {
       const isAdd = field === 'new-level';
-      const scope = isAdd
-        ? target.closest('#add-participant-form')
-        : target.closest('tr.row-editing');
+      const scope = isAdd ? target.closest('#add-participant-form') : target.closest('tr.row-editing');
       if (scope) recheckAllPrefWarnings(scope, isAdd);
       return;
     }
@@ -905,9 +951,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     // Certification checkbox changed → recheck both preference warnings
     if (target.hasAttribute('data-cert') || target.hasAttribute('data-new-cert')) {
       const isAdd = target.hasAttribute('data-new-cert');
-      const scope = isAdd
-        ? target.closest('#add-participant-form')
-        : target.closest('tr.row-editing');
+      const scope = isAdd ? target.closest('#add-participant-form') : target.closest('tr.row-editing');
       if (scope) recheckAllPrefWarnings(scope, isAdd);
     }
   });
@@ -978,7 +1022,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         showNotWithColumn = !showNotWithColumn;
         rerender();
       } else {
-        tapTimer = setTimeout(() => { tapCount = 0; }, 600);
+        tapTimer = setTimeout(() => {
+          tapCount = 0;
+        }, 600);
       }
     });
   }
@@ -989,7 +1035,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     selectAllCb.addEventListener('change', () => {
       const cbs = container.querySelectorAll<HTMLInputElement>('.cb-select-participant');
       if (selectAllCb.checked) {
-        cbs.forEach(cb => selectedIds.add(cb.dataset.pid!));
+        cbs.forEach((cb) => selectedIds.add(cb.dataset.pid!));
       } else {
         selectedIds.clear();
       }
@@ -1001,14 +1047,14 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
   // ─── Bulk: Individual checkboxes (Shift+Click range, Ctrl+Click toggle) ───
 
   // ─── Group badge click → select entire group ──────────────────────────────
-  container.querySelectorAll<HTMLElement>('[data-select-group]').forEach(badge => {
+  container.querySelectorAll<HTMLElement>('[data-select-group]').forEach((badge) => {
     badge.addEventListener('click', (e) => {
       e.stopPropagation();
       const group = badge.dataset.selectGroup!;
       const all = store.getAllParticipants();
-      const groupIds = all.filter(p => p.group === group).map(p => p.id);
+      const groupIds = all.filter((p) => p.group === group).map((p) => p.id);
       // If all group members are already selected, deselect them; otherwise select all
-      const allSelected = groupIds.every(id => selectedIds.has(id));
+      const allSelected = groupIds.every((id) => selectedIds.has(id));
       if (allSelected) {
         for (const id of groupIds) selectedIds.delete(id);
       } else {
@@ -1018,13 +1064,13 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     });
   });
 
-  container.querySelectorAll<HTMLInputElement>('.cb-select-participant').forEach(cb => {
+  container.querySelectorAll<HTMLInputElement>('.cb-select-participant').forEach((cb) => {
     cb.addEventListener('click', (e) => {
       e.stopPropagation();
       const pid = cb.dataset.pid!;
-      const visiblePids = Array.from(
-        container.querySelectorAll<HTMLInputElement>('.cb-select-participant'),
-      ).map(el => el.dataset.pid!);
+      const visiblePids = Array.from(container.querySelectorAll<HTMLInputElement>('.cb-select-participant')).map(
+        (el) => el.dataset.pid!,
+      );
 
       if (e.shiftKey && _lastClickedId) {
         // range-select between _lastClickedId and pid
@@ -1056,7 +1102,6 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       const timeFields = dialog.querySelector('.bulk-time-fields') as HTMLElement;
       if (timeFields) timeFields.classList.toggle('hidden', checked);
     }
-
   });
 
   // ─── Group select change handlers (show/hide + validate new-group input) ──
@@ -1093,7 +1138,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       const startInp = panel.querySelector('[data-field="bo-start"]') as HTMLInputElement;
       const endInp = panel.querySelector('[data-field="bo-end"]') as HTMLInputElement;
       const separator = panel.querySelector('.time-separator') as HTMLElement;
-      
+
       if (cb.checked) {
         if (startInp) startInp.classList.add('hidden');
         if (endInp) endInp.classList.add('hidden');
@@ -1128,9 +1173,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     const row = target.closest('tr')!;
     const pid = row.dataset.participantId || '';
     const allParticipants = store.getAllParticipants();
-    const validNames = new Set(allParticipants.filter(p => p.id !== pid).map(p => p.name));
-    const names = target.value.split(',').map(n => n.trim());
-    const hasInvalid = names.some(n => n !== '' && !validNames.has(n));
+    const validNames = new Set(allParticipants.filter((p) => p.id !== pid).map((p) => p.name));
+    const names = target.value.split(',').map((n) => n.trim());
+    const hasInvalid = names.some((n) => n !== '' && !validNames.has(n));
     setAriaInvalid(target, hasInvalid);
     target.style.color = hasInvalid ? 'var(--error, #e74c3c)' : '';
     target.title = hasInvalid ? 'שמות לא תקינים יסומנו באדום ויתעלמו בשמירה' : 'שמות משתתפים מופרדים בפסיק';
@@ -1188,7 +1233,10 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const groupEl = container.querySelector('[data-field="new-group"]') as HTMLSelectElement;
         const levelEl = container.querySelector('[data-field="new-level"]') as HTMLSelectElement;
         const name = nameEl?.value.trim();
-        if (!name) { nameEl?.focus(); return; }
+        if (!name) {
+          nameEl?.focus();
+          return;
+        }
         if (store.isParticipantNameTaken(name)) {
           showToast('משתתף/ת בשם זה כבר קיים/ת', { type: 'error' });
           nameEl?.focus();
@@ -1205,13 +1253,14 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
 
         const level = parseInt(levelEl?.value || '0') as Level;
         const certs: string[] = [];
-        container.querySelectorAll<HTMLInputElement>('[data-new-cert]').forEach(cb => {
+        container.querySelectorAll<HTMLInputElement>('[data-new-cert]').forEach((cb) => {
           if (cb.checked && cb.dataset.newCert) certs.push(cb.dataset.newCert);
         });
         const pakalIds = collectPakalIds(container, '[data-new-pakal]');
 
         const newPref = (container.querySelector('[data-field="new-preferredTask"]') as HTMLSelectElement)?.value || '';
-        const newLess = (container.querySelector('[data-field="new-lessPreferredTask"]') as HTMLSelectElement)?.value || '';
+        const newLess =
+          (container.querySelector('[data-field="new-lessPreferredTask"]') as HTMLSelectElement)?.value || '';
         if (newPref && newLess && newPref === newLess) {
           showToast('משימה מועדפת ומשימה פחות מועדפת לא יכולות להיות זהות', { type: 'error' });
           return;
@@ -1219,11 +1268,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
 
         const newP = store.addParticipant({ name, level, certifications: certs, pakalIds, group });
         if (newPref || newLess) {
-          store.setTaskNamePreference(
-            newP.id,
-            newPref || undefined,
-            newLess || undefined,
-          );
+          store.setTaskNamePreference(newP.id, newPref || undefined, newLess || undefined);
         }
         rerender();
         showToast(`${name} נוסף/ה`, { type: 'success' });
@@ -1244,7 +1289,10 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const row = container.querySelector(`tr[data-participant-id="${pid}"]`)!;
         const nameEl = row.querySelector('[data-field="name"]') as HTMLInputElement;
         const name = nameEl?.value.trim();
-        if (!name) { nameEl?.focus(); return; }
+        if (!name) {
+          nameEl?.focus();
+          return;
+        }
         if (store.isParticipantNameTaken(name, pid)) {
           showToast('משתתף/ת בשם זה כבר קיים/ת', { type: 'error' });
           nameEl?.focus();
@@ -1260,7 +1308,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
 
         const level = parseInt((row.querySelector('[data-field="level"]') as HTMLSelectElement)?.value || '0') as Level;
         const certs: string[] = [];
-        row.querySelectorAll<HTMLInputElement>('[data-cert]').forEach(cb => {
+        row.querySelectorAll<HTMLInputElement>('[data-cert]').forEach((cb) => {
           if (cb.checked && cb.dataset.cert) certs.push(cb.dataset.cert);
         });
         // Orphan certs (deleted definitions) are rendered as checkboxes in the edit row,
@@ -1272,7 +1320,10 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         // Process "not with" input — only when column is visible
         if (showNotWithColumn) {
           const notWithRaw = (row.querySelector('[data-field="notWith"]') as HTMLInputElement)?.value || '';
-          const notWithNames = notWithRaw.split(',').map(n => n.trim()).filter(Boolean);
+          const notWithNames = notWithRaw
+            .split(',')
+            .map((n) => n.trim())
+            .filter(Boolean);
           const allParticipants = store.getAllParticipants();
           const nameToId = new Map<string, string>();
           for (const ap of allParticipants) {
@@ -1318,7 +1369,11 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const pid = actionButton?.dataset.pid!;
         const p = store.getParticipant(pid);
         if (p) {
-          const okRm = await showConfirm(`להסיר את ${p.name}?`, { danger: true, title: 'הסרת משתתף', confirmLabel: 'הסר' });
+          const okRm = await showConfirm(`להסיר את ${p.name}?`, {
+            danger: true,
+            title: 'הסרת משתתף',
+            confirmLabel: 'הסר',
+          });
           if (okRm) {
             store.removeParticipant(pid);
             showToast(`${p.name} הוסר/ה`, { type: 'success' });
@@ -1336,8 +1391,8 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const table = container.querySelector('.table-participants tbody');
         if (!table) break;
         const rows = table.querySelectorAll('tr[data-participant-id]');
-        const allExpanded = Array.from(rows).every(r => r.classList.contains('row-expanded'));
-        rows.forEach(r => r.classList.toggle('row-expanded', !allExpanded));
+        const allExpanded = Array.from(rows).every((r) => r.classList.contains('row-expanded'));
+        rows.forEach((r) => r.classList.toggle('row-expanded', !allExpanded));
         if (actionButton) {
           actionButton.textContent = allExpanded ? 'הרחב הכל' : 'כווץ הכל';
         }
@@ -1504,7 +1559,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       case 'bulk-dialog-save': {
         const dialog = container.querySelector('.bulk-dialog')!;
         const allDay = (dialog.querySelector('[data-field="bulk-allday"]') as HTMLInputElement).checked;
-        const startHour = parseInt((dialog.querySelector('[data-field="bulk-start"]') as HTMLInputElement).value || '0');
+        const startHour = parseInt(
+          (dialog.querySelector('[data-field="bulk-start"]') as HTMLInputElement).value || '0',
+        );
         const endHour = parseInt((dialog.querySelector('[data-field="bulk-end"]') as HTMLInputElement).value || '0');
         const reason = (dialog.querySelector('[data-field="bulk-reason"]') as HTMLInputElement).value || undefined;
 

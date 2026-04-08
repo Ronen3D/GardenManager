@@ -1,7 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 test.describe('Modals on mobile', () => {
-
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await page.waitForSelector('.tab-nav');
@@ -29,11 +28,14 @@ test.describe('Modals on mobile', () => {
     if (!viewport || viewport.width > 768) test.skip();
 
     const hasSafeAreaRule = await page.evaluate(() => {
-      const rules = Array.from(document.styleSheets)
-        .flatMap(s => {
-          try { return Array.from(s.cssRules); } catch { return []; }
-        });
-      return rules.some(r => {
+      const rules = Array.from(document.styleSheets).flatMap((s) => {
+        try {
+          return Array.from(s.cssRules);
+        } catch {
+          return [];
+        }
+      });
+      return rules.some((r) => {
         const text = r.cssText || '';
         return text.includes('safe-area-inset-bottom') && text.includes('gm-modal');
       });

@@ -1,5 +1,5 @@
-import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { defineConfig } from 'vite';
 
 const isGitHubPages = process.env.GITHUB_PAGES === 'true';
 

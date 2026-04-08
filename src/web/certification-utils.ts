@@ -1,4 +1,4 @@
-import { CertificationDefinition } from '../models/types';
+import type { CertificationDefinition } from '../models/types';
 
 function isCertLike(value: unknown): value is Partial<CertificationDefinition> {
   return !!value && typeof value === 'object';
@@ -35,7 +35,7 @@ export function normalizeCertificationDefinitions(raw: unknown): CertificationDe
 
 export function sanitizeCertificationIds(raw: unknown, definitions: CertificationDefinition[]): string[] {
   if (!Array.isArray(raw)) return [];
-  const validIds = new Set(definitions.filter(d => !d.deleted).map(def => def.id));
+  const validIds = new Set(definitions.filter((d) => !d.deleted).map((def) => def.id));
   const result: string[] = [];
   const seen = new Set<string>();
   for (const value of raw) {

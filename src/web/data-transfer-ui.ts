@@ -4,10 +4,10 @@
  * mobile-friendly multi-step flows.
  */
 
-import { escHtml } from './ui-helpers';
-import { showBottomSheet, showConfirm, showAlert, showToast } from './ui-modal';
 import * as store from './config-store';
 import * as transfer from './data-transfer';
+import { escHtml } from './ui-helpers';
+import { showAlert, showBottomSheet, showConfirm, showToast } from './ui-modal';
 
 // ─── Accordion Body ─────────────────────────────────────────────────────────
 
@@ -110,7 +110,10 @@ function openExportSheet(): void {
           sheet.close();
         } else {
           sheet.close();
-          openSetPicker('taskSet', taskSets.map(s => ({ id: s.id, name: s.name, desc: `${s.templates.length} תבניות` })));
+          openSetPicker(
+            'taskSet',
+            taskSets.map((s) => ({ id: s.id, name: s.name, desc: `${s.templates.length} תבניות` })),
+          );
         }
         break;
       case 'participantSet':
@@ -119,7 +122,10 @@ function openExportSheet(): void {
           sheet.close();
         } else {
           sheet.close();
-          openSetPicker('participantSet', participantSets.map(s => ({ id: s.id, name: s.name, desc: `${s.participants.length} משתתפים` })));
+          openSetPicker(
+            'participantSet',
+            participantSets.map((s) => ({ id: s.id, name: s.name, desc: `${s.participants.length} משתתפים` })),
+          );
         }
         break;
       case 'scheduleSnapshot':
@@ -128,11 +134,14 @@ function openExportSheet(): void {
           sheet.close();
         } else {
           sheet.close();
-          openSetPicker('scheduleSnapshot', snapshots.map(s => ({
-            id: s.id,
-            name: s.name,
-            desc: `${s.schedule.tasks.length} משימות, ${s.schedule.participants.length} משתתפים`,
-          })));
+          openSetPicker(
+            'scheduleSnapshot',
+            snapshots.map((s) => ({
+              id: s.id,
+              name: s.name,
+              desc: `${s.schedule.tasks.length} משימות, ${s.schedule.participants.length} משתתפים`,
+            })),
+          );
         }
         break;
       case 'fullBackup':
@@ -143,23 +152,28 @@ function openExportSheet(): void {
   });
 }
 
-interface PickerItem { id: string; name: string; desc: string }
+interface PickerItem {
+  id: string;
+  name: string;
+  desc: string;
+}
 
-function openSetPicker(
-  type: 'taskSet' | 'participantSet' | 'scheduleSnapshot',
-  items: PickerItem[],
-): void {
+function openSetPicker(type: 'taskSet' | 'participantSet' | 'scheduleSnapshot', items: PickerItem[]): void {
   const typeLabel = type === 'taskSet' ? 'סט משימות' : type === 'participantSet' ? 'סט משתתפים' : 'תמונת מצב';
 
   const html = `
     <div class="transfer-scope-list">
-      ${items.map(item => `
+      ${items
+        .map(
+          (item) => `
         <button class="transfer-scope-item" data-picker-id="${escHtml(item.id)}">
           <span class="transfer-scope-text">
             <span class="transfer-scope-title">${escHtml(item.name)}</span>
             <span class="transfer-scope-desc">${escHtml(item.desc)}</span>
           </span>
-        </button>`).join('')}
+        </button>`,
+        )
+        .join('')}
     </div>`;
 
   const sheet = showBottomSheet(html, { title: `📤 בחר ${typeLabel} לייצוא` });
@@ -168,7 +182,7 @@ function openSetPicker(
     const item = (e.target as HTMLElement).closest<HTMLElement>('[data-picker-id]');
     if (!item) return;
     const id = item.dataset.pickerId!;
-    const name = items.find(i => i.id === id)?.name ?? '';
+    const name = items.find((i) => i.id === id)?.name ?? '';
 
     switch (type) {
       case 'taskSet':
@@ -194,7 +208,10 @@ async function handleExportAlgorithm(): Promise<void> {
 
 async function handleExportTaskSet(id: string, name: string): Promise<void> {
   const content = transfer.exportTaskSet(id);
-  if (!content) { await showAlert('סט המשימות לא נמצא.'); return; }
+  if (!content) {
+    await showAlert('סט המשימות לא נמצא.');
+    return;
+  }
   const filename = transfer.generateExportFilename('taskSet', name);
   await transfer.triggerShareOrDownload(content, filename);
   showToast('סט המשימות יוצא בהצלחה', { type: 'success' });
@@ -202,7 +219,10 @@ async function handleExportTaskSet(id: string, name: string): Promise<void> {
 
 async function handleExportParticipantSet(id: string, name: string): Promise<void> {
   const content = transfer.exportParticipantSet(id);
-  if (!content) { await showAlert('סט המשתתפים לא נמצא.'); return; }
+  if (!content) {
+    await showAlert('סט המשתתפים לא נמצא.');
+    return;
+  }
   const filename = transfer.generateExportFilename('participantSet', name);
   await transfer.triggerShareOrDownload(content, filename);
   showToast('סט המשתתפים יוצא בהצלחה', { type: 'success' });
@@ -210,17 +230,20 @@ async function handleExportParticipantSet(id: string, name: string): Promise<voi
 
 async function handleExportSnapshot(id: string, name: string): Promise<void> {
   const content = transfer.exportScheduleSnapshot(id);
-  if (!content) { await showAlert('תמונת המצב לא נמצאה.'); return; }
+  if (!content) {
+    await showAlert('תמונת המצב לא נמצאה.');
+    return;
+  }
   const filename = transfer.generateExportFilename('scheduleSnapshot', name);
   await transfer.triggerShareOrDownload(content, filename);
   showToast('שבצ"ק יוצא בהצלחה', { type: 'success' });
 }
 
 async function handleExportFullBackup(): Promise<void> {
-  const confirmed = await showConfirm(
-    'פעולה זו תייצא את כל הנתונים במערכת לקובץ אחד. להמשיך?',
-    { title: 'גיבוי מלא', confirmLabel: 'ייצא הכל' },
-  );
+  const confirmed = await showConfirm('פעולה זו תייצא את כל הנתונים במערכת לקובץ אחד. להמשיך?', {
+    title: 'גיבוי מלא',
+    confirmLabel: 'ייצא הכל',
+  });
   if (!confirmed) return;
   const content = transfer.exportFullBackup();
   const filename = transfer.generateExportFilename('fullBackup');
@@ -295,15 +318,12 @@ function openAlgorithmImportSheet(json: string, summary: string): void {
   });
 }
 
-function openSetImportSheet(
-  type: 'taskSet' | 'participantSet',
-  json: string,
-  summary: string,
-): void {
+function openSetImportSheet(type: 'taskSet' | 'participantSet', json: string, summary: string): void {
   const typeLabel = type === 'taskSet' ? 'סט משימות' : 'סט משתתפים';
-  const existingSets = type === 'taskSet'
-    ? store.getAllTaskSets().filter(s => !s.builtIn)
-    : store.getAllParticipantSets().filter(s => !s.builtIn);
+  const existingSets =
+    type === 'taskSet'
+      ? store.getAllTaskSets().filter((s) => !s.builtIn)
+      : store.getAllParticipantSets().filter((s) => !s.builtIn);
 
   let replaceHtml = '';
   if (existingSets.length > 0) {
@@ -311,10 +331,14 @@ function openSetImportSheet(
       <div class="transfer-replace-section">
         <div class="transfer-replace-label">🔄 החלף סט קיים:</div>
         <div class="transfer-replace-list">
-          ${existingSets.map(s => `
+          ${existingSets
+            .map(
+              (s) => `
             <button class="transfer-replace-item" data-replace-id="${escHtml(s.id)}">
               ${escHtml(s.name)}
-            </button>`).join('')}
+            </button>`,
+            )
+            .join('')}
         </div>
       </div>`;
   }
@@ -338,9 +362,8 @@ function openSetImportSheet(
     const addBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-import-mode="add-new"]');
     if (addBtn) {
       sheet.close();
-      const result = type === 'taskSet'
-        ? transfer.importTaskSet(json, 'add-new')
-        : transfer.importParticipantSet(json, 'add-new');
+      const result =
+        type === 'taskSet' ? transfer.importTaskSet(json, 'add-new') : transfer.importParticipantSet(json, 'add-new');
       if (result.ok) {
         showToast(`${typeLabel} יובא בהצלחה`, { type: 'success' });
       } else {
@@ -355,14 +378,16 @@ function openSetImportSheet(
       const replaceId = replaceBtn.dataset.replaceId!;
       const replaceName = replaceBtn.textContent?.trim() ?? '';
       sheet.close();
-      const confirmed = await showConfirm(
-        `הסט '${replaceName}' יוחלף לחלוטין בנתונים מהקובץ. להמשיך?`,
-        { title: 'החלפת סט', danger: true, confirmLabel: 'החלף' },
-      );
+      const confirmed = await showConfirm(`הסט '${replaceName}' יוחלף לחלוטין בנתונים מהקובץ. להמשיך?`, {
+        title: 'החלפת סט',
+        danger: true,
+        confirmLabel: 'החלף',
+      });
       if (!confirmed) return;
-      const result = type === 'taskSet'
-        ? transfer.importTaskSet(json, 'replace', replaceId)
-        : transfer.importParticipantSet(json, 'replace', replaceId);
+      const result =
+        type === 'taskSet'
+          ? transfer.importTaskSet(json, 'replace', replaceId)
+          : transfer.importParticipantSet(json, 'replace', replaceId);
       if (result.ok) {
         showToast(`${typeLabel} הוחלף בהצלחה`, { type: 'success' });
       } else {

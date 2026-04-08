@@ -14,9 +14,13 @@
     "test:e2e": "playwright test",
     "test:e2e:phone": "playwright test --project=phone",
     "test:e2e:desktop": "playwright test --project=desktop",
-    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5174 && tsc -p tsconfig.electron.json && electron .\"",
+    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:${DEV_PORT:-5174} && tsc -p tsconfig.electron.json && electron .\"",
     "electron:compile": "tsc -p tsconfig.electron.json",
-    "electron:build": "vite build && tsc -p tsconfig.electron.json && electron-builder --win"
+    "electron:build": "vite build && tsc -p tsconfig.electron.json && electron-builder --win",
+    "lint": "biome check .",
+    "lint:fix": "biome check --fix .",
+    "format": "biome format --write .",
+    "format:check": "biome format ."
   },
   "keywords": [],
   "author": "Garden Manager",
@@ -28,6 +32,7 @@
     "jspdf-autotable": "^5.0.7"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.10",
     "@playwright/mcp": "^0.0.68",
     "@playwright/test": "^1.58.2",
     "@types/node": "^25.2.3",

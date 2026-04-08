@@ -4,14 +4,9 @@
  * Usage: npm run demo
  */
 
-import {
-  SchedulingEngine,
-  Participant,
-  Level,
-  ViolationSeverity,
-} from './index';
+import { Level, type Participant, SchedulingEngine, ViolationSeverity } from './index';
 import { generateDailyTasks } from './tasks/cli-task-factory';
-import { scheduleToGantt, ganttToAscii, buildTaskSummary } from './ui/gantt-bridge';
+import { buildTaskSummary, ganttToAscii, scheduleToGantt } from './ui/gantt-bridge';
 import { computeAllRestProfiles, computeRestFairness } from './web/utils/rest-calculator';
 
 // ─── Sample Participants ─────────────────────────────────────────────────────
@@ -21,13 +16,7 @@ const DAY_START = new Date(2026, 1, 15, 0, 0);
 const DAY_END = new Date(2026, 1, 16, 12, 0); // Extend to cover overnight tasks
 
 /** Helper to create a participant with full-day availability */
-function createP(
-  id: string,
-  name: string,
-  level: Level,
-  certs: string[],
-  group: string,
-): Participant {
+function createP(id: string, name: string, level: Level, certs: string[], group: string): Participant {
   return {
     id,
     name,

@@ -16,15 +16,9 @@
  * Usage: npx ts-node src/priority-map-analysis.ts
  */
 
-import {
-  Participant,
-  Level,
-  Task,
-  DEFAULT_CONFIG,
-  SchedulerConfig,
-} from './models/types';
-import { generateDailyTasks, resetSlotCounter, resetTaskCounter } from './tasks/cli-task-factory';
 import { optimize, resetAssignmentCounter } from './engine/optimizer';
+import { DEFAULT_CONFIG, Level, type Participant, type SchedulerConfig, type Task } from './models/types';
+import { generateDailyTasks, resetSlotCounter, resetTaskCounter } from './tasks/cli-task-factory';
 
 // ─── Participant Pool (identical to priority-simulation.ts) ──────────────────
 
@@ -32,12 +26,11 @@ const BASE_DATE = new Date(2026, 1, 15);
 const DAY_START = new Date(2026, 1, 15, 0, 0);
 const DAY_END = new Date(2026, 1, 16, 12, 0);
 
-function createP(
-  id: string, name: string, level: Level,
-  certs: string[], group: string,
-): Participant {
+function createP(id: string, name: string, level: Level, certs: string[], group: string): Participant {
   return {
-    id, name, level,
+    id,
+    name,
+    level,
     certifications: certs,
     group,
     availability: [{ start: DAY_START, end: DAY_END }],
@@ -74,7 +67,7 @@ const allParticipants: Participant[] = [
 
 /** Check if any slot in the task has a low-priority level entry (replaces preferJuniors). */
 function hasLowPriority(task: Task): boolean {
-  return task.slots.some(s => s.acceptableLevels.some(e => e.lowPriority));
+  return task.slots.some((s) => s.acceptableLevels.some((e) => e.lowPriority));
 }
 
 // ─── Candidate Pool Helper ───────────────────────────────────────────────────
@@ -86,9 +79,9 @@ function countEligiblePerSlot(task: Task): { avg: number; min: number; max: numb
   for (const slot of task.slots) {
     let eligible = 0;
     for (const p of allParticipants) {
-      if (!slot.acceptableLevels.some(e => e.level === p.level)) continue;
-      if (slot.requiredCertifications.some(c => !p.certifications.includes(c))) continue;
-      if (slot.forbiddenCertifications?.some(c => p.certifications.includes(c))) continue;
+      if (!slot.acceptableLevels.some((e) => e.level === p.level)) continue;
+      if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) continue;
       eligible++;
     }
     total += eligible;
@@ -108,8 +101,7 @@ type PriorityFn = (task: Task) => number;
 function v0_current(task: Task): number {
   if (task.sameGroupRequired) return 0;
   let score = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   score -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
@@ -131,8 +123,7 @@ function v5_candidatePool(task: Task): number {
 function v6_hybrid(task: Task): number {
   if (task.sameGroupRequired) return 0;
   let structural = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   structural -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   structural -= totalCerts * 3;
@@ -171,8 +162,7 @@ function vA_bottleneckHybrid(task: Task): number {
 
   // Structural component
   let structural = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   structural -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   structural -= totalCerts * 3;
@@ -201,8 +191,7 @@ function vB_penaltyAware(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
   let score = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   score -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
@@ -291,8 +280,7 @@ function vE_multiSignal(task: Task): number {
 
   // Signal 1: Structural (0-50 range, lower = harder)
   let structural = 50;
-  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0)
-    / Math.max(1, task.slots.length);
+  const avgLevels = task.slots.reduce((s, sl) => s + sl.acceptableLevels.length, 0) / Math.max(1, task.slots.length);
   structural -= (5 - avgLevels) * 5;
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   structural -= totalCerts * 3;
@@ -309,10 +297,7 @@ function vE_multiSignal(task: Task): number {
   const pool = Math.min(50, avg * 2);
 
   // Weighted blend
-  let score = 0.30 * (structural + penaltyRisk) +
-              0.30 * bottleneck +
-              0.20 * penaltyRisk +
-              0.20 * pool;
+  let score = 0.3 * (structural + penaltyRisk) + 0.3 * bottleneck + 0.2 * penaltyRisk + 0.2 * pool;
 
   if (task.isLight) score += 12;
   return Math.max(1, score);
@@ -336,18 +321,24 @@ function vE_multiSignal(task: Task): number {
 function vF_tieredPool(task: Task): number {
   if (task.sameGroupRequired) return 0;
 
-  const hasCerts = task.slots.some(s => s.requiredCertifications.length > 0);
-  const allL0Only = task.slots.every(s =>
-    s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0);
-  const hasExclusion = task.slots.some(s => (s.forbiddenCertifications?.length ?? 0) > 0);
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (hasLowPriority(task) && hasCerts) tier = 1;       // Hamama
-  else if (allL0Only && hasCerts) tier = 2;           // Shemesh
-  else if (hasCerts || hasExclusion) tier = 3;        // Karov, Mamtera
-  else if (allL0Only && !task.isLight) tier = 4;      // Aruga
-  else if (task.isLight) tier = 5;                    // Karovit
-  else tier = 3;                                      // Fallback
+  if (hasLowPriority(task) && hasCerts)
+    tier = 1; // Hamama
+  else if (allL0Only && hasCerts)
+    tier = 2; // Shemesh
+  else if (hasCerts || hasExclusion)
+    tier = 3; // Karov, Mamtera
+  else if (allL0Only && !task.isLight)
+    tier = 4; // Aruga
+  else if (task.isLight)
+    tier = 5; // Karovit
+  else tier = 3; // Fallback
 
   // Within-tier ordering by min eligible (tighter pool → first)
   const { min } = countEligiblePerSlot(task);
@@ -401,10 +392,10 @@ function stats(values: number[]) {
     max: sorted[n - 1],
     median: n % 2 === 0 ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2 : sorted[Math.floor(n / 2)],
     p5: sorted[Math.floor(n * 0.05)],
-    p10: sorted[Math.floor(n * 0.10)],
+    p10: sorted[Math.floor(n * 0.1)],
     p25: sorted[Math.floor(n * 0.25)],
     p75: sorted[Math.floor(n * 0.75)],
-    p90: sorted[Math.floor(n * 0.90)],
+    p90: sorted[Math.floor(n * 0.9)],
     p95: sorted[Math.floor(n * 0.95)],
   };
 }
@@ -520,7 +511,7 @@ console.log('── 1. FEASIBILITY (unfilled slots — lower mean = better) ─�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.unfilled);
+    const vals = r.runs.map((run) => run.unfilled);
     const s = stats(vals);
     rows.push({
       variant: r.name,
@@ -541,7 +532,7 @@ console.log('── 2. COMPOSITE SCORE (higher = better) ───────�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.compositeScore);
+    const vals = r.runs.map((run) => run.compositeScore);
     const s = stats(vals);
     rows.push({
       variant: r.name,
@@ -562,11 +553,11 @@ console.log('── 3. TOTAL PENALTY (lower = better) — key driver ───�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.totalPenalty);
+    const vals = r.runs.map((run) => run.totalPenalty);
     const s = stats(vals);
-    const zeroCount = vals.filter(v => v === 0).length;
-    const tenKCount = vals.filter(v => v === 10000).length;
-    const twentyKCount = vals.filter(v => v === 20000).length;
+    const zeroCount = vals.filter((v) => v === 0).length;
+    const tenKCount = vals.filter((v) => v === 10000).length;
+    const twentyKCount = vals.filter((v) => v === 20000).length;
     rows.push({
       variant: r.name,
       mean: s.mean.toFixed(0),
@@ -583,7 +574,7 @@ console.log('── 4. L0 FAIRNESS (stddev — lower = fairer) ─────�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.l0StdDev);
+    const vals = r.runs.map((run) => run.l0StdDev);
     const s = stats(vals);
     rows.push({
       variant: r.name,
@@ -601,7 +592,7 @@ console.log('── 5. SENIOR FAIRNESS (stddev — lower = fairer) ────�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.seniorStdDev);
+    const vals = r.runs.map((run) => run.seniorStdDev);
     const s = stats(vals);
     rows.push({
       variant: r.name,
@@ -619,8 +610,11 @@ console.log('── 6. MIN REST HOURS (higher = better) ────────
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const vals = r.runs.map(run => run.minRestHours).filter(v => isFinite(v));
-    if (vals.length === 0) { rows.push({ variant: r.name, mean: 'N/A' }); continue; }
+    const vals = r.runs.map((run) => run.minRestHours).filter((v) => isFinite(v));
+    if (vals.length === 0) {
+      rows.push({ variant: r.name, mean: 'N/A' });
+      continue;
+    }
     const s = stats(vals);
     rows.push({
       variant: r.name,
@@ -638,17 +632,17 @@ console.log('── 7. STABILITY (score CV% — lower = more stable) ───�
 {
   const rows: Record<string, unknown>[] = [];
   for (const r of allResults) {
-    const scoreVals = r.runs.map(run => run.compositeScore);
-    const unfilledVals = r.runs.map(run => run.unfilled);
+    const scoreVals = r.runs.map((run) => run.compositeScore);
+    const unfilledVals = r.runs.map((run) => run.unfilled);
     const s = stats(scoreVals);
     const u = stats(unfilledVals);
     const cv = s.mean !== 0 ? (s.stdDev / Math.abs(s.mean)) * 100 : 0;
     rows.push({
       variant: r.name,
       'score_CV%': cv.toFixed(2) + '%',
-      'score_stdDev': s.stdDev.toFixed(0),
-      'unfilled_stdDev': u.stdDev.toFixed(2),
-      'IQR_score': (s.p75 - s.p25).toFixed(0),
+      score_stdDev: s.stdDev.toFixed(0),
+      unfilled_stdDev: u.stdDev.toFixed(2),
+      IQR_score: (s.p75 - s.p25).toFixed(0),
     });
   }
   console.table(rows);
@@ -664,45 +658,45 @@ console.log('══════════════════════�
 
 {
   const dims = ['feasibility', 'score', 'l0Fair', 'seniorFair', 'penalty', 'stability', 'rest'] as const;
-  const weights: Record<typeof dims[number], number> = {
+  const weights: Record<(typeof dims)[number], number> = {
     feasibility: 0.25,
-    score: 0.20,
+    score: 0.2,
     l0Fair: 0.15,
     seniorFair: 0.05,
     penalty: 0.15,
-    stability: 0.10,
-    rest: 0.10,
+    stability: 0.1,
+    rest: 0.1,
   };
 
-  type DimMap = Record<typeof dims[number], number>;
+  type DimMap = Record<(typeof dims)[number], number>;
   const raw = new Map<string, DimMap>();
 
   for (const r of allResults) {
-    const unf = stats(r.runs.map(run => run.unfilled));
-    const sc = stats(r.runs.map(run => run.compositeScore));
-    const l0 = stats(r.runs.map(run => run.l0StdDev));
-    const sr = stats(r.runs.map(run => run.seniorStdDev));
-    const pen = stats(r.runs.map(run => run.totalPenalty));
-    const rst = stats(r.runs.map(run => run.minRestHours).filter(v => isFinite(v)));
+    const unf = stats(r.runs.map((run) => run.unfilled));
+    const sc = stats(r.runs.map((run) => run.compositeScore));
+    const l0 = stats(r.runs.map((run) => run.l0StdDev));
+    const sr = stats(r.runs.map((run) => run.seniorStdDev));
+    const pen = stats(r.runs.map((run) => run.totalPenalty));
+    const rst = stats(r.runs.map((run) => run.minRestHours).filter((v) => isFinite(v)));
     const cv = sc.mean !== 0 ? sc.stdDev / Math.abs(sc.mean) : 0;
 
     raw.set(r.name, {
-      feasibility: unf.mean,      // lower = better
-      score: -sc.mean,            // negate: lower = better
-      l0Fair: l0.mean,            // lower = better
-      seniorFair: sr.mean,        // lower = better
-      penalty: pen.mean,          // lower = better
-      stability: cv,              // lower = better
-      rest: -rst.mean,            // negate: lower = better
+      feasibility: unf.mean, // lower = better
+      score: -sc.mean, // negate: lower = better
+      l0Fair: l0.mean, // lower = better
+      seniorFair: sr.mean, // lower = better
+      penalty: pen.mean, // lower = better
+      stability: cv, // lower = better
+      rest: -rst.mean, // negate: lower = better
     });
   }
 
   // Rank per dimension
-  const ranks = new Map<string, Record<typeof dims[number], number>>();
+  const ranks = new Map<string, Record<(typeof dims)[number], number>>();
   for (const dim of dims) {
     const sorted = [...raw.entries()].sort((a, b) => a[1][dim] - b[1][dim]);
     sorted.forEach(([name], idx) => {
-      if (!ranks.has(name)) ranks.set(name, {} as Record<typeof dims[number], number>);
+      if (!ranks.has(name)) ranks.set(name, {} as Record<(typeof dims)[number], number>);
       ranks.get(name)![dim] = idx + 1;
     });
   }
@@ -718,15 +712,15 @@ console.log('══════════════════════�
     const avgRank = dims.reduce((s, d) => s + rk[d], 0) / dims.length;
     rows.push({
       variant: r.name,
-      'rk_feas': rk.feasibility,
-      'rk_score': rk.score,
-      'rk_l0': rk.l0Fair,
-      'rk_sr': rk.seniorFair,
-      'rk_pen': rk.penalty,
-      'rk_stab': rk.stability,
-      'rk_rest': rk.rest,
-      'AVG_RANK': avgRank.toFixed(2),
-      'WEIGHTED': weightedRank.toFixed(2),
+      rk_feas: rk.feasibility,
+      rk_score: rk.score,
+      rk_l0: rk.l0Fair,
+      rk_sr: rk.seniorFair,
+      rk_pen: rk.penalty,
+      rk_stab: rk.stability,
+      rk_rest: rk.rest,
+      AVG_RANK: avgRank.toFixed(2),
+      WEIGHTED: weightedRank.toFixed(2),
     });
   }
   rows.sort((a, b) => parseFloat(a['WEIGHTED'] as string) - parseFloat(b['WEIGHTED'] as string));
@@ -742,15 +736,15 @@ console.log('This shows whether each variant successfully assigns L0 to Hamama.\
   // Penalty = 10k per non-L0 Hamama assignment; there are 2 Hamama tasks/day
   // 0 penalty = both L0, 10k = one non-L0, 20k = both non-L0
   for (const r of allResults) {
-    const penalties = r.runs.map(run => run.totalPenalty);
-    const zero = penalties.filter(v => v === 0).length;
-    const tenK = penalties.filter(v => v === 10000).length;
-    const twentyK = penalties.filter(v => v === 20000).length;
+    const penalties = r.runs.map((run) => run.totalPenalty);
+    const zero = penalties.filter((v) => v === 0).length;
+    const tenK = penalties.filter((v) => v === 10000).length;
+    const twentyK = penalties.filter((v) => v === 20000).length;
     console.log(
       `${r.name.padEnd(16)} ` +
-      `both_L0=${((zero / ITERATIONS) * 100).toFixed(1).padStart(5)}%  ` +
-      `one_senior=${((tenK / ITERATIONS) * 100).toFixed(1).padStart(5)}%  ` +
-      `both_senior=${((twentyK / ITERATIONS) * 100).toFixed(1).padStart(5)}%`
+        `both_L0=${((zero / ITERATIONS) * 100).toFixed(1).padStart(5)}%  ` +
+        `one_senior=${((tenK / ITERATIONS) * 100).toFixed(1).padStart(5)}%  ` +
+        `both_senior=${((twentyK / ITERATIONS) * 100).toFixed(1).padStart(5)}%`,
     );
   }
 }

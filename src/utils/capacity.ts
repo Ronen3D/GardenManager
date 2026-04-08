@@ -9,7 +9,7 @@
  * config-store's computeAvailability()). This avoids double-subtraction.
  */
 
-import { Participant, ParticipantCapacity } from '../models/types';
+import type { Participant, ParticipantCapacity } from '../models/types';
 import { operationalDateKey } from './date-utils';
 
 /**
@@ -71,8 +71,13 @@ export function computeParticipantCapacity(
   // calendar day's operational period — the cursor must start there so the map
   // key aligns with operationalDateKey() for such tasks.
   const cursor = new Date(
-    scheduleStart.getFullYear(), scheduleStart.getMonth(), scheduleStart.getDate(),
-    dayStartHour, 0, 0, 0,
+    scheduleStart.getFullYear(),
+    scheduleStart.getMonth(),
+    scheduleStart.getDate(),
+    dayStartHour,
+    0,
+    0,
+    0,
   );
   if (cursor.getTime() > scheduleStart.getTime()) {
     cursor.setDate(cursor.getDate() - 1);

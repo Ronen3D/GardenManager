@@ -10,15 +10,15 @@
  */
 
 import {
-  Task,
-  Schedule,
-  Assignment,
-  Participant,
-  SlotRequirement,
-  LiveModeState,
+  type Assignment,
   AssignmentStatus,
+  type LiveModeState,
+  type Participant,
+  type Schedule,
+  type SlotRequirement,
+  type Task,
 } from '../models/types';
-import { groupColor, fmt, SVG_ICONS, escHtml, levelBadge, certBadges } from './ui-helpers';
+import { certBadges, escHtml, fmt, groupColor, levelBadge, SVG_ICONS } from './ui-helpers';
 
 // ─── Manual Build Context ──────────────────────────────────────────────────
 
@@ -27,14 +27,15 @@ export interface ManualBuildRenderCtx {
   selectedTaskId?: string;
   selectedSlotId?: string;
 }
-import { getDisplayOrderMap, getCategoryColorMap } from './config-store';
+
 import { isFutureTask } from '../engine/temporal';
+import { getCategoryColorMap, getDisplayOrderMap } from './config-store';
 
 // ─── Shared Helpers (canonical definitions — re-exported by schedule-grid-view) ─
 
 export function getUniqueStartTimes(tasks: Task[]): number[] {
   const times = new Set<number>();
-  tasks.forEach(t => times.add(new Date(t.timeBlock.start).getTime()));
+  tasks.forEach((t) => times.add(new Date(t.timeBlock.start).getTime()));
   return Array.from(times).sort((a, b) => a - b);
 }
 
@@ -45,14 +46,14 @@ export interface AssignedSlot {
 }
 
 export function getTaskAssignments(task: Task, schedule: Schedule): AssignedSlot[] {
-  const taskAssignments = schedule.assignments.filter(a => a.taskId === task.id);
-  const participantMap = new Map(schedule.participants.map(p => [p.id, p]));
-  return task.slots.map(slot => {
-    const assign = taskAssignments.find(a => a.slotId === slot.slotId);
+  const taskAssignments = schedule.assignments.filter((a) => a.taskId === task.id);
+  const participantMap = new Map(schedule.participants.map((p) => [p.id, p]));
+  return task.slots.map((slot) => {
+    const assign = taskAssignments.find((a) => a.slotId === slot.slotId);
     return {
       slot,
       assignment: assign,
-      participant: assign ? participantMap.get(assign.participantId) : undefined
+      participant: assign ? participantMap.get(assign.participantId) : undefined,
     };
   });
 }
@@ -82,16 +83,16 @@ function resolveDisplayOrder(cat: string): number {
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface SectionMetrics {
-  id: string;             // displayCategory value
-  title: string;          // human-readable label
+  id: string; // displayCategory value
+  title: string; // human-readable label
   tasks: Task[];
-  columnCount: number;    // data columns the table needs
-  rowCount: number;       // unique start times
-  totalSlots: number;     // sum of all slot requirements
+  columnCount: number; // data columns the table needs
+  rowCount: number; // unique start times
+  totalSlots: number; // sum of all slot requirements
   maxSlotsPerCell: number;
-  weight: number;         // computed layout weight
-  displayOrder: number;   // sort priority
-  wrapperClass: string;   // CSS class for type-specific tinting
+  weight: number; // computed layout weight
+  displayOrder: number; // sort priority
+  wrapperClass: string; // CSS class for type-specific tinting
 }
 
 export interface ColumnDefinition {
@@ -110,9 +111,9 @@ interface LayoutRow {
 
 export interface SectionPlacement {
   sectionId: string;
-  row: number;       // 1-indexed grid row
-  colStart: number;  // 1-indexed grid column start
-  colSpan: number;   // number of grid units to span
+  row: number; // 1-indexed grid row
+  colStart: number; // 1-indexed grid column start
+  colSpan: number; // number of grid units to span
 }
 
 export interface GridTemplate {
@@ -142,14 +143,16 @@ function resolveWrapperClass(cat: string): string {
  * Used for simple sections like hamama, mamtera, or custom categories.
  */
 function flatStrategy(tasks: Task[]): ColumnDefinition[] {
-  const sourceNames = [...new Set(tasks.map(t => t.sourceName || t.name))];
+  const sourceNames = [...new Set(tasks.map((t) => t.sourceName || t.name))];
   const header = sourceNames.join(', ');
 
-  return [{
-    key: 'all',
-    header,
-    matchSlots: (_task: Task, slots: AssignedSlot[]) => slots,
-  }];
+  return [
+    {
+      key: 'all',
+      header,
+      matchSlots: (_task: Task, slots: AssignedSlot[]) => slots,
+    },
+  ];
 }
 
 /**
@@ -176,8 +179,11 @@ function subTeamStrategy(tasks: Task[]): ColumnDefinition[] {
     // Try to find a human-readable name from the first matching slot
     let label: string | undefined;
     for (const t of tasks) {
-      const sample = t.slots.find(s => (s.subTeamId ?? '') === stId);
-      if (sample?.label) { label = sample.label; break; }
+      const sample = t.slots.find((s) => (s.subTeamId ?? '') === stId);
+      if (sample?.label) {
+        label = sample.label;
+        break;
+      }
     }
     if (!label) {
       label = subTeamIds.length === 1 ? categoryLabel : `${categoryLabel} #${subTeamIds.length - i}`;
@@ -186,8 +192,7 @@ function subTeamStrategy(tasks: Task[]): ColumnDefinition[] {
     return {
       key: `subteam-${stId || i}`,
       header: label,
-      matchSlots: (_task: Task, slots: AssignedSlot[]) =>
-        slots.filter(s => (s.slot.subTeamId ?? '') === stId),
+      matchSlots: (_task: Task, slots: AssignedSlot[]) => slots.filter((s) => (s.slot.subTeamId ?? '') === stId),
     };
   });
 }
@@ -201,17 +206,15 @@ function multiSourceSplitStrategy(tasks: Task[]): ColumnDefinition[] {
   const columns: ColumnDefinition[] = [];
 
   // Collect all slots once for ID extraction and label lookup
-  const allSlots = tasks.flatMap(t => t.slots);
-  const distinctTeamIds = [...new Set(
-    allSlots.map(s => s.subTeamId).filter(Boolean)
-  )] as string[];
+  const allSlots = tasks.flatMap((t) => t.slots);
+  const distinctTeamIds = [...new Set(allSlots.map((s) => s.subTeamId).filter(Boolean))] as string[];
   distinctTeamIds.sort();
 
   // Group non-team tasks by sourceName → one column per source
   const nonTeamSources: string[] = [];
   const nonTeamBySource = new Map<string, Task[]>();
   for (const t of tasks) {
-    if (!t.slots.some(s => s.subTeamId != null)) {
+    if (!t.slots.some((s) => s.subTeamId != null)) {
       const key = t.sourceName || t.name;
       if (!nonTeamBySource.has(key)) {
         nonTeamSources.push(key);
@@ -223,12 +226,11 @@ function multiSourceSplitStrategy(tasks: Task[]): ColumnDefinition[] {
 
   // Team columns first (they appear on the right in RTL)
   for (const teamId of distinctTeamIds) {
-    const label = allSlots.find(s => s.subTeamId === teamId)?.subTeamLabel ?? teamId;
+    const label = allSlots.find((s) => s.subTeamId === teamId)?.subTeamLabel ?? teamId;
     columns.push({
       key: `team-${teamId}`,
       header: label,
-      matchSlots: (_task: Task, slots: AssignedSlot[]) =>
-        slots.filter(s => s.slot.subTeamId === teamId),
+      matchSlots: (_task: Task, slots: AssignedSlot[]) => slots.filter((s) => s.slot.subTeamId === teamId),
     });
   }
 
@@ -238,7 +240,7 @@ function multiSourceSplitStrategy(tasks: Task[]): ColumnDefinition[] {
       key: `source-${sourceKey}`,
       header: sourceKey,
       matchSlots: (task: Task, slots: AssignedSlot[]) =>
-        (task.sourceName || task.name) === sourceKey && !task.slots.some(s => s.subTeamId != null) ? slots : [],
+        (task.sourceName || task.name) === sourceKey && !task.slots.some((s) => s.subTeamId != null) ? slots : [],
     });
   }
 
@@ -249,12 +251,12 @@ function multiSourceSplitStrategy(tasks: Task[]): ColumnDefinition[] {
  * Infer the best column strategy for a set of tasks based on their slot properties.
  */
 function inferColumnStrategy(tasks: Task[]): ColumnStrategy {
-  const hasTeams = tasks.some(t => t.slots.some(s => s.subTeamId != null));
-  const hasMultipleSources = new Set(tasks.map(t => t.sourceName || t.name)).size > 1;
+  const hasTeams = tasks.some((t) => t.slots.some((s) => s.subTeamId != null));
+  const hasMultipleSources = new Set(tasks.map((t) => t.sourceName || t.name)).size > 1;
 
   if (hasTeams || hasMultipleSources) return multiSourceSplitStrategy;
 
-  const hasSubTeams = tasks.some(t => t.slots.some(s => s.subTeamId));
+  const hasSubTeams = tasks.some((t) => t.slots.some((s) => s.subTeamId));
   if (hasSubTeams) return subTeamStrategy;
 
   return flatStrategy;
@@ -288,12 +290,12 @@ export function computeSectionMetrics(dayTasks: Task[]): SectionMetrics[] {
     // Compute max slots per cell: for each time × column, how many cards are there?
     let maxSlotsPerCell = 0;
     for (const timeNum of uniqueTimes) {
-      const timeTasks = tasks.filter(t => new Date(t.timeBlock.start).getTime() === timeNum);
+      const timeTasks = tasks.filter((t) => new Date(t.timeBlock.start).getTime() === timeNum);
       for (const col of columns) {
         let cellSlots = 0;
         for (const task of timeTasks) {
           // Count slots that match this column (without needing full assignment resolution)
-          const matchCount = task.slots.filter(s => {
+          const matchCount = task.slots.filter((s) => {
             // Simulate matchSlots logic based on column key
             if (col.key === 'all') return true;
             if (col.key.startsWith('subteam-')) {
@@ -319,7 +321,7 @@ export function computeSectionMetrics(dayTasks: Task[]): SectionMetrics[] {
     const weight = Math.max(1, columnCount * rowCount + totalSlots * 0.25);
 
     // Build title from task source names present
-    const sourceNames = [...new Set(tasks.map(t => t.sourceName || t.name))];
+    const sourceNames = [...new Set(tasks.map((t) => t.sourceName || t.name))];
     const title = sourceNames.filter(Boolean).join(' ו');
 
     sections.push({
@@ -371,7 +373,7 @@ export function assignRows(sections: SectionMetrics[]): LayoutRow[] {
     // Full-width promotion: section dominates the schedule
     if (section.weight > totalWeight * FULL_WIDTH_THRESHOLD && sorted.length > 1) {
       // Insert a dedicated row at position 0 (or after other promoted rows)
-      const insertIdx = rows.findIndex(r => r.sections.length === 0);
+      const insertIdx = rows.findIndex((r) => r.sections.length === 0);
       if (insertIdx >= 0) {
         rows[insertIdx].sections.push(section);
         rows[insertIdx].totalWeight = section.weight;
@@ -401,7 +403,7 @@ export function assignRows(sections: SectionMetrics[]): LayoutRow[] {
   }
 
   // Remove empty rows
-  const nonEmpty = rows.filter(r => r.sections.length > 0);
+  const nonEmpty = rows.filter((r) => r.sections.length > 0);
 
   // Within each row, sort sections by display order for consistent visual positioning
   for (const row of nonEmpty) {
@@ -439,8 +441,8 @@ export function generateGridTemplate(rows: LayoutRow[]): GridTemplate {
     }
 
     // Compute proportional spans
-    const rawSpans = row.sections.map(s =>
-      Math.max(MIN_COL_SPAN, Math.round((s.weight / row.totalWeight) * GRID_UNITS))
+    const rawSpans = row.sections.map((s) =>
+      Math.max(MIN_COL_SPAN, Math.round((s.weight / row.totalWeight) * GRID_UNITS)),
     );
 
     // Adjust to sum exactly to GRID_UNITS
@@ -448,8 +450,10 @@ export function generateGridTemplate(rows: LayoutRow[]): GridTemplate {
     while (sum !== GRID_UNITS) {
       if (sum < GRID_UNITS) {
         // Give extra to the heaviest section (index 0 after sorting, but find the max-weight one)
-        const maxIdx = rawSpans.reduce((best, val, i) =>
-          row.sections[i].weight > row.sections[best].weight ? i : best, 0);
+        const maxIdx = rawSpans.reduce(
+          (best, val, i) => (row.sections[i].weight > row.sections[best].weight ? i : best),
+          0,
+        );
         rawSpans[maxIdx]++;
         sum++;
       } else {
@@ -547,7 +551,7 @@ function renderAssignmentCard(
     // Empty slot: show label + hints in manual-build mode
     let slotHint = '';
     if (isManualActive) {
-      const levels = slot.acceptableLevels.map(l => l.level).join('/');
+      const levels = slot.acceptableLevels.map((l) => l.level).join('/');
       const certs = slot.requiredCertifications;
       slotHint = `<div class="manual-slot-hint">${levels ? `${levels}` : ''}${certs.length ? ' ' + certBadges(certs, '') : ''}</div>`;
     }
@@ -562,7 +566,7 @@ function renderAssignmentCard(
 }
 
 function renderTimeCell(time: Date, timeNum: number): string {
-  return `<td class="time-cell time-cell-inspectable" data-time-ms="${timeNum}" role="button" tabindex="0" title="הצג זמינות לפי פק\"ל">${fmt(time)}</td>`;
+  return `<td class="time-cell time-cell-inspectable" data-time-ms="${timeNum}" role="button" tabindex="0" title="הצג זמינות לפי פק"ל">${fmt(time)}</td>`;
 }
 
 // ─── Unified Section Table Renderer ─────────────────────────────────────────
@@ -583,35 +587,35 @@ export function renderSectionTable(
   const columns = strategy(section.tasks);
   const uniqueTimes = getUniqueStartTimes(section.tasks);
 
-  const rows = uniqueTimes.map(timeNum => {
-    const time = new Date(timeNum);
-    const timeTasks = section.tasks.filter(t =>
-      new Date(t.timeBlock.start).getTime() === timeNum
-    );
+  const rows = uniqueTimes
+    .map((timeNum) => {
+      const time = new Date(timeNum);
+      const timeTasks = section.tasks.filter((t) => new Date(t.timeBlock.start).getTime() === timeNum);
 
-    const cells = columns.map(col => {
-      const cellCards = timeTasks.flatMap(task => {
-        const allSlots = getTaskAssignments(task, schedule);
-        const matched = col.matchSlots(task, allSlots);
-        return matched.map(s =>
-          renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode, manualCtx)
-        );
+      const cells = columns.map((col) => {
+        const cellCards = timeTasks.flatMap((task) => {
+          const allSlots = getTaskAssignments(task, schedule);
+          const matched = col.matchSlots(task, allSlots);
+          return matched.map((s) =>
+            renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode, manualCtx),
+          );
+        });
+        return `<td class="task-cell">${cellCards.join('')}</td>`;
       });
-      return `<td class="task-cell">${cellCards.join('')}</td>`;
-    });
 
-    // Skip rows where all data cells are empty
-    if (cells.every(c => c === '<td class="task-cell"></td>')) return '';
+      // Skip rows where all data cells are empty
+      if (cells.every((c) => c === '<td class="task-cell"></td>')) return '';
 
-    return `
+      return `
       <tr data-time="${timeNum}">
         ${renderTimeCell(time, timeNum)}
         ${cells.join('')}
       </tr>
     `;
-  }).join('');
+    })
+    .join('');
 
-  const headerCells = columns.map(c => `<th>${c.header}</th>`).join('');
+  const headerCells = columns.map((c) => `<th>${c.header}</th>`).join('');
   const wrapperClass = section.wrapperClass
     ? `schedule-table-wrapper ${section.wrapperClass}`
     : 'schedule-table-wrapper';
@@ -656,19 +660,21 @@ export function renderScheduleGridV2(
   const template = generateGridTemplate(rows);
 
   // 4. Build placement map for quick lookup
-  const placementMap = new Map(template.placements.map(p => [p.sectionId, p]));
+  const placementMap = new Map(template.placements.map((p) => [p.sectionId, p]));
 
   // 5. Render each section table with inline grid placement
-  const sectionHtml = sections.map(section => {
-    const placement = placementMap.get(section.id);
-    if (!placement) return '';
+  const sectionHtml = sections
+    .map((section) => {
+      const placement = placementMap.get(section.id);
+      if (!placement) return '';
 
-    const gridStyle = `grid-row: ${placement.row}; grid-column: ${placement.colStart} / span ${placement.colSpan};`;
-    const tableHtml = renderSectionTable(section, schedule, liveMode, manualCtx);
-    if (!tableHtml) return '';
+      const gridStyle = `grid-row: ${placement.row}; grid-column: ${placement.colStart} / span ${placement.colSpan};`;
+      const tableHtml = renderSectionTable(section, schedule, liveMode, manualCtx);
+      if (!tableHtml) return '';
 
-    return `<div style="${gridStyle}">${tableHtml}</div>`;
-  }).join('');
+      return `<div style="${gridStyle}">${tableHtml}</div>`;
+    })
+    .join('');
 
   return `
     <div class="schedule-grid-container schedule-grid-smart${manualCtx?.active ? ' schedule-grid-compact' : ''}">

@@ -19,23 +19,21 @@
  * correct Hebrew (Right-to-Left) rendering.
  */
 
-import { jsPDF } from 'jspdf';
-import autoTable, { type UserOptions, type CellDef } from 'jspdf-autotable';
-import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';
-import {
-  Schedule,
-  Task,
-} from '../models/types';
-import { getTaskAssignments, getUniqueStartTimes } from './layout-engine';
-import { HEBREW_DAYS, fmtTime } from '../utils/date-utils';
 import { addDays } from 'date-fns';
+import { jsPDF } from 'jspdf';
+import autoTable, { type CellDef, type UserOptions } from 'jspdf-autotable';
+import type { Schedule, Task } from '../models/types';
+import { fmtTime, HEBREW_DAYS } from '../utils/date-utils';
 import {
-  computeSectionMetrics,
   assignRows,
+  computeSectionMetrics,
   generateGridTemplate,
+  getTaskAssignments,
+  getUniqueStartTimes,
   SectionMetrics,
   SectionPlacement,
 } from './layout-engine';
+import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';
 
 /** Resolve a task's display category. */
 function getDisplayCategory(task: Task): string {
@@ -45,16 +43,27 @@ function getDisplayCategory(task: Task): string {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const PAGE_MARGIN = 8;                // mm from each edge
-const COL_GAP = 4;                    // mm between grid columns
-const ROW_GAP = 3;                    // mm between grid rows
-const TABLE_LABEL_OFFSET = 3;         // mm from label text to table top
+const PAGE_MARGIN = 8; // mm from each edge
+const COL_GAP = 4; // mm between grid columns
+const ROW_GAP = 3; // mm between grid rows
+const TABLE_LABEL_OFFSET = 3; // mm from label text to table top
 
 /** Named Hebrew shift labels by start-hour ranges */
 const SHIFT_NAMES: Record<number, string> = {
-  5: 'בוקר', 6: 'בוקר', 7: 'בוקר', 8: 'בוקר',
-  12: 'צהריים', 13: 'צהריים', 14: 'צהריים',
-  17: 'ערב', 18: 'ערב', 19: 'ערב', 20: 'ערב', 21: 'לילה', 22: 'לילה', 23: 'לילה',
+  5: 'בוקר',
+  6: 'בוקר',
+  7: 'בוקר',
+  8: 'בוקר',
+  12: 'צהריים',
+  13: 'צהריים',
+  14: 'צהריים',
+  17: 'ערב',
+  18: 'ערב',
+  19: 'ערב',
+  20: 'ערב',
+  21: 'לילה',
+  22: 'לילה',
+  23: 'לילה',
 };
 
 /** Hex colour string → [R, G, B] tuple */
@@ -80,15 +89,26 @@ function rtl(text: string): string {
 
   for (const ch of text) {
     const isHeb = hebrewRange.test(ch);
-    const isNeutral = /[\s\-–—:;,.!?()\[\]{}\/\\#@'"]/.test(ch);
-    if (current.length === 0) { currentIsHebrew = isHeb; current = ch; }
-    else if (isNeutral) { current += ch; }
-    else if (isHeb === currentIsHebrew) { current += ch; }
-    else { segments.push({ text: current, isHebrew: currentIsHebrew }); current = ch; currentIsHebrew = isHeb; }
+    const isNeutral = /[\s\-–—:;,.!?()[\]{}/\\#@'"]/.test(ch);
+    if (current.length === 0) {
+      currentIsHebrew = isHeb;
+      current = ch;
+    } else if (isNeutral) {
+      current += ch;
+    } else if (isHeb === currentIsHebrew) {
+      current += ch;
+    } else {
+      segments.push({ text: current, isHebrew: currentIsHebrew });
+      current = ch;
+      currentIsHebrew = isHeb;
+    }
   }
   if (current) segments.push({ text: current, isHebrew: currentIsHebrew });
 
-  return segments.map(s => s.isHebrew ? [...s.text].reverse().join('') : s.text).reverse().join('');
+  return segments
+    .map((s) => (s.isHebrew ? [...s.text].reverse().join('') : s.text))
+    .reverse()
+    .join('');
 }
 
 // ─── PDF helpers ─────────────────────────────────────────────────────────────
@@ -102,7 +122,7 @@ function createDoc(): jsPDF {
 }
 
 function getDayWindow(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): { start: Date; end: Date } {
-  const allStarts = schedule.tasks.map(t => new Date(t.timeBlock.start).getTime());
+  const allStarts = schedule.tasks.map((t) => new Date(t.timeBlock.start).getTime());
   const scheduleStart = new Date(Math.min(...allStarts));
   const dayAnchor = addDays(scheduleStart, dayIndex - 1);
   const dayStart = new Date(dayAnchor);
@@ -113,18 +133,17 @@ function getDayWindow(schedule: Schedule, dayIndex: number, dayStartHour: number
 
 function getTasksForDay(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): Task[] {
   const { start, end } = getDayWindow(schedule, dayIndex, dayStartHour);
-  return schedule.tasks.filter(t => {
+  return schedule.tasks.filter((t) => {
     const s = new Date(t.timeBlock.start).getTime();
     return s >= start.getTime() && s < end.getTime();
   });
 }
 
 function getNumDays(schedule: Schedule): number {
-  const starts = schedule.tasks.map(t => new Date(t.timeBlock.start).getTime());
-  const ends = schedule.tasks.map(t => new Date(t.timeBlock.end).getTime());
+  const starts = schedule.tasks.map((t) => new Date(t.timeBlock.start).getTime());
+  const ends = schedule.tasks.map((t) => new Date(t.timeBlock.end).getTime());
   return Math.ceil((Math.max(...ends) - Math.min(...starts)) / (24 * 3600_000));
 }
-
 
 /** Format time — if ≤ 2 unique shifts in a category, use named labels; otherwise HH:MM */
 function fmtTimeLabel(d: Date, totalShifts: number): string {
@@ -135,24 +154,26 @@ function fmtTimeLabel(d: Date, totalShifts: number): string {
   return fmtTime(d);
 }
 
-
-
 /** Draw centred page title + day subtitle. Returns Y below the separator line. */
 function drawTitle(doc: jsPDF, dayTitle: string, daySubtitle: string): number {
   const w = doc.internal.pageSize.getWidth();
 
   // Main title — "ניהול גינה" centred
-  doc.setFontSize(16); doc.setTextColor(55, 65, 81);
+  doc.setFontSize(16);
+  doc.setTextColor(55, 65, 81);
   doc.text(rtl('ניהול גינה'), w / 2, 11, { align: 'center' });
 
   // Day subtitle right-aligned
-  doc.setFontSize(9); doc.setTextColor(100, 100, 100);
+  doc.setFontSize(9);
+  doc.setTextColor(100, 100, 100);
   doc.text(rtl(dayTitle), w - PAGE_MARGIN, 18, { align: 'right' });
 
-  doc.setFontSize(7); doc.setTextColor(150, 150, 150);
+  doc.setFontSize(7);
+  doc.setTextColor(150, 150, 150);
   doc.text(rtl(daySubtitle), w - PAGE_MARGIN, 22, { align: 'right' });
 
-  doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3);
+  doc.setDrawColor(200, 200, 200);
+  doc.setLineWidth(0.3);
   doc.line(PAGE_MARGIN, 24, w - PAGE_MARGIN, 24);
   return 27;
 }
@@ -163,17 +184,27 @@ function tblDefaults(doc: jsPDF, y: number, fontSize = 7): Partial<UserOptions> 
     startY: y,
     theme: 'grid',
     styles: {
-      font: 'Rubik', fontStyle: 'normal', fontSize,
-      halign: 'right', cellPadding: { top: 1.8, bottom: 1.8, left: 1, right: 1 },
-      lineColor: [210, 210, 210], lineWidth: 0.2,
+      font: 'Rubik',
+      fontStyle: 'normal',
+      fontSize,
+      halign: 'right',
+      cellPadding: { top: 1.8, bottom: 1.8, left: 1, right: 1 },
+      lineColor: [210, 210, 210],
+      lineWidth: 0.2,
       overflow: 'ellipsize',
     },
     headStyles: {
-      fillColor: [55, 65, 81], textColor: [255, 255, 255],
-      fontSize, halign: 'center', fontStyle: 'normal', cellPadding: 1.5,
+      fillColor: [55, 65, 81],
+      textColor: [255, 255, 255],
+      fontSize,
+      halign: 'center',
+      fontStyle: 'normal',
+      cellPadding: 1.5,
     },
     margin: { right: PAGE_MARGIN, left: PAGE_MARGIN, top: PAGE_MARGIN, bottom: PAGE_MARGIN },
-    didParseCell: (data: any) => { data.cell.styles.font = 'Rubik'; },
+    didParseCell: (data: any) => {
+      data.cell.styles.font = 'Rubik';
+    },
   };
 }
 
@@ -191,11 +222,7 @@ interface GridRegion {
 }
 
 /** Convert layout-engine grid template to positioned PDF regions grouped by row. */
-function computeGridLayoutSmart(
-  dayTasks: Task[],
-  pageW: number,
-  topY: number,
-): { rows: GridRegion[][]; } {
+function computeGridLayoutSmart(dayTasks: Task[], pageW: number, topY: number): { rows: GridRegion[][] } {
   const sections = computeSectionMetrics(dayTasks);
   if (sections.length === 0) return { rows: [] };
 
@@ -205,7 +232,7 @@ function computeGridLayoutSmart(
   const unitWidth = usable / 12;
 
   // Group placements by row
-  const placementMap = new Map(template.placements.map(p => [p.sectionId, p]));
+  const placementMap = new Map(template.placements.map((p) => [p.sectionId, p]));
   const rowMap = new Map<number, GridRegion[]>();
 
   for (const section of sections) {
@@ -252,28 +279,32 @@ function computeGridLayoutSmart(
  * strategy logic as the on-screen layout engine. Returns the finalY.
  */
 function renderSectionTablePdf(
-  doc: jsPDF, tasks: Task[], schedule: Schedule,
-  region: GridRegion, fontSize: number,
+  doc: jsPDF,
+  tasks: Task[],
+  schedule: Schedule,
+  region: GridRegion,
+  fontSize: number,
 ): number {
   if (tasks.length === 0) return region.y;
 
   // Section label
-  doc.setFontSize(fontSize); doc.setTextColor(80, 80, 80);
+  doc.setFontSize(fontSize);
+  doc.setTextColor(80, 80, 80);
   doc.text(rtl(region.label), region.x + region.width - 1, region.y, { align: 'right' });
   const tableY = region.y + TABLE_LABEL_OFFSET;
 
   // ── Infer column strategy from slot properties (mirrors layout-engine logic) ──
-  const hasTeams = tasks.some(t => t.slots.some(s => s.subTeamId != null));
-  const hasMultipleSources = new Set(tasks.map(t => t.sourceName || t.name)).size > 1;
-  const hasSubTeams = tasks.some(t => t.slots.some(s => s.subTeamId));
+  const hasTeams = tasks.some((t) => t.slots.some((s) => s.subTeamId != null));
+  const hasMultipleSources = new Set(tasks.map((t) => t.sourceName || t.name)).size > 1;
+  const hasSubTeams = tasks.some((t) => t.slots.some((s) => s.subTeamId));
 
   type ColDef = { header: string; build: (timeNum: number) => { content: string; color: string } };
   const columns: ColDef[] = [];
 
   if (hasTeams || hasMultipleSources) {
     // ── Multi-source split strategy ──
-    const teamTasks = tasks.filter(t => t.slots.some(s => s.subTeamId != null));
-    const nonTeamTasks = tasks.filter(t => !t.slots.some(s => s.subTeamId != null));
+    const teamTasks = tasks.filter((t) => t.slots.some((s) => s.subTeamId != null));
+    const nonTeamTasks = tasks.filter((t) => !t.slots.some((s) => s.subTeamId != null));
     const nonTeamBySource = new Map<string, Task[]>();
     for (const t of nonTeamTasks) {
       const key = t.sourceName || t.name;
@@ -286,28 +317,37 @@ function renderSectionTablePdf(
       columns.push({
         header: sourceKey,
         build: (timeNum) => {
-          const atTime = sourceTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
-          const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-            .filter(s => s.participant).map(s => rtl(s.participant!.name))).join('\n\n');
+          const atTime = sourceTasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
+          const names = atTime
+            .flatMap((tk) =>
+              getTaskAssignments(tk, schedule)
+                .filter((s) => s.participant)
+                .map((s) => rtl(s.participant!.name)),
+            )
+            .join('\n\n');
           return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
         },
       });
     }
 
     // Team-based columns (deterministic order)
-    const allTeamSlots = teamTasks.flatMap(tk => tk.slots);
-    const distinctTeamIds = [...new Set(allTeamSlots.map(s => s.subTeamId).filter(Boolean))] as string[];
+    const allTeamSlots = teamTasks.flatMap((tk) => tk.slots);
+    const distinctTeamIds = [...new Set(allTeamSlots.map((s) => s.subTeamId).filter(Boolean))] as string[];
     distinctTeamIds.sort();
 
     for (const teamId of distinctTeamIds) {
-      const label = allTeamSlots.find(s => s.subTeamId === teamId)?.subTeamLabel ?? teamId;
+      const label = allTeamSlots.find((s) => s.subTeamId === teamId)?.subTeamLabel ?? teamId;
       columns.push({
         header: label,
         build: (timeNum) => {
-          const atTime = teamTasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
-          const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-            .filter(s => s.slot.subTeamId === teamId && s.participant)
-            .map(s => rtl(s.participant!.name))).join('\n\n');
+          const atTime = teamTasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
+          const names = atTime
+            .flatMap((tk) =>
+              getTaskAssignments(tk, schedule)
+                .filter((s) => s.slot.subTeamId === teamId && s.participant)
+                .map((s) => rtl(s.participant!.name)),
+            )
+            .join('\n\n');
           return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
         },
       });
@@ -319,7 +359,10 @@ function renderSectionTablePdf(
     for (const t of tasks) {
       for (const s of t.slots) {
         const id = s.subTeamId ?? '';
-        if (!seen.has(id)) { seen.add(id); subTeamIds.push(id); }
+        if (!seen.has(id)) {
+          seen.add(id);
+          subTeamIds.push(id);
+        }
       }
     }
 
@@ -329,8 +372,11 @@ function renderSectionTablePdf(
       // Try to find a label from slot metadata
       let label: string | undefined;
       for (const t of tasks) {
-        const sample = t.slots.find(s => (s.subTeamId ?? '') === stId);
-        if (sample?.label) { label = sample.label; break; }
+        const sample = t.slots.find((s) => (s.subTeamId ?? '') === stId);
+        if (sample?.label) {
+          label = sample.label;
+          break;
+        }
       }
       if (!label) {
         label = subTeamIds.length === 1 ? categoryLabel : `${categoryLabel} #${subTeamIds.length - i}`;
@@ -340,10 +386,14 @@ function renderSectionTablePdf(
       columns.push({
         header: label,
         build: (timeNum) => {
-          const atTime = tasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
-          const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-            .filter(s => (s.slot.subTeamId ?? '') === capturedStId && s.participant)
-            .map(s => rtl(s.participant!.name))).join('\n\n');
+          const atTime = tasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
+          const names = atTime
+            .flatMap((tk) =>
+              getTaskAssignments(tk, schedule)
+                .filter((s) => (s.slot.subTeamId ?? '') === capturedStId && s.participant)
+                .map((s) => rtl(s.participant!.name)),
+            )
+            .join('\n\n');
           return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
         },
       });
@@ -353,9 +403,14 @@ function renderSectionTablePdf(
     columns.push({
       header: region.label,
       build: (timeNum) => {
-        const atTime = tasks.filter(tk => new Date(tk.timeBlock.start).getTime() === timeNum);
-        const names = atTime.flatMap(tk => getTaskAssignments(tk, schedule)
-          .filter(s => s.participant).map(s => rtl(s.participant!.name))).join('\n\n');
+        const atTime = tasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
+        const names = atTime
+          .flatMap((tk) =>
+            getTaskAssignments(tk, schedule)
+              .filter((s) => s.participant)
+              .map((s) => rtl(s.participant!.name)),
+          )
+          .join('\n\n');
         return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
       },
     });
@@ -368,7 +423,7 @@ function renderSectionTablePdf(
 
   // Build header (data columns + time column rightmost)
   const head: CellDef[] = [
-    ...columns.map(c => ({ content: rtl(c.header), styles: { halign: 'center' as const } })),
+    ...columns.map((c) => ({ content: rtl(c.header), styles: { halign: 'center' as const } })),
     { content: rtl('זמן'), styles: { halign: 'center' as const } },
   ];
 
@@ -378,9 +433,9 @@ function renderSectionTablePdf(
     fillColor: tint(hexColor) as [number, number, number],
   });
 
-  const body: CellDef[][] = uniqueTimes.map(timeNum => {
+  const body: CellDef[][] = uniqueTimes.map((timeNum) => {
     const time = new Date(timeNum);
-    const cells: CellDef[] = columns.map(col => {
+    const cells: CellDef[] = columns.map((col) => {
       const { content, color: cellColor } = col.build(timeNum);
       return { content, styles: content === '—' ? emptyStyle : filledStyle(cellColor) };
     });
@@ -438,9 +493,9 @@ function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
     }
   }
 
-  const dayTaskIds = new Set(dayTasks.map(t => t.id));
-  const dayAssignments = schedule.assignments.filter(a => dayTaskIds.has(a.taskId));
-  const uniqueParticipants = new Set(dayAssignments.map(a => a.participantId)).size;
+  const dayTaskIds = new Set(dayTasks.map((t) => t.id));
+  const dayAssignments = schedule.assignments.filter((a) => dayTaskIds.has(a.taskId));
+  const uniqueParticipants = new Set(dayAssignments.map((a) => a.participantId)).size;
 
   let size = 9;
   if (maxRows > 6 || uniqueParticipants > 30) size = Math.min(size, 8);
@@ -460,15 +515,12 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStar
   const dayName = HEBREW_DAYS[start.getDay()];
   const numDays = getNumDays(schedule);
 
-  const topY = drawTitle(
-    doc,
-    `יום ${dayName}`,
-    `יום ${dayIndex} / ${numDays}`,
-  );
+  const topY = drawTitle(doc, `יום ${dayName}`, `יום ${dayIndex} / ${numDays}`);
 
   const dayTasks = getTasksForDay(schedule, dayIndex, dayStartHour);
   if (dayTasks.length === 0) {
-    doc.setFontSize(10); doc.setTextColor(150, 150, 150);
+    doc.setFontSize(10);
+    doc.setTextColor(150, 150, 150);
     doc.text(rtl('אין משימות ביום זה'), doc.internal.pageSize.getWidth() / 2, topY + 15, { align: 'center' });
     return;
   }

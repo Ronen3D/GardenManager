@@ -21,7 +21,18 @@ npm run electron:dev     # Dev mode: Vite + Electron concurrently
 npm run electron:build   # Production: Vite + tsc + electron-builder (Windows NSIS)
 ```
 
-There is no external test framework — unit tests use a custom `assert()` function in `src/test.ts` with console pass/fail output. No linter or formatter is configured.
+There is no external test framework — unit tests use a custom `assert()` function in `src/test.ts` with console pass/fail output.
+
+### Linting & Formatting (Biome)
+
+```bash
+npm run lint             # Check for lint issues and formatting
+npm run lint:fix         # Auto-fix safe lint issues
+npm run format           # Format all files
+npm run format:check     # Check formatting without writing
+```
+
+Biome handles both linting and formatting via `biome.json`. Most lint violations are set to `warn` (non-blocking). Run `npm run lint:fix` before committing.
 
 ### E2E Tests (Playwright)
 

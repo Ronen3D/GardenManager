@@ -3,18 +3,29 @@
  * Measures wall-clock time over many iterations on realistic data.
  */
 
-interface TimeBlock { start: Date; end: Date; }
+interface TimeBlock {
+  start: Date;
+  end: Date;
+}
 interface Task {
-  id: string; name: string; timeBlock: TimeBlock;
-  blocksConsecutive: boolean; restRuleId?: string;
+  id: string;
+  name: string;
+  timeBlock: TimeBlock;
+  blocksConsecutive: boolean;
+  restRuleId?: string;
   loadWindows?: { weight: number }[];
   [key: string]: unknown;
 }
-interface Assignment { id: string; taskId: string; slotId: string; participantId: string; }
+interface Assignment {
+  id: string;
+  taskId: string;
+  slotId: string;
+  participantId: string;
+}
 
 function effectivelyBlocksAt(task: Task, edge: 'start' | 'end'): boolean {
   if (task.loadWindows && task.loadWindows.length > 0) {
-    return task.loadWindows.some(w => w.weight >= 1.0);
+    return task.loadWindows.some((w) => w.weight >= 1.0);
   }
   return task.blocksConsecutive;
 }
@@ -27,11 +38,12 @@ const BREAK_MS = 5 * HOUR;
 
 function oldHC12(pid: string, byP: Map<string, Assignment[]>, tm: Map<string, Task>): boolean {
   const pAssignments = (byP.get(pid) || [])
-    .map(a => ({ assignment: a, task: tm.get(a.taskId) }))
+    .map((a) => ({ assignment: a, task: tm.get(a.taskId) }))
     .filter((x): x is { assignment: Assignment; task: Task } => x.task != null)
     .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
   for (let x = 0; x < pAssignments.length - 1; x++) {
-    const cur = pAssignments[x]; const nxt = pAssignments[x + 1];
+    const cur = pAssignments[x];
+    const nxt = pAssignments[x + 1];
     if (cur.task.id === nxt.task.id) continue;
     const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
     if (gap > 0) continue;
@@ -42,11 +54,12 @@ function oldHC12(pid: string, byP: Map<string, Assignment[]>, tm: Map<string, Ta
 
 function oldHC14(pid: string, byP: Map<string, Assignment[]>, tm: Map<string, Task>, breakMs: number): boolean {
   const pAssignments = (byP.get(pid) || [])
-    .map(a => ({ assignment: a, task: tm.get(a.taskId) }))
+    .map((a) => ({ assignment: a, task: tm.get(a.taskId) }))
     .filter((x): x is { assignment: Assignment; task: Task } => x.task != null && !!x.task.restRuleId)
     .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
   for (let x = 0; x < pAssignments.length - 1; x++) {
-    const cur = pAssignments[x]; const nxt = pAssignments[x + 1];
+    const cur = pAssignments[x];
+    const nxt = pAssignments[x + 1];
     if (cur.task.id === nxt.task.id) continue;
     const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
     if (gap < breakMs) return false;
@@ -67,7 +80,8 @@ function newHC12(pid: string, byP: Map<string, Assignment[]>, tm: Map<string, Ta
   }
   _hcScratch.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
   for (let x = 0; x < _hcScratch.length - 1; x++) {
-    const cur = _hcScratch[x]; const nxt = _hcScratch[x + 1];
+    const cur = _hcScratch[x];
+    const nxt = _hcScratch[x + 1];
     if (cur.id === nxt.id) continue;
     const gap = nxt.timeBlock.start.getTime() - cur.timeBlock.end.getTime();
     if (gap > 0) continue;
@@ -85,7 +99,8 @@ function newHC14(pid: string, byP: Map<string, Assignment[]>, tm: Map<string, Ta
   }
   _hcScratch.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
   for (let x = 0; x < _hcScratch.length - 1; x++) {
-    const cur = _hcScratch[x]; const nxt = _hcScratch[x + 1];
+    const cur = _hcScratch[x];
+    const nxt = _hcScratch[x + 1];
     if (cur.id === nxt.id) continue;
     const gap = nxt.timeBlock.start.getTime() - cur.timeBlock.end.getTime();
     if (gap < breakMs) return false;
@@ -104,7 +119,7 @@ const tasks: Task[] = [];
 const taskMap = new Map<string, Task>();
 for (let ti = 0; ti < TASK_COUNT; ti++) {
   const startH = 5 + Math.floor(Math.random() * 16); // 5am to 9pm
-  const dur = 2 + Math.floor(Math.random() * 4);      // 2-5 hours
+  const dur = 2 + Math.floor(Math.random() * 4); // 2-5 hours
   const t: Task = {
     id: `t${ti}`,
     name: `Task${ti}`,
@@ -174,13 +189,17 @@ const newNs = Number(process.hrtime.bigint() - t0new);
 
 const oldMs = oldNs / 1e6;
 const newMs = newNs / 1e6;
-const speedup = ((oldMs - newMs) / oldMs * 100).toFixed(1);
+const speedup = (((oldMs - newMs) / oldMs) * 100).toFixed(1);
 const oldPerCall = (oldNs / (ITERATIONS * 4) / 1000).toFixed(2); // 4 calls per iter
 const newPerCall = (newNs / (ITERATIONS * 4) / 1000).toFixed(2);
 
 out.push(`=== HC-12/HC-14 Micro-Benchmark ===`);
-out.push(`Participants: ${PARTICIPANT_COUNT}, Assignments/participant: ${ASSIGNMENTS_PER_PARTICIPANT}, Tasks: ${TASK_COUNT}`);
-out.push(`Iterations: ${ITERATIONS.toLocaleString()} (× 4 calls each = ${(ITERATIONS * 4).toLocaleString()} total calls)`);
+out.push(
+  `Participants: ${PARTICIPANT_COUNT}, Assignments/participant: ${ASSIGNMENTS_PER_PARTICIPANT}, Tasks: ${TASK_COUNT}`,
+);
+out.push(
+  `Iterations: ${ITERATIONS.toLocaleString()} (× 4 calls each = ${(ITERATIONS * 4).toLocaleString()} total calls)`,
+);
 out.push(``);
 out.push(`OLD (.map/.filter/.sort): ${oldMs.toFixed(1)} ms total, ${oldPerCall} µs/call`);
 out.push(`NEW (_hcScratch):         ${newMs.toFixed(1)} ms total, ${newPerCall} µs/call`);
