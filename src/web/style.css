@@ -1256,6 +1256,11 @@ select.input-sm {
   color: var(--text-muted);
   font-size: 0.85rem;
 }
+.time-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
 
 /* ─── Template Cards ─────────────────────────────────── */
 .template-list {
@@ -4394,6 +4399,10 @@ tr.now-row-animate > td.time-cell {
 .badge-orphan-label {
   color: #e74c3c;
   font-style: italic;
+}
+.badge-orphan-icon {
+  color: #e74c3c;
+  font-size: 0.85em;
 }
 
 /* Color swatch in-use indicator (dimmed) */

@@ -57,6 +57,16 @@ function templateBadge(tpl: { color?: string; name: string }): string {
   return `<span class="badge" style="background:${color}">${escHtml(tpl.name)}</span>`;
 }
 
+/** Check if any slot in a template references a deleted certification. */
+function hasOrphanedSlotCerts(tpl: { slots: { requiredCertifications: string[]; forbiddenCertifications?: string[] }[]; subTeams: { slots: { requiredCertifications: string[]; forbiddenCertifications?: string[] }[] }[] }): boolean {
+  const activeCertIds = new Set(getCertOptions().map((d) => d.id));
+  const allSlots = [...tpl.slots, ...tpl.subTeams.flatMap((st) => st.slots)];
+  return allSlots.some((s) =>
+    s.requiredCertifications.some((c) => !activeCertIds.has(c)) ||
+    (s.forbiddenCertifications || []).some((c) => !activeCertIds.has(c)),
+  );
+}
+
 function levelBadge(level: Level): string {
   const colors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
   return `<span class="badge badge-sm" style="background:${colors[level]}">${level}</span>`;
@@ -352,6 +362,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
   const totalSlots = allSlots.length;
   const totalPeople = totalSlots * tpl.shiftsPerDay;
 
+  const hasOrphans = hasOrphanedSlotCerts(tpl);
   const alertClass = hasCritical ? 'template-card-error' : hasWarning ? 'template-card-warn' : '';
 
   let html = `<div class="template-card ${alertClass}" data-template-id="${tpl.id}">
@@ -362,6 +373,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         <span class="text-muted"> · ${tpl.shiftsPerDay} משמרות × ${tpl.durationHours} שע׳ — ${totalPeople} איש/יום</span>
         ${hasCritical ? '<span class="badge badge-sm" style="background:var(--danger)">!</span>' : ''}
         ${hasWarning && !hasCritical ? '<span class="badge badge-sm" style="background:var(--warning)">⚠</span>' : ''}
+        ${hasOrphans ? '<span class="badge badge-sm badge-orphan">⚠</span>' : ''}
       </div>
       <div class="template-toggles">
         ${tpl.sameGroupRequired ? '<span class="badge badge-sm badge-outline">נדרשת אותה קבוצה</span>' : ''}

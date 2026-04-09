@@ -26,6 +26,15 @@ function getCertOptions(): CertificationDefinition[] {
   return store.getCertificationDefinitions();
 }
 
+/** Check if a participant holds any deleted certification or pakal. */
+function hasOrphanedRefs(p: Participant): boolean {
+  const activeCertIds = new Set(getCertOptions().map((d) => d.id));
+  if (p.certifications.some((c) => !activeCertIds.has(c))) return true;
+  const activePakalIds = new Set(store.getPakalDefinitions().map((d) => d.id));
+  if ((p.pakalIds || []).some((id) => !activePakalIds.has(id))) return true;
+  return false;
+}
+
 function getNotWithNamesForEdit(pid: string): string {
   const ids = store.getNotWithIds(pid);
   return ids
@@ -562,7 +571,7 @@ export function renderParticipantsTab(): string {
       html += `<tr data-participant-id="${p.id}" class="${isSelected ? 'row-selected' : ''}">
         <td class="col-select"><input type="checkbox" class="cb-select-participant" data-pid="${p.id}" ${isSelected ? 'checked' : ''} /></td>
         <td class="col-index">${i + 1}</td>
-        <td class="col-name" title="${escHtml(p.name)}"><strong>${escHtml(p.name)}</strong></td>
+        <td class="col-name" title="${escHtml(p.name)}">${hasOrphanedRefs(p) ? '<span class="badge-orphan-icon">⚠</span> ' : ''}<strong>${escHtml(p.name)}</strong></td>
         <td class="col-group">${groupBadge(p.group, true)}</td>
         <td class="col-level">${levelBadge(p.level)}</td>
         <td class="col-certs">${certBadges(p.certifications)}</td>
@@ -734,8 +743,9 @@ function renderInlineUnavailEditor(pid: string): string {
     <label class="checkbox-label" style="white-space:nowrap">
       <input type="checkbox" data-field="du-allday" /> כל היום
     </label>
+    <span class="time-label">משעה</span>
     <input type="text" class="input-sm time-24h" maxlength="5" placeholder="HH:mm" data-field="bo-start" value="08:00" style="width:60px" />
-    <span class="time-separator">–</span>
+    <span class="time-label">עד שעה</span>
     <input type="text" class="input-sm time-24h" maxlength="5" placeholder="HH:mm" data-field="bo-end" value="12:00" style="width:60px" />
     <input type="text" class="input-sm" data-field="bo-reason" placeholder="סיבה" style="width:80px" />
     <button class="btn-sm btn-primary" data-action="add-unified-constraint" data-pid="${pid}">+</button>
@@ -784,8 +794,9 @@ function renderBlackoutRow(pid: string): string {
         <label class="checkbox-label" style="white-space:nowrap;" data-field="du-allday-wrapper">
           <input type="checkbox" data-field="du-allday" /> כל היום
         </label>
+        <span class="time-label">משעה</span>
         <input type="text" class="input-sm time-24h" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="bo-start" value="08:00" />
-        <span class="time-separator">עד</span>
+        <span class="time-label">עד שעה</span>
         <input type="text" class="input-sm time-24h" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="bo-end" value="12:00" />
       </div>
       
@@ -1134,19 +1145,20 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     // Handle "All Day" checkbox toggle
     if ((target as HTMLInputElement).dataset?.field === 'du-allday') {
       const cb = target as HTMLInputElement;
-      const panel = cb.closest('.blackout-panel')!;
+      const panel = cb.closest('.blackout-panel') || cb.closest('.inline-unavail-add');
+      if (!panel) return;
       const startInp = panel.querySelector('[data-field="bo-start"]') as HTMLInputElement;
       const endInp = panel.querySelector('[data-field="bo-end"]') as HTMLInputElement;
-      const separator = panel.querySelector('.time-separator') as HTMLElement;
+      const timeLabels = panel.querySelectorAll('.time-label');
 
       if (cb.checked) {
         if (startInp) startInp.classList.add('hidden');
         if (endInp) endInp.classList.add('hidden');
-        if (separator) separator.classList.add('hidden');
+        timeLabels.forEach((el) => el.classList.add('hidden'));
       } else {
         if (startInp) startInp.classList.remove('hidden');
         if (endInp) endInp.classList.remove('hidden');
-        if (separator) separator.classList.remove('hidden');
+        timeLabels.forEach((el) => el.classList.remove('hidden'));
       }
     }
   });
