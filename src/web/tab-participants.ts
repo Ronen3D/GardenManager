@@ -18,6 +18,15 @@ import * as store from './config-store';
 import { getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
 import { certBadges, escHtml, groupBadge, groupColor, levelBadge, SVG_ICONS } from './ui-helpers';
 import { showConfirm, showSaveConfirm, showToast } from './ui-modal';
+import {
+  canLeaveTableEdit,
+  enterTableEditMode,
+  exitTableEditMode,
+  hasTableEditChanges,
+  isTableEditActive,
+  renderTableEditMode,
+  wireTableEditEvents,
+} from './table-edit-participants';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -399,10 +408,19 @@ let _setsRenameTargetId: string | null = null;
 
 /** Clear participant selection state (called on tab change) */
 export function clearParticipantSelection(): void {
+  if (isTableEditActive()) exitTableEditMode();
   selectedIds.clear();
   _lastClickedId = null;
   _bulkDialogOpen = false;
   _bulkDeleteDialogOpen = false;
+}
+
+/**
+ * Async guard for tab switching: if table-edit mode has unsaved changes,
+ * show a save/discard/continue dialog. Returns true if leaving is allowed.
+ */
+export async function canLeaveParticipantsTab(): Promise<boolean> {
+  return canLeaveTableEdit();
 }
 // ─── Sort Logic ──────────────────────────────────────────────────────────────
 
@@ -508,6 +526,11 @@ function renderSetsPanel(): string {
 // ─── Render ──────────────────────────────────────────────────────────────────
 
 export function renderParticipantsTab(): string {
+  // ── Table Edit Mode branch ──
+  if (isTableEditActive()) {
+    return renderTableEditMode();
+  }
+
   const allParticipants = store.getAllParticipants();
   const groups = store.getGroups();
   const sorted = getVisibleParticipants(allParticipants);
@@ -534,6 +557,7 @@ export function renderParticipantsTab(): string {
     <div class="toolbar-right">
       <button class="btn-expand-all-mobile btn-sm btn-outline" data-action="toggle-all-details">הרחב הכל</button>
       <button class="btn-sm btn-outline${_setsPanelOpen ? ' pill-active' : ''}" data-action="pset-panel-toggle" title="סטים של משתתפים">📋 סטים${store.isParticipantSetDirty() ? ' <span class="dirty-dot"></span>' : ''}</button>
+      <button class="btn-sm btn-outline" data-action="enter-table-edit" title="עריכת טבלה מרובה">✏️ עריכת טבלה</button>
       <button class="btn-primary btn-sm" data-action="add-participant">+ הוסף משתתף</button>
     </div>
   </div>`;
@@ -927,6 +951,18 @@ function renderBulkDeleteDialog(): string {
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
 export function wireParticipantsEvents(container: HTMLElement, rerender: () => void): void {
+  // ── Table Edit Mode branch ──
+  if (isTableEditActive()) {
+    wireTableEditEvents(container, rerender);
+    return;
+  }
+
+  // ── Enter Table Edit button ──
+  container.querySelector('[data-action="enter-table-edit"]')?.addEventListener('click', () => {
+    enterTableEditMode();
+    rerender();
+  });
+
   // ─── Preference eligibility warnings: show on edit open if prefs already set ─
   container.querySelectorAll<HTMLElement>('tr.row-editing').forEach((row) => {
     recheckAllPrefWarnings(row, false);

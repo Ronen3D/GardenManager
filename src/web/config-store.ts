@@ -832,14 +832,15 @@ export function isParticipantNameTaken(name: string, excludeId?: string): boolea
   return false;
 }
 
-export function addParticipant(data: {
+// ── Internal no-snapshot helpers (used by public functions & bulkMutateParticipants) ──
+
+function _addParticipantNoSnapshot(data: {
   name: string;
   level?: Level;
   certifications?: string[];
   pakalIds?: string[];
   group: string;
 }): Participant {
-  pushSnapshot();
   const id = uid('p');
   const firstActiveId = certificationDefinitions.find((d) => !d.deleted)?.id;
   const certs = data.certifications ?? (firstActiveId ? [firstActiveId] : []);
@@ -855,6 +856,45 @@ export function addParticipant(data: {
     dateUnavailability: [],
   };
   participants.set(id, p);
+  return p;
+}
+
+function _updateParticipantNoSnapshot(id: string, patch: Partial<Omit<Participant, 'id' | 'availability'>>): void {
+  const p = participants.get(id);
+  if (!p) return;
+  const nextPatch = { ...patch };
+  // biome-ignore lint/suspicious/noPrototypeBuiltins: ES2020 target doesn't support Object.hasOwn
+  if (Object.prototype.hasOwnProperty.call(nextPatch, 'pakalIds')) {
+    nextPatch.pakalIds = sanitizePakalIds(nextPatch.pakalIds, pakalDefinitions);
+  }
+  Object.assign(p, nextPatch);
+  p.availability = computeAvailability(id);
+}
+
+function _removeParticipantNoSnapshot(id: string): void {
+  participants.delete(id);
+  dateUnavailabilities.delete(id);
+  cleanupNotWith(id);
+}
+
+function _setTaskNamePreferenceNoSnapshot(pid: string, preferred?: string, lessPreferred?: string): void {
+  const p = participants.get(pid);
+  if (!p) return;
+  p.preferredTaskName = preferred;
+  p.lessPreferredTaskName = lessPreferred;
+}
+
+// ── Public CRUD (delegate to helpers, wrapping with snapshot + notify) ──
+
+export function addParticipant(data: {
+  name: string;
+  level?: Level;
+  certifications?: string[];
+  pakalIds?: string[];
+  group: string;
+}): Participant {
+  pushSnapshot();
+  const p = _addParticipantNoSnapshot(data);
   notify();
   return p;
 }
@@ -863,22 +903,14 @@ export function updateParticipant(id: string, patch: Partial<Omit<Participant, '
   const p = participants.get(id);
   if (!p) return;
   pushSnapshot();
-  const nextPatch = { ...patch };
-  // biome-ignore lint/suspicious/noPrototypeBuiltins: ES2020 target doesn't support Object.hasOwn
-  if (Object.prototype.hasOwnProperty.call(nextPatch, 'pakalIds')) {
-    nextPatch.pakalIds = sanitizePakalIds(nextPatch.pakalIds, pakalDefinitions);
-  }
-  Object.assign(p, nextPatch);
-  p.availability = computeAvailability(id);
+  _updateParticipantNoSnapshot(id, patch);
   notify();
 }
 
 export function removeParticipant(id: string): void {
   if (!participants.has(id)) return;
   pushSnapshot();
-  participants.delete(id);
-  dateUnavailabilities.delete(id);
-  cleanupNotWith(id);
+  _removeParticipantNoSnapshot(id);
   syncNotWithToParticipants();
   notify();
 }
@@ -1067,9 +1099,74 @@ export function setTaskNamePreference(pid: string, preferred?: string, lessPrefe
   if (!p) return;
   if (p.preferredTaskName === preferred && p.lessPreferredTaskName === lessPreferred) return;
   pushSnapshot();
-  p.preferredTaskName = preferred;
-  p.lessPreferredTaskName = lessPreferred;
+  _setTaskNamePreferenceNoSnapshot(pid, preferred, lessPreferred);
   notify();
+}
+
+// ─── Bulk Participant Mutations ─────────────────────────────────────────────
+
+export interface BulkParticipantOp {
+  type: 'add' | 'update' | 'delete';
+  /** For 'update' and 'delete': existing participant ID */
+  id?: string;
+  /** For 'add' and 'update': the field values */
+  data?: {
+    name: string;
+    group: string;
+    level?: Level;
+    certifications?: string[];
+    pakalIds?: string[];
+    preferredTaskName?: string;
+    lessPreferredTaskName?: string;
+  };
+}
+
+/**
+ * Apply multiple participant add/update/delete operations in one undo-able action.
+ * A single snapshot is pushed before all mutations, and notify() is called once at the end.
+ */
+export function bulkMutateParticipants(ops: BulkParticipantOp[]): { added: number; updated: number; deleted: number } {
+  if (ops.length === 0) return { added: 0, updated: 0, deleted: 0 };
+  pushSnapshot();
+  _suppressSnapshot = true;
+  let added = 0;
+  let updated = 0;
+  let deleted = 0;
+  try {
+    for (const op of ops) {
+      switch (op.type) {
+        case 'add': {
+          const p = _addParticipantNoSnapshot(op.data!);
+          if (op.data!.preferredTaskName || op.data!.lessPreferredTaskName) {
+            _setTaskNamePreferenceNoSnapshot(p.id, op.data!.preferredTaskName, op.data!.lessPreferredTaskName);
+          }
+          added++;
+          break;
+        }
+        case 'update': {
+          const existing = participants.get(op.id!);
+          if (existing) {
+            _updateParticipantNoSnapshot(op.id!, op.data!);
+            _setTaskNamePreferenceNoSnapshot(op.id!, op.data!.preferredTaskName, op.data!.lessPreferredTaskName);
+            updated++;
+          }
+          break;
+        }
+        case 'delete': {
+          if (participants.has(op.id!)) {
+            _removeParticipantNoSnapshot(op.id!);
+            deleted++;
+          }
+          break;
+        }
+      }
+    }
+    syncNotWithToParticipants();
+  } finally {
+    _suppressSnapshot = false;
+  }
+  notify();
+  return { added, updated, deleted };
 }
 
 // ─── Task Template Store ─────────────────────────────────────────────────────

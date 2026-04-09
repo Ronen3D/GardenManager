@@ -53,7 +53,12 @@ import { runPreflight } from './preflight';
 import { initResponsive, isSmallScreen, isTouchDevice } from './responsive';
 import { renderScheduleGrid } from './schedule-grid-view';
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
-import { clearParticipantSelection, renderParticipantsTab, wireParticipantsEvents } from './tab-participants';
+import {
+  canLeaveParticipantsTab,
+  clearParticipantSelection,
+  renderParticipantsTab,
+  wireParticipantsEvents,
+} from './tab-participants';
 import { type ProfileContext, renderProfileView, wireProfileEvents } from './tab-profile';
 import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
 import {
@@ -2978,7 +2983,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.9.7</span>
+      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v1.9.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3078,11 +3083,13 @@ function renderAll(): void {
 
 function wireTabNav(container: HTMLElement): void {
   container.querySelectorAll('.tab-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const tab = (btn as HTMLElement).dataset.tab as typeof currentTab;
       if (tab && tab !== currentTab) {
-        // Issue 6: clear participant selection when leaving Participants tab
+        // Guard: if table-edit mode has unsaved changes, confirm before leaving
         if (currentTab === 'participants') {
+          const canLeave = await canLeaveParticipantsTab();
+          if (!canLeave) return;
           clearParticipantSelection();
         }
         currentTab = tab;

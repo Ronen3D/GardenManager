@@ -6774,3 +6774,248 @@ tr.now-row-animate > td.time-cell {
 .violations-content {
   margin-top: 4px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Table Edit Mode (Bulk Participant Editing)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.te-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.te-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.te-toolbar-left h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.te-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.te-change-summary {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: var(--surface);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+/* Validation summary bar */
+.te-validation-bar {
+  background: rgba(231, 76, 60, 0.12);
+  border: 1px solid rgba(231, 76, 60, 0.3);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 12px;
+  color: #e74c3c;
+  font-size: 0.85rem;
+}
+
+.te-validation-bar strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.te-error-list {
+  margin: 4px 0 0 0;
+  padding-inline-start: 18px;
+  font-size: 0.8rem;
+}
+
+/* Editable table */
+.te-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.te-table th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: none;
+  padding: 6px 4px;
+  border-bottom: 2px solid var(--border);
+  text-align: start;
+  white-space: nowrap;
+}
+
+.te-table td {
+  padding: 4px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.te-col-select { width: 30px; text-align: center; }
+.te-col-index  { width: 30px; text-align: center; color: var(--text-muted); font-size: 0.8rem; }
+.te-col-name   { min-width: 120px; }
+.te-col-group  { min-width: 100px; }
+.te-col-level  { width: 70px; }
+.te-col-certs  { min-width: 100px; }
+.te-col-pakals { min-width: 80px; }
+.te-col-pref   { min-width: 100px; }
+.te-col-lesspref { min-width: 100px; }
+.te-col-delete { width: 36px; text-align: center; }
+
+.te-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.85rem;
+}
+
+/* Row status indicators */
+.te-row-new {
+  border-inline-start: 3px solid #27ae60;
+}
+
+.te-row-modified {
+  border-inline-start: 3px solid #f39c12;
+}
+
+.te-row-deleted {
+  opacity: 0.45;
+  background: rgba(231, 76, 60, 0.06);
+}
+
+.te-row-deleted td.te-col-name {
+  text-decoration: line-through;
+}
+
+/* Cell error styling */
+.te-cell-error {
+  border-color: #e74c3c !important;
+  box-shadow: 0 0 0 1px rgba(231, 76, 60, 0.4);
+}
+
+.te-field-error {
+  color: #e74c3c;
+  font-size: 0.72rem;
+  margin-top: 2px;
+  line-height: 1.2;
+}
+
+/* Compact checkbox groups inside table cells */
+.te-cert-checks,
+.te-pakal-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+}
+
+.te-check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.te-check-label input[type="checkbox"] {
+  margin: 0;
+}
+
+/* Disabled button styling */
+.btn-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ── Mobile card layout ── */
+
+.te-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.te-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.te-card-new {
+  border-inline-start: 3px solid #27ae60;
+}
+
+.te-card-modified {
+  border-inline-start: 3px solid #f39c12;
+}
+
+.te-card-deleted {
+  opacity: 0.45;
+  background: rgba(231, 76, 60, 0.06);
+}
+
+.te-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.te-card-num {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  min-width: 20px;
+}
+
+.te-card-name {
+  flex: 1;
+  min-width: 100px;
+}
+
+.te-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.te-card-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: -2px;
+}
+
+/* Mobile sticky bottom bar */
+.te-mobile-bottom-bar {
+  display: none;
+}
+
+/* Bulk group bottom sheet */
+.te-bulk-group-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.te-group-option {
+  text-align: start;
+}
