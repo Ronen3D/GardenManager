@@ -284,6 +284,10 @@ function resolveGroupInput(
   const raw = newGroupInput?.value ?? '';
   const result = validateGroupName(raw, store.getGroups());
   if (!result.valid) {
+    // Defensive: if the input is hidden (e.g., when __new__ was the default
+    // selected option and no change event ever fired), unhide it so the user
+    // can see and act on the validation error.
+    newGroupInput?.classList.remove('hidden');
     syncGroupValidationState(newGroupInput, errorSpan, result);
     newGroupInput?.focus();
     return null;
@@ -834,6 +838,10 @@ function renderBlackoutRow(pid: string): string {
 
 function renderAddForm(groups: string[]): string {
   const pakalDefs = store.getPakalDefinitions();
+  // When there are no existing groups, the select's only option is "+ new group",
+  // so the browser auto-selects __new__ without firing a change event. Render the
+  // name input visible so the user has a way to type the group name.
+  const noGroups = groups.length === 0;
   return `
   <div id="add-participant-form" class="add-form hidden">
     <h4>הוסף משתתף</h4>
@@ -844,7 +852,7 @@ function renderAddForm(groups: string[]): string {
           ${groups.map((g) => `<option value="${escHtml(g)}">${escHtml(g)}</option>`).join('')}
           <option value="__new__">+ קבוצה חדשה…</option>
         </select>
-        <input class="input-sm hidden" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
+        <input class="input-sm${noGroups ? '' : ' hidden'}" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
         <span class="group-error hidden" style="color:var(--danger); font-size:0.75rem;"></span>
       </label>
       <label>דרגה
