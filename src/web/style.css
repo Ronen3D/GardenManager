@@ -6942,70 +6942,222 @@ tr.now-row-animate > td.time-cell {
 
 /* ── Mobile card layout ── */
 
-.te-cards {
+/* ── Mobile compact list ────────────────────────────────────────────── */
+
+.te-compact-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px;
+  gap: 0;
+  padding: 0 4px;
 }
 
-.te-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px;
+.te-compact-row {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 4px;
+  border-inline-start: 3px solid transparent;
 }
 
-.te-card-new {
-  border-inline-start: 3px solid #27ae60;
+.te-compact-new {
+  border-inline-start-color: #27ae60;
+  background: rgba(39, 174, 96, 0.04);
 }
 
-.te-card-modified {
-  border-inline-start: 3px solid #f39c12;
+.te-compact-modified {
+  border-inline-start-color: #f39c12;
 }
 
-.te-card-deleted {
+.te-compact-deleted {
   opacity: 0.45;
   background: rgba(231, 76, 60, 0.06);
 }
 
-.te-card-header {
+.te-compact-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 4px;
 }
 
-.te-card-num {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  min-width: 20px;
-}
-
-.te-card-name {
+.te-compact-name {
   flex: 1;
-  min-width: 100px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 0.9rem;
+  background: var(--bg);
+  color: var(--text);
 }
 
-.te-card-body {
+.te-compact-pill {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 0.8rem;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  max-width: 100px;
+}
+
+.te-compact-level {
+  max-width: 50px;
+  text-align: center;
+}
+
+.te-compact-chevron {
+  border: none;
+  background: none;
+  font-size: 1rem;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.te-compact-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  overflow: hidden;
+  transition: grid-template-rows 0.2s ease;
+}
+
+.te-compact-expanded .te-compact-body {
+  grid-template-rows: 1fr;
+}
+
+.te-compact-body-inner {
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
 }
 
-.te-card-label {
+.te-compact-expanded .te-compact-body-inner {
+  padding: 8px 0 4px 28px;
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+}
+
+.te-compact-body-hidden {
+  display: none !important;
+}
+
+.te-compact-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.te-compact-label {
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-muted);
-  margin-bottom: -2px;
+}
+
+.te-compact-error {
+  padding-inline-start: 28px;
+  font-size: 0.75rem;
+}
+
+.te-compact-delete {
+  align-self: flex-start;
+  margin-top: 4px;
 }
 
 /* Mobile sticky bottom bar */
 .te-mobile-bottom-bar {
   display: none;
+}
+
+/* Quick-Add sheet */
+.te-quick-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.te-qa-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.te-qa-details summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.te-qa-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+.te-qa-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.te-qa-input-row .te-qa-name {
+  flex: 1;
+}
+
+.te-qa-error {
+  color: var(--error);
+  font-size: 0.8rem;
+}
+
+.te-qa-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.te-qa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+}
+
+.te-qa-chip-remove {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.te-qa-summary {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.te-bulk-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.te-bulk-cert-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
 }
 
 /* Bulk group bottom sheet */

@@ -54,6 +54,7 @@ let _draftRows: DraftRow[] = [];
 let _originalSnapshot: Map<string, OriginalValues> = new Map();
 let _tmpCounter = 0;
 let _beforeUnloadHandler: ((e: BeforeUnloadEvent) => void) | null = null;
+let _expandedRows: Set<string> = new Set();
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -117,6 +118,7 @@ export function exitTableEditMode(): void {
   _tableEditActive = false;
   _draftRows = [];
   _originalSnapshot = new Map();
+  _expandedRows = new Set();
   if (_beforeUnloadHandler) {
     window.removeEventListener('beforeunload', _beforeUnloadHandler);
     _beforeUnloadHandler = null;
@@ -392,7 +394,7 @@ export function renderTableEditMode(): string {
 
   // ── Table (desktop) or Cards (mobile) ──
   if (isSmallScreen) {
-    html += renderMobileCards(certDefs, pakalDefs, taskNames, groups);
+    html += renderMobileCompactList(certDefs, pakalDefs, taskNames, groups);
   } else {
     html += renderDesktopTable(certDefs, pakalDefs, taskNames, groups);
   }
@@ -540,30 +542,42 @@ function renderTaskSelect(
   </select>`;
 }
 
-// ─── Mobile Card Rendering ──────────────────────────────────────────────────
+// ─── Mobile Compact List Rendering ─────────────────────────────────────────
 
-function renderMobileCards(
+function renderMobileCompactList(
   certDefs: CertificationDefinition[],
   pakalDefs: PakalDefinition[],
   taskNames: string[],
   groups: string[],
 ): string {
-  let html = '<div class="te-cards">';
+  const selCount = getSelectedNonDeletedRows().length;
+  let html = '<div class="te-compact-list">';
   _draftRows.forEach((row, i) => {
-    html += renderMobileCard(row, i, certDefs, pakalDefs, taskNames, groups);
+    html += renderCompactRow(row, i, certDefs, pakalDefs, taskNames, groups);
   });
   html += '</div>';
 
   // Sticky bottom toolbar for mobile
-  html += `<div class="te-mobile-bottom-bar">
-    <button class="btn-sm btn-outline" data-te-action="add-row">+ שורה חדשה</button>
-    <button class="btn-sm btn-outline" data-te-action="cancel">ביטול</button>
-    <button class="btn-primary btn-sm${hasValidationErrors() ? ' btn-disabled' : ''}" data-te-action="save"${hasValidationErrors() ? ' disabled' : ''}>שמירה</button>
-  </div>`;
+  if (selCount > 0) {
+    html += `<div class="te-mobile-bottom-bar te-mobile-bulk-bar">
+      <span class="te-bulk-count">${selCount} נבחרים</span>
+      <button class="btn-sm btn-outline" data-te-action="bulk-group">קבוצה</button>
+      <button class="btn-sm btn-outline" data-te-action="bulk-level">דרגה</button>
+      <button class="btn-sm btn-outline" data-te-action="bulk-certs">הסמכות</button>
+      <button class="btn-sm btn-outline btn-danger-outline" data-te-action="bulk-delete">${SVG_ICONS.trash}</button>
+    </div>`;
+  } else {
+    html += `<div class="te-mobile-bottom-bar">
+      <button class="btn-sm btn-outline" data-te-action="quick-add">+ הוספה מהירה</button>
+      <button class="btn-sm btn-outline" data-te-action="add-row">+ שורה</button>
+      <button class="btn-sm btn-outline" data-te-action="cancel">ביטול</button>
+      <button class="btn-primary btn-sm${hasValidationErrors() ? ' btn-disabled' : ''}" data-te-action="save"${hasValidationErrors() ? ' disabled' : ''}>שמירה${getChangeSummary().total > 0 ? ` · ${getChangeSummary().total}` : ''}</button>
+    </div>`;
+  }
   return html;
 }
 
-function renderMobileCard(
+function renderCompactRow(
   row: DraftRow,
   index: number,
   certDefs: CertificationDefinition[],
@@ -572,51 +586,71 @@ function renderMobileCard(
   groups: string[],
 ): string {
   const isDeleted = row.status === 'deleted';
-  const cls = isDeleted
-    ? 'te-card-deleted'
+  const isExpanded = _expandedRows.has(row.rowId);
+  const statusCls = isDeleted
+    ? 'te-compact-deleted'
     : row.status === 'new'
-      ? 'te-card-new'
+      ? 'te-compact-new'
       : row.status === 'modified'
-        ? 'te-card-modified'
+        ? 'te-compact-modified'
         : '';
   const dis = isDeleted ? ' disabled' : '';
+  const hasErrors = row.errors.size > 0;
 
-  return `<div class="te-card ${cls}" data-te-row="${row.rowId}">
-    <div class="te-card-header">
+  let html = `<div class="te-compact-row ${statusCls}${isExpanded ? ' te-compact-expanded' : ''}${hasErrors ? ' te-compact-has-errors' : ''}" data-te-row="${row.rowId}">
+    <div class="te-compact-header">
       <input type="checkbox" data-te-action="select-row" data-te-row-id="${row.rowId}" ${row.selected ? 'checked' : ''}${dis} />
-      <span class="te-card-num">${index + 1}</span>
-      <input type="text" class="input-sm te-input te-card-name${row.errors.has('name') ? ' te-cell-error' : ''}" data-te-field="name" data-te-row-id="${row.rowId}" value="${escAttr(row.name)}" placeholder="שם"${dis} aria-invalid="${row.errors.has('name')}" />
-      ${row.group ? `<span class="badge badge-sm" style="background:${groupColor(row.group)}">${escHtml(row.group)}</span>` : ''}
-      <button class="btn-sm btn-outline btn-icon" data-te-action="${isDeleted ? 'restore-row' : 'delete-row'}" data-te-row-id="${row.rowId}">
-        ${isDeleted ? '↩' : SVG_ICONS.trash}
-      </button>
-    </div>
-    ${row.errors.has('name') ? `<div class="te-field-error">${escHtml(row.errors.get('name')!)}</div>` : ''}
-    <div class="te-card-body"${isDeleted ? ' style="display:none"' : ''}>
-      <label class="te-card-label">קבוצה</label>
-      ${renderGroupSelect(row, groups, isDeleted)}
-      ${row.errors.has('group') ? `<div class="te-field-error">${escHtml(row.errors.get('group')!)}</div>` : ''}
-
-      <label class="te-card-label">דרגה</label>
-      <select class="input-sm te-input" data-te-field="level" data-te-row-id="${row.rowId}"${dis}>
+      <input type="text" class="te-compact-name${row.errors.has('name') ? ' te-cell-error' : ''}" data-te-field="name" data-te-row-id="${row.rowId}" value="${escAttr(row.name)}" placeholder="שם"${dis} aria-invalid="${row.errors.has('name')}" />
+      <select class="te-compact-pill te-compact-group${row.errors.has('group') ? ' te-cell-error' : ''}" data-te-field="group" data-te-row-id="${row.rowId}"${dis} aria-invalid="${row.errors.has('group')}">
+        ${groups.map((g) => `<option value="${escAttr(g)}"${row.group === g ? ' selected' : ''}>${escHtml(g)}</option>`).join('')}
+        <option value="__new__">+ חדשה…</option>
+      </select>
+      <select class="te-compact-pill te-compact-level" data-te-field="level" data-te-row-id="${row.rowId}"${dis}>
         ${LEVEL_OPTIONS.map((l) => `<option value="${l}"${row.level === l ? ' selected' : ''}>${LEVEL_LABELS[l]}</option>`).join('')}
       </select>
+      <button class="te-compact-chevron" data-te-action="${isDeleted ? 'restore-row' : 'toggle-expand'}" data-te-row-id="${row.rowId}">
+        ${isDeleted ? '↩' : isExpanded ? '⌃' : '⌄'}
+      </button>
+    </div>`;
 
-      <label class="te-card-label">הסמכות</label>
-      ${renderCertCheckboxes(row, certDefs, isDeleted)}
+  // Inline error for name/group (shown in compact view, targetable for DOM updates)
+  if (row.errors.has('name')) {
+    html += `<div class="te-field-error te-compact-error" data-te-error-for="name">${escHtml(row.errors.get('name')!)}</div>`;
+  }
+  if (row.errors.has('group')) {
+    html += `<div class="te-field-error te-compact-error" data-te-error-for="group">${escHtml(row.errors.get('group')!)}</div>`;
+  }
 
-      <label class="te-card-label">פק"לים</label>
-      ${renderPakalCheckboxes(row, pakalDefs, isDeleted)}
-
-      <label class="te-card-label">מעדיף</label>
-      ${renderTaskSelect(row, 'preferredTaskName', taskNames, isDeleted)}
-      ${row.errors.has('preferredTaskName') ? `<div class="te-field-error">${escHtml(row.errors.get('preferredTaskName')!)}</div>` : ''}
-
-      <label class="te-card-label">פחות מועדף</label>
-      ${renderTaskSelect(row, 'lessPreferredTaskName', taskNames, isDeleted)}
-      ${row.errors.has('lessPreferredTaskName') ? `<div class="te-field-error">${escHtml(row.errors.get('lessPreferredTaskName')!)}</div>` : ''}
+  // Expanded section (secondary fields — visibility controlled via CSS grid animation)
+  // Single wrapper child is required for the 0fr → 1fr grid animation to work
+  html += `<div class="te-compact-body${isDeleted ? ' te-compact-body-hidden' : ''}">
+    <div class="te-compact-body-inner">
+      <div class="te-compact-field">
+        <label class="te-compact-label">הסמכות</label>
+        ${renderCertCheckboxes(row, certDefs, isDeleted)}
+      </div>
+      <div class="te-compact-field">
+        <label class="te-compact-label">פק"לים</label>
+        ${renderPakalCheckboxes(row, pakalDefs, isDeleted)}
+      </div>
+      <div class="te-compact-field">
+        <label class="te-compact-label">מעדיף</label>
+        ${renderTaskSelect(row, 'preferredTaskName', taskNames, isDeleted)}
+        ${row.errors.has('preferredTaskName') ? `<div class="te-field-error">${escHtml(row.errors.get('preferredTaskName')!)}</div>` : ''}
+      </div>
+      <div class="te-compact-field">
+        <label class="te-compact-label">פחות מועדף</label>
+        ${renderTaskSelect(row, 'lessPreferredTaskName', taskNames, isDeleted)}
+        ${row.errors.has('lessPreferredTaskName') ? `<div class="te-field-error">${escHtml(row.errors.get('lessPreferredTaskName')!)}</div>` : ''}
+      </div>
+      <button class="btn-sm btn-danger-outline te-compact-delete" data-te-action="delete-row" data-te-row-id="${row.rowId}">
+        ${SVG_ICONS.trash} מחיקה
+      </button>
     </div>
   </div>`;
+
+  html += '</div>';
+  return html;
 }
 
 // ─── Event Wiring ───────────────────────────────────────────────────────────
@@ -654,12 +688,29 @@ export function wireTableEditEvents(container: HTMLElement, rerender: () => void
       case 'bulk-group':
         await handleBulkGroup(rerender);
         break;
+      case 'bulk-level':
+        await handleBulkLevel(rerender);
+        break;
+      case 'bulk-certs':
+        await handleBulkCerts(rerender);
+        break;
+      case 'bulk-delete':
+        handleBulkDelete(rerender);
+        break;
+      case 'toggle-expand':
+        handleToggleExpand(btn.dataset.teRowId!, rerender);
+        break;
+      case 'quick-add':
+        await handleQuickAdd(rerender);
+        break;
     }
   });
 
-  // Delegated input handler for fields
+  // Delegated input handler for text fields (selects are handled by 'change' only
+  // to avoid double-processing — selects fire both 'input' and 'change')
   container.addEventListener('input', (e) => {
     const target = e.target as HTMLInputElement | HTMLSelectElement;
+    if (target.tagName === 'SELECT') return;
     const rowId = target.dataset.teRowId;
     const field = target.dataset.teField;
     if (!rowId || !field) return;
@@ -779,13 +830,22 @@ function handleFieldChange(
 
 function handleAddRow(rerender: () => void): void {
   const firstCert = getCertDefs().find((d) => !d.deleted)?.id;
-  const firstGroup = getGroupOptions()[0] || '';
+  // Smart defaults: inherit group + level from the last non-deleted row
+  let lastRow: DraftRow | null = null;
+  for (let i = _draftRows.length - 1; i >= 0; i--) {
+    if (_draftRows[i].status !== 'deleted') {
+      lastRow = _draftRows[i];
+      break;
+    }
+  }
+  const defaultGroup = lastRow?.group || getGroupOptions()[0] || '';
+  const defaultLevel = lastRow?.level ?? Level.L0;
   const row: DraftRow = {
     rowId: `tmp-${++_tmpCounter}`,
     originalId: null,
     name: '',
-    group: firstGroup,
-    level: Level.L0,
+    group: defaultGroup,
+    level: defaultLevel,
     certifications: firstCert ? [firstCert] : [],
     pakalIds: [],
     preferredTaskName: '',
@@ -913,6 +973,351 @@ async function handleBulkGroup(rerender: () => void): Promise<void> {
   }
 }
 
+function handleToggleExpand(rowId: string, _rerender: () => void): void {
+  if (_expandedRows.has(rowId)) {
+    _expandedRows.delete(rowId);
+  } else {
+    _expandedRows.add(rowId);
+  }
+  // Targeted toggle without full re-render — CSS grid animation handles visibility
+  const rowEl = document.querySelector<HTMLElement>(`[data-te-row="${rowId}"]`);
+  if (rowEl) {
+    const chevron = rowEl.querySelector<HTMLElement>('[data-te-action="toggle-expand"]');
+    const isExpanded = _expandedRows.has(rowId);
+    rowEl.classList.toggle('te-compact-expanded', isExpanded);
+    if (chevron) chevron.textContent = isExpanded ? '⌃' : '⌄';
+  }
+}
+
+async function handleBulkLevel(rerender: () => void): Promise<void> {
+  const selected = getSelectedNonDeletedRows();
+  if (selected.length === 0) return;
+
+  const sheetHtml = `<div class="te-bulk-group-sheet">
+    <p>בחר דרגה עבור ${selected.length} משתתפים:</p>
+    ${LEVEL_OPTIONS.map((l) => `<button class="btn-sm btn-outline te-level-option" data-level="${l}">${LEVEL_LABELS[l]}</button>`).join('')}
+  </div>`;
+  const sheet = showBottomSheet(sheetHtml, { title: 'דרגה לנבחרים' });
+  sheet.el.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('.te-level-option');
+    if (!btn) return;
+    const level = Number.parseInt(btn.dataset.level!, 10) as Level;
+    for (const row of selected) {
+      row.level = level;
+      computeRowStatus(row);
+      validateRow(row);
+    }
+    sheet.close();
+    rerender();
+  });
+}
+
+async function handleBulkCerts(rerender: () => void): Promise<void> {
+  const selected = getSelectedNonDeletedRows();
+  if (selected.length === 0) return;
+
+  const certDefs = getCertDefs().filter((d) => !d.deleted);
+  // Pre-check certs that ALL selected participants currently have
+  const allHaveCert = (certId: string) => selected.every((r) => r.certifications.includes(certId));
+
+  const sheetHtml = `<div class="te-bulk-group-sheet">
+    <p>הסמכות עבור ${selected.length} משתתפים:</p>
+    <p class="te-bulk-hint">סמן כדי להוסיף, בטל סימון כדי להסיר</p>
+    ${certDefs.map((d) => `<label class="te-check-label te-bulk-cert-label"><input type="checkbox" data-cert-id="${d.id}" ${allHaveCert(d.id) ? 'checked' : ''} />${certBadge(d.id)} ${escHtml(d.label)}</label>`).join('')}
+    <button class="btn-primary btn-sm te-bulk-apply" style="margin-top:8px">החל</button>
+  </div>`;
+  const sheet = showBottomSheet(sheetHtml, { title: 'הסמכות לנבחרים' });
+  sheet.el.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('.te-bulk-apply');
+    if (!btn) return;
+    const checks = sheet.el.querySelectorAll<HTMLInputElement>('[data-cert-id]');
+    for (const chk of checks) {
+      const certId = chk.dataset.certId!;
+      for (const row of selected) {
+        if (chk.checked && !row.certifications.includes(certId)) {
+          row.certifications.push(certId);
+        } else if (!chk.checked) {
+          row.certifications = row.certifications.filter((c) => c !== certId);
+        }
+        computeRowStatus(row);
+        validateRow(row);
+      }
+    }
+    sheet.close();
+    rerender();
+  });
+}
+
+function handleBulkDelete(rerender: () => void): void {
+  const selected = getSelectedNonDeletedRows();
+  if (selected.length === 0) return;
+  for (const row of selected) {
+    if (row.originalId === null) {
+      _draftRows = _draftRows.filter((r) => r.rowId !== row.rowId);
+    } else {
+      row.status = 'deleted';
+      row.selected = false;
+      row.errors.clear();
+    }
+  }
+  revalidateNames();
+  rerender();
+}
+
+// ─── Quick-Add Sheet ───────────────────────────────────────────────────────
+
+interface QuickAddChip {
+  name: string;
+  id: number;
+}
+
+let _quickAddCounter = 0;
+
+async function handleQuickAdd(rerender: () => void): Promise<void> {
+  const groups = getGroupOptions();
+  const certDefs = getCertDefs().filter((d) => !d.deleted);
+  let chips: QuickAddChip[] = [];
+  let selectedGroup = groups[0] || '';
+  let selectedLevel = Level.L0;
+
+  const sheetHtml = `<div class="te-quick-add">
+    <div class="te-qa-field">
+      <label class="te-compact-label">קבוצה</label>
+      <select class="input-sm te-input te-qa-group">
+        ${groups.map((g) => `<option value="${escAttr(g)}">${escHtml(g)}</option>`).join('')}
+        <option value="__new__">+ קבוצה חדשה…</option>
+      </select>
+    </div>
+    <div class="te-qa-field">
+      <label class="te-compact-label">דרגה</label>
+      <select class="input-sm te-input te-qa-level">
+        ${LEVEL_OPTIONS.map((l) => `<option value="${l}"${l === Level.L0 ? ' selected' : ''}>${LEVEL_LABELS[l]}</option>`).join('')}
+      </select>
+    </div>
+    <details class="te-qa-details">
+      <summary>הסמכות ברירת מחדל</summary>
+      <div class="te-cert-checks te-qa-certs">
+        ${certDefs.map((d) => `<label class="te-check-label"><input type="checkbox" data-qa-cert="${d.id}" />${certBadge(d.id)} ${escHtml(d.label)}</label>`).join('')}
+      </div>
+    </details>
+    <hr class="te-qa-divider" />
+    <div class="te-qa-input-row">
+      <input type="text" class="input-sm te-input te-qa-name" placeholder="שם משתתף" />
+      <button class="btn-sm btn-outline te-qa-add-btn" disabled>הוסף</button>
+      <button class="btn-sm btn-outline te-qa-paste-btn" title="הדבק שמות מהלוח">📋</button>
+    </div>
+    <div class="te-qa-error" style="display:none"></div>
+    <div class="te-qa-chips"></div>
+    <div class="te-qa-summary" style="display:none"></div>
+    <button class="btn-primary btn-sm te-qa-create" disabled style="width:100%;margin-top:8px"></button>
+  </div>`;
+
+  const sheet = showBottomSheet(sheetHtml, { title: 'הוספה מהירה' });
+  const el = sheet.el;
+
+  const nameInput = el.querySelector<HTMLInputElement>('.te-qa-name')!;
+  const addBtn = el.querySelector<HTMLButtonElement>('.te-qa-add-btn')!;
+  const chipsEl = el.querySelector<HTMLElement>('.te-qa-chips')!;
+  const summaryEl = el.querySelector<HTMLElement>('.te-qa-summary')!;
+  const createBtn = el.querySelector<HTMLButtonElement>('.te-qa-create')!;
+  const errorEl = el.querySelector<HTMLElement>('.te-qa-error')!;
+  const groupSelect = el.querySelector<HTMLSelectElement>('.te-qa-group')!;
+  const levelSelect = el.querySelector<HTMLSelectElement>('.te-qa-level')!;
+
+  function updateChipsUI(): void {
+    chipsEl.innerHTML = chips
+      .map(
+        (c) =>
+          `<span class="te-qa-chip" data-qa-chip="${c.id}">${escHtml(c.name)}<button class="te-qa-chip-remove" data-qa-remove="${c.id}">×</button></span>`,
+      )
+      .join('');
+    const count = chips.length;
+    createBtn.textContent = count > 0 ? `צור ${count} משתתפים` : 'צור משתתפים';
+    // Disable Create when no chips OR no group selected
+    createBtn.disabled = count === 0 || !selectedGroup.trim();
+    // Also disable name input & add button when no group selected
+    const noGroup = !selectedGroup.trim();
+    nameInput.disabled = noGroup;
+    addBtn.disabled = noGroup || !nameInput.value.trim();
+    if (noGroup) {
+      errorEl.textContent = 'יש לבחור קבוצה תחילה.';
+      errorEl.style.display = '';
+    } else if (errorEl.textContent === 'יש לבחור קבוצה תחילה.') {
+      errorEl.style.display = 'none';
+    }
+    summaryEl.style.display = count > 0 ? '' : 'none';
+    summaryEl.textContent = `${count} משתתפים · ${selectedGroup} · ${LEVEL_LABELS[selectedLevel]}`;
+  }
+
+  function validateName(name: string): string | null {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    // Check against existing draft rows
+    const lower = trimmed.toLowerCase();
+    const existsInDraft = _draftRows.find((r) => r.status !== 'deleted' && r.name.trim().toLowerCase() === lower);
+    if (existsInDraft) return `"${trimmed}" כבר קיים ברשימה.`;
+    // Check against chips already added
+    const existsInChips = chips.find((c) => c.name.trim().toLowerCase() === lower);
+    if (existsInChips) return `"${trimmed}" כבר נוסף.`;
+    return null;
+  }
+
+  function addChip(): void {
+    const name = nameInput.value.trim();
+    if (!name) return;
+    const err = validateName(name);
+    if (err) {
+      errorEl.textContent = err;
+      errorEl.style.display = '';
+      return;
+    }
+    chips.push({ name, id: ++_quickAddCounter });
+    nameInput.value = '';
+    errorEl.style.display = 'none';
+    addBtn.disabled = true;
+    updateChipsUI();
+    nameInput.focus();
+  }
+
+  // Initialize UI state (gates name input when no group selected)
+  updateChipsUI();
+
+  // Wire events
+  nameInput.addEventListener('input', () => {
+    const val = nameInput.value.trim();
+    addBtn.disabled = !val || !selectedGroup.trim();
+    if (val) {
+      const err = validateName(val);
+      if (err) {
+        errorEl.textContent = err;
+        errorEl.style.display = '';
+      } else {
+        errorEl.style.display = 'none';
+      }
+    } else {
+      errorEl.style.display = 'none';
+    }
+  });
+
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addChip();
+    }
+  });
+
+  addBtn.addEventListener('click', () => addChip());
+
+  chipsEl.addEventListener('click', (e) => {
+    const removeBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-qa-remove]');
+    if (!removeBtn) return;
+    const chipId = Number.parseInt(removeBtn.dataset.qaRemove!, 10);
+    chips = chips.filter((c) => c.id !== chipId);
+    updateChipsUI();
+  });
+
+  // Paste from clipboard
+  const pasteBtn = el.querySelector<HTMLButtonElement>('.te-qa-paste-btn')!;
+  pasteBtn.addEventListener('click', async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const names = text
+        .split(/\r?\n/)
+        .map((n) => n.trim())
+        .filter(Boolean);
+      if (names.length === 0) {
+        errorEl.textContent = 'הלוח ריק או לא מכיל שמות.';
+        errorEl.style.display = '';
+        return;
+      }
+      let added = 0;
+      const errors: string[] = [];
+      for (const name of names) {
+        const err = validateName(name);
+        if (err) {
+          errors.push(`${name}: ${err}`);
+        } else {
+          chips.push({ name, id: ++_quickAddCounter });
+          added++;
+        }
+      }
+      updateChipsUI();
+      if (errors.length > 0) {
+        errorEl.textContent = `${added} שמות נוספו, ${errors.length} דולגו (כפילויות).`;
+        errorEl.style.display = '';
+      } else {
+        errorEl.style.display = 'none';
+      }
+    } catch {
+      errorEl.textContent = 'אין גישה ללוח. בדוק הרשאות.';
+      errorEl.style.display = '';
+    }
+  });
+
+  groupSelect.addEventListener('change', async () => {
+    if (groupSelect.value === '__new__') {
+      const name = await showPrompt('שם קבוצה חדשה:', { title: 'קבוצה חדשה', placeholder: 'שם קבוצה' });
+      if (name?.trim()) {
+        selectedGroup = name.trim();
+        // Add option and select it
+        const opt = document.createElement('option');
+        opt.value = selectedGroup;
+        opt.textContent = selectedGroup;
+        groupSelect.insertBefore(opt, groupSelect.querySelector('option[value="__new__"]'));
+        groupSelect.value = selectedGroup;
+      } else {
+        groupSelect.value = selectedGroup;
+      }
+    } else {
+      selectedGroup = groupSelect.value;
+    }
+    updateChipsUI();
+  });
+
+  levelSelect.addEventListener('change', () => {
+    selectedLevel = Number.parseInt(levelSelect.value, 10) as Level;
+    updateChipsUI();
+  });
+
+  createBtn.addEventListener('click', () => {
+    if (chips.length === 0) return;
+    const certChecks = el.querySelectorAll<HTMLInputElement>('[data-qa-cert]');
+    const defaultCerts: string[] = [];
+    for (const chk of certChecks) {
+      if (chk.checked) defaultCerts.push(chk.dataset.qaCert!);
+    }
+    // If no certs selected, use the first active cert as default (matching handleAddRow behavior)
+    const firstCert = getCertDefs().find((d) => !d.deleted)?.id;
+    const certs = defaultCerts.length > 0 ? defaultCerts : firstCert ? [firstCert] : [];
+
+    for (const chip of chips) {
+      const row: DraftRow = {
+        rowId: `tmp-${++_tmpCounter}`,
+        originalId: null,
+        name: chip.name,
+        group: selectedGroup,
+        level: selectedLevel,
+        certifications: [...certs],
+        pakalIds: [],
+        preferredTaskName: '',
+        lessPreferredTaskName: '',
+        status: 'new',
+        errors: new Map(),
+        selected: false,
+      };
+      validateRow(row);
+      _draftRows.push(row);
+    }
+    revalidateNames();
+    sheet.close();
+    showToast(`${chips.length} משתתפים נוספו ל-${selectedGroup}`, { type: 'success' });
+    rerender();
+  });
+
+  // Focus the name input after the sheet animates in
+  requestAnimationFrame(() => nameInput.focus());
+}
+
 // ─── Targeted DOM Updates ───────────────────────────────────────────────────
 
 function updateRowUI(row: DraftRow, container: HTMLElement): void {
@@ -924,11 +1329,11 @@ function updateRowUI(row: DraftRow, container: HTMLElement): void {
     'te-row-new',
     'te-row-modified',
     'te-row-deleted',
-    'te-card-new',
-    'te-card-modified',
-    'te-card-deleted',
+    'te-compact-new',
+    'te-compact-modified',
+    'te-compact-deleted',
   );
-  const prefix = rowEl.tagName === 'TR' ? 'te-row' : 'te-card';
+  const prefix = rowEl.tagName === 'TR' ? 'te-row' : 'te-compact';
   if (row.status === 'new') rowEl.classList.add(`${prefix}-new`);
   else if (row.status === 'modified') rowEl.classList.add(`${prefix}-modified`);
   else if (row.status === 'deleted') rowEl.classList.add(`${prefix}-deleted`);
@@ -943,17 +1348,23 @@ function updateRowUI(row: DraftRow, container: HTMLElement): void {
     input.setAttribute('aria-invalid', String(hasError));
 
     // Update or create error message
-    const existingMsg = input.parentElement?.querySelector('.te-field-error');
+    // For desktop rows: error is inside the <td> parent of the input
+    // For compact rows: error has data-te-error-for attribute, lives in the row element
+    const existingMsg =
+      rowEl.querySelector<HTMLElement>(`.te-field-error[data-te-error-for="${field}"]`) ??
+      input.parentElement?.querySelector('.te-field-error');
     if (hasError) {
       const msg = row.errors.get(field)!;
       if (existingMsg) {
         existingMsg.textContent = msg;
-      } else {
+      } else if (rowEl.tagName === 'TR') {
+        // Desktop: append to the input's parent <td>
         const div = document.createElement('div');
         div.className = 'te-field-error';
         div.textContent = msg;
         input.parentElement?.appendChild(div);
       }
+      // Compact rows: errors are rendered during full re-render only (not created dynamically)
     } else if (existingMsg) {
       existingMsg.remove();
     }
