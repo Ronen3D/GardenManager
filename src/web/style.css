@@ -7621,7 +7621,8 @@ tr.now-row-animate > td.time-cell {
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 24px 80px rgba(0, 0, 0, 0.5),
     0 0 60px rgba(74, 144, 217, 0.12);
-  animation: gmEggAppear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+  animation:
+    gmEggAppear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
     gmEggGlow 3s ease-in-out 0.5s infinite;
 }
 
@@ -7639,7 +7640,8 @@ tr.now-row-animate > td.time-cell {
 }
 
 @keyframes gmEggGlow {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.08),
       0 24px 80px rgba(0, 0, 0, 0.5),
@@ -7682,8 +7684,13 @@ tr.now-row-animate > td.time-cell {
 }
 
 @keyframes gmEggFloat {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
 }
 
 .gm-egg-quote {
@@ -7775,12 +7782,14 @@ tr.now-row-animate > td.time-cell {
     inset 0 1px 0 rgba(255, 255, 255, 0.6),
     0 24px 80px rgba(0, 0, 0, 0.12),
     0 0 60px rgba(45, 104, 184, 0.08);
-  animation: gmEggAppear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+  animation:
+    gmEggAppear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
     gmEggGlowLight 3s ease-in-out 0.5s infinite;
 }
 
 @keyframes gmEggGlowLight {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.6),
       0 24px 80px rgba(0, 0, 0, 0.12),

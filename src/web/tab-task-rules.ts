@@ -39,7 +39,10 @@ function notifyIfClamped(raw: Record<string, number | undefined>, sanitized: Rec
     const r = raw[key],
       s = sanitized[key];
     if (r !== undefined && s !== undefined && r !== s) {
-      corrections.push(`${FIELD_LABELS[key] || key}: ${r} → ${s}`);
+      // Wrap the numeric "raw → sanitized" transition in an LRI/PDI bidi isolate
+      // (U+2066 … U+2069) so it renders LTR inside the Hebrew toast, keeping the
+      // older value on the left and the corrected value on the right.
+      corrections.push(`${FIELD_LABELS[key] || key}: \u2066${r} → ${s}\u2069`);
     }
   }
   if (corrections.length) {

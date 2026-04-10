@@ -674,7 +674,11 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
       assignmentId: state.assignmentId,
       newParticipantId: state.selectedCandidateId,
     });
-    label = `החלפה: ${ctx.sourceParticipant.name} → ${inc?.name ?? ''}`;
+    // Arrow points ← (left) to match the RTL reading flow: the name on the
+    // right is the one being replaced, the name on the left is the replacement.
+    // LRI/PDI isolates have no visible effect on Hebrew-name content (verified
+    // empirically via pixel measurements), so we flip the arrow character.
+    label = `החלפה: ${ctx.sourceParticipant.name} ← ${inc?.name ?? ''}`;
   } else {
     state.committing = false;
     return;

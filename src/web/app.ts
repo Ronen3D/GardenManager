@@ -2454,8 +2454,11 @@ function showRescueModal(): void {
         // Direct swap: natural sentence
         stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${stripDayPrefix(sw.taskName)}</strong> (${sw.slotLabel})</li>`;
       } else {
-        // Chain swap: arrow style
-        stepsHtml += `<li>${assignedSpan} → <strong>${stripDayPrefix(sw.taskName)}</strong> (${sw.slotLabel})${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
+        // Chain swap: arrow style. Arrow points ← (left) to match the RTL
+        // reading flow — the participant on the right flows into the task on
+        // the left. LRI/PDI isolates have no visible effect on Hebrew-text
+        // content, so we flip the arrow character instead.
+        stepsHtml += `<li>${assignedSpan} ← <strong>${stripDayPrefix(sw.taskName)}</strong> (${sw.slotLabel})${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
       }
     }
     stepsHtml += `</ol>`;
@@ -2982,7 +2985,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.1</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3159,10 +3162,15 @@ function wireEasterEgg(container: HTMLElement): void {
   title.addEventListener('click', () => {
     _easterEggClicks++;
     if (_easterEggTimer) clearTimeout(_easterEggTimer);
-    _easterEggTimer = setTimeout(() => { _easterEggClicks = 0; }, 2500);
+    _easterEggTimer = setTimeout(() => {
+      _easterEggClicks = 0;
+    }, 2500);
     if (_easterEggClicks >= 7) {
       _easterEggClicks = 0;
-      if (_easterEggTimer) { clearTimeout(_easterEggTimer); _easterEggTimer = null; }
+      if (_easterEggTimer) {
+        clearTimeout(_easterEggTimer);
+        _easterEggTimer = null;
+      }
       showEasterEgg();
     }
   });
@@ -3193,9 +3201,14 @@ function showEasterEgg(): void {
     backdrop.addEventListener('animationend', () => backdrop.remove(), { once: true });
   };
   backdrop.querySelector('.gm-egg-close')!.addEventListener('click', close);
-  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) close();
+  });
   document.addEventListener('keydown', function onKey(e) {
-    if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(); }
+    if (e.key === 'Escape') {
+      document.removeEventListener('keydown', onKey);
+      close();
+    }
   });
   document.body.appendChild(backdrop);
   (backdrop.querySelector('.gm-egg-close') as HTMLElement).focus();
