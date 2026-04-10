@@ -292,6 +292,77 @@ export function getEligibleParticipantsForSlot(
   });
 }
 
+/**
+ * Hebrew user-facing explanation for each rejection code.
+ *
+ * Lives in the engine layer (a static string table is not DOM or storage)
+ * so validator helpers can return pre-formatted reasons without the web
+ * layer duplicating the mapping.
+ */
+export const REJECTION_REASONS_HE: Record<RejectionCode, string> = {
+  'HC-1': 'הדרגה לא מתאימה למשבצת הזו',
+  'HC-2': 'חסרה הסמכה נדרשת',
+  'HC-3': 'המשתתף לא זמין בשעות המשימה',
+  'HC-4': 'המשתתפים חייבים להיות מאותה קבוצה',
+  'HC-5': 'המשתתף כבר משובץ במשימה חופפת',
+  'HC-7': 'המשתתף כבר משובץ במשימה הזו',
+  'HC-11': 'למשתתף הסמכה אסורה למשבצת הזו',
+  'HC-12': 'לא ניתן לשבץ למשימות כבדות רצופות',
+  'HC-14': 'נדרשת הפסקה של 5 שעות לפחות ממשימת קטגוריה',
+};
+
+/** Candidate row for the post-generation swap picker. */
+export interface CandidateEligibility {
+  participant: Participant;
+  eligible: boolean;
+  rejectionCode: RejectionCode | null;
+  reason: string | null;
+}
+
+/**
+ * Like `getEligibleParticipantsForSlot` but returns EVERY participant with
+ * an `eligible` flag and the specific rejection reason for the ones that
+ * cannot fill the slot. Used by the swap picker to surface diagnostics
+ * (gap 9: empty-eligible fallback).
+ */
+export function getCandidatesWithEligibility(
+  task: Task,
+  slotId: string,
+  participants: Participant[],
+  currentAssignments: Assignment[],
+  tasks: Task[],
+  disabledHC?: Set<string>,
+  restRuleMap?: Map<string, number>,
+): CandidateEligibility[] {
+  const slot = task.slots.find((s) => s.slotId === slotId);
+  if (!slot) return [];
+
+  const taskMap = new Map<string, Task>();
+  for (const t of tasks) taskMap.set(t.id, t);
+
+  const pMap = new Map<string, Participant>();
+  for (const p of participants) pMap.set(p.id, p);
+
+  const taskAssignments = currentAssignments.filter((a) => a.taskId === task.id);
+
+  return participants.map((p) => {
+    const pAssignments = currentAssignments.filter((a) => a.participantId === p.id && a.taskId !== task.id);
+    const code = checkEligibility(p, task, slot, pAssignments, taskMap, {
+      checkSameGroup: true,
+      taskAssignments,
+      participantMap: pMap,
+      disabledHC,
+      restRuleMap,
+    });
+    return {
+      participant: p,
+      eligible: code === null,
+      rejectionCode: code,
+      reason: code ? REJECTION_REASONS_HE[code] : null,
+    };
+  });
+}
+
 // ─── Template-level eligibility (static checks, no runtime context) ─────────
 
 export interface TemplateEligibilityResult {

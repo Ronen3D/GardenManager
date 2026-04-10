@@ -58,12 +58,16 @@ function templateBadge(tpl: { color?: string; name: string }): string {
 }
 
 /** Check if any slot in a template references a deleted certification. */
-function hasOrphanedSlotCerts(tpl: { slots: { requiredCertifications: string[]; forbiddenCertifications?: string[] }[]; subTeams: { slots: { requiredCertifications: string[]; forbiddenCertifications?: string[] }[] }[] }): boolean {
+function hasOrphanedSlotCerts(tpl: {
+  slots: { requiredCertifications: string[]; forbiddenCertifications?: string[] }[];
+  subTeams: { slots: { requiredCertifications: string[]; forbiddenCertifications?: string[] }[] }[];
+}): boolean {
   const activeCertIds = new Set(getCertOptions().map((d) => d.id));
   const allSlots = [...tpl.slots, ...tpl.subTeams.flatMap((st) => st.slots)];
-  return allSlots.some((s) =>
-    s.requiredCertifications.some((c) => !activeCertIds.has(c)) ||
-    (s.forbiddenCertifications || []).some((c) => !activeCertIds.has(c)),
+  return allSlots.some(
+    (s) =>
+      s.requiredCertifications.some((c) => !activeCertIds.has(c)) ||
+      (s.forbiddenCertifications || []).some((c) => !activeCertIds.has(c)),
   );
 }
 
@@ -675,7 +679,7 @@ function renderOneTimeCard(ot: OneTimeTask): string {
       <div class="template-title">
         ${templateBadge({ color: ot.color, name: ot.name })}
         <strong>${escHtml(ot.name)}</strong>
-        <span class="text-muted" style="font-size:0.85em;">📅 ${dateStr} ${timeStr}–${endStr} (${ot.durationHours} שע')</span>
+        <span class="text-muted" style="font-size:0.85em;">📅 ${dateStr} <span dir="ltr">${timeStr}–${endStr}</span> (${ot.durationHours} שע')</span>
       </div>
       <div class="template-actions">
         <button class="btn-xs btn-danger-outline" data-action="delete-onetime" data-ot-id="${ot.id}" title="מחק">✕</button>

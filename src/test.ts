@@ -5773,6 +5773,165 @@ console.log('\n── Optimizer ────────────────
   assert(cons1Pid !== cons2Pid, 'optimize: HC-12 assigns back-to-back blocking tasks to different participants');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Swap Picker support: previewSwap / previewSwapChain / getCandidatesWithEligibility
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { getCandidatesWithEligibility } from './engine/validator';
+
+console.log('\n── engine.previewSwap / previewSwapChain ───');
+
+{
+  // Build a tiny schedule: 2 Shemesh slots, 4 eligible L0 participants.
+  const swapEngine = new SchedulingEngine({ maxIterations: 100, maxSolverTimeMs: 1000 });
+  const dayAvail2: TimeBlock[] = [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 16, 12, 0) }];
+  const mkP = (id: string): Participant => ({
+    id,
+    name: id,
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: dayAvail2,
+    dateUnavailability: [],
+  });
+  const swapPs = [mkP('sw-p1'), mkP('sw-p2'), mkP('sw-p3'), mkP('sw-p4')];
+  swapEngine.addParticipants(swapPs);
+  swapEngine.addTask(createShemeshTask(createTimeBlockFromHours(new Date(2026, 1, 15), 6, 14)));
+  const swapSchedule = swapEngine.generateSchedule();
+
+  assert(swapSchedule.assignments.length >= 2, 'preview setup: schedule has assignments');
+
+  const firstA = swapSchedule.assignments[0];
+  const outgoingPid = firstA.participantId;
+  const outgoingStatus = firstA.status;
+  const outgoingUpdatedAt = firstA.updatedAt;
+  const freeP = swapPs.find((p) => !swapSchedule.assignments.some((a) => a.participantId === p.id));
+  assert(freeP !== undefined, 'preview setup: at least one unassigned participant');
+
+  // 1) Valid preview: swap out → free participant → must leave engine untouched
+  if (freeP) {
+    const validPreview = swapEngine.previewSwap({ assignmentId: firstA.id, newParticipantId: freeP.id });
+    assert(validPreview.valid === true, 'previewSwap: valid swap reports valid=true');
+    assert(
+      validPreview.simulatedAssignments.some((a) => a.id === firstA.id && a.participantId === freeP.id),
+      'previewSwap: simulatedAssignments reflects post-swap state',
+    );
+    assert(validPreview.affectedParticipantIds.includes(outgoingPid), 'previewSwap: outgoing pid in affected');
+    assert(validPreview.affectedParticipantIds.includes(freeP.id), 'previewSwap: incoming pid in affected');
+
+    // Engine-side assignment object must be fully rolled back
+    const liveFirstA = swapEngine.getSchedule()?.assignments.find((a) => a.id === firstA.id);
+    assert(liveFirstA?.participantId === outgoingPid, 'previewSwap: participantId rolled back');
+    assert(liveFirstA?.status === outgoingStatus, 'previewSwap: status rolled back');
+    assert(
+      liveFirstA?.updatedAt.getTime() === outgoingUpdatedAt.getTime(),
+      'previewSwap: updatedAt rolled back to exact original timestamp',
+    );
+  }
+
+  // 2) Invalid preview (nonexistent participant) still rolls back
+  const invalidPreview = swapEngine.previewSwap({ assignmentId: firstA.id, newParticipantId: 'does-not-exist' });
+  assert(invalidPreview.valid === false, 'previewSwap: unknown participant → invalid');
+  const liveFirstA2 = swapEngine.getSchedule()?.assignments.find((a) => a.id === firstA.id);
+  assert(liveFirstA2?.participantId === outgoingPid, 'previewSwap: rollback on invalid request');
+  assert(
+    liveFirstA2?.updatedAt.getTime() === outgoingUpdatedAt.getTime(),
+    'previewSwap: updatedAt preserved on invalid request',
+  );
+
+  // 3) previewSwapChain: circular two-assignment swap (A↔B)
+  if (swapSchedule.assignments.length >= 2) {
+    const [aOne, aTwo] = swapSchedule.assignments;
+    const chainPreview = swapEngine.previewSwapChain([
+      { assignmentId: aOne.id, newParticipantId: aTwo.participantId },
+      { assignmentId: aTwo.id, newParticipantId: aOne.participantId },
+    ]);
+    assert(chainPreview.valid === true, 'previewSwapChain: circular A↔B swap is valid');
+    // Post-chain state in snapshot: the two assignments should have swapped participants
+    const simA1 = chainPreview.simulatedAssignments.find((a) => a.id === aOne.id);
+    const simA2 = chainPreview.simulatedAssignments.find((a) => a.id === aTwo.id);
+    assert(
+      simA1?.participantId === aTwo.participantId && simA2?.participantId === aOne.participantId,
+      'previewSwapChain: simulated state shows swapped participants',
+    );
+    // Engine state unchanged
+    const liveA1 = swapEngine.getSchedule()?.assignments.find((a) => a.id === aOne.id);
+    const liveA2 = swapEngine.getSchedule()?.assignments.find((a) => a.id === aTwo.id);
+    assert(
+      liveA1?.participantId === aOne.participantId && liveA2?.participantId === aTwo.participantId,
+      'previewSwapChain: engine state byte-identical after preview',
+    );
+  }
+}
+
+console.log('\n── getCandidatesWithEligibility ────────');
+
+{
+  // Pool of 4 participants, varying cert/level. Use the same Hamama task shape
+  // (requires Hamama cert, L0 or L4-lowPriority).
+  const candTask = createHamamaTask(createTimeBlockFromHours(new Date(2026, 1, 15), 6, 14));
+  const candSlot = candTask.slots[0];
+  const dayAvail3: TimeBlock[] = [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 16, 12, 0) }];
+
+  const pGood: Participant = {
+    id: 'cand-good',
+    name: 'Good',
+    level: Level.L0,
+    certifications: ['Hamama', 'Nitzan'],
+    group: 'A',
+    availability: dayAvail3,
+    dateUnavailability: [],
+  };
+  const pNoCert: Participant = {
+    id: 'cand-nocert',
+    name: 'NoCert',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: dayAvail3,
+    dateUnavailability: [],
+  };
+  const pWrongLevel: Participant = {
+    id: 'cand-wronglevel',
+    name: 'WrongLevel',
+    level: Level.L3,
+    certifications: ['Hamama', 'Nitzan'],
+    group: 'A',
+    availability: dayAvail3,
+    dateUnavailability: [],
+  };
+
+  const pool = [pGood, pNoCert, pWrongLevel];
+  const candidates = getCandidatesWithEligibility(candTask, candSlot.slotId, pool, [], [candTask]);
+
+  assert(candidates.length === 3, 'getCandidatesWithEligibility: one entry per participant');
+  assert(
+    candidates.every((c) => (c.eligible ? c.rejectionCode === null : c.rejectionCode !== null)),
+    'getCandidatesWithEligibility: eligible ⇔ rejectionCode === null',
+  );
+
+  // Parity with getEligibleParticipantsForSlot for the eligible subset
+  const eligibleSubset = candidates
+    .filter((c) => c.eligible)
+    .map((c) => c.participant.id)
+    .sort();
+  const eligibleParity = getEligibleParticipantsForSlot(candTask, candSlot.slotId, pool, [], [candTask])
+    .map((p) => p.id)
+    .sort();
+  assert(
+    JSON.stringify(eligibleSubset) === JSON.stringify(eligibleParity),
+    'getCandidatesWithEligibility: eligible subset matches getEligibleParticipantsForSlot',
+  );
+
+  // Ineligibles come with a Hebrew reason string
+  const rejects = candidates.filter((c) => !c.eligible);
+  assert(rejects.length === 2, 'getCandidatesWithEligibility: 2 ineligible');
+  assert(
+    rejects.every((c) => typeof c.reason === 'string' && c.reason.length > 0),
+    'getCandidatesWithEligibility: rejection reasons populated',
+  );
+}
+
 // ─── Summary ─────────────────────────────────────────────────────────────────
 
 console.log('\n══════════════════════════════════════════');

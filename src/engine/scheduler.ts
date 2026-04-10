@@ -33,6 +33,32 @@ import {
 } from './optimizer';
 import { mergePhantomRules, type PhantomContext } from './phantom';
 
+/**
+ * Result of a non-mutating swap preview: mirrors `ValidationResult` but
+ * additionally carries soft-warning deltas, score delta, a snapshot of
+ * the simulated post-swap assignments, and the participants affected by
+ * the swap (source + destination).
+ */
+export interface SwapPreview {
+  valid: boolean;
+  violations: ConstraintViolation[];
+  /** Soft warnings present AFTER the swap but not before. */
+  addedSoftWarnings: ConstraintViolation[];
+  /** Soft warnings present BEFORE the swap but not after. */
+  removedSoftWarnings: ConstraintViolation[];
+  /** (newScore - oldScore). Negative = improvement (lower penalty). */
+  scoreDelta: number;
+  /** IDs of participants whose schedule changed (outgoing + incoming + chain). */
+  affectedParticipantIds: string[];
+  /** Deep-cloned post-swap assignment snapshot. Engine state itself is rolled back. */
+  simulatedAssignments: Assignment[];
+}
+
+/** Stable key for diffing soft warnings between pre- and post-swap states. */
+function softWarningKey(w: ConstraintViolation): string {
+  return `${w.code}|${w.taskId}|${w.slotId ?? ''}|${w.participantId ?? ''}|${w.message}`;
+}
+
 export class SchedulingEngine {
   private participants: Map<string, Participant> = new Map();
   private tasks: Map<string, Task> = new Map();
@@ -625,6 +651,181 @@ export class SchedulingEngine {
     ];
 
     return validation;
+  }
+
+  /**
+   * Preview a single swap without committing it. Mutates briefly to run
+   * validation + soft warning collection + score computation, then always
+   * rolls back — regardless of whether the swap would be valid.
+   *
+   * The returned `simulatedAssignments` is a deep-cloned snapshot of the
+   * post-swap state, letting the UI compute workload deltas without
+   * re-mutating the engine.
+   */
+  previewSwap(request: SwapRequest): SwapPreview {
+    return this.previewSwapChain([request]);
+  }
+
+  /**
+   * Preview an atomic chain swap (two-way trade or multi-step chain)
+   * without committing. Mirrors `swapParticipantChain` but always rolls
+   * back and returns a `SwapPreview` with score/warning deltas and a
+   * snapshot of the simulated post-swap state.
+   */
+  previewSwapChain(requests: SwapRequest[]): SwapPreview {
+    const emptyPreview: SwapPreview = {
+      valid: false,
+      violations: [],
+      addedSoftWarnings: [],
+      removedSoftWarnings: [],
+      scoreDelta: 0,
+      affectedParticipantIds: [],
+      simulatedAssignments: [],
+    };
+
+    if (!this.currentSchedule) {
+      return {
+        ...emptyPreview,
+        violations: [
+          { severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'אין שבצ"ק לעריכה.', taskId: '' },
+        ],
+      };
+    }
+    if (requests.length === 0) {
+      return {
+        ...emptyPreview,
+        valid: true,
+        simulatedAssignments: this.currentSchedule.assignments.map((a) => ({ ...a })),
+      };
+    }
+
+    // Resolve targets + save previous state (mirrors swapParticipantChain)
+    const targets: Array<{
+      assignment: Assignment;
+      prevParticipantId: string;
+      prevStatus: AssignmentStatus;
+      prevUpdatedAt: Date;
+      newParticipantId: string;
+    }> = [];
+    const affected = new Set<string>();
+
+    for (const req of requests) {
+      const assignment = this.currentSchedule.assignments.find((a) => a.id === req.assignmentId);
+      if (!assignment) {
+        return {
+          ...emptyPreview,
+          violations: [
+            {
+              severity: ViolationSeverity.Error,
+              code: 'ASSIGNMENT_NOT_FOUND',
+              message: `שיבוץ ${req.assignmentId} לא נמצא.`,
+              taskId: '',
+            },
+          ],
+        };
+      }
+      if (assignment.status === AssignmentStatus.Frozen) {
+        return {
+          ...emptyPreview,
+          violations: [
+            {
+              severity: ViolationSeverity.Error,
+              code: 'ASSIGNMENT_FROZEN',
+              message: `שיבוץ ${req.assignmentId} קפוא ולא ניתן לשינוי.`,
+              taskId: assignment.taskId,
+            },
+          ],
+        };
+      }
+      if (!this.participants.has(req.newParticipantId)) {
+        return {
+          ...emptyPreview,
+          violations: [
+            {
+              severity: ViolationSeverity.Error,
+              code: 'PARTICIPANT_NOT_FOUND',
+              message: `משתתף ${req.newParticipantId} לא נמצא.`,
+              taskId: assignment.taskId,
+            },
+          ],
+        };
+      }
+      affected.add(assignment.participantId);
+      affected.add(req.newParticipantId);
+      targets.push({
+        assignment,
+        prevParticipantId: assignment.participantId,
+        prevStatus: assignment.status,
+        prevUpdatedAt: assignment.updatedAt,
+        newParticipantId: req.newParticipantId,
+      });
+    }
+
+    // Capture baseline soft warnings BEFORE mutating
+    const baselineSoft = collectSoftWarnings(
+      this.currentSchedule.tasks,
+      this.currentSchedule.participants,
+      this.currentSchedule.assignments,
+      this.config,
+    );
+    const baselineComposite = this.currentSchedule.score?.compositeScore ?? 0;
+
+    // Apply all mutations
+    const now = new Date();
+    for (const t of targets) {
+      t.assignment.participantId = t.newParticipantId;
+      t.assignment.status = AssignmentStatus.Manual;
+      t.assignment.updatedAt = now;
+    }
+
+    let preview: SwapPreview;
+    try {
+      const validation = this.validate();
+      const postSoft = collectSoftWarnings(
+        this.currentSchedule.tasks,
+        this.currentSchedule.participants,
+        this.currentSchedule.assignments,
+        this.config,
+      );
+      const postScore = computeScheduleScore(
+        this.currentSchedule.tasks,
+        this.currentSchedule.participants,
+        this.currentSchedule.assignments,
+        this.config,
+        this._buildScoreCtx(this.currentSchedule.tasks, this.currentSchedule.participants),
+      );
+
+      const baselineKeys = new Set(baselineSoft.map(softWarningKey));
+      const postKeys = new Set(postSoft.map(softWarningKey));
+      const addedSoftWarnings = postSoft.filter((w) => !baselineKeys.has(softWarningKey(w)));
+      const removedSoftWarnings = baselineSoft.filter((w) => !postKeys.has(softWarningKey(w)));
+
+      // Deep-clone assignments as the simulated snapshot
+      const simulatedAssignments: Assignment[] = this.currentSchedule.assignments.map((a) => ({
+        ...a,
+        updatedAt: new Date(a.updatedAt.getTime()),
+      }));
+
+      preview = {
+        valid: validation.valid,
+        violations: validation.violations,
+        addedSoftWarnings,
+        removedSoftWarnings,
+        scoreDelta: postScore.compositeScore - baselineComposite,
+        affectedParticipantIds: [...affected],
+        simulatedAssignments,
+      };
+    } finally {
+      // ALWAYS roll back — even on valid previews. Commit is a separate
+      // step via `swapParticipant` / `swapParticipantChain`.
+      for (const t of targets) {
+        t.assignment.participantId = t.prevParticipantId;
+        t.assignment.status = t.prevStatus;
+        t.assignment.updatedAt = t.prevUpdatedAt;
+      }
+    }
+
+    return preview;
   }
 
   /**

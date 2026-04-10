@@ -237,7 +237,7 @@ function renderUnavailabilitySection(p: Participant): string {
       const label = `כל ${hebrewDayName(new Date(2026, 0, 4 + r.dayOfWeek))}`;
       const timeLabel = r.allDay
         ? 'כל היום'
-        : `${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00`;
+        : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00</span>`;
       html += `<li>
         <strong>${label}</strong> — ${timeLabel}
         ${r.reason ? `<span class="text-muted"> · ${r.reason}</span>` : ''}

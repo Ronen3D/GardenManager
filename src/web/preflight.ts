@@ -302,7 +302,7 @@ export function runPreflight(): PreflightResult {
       findings: [
         {
           severity: PreflightSeverity.Critical,
-          category: 'NoTasks',
+          code: 'NO_TASKS',
           message: 'יש להגדיר משימות לפני יצירת שבצ"ק.',
         },
       ],

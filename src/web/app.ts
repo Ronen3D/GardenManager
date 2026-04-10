@@ -22,7 +22,7 @@ import {
   isModifiableAssignment,
   unfreezeAll,
 } from '../engine/temporal';
-import { getEligibleParticipantsForSlot, getRejectionReason } from '../engine/validator';
+import { getEligibleParticipantsForSlot, getRejectionReason, REJECTION_REASONS_HE } from '../engine/validator';
 import {
   AlgorithmSettings,
   type Assignment,
@@ -31,7 +31,6 @@ import {
   Level,
   LiveModeState,
   type Participant,
-  type RejectionCode,
   type RescuePlan,
   type RescueRequest,
   type RescueResult,
@@ -48,10 +47,12 @@ import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
 import { wireDataTransferEvents } from './data-transfer-ui';
 import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
+import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
 import { runPreflight } from './preflight';
 import { initResponsive, isSmallScreen, isTouchDevice } from './responsive';
 import { renderScheduleGrid } from './schedule-grid-view';
+import { openSwapPicker } from './swap-picker';
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
 import {
   canLeaveParticipantsTab,
@@ -81,7 +82,6 @@ import {
   showBottomSheet,
   showConfirm,
   showContinuityImport,
-  showPrompt,
   showTimePicker,
   showToast,
   wireCustomSelect,
@@ -213,23 +213,46 @@ let _manualSelectedTaskId: string | null = null;
 let _manualSelectedSlotId: string | null = null;
 /** Cached eligible participant IDs for the selected slot */
 let _eligibleForSelectedSlot: Set<string> | null = null;
-/** Manual-build undo stack: snapshots of assignment arrays */
-let _manualUndoStack: Assignment[][] = [];
+/**
+ * Unified undo stack — used by both manual-build and post-generation swap flows.
+ * Each entry holds a deep snapshot of the schedule's assignments at the point
+ * BEFORE the action was applied, plus a kind + label for surfacing in toasts.
+ */
+interface UndoEntry {
+  kind: 'manual' | 'swap';
+  assignments: Assignment[];
+  label: string;
+}
+let _undoStack: UndoEntry[] = [];
+
+function pushUndo(kind: UndoEntry['kind'], label: string): void {
+  if (!currentSchedule) return;
+  _undoStack.push({
+    kind,
+    assignments: currentSchedule.assignments.map((a) => ({ ...a })),
+    label,
+  });
+  // Cap stack depth so long sessions don't balloon.
+  if (_undoStack.length > 20) _undoStack.shift();
+}
+
+function popUndoByKind(kind: UndoEntry['kind']): UndoEntry | null {
+  // Pop the top entry only if it matches the requested kind — prevents a
+  // swap undo from silently reverting a subsequent manual-build action.
+  const top = _undoStack[_undoStack.length - 1];
+  if (!top || top.kind !== kind) return null;
+  _undoStack.pop();
+  return top;
+}
+
+function applyUndoEntry(entry: UndoEntry): void {
+  if (!currentSchedule || !engine) return;
+  currentSchedule.assignments = entry.assignments;
+  engine.importSchedule(currentSchedule);
+  revalidateAndRefresh();
+}
 /** Warehouse search filter text */
 let _warehouseFilter = '';
-
-/** HC rejection code → Hebrew user-facing message */
-const REJECTION_MESSAGES: Record<RejectionCode, string> = {
-  'HC-1': 'הדרגה לא מתאימה למשבצת הזו',
-  'HC-2': 'חסרה הסמכה נדרשת',
-  'HC-3': 'המשתתף לא זמין בשעות המשימה',
-  'HC-4': 'המשתתפים חייבים להיות מאותה קבוצה',
-  'HC-5': 'המשתתף כבר משובץ במשימה חופפת',
-  'HC-7': 'המשתתף כבר משובץ במשימה הזו',
-  'HC-11': 'למשתתף הסמכה אסורה למשבצת הזו',
-  'HC-12': 'לא ניתן לשבץ למשימות כבדות רצופות',
-  'HC-14': 'נדרשת הפסקה של 5 שעות לפחות ממשימת קטגוריה',
-};
 
 function clearManualSelection(): void {
   _manualSelectedTaskId = null;
@@ -1063,7 +1086,7 @@ function renderScheduleTab(): string {
     const filledSlots = s.assignments.length;
     html += `<div class="manual-build-strip">
       <span class="manual-build-status">מצב בנייה ידנית — ${filledSlots}/${totalSlots} משבצות מלאות</span>
-      <button class="btn-sm btn-outline" id="btn-manual-undo" ${_manualUndoStack.length === 0 ? 'disabled' : ''} title="ביטול פעולה אחרונה">↩ ביטול</button>
+      <button class="btn-sm btn-outline" id="btn-manual-undo" ${_undoStack.filter((e) => e.kind === 'manual').length === 0 ? 'disabled' : ''} title="ביטול פעולה אחרונה">↩ ביטול</button>
     </div>`;
   }
 
@@ -1157,16 +1180,12 @@ function renderParticipantWarehouse(schedule: Schedule): string {
 
     const cards = filtered
       .map((p) => {
-        const dayCount = dayAssignmentCounts.get(p.id) || 0;
-        let cardClass = 'warehouse-card';
-        if (_eligibleForSelectedSlot) {
-          cardClass += _eligibleForSelectedSlot.has(p.id) ? ' wc-eligible' : ' wc-ineligible';
-        }
-        return `<div class="${cardClass}" data-pid="${p.id}" role="button" tabindex="0">
-        <span class="wc-name" style="color:${groupColor(p.group)}">${escHtml(p.name)}</span>
-        <span class="wc-badges">${levelBadge(p.level)} ${certBadges(p.certifications, '')}</span>
-        ${dayCount > 0 ? `<span class="wc-load" title="${dayCount} שיבוצים היום">${dayCount}</span>` : ''}
-      </div>`;
+        const eligible = _eligibleForSelectedSlot ? _eligibleForSelectedSlot.has(p.id) : true;
+        return renderParticipantCard({
+          participant: p,
+          eligible,
+          dayAssignmentCount: dayAssignmentCounts.get(p.id) || 0,
+        });
       })
       .join('');
 
@@ -1206,7 +1225,7 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
   const levels = slot.acceptableLevels.map((l) => l.level).join('/');
   const cleanTaskName = (task.sourceName || task.name).replace(/^D\d+\s+/, '');
   const slotLabel = slot.label ? ` — ${slot.label}` : '';
-  const timeRange = `${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}`;
+  const timeRange = `<span dir="ltr">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</span>`;
   let header = `<div class="warehouse-sheet-header">
     <div class="warehouse-sheet-title">בחר משתתף ל-${escHtml(cleanTaskName)}${escHtml(slotLabel)}</div>
     <div class="warehouse-sheet-reqs">${timeRange} ${levels ? `${levels}` : ''} ${certBadges(slot.requiredCertifications, '')}</div>
@@ -1235,14 +1254,12 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
 
   const cards = filtered
     .map((p) => {
-      let cardClass = 'warehouse-card warehouse-card-sheet';
-      if (_eligibleForSelectedSlot) {
-        cardClass += _eligibleForSelectedSlot.has(p.id) ? ' wc-eligible' : ' wc-ineligible';
-      }
-      return `<div class="${cardClass}" data-pid="${p.id}" role="button" tabindex="0">
-      <span class="wc-name" style="color:${groupColor(p.group)}">${escHtml(p.name)}</span>
-      <span class="wc-badges">${levelBadge(p.level)} ${certBadges(p.certifications, '')}</span>
-    </div>`;
+      const eligible = _eligibleForSelectedSlot ? _eligibleForSelectedSlot.has(p.id) : true;
+      return renderParticipantCard({
+        participant: p,
+        eligible,
+        extraClass: 'warehouse-card-sheet',
+      });
     })
     .join('');
 
@@ -1335,7 +1352,7 @@ async function handleManualParticipantClick(participantId: string): Promise<bool
   });
 
   if (reason) {
-    showToast(REJECTION_MESSAGES[reason] || `אילוץ ${reason}`, { type: 'error' });
+    showToast(REJECTION_REASONS_HE[reason] || `אילוץ ${reason}`, { type: 'error' });
     return false;
   }
 
@@ -1361,7 +1378,7 @@ function executeManualAssignment(
   if (!currentSchedule || !engine) return;
 
   // Push undo snapshot
-  _manualUndoStack.push(currentSchedule.assignments.map((a) => ({ ...a })));
+  pushUndo('manual', 'שיבוץ ידני');
 
   // Remove from source slot if moving
   if (moveFrom) {
@@ -1424,7 +1441,7 @@ function handleManualRemove(assignmentId: string): void {
   }
 
   // Push undo snapshot
-  _manualUndoStack.push(currentSchedule.assignments.map((a) => ({ ...a })));
+  pushUndo('manual', 'הסרת שיבוץ');
 
   currentSchedule.assignments = currentSchedule.assignments.filter((x) => x.id !== assignmentId);
   engine.importSchedule(currentSchedule);
@@ -1434,12 +1451,11 @@ function handleManualRemove(assignmentId: string): void {
 }
 
 function handleManualUndo(): void {
-  if (!currentSchedule || !engine || _manualUndoStack.length === 0) return;
-  const prev = _manualUndoStack.pop()!;
-  currentSchedule.assignments = prev;
-  engine.importSchedule(currentSchedule);
+  if (!currentSchedule || !engine) return;
+  const entry = popUndoByKind('manual');
+  if (!entry) return;
+  applyUndoEntry(entry);
   clearManualSelection();
-  revalidateAndRefresh();
   showToast('הפעולה בוטלה', { type: 'info' });
 }
 
@@ -1780,7 +1796,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
 
     if (taskAssignments.length === 0) {
       html += `<tr class="row-warning"><td><strong>${task.name}</strong> ${crossDayTag}</td><td>${taskBadge(task)}</td>
-        <td>${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</td>
+        <td><span dir="ltr">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</span></td>
         <td colspan="6"><em class="text-danger">⚠ אין שיבוצים</em></td></tr>`;
       continue;
     }
@@ -1796,7 +1812,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
           <strong>${task.name}</strong>${task.isLight ? ' <small>(קלה)</small>' : ''} ${crossDayTag}
           ${taskIsFrozen ? '<span class="frozen-label">🧊 מוקפא</span>' : ''}</td>
           <td rowspan="${taskAssignments.length}">${taskBadge(task)}</td>
-          <td rowspan="${taskAssignments.length}">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</td>`;
+          <td rowspan="${taskAssignments.length}"><span dir="ltr">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</span></td>`;
       }
       html += `<td><small>${slot?.label || task.name}</small></td>
         <td><strong class="participant-hover" data-pid="${p?.id || ''}">${p?.name || '???'}</strong></td>
@@ -1872,7 +1888,10 @@ function renderGanttChart(schedule: Schedule): string {
       const crossTo = task && taskEndsAfter(task, currentDay);
       const crossClass = crossFrom ? 'gantt-cross-from' : crossTo ? 'gantt-cross-to' : '';
 
-      const tooltip = `${block.taskName}&#10;${new Date(block.startMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} – ${new Date(block.endMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}${crossFrom ? '&#10;▶ המשך מהיום הקודם' : ''}${crossTo ? '&#10;◀ ממשיך ליום הבא' : ''}`;
+      // Browser title tooltips render as plain text (no HTML), so we use
+      // U+2066 LRI + U+2069 PDI to force the time range into an LTR isolate
+      // inside the surrounding RTL tooltip — otherwise "05:00 – 13:00" flips.
+      const tooltip = `${block.taskName}&#10;\u2066${new Date(block.startMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} – ${new Date(block.endMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}\u2069${crossFrom ? '&#10;▶ המשך מהיום הקודם' : ''}${crossTo ? '&#10;◀ ממשיך ליום הבא' : ''}`;
       const shortName = block.taskName.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
       html += `<div class="gantt-block task-tooltip-hover ${block.isLight ? 'gantt-light' : ''} ${crossClass}" data-task-id="${block.taskId}" style="left:${left}%;width:${width}%;background:${block.color}" title="${tooltip}">
         <span class="gantt-block-text">${crossFrom ? '▶ ' : ''}${shortName}${crossTo ? ' ◀' : ''}</span></div>`;
@@ -2166,7 +2185,7 @@ function doCreateManualSchedule(): void {
   // Activate manual build mode immediately
   _manualBuildActive = true;
   clearManualSelection();
-  _manualUndoStack = [];
+  _undoStack = _undoStack.filter((e) => e.kind !== 'manual');
   _warehouseFilter = '';
 
   scheduleElapsed = 0;
@@ -2229,59 +2248,39 @@ async function handleSwap(assignmentId: string): Promise<void> {
     await showAlert('השיבוץ הזה מוקפא כי הוא בעבר. אי אפשר לשנות אותו.', { icon: '🧊' });
     return;
   }
-  const task = currentSchedule.tasks.find((t) => t.id === assignment.taskId);
-  if (!task) return;
-  const currentP = currentSchedule.participants.find((p) => p.id === assignment.participantId);
 
-  // Pre-filter to participants who are *actually* eligible for this slot, so
-  // the user doesn't have to guess-and-check through dozens of names and hit
-  // Hebrew constraint errors. getEligibleParticipantsForSlot already excludes
-  // the current participant (HC-7) and handles all HC-1..HC-14 rules.
   const disabledHC = new Set(store.getAlgorithmSettings().disabledHardConstraints);
   const restRuleMap = store.buildRestRuleMap();
-  const eligible = getEligibleParticipantsForSlot(
-    task,
-    assignment.slotId,
-    currentSchedule.participants,
-    currentSchedule.assignments,
-    currentSchedule.tasks,
+
+  await openSwapPicker(assignmentId, {
+    engine,
+    schedule: currentSchedule,
     disabledHC,
     restRuleMap,
-  ).filter((p) => p.id !== assignment.participantId);
+    dayStartHour: store.getDayStartHour(),
+    onCommit: ({ label, preCommitAssignments }) => {
+      if (!currentSchedule) return;
+      // Record the pre-commit snapshot on the unified undo stack. The engine
+      // mutated `currentSchedule.assignments` in place (shared reference), so
+      // there's no need to re-fetch the schedule object from the engine here.
+      _undoStack.push({ kind: 'swap', assignments: preCommitAssignments, label });
+      if (_undoStack.length > 20) _undoStack.shift();
 
-  if (eligible.length === 0) {
-    await showAlert(
-      `אין משתתפים זמינים להחלפה ב-"${task.name}".\nכל שאר המשתתפים חסומים על-ידי אילוצים (דרגה, הסמכה, זמינות, חפיפה וכו').`,
-      { title: 'אין החלפה אפשרית', icon: 'ℹ️' },
-    );
-    return;
-  }
+      revalidateAndRefresh();
 
-  const suggestions = eligible.map((p) => `${p.name} (${p.level}, ${p.group})`);
-
-  const choice = await showPrompt(
-    `החלפה ב-"${task.name}".\nנוכחי: ${currentP?.name}\nמוצגים ${eligible.length} משתתפים זמינים בלבד.`,
-    { title: 'החלפת משתתף', suggestions },
-  );
-  if (!choice) return;
-
-  const newP = eligible.find((p) => choice.includes(p.name) || choice === p.id);
-  if (!newP) {
-    await showAlert('לא נמצא משתתף בשם הזה.', { icon: '⚠️' });
-    return;
-  }
-
-  const result = engine.swapParticipant({ assignmentId, newParticipantId: newP.id });
-  currentSchedule = engine.getSchedule();
-
-  if (!result.valid) {
-    const msgs = result.violations.map((v) => `[${v.code}] ${v.message}`).join('\n');
-    await showAlert(`ההחלפה יוצרת הפרות בשבצ"ק:\n\n${msgs}`, { title: 'הפרות', icon: '⚠️' });
-  } else {
-    showToast('החלפה בוצעה בהצלחה', { type: 'success' });
-    // Full re-validation + refresh only on successful swap
-    revalidateAndRefresh();
-  }
+      showToast(label, {
+        type: 'success',
+        duration: 5000,
+        action: {
+          label: 'בטל',
+          callback: () => {
+            const entry = popUndoByKind('swap');
+            if (entry) applyUndoEntry(entry);
+          },
+        },
+      });
+    },
+  });
 }
 
 async function handleLock(assignmentId: string): Promise<void> {
@@ -2620,7 +2619,7 @@ function buildRescueParticipantTooltip(
     for (let i = 0; i < nextTasks.length; i++) {
       const t = nextTasks[i];
       const dayStr = 'יום ' + hebrewDayName(t.start);
-      const timeStr = fmt(t.start) + ' – ' + fmt(t.end);
+      const timeStr = `<span dir="ltr">${fmt(t.start)} – ${fmt(t.end)}</span>`;
       const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
       const refMarker = t.isReference ? ' ◄' : '';
       html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${stripDayPrefix(t.taskName)}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
@@ -2983,7 +2982,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1>⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.0</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3061,6 +3060,7 @@ function renderAll(): void {
   // Wire events
   wireTabNav(app);
   wireUndoRedo(app);
+  wireEasterEgg(app);
   wireFactoryReset(app);
 
   const content = document.getElementById('tab-content')!;
@@ -3146,6 +3146,59 @@ function wireUndoRedo(container: HTMLElement): void {
   const redoBtn = container.querySelector('#btn-redo');
   if (undoBtn) undoBtn.addEventListener('click', () => doUndoRedo('undo'));
   if (redoBtn) redoBtn.addEventListener('click', () => doUndoRedo('redo'));
+}
+
+// ─── Easter Egg ─────────────────────────────────────────────────────────────
+
+let _easterEggClicks = 0;
+let _easterEggTimer: ReturnType<typeof setTimeout> | null = null;
+
+function wireEasterEgg(container: HTMLElement): void {
+  const title = container.querySelector('#app-title');
+  if (!title) return;
+  title.addEventListener('click', () => {
+    _easterEggClicks++;
+    if (_easterEggTimer) clearTimeout(_easterEggTimer);
+    _easterEggTimer = setTimeout(() => { _easterEggClicks = 0; }, 2500);
+    if (_easterEggClicks >= 7) {
+      _easterEggClicks = 0;
+      if (_easterEggTimer) { clearTimeout(_easterEggTimer); _easterEggTimer = null; }
+      showEasterEgg();
+    }
+  });
+}
+
+function showEasterEgg(): void {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'gm-modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="gm-egg-dialog" role="dialog" aria-modal="true">
+      <div class="gm-egg-sparkle">✨</div>
+      <div class="gm-egg-quote">
+        <blockquote>\u201Cחרטה היחידה בלבי היא שלא חלמתי חלומות רבים וגדולים עוד יותר\u201D</blockquote>
+        <cite>— שמעון פרס</cite>
+      </div>
+      <div class="gm-egg-divider"></div>
+      <div class="gm-egg-quote">
+        <blockquote>\u201Cאם ברצונך ללמוד להכיר אדם, שים לב איך הוא מתייחס לזוטרים ממנו, לא לשווים לו.\u201D</blockquote>
+        <cite>— סיריוס בלק, הארי פוטר וגביע האש</cite>
+      </div>
+      <button class="gm-egg-close">🪄</button>
+    </div>`;
+
+  const close = () => {
+    const dialog = backdrop.querySelector('.gm-egg-dialog');
+    if (dialog) dialog.classList.add('closing');
+    backdrop.classList.add('closing');
+    backdrop.addEventListener('animationend', () => backdrop.remove(), { once: true });
+  };
+  backdrop.querySelector('.gm-egg-close')!.addEventListener('click', close);
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+  document.addEventListener('keydown', function onKey(e) {
+    if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(); }
+  });
+  document.body.appendChild(backdrop);
+  (backdrop.querySelector('.gm-egg-close') as HTMLElement).focus();
 }
 
 // ─── KPI Count-Up Animation ─────────────────────────────────────────────────
@@ -3832,7 +3885,7 @@ function wireScheduleEvents(container: HTMLElement): void {
     manualBuildBtn.addEventListener('click', () => {
       _manualBuildActive = !_manualBuildActive;
       clearManualSelection();
-      _manualUndoStack = [];
+      _undoStack = _undoStack.filter((e) => e.kind !== 'manual');
       _warehouseFilter = '';
       renderAll();
     });
@@ -4597,7 +4650,7 @@ function buildTaskTooltipContent(taskId: string): string {
       ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
     </div>
     <div class="ttt-time">
-      <span>${startStr} – ${endStr}</span>
+      <span dir="ltr">${startStr} – ${endStr}</span>
       <span class="ttt-dur">${hrs.toFixed(1)} שע'</span>
     </div>
     <div class="ttt-divider"></div>

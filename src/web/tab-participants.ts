@@ -16,8 +16,6 @@ import {
 import { fmtTime, HEBREW_DAYS } from '../utils/date-utils';
 import * as store from './config-store';
 import { getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
-import { certBadges, escHtml, groupBadge, groupColor, levelBadge, SVG_ICONS } from './ui-helpers';
-import { showConfirm, showSaveConfirm, showToast } from './ui-modal';
 import {
   canLeaveTableEdit,
   enterTableEditMode,
@@ -27,6 +25,8 @@ import {
   renderTableEditMode,
   wireTableEditEvents,
 } from './table-edit-participants';
+import { certBadges, escHtml, groupBadge, groupColor, levelBadge, SVG_ICONS } from './ui-helpers';
+import { showConfirm, showSaveConfirm, showToast } from './ui-modal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

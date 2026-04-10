@@ -1835,3 +1835,56 @@
     font-size: 0.8rem;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Swap Picker — Mobile Overrides
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  .swap-picker {
+    max-height: none;
+    gap: 8px;
+  }
+
+  .swap-picker-list {
+    max-height: none;
+  }
+
+  /* Touch target sizes ≥44×44 */
+  .swap-picker-tab {
+    min-height: 44px;
+    font-size: 0.9rem;
+  }
+
+  .swap-picker-chip {
+    min-height: 36px;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+  }
+
+  .swap-picker-search {
+    min-height: 44px;
+    font-size: 16px; /* prevent iOS zoom */
+  }
+
+  .swap-picker-sort {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .swap-picker-list .warehouse-card {
+    min-height: 52px;
+    padding: 10px 12px;
+  }
+
+  .swap-picker-cancel,
+  .swap-picker-confirm {
+    min-height: 48px;
+    font-size: 0.95rem;
+  }
+
+  /* Keep the sticky footer (preview + actions) above the on-screen keyboard */
+  .swap-picker-footer {
+    padding-bottom: calc(8px + env(keyboard-inset-height, 0px));
+  }
+}
