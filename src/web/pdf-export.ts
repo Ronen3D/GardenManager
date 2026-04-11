@@ -19,11 +19,11 @@
  * correct Hebrew (Right-to-Left) rendering.
  */
 
-import { addDays } from 'date-fns';
 import { jsPDF } from 'jspdf';
 import autoTable, { __createTable, __drawTable, type CellDef, type UserOptions } from 'jspdf-autotable';
 import type { Schedule, Task } from '../models/types';
-import { fmtTime, HEBREW_DAYS } from '../utils/date-utils';
+import { HEBREW_DAYS } from '../utils/date-utils';
+import { fmtTimeLabel, getDayWindow, getNumDays, getTasksForDay, tint } from './export-utils';
 import {
   assignRows,
   computeSectionMetrics,
@@ -47,36 +47,6 @@ const PAGE_MARGIN = 8; // mm from each edge
 const COL_GAP = 4; // mm between grid columns
 const ROW_GAP = 3; // mm between grid rows
 const TABLE_LABEL_OFFSET = 3; // mm from label text to table top
-
-/** Named Hebrew shift labels by start-hour ranges */
-const SHIFT_NAMES: Record<number, string> = {
-  5: 'בוקר',
-  6: 'בוקר',
-  7: 'בוקר',
-  8: 'בוקר',
-  12: 'צהריים',
-  13: 'צהריים',
-  14: 'צהריים',
-  17: 'ערב',
-  18: 'ערב',
-  19: 'ערב',
-  20: 'ערב',
-  21: 'לילה',
-  22: 'לילה',
-  23: 'לילה',
-};
-
-/** Hex colour string → [R, G, B] tuple */
-function hexToRgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', '');
-  return [parseInt(h.substring(0, 2), 16), parseInt(h.substring(2, 4), 16), parseInt(h.substring(4, 6), 16)];
-}
-
-/** Light tint for cell backgrounds */
-function tint(hex: string, f = 0.82): [number, number, number] {
-  const [r, g, b] = hexToRgb(hex);
-  return [Math.round(r + (255 - r) * f), Math.round(g + (255 - g) * f), Math.round(b + (255 - b) * f)];
-}
 
 // ─── Hebrew RTL helper ───────────────────────────────────────────────────────
 
@@ -119,39 +89,6 @@ function createDoc(): jsPDF {
   doc.addFont('Rubik-Regular.ttf', 'Rubik', 'normal');
   doc.setFont('Rubik', 'normal');
   return doc;
-}
-
-function getDayWindow(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): { start: Date; end: Date } {
-  const allStarts = schedule.tasks.map((t) => new Date(t.timeBlock.start).getTime());
-  const scheduleStart = new Date(Math.min(...allStarts));
-  const dayAnchor = addDays(scheduleStart, dayIndex - 1);
-  const dayStart = new Date(dayAnchor);
-  if (dayStart.getHours() < dayStartHour) dayStart.setDate(dayStart.getDate() - 1);
-  dayStart.setHours(dayStartHour, 0, 0, 0);
-  return { start: dayStart, end: addDays(dayStart, 1) };
-}
-
-function getTasksForDay(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): Task[] {
-  const { start, end } = getDayWindow(schedule, dayIndex, dayStartHour);
-  return schedule.tasks.filter((t) => {
-    const s = new Date(t.timeBlock.start).getTime();
-    return s >= start.getTime() && s < end.getTime();
-  });
-}
-
-function getNumDays(schedule: Schedule): number {
-  const starts = schedule.tasks.map((t) => new Date(t.timeBlock.start).getTime());
-  const ends = schedule.tasks.map((t) => new Date(t.timeBlock.end).getTime());
-  return Math.ceil((Math.max(...ends) - Math.min(...starts)) / (24 * 3600_000));
-}
-
-/** Format time — if ≤ 2 unique shifts in a category, use named labels; otherwise HH:MM */
-function fmtTimeLabel(d: Date, totalShifts: number): string {
-  if (totalShifts <= 2) {
-    const name = SHIFT_NAMES[d.getHours()];
-    if (name) return rtl(name);
-  }
-  return fmtTime(d);
 }
 
 /** Draw centred page title + day subtitle. Returns Y below the separator line. */
@@ -439,7 +376,7 @@ function renderSectionTablePdf(
       const { content, color: cellColor } = col.build(timeNum);
       return { content, styles: content === '—' ? emptyStyle : filledStyle(cellColor) };
     });
-    cells.push({ content: fmtTimeLabel(time, totalShifts), styles: { halign: 'center' as const } });
+    cells.push({ content: rtl(fmtTimeLabel(time, totalShifts)), styles: { halign: 'center' as const } });
     return cells;
   });
 

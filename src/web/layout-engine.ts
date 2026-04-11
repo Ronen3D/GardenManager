@@ -102,7 +102,7 @@ export interface ColumnDefinition {
   matchSlots: (task: Task, slots: AssignedSlot[]) => AssignedSlot[];
 }
 
-type ColumnStrategy = (tasks: Task[]) => ColumnDefinition[];
+export type ColumnStrategy = (tasks: Task[]) => ColumnDefinition[];
 
 interface LayoutRow {
   sections: SectionMetrics[];
@@ -249,8 +249,9 @@ function multiSourceSplitStrategy(tasks: Task[]): ColumnDefinition[] {
 
 /**
  * Infer the best column strategy for a set of tasks based on their slot properties.
+ * Exported so exporters (PDF, Excel) can resolve columns identically to the on-screen grid.
  */
-function inferColumnStrategy(tasks: Task[]): ColumnStrategy {
+export function inferColumnStrategy(tasks: Task[]): ColumnStrategy {
   const hasTeams = tasks.some((t) => t.slots.some((s) => s.subTeamId != null));
   const hasMultipleSources = new Set(tasks.map((t) => t.sourceName || t.name)).size > 1;
 

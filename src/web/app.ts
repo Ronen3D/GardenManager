@@ -46,6 +46,7 @@ import * as store from './config-store';
 import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
 import { wireDataTransferEvents } from './data-transfer-ui';
+import { exportDailyExcel, exportWeeklyExcel } from './excel-export';
 import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
 import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
@@ -1034,7 +1035,7 @@ function renderScheduleTab(): string {
       <span class="toolbar-group toolbar-group--day-actions">
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
         ${currentSchedule && currentDay < store.getScheduleDays() ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
-        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא PDF">📤 ייצוא</button>` : ''}
+        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא">📤 ייצוא</button>` : ''}
       </span>
     </div>
   </div>`;
@@ -1335,9 +1336,7 @@ async function handleManualParticipantClick(participantId: string): Promise<bool
   // getEligibleParticipantsForSlot (validator.ts) so HC-5/HC-7 still fire
   // when the participant is already in a DIFFERENT slot of the same task.
   const pAssignments = currentSchedule.assignments.filter(
-    (a) =>
-      a.participantId === participantId &&
-      !(a.taskId === task.id && a.slotId === _manualSelectedSlotId),
+    (a) => a.participantId === participantId && !(a.taskId === task.id && a.slotId === _manualSelectedSlotId),
   );
 
   const taskAssignments = currentSchedule.assignments.filter((a) => a.taskId === task.id);
@@ -2996,7 +2995,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.3</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3997,10 +3996,20 @@ function openExportModal(): void {
     <div class="export-backdrop" id="export-modal-backdrop">
       <div class="export-modal">
         <div class="export-header">
-          <h3>📤 ייצוא PDF</h3>
+          <h3>📤 ייצוא</h3>
           <button class="export-close" id="export-close">✕</button>
         </div>
         <div class="export-body">
+          <div class="export-format-group" id="export-format-group">
+            <label class="export-format-option selected" id="fmt-pdf">
+              <input type="radio" name="export-format" value="pdf" checked />
+              <span class="export-format-label">📄 PDF</span>
+            </label>
+            <label class="export-format-option" id="fmt-excel">
+              <input type="radio" name="export-format" value="excel" />
+              <span class="export-format-label">📊 Excel</span>
+            </label>
+          </div>
           <div class="export-mode-group">
             <label class="export-mode-option selected" id="opt-weekly">
               <input type="radio" name="export-mode" value="weekly" checked />
@@ -4023,7 +4032,7 @@ function openExportModal(): void {
           </div>
         </div>
         <div class="export-footer">
-          <button class="btn-primary" id="export-do">📄 ייצוא</button>
+          <button class="btn-primary" id="export-do">📤 ייצוא</button>
           <button class="btn-sm btn-outline" id="export-cancel">ביטול</button>
           <span class="export-status" id="export-status"></span>
         </div>
@@ -4060,6 +4069,18 @@ function wireExportModalEvents(): void {
 
   document.addEventListener('keydown', onEscape);
 
+  // Format radio toggle
+  const fmtPdf = backdrop.querySelector('#fmt-pdf') as HTMLElement;
+  const fmtExcel = backdrop.querySelector('#fmt-excel') as HTMLElement;
+  const formatRadios = backdrop.querySelectorAll('input[name="export-format"]');
+  formatRadios.forEach((r) => {
+    r.addEventListener('change', () => {
+      const fmt = (r as HTMLInputElement).value;
+      fmtPdf.classList.toggle('selected', fmt === 'pdf');
+      fmtExcel.classList.toggle('selected', fmt === 'excel');
+    });
+  });
+
   // Mode radio toggle
   const optWeekly = backdrop.querySelector('#opt-weekly') as HTMLElement;
   const optDaily = backdrop.querySelector('#opt-daily') as HTMLElement;
@@ -4085,25 +4106,38 @@ function wireExportModalEvents(): void {
   wireCustomSelect(backdrop, 'gm-export-day-select', () => {});
 
   // Export action
-  backdrop.querySelector('#export-do')?.addEventListener('click', () => {
+  backdrop.querySelector('#export-do')?.addEventListener('click', async () => {
     if (!currentSchedule) return;
     const status = backdrop.querySelector('#export-status') as HTMLElement;
 
+    const selectedFormat = (backdrop.querySelector('input[name="export-format"]:checked') as HTMLInputElement)?.value;
     const selectedMode = (backdrop.querySelector('input[name="export-mode"]:checked') as HTMLInputElement)?.value;
+    const dayStartHour = store.getDayStartHour();
+    const getSelectedDay = (): number => {
+      const daySelectEl = backdrop.querySelector('#gm-export-day-select') as HTMLElement | null;
+      return parseInt(daySelectEl?.dataset.value || '1', 10);
+    };
 
     try {
       status.textContent = 'מייצא…';
-      if (selectedMode === 'weekly') {
-        exportWeeklyOverview(currentSchedule, store.getDayStartHour());
+      status.style.color = '';
+      if (selectedFormat === 'excel') {
+        if (selectedMode === 'weekly') {
+          await exportWeeklyExcel(currentSchedule, dayStartHour);
+        } else {
+          await exportDailyExcel(currentSchedule, getSelectedDay(), dayStartHour);
+        }
       } else {
-        const daySelectEl = backdrop.querySelector('#gm-export-day-select') as HTMLElement | null;
-        const dayIdx = parseInt(daySelectEl?.dataset.value || '1', 10);
-        exportDailyDetail(currentSchedule, dayIdx, store.getDayStartHour());
+        if (selectedMode === 'weekly') {
+          exportWeeklyOverview(currentSchedule, dayStartHour);
+        } else {
+          exportDailyDetail(currentSchedule, getSelectedDay(), dayStartHour);
+        }
       }
       status.textContent = '✓ הייצוא הושלם';
       setTimeout(closeModal, 1200);
     } catch (err) {
-      console.error('PDF export error:', err);
+      console.error('Export error:', err);
       status.textContent = '✗ שגיאה בייצוא';
       status.style.color = '#e74c3c';
     }

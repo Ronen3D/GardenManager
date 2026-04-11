@@ -5604,6 +5604,44 @@ tr.now-row-animate > td.time-cell {
   padding: 20px;
 }
 
+.export-format-group {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.export-format-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 2px solid var(--border, #e0e0e0);
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+.export-format-option:hover {
+  border-color: var(--accent);
+}
+.export-format-option.selected {
+  border-color: var(--accent);
+  background: rgba(108, 99, 255, 0.08);
+}
+.export-format-option input[type="radio"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
+.export-format-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
 .export-mode-group {
   display: flex;
   flex-direction: column;
@@ -7623,8 +7661,8 @@ tr.now-row-animate > td.time-cell {
   /* Slightly uneven rounded corners hint at a torn, aged page */
   border: 1px solid rgba(120, 80, 30, 0.38);
   border-radius: 6px 22px 4px 20px;
+  /* aged-edge vignette */
   box-shadow:
-    /* aged-edge vignette */
     inset 0 0 70px rgba(120, 70, 20, 0.32),
     inset 0 0 12px rgba(90, 50, 15, 0.22),
     /* lift off the backdrop */
@@ -7635,7 +7673,7 @@ tr.now-row-animate > td.time-cell {
 
 /* Paper grain: subtle speckled overlay */
 .gm-egg-dialog::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -7645,13 +7683,17 @@ tr.now-row-animate > td.time-cell {
     radial-gradient(circle at 65% 55%, rgba(130, 85, 30, 0.07) 1px, transparent 2px),
     radial-gradient(circle at 85% 15%, rgba(80, 45, 10, 0.08) 1.3px, transparent 2px),
     radial-gradient(circle at 40% 85%, rgba(110, 70, 25, 0.06) 1px, transparent 2px);
-  background-size: 90px 90px, 70px 70px, 110px 110px, 80px 80px;
+  background-size:
+    90px 90px,
+    70px 70px,
+    110px 110px,
+    80px 80px;
   mix-blend-mode: multiply;
 }
 
 /* Faint vertical center fold line running down the page */
 .gm-egg-dialog::after {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   bottom: 0;
@@ -7727,11 +7769,11 @@ tr.now-row-animate > td.time-cell {
 /* Oversized serif quotation mark bleeding behind the start of the quote.
    Positioned at the start edge — in RTL that's the top-right of the block. */
 .gm-egg-quote::before {
-  content: '\201C';
+  content: "\201C";
   position: absolute;
   top: -44px;
   inset-inline-start: -6px;
-  font-family: 'Georgia', 'Palatino Linotype', 'Book Antiqua', serif;
+  font-family: "Georgia", "Palatino Linotype", "Book Antiqua", serif;
   font-size: 110px;
   line-height: 1;
   color: rgba(120, 70, 20, 0.22);
@@ -7750,7 +7792,7 @@ tr.now-row-animate > td.time-cell {
 
 .gm-egg-quote blockquote {
   position: relative;
-  font-family: 'Georgia', 'Palatino Linotype', 'David', 'Times New Roman', serif;
+  font-family: "Georgia", "Palatino Linotype", "David", "Times New Roman", serif;
   font-size: 1.1rem;
   line-height: 1.95;
   color: #3a2610;
@@ -7763,7 +7805,7 @@ tr.now-row-animate > td.time-cell {
 .gm-egg-quote cite {
   position: relative;
   display: block;
-  font-family: 'Georgia', 'Palatino Linotype', serif;
+  font-family: "Georgia", "Palatino Linotype", serif;
   font-size: 0.88rem;
   color: #6d4418;
   font-style: normal;
@@ -7778,7 +7820,7 @@ tr.now-row-animate > td.time-cell {
   justify-content: center;
   gap: 18px;
   margin: 30px 0;
-  font-family: 'Georgia', 'Palatino Linotype', serif;
+  font-family: "Georgia", "Palatino Linotype", serif;
   font-size: 1.35rem;
   line-height: 1;
   color: rgba(110, 65, 20, 0.55);
@@ -7824,15 +7866,13 @@ tr.now-row-animate > td.time-cell {
   height: 68px;
   padding: 0;
   border: none;
-  background: url('../../public/icon-192.png') center / contain no-repeat;
+  background: url("../../public/icon-192.png") center / contain no-repeat;
   border-radius: 50%;
   cursor: pointer;
   /* Slight tilt gives it the hand-stamped, signature feel */
   transform: rotate(-6deg);
   /* drop-shadow (not box-shadow) so the shadow follows the icon's alpha silhouette */
-  filter:
-    drop-shadow(0 5px 10px rgba(60, 30, 5, 0.38))
-    drop-shadow(0 2px 3px rgba(30, 15, 0, 0.35));
+  filter: drop-shadow(0 5px 10px rgba(60, 30, 5, 0.38)) drop-shadow(0 2px 3px rgba(30, 15, 0, 0.35));
   transition:
     transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
     filter 0.25s ease;
@@ -7840,9 +7880,7 @@ tr.now-row-animate > td.time-cell {
 
 .gm-egg-seal:hover {
   transform: rotate(-2deg) scale(1.08);
-  filter:
-    drop-shadow(0 8px 16px rgba(60, 30, 5, 0.45))
-    drop-shadow(0 2px 4px rgba(30, 15, 0, 0.4));
+  filter: drop-shadow(0 8px 16px rgba(60, 30, 5, 0.45)) drop-shadow(0 2px 4px rgba(30, 15, 0, 0.4));
 }
 
 .gm-egg-seal:active {
