@@ -15,6 +15,7 @@ import {
 } from '../models/types';
 import { fmtTime, HEBREW_DAYS } from '../utils/date-utils';
 import * as store from './config-store';
+import { openParticipantSetFormatSheet, openXlsxImportFlow } from './data-transfer-ui';
 import { getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
 import {
   canLeaveTableEdit,
@@ -462,7 +463,10 @@ function renderSetsPanel(): string {
   // Header
   html += `<div class="preset-panel-header">
     <h3>📋 סטים של משתתפים <span class="count">${sets.length}</span></h3>
-    <button class="btn-xs btn-outline" data-action="pset-panel-close" title="סגור">✕</button>
+    <div class="preset-header-actions">
+      <button class="btn-xs btn-outline" data-action="pset-import-xlsx" title="ייבוא סט מקובץ Excel">📊 ייבוא Excel</button>
+      <button class="btn-xs btn-outline" data-action="pset-panel-close" title="סגור">✕</button>
+    </div>
   </div>`;
 
   // Form area
@@ -516,6 +520,7 @@ function renderSetsPanel(): string {
           ${isActive && dirty && !isBuiltIn ? `<button class="btn-xs btn-outline" data-pset-action="update" data-pset-id="${s.id}" title="עדכן עם המשתתפים הנוכחיים">עדכן</button>` : ''}
           ${!isBuiltIn ? `<button class="btn-xs btn-outline" data-pset-action="rename" data-pset-id="${s.id}" title="שנה שם">✎</button>` : ''}
           <button class="btn-xs btn-outline" data-pset-action="duplicate" data-pset-id="${s.id}" title="שכפל">⧉</button>
+          <button class="btn-xs btn-outline" data-pset-action="export" data-pset-id="${s.id}" title="ייצוא (JSON / Excel)">📤</button>
           ${!isBuiltIn ? `<button class="btn-xs btn-danger-outline" data-pset-action="delete" data-pset-id="${s.id}" title="מחק">${SVG_ICONS.trash}</button>` : ''}
         </div>
       </div>`;
@@ -1511,6 +1516,10 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         rerender();
         break;
       }
+      case 'pset-import-xlsx': {
+        void openXlsxImportFlow(() => rerender());
+        break;
+      }
       case 'pset-new': {
         _setsFormMode = 'save-as';
         _setsFormError = '';
@@ -1680,6 +1689,12 @@ async function _handlePsetItemAction(action: string, id: string, rerender: () =>
       store.duplicateParticipantSet(id);
       showToast('הסט שוכפל', { type: 'success' });
       rerender();
+      break;
+    }
+    case 'export': {
+      const pset = store.getParticipantSetById(id);
+      if (!pset) return;
+      openParticipantSetFormatSheet(id, pset.name);
       break;
     }
     case 'delete': {

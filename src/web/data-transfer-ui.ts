@@ -4,10 +4,21 @@
  * mobile-friendly multi-step flows.
  */
 
+import type { ParticipantSet } from '../models/types';
 import * as store from './config-store';
 import * as transfer from './data-transfer';
+import {
+  generateParticipantSetXlsx,
+  generateXlsxFilename,
+  MAX_FILE_BYTES,
+  parseParticipantSetXlsx,
+  type XlsxImportError,
+  type XlsxImportMeta,
+} from './participant-set-xlsx';
 import { escHtml } from './ui-helpers';
 import { showAlert, showBottomSheet, showConfirm, showToast } from './ui-modal';
+
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 // ─── Accordion Body ─────────────────────────────────────────────────────────
 
@@ -29,6 +40,13 @@ export function renderDataTransferContent(): string {
           <span class="transfer-action-desc">טען נתונים מקובץ שהתקבל</span>
         </span>
       </button>
+      <button class="transfer-action-btn" data-action="transfer-import-xlsx">
+        <span class="transfer-action-icon">📊</span>
+        <span class="transfer-action-text">
+          <span class="transfer-action-title">ייבוא סט משתתפים מ-Excel</span>
+          <span class="transfer-action-desc">טען סט משתתפים מקובץ .xlsx</span>
+        </span>
+      </button>
     </div>`;
 }
 
@@ -42,6 +60,7 @@ export function wireDataTransferEvents(container: HTMLElement): void {
     const action = btn.dataset.action;
     if (action === 'transfer-export') openExportSheet();
     if (action === 'transfer-import') openImportFlow();
+    if (action === 'transfer-import-xlsx') openXlsxImportFlow();
   });
 }
 
@@ -118,8 +137,8 @@ function openExportSheet(): void {
         break;
       case 'participantSet':
         if (participantSets.length === 1) {
-          await handleExportParticipantSet(participantSets[0].id, participantSets[0].name);
           sheet.close();
+          openParticipantSetFormatSheet(participantSets[0].id, participantSets[0].name);
         } else {
           sheet.close();
           openSetPicker(
@@ -189,8 +208,9 @@ function openSetPicker(type: 'taskSet' | 'participantSet' | 'scheduleSnapshot', 
         await handleExportTaskSet(id, name);
         break;
       case 'participantSet':
-        await handleExportParticipantSet(id, name);
-        break;
+        sheet.close();
+        openParticipantSetFormatSheet(id, name);
+        return;
       case 'scheduleSnapshot':
         await handleExportSnapshot(id, name);
         break;
@@ -226,6 +246,95 @@ async function handleExportParticipantSet(id: string, name: string): Promise<voi
   const filename = transfer.generateExportFilename('participantSet', name);
   await transfer.triggerShareOrDownload(content, filename);
   showToast('סט המשתתפים יוצא בהצלחה', { type: 'success' });
+}
+
+// ─── Participant set — format sub-sheet (JSON / xlsx / template) ───────────
+
+/**
+ * Opens the "export format" sub-sheet (JSON / xlsx / template) for a saved
+ * participant set. Exported so the Participants tab can trigger it directly
+ * from the sets panel.
+ */
+export function openParticipantSetFormatSheet(id: string, name: string): void {
+  const html = `
+    <div class="transfer-scope-list">
+      <button class="transfer-scope-item" data-format="json">
+        <span class="transfer-scope-icon">📄</span>
+        <span class="transfer-scope-text">
+          <span class="transfer-scope-title">JSON (.gm.json)</span>
+          <span class="transfer-scope-desc">פורמט ייצוא/ייבוא רגיל בין מכשירים</span>
+        </span>
+      </button>
+      <button class="transfer-scope-item" data-format="xlsx">
+        <span class="transfer-scope-icon">📊</span>
+        <span class="transfer-scope-text">
+          <span class="transfer-scope-title">Excel (.xlsx)</span>
+          <span class="transfer-scope-desc">קובץ גיליון אלקטרוני לעריכה ידנית</span>
+        </span>
+      </button>
+      <button class="transfer-scope-item" data-format="xlsx-template">
+        <span class="transfer-scope-icon">📄</span>
+        <span class="transfer-scope-text">
+          <span class="transfer-scope-title">תבנית Excel ריקה</span>
+          <span class="transfer-scope-desc">קובץ ריק עם הקטלוגים הנוכחיים</span>
+        </span>
+      </button>
+    </div>`;
+  const sheet = showBottomSheet(html, { title: `📤 '${name}' — בחר פורמט` });
+  sheet.el.addEventListener('click', async (e) => {
+    const item = (e.target as HTMLElement).closest<HTMLElement>('[data-format]');
+    if (!item) return;
+    const format = item.dataset.format!;
+    sheet.close();
+    if (format === 'json') {
+      await handleExportParticipantSet(id, name);
+    } else if (format === 'xlsx') {
+      await handleExportParticipantSetXlsx(id, name);
+    } else if (format === 'xlsx-template') {
+      await handleDownloadXlsxTemplate();
+    }
+  });
+}
+
+async function handleExportParticipantSetXlsx(id: string, name: string): Promise<void> {
+  const pset = store.getParticipantSetById(id);
+  if (!pset) {
+    await showAlert('סט המשתתפים לא נמצא.');
+    return;
+  }
+  try {
+    const blob = await generateParticipantSetXlsx(pset);
+    await transfer.triggerShareOrDownload(blob, generateXlsxFilename(name), XLSX_MIME);
+    showToast('סט המשתתפים יוצא ל-Excel', { type: 'success' });
+  } catch (err) {
+    await showAlert(`ייצוא Excel נכשל: ${err instanceof Error ? err.message : String(err)}`, {
+      title: 'שגיאת ייצוא',
+      icon: '❌',
+    });
+  }
+}
+
+async function handleDownloadXlsxTemplate(): Promise<void> {
+  // Build a minimal set that carries only the current catalogs.
+  const templatePset: ParticipantSet = {
+    id: 'template',
+    name: '',
+    description: '',
+    participants: [],
+    certificationCatalog: store.getCertificationDefinitions(),
+    pakalCatalog: store.getPakalDefinitions(),
+    createdAt: Date.now(),
+  };
+  try {
+    const blob = await generateParticipantSetXlsx(templatePset, { templateMode: true });
+    await transfer.triggerShareOrDownload(blob, generateXlsxFilename('template'), XLSX_MIME);
+    showToast('תבנית Excel הורדה', { type: 'success' });
+  } catch (err) {
+    await showAlert(`הורדת תבנית נכשלה: ${err instanceof Error ? err.message : String(err)}`, {
+      title: 'שגיאת תבנית',
+      icon: '❌',
+    });
+  }
 }
 
 async function handleExportSnapshot(id: string, name: string): Promise<void> {
@@ -422,6 +531,161 @@ function openSnapshotImportSheet(json: string, summary: string): void {
       await showAlert(result.error!, { title: 'שגיאת ייבוא', icon: '❌' });
     }
   });
+}
+
+// ─── xlsx import flow ──────────────────────────────────────────────────────
+
+/**
+ * Entry point for the xlsx import flow. Exported so the Participants tab can
+ * trigger it directly from the sets panel. The optional `onComplete` callback
+ * is invoked after a successful import and can be used by the caller to
+ * refresh its UI.
+ */
+export async function openXlsxImportFlow(onComplete?: () => void): Promise<void> {
+  const picked = await transfer.openBinaryFilePicker('.xlsx');
+  if (!picked) return;
+  if (!picked.name.toLowerCase().endsWith('.xlsx')) {
+    await showAlert('רק קבצי .xlsx נתמכים. קבצי .xls או .xlsm נדחים.', {
+      title: 'שגיאת ייבוא',
+      icon: '❌',
+    });
+    return;
+  }
+  if (picked.buffer.byteLength > MAX_FILE_BYTES) {
+    await showAlert(`הקובץ גדול מ-${MAX_FILE_BYTES / 1024 / 1024}MB ונדחה.`, {
+      title: 'שגיאת ייבוא',
+      icon: '❌',
+    });
+    return;
+  }
+
+  let result: Awaited<ReturnType<typeof parseParticipantSetXlsx>>;
+  try {
+    result = await parseParticipantSetXlsx(picked.buffer);
+  } catch (err) {
+    await showAlert(`קריאת הקובץ נכשלה: ${err instanceof Error ? err.message : String(err)}`, {
+      title: 'שגיאת ייבוא',
+      icon: '❌',
+    });
+    return;
+  }
+
+  if (!result.ok) {
+    openXlsxImportErrorSheet(result.errors);
+    return;
+  }
+
+  openXlsxImportPreviewSheet(result.pset, result.meta, onComplete);
+}
+
+function openXlsxImportErrorSheet(errors: XlsxImportError[]): void {
+  const items = errors
+    .map((e) => {
+      const locParts: string[] = [escHtml(e.sheet)];
+      if (e.cellRef) locParts.push(escHtml(e.cellRef));
+      else if (e.rowNumber !== undefined) locParts.push(`שורה ${e.rowNumber}`);
+      return `<li><span class="xlsx-err-loc">${locParts.join(' · ')}</span> — ${escHtml(e.message)}</li>`;
+    })
+    .join('');
+  const html = `
+    <div class="xlsx-error-list">
+      <p class="xlsx-error-intro">נמצאו ${errors.length} שגיאות. תקן את הקובץ וייבא שוב:</p>
+      <ol class="xlsx-error-items">${items}</ol>
+    </div>`;
+  showBottomSheet(html, { title: '📊 שגיאות בייבוא Excel' });
+}
+
+function openXlsxImportPreviewSheet(pset: ParticipantSet, meta: XlsxImportMeta, onComplete?: () => void): void {
+  const existingSets = store.getAllParticipantSets().filter((s) => !s.builtIn);
+  const atCap = store.getAllParticipantSets().length >= 30;
+
+  const newCertsHtml =
+    meta.newCertsForApp.length > 0
+      ? `<div class="xlsx-preview-row">הסמכות בקובץ: ${meta.newCertsForApp.map((c) => escHtml(c.label)).join(', ')}</div>`
+      : '';
+  const newPakalsHtml =
+    meta.newPakalsForApp.length > 0
+      ? `<div class="xlsx-preview-row">פק"לים בקובץ: ${meta.newPakalsForApp.map((p) => escHtml(p.label)).join(', ')}</div>`
+      : '';
+
+  const replaceHtml =
+    existingSets.length > 0
+      ? `<div class="transfer-replace-section">
+         <div class="transfer-replace-label">🔄 החלף סט קיים:</div>
+         <div class="transfer-replace-list">
+           ${existingSets
+             .map(
+               (s) =>
+                 `<button class="transfer-replace-item" data-replace-id="${escHtml(s.id)}">${escHtml(s.name)}</button>`,
+             )
+             .join('')}
+         </div>
+       </div>`
+      : '';
+
+  const html = `
+    <div class="transfer-import-summary">
+      <div class="xlsx-preview-row"><strong>${escHtml(meta.name)}</strong></div>
+      ${meta.description ? `<div class="xlsx-preview-row">${escHtml(meta.description)}</div>` : ''}
+      <div class="xlsx-preview-row">${meta.participantCount} משתתפים · ${meta.rulesCount} כללי אי-זמינות</div>
+      ${newCertsHtml}
+      ${newPakalsHtml}
+    </div>
+    <div class="transfer-import-options">
+      <button class="transfer-import-option" data-import-mode="add-new" ${atCap ? 'disabled title="הגעת למגבלת 30 סטים"' : ''}>
+        <span class="transfer-import-option-icon">➕</span>
+        <span class="transfer-import-option-text">
+          <span class="transfer-import-option-title">הוסף כסט חדש</span>
+        </span>
+      </button>
+    </div>
+    ${replaceHtml}`;
+  const sheet = showBottomSheet(html, { title: '📊 אישור ייבוא Excel' });
+  sheet.el.addEventListener('click', async (e) => {
+    const target = e.target as HTMLElement;
+
+    const addBtn = target.closest<HTMLElement>('[data-import-mode="add-new"]');
+    if (addBtn && !addBtn.hasAttribute('disabled')) {
+      sheet.close();
+      commitXlsxImport(pset, 'add-new', undefined, onComplete);
+      return;
+    }
+
+    const replaceBtn = target.closest<HTMLElement>('[data-replace-id]');
+    if (replaceBtn) {
+      const replaceId = replaceBtn.dataset.replaceId!;
+      const replaceName = replaceBtn.textContent?.trim() ?? '';
+      sheet.close();
+      const confirmed = await showConfirm(
+        `הסט '${replaceName}' יוחלף לחלוטין בנתונים מהקובץ. פעולה זו לא ניתנת לביטול.`,
+        { title: 'החלפת סט', danger: true, confirmLabel: 'החלף' },
+      );
+      if (!confirmed) return;
+      commitXlsxImport(pset, 'replace', replaceId, onComplete);
+    }
+  });
+}
+
+function commitXlsxImport(
+  pset: ParticipantSet,
+  mode: 'add-new' | 'replace',
+  replaceId: string | undefined,
+  onComplete: (() => void) | undefined,
+): void {
+  // Merge any new cert/pakal definitions into the app catalog.
+  if (pset.certificationCatalog.length > 0) {
+    store.ensureCertificationDefinitions(pset.certificationCatalog);
+  }
+  if (pset.pakalCatalog && pset.pakalCatalog.length > 0) {
+    store.ensurePakalDefinitions(pset.pakalCatalog);
+  }
+  const result = transfer.importParticipantSetFromObject(pset, mode, replaceId);
+  if (result.ok) {
+    showToast('סט המשתתפים יובא בהצלחה', { type: 'success' });
+    onComplete?.();
+  } else {
+    void showAlert(result.error ?? 'שמירה נכשלה.', { title: 'שגיאת ייבוא', icon: '❌' });
+  }
 }
 
 async function handleFullBackupImport(json: string): Promise<void> {

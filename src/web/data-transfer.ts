@@ -36,7 +36,7 @@ function buildEnvelope(exportType: ExportType, payload: GardenManagerExport['pay
   };
 }
 
-function sanitizeName(name: string): string {
+export function sanitizeName(name: string): string {
   return name
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
     .replace(/\s+/g, '-')
@@ -48,7 +48,7 @@ function dateStamp(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export function generateExportFilename(type: ExportType, name?: string): string {
+export function generateExportFilename(type: ExportType, name?: string, extension?: string): string {
   const typeMap: Record<ExportType, string> = {
     algorithm: 'algorithm',
     taskSet: 'tasks',
@@ -59,7 +59,8 @@ export function generateExportFilename(type: ExportType, name?: string): string 
   const parts = ['gm', typeMap[type]];
   if (name) parts.push(sanitizeName(name));
   parts.push(dateStamp());
-  return parts.join('-') + '.gm.json';
+  const ext = extension ?? '.gm.json';
+  return parts.join('-') + ext;
 }
 
 // ─── Export Functions ───────────────────────────────────────────────────────
@@ -139,8 +140,18 @@ export function exportFullBackup(): string {
 
 // ─── File I/O ───────────────────────────────────────────────────────────────
 
-export async function triggerShareOrDownload(content: string, filename: string): Promise<void> {
-  const file = new File([content], filename, { type: 'application/json' });
+export async function triggerShareOrDownload(
+  content: string | Blob,
+  filename: string,
+  mimeType?: string,
+): Promise<void> {
+  const isBlob = typeof Blob !== 'undefined' && content instanceof Blob;
+  const fileMime =
+    mimeType ?? (isBlob ? (content as Blob).type || 'application/octet-stream' : 'application/json');
+  const blobMime = mimeType ?? (isBlob ? fileMime : 'application/json;charset=utf-8');
+  const file = isBlob
+    ? new File([content as Blob], filename, { type: fileMime })
+    : new File([content as string], filename, { type: fileMime });
   if (typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
     try {
       if (navigator.canShare({ files: [file] })) {
@@ -152,7 +163,7 @@ export async function triggerShareOrDownload(content: string, filename: string):
     }
   }
   // Fallback: blob download
-  const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
+  const blob = isBlob ? (content as Blob) : new Blob([content as string], { type: blobMime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -161,6 +172,53 @@ export async function triggerShareOrDownload(content: string, filename: string):
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+export function openBinaryFilePicker(accept: string): Promise<{ name: string; buffer: ArrayBuffer } | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    let resolved = false;
+    const cleanup = () => input.remove();
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolved = true;
+        cleanup();
+        resolve(null);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        resolved = true;
+        cleanup();
+        resolve({ name: file.name, buffer: reader.result as ArrayBuffer });
+      };
+      reader.onerror = () => {
+        resolved = true;
+        cleanup();
+        resolve(null);
+      };
+      reader.readAsArrayBuffer(file);
+    };
+    window.addEventListener(
+      'focus',
+      function onFocus() {
+        window.removeEventListener('focus', onFocus);
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            cleanup();
+            resolve(null);
+          }
+        }, 500);
+      },
+      { once: true },
+    );
+    document.body.appendChild(input);
+    input.click();
+  });
 }
 
 export function openFilePicker(): Promise<string | null> {
@@ -460,22 +518,30 @@ export function importTaskSet(json: string, mode: 'add-new' | 'replace', replace
   return { ok: true };
 }
 
-export function importParticipantSet(json: string, mode: 'add-new' | 'replace', replaceId?: string): ImportResult {
-  const envelope = parseEnvelope(json);
-  const payload = envelope.payload as ParticipantSetExportPayload;
-  const pset = { ...payload.participantSet };
-  pset.id = store.uid('pset');
-  pset.createdAt = Date.now();
-  delete (pset as unknown as Record<string, unknown>).builtIn;
+/**
+ * Core participant-set import — shared between the JSON envelope path and
+ * the xlsx importer. Accepts a fully-formed `ParticipantSet` object and
+ * performs the final deduplication, id regeneration, optional replace, and
+ * store write. Does NOT touch certification/pakal catalogs — callers that
+ * need to merge external catalogs must do so before invoking this.
+ */
+export function importParticipantSetFromObject(
+  pset: ParticipantSet,
+  mode: 'add-new' | 'replace',
+  replaceId?: string,
+): ImportResult {
+  const clone = { ...pset };
+  clone.id = store.uid('pset');
+  clone.createdAt = Date.now();
+  delete (clone as unknown as Record<string, unknown>).builtIn;
 
   if (mode === 'replace' && replaceId) {
     store.deleteParticipantSet(replaceId);
   }
-  // Deduplicate name against remaining sets (after deletion if applicable)
   const existingPsetNames = store.getAllParticipantSets().map((s) => s.name);
-  pset.name = deduplicateName(payload.participantSet.name, existingPsetNames);
+  clone.name = deduplicateName(pset.name, existingPsetNames);
 
-  const ok = store.importParticipantSetDirect(pset);
+  const ok = store.importParticipantSetDirect(clone);
   if (!ok) {
     return {
       ok: false,
@@ -486,6 +552,12 @@ export function importParticipantSet(json: string, mode: 'add-new' | 'replace', 
     };
   }
   return { ok: true };
+}
+
+export function importParticipantSet(json: string, mode: 'add-new' | 'replace', replaceId?: string): ImportResult {
+  const envelope = parseEnvelope(json);
+  const payload = envelope.payload as ParticipantSetExportPayload;
+  return importParticipantSetFromObject(payload.participantSet, mode, replaceId);
 }
 
 export function importScheduleSnapshot(json: string): ImportResult {

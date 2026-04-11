@@ -8,6 +8,7 @@
 import { type CertificationDefinition, Level, type PakalDefinition } from '../models/types';
 import type { BulkParticipantOp } from './config-store';
 import * as store from './config-store';
+import { FORBIDDEN_GROUP_PATTERNS } from './group-name-rules';
 import { getEffectivePakalIds } from './pakal-utils';
 import { isSmallScreen } from './responsive';
 import { certBadge, escAttr, escHtml, groupColor, SVG_ICONS } from './ui-helpers';
@@ -17,8 +18,6 @@ import { showAlert, showBottomSheet, showPrompt, showSaveConfirm, showToast } fr
 
 const LEVEL_OPTIONS: Level[] = [Level.L0, Level.L2, Level.L3, Level.L4];
 const LEVEL_LABELS: Record<Level, string> = { [Level.L0]: 'L0', [Level.L2]: 'L2', [Level.L3]: 'L3', [Level.L4]: 'L4' };
-
-const FORBIDDEN_GROUP_PATTERNS = [/^new\s*group$/i, /^group\s*\w$/i, /^untitled/i, /^default/i];
 
 // ─── Draft State ────────────────────────────────────────────────────────────
 

@@ -305,6 +305,7 @@ import {
 } from './constraints/hard-constraints';
 import { collectSoftWarnings, dailyWorkloadImbalance, workloadImbalanceSplit } from './constraints/soft-constraints';
 import { fullValidate, previewSwap } from './engine/validator';
+import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
 import { computeParticipantRest } from './web/utils/rest-calculator';
 import { isDateInBlock } from './web/utils/time-utils';
 
@@ -5997,12 +5998,16 @@ console.log('\n── getCandidatesWithEligibility ────────');
   );
 }
 
-// ─── Summary ─────────────────────────────────────────────────────────────────
+// ─── Async test blocks + Summary ─────────────────────────────────────────────
 
-console.log('\n══════════════════════════════════════════');
-console.log(`  Tests: ${passed + failed} | Passed: ${passed} | Failed: ${failed}`);
-console.log('══════════════════════════════════════════\n');
+(async () => {
+  await runParticipantSetXlsxTests(assert);
 
-if (failed > 0) {
-  process.exit(1);
-}
+  console.log('\n══════════════════════════════════════════');
+  console.log(`  Tests: ${passed + failed} | Passed: ${passed} | Failed: ${failed}`);
+  console.log('══════════════════════════════════════════\n');
+
+  if (failed > 0) {
+    process.exit(1);
+  }
+})();
