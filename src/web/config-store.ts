@@ -473,6 +473,19 @@ export function getUndoRedoState(): { canUndo: boolean; canRedo: boolean; undoDe
   };
 }
 
+/**
+ * Push a no-op checkpoint onto the undo stack for actions that live outside
+ * the store (e.g. swap-picker commits mutate the schedule directly through
+ * the engine). The snapshot captures the current — unchanged — store state,
+ * so restoring it during undo is a no-op; its sole purpose is to enable the
+ * header undo/redo buttons so the parallel schedule undo stack in app.ts
+ * stays wired to them. Does NOT call notify() — callers are expected to
+ * manage their own schedule-level snapshot and refresh.
+ */
+export function pushUndoCheckpoint(): void {
+  pushSnapshot();
+}
+
 // ─── Participant Store ───────────────────────────────────────────────────────
 
 const participants: Map<string, Participant> = new Map();

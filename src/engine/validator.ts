@@ -280,8 +280,13 @@ export function getEligibleParticipantsForSlot(
   const taskAssignments = currentAssignments.filter((a) => a.taskId === task.id);
 
   return participants.filter((p) => {
-    // Build participant's assignments excluding this task
-    const pAssignments = currentAssignments.filter((a) => a.participantId === p.id && a.taskId !== task.id);
+    // Build participant's assignments excluding ONLY the current slot (not
+    // the whole task). If the participant is already sitting in a DIFFERENT
+    // slot of the same task, HC-5/HC-7 must still fire against that
+    // assignment — otherwise we'd falsely mark them eligible for this slot.
+    const pAssignments = currentAssignments.filter(
+      (a) => a.participantId === p.id && !(a.taskId === task.id && a.slotId === slotId),
+    );
     return isEligible(p, task, slot, pAssignments, taskMap, {
       checkSameGroup: true,
       taskAssignments,
@@ -346,7 +351,12 @@ export function getCandidatesWithEligibility(
   const taskAssignments = currentAssignments.filter((a) => a.taskId === task.id);
 
   return participants.map((p) => {
-    const pAssignments = currentAssignments.filter((a) => a.participantId === p.id && a.taskId !== task.id);
+    // See note in getEligibleParticipantsForSlot: exclude only the CURRENT
+    // slot, not the whole task, so that a participant already assigned to
+    // another slot of the same task is correctly flagged as ineligible.
+    const pAssignments = currentAssignments.filter(
+      (a) => a.participantId === p.id && !(a.taskId === task.id && a.slotId === slotId),
+    );
     const code = checkEligibility(p, task, slot, pAssignments, taskMap, {
       checkSameGroup: true,
       taskAssignments,

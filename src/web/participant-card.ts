@@ -23,6 +23,13 @@ export interface ParticipantCardData {
   capacity?: ParticipantCapacity;
   /** Number of assignments this participant already has on the current day. */
   dayAssignmentCount?: number;
+  /**
+   * Override for the corner load badge. When provided, takes precedence over
+   * `dayAssignmentCount` — callers can use this to surface a different metric
+   * (e.g. effective hours in the swap picker, where the list is ordered by
+   * that value and the badge should reflect the actual ordering criterion).
+   */
+  loadBadge?: { text: string; tooltip: string };
   /** Whether this card is the currently selected candidate in the picker. */
   selected?: boolean;
   /** Extra CSS classes to append (callers can pass layout variants). */
@@ -44,6 +51,7 @@ export function renderParticipantCard(data: ParticipantCardData): string {
     workload,
     capacity,
     dayAssignmentCount,
+    loadBadge,
     selected,
     extraClass,
     extraDataAttrs,
@@ -56,8 +64,9 @@ export function renderParticipantCard(data: ParticipantCardData): string {
 
   const workloadBar = workload ? renderWorkloadBar(workload, capacity) : '';
   const workloadText = workload ? renderWorkloadText(workload) : '';
-  const dayBadge =
-    dayAssignmentCount && dayAssignmentCount > 0
+  const dayBadge = loadBadge
+    ? `<span class="wc-load" title="${escHtml(loadBadge.tooltip)}">${escHtml(loadBadge.text)}</span>`
+    : dayAssignmentCount && dayAssignmentCount > 0
       ? `<span class="wc-load" title="${dayAssignmentCount} שיבוצים היום">${dayAssignmentCount}</span>`
       : '';
   const reasonOverlay =

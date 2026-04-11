@@ -7604,55 +7604,81 @@ tr.now-row-animate > td.time-cell {
   cursor: not-allowed;
 }
 
-/* ─── Easter Egg Modal ──────────────────────────────────── */
+/* ─── Easter Egg Modal · Parchment Page ─────────────────── */
 
 .gm-egg-dialog {
-  background: linear-gradient(135deg, rgba(26, 29, 39, 0.92) 0%, rgba(30, 34, 53, 0.95) 100%);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 16px;
-  padding: 36px 32px 28px;
-  max-width: 480px;
-  width: 90%;
-  text-align: center;
   position: relative;
+  max-width: 520px;
+  width: 90%;
+  padding: 56px 44px 76px;
+  text-align: center;
+  overflow: hidden;
+  color: #3a2610;
+  /* Parchment base: layered gradients for paper tone + soft highlights */
+  background:
+    radial-gradient(ellipse at 50% 100%, rgba(120, 70, 20, 0.22), transparent 62%),
+    radial-gradient(ellipse at 0% 0%, rgba(255, 232, 175, 0.38), transparent 58%),
+    radial-gradient(ellipse at 100% 0%, rgba(210, 160, 85, 0.28), transparent 58%),
+    linear-gradient(160deg, #f2e5bf 0%, #e9d5a2 50%, #dcc382 100%);
+  /* Slightly uneven rounded corners hint at a torn, aged page */
+  border: 1px solid rgba(120, 80, 30, 0.38);
+  border-radius: 6px 22px 4px 20px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 24px 80px rgba(0, 0, 0, 0.5),
-    0 0 60px rgba(74, 144, 217, 0.12);
-  animation:
-    gmEggAppear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
-    gmEggGlow 3s ease-in-out 0.5s infinite;
+    /* aged-edge vignette */
+    inset 0 0 70px rgba(120, 70, 20, 0.32),
+    inset 0 0 12px rgba(90, 50, 15, 0.22),
+    /* lift off the backdrop */
+    0 32px 80px rgba(0, 0, 0, 0.55),
+    0 10px 22px rgba(0, 0, 0, 0.38);
+  animation: gmEggAppear 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Paper grain: subtle speckled overlay */
+.gm-egg-dialog::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  background-image:
+    radial-gradient(circle at 15% 25%, rgba(90, 50, 15, 0.09) 1.2px, transparent 2px),
+    radial-gradient(circle at 65% 55%, rgba(130, 85, 30, 0.07) 1px, transparent 2px),
+    radial-gradient(circle at 85% 15%, rgba(80, 45, 10, 0.08) 1.3px, transparent 2px),
+    radial-gradient(circle at 40% 85%, rgba(110, 70, 25, 0.06) 1px, transparent 2px);
+  background-size: 90px 90px, 70px 70px, 110px 110px, 80px 80px;
+  mix-blend-mode: multiply;
+}
+
+/* Faint vertical center fold line running down the page */
+.gm-egg-dialog::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(90, 50, 15, 0.1) 14%,
+    rgba(90, 50, 15, 0.16) 50%,
+    rgba(90, 50, 15, 0.1) 86%,
+    transparent 100%
+  );
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 
 @keyframes gmEggAppear {
   from {
     opacity: 0;
-    transform: scale(0.8) rotate(-2deg);
+    transform: scale(0.86) rotate(-1.5deg);
   }
-  50% {
+  60% {
     opacity: 1;
   }
   to {
     transform: scale(1) rotate(0deg);
-  }
-}
-
-@keyframes gmEggGlow {
-  0%,
-  100% {
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.08),
-      0 24px 80px rgba(0, 0, 0, 0.5),
-      0 0 60px rgba(74, 144, 217, 0.12);
-  }
-  50% {
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.08),
-      0 24px 80px rgba(0, 0, 0, 0.5),
-      0 0 40px rgba(74, 144, 217, 0.25),
-      0 0 80px rgba(74, 144, 217, 0.1);
   }
 }
 
@@ -7667,7 +7693,7 @@ tr.now-row-animate > td.time-cell {
 @keyframes gmEggDisappear {
   to {
     opacity: 0;
-    transform: scale(0.85);
+    transform: scale(0.88) rotate(1deg);
   }
 }
 
@@ -7677,34 +7703,42 @@ tr.now-row-animate > td.time-cell {
   }
 }
 
-.gm-egg-sparkle {
-  font-size: 2.4rem;
-  margin-bottom: 20px;
-  animation: gmEggFloat 3s ease-in-out infinite;
-}
-
-@keyframes gmEggFloat {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-6px);
-  }
+.gm-egg-page {
+  position: relative;
+  z-index: 2;
 }
 
 .gm-egg-quote {
+  position: relative;
+  padding: 0 18px;
   opacity: 0;
   transform: translateY(10px);
-  animation: gmEggQuoteFadeIn 0.5s ease forwards;
+  animation: gmEggQuoteFadeIn 0.55s ease forwards;
 }
 
-.gm-egg-quote:nth-child(2) {
-  animation-delay: 0.3s;
+.gm-egg-page > .gm-egg-quote:first-child {
+  animation-delay: 0.15s;
 }
 
-.gm-egg-quote:nth-child(4) {
-  animation-delay: 0.8s;
+.gm-egg-page > .gm-egg-quote:last-child {
+  animation-delay: 0.7s;
+}
+
+/* Oversized serif quotation mark bleeding behind the start of the quote.
+   Positioned at the start edge — in RTL that's the top-right of the block. */
+.gm-egg-quote::before {
+  content: '\201C';
+  position: absolute;
+  top: -44px;
+  inset-inline-start: -6px;
+  font-family: 'Georgia', 'Palatino Linotype', 'Book Antiqua', serif;
+  font-size: 110px;
+  line-height: 1;
+  color: rgba(120, 70, 20, 0.22);
+  font-style: italic;
+  pointer-events: none;
+  user-select: none;
+  z-index: 0;
 }
 
 @keyframes gmEggQuoteFadeIn {
@@ -7715,52 +7749,111 @@ tr.now-row-animate > td.time-cell {
 }
 
 .gm-egg-quote blockquote {
-  font-size: 1.05rem;
-  line-height: 1.8;
-  color: var(--text);
+  position: relative;
+  font-family: 'Georgia', 'Palatino Linotype', 'David', 'Times New Roman', serif;
+  font-size: 1.1rem;
+  line-height: 1.95;
+  color: #3a2610;
   font-style: italic;
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   padding: 0 8px;
+  z-index: 1;
 }
 
 .gm-egg-quote cite {
+  position: relative;
   display: block;
-  font-size: 0.82rem;
-  color: var(--accent-hover);
+  font-family: 'Georgia', 'Palatino Linotype', serif;
+  font-size: 0.88rem;
+  color: #6d4418;
   font-style: normal;
   font-weight: 500;
+  letter-spacing: 0.02em;
+  z-index: 1;
 }
 
-.gm-egg-divider {
-  width: 40px;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  margin: 20px auto;
-  border-radius: 1px;
-  opacity: 0;
-  animation: gmEggQuoteFadeIn 0.4s ease 0.6s forwards;
-}
-
-.gm-egg-close {
-  margin-top: 24px;
-  background: none;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 50%;
-  width: 44px;
-  height: 44px;
-  font-size: 1.3rem;
-  cursor: pointer;
-  color: var(--text);
-  transition: all 0.2s ease;
-  display: inline-flex;
-  align-items: center;
+/* Ornamental divider (fleuron) between the two quotes */
+.gm-egg-ornament {
+  display: flex;
   justify-content: center;
+  gap: 18px;
+  margin: 30px 0;
+  font-family: 'Georgia', 'Palatino Linotype', serif;
+  font-size: 1.35rem;
+  line-height: 1;
+  color: rgba(110, 65, 20, 0.55);
+  opacity: 0;
+  animation: gmEggQuoteFadeIn 0.4s ease 0.5s forwards;
 }
 
-.gm-egg-close:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: var(--accent);
-  transform: rotate(15deg) scale(1.1);
+.gm-egg-ornament span:nth-child(2) {
+  font-size: 1.55rem;
+  transform: translateY(-1px);
+}
+
+/* Logo-as-seal at the bottom-center — also the primary close button.
+   The wrapper owns the stamp-in reveal (opacity + scale), so the inner
+   button is free to run its own hover/focus transforms without conflict. */
+.gm-egg-seal-wrap {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  opacity: 0;
+  z-index: 3;
+  animation: gmEggSealStamp 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 1.05s forwards;
+}
+
+@keyframes gmEggSealStamp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.7);
+  }
+  70% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+}
+
+.gm-egg-seal {
+  display: block;
+  width: 68px;
+  height: 68px;
+  padding: 0;
+  border: none;
+  background: url('../../public/icon-192.png') center / contain no-repeat;
+  border-radius: 50%;
+  cursor: pointer;
+  /* Slight tilt gives it the hand-stamped, signature feel */
+  transform: rotate(-6deg);
+  /* drop-shadow (not box-shadow) so the shadow follows the icon's alpha silhouette */
+  filter:
+    drop-shadow(0 5px 10px rgba(60, 30, 5, 0.38))
+    drop-shadow(0 2px 3px rgba(30, 15, 0, 0.35));
+  transition:
+    transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+    filter 0.25s ease;
+}
+
+.gm-egg-seal:hover {
+  transform: rotate(-2deg) scale(1.08);
+  filter:
+    drop-shadow(0 8px 16px rgba(60, 30, 5, 0.45))
+    drop-shadow(0 2px 4px rgba(30, 15, 0, 0.4));
+}
+
+.gm-egg-seal:active {
+  transform: rotate(-4deg) scale(0.96);
+  transition-duration: 0.1s;
+}
+
+.gm-egg-seal:focus-visible {
+  outline: 2px solid rgba(120, 70, 20, 0.6);
+  outline-offset: 5px;
+  border-radius: 50%;
 }
 
 #app-title {
@@ -7776,48 +7869,16 @@ tr.now-row-animate > td.time-cell {
 }
 
 [data-theme="light"] .gm-egg-dialog {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(238, 241, 248, 0.97) 100%);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  /* Fresher, brighter parchment — still warm and aged, but lighter to suit daylight theme */
+  background:
+    radial-gradient(ellipse at 50% 100%, rgba(140, 90, 30, 0.14), transparent 62%),
+    radial-gradient(ellipse at 0% 0%, rgba(255, 242, 200, 0.52), transparent 58%),
+    radial-gradient(ellipse at 100% 0%, rgba(220, 180, 110, 0.3), transparent 58%),
+    linear-gradient(160deg, #faf0d4 0%, #f2e0b5 50%, #e6cf93 100%);
+  border: 1px solid rgba(120, 80, 30, 0.28);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.6),
-    0 24px 80px rgba(0, 0, 0, 0.12),
-    0 0 60px rgba(45, 104, 184, 0.08);
-  animation:
-    gmEggAppear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
-    gmEggGlowLight 3s ease-in-out 0.5s infinite;
-}
-
-@keyframes gmEggGlowLight {
-  0%,
-  100% {
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.6),
-      0 24px 80px rgba(0, 0, 0, 0.12),
-      0 0 60px rgba(45, 104, 184, 0.08);
-  }
-  50% {
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.6),
-      0 24px 80px rgba(0, 0, 0, 0.12),
-      0 0 40px rgba(45, 104, 184, 0.18),
-      0 0 80px rgba(45, 104, 184, 0.06);
-  }
-}
-
-[data-theme="light"] .gm-egg-quote blockquote {
-  color: var(--text);
-}
-
-[data-theme="light"] .gm-egg-quote cite {
-  color: var(--accent);
-}
-
-[data-theme="light"] .gm-egg-close {
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  color: var(--text);
-}
-
-[data-theme="light"] .gm-egg-close:hover {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: var(--accent);
+    inset 0 0 60px rgba(120, 70, 20, 0.22),
+    inset 0 0 10px rgba(90, 50, 15, 0.14),
+    0 24px 64px rgba(60, 40, 10, 0.22),
+    0 8px 18px rgba(60, 40, 10, 0.12);
 }

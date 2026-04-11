@@ -5932,6 +5932,71 @@ console.log('\n── getCandidatesWithEligibility ────────');
   );
 }
 
+// Regression: swap-picker Bug 1 — a participant already sitting in a DIFFERENT
+// slot of the same task must be flagged ineligible for this slot (HC-5/HC-7),
+// otherwise previewSwap downstream returns invalid and the picker surfaces
+// unusable candidates. Earlier logic excluded the whole task from a
+// participant's assignment set, masking these collisions.
+{
+  const regTask = createShemeshTask(createTimeBlockFromHours(new Date(2026, 1, 15), 6, 14));
+  const [slotA, slotB] = regTask.slots;
+  const dayAvailReg: TimeBlock[] = [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 16, 12, 0) }];
+  const pAlreadyIn: Participant = {
+    id: 'reg-already-in',
+    name: 'AlreadyIn',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: dayAvailReg,
+    dateUnavailability: [],
+  };
+  const pFree: Participant = {
+    id: 'reg-free',
+    name: 'Free',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: dayAvailReg,
+    dateUnavailability: [],
+  };
+  // pAlreadyIn is currently assigned to slotA of the same task.
+  const existing: Assignment[] = [
+    {
+      id: 'reg-a-1',
+      taskId: regTask.id,
+      slotId: slotA.slotId,
+      participantId: pAlreadyIn.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(2026, 1, 15, 6, 0),
+    },
+  ];
+
+  // Query candidates for slotB. pAlreadyIn must NOT be eligible because
+  // accepting slotB would put them in two slots of the same task (HC-7) and
+  // double-book them at an overlapping time (HC-5).
+  const regCandidates = getCandidatesWithEligibility(regTask, slotB.slotId, [pAlreadyIn, pFree], existing, [regTask]);
+  const alreadyInEntry = regCandidates.find((c) => c.participant.id === pAlreadyIn.id);
+  const freeEntry = regCandidates.find((c) => c.participant.id === pFree.id);
+
+  assert(alreadyInEntry !== undefined, 'Bug1 regression: candidate list includes already-in participant');
+  assert(
+    alreadyInEntry?.eligible === false,
+    'Bug1 regression: participant in another slot of same task is ineligible',
+  );
+  assert(
+    alreadyInEntry?.rejectionCode === 'HC-5' || alreadyInEntry?.rejectionCode === 'HC-7',
+    'Bug1 regression: rejection code is HC-5 (double-book) or HC-7 (duplicate-in-task)',
+  );
+  assert(freeEntry?.eligible === true, 'Bug1 regression: truly free participant remains eligible');
+
+  // And the filtered variant agrees.
+  const regEligible = getEligibleParticipantsForSlot(regTask, slotB.slotId, [pAlreadyIn, pFree], existing, [regTask]);
+  assert(
+    regEligible.length === 1 && regEligible[0].id === pFree.id,
+    'Bug1 regression: getEligibleParticipantsForSlot excludes the already-in participant',
+  );
+}
+
 // ─── Summary ─────────────────────────────────────────────────────────────────
 
 console.log('\n══════════════════════════════════════════');

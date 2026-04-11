@@ -27,7 +27,6 @@ import {
   type Task,
 } from '../index';
 import { computeAllCapacities } from '../utils/capacity';
-import { operationalDateKey } from '../utils/date-utils';
 import { renderParticipantCard } from './participant-card';
 import { escHtml, fmt } from './ui-helpers';
 import { showBottomSheet, showToast } from './ui-modal';
@@ -73,8 +72,6 @@ interface ResolvedContext {
   tradeCandidates: TradeCandidate[];
   baselineWorkloads: Map<string, WeeklyWorkload>;
   capacities: Map<string, ParticipantCapacity>;
-  /** Number of assignments per participant on the same operational day as the source task. */
-  dayAssignmentCountByParticipant: Map<string, number>;
   /** Reference to the full task list — needed for post-swap workload recompute. */
   tasks: Task[];
   /** Reference to the full participant list — needed for affected-participant lookups. */
@@ -171,22 +168,6 @@ function resolveContext(state: PickerState, deps: SwapPickerDeps): ResolvedConte
     capacities,
   );
 
-  // Day-load badge: count ASSIGNMENTS per participant on the same operational
-  // day as the source task. Matches the manual-build warehouse picker
-  // semantics so `renderParticipantCard`'s `wc-load` tooltip stays accurate.
-  const sourceDayKey = operationalDateKey(sourceTask.timeBlock.start, dayStartHour);
-  const sameDayTaskIds = new Set(
-    schedule.tasks.filter((t) => operationalDateKey(t.timeBlock.start, dayStartHour) === sourceDayKey).map((t) => t.id),
-  );
-  const dayAssignmentCountByParticipant = new Map<string, number>();
-  for (const a of schedule.assignments) {
-    if (!sameDayTaskIds.has(a.taskId)) continue;
-    dayAssignmentCountByParticipant.set(
-      a.participantId,
-      (dayAssignmentCountByParticipant.get(a.participantId) || 0) + 1,
-    );
-  }
-
   return {
     sourceAssignment,
     sourceTask,
@@ -195,7 +176,6 @@ function resolveContext(state: PickerState, deps: SwapPickerDeps): ResolvedConte
     tradeCandidates,
     baselineWorkloads,
     capacities,
-    dayAssignmentCountByParticipant,
     tasks: schedule.tasks,
     participants: schedule.participants,
   };
@@ -390,18 +370,23 @@ function renderCandidateList(state: PickerState, ctx: ResolvedContext): string {
     : '';
 
   const cards = sorted
-    .map((c) =>
-      renderParticipantCard({
+    .map((c) => {
+      const wl = ctx.baselineWorkloads.get(c.participant.id);
+      return renderParticipantCard({
         participant: c.participant,
         eligible: c.eligible,
         rejectionReason: c.reason,
-        workload: ctx.baselineWorkloads.get(c.participant.id),
+        workload: wl,
         capacity: ctx.capacities.get(c.participant.id),
-        dayAssignmentCount: ctx.dayAssignmentCountByParticipant.get(c.participant.id) || 0,
+        // Badge shows effective hours so the corner number matches the
+        // sorting criterion (workload sorts use `effectiveHours`). Keeping
+        // these aligned prevents the puzzling "list ordered by one metric,
+        // badge shows another" mismatch.
+        loadBadge: wl ? loadBadgeForWorkload(wl) : undefined,
         selected: state.selectedCandidateId === c.participant.id,
         extraClass: 'warehouse-card-sheet',
-      }),
-    )
+      });
+    })
     .join('');
 
   return banner + cards;
@@ -422,11 +407,13 @@ function renderTradeList(state: PickerState, ctx: ResolvedContext): string {
 
   return trades
     .map((tc) => {
+      const wl = ctx.baselineWorkloads.get(tc.participant.id);
       const card = renderParticipantCard({
         participant: tc.participant,
         eligible: true,
-        workload: ctx.baselineWorkloads.get(tc.participant.id),
+        workload: wl,
         capacity: ctx.capacities.get(tc.participant.id),
+        loadBadge: wl ? loadBadgeForWorkload(wl) : undefined,
         selected: state.selectedTradeAssignmentId === tc.assignment.id,
         extraClass: 'warehouse-card-sheet swap-trade-card',
         extraDataAttrs: `data-trade-assignment-id="${tc.assignment.id}"`,
@@ -703,6 +690,16 @@ function uniqueGroups(candidates: CandidateEligibility[]): string[] {
   const set = new Set<string>();
   for (const c of candidates) set.add(c.participant.group);
   return [...set].sort();
+}
+
+/**
+ * Build the corner badge payload from a participant's weekly workload.
+ * Displays `effectiveHours` — the same metric the workload sorts use —
+ * so the badge always reflects the actual ordering criterion.
+ */
+function loadBadgeForWorkload(workload: WeeklyWorkload): { text: string; tooltip: string } {
+  const eff = workload.effectiveHours.toFixed(1);
+  return { text: `${eff}h`, tooltip: `שעות אפקטיביות: ${eff}` };
 }
 
 function sortCandidates(

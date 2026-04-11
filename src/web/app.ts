@@ -214,12 +214,12 @@ let _manualSelectedSlotId: string | null = null;
 /** Cached eligible participant IDs for the selected slot */
 let _eligibleForSelectedSlot: Set<string> | null = null;
 /**
- * Unified undo stack — used by both manual-build and post-generation swap flows.
- * Each entry holds a deep snapshot of the schedule's assignments at the point
- * BEFORE the action was applied, plus a kind + label for surfacing in toasts.
+ * Manual-build undo stack — scoped to the manual-build strip's own
+ * ↩ button. Post-generation swap undo flows through the store's undo
+ * stack + `_scheduleUndoStack` so it lights up the header undo button.
  */
 interface UndoEntry {
-  kind: 'manual' | 'swap';
+  kind: 'manual';
   assignments: Assignment[];
   label: string;
 }
@@ -237,8 +237,6 @@ function pushUndo(kind: UndoEntry['kind'], label: string): void {
 }
 
 function popUndoByKind(kind: UndoEntry['kind']): UndoEntry | null {
-  // Pop the top entry only if it matches the requested kind — prevents a
-  // swap undo from silently reverting a subsequent manual-build action.
   const top = _undoStack[_undoStack.length - 1];
   if (!top || top.kind !== kind) return null;
   _undoStack.pop();
@@ -1332,12 +1330,14 @@ async function handleManualParticipantClick(participantId: string): Promise<bool
     (a) => a.taskId === task.id && a.slotId === _manualSelectedSlotId,
   );
 
-  // Build participant's current assignments, excluding assignments to this task
-  // so HC-7 ("already assigned to this task") doesn't wrongly reject.  This
-  // must match the filter in getEligibleParticipantsForSlot (validator.ts)
-  // which also uses `a.taskId !== task.id`.
+  // Build participant's current assignments, excluding ONLY the assignment
+  // at the slot we're currently filling (if any). Mirrors the filter in
+  // getEligibleParticipantsForSlot (validator.ts) so HC-5/HC-7 still fire
+  // when the participant is already in a DIFFERENT slot of the same task.
   const pAssignments = currentSchedule.assignments.filter(
-    (a) => a.participantId === participantId && a.taskId !== task.id,
+    (a) =>
+      a.participantId === participantId &&
+      !(a.taskId === task.id && a.slotId === _manualSelectedSlotId),
   );
 
   const taskAssignments = currentSchedule.assignments.filter((a) => a.taskId === task.id);
@@ -2260,11 +2260,23 @@ async function handleSwap(assignmentId: string): Promise<void> {
     dayStartHour: store.getDayStartHour(),
     onCommit: ({ label, preCommitAssignments }) => {
       if (!currentSchedule) return;
-      // Record the pre-commit snapshot on the unified undo stack. The engine
-      // mutated `currentSchedule.assignments` in place (shared reference), so
-      // there's no need to re-fetch the schedule object from the engine here.
-      _undoStack.push({ kind: 'swap', assignments: preCommitAssignments, label });
-      if (_undoStack.length > 20) _undoStack.shift();
+      // Record a pre-commit schedule snapshot on the parallel stack and push
+      // a (no-op) checkpoint onto the store's undo stack so the header
+      // undo/redo buttons light up and `doUndoRedo('undo')` restores the
+      // pre-swap state. The engine mutated `currentSchedule.assignments` in
+      // place (shared reference), so we clone the schedule and substitute
+      // the pre-commit assignments.
+      const preCommitSchedule: Schedule = {
+        ...currentSchedule,
+        assignments: preCommitAssignments,
+      };
+      _scheduleUndoStack.push({
+        schedule: structuredClone(preCommitSchedule),
+        dirty: _scheduleDirty,
+      });
+      if (_scheduleUndoStack.length > 80) _scheduleUndoStack.shift();
+      _scheduleRedoStack.length = 0;
+      store.pushUndoCheckpoint();
 
       revalidateAndRefresh();
 
@@ -2274,8 +2286,7 @@ async function handleSwap(assignmentId: string): Promise<void> {
         action: {
           label: 'בטל',
           callback: () => {
-            const entry = popUndoByKind('swap');
-            if (entry) applyUndoEntry(entry);
+            doUndoRedo('undo');
           },
         },
       });
@@ -2985,7 +2996,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.2</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3181,17 +3192,20 @@ function showEasterEgg(): void {
   backdrop.className = 'gm-modal-backdrop';
   backdrop.innerHTML = `
     <div class="gm-egg-dialog" role="dialog" aria-modal="true">
-      <div class="gm-egg-sparkle">✨</div>
-      <div class="gm-egg-quote">
-        <blockquote>\u201Cחרטה היחידה בלבי היא שלא חלמתי חלומות רבים וגדולים עוד יותר\u201D</blockquote>
-        <cite>— שמעון פרס</cite>
+      <div class="gm-egg-page">
+        <div class="gm-egg-quote">
+          <blockquote>החרטה היחידה בלבי היא שלא חלמתי חלומות רבים וגדולים עוד יותר</blockquote>
+          <cite>— שמעון פרס</cite>
+        </div>
+        <div class="gm-egg-ornament" aria-hidden="true"><span>✦</span><span>❦</span><span>✦</span></div>
+        <div class="gm-egg-quote">
+          <blockquote>אם ברצונך ללמוד להכיר אדם, שים לב איך הוא מתייחס לזוטרים ממנו, לא לשווים לו.</blockquote>
+          <cite>— סיריוס בלק, הארי פוטר וגביע האש</cite>
+        </div>
       </div>
-      <div class="gm-egg-divider"></div>
-      <div class="gm-egg-quote">
-        <blockquote>\u201Cאם ברצונך ללמוד להכיר אדם, שים לב איך הוא מתייחס לזוטרים ממנו, לא לשווים לו.\u201D</blockquote>
-        <cite>— סיריוס בלק, הארי פוטר וגביע האש</cite>
+      <div class="gm-egg-seal-wrap">
+        <button class="gm-egg-seal" aria-label="סגור" title="סגור"></button>
       </div>
-      <button class="gm-egg-close">🪄</button>
     </div>`;
 
   const close = () => {
@@ -3200,7 +3214,7 @@ function showEasterEgg(): void {
     backdrop.classList.add('closing');
     backdrop.addEventListener('animationend', () => backdrop.remove(), { once: true });
   };
-  backdrop.querySelector('.gm-egg-close')!.addEventListener('click', close);
+  backdrop.querySelector('.gm-egg-seal')!.addEventListener('click', close);
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) close();
   });
@@ -3211,7 +3225,7 @@ function showEasterEgg(): void {
     }
   });
   document.body.appendChild(backdrop);
-  (backdrop.querySelector('.gm-egg-close') as HTMLElement).focus();
+  (backdrop.querySelector('.gm-egg-seal') as HTMLElement).focus();
 }
 
 // ─── KPI Count-Up Animation ─────────────────────────────────────────────────
