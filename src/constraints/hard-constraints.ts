@@ -15,7 +15,7 @@ import {
   type ValidationResult,
   ViolationSeverity,
 } from '../models/types';
-import { describeSlot } from '../utils/date-utils';
+import { bidiTimeRange, describeSlotBidi } from '../utils/date-utils';
 import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
 import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../web/utils/time-utils';
 
@@ -67,12 +67,12 @@ export function checkLevelRequirement(
 ): ConstraintViolation | null {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) {
-    return violation('SLOT_NOT_FOUND', `משבצת ${slotId} לא נמצאה במשימה ${task.id}`, task.id, slotId, participant.id);
+    return violation('SLOT_NOT_FOUND', `${task.name} \u200F— משבצת ${slotId} לא נמצאה`, task.id, slotId, participant.id);
   }
   if (!isLevelSatisfied(participant.level, slot)) {
     return violation(
       'LEVEL_MISMATCH',
-      `משתתף ${participant.name} (דרגה ${participant.level}) לא עומד בדרישת הדרגה [${slot.acceptableLevels.map((e) => 'דרגה ' + e.level).join(',')}] עבור ${task.name} משבצת "${describeSlot(slot.label, task.timeBlock)}"`,
+      `${participant.name} (דרגה ${participant.level}) \u200F— ${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} (נדרש: ${slot.acceptableLevels.map((e) => 'דרגה ' + e.level).join(', ')})`,
       task.id,
       slotId,
       participant.id,
@@ -88,6 +88,7 @@ export function checkCertificationRequirement(
   participant: Participant,
   task: Task,
   slotId: string,
+  certLabelResolver: (certId: string) => string = (id) => id,
 ): ConstraintViolation | null {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) return null;
@@ -96,7 +97,7 @@ export function checkCertificationRequirement(
     if (!participant.certifications.includes(cert)) {
       return violation(
         'CERT_MISSING',
-        `משתתף ${participant.name} חסר הסמכה נדרשת "${cert}" עבור ${task.name} משבצת "${describeSlot(slot.label, task.timeBlock)}"`,
+        `${participant.name} \u200F— ${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} (חסר: ${certLabelResolver(cert)})`,
         task.id,
         slotId,
         participant.id,
@@ -113,7 +114,7 @@ export function checkAvailability(participant: Participant, task: Task): Constra
   if (!isFullyCovered(task.timeBlock, participant.availability)) {
     return violation(
       'AVAILABILITY_VIOLATION',
-      `משתתף ${participant.name} לא זמין למשך הזמן המלא של ${task.name}`,
+      `${participant.name} \u200F— ${task.name} (${bidiTimeRange(task.timeBlock)})`,
       task.id,
       undefined,
       participant.id,
@@ -122,7 +123,7 @@ export function checkAvailability(participant: Participant, task: Task): Constra
   if (isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability)) {
     return violation(
       'AVAILABILITY_VIOLATION',
-      `משתתף ${participant.name} לא זמין למשך הזמן המלא של ${task.name}`,
+      `${participant.name} \u200F— ${task.name} (${bidiTimeRange(task.timeBlock)})`,
       task.id,
       undefined,
       participant.id,
@@ -142,7 +143,7 @@ export function checkSameGroup(task: Task, assignedParticipants: Participant[]):
     return [
       violation(
         'GROUP_MISMATCH',
-        `משימה ${task.name} דורשת שכל המשתתפים יהיו מאותה קבוצה, אך נמצאו קבוצות: [${[...groups].join(', ')}]`,
+        `${task.name} \u200F— קבוצות: ${[...groups].join(', ')} (נדרשת קבוצה אחת)`,
         task.id,
       ),
     ];
@@ -158,6 +159,7 @@ export function checkForbiddenCertifications(
   task: Task,
   taskAssignments: Assignment[],
   pMap: Map<string, Participant>,
+  certLabelResolver: (certId: string) => string = (id) => id,
 ): ConstraintViolation[] {
   const violations: ConstraintViolation[] = [];
   for (const a of taskAssignments) {
@@ -170,7 +172,7 @@ export function checkForbiddenCertifications(
       violations.push(
         violation(
           'EXCLUDED_CERTIFICATION',
-          `${p.name} מחזיק/ה בהסמכה ${forbidden.join(', ')} ואסור/ה במשבצת "${describeSlot(slot.label, task.timeBlock)}" במשימת "${task.name}"`,
+          `${p.name} \u200F— ${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} (מחזיק/ה: ${forbidden.map(certLabelResolver).join(', ')})`,
           task.id,
           slot.slotId,
           p.id,
@@ -190,8 +192,10 @@ export function checkNoDoubleBooking(
   participantId: string,
   assignments: Assignment[],
   taskMap: Map<string, Task>,
+  participantName?: string,
 ): ConstraintViolation[] {
   const violations: ConstraintViolation[] = [];
+  const displayName = participantName ?? participantId;
   const participantAssignments = assignments.filter((a) => a.participantId === participantId);
 
   // Check ALL assignments for physical overlap (including light tasks)
@@ -215,7 +219,7 @@ export function checkNoDoubleBooking(
         violations.push(
           violation(
             'DOUBLE_BOOKING',
-            `משתתף ${participantId} משובץ/ת בכפל: "${taskA.name}" ו-"${taskB.name}" חופפים`,
+            `${displayName} \u200F— "${taskA.name}" \u200F↔ "${taskB.name}"`,
             taskA.id,
             undefined,
             participantId,
@@ -241,7 +245,7 @@ export function checkSlotsFilled(task: Task, assignments: Assignment[]): Constra
       violations.push(
         violation(
           'SLOT_UNFILLED',
-          `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} לא משובץ משתתף`,
+          `${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)}`,
           task.id,
           slot.slotId,
         ),
@@ -250,7 +254,7 @@ export function checkSlotsFilled(task: Task, assignments: Assignment[]): Constra
       violations.push(
         violation(
           'SLOT_OVERBOOKED',
-          `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} יש ${slotAssignments.length} משתתפים (צפוי 1)`,
+          `${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} \u200F— ${slotAssignments.length} במקום 1`,
           task.id,
           slot.slotId,
         ),
@@ -273,7 +277,7 @@ export function checkUniqueParticipantsPerTask(task: Task, assignments: Assignme
       violations.push(
         violation(
           'DUPLICATE_IN_TASK',
-          `משתתף ${a.participantId} משובץ/ת מספר פעמים ב-${task.name}`,
+          `${a.participantId} \u200F— ${task.name}`,
           task.id,
           a.slotId,
           a.participantId,
@@ -294,7 +298,11 @@ export function checkUniqueParticipantsPerTask(task: Task, assignments: Assignme
  * counts. For the default Adanit template (6 slots: 4×L0+Nitzan, 1×L2+Nitzan,
  * 1×L3/L4+Nitzan), this produces equivalent results to the previous hardcoded check.
  */
-export function checkGroupFeasibility(task: Task, groupParticipants: Participant[]): ConstraintViolation[] {
+export function checkGroupFeasibility(
+  task: Task,
+  groupParticipants: Participant[],
+  certLabelResolver: (certId: string) => string = (id) => id,
+): ConstraintViolation[] {
   if (!task.sameGroupRequired) return [];
 
   const violations: ConstraintViolation[] = [];
@@ -321,11 +329,11 @@ export function checkGroupFeasibility(task: Task, groupParticipants: Participant
       claimed.add(match.id);
     } else {
       const levelDesc = slot.acceptableLevels.map((e) => `דרגה ${e.level}`).join('/');
-      const certDesc = slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
+      const certDesc = slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.map(certLabelResolver).join(', ')}` : '';
       violations.push(
         violation(
           'GROUP_INSUFFICIENT',
-          `משימה "${task.name}": הקבוצה חסרה משתתף כשיר למשבצת "${describeSlot(slot.label, task.timeBlock)}" (נדרש: ${levelDesc}${certDesc})`,
+          `${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} \u200F— נדרש: ${levelDesc}${certDesc}`,
           task.id,
           slot.slotId,
         ),
@@ -366,8 +374,10 @@ export function checkNoConsecutiveHighLoad(
   participantId: string,
   assignments: Assignment[],
   taskMap: Map<string, Task>,
+  participantName?: string,
 ): ConstraintViolation[] {
   const violations: ConstraintViolation[] = [];
+  const displayName = participantName ?? participantId;
 
   // Collect this participant's assignments with their tasks
   const pAssignments = assignments
@@ -393,7 +403,7 @@ export function checkNoConsecutiveHighLoad(
       violations.push(
         violation(
           'CONSECUTIVE_HIGH_LOAD',
-          `למשתתף ${participantId} משימות עוקבות ללא הפסקה: "${current.task.name}" ו-"${next.task.name}"`,
+          `${displayName} \u200F— "${current.task.name}" \u200F→ "${next.task.name}"`,
           next.task.id,
           undefined,
           participantId,
@@ -472,7 +482,7 @@ export function checkRestRules(
         violations.push(
           violation(
             'CATEGORY_BREAK_VIOLATION',
-            `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות ${(durationMs / 3600000).toFixed(1)} שעות לפחות)`,
+            `${displayName} \u200F— ${(gap / 3600000).toFixed(1)} שעות בין "${cur.task.name}" ל-"${nxt.task.name}" (מינימום ${(durationMs / 3600000).toFixed(1)})`,
             nxt.task.id,
             undefined,
             participantId,
@@ -498,7 +508,7 @@ export function checkRestRules(
         violations.push(
           violation(
             'CATEGORY_BREAK_VIOLATION',
-            `ל-${displayName} הפרש של ${(gap / 3600000).toFixed(1)} שעות בלבד בין "${cur.task.name}" ל-"${nxt.task.name}" (נדרשות ${(durationMs / 3600000).toFixed(1)} שעות לפחות)`,
+            `${displayName} \u200F— ${(gap / 3600000).toFixed(1)} שעות בין "${cur.task.name}" ל-"${nxt.task.name}" (מינימום ${(durationMs / 3600000).toFixed(1)})`,
             nxt.task.id,
             undefined,
             participantId,
@@ -526,6 +536,7 @@ export function validateHardConstraints(
   assignments: Assignment[],
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
+  certLabelResolver: (certId: string) => string = (id) => id,
 ): ValidationResult {
   const allViolations: ConstraintViolation[] = [];
   const pMap = buildParticipantMap(participants);
@@ -561,7 +572,7 @@ export function validateHardConstraints(
           allViolations.push(
             violation(
               'SLOT_UNFILLED',
-              `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} לא משובץ משתתף`,
+              `${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)}`,
               task.id,
               slot.slotId,
             ),
@@ -570,7 +581,7 @@ export function validateHardConstraints(
           allViolations.push(
             violation(
               'SLOT_OVERBOOKED',
-              `למשבצת "${describeSlot(slot.label, task.timeBlock)}" ב-${task.name} יש ${slotAssignments.length} משתתפים (צפוי 1)`,
+              `${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} \u200F— ${slotAssignments.length} במקום 1`,
               task.id,
               slot.slotId,
             ),
@@ -588,7 +599,7 @@ export function validateHardConstraints(
           allViolations.push(
             violation(
               'DUPLICATE_IN_TASK',
-              `${pName} משובץ/ת מספר פעמים ב-${task.name}`,
+              `${pName} \u200F— ${task.name}`,
               task.id,
               a.slotId,
               a.participantId,
@@ -603,10 +614,11 @@ export function validateHardConstraints(
     for (const a of taskAssignments) {
       const participant = pMap.get(a.participantId);
       if (!participant) {
+        const slot = task.slots.find((s) => s.slotId === a.slotId);
         allViolations.push(
           violation(
             'PARTICIPANT_NOT_FOUND',
-            `שיבוץ מפנה למשתתף לא ידוע ${a.participantId}`,
+            `${task.name}, ${describeSlotBidi(slot?.label, task.timeBlock)} \u200F— מזהה: ${a.participantId}`,
             task.id,
             a.slotId,
             a.participantId,
@@ -623,7 +635,7 @@ export function validateHardConstraints(
 
       // HC-2: Certifications
       if (!disabledHC?.has('HC-2')) {
-        const certV = checkCertificationRequirement(participant, task, a.slotId);
+        const certV = checkCertificationRequirement(participant, task, a.slotId, certLabelResolver);
         if (certV) allViolations.push(certV);
       }
 
@@ -636,7 +648,7 @@ export function validateHardConstraints(
 
     // HC-11: Forbidden certification — per-slot check
     if (!disabledHC?.has('HC-11')) {
-      allViolations.push(...checkForbiddenCertifications(task, taskAssignments, pMap));
+      allViolations.push(...checkForbiddenCertifications(task, taskAssignments, pMap, certLabelResolver));
     }
 
     // HC-4: Same group — use pre-indexed task assignments
@@ -654,7 +666,7 @@ export function validateHardConstraints(
       if (assignedParticipants.length > 0) {
         const group = assignedParticipants[0].group;
         const groupMembers = participants.filter((p) => p.group === group);
-        allViolations.push(...checkGroupFeasibility(task, groupMembers));
+        allViolations.push(...checkGroupFeasibility(task, groupMembers, certLabelResolver));
       }
     }
   }
@@ -689,7 +701,7 @@ export function validateHardConstraints(
               allViolations.push(
                 violation(
                   'DOUBLE_BOOKING',
-                  `${p.name} משובץ/ת בכפל: "${prevTask.name}" ו-"${task.name}" חופפים`,
+                  `${p.name} \u200F— "${prevTask.name}" \u200F↔ "${task.name}"`,
                   prevTask.id,
                   undefined,
                   p.id,
@@ -722,7 +734,7 @@ export function validateHardConstraints(
           allViolations.push(
             violation(
               'CONSECUTIVE_HIGH_LOAD',
-              `ל-${p.name} משימות עוקבות ללא הפסקה: "${cur.task.name}" ו-"${nxt.task.name}"`,
+              `${p.name} \u200F— "${cur.task.name}" \u200F→ "${nxt.task.name}"`,
               nxt.task.id,
               undefined,
               p.id,

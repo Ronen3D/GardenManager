@@ -37,8 +37,9 @@ export function fullValidate(
   assignments: Assignment[],
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
+  certLabelResolver?: (certId: string) => string,
 ): FullValidationResult {
-  const hard = validateHardConstraints(tasks, participants, assignments, disabledHC, restRuleMap);
+  const hard = validateHardConstraints(tasks, participants, assignments, disabledHC, restRuleMap, certLabelResolver);
   const warnings = collectSoftWarnings(tasks, participants, assignments);
 
   const hardCount = hard.violations.length;
@@ -70,6 +71,7 @@ export function previewSwap(
   assignments: Assignment[],
   swap: SwapRequest,
   restRuleMap?: Map<string, number>,
+  certLabelResolver?: (certId: string) => string,
 ): FullValidationResult {
   // Create a temporary copy with the swap applied
   const tempAssignments = assignments.map((a) => {
@@ -79,7 +81,7 @@ export function previewSwap(
     return { ...a };
   });
 
-  return fullValidate(tasks, participants, tempAssignments, undefined, restRuleMap);
+  return fullValidate(tasks, participants, tempAssignments, undefined, restRuleMap, certLabelResolver);
 }
 
 // ─── R8: Rejection Reason Codes ──────────────────────────────────────────────

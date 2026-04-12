@@ -23,7 +23,7 @@ import {
   ViolationSeverity,
 } from '../models/types';
 import { computeAllCapacities } from '../utils/capacity';
-import { describeSlot } from '../utils/date-utils';
+import { describeSlotBidi } from '../utils/date-utils';
 import {
   type MultiAttemptProgressCallback,
   type OptimizationResult,
@@ -69,6 +69,7 @@ export class SchedulingEngine {
   private phantomContext: PhantomContext | null = null;
   private restRuleMap?: Map<string, number>;
   private dayStartHour: number;
+  certLabelResolver: (certId: string) => string = (id) => id;
 
   constructor(
     config: Partial<SchedulerConfig> = {},
@@ -245,6 +246,7 @@ export class SchedulingEngine {
       result.assignments,
       this.disabledHC,
       this.restRuleMap,
+      this.certLabelResolver,
     );
     const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.config);
 
@@ -254,13 +256,13 @@ export class SchedulingEngine {
     for (const { taskId, slotId, reason } of result.unfilledSlots) {
       const task = this.tasks.get(taskId);
       const slot = task?.slots.find((s) => s.slotId === slotId);
-      const slotDesc = task ? describeSlot(slot?.label, task.timeBlock) : slotId;
+      const slotDesc = task ? describeSlotBidi(slot?.label, task.timeBlock) : slotId;
       allViolations.push({
         severity: ViolationSeverity.Error,
         code: 'INFEASIBLE_SLOT',
         message: reason
-          ? `לא ניתן לשבץ: ${reason} (עמדה "${slotDesc}" במשימה "${task?.name ?? taskId}")`
-          : `שבצ"ק בלתי אפשרי: לא ניתן למלא עמדה "${slotDesc}" במשימה "${task?.name ?? taskId}". אין משתתפים זמינים.`,
+          ? `${task?.name ?? taskId}, ${slotDesc} \u200F\u2014 ${reason}`
+          : `${task?.name ?? taskId}, ${slotDesc} \u200F\u2014 אין משתתפים זמינים`,
         taskId,
         slotId,
       });
@@ -343,6 +345,7 @@ export class SchedulingEngine {
       this.phantomContext ?? undefined,
       this.restRuleMap,
       this.dayStartHour,
+      this.certLabelResolver,
     );
 
     return this._commitOptimizationResult(tasks, participants, result);
@@ -396,6 +399,7 @@ export class SchedulingEngine {
       this.currentSchedule.assignments,
       this.disabledHC,
       this.restRuleMap,
+      this.certLabelResolver,
     );
   }
 
@@ -410,7 +414,7 @@ export class SchedulingEngine {
     if (!this.currentSchedule) return;
     const { tasks, participants, assignments } = this.currentSchedule;
 
-    const hard = validateHardConstraints(tasks, participants, assignments, this.disabledHC, this.restRuleMap);
+    const hard = validateHardConstraints(tasks, participants, assignments, this.disabledHC, this.restRuleMap, this.certLabelResolver);
     const soft = collectSoftWarnings(tasks, participants, assignments, this.config);
     const score = computeScheduleScore(
       tasks,
@@ -882,6 +886,7 @@ export class SchedulingEngine {
       result.assignments,
       this.disabledHC,
       this.restRuleMap,
+      this.certLabelResolver,
     );
     const softWarnings = collectSoftWarnings(
       this.currentSchedule.tasks,

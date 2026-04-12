@@ -597,6 +597,7 @@ export function generateRescuePlans(
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
+  certLabelResolver?: (certId: string) => string,
 ): RescueResult {
   // Validate page parameter
   page = Math.max(0, Math.floor(page));
@@ -716,6 +717,7 @@ export function generateRescuePlans(
       tempAssignments,
       disabledHC,
       restRuleMap,
+      certLabelResolver,
     );
     if (validation.valid) {
       validPlans.push({ ...cp, violations: [] });

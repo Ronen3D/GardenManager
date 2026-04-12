@@ -86,6 +86,7 @@ export function openRescueModal(assignmentId: string): void {
     store.getDisabledHCSet(),
     store.buildRestRuleMap(),
     store.getDayStartHour(),
+    store.getCertLabel,
   );
   showRescueModal();
 }
@@ -192,7 +193,7 @@ function showRescueModal(): void {
           <summary>הצג פרטים</summary>
           <ul>`;
       for (const v of plan.violations!) {
-        violationsHtml += `<li><code>${violationLabel(v.code)}</code> — ${v.message}</li>`;
+        violationsHtml += `<li dir="rtl"><code>${violationLabel(v.code)}</code> · ${v.message}</li>`;
       }
       violationsHtml += `</ul></details></div>`;
     }
@@ -382,6 +383,7 @@ function wireRescueModalEvents(): void {
       store.getDisabledHCSet(),
       store.buildRestRuleMap(),
       store.getDayStartHour(),
+      store.getCertLabel,
     );
     // Ranks are already sequential from the engine (1-based per returned plan)
     _rescueResult = result;

@@ -17,7 +17,7 @@ import {
   type Task,
   ViolationSeverity,
 } from '../models/types';
-import { describeSlot, operationalDateKey } from '../utils/date-utils';
+import { describeSlotBidi, operationalDateKey } from '../utils/date-utils';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import {
   computeAllRestProfiles,
@@ -297,7 +297,7 @@ export function collectSoftWarnings(
           warnings.push({
             severity: ViolationSeverity.Warning,
             code: 'LOW_PRIORITY_LEVEL',
-            message: `${p.name} (דרגה ${p.level}) שובץ/ה ל-${task.name} [${describeSlot(slot.label, task.timeBlock)}] כמוצא אחרון — דרגה זו בעדיפות נמוכה מאוד למשבצת זו`,
+            message: `${p.name} (דרגה ${p.level}) \u200F— ${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)}`,
             taskId: task.id,
             participantId: p.id,
           });
@@ -313,7 +313,7 @@ export function collectSoftWarnings(
         warnings.push({
           severity: ViolationSeverity.Warning,
           code: 'GROUP_MISMATCH',
-          message: `משימה ${task.name} דורשת שכל המשתתפים יהיו מאותה קבוצה, אך כוללת משתתפים מ-${groups.size} קבוצות: [${[...groups].join(', ')}]`,
+          message: `${task.name} \u200F— ${groups.size} קבוצות: ${[...groups].join(', ')}`,
           taskId: task.id,
         });
       }
@@ -325,7 +325,7 @@ export function collectSoftWarnings(
         warnings.push({
           severity: ViolationSeverity.Warning,
           code: 'LESS_PREFERRED_ASSIGNMENT',
-          message: `${p.name} שובץ/ה ל-${task.name} — משימה שמועדף להימנע ממנה`,
+          message: `${p.name} \u200F— ${task.name}`,
           taskId: task.id,
           participantId: p.id,
         });
@@ -352,7 +352,7 @@ export function collectSoftWarnings(
       warnings.push({
         severity: ViolationSeverity.Warning,
         code: 'PREFERRED_NAME_UNAVAILABLE',
-        message: `${p.name} מעדיף/ה ${p.preferredTaskName} אך אין משימות בשם זה בלוח — העדפה זו לא ניתנת למימוש`,
+        message: `${p.name} \u200F— "${p.preferredTaskName}" לא קיים בלוח`,
         taskId: '',
         participantId: p.id,
       });
@@ -367,7 +367,7 @@ export function collectSoftWarnings(
       warnings.push({
         severity: ViolationSeverity.Warning,
         code: 'PREFERRED_NOT_SATISFIED',
-        message: `${p.name} מעדיף/ה ${p.preferredTaskName} אך לא שובץ/ה למשימה בשם זה`,
+        message: `${p.name} \u200F— מעדיף/ה "${p.preferredTaskName}"`,
         taskId: pAssigns[0].taskId,
         participantId: p.id,
       });

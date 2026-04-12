@@ -28,6 +28,7 @@ import {
 } from '../index';
 import { computeAllCapacities } from '../utils/capacity';
 import { renderParticipantCard } from './participant-card';
+import { violationLabel } from './schedule-utils';
 import { escHtml, fmt } from './ui-helpers';
 import { showBottomSheet, showToast } from './ui-modal';
 import { computeWeeklyWorkloads, type WeeklyWorkload } from './workload-utils';
@@ -455,20 +456,20 @@ function renderPreviewPanel(state: PickerState, ctx: ResolvedContext): string {
 
   const violationsHtml = preview.violations.length
     ? `<ul class="swap-preview-violations">${preview.violations
-        .map((v) => `<li>[${escHtml(v.code)}] ${escHtml(v.message)}</li>`)
+        .map((v) => `<li dir="rtl"><code>${violationLabel(v.code)}</code> · ${escHtml(v.message)}</li>`)
         .join('')}</ul>`
     : '';
 
   const addedHtml = preview.addedSoftWarnings.length
     ? `<div class="swap-preview-soft swap-preview-soft-added">
         <div class="swap-preview-soft-label">אזהרות חדשות:</div>
-        <ul>${preview.addedSoftWarnings.map((w) => `<li>${escHtml(w.message)}</li>`).join('')}</ul>
+        <ul>${preview.addedSoftWarnings.map((w) => `<li dir="rtl"><code>${violationLabel(w.code)}</code> · ${escHtml(w.message)}</li>`).join('')}</ul>
       </div>`
     : '';
   const removedHtml = preview.removedSoftWarnings.length
     ? `<div class="swap-preview-soft swap-preview-soft-removed">
         <div class="swap-preview-soft-label">אזהרות שבוטלו:</div>
-        <ul>${preview.removedSoftWarnings.map((w) => `<li>${escHtml(w.message)}</li>`).join('')}</ul>
+        <ul>${preview.removedSoftWarnings.map((w) => `<li dir="rtl"><code>${violationLabel(w.code)}</code> · ${escHtml(w.message)}</li>`).join('')}</ul>
       </div>`
     : '';
 
@@ -673,7 +674,7 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
 
   if (!result.valid) {
     state.committing = false;
-    const msgs = result.violations.map((v) => `[${v.code}] ${v.message}`).join('\n');
+    const msgs = result.violations.map((v) => `${violationLabel(v.code)}: ${v.message}`).join('\n');
     showToast(`ההחלפה נכשלה: ${msgs}`, { type: 'error' });
     return;
   }

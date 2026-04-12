@@ -125,8 +125,9 @@ const violationCodeLabels: Record<string, string> = {
   INFEASIBLE_SLOT: 'שיבוץ בלתי אפשרי',
   SENIOR_HARD_BLOCK: 'חסימת סגל',
   SENIOR_IN_JUNIOR_PREFERRED: 'סגל בכיר במשימת צעירים',
+  LOW_PRIORITY_LEVEL: 'שיבוץ מוצא אחרון',
   LESS_PREFERRED_ASSIGNMENT: 'משימה לא מועדפת',
-  PREFERRED_TYPE_UNAVAILABLE: 'סוג מועדף לא קיים',
+  PREFERRED_NAME_UNAVAILABLE: 'סוג מועדף לא קיים',
   PREFERRED_NOT_SATISFIED: 'העדפה לא מומשה',
 };
 

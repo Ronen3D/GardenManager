@@ -1502,6 +1502,7 @@ function loadScheduleSnapshot(snapshotId: string): void {
     store.buildRestRuleMap(),
     store.getDayStartHour(),
   );
+  engine.certLabelResolver = store.getCertLabel;
 
   // 4. Load data into engine
   engine.addParticipants(reconciledParticipants);
@@ -1554,19 +1555,19 @@ function renderViolations(schedule: Schedule): string {
     html += `<div class="alert alert-error"><strong>הפרות חמורות (${hard.length})</strong>`;
     if (today.length > 0) {
       html += `<div class="violation-section"><em>יום ${currentDay}:</em><ul>`;
-      for (const v of today) html += `<li><code>${violationLabel(v.code)}</code> ${v.message}</li>`;
+      for (const v of today) html += `<li dir="rtl"><code>${violationLabel(v.code)}</code> · ${v.message}</li>`;
       html += `</ul></div>`;
     }
     if (other.length > 0) {
       html += `<div class="violation-section violation-other"><em>ימים אחרים:</em><ul>`;
-      for (const v of other) html += `<li><code>${violationLabel(v.code)}</code> ${v.message}</li>`;
+      for (const v of other) html += `<li dir="rtl"><code>${violationLabel(v.code)}</code> · ${v.message}</li>`;
       html += `</ul></div>`;
     }
     html += '</div>';
   }
   if (warn.length > 0) {
     html += `<div class="alert alert-warn"><strong>אזהרות (${warn.length})</strong><ul>`;
-    for (const w of warn) html += `<li><code>${violationLabel(w.code)}</code> ${w.message}</li>`;
+    for (const w of warn) html += `<li dir="rtl"><code>${violationLabel(w.code)}</code> · ${w.message}</li>`;
     html += '</ul></div>';
   }
   return html;
@@ -1837,6 +1838,7 @@ async function doGenerate(): Promise<void> {
     store.buildRestRuleMap(),
     store.getDayStartHour(),
   );
+  engine.certLabelResolver = store.getCertLabel;
   engine.addParticipants(participants);
   engine.addTasks(tasks);
 
@@ -1968,6 +1970,7 @@ function doCreateManualSchedule(): void {
     store.buildRestRuleMap(),
     store.getDayStartHour(),
   );
+  engine.certLabelResolver = store.getCertLabel;
   engine.addParticipants(participants);
   engine.addTasks(tasks);
 
@@ -2324,7 +2327,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.1.2</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.1.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3829,6 +3832,7 @@ function init(): void {
         store.buildRestRuleMap(),
         store.getDayStartHour(),
       );
+      engine.certLabelResolver = store.getCertLabel;
       engine.addParticipants(reconciledParticipants);
       engine.addTasks(savedSchedule.tasks);
       engine.importSchedule(reconciledSchedule);

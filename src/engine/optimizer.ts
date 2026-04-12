@@ -1546,6 +1546,7 @@ export function optimize(
   phantomContext?: PhantomContext,
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
+  certLabelResolver?: (certId: string) => string,
 ): OptimizationResult {
   const startTime = Date.now();
 
@@ -1578,7 +1579,7 @@ export function optimize(
   const remainingUnfilled = greedy.unfilledSlots.filter((uf) => !lsResult.filledSlots.includes(uf.slotId));
 
   // Validate final result
-  const validation = validateHardConstraints(tasks, participants, lsResult.assignments, disabledHC);
+  const validation = validateHardConstraints(tasks, participants, lsResult.assignments, disabledHC, undefined, certLabelResolver);
 
   // Build capacities for final scoring
   let schedStart = tasks[0]?.timeBlock.start ?? new Date();
@@ -1678,6 +1679,7 @@ export function optimizeMultiAttempt(
   disabledHC?: Set<string>,
   phantomContext?: PhantomContext,
   restRuleMap?: Map<string, number>,
+  certLabelResolver?: (certId: string) => string,
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
   const totalStart = Date.now();
@@ -1727,6 +1729,8 @@ export function optimizeMultiAttempt(
       jitter,
       phantomContext,
       restRuleMap,
+      undefined,
+      certLabelResolver,
     );
 
     const improved = best === null || isBetterResult(result, best);
@@ -1796,6 +1800,7 @@ export function optimizeMultiAttemptAsync(
   phantomContext?: PhantomContext,
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
+  certLabelResolver?: (certId: string) => string,
 ): Promise<OptimizationResult> {
   return new Promise((resolve, reject) => {
     let best: OptimizationResult | null = null;
@@ -1852,6 +1857,7 @@ export function optimizeMultiAttemptAsync(
             phantomContext,
             restRuleMap,
             dayStartHour,
+            certLabelResolver,
           );
 
           const improved = best === null || isBetterResult(result, best);

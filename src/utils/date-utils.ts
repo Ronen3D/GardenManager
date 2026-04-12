@@ -25,6 +25,17 @@ export function describeSlot(slotLabel: string | undefined, timeBlock: { start: 
   return slotLabel ? `${slotLabel} ${time}` : time;
 }
 
+/** Time range wrapped with LRI/PDI BiDi isolates for safe RTL embedding. */
+export function bidiTimeRange(tb: { start: Date; end: Date }): string {
+  return `\u2066${fmtTime(tb.start)}\u2013${fmtTime(tb.end)}\u2069`;
+}
+
+/** Slot description with BiDi isolates for safe RTL embedding in violation messages. */
+export function describeSlotBidi(slotLabel: string | undefined, timeBlock: { start: Date; end: Date }): string {
+  const time = bidiTimeRange(timeBlock);
+  return slotLabel ? `${slotLabel} ${time}` : time;
+}
+
 /**
  * Calendar-date key from a Date (YYYY-MM-DD in local time).
  *
