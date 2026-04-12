@@ -360,7 +360,7 @@ export class SchedulingEngine {
 
   /**
    * Import a previously saved schedule so real-time adjustments
-   * (swap, lock, revalidate) work without re-generating.
+   * (swap, revalidate) work without re-generating.
    *
    * The participants and tasks must have been added via addParticipants/addTasks
    * before calling this method.
@@ -407,14 +407,21 @@ export class SchedulingEngine {
    * Full revalidation: re-run hard constraints, recompute soft warnings,
    * and recompute the schedule score. Updates the internal schedule state.
    *
-   * Use after any manual change (swap, lock/unlock) to ensure all
+   * Use after any manual change (swap) to ensure all
    * violations and KPIs are fresh.
    */
   revalidateFull(): void {
     if (!this.currentSchedule) return;
     const { tasks, participants, assignments } = this.currentSchedule;
 
-    const hard = validateHardConstraints(tasks, participants, assignments, this.disabledHC, this.restRuleMap, this.certLabelResolver);
+    const hard = validateHardConstraints(
+      tasks,
+      participants,
+      assignments,
+      this.disabledHC,
+      this.restRuleMap,
+      this.certLabelResolver,
+    );
     const soft = collectSoftWarnings(tasks, participants, assignments, this.config);
     const score = computeScheduleScore(
       tasks,
@@ -833,7 +840,7 @@ export class SchedulingEngine {
   }
 
   /**
-   * Partial re-schedule: lock existing assignments and re-optimize only affected slots.
+   * Partial re-schedule: pin existing assignments and re-optimize only affected slots.
    * Used when a participant becomes unavailable mid-day.
    */
   partialReSchedule(request: ReScheduleRequest): Schedule {
@@ -841,37 +848,37 @@ export class SchedulingEngine {
       throw new Error('אין שבצ"ק לתזמון מחדש חלקי.');
     }
 
-    const { lockedAssignmentIds, unavailableParticipantIds } = request;
+    const { pinnedAssignmentIds, unavailableParticipantIds } = request;
     const unavailableSet = new Set(unavailableParticipantIds);
 
-    // Separate locked assignments from those that need re-assignment
-    const lockedAssignments: Assignment[] = [];
+    // Separate pinned assignments from those that need re-assignment
+    const pinnedAssignments: Assignment[] = [];
     const needsReassignment: Assignment[] = [];
 
     for (const a of this.currentSchedule.assignments) {
-      if (lockedAssignmentIds.includes(a.id)) {
-        // Keep locked unless the participant is unavailable
+      if (pinnedAssignmentIds.includes(a.id)) {
+        // Keep pinned unless the participant is unavailable
         if (unavailableSet.has(a.participantId)) {
           needsReassignment.push(a);
         } else {
-          lockedAssignments.push({ ...a, status: AssignmentStatus.Locked });
+          pinnedAssignments.push({ ...a });
         }
       } else if (unavailableSet.has(a.participantId)) {
         needsReassignment.push(a);
       } else {
-        lockedAssignments.push({ ...a, status: AssignmentStatus.Locked });
+        pinnedAssignments.push({ ...a });
       }
     }
 
     // Filter out unavailable participants
     const availableParticipants = this.getAllParticipants().filter((p) => !unavailableSet.has(p.id));
 
-    // Re-optimize with locked assignments
+    // Re-optimize with pinned assignments
     const result = optimize(
       this.currentSchedule.tasks,
       availableParticipants,
       this.config,
-      lockedAssignments,
+      pinnedAssignments,
       this.disabledHC,
       0,
       undefined,
@@ -908,30 +915,6 @@ export class SchedulingEngine {
 
     this.currentSchedule = schedule;
     return schedule;
-  }
-
-  /**
-   * Lock a specific assignment (prevent it from being changed by optimizer).
-   */
-  lockAssignment(assignmentId: string): boolean {
-    if (!this.currentSchedule) return false;
-    const assignment = this.currentSchedule.assignments.find((a) => a.id === assignmentId);
-    if (!assignment) return false;
-    assignment.status = AssignmentStatus.Locked;
-    assignment.updatedAt = new Date();
-    return true;
-  }
-
-  /**
-   * Unlock a specific assignment.
-   */
-  unlockAssignment(assignmentId: string): boolean {
-    if (!this.currentSchedule) return false;
-    const assignment = this.currentSchedule.assignments.find((a) => a.id === assignmentId);
-    if (!assignment) return false;
-    assignment.status = AssignmentStatus.Scheduled;
-    assignment.updatedAt = new Date();
-    return true;
   }
 
   /**

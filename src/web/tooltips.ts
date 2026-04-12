@@ -3,7 +3,7 @@
  *
  * Extracted from app.ts. Self-contained with own DOM singletons and timer state.
  * Read-only with respect to app state — never mutates schedule or engine.
- * Action callbacks (swap, lock, rescue, navigateToProfile) are injected via initTooltips().
+ * Action callbacks (swap, rescue, navigateToProfile) are injected via initTooltips().
  */
 
 import type { Participant, Schedule, Task } from '../index';
@@ -18,7 +18,6 @@ import { computeTaskBreakdown } from './workload-utils';
 
 export interface TooltipCallbacks {
   onSwap: (assignmentId: string) => void;
-  onLock: (assignmentId: string) => void;
   onRescue: (assignmentId: string) => void;
   onNavigateToProfile: (participantId: string) => void;
 }
@@ -61,7 +60,7 @@ function getTooltipEl(): HTMLElement {
     el.style.display = 'none';
   });
 
-  // Delegate action button clicks (swap/lock/rescue) inside the tooltip
+  // Delegate action button clicks (swap/rescue) inside the tooltip
   el.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest('button') as HTMLElement | null;
     if (!btn) return;
@@ -72,8 +71,6 @@ function getTooltipEl(): HTMLElement {
 
     if (btn.classList.contains('btn-swap')) {
       _callbacks?.onSwap(assignmentId);
-    } else if (btn.classList.contains('btn-lock')) {
-      _callbacks?.onLock(assignmentId);
     } else if (btn.classList.contains('btn-rescue')) {
       _callbacks?.onRescue(assignmentId);
     }
@@ -87,7 +84,7 @@ function getTooltipEl(): HTMLElement {
 export function buildParticipantTooltipContent(
   p: Participant,
   schedule: Schedule | null,
-  slotCtx?: { assignmentId: string; taskId: string; isFrozen: boolean; isLocked: boolean } | null,
+  slotCtx?: { assignmentId: string; taskId: string; isFrozen: boolean } | null,
 ): string {
   // Workload data
   const numDays = store.getScheduleDays();
@@ -157,7 +154,6 @@ export function buildParticipantTooltipContent(
   if (slotCtx && !slotCtx.isFrozen) {
     const lm = store.getLiveModeState();
     actionsHtml = `<span class="tt-actions">
-      <button class="btn-lock ${slotCtx.isLocked ? 'active' : ''}" data-assignment-id="${slotCtx.assignmentId}" title="${slotCtx.isLocked ? 'בטל נעילה' : 'נעל'}">${slotCtx.isLocked ? '🔒' : '🔓'}</button>
       <button class="btn-swap" data-assignment-id="${slotCtx.assignmentId}" data-task-id="${slotCtx.taskId}" title="החלף">⇄</button>
       ${lm.enabled ? `<button class="btn-rescue" data-assignment-id="${slotCtx.assignmentId}" title="החלפה">🆘</button>` : ''}
     </span>`;
@@ -250,7 +246,6 @@ export function wireParticipantTooltip(container: HTMLElement, getSchedule: () =
             assignmentId: target.dataset.assignmentId,
             taskId: target.dataset.taskId || '',
             isFrozen: target.dataset.frozen === '1',
-            isLocked: target.dataset.locked === '1',
           }
         : null;
 
@@ -270,7 +265,6 @@ export function wireParticipantTooltip(container: HTMLElement, getSchedule: () =
           if (!assignmentId) return;
           handle.close();
           if (btn.classList.contains('btn-swap')) _callbacks?.onSwap(assignmentId);
-          else if (btn.classList.contains('btn-lock')) _callbacks?.onLock(assignmentId);
           else if (btn.classList.contains('btn-rescue')) _callbacks?.onRescue(assignmentId);
         });
 
@@ -307,7 +301,6 @@ export function wireParticipantTooltip(container: HTMLElement, getSchedule: () =
           assignmentId: target.dataset.assignmentId,
           taskId: target.dataset.taskId || '',
           isFrozen: target.dataset.frozen === '1',
-          isLocked: target.dataset.locked === '1',
         }
       : null;
 

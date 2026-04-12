@@ -6,12 +6,7 @@
  */
 
 import { checkTemplateEligibility, type TemplateEligibilityResult } from '../engine/validator';
-import {
-  type CertificationDefinition,
-  Level,
-  type PakalDefinition,
-  type Participant,
-} from '../models/types';
+import { type CertificationDefinition, Level, type PakalDefinition, type Participant } from '../models/types';
 import { fmtTime, HEBREW_DAYS } from '../utils/date-utils';
 import * as store from './config-store';
 import { openParticipantSetFormatSheet, openXlsxImportFlow } from './data-transfer-ui';

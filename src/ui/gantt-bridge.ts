@@ -18,7 +18,6 @@ import { blockDurationMinutes, getTimelineBounds } from '../web/utils/time-utils
 
 const STATUS_OPACITY: Record<AssignmentStatus, number> = {
   [AssignmentStatus.Scheduled]: 1.0,
-  [AssignmentStatus.Locked]: 0.9,
   [AssignmentStatus.Manual]: 1.0,
   [AssignmentStatus.Conflict]: 0.5,
   [AssignmentStatus.Frozen]: 0.4,

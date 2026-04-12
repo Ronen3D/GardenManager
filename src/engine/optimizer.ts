@@ -384,13 +384,17 @@ function sortTasksByDifficulty(tasks: Task[], jitter: number = 0): Task[] {
 export function greedyAssign(
   tasks: Task[],
   participants: Participant[],
-  lockedAssignments: Assignment[] = [],
+  pinnedAssignments: Assignment[] = [],
   disabledHC?: Set<string>,
   taskOrderJitter: number = 0,
   phantomContext?: PhantomContext,
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
-): { assignments: Assignment[]; unfilledSlots: { taskId: string; slotId: string; reason: string }[] } {
+): {
+  assignments: Assignment[];
+  unfilledSlots: { taskId: string; slotId: string; reason: string }[];
+  pinnedIds: Set<string>;
+} {
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
 
@@ -399,11 +403,12 @@ export function greedyAssign(
     for (const pt of phantomContext.phantomTasks) taskMap.set(pt.id, pt);
   }
 
-  const assignments: Assignment[] = [...lockedAssignments];
+  const pinnedIds = new Set(pinnedAssignments.map((a) => a.id));
+  const assignments: Assignment[] = [...pinnedAssignments];
   const unfilledSlots: { taskId: string; slotId: string; reason: string }[] = [];
 
   // P4: Pre-build per-participant assignment index for O(1) lookups
-  const assignmentsByParticipant = buildAssignmentMap(lockedAssignments);
+  const assignmentsByParticipant = buildAssignmentMap(pinnedAssignments);
 
   // Seed phantom assignments into per-participant index for cross-schedule
   // constraint enforcement (HC-5, HC-12, HC-14). NOT added to assignments[]
@@ -420,7 +425,7 @@ export function greedyAssign(
     workload.set(p.id, 0);
     dailyWorkload.set(p.id, new Map());
   }
-  for (const a of lockedAssignments) {
+  for (const a of pinnedAssignments) {
     const task = taskMap.get(a.taskId);
     if (task) {
       // For daily spread: count all tasks (light tasks get a floor of 1h so
@@ -523,7 +528,7 @@ export function greedyAssign(
         Math.min(...b.acceptableLevels.map((e) => e.level)) - Math.min(...a.acceptableLevels.map((e) => e.level)),
     );
     for (const slot of orderedSlots) {
-      // Skip if already assigned (locked)
+      // Skip if already assigned (pinned)
       const existing = assignments.find((a) => a.taskId === task.id && a.slotId === slot.slotId);
       if (existing) continue;
 
@@ -596,7 +601,7 @@ export function greedyAssign(
           const pAssignsCopy = [...pAssigns];
           for (const blockingAssign of pAssignsCopy) {
             if (
-              blockingAssign.status === AssignmentStatus.Locked ||
+              pinnedIds.has(blockingAssign.id) ||
               blockingAssign.status === AssignmentStatus.Manual ||
               blockingAssign.status === AssignmentStatus.Frozen
             )
@@ -744,7 +749,7 @@ export function greedyAssign(
   // ─── Greedy summary log (gated by diagnostic flag) ──────────────
   if (_diagnosticLogging) {
     const totalSlots = tasks.reduce((n, t) => n + t.slots.length, 0);
-    const filledCount = assignments.length - lockedAssignments.length;
+    const filledCount = assignments.length - pinnedAssignments.length;
     const usedIds = new Set(assignments.map((a) => a.participantId));
     const idleCount = participants.length - usedIds.size;
     console.log(
@@ -764,7 +769,7 @@ export function greedyAssign(
     }
   }
 
-  return { assignments, unfilledSlots };
+  return { assignments, unfilledSlots, pinnedIds };
 }
 
 /**
@@ -783,15 +788,15 @@ function assignSameGroupTask(
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
 ): boolean {
-  // Already have some locked assignments for this task?
-  const lockedForTask = currentAssignments.filter((a) => a.taskId === task.id);
-  const lockedSlotIds = new Set(lockedForTask.map((a) => a.slotId));
+  // Already have some pinned assignments for this task?
+  const pinnedForTask = currentAssignments.filter((a) => a.taskId === task.id);
+  const pinnedSlotIds = new Set(pinnedForTask.map((a) => a.slotId));
 
-  // If locked assignments exist, determine the required group
+  // If pinned assignments exist, determine the required group
   let requiredGroup: string | undefined;
-  if (lockedForTask.length > 0) {
+  if (pinnedForTask.length > 0) {
     const groups = new Set<string>();
-    for (const a of lockedForTask) {
+    for (const a of pinnedForTask) {
       const p = participants.find((pp) => pp.id === a.participantId);
       if (p) groups.add(p.group);
     }
@@ -827,7 +832,7 @@ function assignSameGroupTask(
 
   // Sort slots: fill most-constrained first (highest min-level → fewest candidates)
   const slotsToFill = task.slots
-    .filter((s) => !lockedSlotIds.has(s.slotId))
+    .filter((s) => !pinnedSlotIds.has(s.slotId))
     .sort(
       (a, b) =>
         Math.min(...b.acceptableLevels.map((e) => e.level)) - Math.min(...a.acceptableLevels.map((e) => e.level)),
@@ -1136,6 +1141,7 @@ export function localSearchOptimize(
   phantomContext?: PhantomContext,
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
+  pinnedIds: Set<string> = new Set(),
 ): { assignments: Assignment[]; filledSlots: string[] } {
   const current = [...assignments.map((a) => ({ ...a }))];
 
@@ -1359,18 +1365,10 @@ export function localSearchOptimize(
         const ai = current[i];
         const aj = current[j];
 
-        // Skip locked/manual/frozen assignments (don't count as iterations)
-        if (
-          ai.status === AssignmentStatus.Locked ||
-          ai.status === AssignmentStatus.Manual ||
-          ai.status === AssignmentStatus.Frozen
-        )
+        // Skip pinned/manual/frozen assignments (don't count as iterations)
+        if (pinnedIds.has(ai.id) || ai.status === AssignmentStatus.Manual || ai.status === AssignmentStatus.Frozen)
           continue;
-        if (
-          aj.status === AssignmentStatus.Locked ||
-          aj.status === AssignmentStatus.Manual ||
-          aj.status === AssignmentStatus.Frozen
-        )
+        if (pinnedIds.has(aj.id) || aj.status === AssignmentStatus.Manual || aj.status === AssignmentStatus.Frozen)
           continue;
 
         // Skip if same participant (don't count as iterations)
@@ -1540,7 +1538,7 @@ export function optimize(
   tasks: Task[],
   participants: Participant[],
   config: SchedulerConfig,
-  lockedAssignments: Assignment[] = [],
+  pinnedAssignments: Assignment[] = [],
   disabledHC?: Set<string>,
   taskOrderJitter: number = 0,
   phantomContext?: PhantomContext,
@@ -1554,7 +1552,7 @@ export function optimize(
   const greedy = greedyAssign(
     tasks,
     participants,
-    lockedAssignments,
+    pinnedAssignments,
     disabledHC,
     taskOrderJitter,
     phantomContext,
@@ -1573,13 +1571,21 @@ export function optimize(
     phantomContext,
     restRuleMap,
     dayStartHour,
+    greedy.pinnedIds,
   );
 
   // Remove slots that SA managed to fill
   const remainingUnfilled = greedy.unfilledSlots.filter((uf) => !lsResult.filledSlots.includes(uf.slotId));
 
   // Validate final result
-  const validation = validateHardConstraints(tasks, participants, lsResult.assignments, disabledHC, undefined, certLabelResolver);
+  const validation = validateHardConstraints(
+    tasks,
+    participants,
+    lsResult.assignments,
+    disabledHC,
+    undefined,
+    certLabelResolver,
+  );
 
   // Build capacities for final scoring
   let schedStart = tasks[0]?.timeBlock.start ?? new Date();
@@ -1673,7 +1679,7 @@ export function optimizeMultiAttempt(
   tasks: Task[],
   participants: Participant[],
   config: SchedulerConfig,
-  lockedAssignments: Assignment[] = [],
+  pinnedAssignments: Assignment[] = [],
   attempts: number = 2000,
   onProgress?: MultiAttemptProgressCallback,
   disabledHC?: Set<string>,
@@ -1724,7 +1730,7 @@ export function optimizeMultiAttempt(
       attemptTasks,
       shuffledParticipants,
       config,
-      lockedAssignments,
+      pinnedAssignments,
       disabledHC,
       jitter,
       phantomContext,
@@ -1793,7 +1799,7 @@ export function optimizeMultiAttemptAsync(
   tasks: Task[],
   participants: Participant[],
   config: SchedulerConfig,
-  lockedAssignments: Assignment[] = [],
+  pinnedAssignments: Assignment[] = [],
   attempts: number = 2000,
   onProgress?: MultiAttemptProgressCallback,
   disabledHC?: Set<string>,
@@ -1851,7 +1857,7 @@ export function optimizeMultiAttemptAsync(
             attemptTasks,
             shuffledParticipants,
             config,
-            lockedAssignments,
+            pinnedAssignments,
             disabledHC,
             jitter,
             phantomContext,

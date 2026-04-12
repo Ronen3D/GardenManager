@@ -109,7 +109,7 @@ const PAKAL_HEADER_PREFIX = 'פק"ל: ';
 // Header regex: `<label> [<id>]`.
 /** Legacy bracket regex — accepted on import for backwards compatibility with
  *  files exported before the switch to label-only headers. */
-const HEADER_ID_REGEX = /^([^\[]+?)\s*\[([^\]]+)\]\s*$/;
+const HEADER_ID_REGEX = /^([^[]+?)\s*\[([^\]]+)\]\s*$/;
 
 // Visual styling (mirrors excel-export.ts).
 const HEADER_FILL_ARGB = 'FF374151';
@@ -371,7 +371,9 @@ function buildInstructionsSheet(wb: Workbook, templateMode: boolean): void {
     {
       text: templateMode
         ? R('זו תבנית ריקה. מלא אותה ולאחר מכן ייבא חזרה דרך תפריט ״ייבוא נתונים״.')
-        : R('זהו ייצוא מלא של סט משתתפים. ניתן לערוך את הקובץ ולייבא חזרה — הייבוא הוא החלפה מלאה של סט קיים או יצירת סט חדש.'),
+        : R(
+            'זהו ייצוא מלא של סט משתתפים. ניתן לערוך את הקובץ ולייבא חזרה — הייבוא הוא החלפה מלאה של סט קיים או יצירת סט חדש.',
+          ),
     },
     { text: '' },
     { text: R('כללי זהב'), heading: true },
@@ -400,7 +402,9 @@ function buildInstructionsSheet(wb: Workbook, templateMode: boolean): void {
     },
     { text: R(`• ${UNAVAIL_HEADER_ALL_DAY} — ״כן״ מתעלם משעות התחלה/סיום.`) },
     {
-      text: R(`• ${UNAVAIL_HEADER_START} / ${UNAVAIL_HEADER_END} — שלמים בטווח 0..23. הערה: ${UNAVAIL_HEADER_END} קטן מ-${UNAVAIL_HEADER_START} מבטא חציית חצות (מותר).`),
+      text: R(
+        `• ${UNAVAIL_HEADER_START} / ${UNAVAIL_HEADER_END} — שלמים בטווח 0..23. הערה: ${UNAVAIL_HEADER_END} קטן מ-${UNAVAIL_HEADER_START} מבטא חציית חצות (מותר).`,
+      ),
     },
     { text: R(`• ${UNAVAIL_HEADER_REASON} — טקסט חופשי, אופציונלי.`) },
     { text: '' },

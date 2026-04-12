@@ -1128,7 +1128,6 @@
   /* Availability hours hidden on mobile — default is "all available",
      only unavailability chips (in col-name) matter */
 
-
   /* Unavailability chips — mobile compact */
   .unavail-chips {
     gap: 2px;

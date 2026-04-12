@@ -709,9 +709,9 @@ if (schedule.assignments.length >= 1) {
 
 // Partial re-schedule test
 console.log('  Testing partial re-schedule...');
-const lockedIds = schedule.assignments.slice(0, 2).map((a) => a.id);
+const pinnedIds = schedule.assignments.slice(0, 2).map((a) => a.id);
 const reScheduled = engine.partialReSchedule({
-  lockedAssignmentIds: lockedIds,
+  pinnedAssignmentIds: pinnedIds,
   unavailableParticipantIds: ['p0'], // Remove one person
 });
 assert(reScheduled.assignments.length > 0, 'Partial re-schedule produces assignments');
@@ -4641,14 +4641,6 @@ console.log('\n── Temporal Engine (Live Mode) ──────────
     status: AssignmentStatus.Scheduled,
     updatedAt: new Date(),
   };
-  const lockedAssign: Assignment = {
-    id: 'ta-3',
-    taskId: futureTask.id,
-    slotId: 'tp-s2',
-    participantId: 'p1',
-    status: AssignmentStatus.Locked,
-    updatedAt: new Date(),
-  };
   const frozenAssign: Assignment = {
     id: 'ta-4',
     taskId: futureTask.id,
@@ -4663,10 +4655,6 @@ console.log('\n── Temporal Engine (Live Mode) ──────────
     'Temporal: scheduled future assignment is modifiable',
   );
   assert(isModifiableAssignment(pastAssign, taskMap, anchor) === false, 'Temporal: past assignment is NOT modifiable');
-  assert(
-    isModifiableAssignment(lockedAssign, taskMap, anchor) === false,
-    'Temporal: locked future assignment is NOT modifiable',
-  );
   assert(
     isModifiableAssignment(frozenAssign, taskMap, anchor) === false,
     'Temporal: frozen future assignment is NOT modifiable',
@@ -5592,23 +5580,23 @@ console.log('\n── Optimizer ────────────────
     assert(false, 'greedy: HC-4 same-group task should fill both slots');
   }
 
-  // ── greedyAssign: locked assignments preserved ──
+  // ── greedyAssign: pinned assignments preserved ──
 
-  const locked: Assignment[] = [
+  const pinned: Assignment[] = [
     {
-      id: 'opt-lock1',
+      id: 'opt-pin1',
       taskId: 'opt-t1',
       slotId: 'opt-s1',
       participantId: 'opt-p1',
-      status: AssignmentStatus.Locked,
+      status: AssignmentStatus.Scheduled,
       updatedAt: new Date(),
     },
   ];
-  const lockGreedy = greedyAssign([optT1, optT2], [optP1, optP2, optP3], locked);
-  const lockKept = lockGreedy.assignments.find((a) => a.id === 'opt-lock1');
-  assert(lockKept !== undefined, 'greedy: locked assignment present in output');
-  assert(lockKept!.participantId === 'opt-p1', 'greedy: locked assignment participant unchanged');
-  assert(lockKept!.slotId === 'opt-s1', 'greedy: locked assignment slot unchanged');
+  const pinGreedy = greedyAssign([optT1, optT2], [optP1, optP2, optP3], pinned);
+  const pinKept = pinGreedy.assignments.find((a) => a.id === 'opt-pin1');
+  assert(pinKept !== undefined, 'greedy: pinned assignment present in output');
+  assert(pinKept!.participantId === 'opt-p1', 'greedy: pinned assignment participant unchanged');
+  assert(pinKept!.slotId === 'opt-s1', 'greedy: pinned assignment slot unchanged');
 
   // ── optimize: constraint closure ──
 
@@ -5661,22 +5649,22 @@ console.log('\n── Optimizer ────────────────
   assert(emptyOpt.feasible === true, 'optimize: empty input is trivially feasible');
   assert(emptyOpt.assignments.length === 0, 'optimize: empty input produces no assignments');
 
-  // ── optimize: locked preservation through full pipeline ──
+  // ── optimize: pinned preservation through full pipeline ──
 
-  const optLocked: Assignment[] = [
+  const optPinned: Assignment[] = [
     {
-      id: 'opt-pipe-lock',
+      id: 'opt-pipe-pin',
       taskId: 'opt-t1',
       slotId: 'opt-s1',
       participantId: 'opt-p1',
-      status: AssignmentStatus.Locked,
+      status: AssignmentStatus.Scheduled,
       updatedAt: new Date(),
     },
   ];
-  const lockResult = optimize([optT1, optT2], [optP1, optP2, optP3], fastConfig, optLocked);
-  const pipeLockedFound = lockResult.assignments.find((a) => a.id === 'opt-pipe-lock');
-  assert(pipeLockedFound !== undefined, 'optimize: locked assignment survives full pipeline');
-  assert(pipeLockedFound!.participantId === 'opt-p1', 'optimize: locked assignment participant not reassigned');
+  const pinResult = optimize([optT1, optT2], [optP1, optP2, optP3], fastConfig, optPinned);
+  const pipePinnedFound = pinResult.assignments.find((a) => a.id === 'opt-pipe-pin');
+  assert(pipePinnedFound !== undefined, 'optimize: pinned assignment survives full pipeline');
+  assert(pipePinnedFound!.participantId === 'opt-p1', 'optimize: pinned assignment participant not reassigned');
 
   // ── optimize: score consistency (re-scoring produces same result) ──
 
@@ -5980,10 +5968,7 @@ console.log('\n── getCandidatesWithEligibility ────────');
   const freeEntry = regCandidates.find((c) => c.participant.id === pFree.id);
 
   assert(alreadyInEntry !== undefined, 'Bug1 regression: candidate list includes already-in participant');
-  assert(
-    alreadyInEntry?.eligible === false,
-    'Bug1 regression: participant in another slot of same task is ineligible',
-  );
+  assert(alreadyInEntry?.eligible === false, 'Bug1 regression: participant in another slot of same task is ineligible');
   assert(
     alreadyInEntry?.rejectionCode === 'HC-5' || alreadyInEntry?.rejectionCode === 'HC-7',
     'Bug1 regression: rejection code is HC-5 (double-book) or HC-7 (duplicate-in-task)',

@@ -508,7 +508,6 @@ function renderAssignmentCard(
 ): string {
   const isFuture = isFutureTask(task, liveMode.currentTimestamp);
   const isFrozen = liveMode.enabled && !isFuture;
-  const isLocked = assignment?.status === AssignmentStatus.Locked || assignment?.status === AssignmentStatus.Manual;
   const isConflict = assignment?.status === AssignmentStatus.Conflict;
   const isManualActive = manualCtx?.active === true;
   const isSelected = isManualActive && manualCtx.selectedTaskId === task.id && manualCtx.selectedSlotId === slot.slotId;
@@ -516,7 +515,6 @@ function renderAssignmentCard(
   let cardClass = 'assignment-card';
   if (isConflict) cardClass += ' status-conflict';
   else if (isFrozen) cardClass += ' status-frozen';
-  else if (isLocked) cardClass += ' status-locked';
 
   // Manual-build mode classes
   if (isManualActive) {
@@ -533,7 +531,7 @@ function renderAssignmentCard(
 
   if (participant) {
     const hoverAttrs = assignment
-      ? `data-pid="${participant.id}" data-assignment-id="${assignment.id}" data-task-id="${task.id}"${isFrozen ? ' data-frozen="1"' : ''}${isLocked ? ' data-locked="1"' : ''}`
+      ? `data-pid="${participant.id}" data-assignment-id="${assignment.id}" data-task-id="${task.id}"${isFrozen ? ' data-frozen="1"' : ''}`
       : `data-pid="${participant.id}"`;
 
     content = `
@@ -543,7 +541,6 @@ function renderAssignmentCard(
         </span>
       </div>
       <div class="card-details">
-        ${isLocked ? '<span title="נעל">🔒</span>' : ''}
         ${isFrozen ? `<span title="מוקפא">${SVG_ICONS.snowflake}</span>` : ''}
         ${isSelected && isManualActive && !isFrozen ? '<button class="btn-manual-remove" data-action="manual-remove" title="הסר שיבוץ">✕ הסר</button>' : ''}
       </div>

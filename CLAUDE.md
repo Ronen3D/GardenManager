@@ -111,7 +111,7 @@ Foundation
 `src/web/app.ts` is the main UI orchestrator (~3900 lines). It manages a tabbed interface (participants, task-rules, schedule, algorithm) with day navigation (days 1-7), schedule grid rendering, manual drag-drop swaps, live mode controls, and triggers full 7-day re-validation after every change. A profile view is rendered as a separate overlay, not as a tab. State is persisted in localStorage via `src/web/config-store.ts`.
 
 Extracted modules use **callback injection** to avoid circular imports back to `app.ts`:
-- `tooltips.ts` receives action callbacks (`onSwap`, `onLock`, `onRescue`, `onNavigateToProfile`) via `initTooltips()` and a `() => Schedule | null` getter for live schedule access.
+- `tooltips.ts` receives action callbacks (`onSwap`, `onRescue`, `onNavigateToProfile`) via `initTooltips()` and a `() => Schedule | null` getter for live schedule access.
 - `rescue-modal.ts` receives engine/schedule getters and result callbacks via `initRescue()`.
 - `schedule-utils.ts` is pure — reads only from the `store` singleton, no app-level state.
 

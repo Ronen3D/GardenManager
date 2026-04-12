@@ -71,7 +71,7 @@ export function buildPhantomContext(snapshot: ContinuitySnapshot, participants: 
         taskId,
         slotId: 'phantom-slot',
         participantId: matched.id,
-        status: AssignmentStatus.Locked,
+        status: AssignmentStatus.Scheduled,
         updatedAt: new Date(),
       });
     }

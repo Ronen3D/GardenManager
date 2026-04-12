@@ -94,4 +94,3 @@ function renderWorkloadText(workload: WeeklyWorkload): string {
   const ratio = workload.loadRatio !== undefined ? ` · ${Math.round(workload.loadRatio * 100)}%` : '';
   return `<span class="wc-workload-text" title="שעות אפקטיביות: ${eff}; חמות: ${hot}; קרות: ${cold}">שע׳: ${eff}${ratio}</span>`;
 }
-

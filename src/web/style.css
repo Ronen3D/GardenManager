@@ -158,7 +158,6 @@ header,
 .table-slots,
 .btn-primary,
 .btn-swap,
-.btn-lock,
 .btn-sm,
 .btn-outline,
 .btn-danger-outline,
@@ -387,8 +386,7 @@ header h1 {
   box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
 }
 
-.btn-swap,
-.btn-lock {
+.btn-swap {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-muted);
@@ -402,10 +400,6 @@ header h1 {
 .btn-swap:hover {
   border-color: var(--accent);
   color: var(--accent);
-}
-.btn-lock:hover {
-  border-color: var(--warning);
-  color: var(--warning);
 }
 
 /* ─── Sections ───────────────────────────────────────── */
@@ -1455,7 +1449,7 @@ select.input-sm {
   position: relative;
 }
 .table-participants tbody tr.has-unavail > td:first-child::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   bottom: 0;
@@ -2444,13 +2438,6 @@ tr.row-rest td {
   border-color: var(--accent);
   color: var(--accent);
 }
-.tt-actions .btn-lock:hover {
-  border-color: var(--warning);
-  color: var(--warning);
-}
-.tt-actions .btn-lock.active {
-  text-shadow: 0 0 5px var(--warning);
-}
 .tt-actions .btn-rescue {
   color: var(--danger);
 }
@@ -2991,7 +2978,6 @@ tr.row-selected:hover {
   font-weight: 600;
   white-space: nowrap;
 }
-
 
 /* ── Bulk Dialog (Modal) ─────────────────────────────────────────────────── */
 
@@ -4109,11 +4095,6 @@ tr.now-row-animate > td.time-cell {
 .assignment-card.status-conflict {
   border-inline-start-color: var(--danger);
   background: rgba(231, 76, 60, 0.1);
-}
-
-.assignment-card.status-locked {
-  border-inline-start-color: var(--warning);
-  background: rgba(243, 156, 18, 0.1);
 }
 
 .assignment-card.status-frozen {
@@ -7882,7 +7863,8 @@ tr.now-row-animate > td.time-cell {
   /* Slight tilt gives it the hand-stamped, signature feel */
   transform: rotate(-6deg);
   /* drop-shadow (not box-shadow) so the shadow follows the icon's alpha silhouette */
-  filter: sepia(0.35) saturate(0.7) drop-shadow(0 5px 10px rgba(60, 30, 5, 0.38)) drop-shadow(0 2px 3px rgba(30, 15, 0, 0.35));
+  filter: sepia(0.35) saturate(0.7) drop-shadow(0 5px 10px rgba(60, 30, 5, 0.38))
+    drop-shadow(0 2px 3px rgba(30, 15, 0, 0.35));
   transition:
     transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
     filter 0.25s ease;
@@ -7890,7 +7872,8 @@ tr.now-row-animate > td.time-cell {
 
 .gm-egg-seal:hover {
   transform: rotate(-2deg) scale(1.08);
-  filter: sepia(0.35) saturate(0.7) drop-shadow(0 8px 16px rgba(60, 30, 5, 0.45)) drop-shadow(0 2px 4px rgba(30, 15, 0, 0.4));
+  filter: sepia(0.35) saturate(0.7) drop-shadow(0 8px 16px rgba(60, 30, 5, 0.45))
+    drop-shadow(0 2px 4px rgba(30, 15, 0, 0.4));
 }
 
 .gm-egg-seal:active {

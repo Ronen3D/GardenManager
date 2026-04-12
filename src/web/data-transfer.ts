@@ -146,8 +146,7 @@ export async function triggerShareOrDownload(
   mimeType?: string,
 ): Promise<void> {
   const isBlob = typeof Blob !== 'undefined' && content instanceof Blob;
-  const fileMime =
-    mimeType ?? (isBlob ? (content as Blob).type || 'application/octet-stream' : 'application/json');
+  const fileMime = mimeType ?? (isBlob ? (content as Blob).type || 'application/octet-stream' : 'application/json');
   const blobMime = mimeType ?? (isBlob ? fileMime : 'application/json;charset=utf-8');
   const file = isBlob
     ? new File([content as Blob], filename, { type: fileMime })

@@ -90,14 +90,12 @@ export function taskEndsAfter(task: Task, dayIndex: number): boolean {
 export function statusBadge(status: AssignmentStatus): string {
   const colors: Record<string, string> = {
     Scheduled: '#27ae60',
-    Locked: '#2980b9',
     Manual: '#f39c12',
     Conflict: '#e74c3c',
     Frozen: '#00bcd4',
   };
   const labels: Record<string, string> = {
     Scheduled: 'משובץ',
-    Locked: 'נעול',
     Manual: 'ידני',
     Conflict: 'התנגשות',
     Frozen: 'מוקפא',

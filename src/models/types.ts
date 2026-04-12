@@ -46,7 +46,6 @@ export interface LevelEntry {
 /** Assignment status */
 export enum AssignmentStatus {
   Scheduled = 'Scheduled',
-  Locked = 'Locked', // Locked by user or partial re-schedule
   Manual = 'Manual', // Manually overridden by user
   Conflict = 'Conflict', // Hard constraint violation detected
   Frozen = 'Frozen', // Temporally locked — past the live-mode anchor
@@ -542,8 +541,8 @@ export interface SwapRequest {
 }
 
 export interface ReScheduleRequest {
-  /** IDs of assignments to keep locked */
-  lockedAssignmentIds: string[];
+  /** IDs of assignments to keep pinned (not re-optimized) */
+  pinnedAssignmentIds: string[];
   /** IDs of participants that became unavailable */
   unavailableParticipantIds: string[];
 }

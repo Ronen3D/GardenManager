@@ -67,7 +67,13 @@ export function checkLevelRequirement(
 ): ConstraintViolation | null {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) {
-    return violation('SLOT_NOT_FOUND', `${task.name} \u200F— משבצת ${slotId} לא נמצאה`, task.id, slotId, participant.id);
+    return violation(
+      'SLOT_NOT_FOUND',
+      `${task.name} \u200F— משבצת ${slotId} לא נמצאה`,
+      task.id,
+      slotId,
+      participant.id,
+    );
   }
   if (!isLevelSatisfied(participant.level, slot)) {
     return violation(
@@ -141,11 +147,7 @@ export function checkSameGroup(task: Task, assignedParticipants: Participant[]):
   const groups = new Set(assignedParticipants.map((p) => p.group));
   if (groups.size > 1) {
     return [
-      violation(
-        'GROUP_MISMATCH',
-        `${task.name} \u200F— קבוצות: ${[...groups].join(', ')} (נדרשת קבוצה אחת)`,
-        task.id,
-      ),
+      violation('GROUP_MISMATCH', `${task.name} \u200F— קבוצות: ${[...groups].join(', ')} (נדרשת קבוצה אחת)`, task.id),
     ];
   }
   return [];
@@ -275,13 +277,7 @@ export function checkUniqueParticipantsPerTask(task: Task, assignments: Assignme
   for (const a of taskAssignments) {
     if (seen.has(a.participantId)) {
       violations.push(
-        violation(
-          'DUPLICATE_IN_TASK',
-          `${a.participantId} \u200F— ${task.name}`,
-          task.id,
-          a.slotId,
-          a.participantId,
-        ),
+        violation('DUPLICATE_IN_TASK', `${a.participantId} \u200F— ${task.name}`, task.id, a.slotId, a.participantId),
       );
     }
     seen.add(a.participantId);
@@ -329,7 +325,10 @@ export function checkGroupFeasibility(
       claimed.add(match.id);
     } else {
       const levelDesc = slot.acceptableLevels.map((e) => `דרגה ${e.level}`).join('/');
-      const certDesc = slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.map(certLabelResolver).join(', ')}` : '';
+      const certDesc =
+        slot.requiredCertifications.length > 0
+          ? ` + ${slot.requiredCertifications.map(certLabelResolver).join(', ')}`
+          : '';
       violations.push(
         violation(
           'GROUP_INSUFFICIENT',
@@ -597,13 +596,7 @@ export function validateHardConstraints(
         if (seen.has(a.participantId)) {
           const pName = pMap.get(a.participantId)?.name || a.participantId;
           allViolations.push(
-            violation(
-              'DUPLICATE_IN_TASK',
-              `${pName} \u200F— ${task.name}`,
-              task.id,
-              a.slotId,
-              a.participantId,
-            ),
+            violation('DUPLICATE_IN_TASK', `${pName} \u200F— ${task.name}`, task.id, a.slotId, a.participantId),
           );
         }
         seen.add(a.participantId);

@@ -21,7 +21,15 @@ import {
 } from '../models/types';
 import * as store from './config-store';
 import { renderDataTransferContent } from './data-transfer-ui';
-import { escHtml, getCurrentTheme, getStoredDefaultAttempts, getStoredTheme, setDefaultAttempts, SVG_ICONS, setTheme } from './ui-helpers';
+import {
+  escHtml,
+  getCurrentTheme,
+  getStoredDefaultAttempts,
+  getStoredTheme,
+  SVG_ICONS,
+  setDefaultAttempts,
+  setTheme,
+} from './ui-helpers';
 import { renderCustomSelect, showConfirm, showToast, wireCustomSelect } from './ui-modal';
 
 // ─── Weight field metadata ───────────────────────────────────────────────────
@@ -1065,7 +1073,10 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
       case 'set-default-attempts': {
         const inp = el as HTMLInputElement;
         const val = parseInt(inp.value, 10);
-        if (isNaN(val) || val < 50) { inp.value = String(getStoredDefaultAttempts()); break; }
+        if (isNaN(val) || val < 50) {
+          inp.value = String(getStoredDefaultAttempts());
+          break;
+        }
         const clamped = Math.min(50000, Math.max(50, val));
         inp.value = String(clamped);
         setDefaultAttempts(clamped);

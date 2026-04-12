@@ -41,7 +41,7 @@ export function isInProgressTask(task: Task, anchor: Date): boolean {
  *
  * An assignment is modifiable when:
  *  1. Its task starts strictly at or after the anchor (fully in the future), AND
- *  2. Its status is not Locked or Frozen (user-pinned or time-frozen).
+ *  2. Its status is not Frozen (time-frozen).
  *
  * Note: In-progress tasks (started but not ended) are treated as frozen
  * because they've already begun execution.
@@ -54,7 +54,7 @@ export function isModifiableAssignment(assignment: Assignment, taskMap: Map<stri
   if (!isFutureTask(task, anchor)) return false;
 
   // Status must allow modification
-  if (assignment.status === AssignmentStatus.Locked || assignment.status === AssignmentStatus.Frozen) {
+  if (assignment.status === AssignmentStatus.Frozen) {
     return false;
   }
 
@@ -86,7 +86,7 @@ export function freezeAssignments(schedule: Schedule, anchor: Date): number {
 
     if (isFutureTask(task, anchor)) {
       // Task is in the future — unfreeze if it was previously frozen
-      // (but don't touch Locked/Manual/Conflict statuses)
+      // (but don't touch Manual/Conflict statuses)
       if (assignment.status === AssignmentStatus.Frozen) {
         assignment.status = assignment.preFreezeStatus || AssignmentStatus.Scheduled;
         delete assignment.preFreezeStatus;

@@ -1647,7 +1647,6 @@ function renderAssignmentsTable(schedule: Schedule): string {
           ${isFrozen
             ? `<span class="frozen-action-icon" title="מוקפא — לא ניתן לשנות שיבוצי עבר">🧊</span>`
             : `<button class="btn-swap" data-assignment-id="${a.id}" data-task-id="${task.id}" title="החלפה">⇄</button>
-               <button class="btn-lock" data-assignment-id="${a.id}" title="נעילה/שחרור">🔒</button>
                ${liveMode.enabled ? `<button class="btn-rescue" data-assignment-id="${a.id}" title="תוכניות חילוץ">🆘</button>` : ''}`
           }
         </td></tr>`;
@@ -2120,25 +2119,6 @@ async function handleSwap(assignmentId: string): Promise<void> {
   });
 }
 
-async function handleLock(assignmentId: string): Promise<void> {
-  if (!currentSchedule || !engine) return;
-  const a = currentSchedule.assignments.find((a) => a.id === assignmentId);
-  if (!a) return;
-
-  if (a.status === AssignmentStatus.Frozen) {
-    await showAlert('השיבוץ הזה מוקפא כי הוא בעבר. אי אפשר לשנות אותו.', { icon: '🧊' });
-    return;
-  }
-
-  if (a.status === AssignmentStatus.Locked) {
-    engine.unlockAssignment(assignmentId);
-  } else {
-    engine.lockAssignment(assignmentId);
-  }
-  currentSchedule = engine.getSchedule();
-  revalidateAndRefresh();
-}
-
 // ─── Rescue Modal ────────────────────────────────────────────────────────────
 
 async function handleProfileSos(assignmentId: string): Promise<void> {
@@ -2327,7 +2307,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.1.3</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.1.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3201,6 +3181,11 @@ function wireScheduleEvents(container: HTMLElement): void {
     if (currentSchedule && store.getLiveModeState().enabled) {
       freezeAssignments(currentSchedule, ts);
     }
+    // Navigate the schedule view to the selected live-mode day
+    if (dayIdx >= 1 && dayIdx <= 7) {
+      currentDay = dayIdx;
+      pushHash(true);
+    }
     const savedScrollY = window.scrollY;
     renderAll();
     requestAnimationFrame(() => {
@@ -3763,7 +3748,6 @@ function init(): void {
     // Initialize tooltip callbacks before first render
     initTooltips({
       onSwap: handleSwap,
-      onLock: handleLock,
       onRescue: openRescueModal,
       onNavigateToProfile: navigateToProfile,
     });
