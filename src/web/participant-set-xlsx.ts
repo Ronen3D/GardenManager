@@ -107,6 +107,8 @@ const TRUTHY_TOKENS = new Set(['כן', 'כ', 'true', 'yes', 'y', 'x', 'v', '✓'
 const PAKAL_HEADER_PREFIX = 'פק"ל: ';
 
 // Header regex: `<label> [<id>]`.
+/** Legacy bracket regex — accepted on import for backwards compatibility with
+ *  files exported before the switch to label-only headers. */
 const HEADER_ID_REGEX = /^([^\[]+?)\s*\[([^\]]+)\]\s*$/;
 
 // Visual styling (mirrors excel-export.ts).
@@ -157,6 +159,21 @@ function normStrLowerCanonical(s: string): string {
   return normStr(s).toLowerCase();
 }
 
+const RLM = '\u200F';
+
+/** Fix BiDi rendering for Hebrew text in Excel cells: anchor neutral
+ *  characters (periods, quotes, parens) so they don't float to the wrong
+ *  visual side. Prepends RLM to establish base RTL direction and inserts
+ *  RLM before trailing neutral punctuation. */
+function rtlFix(s: string): string {
+  if (!s) return s;
+  // Prepend RLM so Excel treats the paragraph as RTL from the start.
+  let out = RLM + s;
+  // Insert RLM before a trailing period/comma so it sticks to the text.
+  out = out.replace(/([^\u200F])([.,;:!?])$/u, `$1${RLM}$2`);
+  return out;
+}
+
 /** Block CSV/Excel formula injection. Prefix `'` when the value begins with
  *  any of `=`, `+`, `-`, `@`, TAB, or CR. */
 function escapeFormulaInjection(raw: string): string {
@@ -169,18 +186,12 @@ function escapeFormulaInjection(raw: string): string {
   return raw;
 }
 
-/** Strip `[` and `]` from a human-label so our header regex remains
- *  unambiguous. Replaces with `(` `)`. */
-function stripBracketsFromLabel(label: string): string {
-  return label.replace(/\[/g, '(').replace(/\]/g, ')');
-}
-
 function buildCertHeader(def: CertificationDefinition): string {
-  return `${stripBracketsFromLabel(def.label)} [${def.id}]`;
+  return def.label;
 }
 
 function buildPakalHeader(def: PakalDefinition): string {
-  return `${PAKAL_HEADER_PREFIX}${stripBracketsFromLabel(def.label)} [${def.id}]`;
+  return `${PAKAL_HEADER_PREFIX}${def.label}`;
 }
 
 function dayIndexToName(dow: number): string {
@@ -350,60 +361,64 @@ function buildInstructionsSheet(wb: Workbook, templateMode: boolean): void {
   ws.views = [{ rightToLeft: true }];
   ws.getColumn(1).width = 100;
 
+  // rtlFix() anchors neutral punctuation (periods, quotes, parens) so
+  // Excel's BiDi algorithm keeps them next to the Hebrew text instead of
+  // floating them to the wrong visual edge.
+  const R = rtlFix;
   const lines: Array<{ text: string; heading?: boolean }> = [
-    { text: 'סט משתתפים — Excel', heading: true },
+    { text: R('סט משתתפים — Excel'), heading: true },
     { text: '' },
     {
       text: templateMode
-        ? 'זו תבנית ריקה. מלא אותה ולאחר מכן ייבא חזרה דרך תפריט "ייבוא נתונים".'
-        : 'זהו ייצוא מלא של סט משתתפים. ניתן לערוך את הקובץ ולייבא חזרה — הייבוא הוא החלפה מלאה של סט קיים או יצירת סט חדש.',
+        ? R('זו תבנית ריקה. מלא אותה ולאחר מכן ייבא חזרה דרך תפריט ״ייבוא נתונים״.')
+        : R('זהו ייצוא מלא של סט משתתפים. ניתן לערוך את הקובץ ולייבא חזרה — הייבוא הוא החלפה מלאה של סט קיים או יצירת סט חדש.'),
     },
     { text: '' },
-    { text: 'כללי זהב', heading: true },
-    { text: '• אל תשנה את שמות הגיליונות ואל תשנה את שורת הכותרות.' },
-    { text: '• אל תמחק ואל תשנה את ה-[מזהה] בסוגריים מרובעים בכותרות של הסמכות/פק"לים.' },
-    { text: '• אין להשתמש בנוסחאות, בקישורים, בהערות לתא או בתמונות — הייבוא ידחה את הקובץ.' },
-    { text: '• אל תערוך את גיליון "מטא". הערכים שם זיהויים וחובה.' },
+    { text: R('כללי זהב'), heading: true },
+    { text: R('• אל תשנה את שמות הגיליונות ואל תשנה את שורת הכותרות.') },
+    { text: R('• אל תשנה את כותרות העמודות של הסמכות ופק״לים — הייבוא מזהה אותן לפי השם.') },
+    { text: R('• אין להשתמש בנוסחאות, בקישורים, בהערות לתא או בתמונות — הייבוא ידחה את הקובץ.') },
+    { text: R('• אל תערוך את גיליון ״מטא״. הערכים שם זיהויים וחובה.') },
     { text: '' },
-    { text: 'גיליון משתתפים', heading: true },
-    { text: `• ${HEADER_NAME} — שם המשתתף. חייב להיות ייחודי בתוך הקובץ.` },
-    { text: `• ${HEADER_GROUP} — שם קבוצה (2 תווים ומעלה).` },
-    { text: `• ${HEADER_LEVEL} — אחד מ-L0 / L2 / L3 / L4 (אין L1).` },
+    { text: R('גיליון משתתפים'), heading: true },
+    { text: R(`• ${HEADER_NAME} — שם המשתתף. חייב להיות ייחודי בתוך הקובץ.`) },
+    { text: R(`• ${HEADER_GROUP} — שם קבוצה (2 תווים ומעלה).`) },
+    { text: R(`• ${HEADER_LEVEL} — אחד מ: L0 / L2 / L3 / L4 (אין L1).`) },
     {
-      text: '• עמודות ההסמכות והפק"לים — תא ריק = לא, "כן" = כן. מקובלים גם true / yes / 1 / x / ✓.',
+      text: R('• עמודות ההסמכות והפק״לים — תא ריק = לא, ״כן״ = כן. מקובלים גם true / yes / 1 / x / ✓.'),
     },
     {
-      text: `• ${HEADER_NOT_WITH} — שמות משתתפים אחרים בקובץ, מופרדים בנקודה-פסיק (;).`,
+      text: R(`• ${HEADER_NOT_WITH} — שמות משתתפים אחרים בקובץ, מופרדים בנקודה-פסיק (;).`),
     },
-    { text: `• ${HEADER_PREFERRED} / ${HEADER_LESS_PREFERRED} — שם משימה חופשי.` },
+    { text: R(`• ${HEADER_PREFERRED} / ${HEADER_LESS_PREFERRED} — שם משימה חופשי.`) },
     { text: '' },
-    { text: 'גיליון אי-זמינות', heading: true },
-    { text: '• שורה אחת לכל חלון אי-זמינות שבועי חוזר.' },
-    { text: `• ${UNAVAIL_HEADER_NAME} — חייב להיות שם הקיים בגיליון משתתפים.` },
+    { text: R('גיליון אי-זמינות'), heading: true },
+    { text: R('• שורה אחת לכל חלון אי-זמינות שבועי חוזר.') },
+    { text: R(`• ${UNAVAIL_HEADER_NAME} — חייב להיות שם הקיים בגיליון משתתפים.`) },
     {
-      text: `• ${UNAVAIL_HEADER_DAY} — אחד מ: ${HEBREW_DAYS.join(', ')} (גם בצורת "יום ראשון" וכו').`,
+      text: R(`• ${UNAVAIL_HEADER_DAY} — אחד מ: ${HEBREW_DAYS.join(', ')} (גם בצורת ״יום ראשון״ וכו׳).`),
     },
-    { text: `• ${UNAVAIL_HEADER_ALL_DAY} — "כן" מתעלם משעות התחלה/סיום.` },
+    { text: R(`• ${UNAVAIL_HEADER_ALL_DAY} — ״כן״ מתעלם משעות התחלה/סיום.`) },
     {
-      text: `• ${UNAVAIL_HEADER_START} / ${UNAVAIL_HEADER_END} — שלמים בטווח 0..23. הערה: ${UNAVAIL_HEADER_END} קטן מ-${UNAVAIL_HEADER_START} מבטא חציית חצות (מותר).`,
+      text: R(`• ${UNAVAIL_HEADER_START} / ${UNAVAIL_HEADER_END} — שלמים בטווח 0..23. הערה: ${UNAVAIL_HEADER_END} קטן מ-${UNAVAIL_HEADER_START} מבטא חציית חצות (מותר).`),
     },
-    { text: `• ${UNAVAIL_HEADER_REASON} — טקסט חופשי, אופציונלי.` },
+    { text: R(`• ${UNAVAIL_HEADER_REASON} — טקסט חופשי, אופציונלי.`) },
     { text: '' },
-    { text: 'גיליונות הסמכות ופקלים', heading: true },
-    { text: '• גיליונות ייחוס — הסמכות חדשות יתווספו לקטלוג האפליקציה באופן אוטומטי בייבוא.' },
-    { text: '• [מזהה] בסוגריים מרובעים בכותרות המשתתפים מצביע על ה-מזהה בגיליונות אלה.' },
+    { text: R('גיליונות הסמכות ופקלים'), heading: true },
+    { text: R('• גיליונות ייחוס — הסמכות חדשות יתווספו לקטלוג האפליקציה באופן אוטומטי בייבוא.') },
+    { text: R('• כותרות העמודות בגיליון משתתפים חייבות להתאים לשמות בגיליונות אלה.') },
     { text: '' },
-    { text: 'ייבוא חזרה', heading: true },
-    { text: '• בתפריט ייבוא נתונים בחר "סט משתתפים (Excel)" והעלה את הקובץ.' },
-    { text: '• שני מצבים בלבד: הוסף כסט חדש, או החלף סט קיים במלואו. אין מיזוג.' },
+    { text: R('ייבוא חזרה'), heading: true },
+    { text: R('• בתפריט ייבוא נתונים בחר ״סט משתתפים (Excel)״ והעלה את הקובץ.') },
+    { text: R('• שני מצבים בלבד: הוסף כסט חדש, או החלף סט קיים במלואו. אין מיזוג.') },
     { text: '' },
-    { text: 'שגיאות נפוצות', heading: true },
-    { text: '• שם גיליון שונה — הייבוא דורש שמות מדויקים.' },
-    { text: '• נוסחה בתא — מחק את הנוסחה והזן ערך ישיר.' },
-    { text: '• רמה לא חוקית — רק L0 / L2 / L3 / L4.' },
-    { text: '• שם ברשימת "לא עם" שאינו קיים בגיליון משתתפים.' },
+    { text: R('שגיאות נפוצות'), heading: true },
+    { text: R('• שם גיליון שונה — הייבוא דורש שמות מדויקים.') },
+    { text: R('• נוסחה בתא — מחק את הנוסחה והזן ערך ישיר.') },
+    { text: R('• רמה לא חוקית — רק L0 / L2 / L3 / L4.') },
+    { text: R('• שם ברשימת ״לא עם״ שאינו קיים בגיליון משתתפים.') },
     { text: '' },
-    { text: `גרסת סכמה: ${SCHEMA_VERSION}` },
+    { text: R(`גרסת סכמה: ${SCHEMA_VERSION}`) },
   ];
   for (const line of lines) {
     const row = ws.addRow([line.text]);
@@ -961,6 +976,10 @@ function parseParticipantsHeader(
   const columns = new Map<number, ParsedHeader['kind']>();
   const seenCertIds = new Set<string>();
   const seenPakalIds = new Set<string>();
+  // Build label→id reverse maps for matching column headers by Hebrew label.
+  const certLabelToId = new Map(certs.map((c) => [normStrLowerCanonical(c.label), c.id]));
+  const pakalLabelToId = new Map(pakals.map((p) => [normStrLowerCanonical(p.label), p.id]));
+  // Also keep id sets for legacy bracket-format fallback.
   const certIdSet = new Set(certs.map((c) => c.id));
   const pakalIdSet = new Set(pakals.map((p) => p.id));
   const required = new Set<string>([
@@ -1018,9 +1037,42 @@ function parseParticipantsHeader(
       continue;
     }
 
-    // Dynamic (cert/pakal) header.
-    const m = HEADER_ID_REGEX.exec(raw);
-    if (!m) {
+    // Dynamic (cert/pakal) header — match by Hebrew label against the catalog.
+    // Also accept legacy bracket format `<label> [<id>]` for older exports.
+    let resolvedId: string | undefined;
+    let resolvedType: 'cert' | 'pakal' | undefined;
+
+    // Check if header starts with the pakal prefix.
+    const pakalPrefix = PAKAL_HEADER_PREFIX.trim();
+    if (raw.startsWith(pakalPrefix)) {
+      const label = normStrLowerCanonical(raw.slice(pakalPrefix.length));
+      resolvedId = pakalLabelToId.get(label);
+      resolvedType = 'pakal';
+    }
+
+    // Try cert label match (only if not already matched as pakal).
+    if (!resolvedId) {
+      resolvedId = certLabelToId.get(normStrLowerCanonical(raw));
+      if (resolvedId) resolvedType = 'cert';
+    }
+
+    // Fallback: legacy `<label> [<id>]` bracket format.
+    if (!resolvedId) {
+      const m = HEADER_ID_REGEX.exec(raw);
+      if (m) {
+        const labelPart = m[1].trim();
+        const bracketId = m[2].trim();
+        if (labelPart.startsWith(pakalPrefix) && pakalIdSet.has(bracketId)) {
+          resolvedId = bracketId;
+          resolvedType = 'pakal';
+        } else if (certIdSet.has(bracketId)) {
+          resolvedId = bracketId;
+          resolvedType = 'cert';
+        }
+      }
+    }
+
+    if (!resolvedId || !resolvedType) {
       pushError(ctx, {
         sheet: SHEET_PARTICIPANTS,
         cellRef: cell.address,
@@ -1028,48 +1080,19 @@ function parseParticipantsHeader(
       });
       continue;
     }
-    const labelPart = m[1].trim();
-    const id = m[2].trim();
-    const isPakal = labelPart.startsWith(PAKAL_HEADER_PREFIX.trim());
-    if (isPakal) {
-      if (!pakalIdSet.has(id)) {
-        pushError(ctx, {
-          sheet: SHEET_PARTICIPANTS,
-          cellRef: cell.address,
-          message: `פק"ל לא קיים בגיליון ${SHEET_PAKALS}: '${id}'.`,
-        });
-        continue;
-      }
-      if (seenPakalIds.has(id)) {
-        pushError(ctx, {
-          sheet: SHEET_PARTICIPANTS,
-          cellRef: cell.address,
-          message: `עמודה כפולה עבור פק"ל '${id}'.`,
-        });
-        continue;
-      }
-      seenPakalIds.add(id);
-      columns.set(c, { type: 'pakal', id });
-    } else {
-      if (!certIdSet.has(id)) {
-        pushError(ctx, {
-          sheet: SHEET_PARTICIPANTS,
-          cellRef: cell.address,
-          message: `הסמכה לא קיימת בגיליון ${SHEET_CERTS}: '${id}'.`,
-        });
-        continue;
-      }
-      if (seenCertIds.has(id)) {
-        pushError(ctx, {
-          sheet: SHEET_PARTICIPANTS,
-          cellRef: cell.address,
-          message: `עמודה כפולה עבור הסמכה '${id}'.`,
-        });
-        continue;
-      }
-      seenCertIds.add(id);
-      columns.set(c, { type: 'cert', id });
+
+    const seenSet = resolvedType === 'pakal' ? seenPakalIds : seenCertIds;
+    const typeLabel = resolvedType === 'pakal' ? 'פק"ל' : 'הסמכה';
+    if (seenSet.has(resolvedId)) {
+      pushError(ctx, {
+        sheet: SHEET_PARTICIPANTS,
+        cellRef: cell.address,
+        message: `עמודה כפולה עבור ${typeLabel} '${resolvedId}'.`,
+      });
+      continue;
     }
+    seenSet.add(resolvedId);
+    columns.set(c, { type: resolvedType, id: resolvedId });
   }
 
   for (const h of required) {
