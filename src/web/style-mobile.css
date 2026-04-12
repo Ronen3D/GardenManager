@@ -1098,7 +1098,6 @@
   .table-participants .col-certs,
   .table-participants .col-pakals,
   .table-participants .col-avail,
-  .table-participants .col-unavail,
   .table-participants .col-notwith,
   .table-participants .col-prefs {
     display: none !important;
@@ -1126,35 +1125,53 @@
     flex-shrink: 0;
   }
 
-  .table-participants tr.row-expanded .col-avail {
-    display: block !important;
-    order: 13;
-    flex-shrink: 0;
+  /* Availability hours hidden on mobile — default is "all available",
+     only unavailability chips (in col-name) matter */
+
+
+  /* Unavailability chips — mobile compact */
+  .unavail-chips {
+    gap: 2px;
+    margin-top: 2px;
+  }
+  .unavail-chip {
+    font-size: 0.6rem;
+    padding: 0 4px;
   }
 
-  .table-participants tr.row-expanded .col-unavail {
-    display: block !important;
-    order: 14;
-    flex-shrink: 0;
+  /* ── Blackout panel — mobile stack ──────────────────────────────────── */
+  .blackout-panel {
+    padding: 12px 10px;
   }
-  .table-participants tr.row-expanded .col-unavail.unavail-empty {
-    display: none !important;
+  .blackout-panel h4 {
+    font-size: 0.85rem;
   }
-  /* Hide the toggle button on mobile, show inline summary only */
-  .table-participants .col-unavail .btn-icon {
-    display: none;
+  .blackout-list li {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 8px;
+    font-size: 0.78rem;
   }
-  .table-participants .col-unavail .unavail-summary {
-    display: inline;
+  .blackout-add {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px;
   }
-  .table-participants .unavail-summary small {
-    display: inline-block;
-    background: rgba(231, 76, 60, 0.1);
-    border: 1px solid rgba(231, 76, 60, 0.2);
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-size: 0.63rem;
-    margin: 1px 0;
+  .blackout-add select.input-sm {
+    width: 100% !important;
+  }
+  .time-inputs-group {
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+  }
+  .time-inputs-group .time-24h {
+    flex: 1;
+    min-width: 60px;
+  }
+  .blackout-add input[data-field="bo-reason"] {
+    width: 100%;
   }
 
   /* Hide empty-state dashes */
@@ -1180,8 +1197,7 @@
   .table-participants .col-level,
   .table-participants .col-certs,
   .table-participants .col-pakals,
-  .table-participants .col-avail,
-  .table-participants .col-unavail {
+  .table-participants .col-avail {
     font-size: 0.63rem;
   }
 
@@ -1200,9 +1216,7 @@
   .table-participants tbody tr.row-editing .col-certs,
   .table-participants tbody tr.row-editing .col-pakals,
   .table-participants tbody tr.row-editing .col-prefs,
-  .table-participants tbody tr.row-editing .col-notwith,
-  .table-participants tbody tr.row-editing .col-avail,
-  .table-participants tbody tr.row-editing .col-unavail {
+  .table-participants tbody tr.row-editing .col-notwith {
     display: block !important;
   }
   .table-participants tbody tr.row-editing td:not(.col-select):not(.col-index):not(.col-expand) {
@@ -1248,11 +1262,8 @@
   .table-participants tbody tr.row-editing .col-avail {
     order: 8;
   }
-  .table-participants tbody tr.row-editing .col-unavail {
-    order: 9;
-  }
   .table-participants tbody tr.row-editing .col-actions {
-    order: 10;
+    order: 9;
   }
   .table-participants tbody tr.row-editing .pakal-checkboxes,
   .table-participants tbody tr.row-editing .cert-checkboxes {
@@ -1268,43 +1279,13 @@
     padding: 5px 8px;
   }
 
-  /* Inline unavailability editor — mobile compact */
+  /* Availability label — mobile compact */
   .table-participants tbody tr.row-editing .col-avail::before {
     content: "זמינות";
     display: block;
     font-weight: 700;
     font-size: 0.75rem;
     margin-bottom: 2px;
-  }
-  .table-participants tbody tr.row-editing .col-unavail::before {
-    content: "אי-זמינות";
-    display: block;
-    font-weight: 700;
-    font-size: 0.75rem;
-    margin-bottom: 2px;
-  }
-  .inline-unavail-add {
-    gap: 4px;
-  }
-  .inline-unavail-add .input-sm {
-    min-height: 34px !important;
-    padding: 4px 6px !important;
-    font-size: 0.75rem;
-  }
-  .inline-unavail-add .btn-sm {
-    min-height: 34px !important;
-    padding: 4px 10px !important;
-    font-size: 0.8rem !important;
-  }
-  .inline-unavail-list {
-    font-size: 0.75rem;
-  }
-  .btn-inline-remove {
-    min-height: 30px;
-    min-width: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
   }
 
   /* ── Safe tap targets ────────────────────────────────────────────────── */

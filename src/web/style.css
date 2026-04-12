@@ -1197,7 +1197,6 @@ select.input-sm {
 .btn-expand-all-mobile {
   display: none;
 } /* mobile-only: shown via style-mobile.css */
-
 /* ─── Blackout Panel ─────────────────────────────────── */
 .row-blackout-expansion td {
   padding: 0 !important;
@@ -1422,9 +1421,61 @@ select.input-sm {
   box-shadow: none !important;
 }
 
-/* ─── Unavailability Cell ────────────────────────────── */
-.unavail-summary {
-  display: none;
+/* ─── Unavailability Chips (inside col-name) ─────────── */
+.unavail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+  cursor: pointer;
+}
+.unavail-chip {
+  display: inline-block;
+  background: rgba(231, 76, 60, 0.12);
+  border: 1px solid rgba(231, 76, 60, 0.25);
+  color: var(--danger);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.unavail-chip-more {
+  background: rgba(231, 76, 60, 0.06);
+  font-style: italic;
+}
+.unavail-chips:hover .unavail-chip {
+  background: rgba(231, 76, 60, 0.2);
+  border-color: rgba(231, 76, 60, 0.4);
+}
+
+/* ─── Unavailability Row Stripe ───────────────────────── */
+.table-participants tbody tr.has-unavail > td:first-child {
+  position: relative;
+}
+.table-participants tbody tr.has-unavail > td:first-child::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: 0;
+  width: 3px;
+  background: var(--danger);
+}
+
+/* ─── Unavail Edit Toggle (edit-mode name cell) ───────── */
+.unavail-edit-toggle {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.unavail-toggle-active {
+  background: rgba(231, 76, 60, 0.15);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 /* ─── Availability Cell ──────────────────────────────── */
@@ -2941,43 +2992,6 @@ tr.row-selected:hover {
   white-space: nowrap;
 }
 
-/* ── Inline Unavailability Editor (inside editing row) ────────────────── */
-
-.inline-unavail-editor {
-  font-size: 0.8rem;
-}
-.inline-unavail-list {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 6px;
-}
-.inline-unavail-list li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 0;
-  border-bottom: 1px solid var(--border, #333);
-  flex-wrap: wrap;
-}
-.btn-inline-remove {
-  background: none;
-  border: none;
-  color: var(--danger, #e74c3c);
-  cursor: pointer;
-  font-size: 0.85rem;
-  padding: 2px 6px;
-  line-height: 1;
-  border-radius: 4px;
-}
-.btn-inline-remove:hover {
-  background: rgba(231, 76, 60, 0.15);
-}
-.inline-unavail-add {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-}
 
 /* ── Bulk Dialog (Modal) ─────────────────────────────────────────────────── */
 

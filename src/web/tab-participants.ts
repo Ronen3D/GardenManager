@@ -8,7 +8,6 @@
 import { checkTemplateEligibility, type TemplateEligibilityResult } from '../engine/validator';
 import {
   type CertificationDefinition,
-  type DateUnavailability,
   Level,
   type PakalDefinition,
   type Participant,
@@ -68,17 +67,33 @@ function renderNotWithBadges(pid: string): string {
     .join(' ');
 }
 
-/** Compact inline summary of unavailability rules for mobile cards. */
-function formatUnavailSummary(rules: DateUnavailability[]): string {
-  return rules
+const HEBREW_DAYS_SHORT = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'] as const;
+
+/** Compact unavailability chips rendered below participant name. */
+function renderUnavailChips(pid: string): string {
+  const rules = store.getDateUnavailabilities(pid);
+  if (rules.length === 0) return '';
+
+  const MAX_VISIBLE = 3;
+  const visible = rules.slice(0, MAX_VISIBLE);
+
+  const chips = visible
     .map((r) => {
-      const day = HEBREW_DAYS[r.dayOfWeek];
+      const day = HEBREW_DAYS_SHORT[r.dayOfWeek];
       const time = r.allDay
         ? 'כל היום'
-        : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00</span>`;
-      return `<small>${day} ${time}</small>`;
+        : `${String(r.startHour).padStart(2, '0')}-${String(r.endHour).padStart(2, '0')}`;
+      const tooltip = `${HEBREW_DAYS[r.dayOfWeek]} ${r.allDay ? 'כל היום' : `${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00`}${r.reason ? ` (${r.reason})` : ''}`;
+      return `<span class="unavail-chip" title="${escHtml(tooltip)}">${day} ${time}</span>`;
     })
-    .join('<br>');
+    .join('');
+
+  const overflow =
+    rules.length > MAX_VISIBLE
+      ? `<span class="unavail-chip unavail-chip-more" title="${rules.length} כללי אי-זמינות">+${rules.length - MAX_VISIBLE}</span>`
+      : '';
+
+  return `<div class="unavail-chips" data-action="toggle-blackouts" data-pid="${pid}">${chips}${overflow}</div>`;
 }
 
 /** Get distinct task template names for preference dropdowns. */
@@ -382,6 +397,9 @@ function hasEditingChanges(row: Element, pid: string): boolean {
 /** Flag to prevent re-entrant outside-click handling. */
 let _outsideClickBusy = false;
 
+/** Stored reference so we can remove the previous listener on rerender. */
+let _currentOutsideClickHandler: ((e: MouseEvent) => void) | null = null;
+
 function getVisibleParticipants(allParticipants: Participant[] = store.getAllParticipants()): Participant[] {
   const filtered = filterGroup ? allParticipants.filter((p) => p.group === filterGroup) : allParticipants;
   return sortParticipants(filtered);
@@ -587,7 +605,7 @@ export function renderParticipantsTab(): string {
       <th class="col-pakals">פק"לים</th>
       ${showNotWithColumn ? '<th class="col-notwith">אי התאמה</th>' : ''}
       <th class="col-prefs">העדפות</th>
-      <th class="col-avail">זמינות</th><th class="col-unavail">אי-זמינות</th><th class="col-actions">פעולות</th><th class="col-expand"></th>
+      <th class="col-avail">זמינות</th><th class="col-actions">פעולות</th><th class="col-expand"></th>
     </tr></thead><tbody>`;
 
   sorted.forEach((p, i) => {
@@ -600,11 +618,14 @@ export function renderParticipantsTab(): string {
 
     if (isEditing) {
       html += renderEditRow(p, i + 1);
+      if (isExpanded) {
+        html += renderBlackoutRow(p.id);
+      }
     } else {
-      html += `<tr data-participant-id="${p.id}" class="${isSelected ? 'row-selected' : ''}">
+      html += `<tr data-participant-id="${p.id}" class="${isSelected ? 'row-selected' : ''}${totalRules > 0 ? ' has-unavail' : ''}">
         <td class="col-select"><input type="checkbox" class="cb-select-participant" data-pid="${p.id}" ${isSelected ? 'checked' : ''} /></td>
         <td class="col-index">${i + 1}</td>
-        <td class="col-name" title="${escHtml(p.name)}">${hasOrphanedRefs(p) ? '<span class="badge-orphan-icon">⚠</span> ' : ''}<strong>${escHtml(p.name)}</strong></td>
+        <td class="col-name" title="${escHtml(p.name)}">${hasOrphanedRefs(p) ? '<span class="badge-orphan-icon">⚠</span> ' : ''}<strong>${escHtml(p.name)}</strong>${renderUnavailChips(p.id)}</td>
         <td class="col-group">${groupBadge(p.group, true)}</td>
         <td class="col-level">${levelBadge(p.level)}</td>
         <td class="col-certs">${certBadges(p.certifications)}</td>
@@ -613,12 +634,6 @@ export function renderParticipantsTab(): string {
         <td class="col-prefs">${renderPreferenceBadges(p)}</td>
         <td class="col-avail avail-cell">
           <span class="mobile-label">זמינות: </span>${p.availability.map((w) => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
-        </td>
-        <td class="col-unavail unavail-cell${totalRules === 0 ? ' unavail-empty' : ''}">
-          <button class="btn-sm btn-outline btn-icon" data-action="toggle-blackouts" data-pid="${p.id}" title="ניהול אי-זמינות">
-            ${totalRules > 0 ? `<span class="badge badge-sm" style="background:var(--warning)">${totalRules}</span>` : SVG_ICONS.block}
-          </button>
-          ${totalRules > 0 ? `<span class="unavail-summary"><span class="mobile-label">חסר: </span>${formatUnavailSummary(dateRules)}</span>` : ''}
         </td>
         <td class="col-actions">
           <button class="btn-sm btn-outline btn-icon" data-action="edit-participant" data-pid="${p.id}" title="עריכה">${SVG_ICONS.edit}</button>
@@ -668,7 +683,9 @@ function renderEditRow(p: Participant, idx: number): string {
   return `<tr class="row-editing" data-participant-id="${p.id}">
     <td class="col-select"></td>
     <td class="col-index">${idx}</td>
-    <td class="col-name"><input class="input-sm" type="text" data-field="name" value="${escHtml(p.name)}" /></td>
+    <td class="col-name">
+      <input class="input-sm" type="text" data-field="name" value="${escHtml(p.name)}" />
+    </td>
     <td class="col-group">
       <select class="input-sm" data-field="group" data-group-select>
         ${groups.map((g) => `<option value="${escHtml(g)}" ${p.group === g ? 'selected' : ''}>${escHtml(g)}</option>`).join('')}
@@ -742,10 +759,16 @@ function renderEditRow(p: Participant, idx: number): string {
     <td class="col-avail avail-cell">
       <span class="mobile-label">זמינות: </span>${p.availability.map((w) => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
     </td>
-    <td class="col-unavail unavail-cell">
-      ${renderInlineUnavailEditor(p.id)}
-    </td>
     <td class="col-actions">
+      ${(() => {
+        const dateRules = store.getDateUnavailabilities(p.id);
+        const isOpen = expandedBlackoutId === p.id;
+        const activeClass = isOpen ? ' unavail-toggle-active' : '';
+        if (dateRules.length > 0) {
+          return `<button class="btn-sm btn-outline unavail-edit-toggle${activeClass}" data-action="toggle-blackouts" data-pid="${p.id}"><span class="badge badge-sm" style="background:var(--warning)">${dateRules.length}</span> אי-זמינות ${isOpen ? '▲' : '▼'}</button>`;
+        }
+        return `<button class="btn-sm btn-outline unavail-edit-toggle${activeClass}" data-action="toggle-blackouts" data-pid="${p.id}">${isOpen ? '— סגור אי-זמינות' : '+ אי-זמינות'}</button>`;
+      })()}
       <button class="btn-sm btn-primary" data-action="save-participant" data-pid="${p.id}">שמור</button>
       <button class="btn-sm btn-outline" data-action="cancel-edit">ביטול</button>
     </td>
@@ -753,46 +776,11 @@ function renderEditRow(p: Participant, idx: number): string {
   </tr>`;
 }
 
-function renderInlineUnavailEditor(pid: string): string {
-  const dateRules = store.getDateUnavailabilities(pid);
-  let html = '<div class="inline-unavail-editor">';
-
-  if (dateRules.length > 0) {
-    html += '<ul class="inline-unavail-list">';
-    for (const r of dateRules) {
-      const label = HEBREW_DAYS[r.dayOfWeek];
-      const timeLabel = r.allDay
-        ? 'כל היום'
-        : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00</span>`;
-      html += `<li>${label} ${timeLabel}${r.reason ? ` (${r.reason})` : ''} <button class="btn-inline-remove" data-action="remove-date-unavail" data-pid="${pid}" data-rid="${r.id}">✕</button></li>`;
-    }
-    html += '</ul>';
-  }
-
-  html += `<div class="inline-unavail-add">
-    <select class="input-sm" data-field="du-dow" style="width:auto">
-      ${HEBREW_DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
-    </select>
-    <label class="checkbox-label" style="white-space:nowrap">
-      <input type="checkbox" data-field="du-allday" /> כל היום
-    </label>
-    <span class="time-label">משעה</span>
-    <input type="text" class="input-sm time-24h" maxlength="5" placeholder="HH:mm" data-field="bo-start" value="08:00" style="width:60px" />
-    <span class="time-label">עד שעה</span>
-    <input type="text" class="input-sm time-24h" maxlength="5" placeholder="HH:mm" data-field="bo-end" value="12:00" style="width:60px" />
-    <input type="text" class="input-sm" data-field="bo-reason" placeholder="סיבה" style="width:80px" />
-    <button class="btn-sm btn-primary" data-action="add-unified-constraint" data-pid="${pid}">+</button>
-  </div>`;
-
-  html += '</div>';
-  return html;
-}
-
 function renderBlackoutRow(pid: string): string {
   const dateRules = store.getDateUnavailabilities(pid);
 
   let html = `<tr class="row-blackout-expansion">
-    <td colspan="${showNotWithColumn ? 13 : 12}">
+    <td colspan="${showNotWithColumn ? 12 : 11}">
       <div class="blackout-panel">
         <h4>כללי אי-זמינות</h4>
         <div class="blackout-list">`;
@@ -1017,8 +1005,16 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
   });
 
   // ─── Outside-click: close editing panel (with save confirmation if dirty) ──
+  // Remove any stale handler from a previous render cycle
+  if (_currentOutsideClickHandler) {
+    document.removeEventListener('click', _currentOutsideClickHandler, true);
+    _currentOutsideClickHandler = null;
+  }
   if (editingId) {
     const editRow = container.querySelector('tr.row-editing') as HTMLElement | null;
+    const blackoutRow = editRow?.nextElementSibling?.classList.contains('row-blackout-expansion')
+      ? editRow.nextElementSibling
+      : null;
     if (editRow) {
       const onOutsideClick = async (e: MouseEvent) => {
         // Ignore if already handling an outside click, or if a modal is open
@@ -1026,8 +1022,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         if (document.querySelector('.gm-modal-backdrop')) return;
 
         const target = e.target as HTMLElement;
-        // Click inside the editing row — do nothing
+        // Click inside the editing row or its blackout expansion — do nothing
         if (editRow.contains(target)) return;
+        if (blackoutRow?.contains(target)) return;
 
         e.preventDefault();
         e.stopPropagation();
@@ -1038,6 +1035,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         if (!hasEditingChanges(editRow, pid)) {
           // No changes — close immediately
           document.removeEventListener('click', onOutsideClick, true);
+          _currentOutsideClickHandler = null;
           editingId = null;
           rerender();
           return;
@@ -1048,6 +1046,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         try {
           const result = await showSaveConfirm();
           document.removeEventListener('click', onOutsideClick, true);
+          _currentOutsideClickHandler = null;
           if (result === 'save') {
             // Trigger the save button click
             const saveBtn = editRow.querySelector('[data-action="save-participant"]') as HTMLElement | null;
@@ -1058,6 +1057,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
           }
           // 'continue' → do nothing, keep panel open (re-attach listener)
           if (result === 'continue') {
+            _currentOutsideClickHandler = onOutsideClick;
             document.addEventListener('click', onOutsideClick, true);
           }
         } finally {
@@ -1065,6 +1065,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         }
       };
       // Use capture phase so we intercept before other click handlers
+      _currentOutsideClickHandler = onOutsideClick;
       document.addEventListener('click', onOutsideClick, true);
     }
   }
