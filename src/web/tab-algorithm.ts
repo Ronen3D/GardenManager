@@ -21,7 +21,7 @@ import {
 } from '../models/types';
 import * as store from './config-store';
 import { renderDataTransferContent } from './data-transfer-ui';
-import { escHtml, getCurrentTheme, getStoredTheme, SVG_ICONS, setTheme } from './ui-helpers';
+import { escHtml, getCurrentTheme, getStoredDefaultAttempts, getStoredTheme, setDefaultAttempts, SVG_ICONS, setTheme } from './ui-helpers';
 import { renderCustomSelect, showConfirm, showToast, wireCustomSelect } from './ui-modal';
 
 // ─── Weight field metadata ───────────────────────────────────────────────────
@@ -340,7 +340,7 @@ function getCertPakalSummary(): string {
 }
 
 function getDisplaySummary(): string {
-  return `ערכת נושא: ${getStoredTheme() === 'dark' ? 'כהה' : 'בהיר'}`;
+  return `ערכת נושא: ${getStoredTheme() === 'dark' ? 'כהה' : 'בהיר'} · ניסיונות: ${getStoredDefaultAttempts()}`;
 }
 
 // ─── Content Renderers ──────────────────────────────────────────────────────
@@ -512,6 +512,7 @@ function renderPakalContent(): string {
 
 function renderDisplayContent(): string {
   const theme = getStoredTheme();
+  const defaultAttempts = getStoredDefaultAttempts();
   return `
     <h3 class="algo-section-title">תצוגה</h3>
     <p class="algo-section-desc">בחירת מראה כללי של המערכת.</p>
@@ -522,7 +523,14 @@ function renderDisplayContent(): string {
       <button class="theme-seg-btn ${theme === 'dark' ? 'theme-seg-active' : ''}" data-action="set-theme" data-theme="dark">
         ${SVG_ICONS.moon} <span>כהה</span>
       </button>
-    </div>`;
+    </div>
+
+    <h3 class="algo-section-title" style="margin-top:20px">ייצור שבצ"ק</h3>
+    <p class="algo-section-desc">מספר ניסיונות ברירת מחדל ביצירת שבצ"ק. ניתן לשנות גם בעת הייצור עצמו.</p>
+    <label class="scenarios-label" for="input-default-attempts" style="display:inline-flex;align-items:center;gap:8px">
+      ניסיונות ברירת מחדל
+      <input type="number" id="input-default-attempts" class="input-sm" data-action="set-default-attempts" min="50" max="50000" step="50" value="${defaultAttempts}" style="width:100px" />
+    </label>`;
 }
 
 function renderDangerContent(): string {
@@ -1052,6 +1060,16 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         if (!isNaN(lo) && !isNaN(hi)) {
           inp.value = String(Math.min(hi, Math.max(lo, v)));
         }
+        break;
+      }
+      case 'set-default-attempts': {
+        const inp = el as HTMLInputElement;
+        const val = parseInt(inp.value, 10);
+        if (isNaN(val) || val < 50) { inp.value = String(getStoredDefaultAttempts()); break; }
+        const clamped = Math.min(50000, Math.max(50, val));
+        inp.value = String(clamped);
+        setDefaultAttempts(clamped);
+        rerender();
         break;
       }
     }

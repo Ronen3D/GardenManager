@@ -127,6 +127,8 @@ export function escAttr(s: string): string {
 // ─── Theme Utilities ────────────────────────────────────────────────────────
 
 const THEME_STORAGE_KEY = 'gardenmanager_theme';
+const DEFAULT_ATTEMPTS_STORAGE_KEY = 'gardenmanager_default_attempts';
+const FALLBACK_DEFAULT_ATTEMPTS = 100;
 
 export function applyTheme(theme: 'dark' | 'light'): void {
   if (theme === 'light') {
@@ -165,5 +167,24 @@ export function setTheme(theme: 'dark' | 'light'): void {
     document.startViewTransition(commitSwitch);
   } else {
     commitSwitch();
+  }
+}
+
+// ─── Default Attempts Utilities ─────────────────────────────────────────────
+
+export function getStoredDefaultAttempts(): number {
+  const stored = localStorage.getItem(DEFAULT_ATTEMPTS_STORAGE_KEY);
+  if (stored !== null) {
+    const val = parseInt(stored, 10);
+    if (val >= 50 && val <= 50000) return val;
+  }
+  return FALLBACK_DEFAULT_ATTEMPTS;
+}
+
+export function setDefaultAttempts(value: number): void {
+  try {
+    localStorage.setItem(DEFAULT_ATTEMPTS_STORAGE_KEY, String(value));
+  } catch (err) {
+    console.warn('[ui-helpers] Failed to persist default attempts:', err);
   }
 }

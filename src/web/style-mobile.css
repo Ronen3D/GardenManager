@@ -1560,7 +1560,7 @@
     display: none;
   }
   .schedule-toolbar-manual .toolbar-group--day-actions {
-    display: none;
+    /* Keep day-actions visible so "המשך מכאן" / export remain accessible */
   }
   /* Inside state group, hide reset/continuity — keep exit + snapshots */
   .schedule-toolbar-manual #btn-reset-storage,

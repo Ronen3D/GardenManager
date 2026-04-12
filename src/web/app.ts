@@ -69,6 +69,7 @@ import {
   certBadges,
   escHtml,
   fmt,
+  getStoredDefaultAttempts,
   getStoredTheme,
   groupBadge,
   groupColor,
@@ -1034,7 +1035,7 @@ function renderScheduleTab(): string {
       </span>
       <span class="toolbar-group toolbar-group--day-actions">
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
-        ${currentSchedule && currentDay < store.getScheduleDays() ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
+        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא">📤 ייצוא</button>` : ''}
       </span>
     </div>
@@ -1904,7 +1905,7 @@ function renderGanttChart(schedule: Schedule): string {
 // ─── Schedule Generation ─────────────────────────────────────────────────────
 
 /** Number of optimization attempts per generation (user-configurable) */
-let OPTIM_ATTEMPTS = 100;
+let OPTIM_ATTEMPTS = getStoredDefaultAttempts();
 
 /**
  * Render the optimization overlay that covers the schedule board
@@ -2995,7 +2996,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.6</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3632,7 +3633,6 @@ function wireScheduleEvents(container: HTMLElement): void {
       if (!currentSchedule) return;
       const numDaysNow = store.getScheduleDays();
       const remainingDays = numDaysNow - currentDay;
-      if (remainingDays < 1) return;
 
       // 1. Export snapshot for the current day
       const snapshot = exportDaySnapshot(
@@ -3647,7 +3647,8 @@ function wireScheduleEvents(container: HTMLElement): void {
       // 2. Update schedule start date to end of current day
       const dayWindow = getDayWindow(currentDay);
       store.setScheduleDate(dayWindow.end);
-      store.setScheduleDays(remainingDays);
+      // Last day: start a fresh full-cycle schedule; otherwise only remaining days
+      store.setScheduleDays(remainingDays > 0 ? remainingDays : numDaysNow);
 
       // 3. Trigger generation
       currentDay = 1;
