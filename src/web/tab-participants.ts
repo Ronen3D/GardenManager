@@ -1598,7 +1598,12 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         rerender();
         break;
       }
-      case 'bulk-delete-dismiss':
+      case 'bulk-delete-dismiss': {
+        if (target !== actionButton) break;
+        _bulkDeleteDialogOpen = false;
+        rerender();
+        break;
+      }
       case 'bulk-delete-cancel': {
         _bulkDeleteDialogOpen = false;
         rerender();
@@ -1615,7 +1620,12 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         showToast(`${deleted} משתתפים נמחקו בהצלחה.`, { type: 'success' });
         break;
       }
-      case 'bulk-dialog-dismiss':
+      case 'bulk-dialog-dismiss': {
+        if (target !== actionButton) break;
+        _bulkDialogOpen = false;
+        rerender();
+        break;
+      }
       case 'bulk-dialog-cancel': {
         _bulkDialogOpen = false;
         rerender();

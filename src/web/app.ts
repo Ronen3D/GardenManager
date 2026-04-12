@@ -13,7 +13,6 @@
 import './style.css';
 import './style-mobile.css';
 import { buildPhantomContext } from '../engine/phantom';
-import { generateRescuePlans } from '../engine/rescue';
 import {
   freezeAssignments,
   isDayFrozen,
@@ -27,13 +26,9 @@ import {
   AlgorithmSettings,
   type Assignment,
   AssignmentStatus,
-  type ConstraintViolation,
   Level,
   LiveModeState,
   type Participant,
-  type RescuePlan,
-  type RescueRequest,
-  type RescueResult,
   type Schedule,
   SchedulingEngine,
   type SlotRequirement,
@@ -47,12 +42,26 @@ import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
 import { wireDataTransferEvents } from './data-transfer-ui';
 import { exportDailyExcel, exportWeeklyExcel } from './excel-export';
-import { getEffectivePakalDefinitions, renderPakalBadges } from './pakal-utils';
+import { getEffectivePakalDefinitions } from './pakal-utils';
 import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
 import { runPreflight } from './preflight';
+import { closeRescueModal, initRescue, openRescueModal } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice } from './responsive';
 import { renderScheduleGrid } from './schedule-grid-view';
+import {
+  computePerDayHours,
+  filterVisibleViolations,
+  fmtDate,
+  formatLiveClock,
+  getDayWindow,
+  resolveLogicalDayTimestamp,
+  statusBadge,
+  taskEndsAfter,
+  taskIntersectsDay,
+  taskStartsBefore,
+  violationLabel,
+} from './schedule-utils';
 import { openSwapPicker } from './swap-picker';
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
 import {
@@ -63,17 +72,15 @@ import {
 } from './tab-participants';
 import { type ProfileContext, renderProfileView, wireProfileEvents } from './tab-profile';
 import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
+import { hideTaskTooltip, hideTooltip, initTooltips, wireParticipantTooltip, wireTaskTooltip } from './tooltips';
 import {
   applyTheme,
-  certBadge,
   certBadges,
   escHtml,
   fmt,
   getStoredDefaultAttempts,
   getStoredTheme,
   groupBadge,
-  groupColor,
-  LEVEL_COLORS,
   levelBadge,
   SVG_ICONS,
   taskBadge,
@@ -89,7 +96,7 @@ import {
   wireCustomSelect,
 } from './ui-modal';
 import { generateShiftBlocks } from './utils/time-utils';
-import { computeTaskBreakdown, computeWeeklyWorkloads } from './workload-utils';
+import { computeWeeklyWorkloads } from './workload-utils';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
@@ -196,17 +203,6 @@ let _optimProgress: {
 const WORKLOAD_OVER_THRESHOLD = 0.18;
 const WORKLOAD_UNDER_THRESHOLD = 0.08;
 
-// ─── Rescue Modal State ──────────────────────────────────────────────────────
-
-/** Currently displayed rescue result (null when modal is closed) */
-let _rescueResult: RescueResult | null = null;
-/** Which assignment ID the rescue modal is open for */
-let _rescueAssignmentId: string | null = null;
-/** Current rescue page (0-based) */
-let _rescuePage = 0;
-/** Escape key handler for rescue modal (stored for cleanup) */
-let _rescueEscHandler: ((e: KeyboardEvent) => void) | null = null;
-
 // ─── Manual Build Mode State ────────────────────────────────────────────────
 
 let _manualBuildActive = false;
@@ -258,34 +254,6 @@ function clearManualSelection(): void {
   _manualSelectedTaskId = null;
   _manualSelectedSlotId = null;
   _eligibleForSelectedSlot = null;
-}
-
-// ─── Formatting Helpers (app-local) ──────────────────────────────────────────
-
-function fmtDate(d: Date): string {
-  return hebrewDayName(d) + ' ' + fmt(d);
-}
-
-function fmtDayShort(d: Date): string {
-  return 'יום ' + hebrewDayName(d);
-}
-
-function parseTimeInput(timeValue: string): { hours: number; minutes: number } | null {
-  const match = /^(\d{2}):(\d{2})$/.exec(timeValue.trim());
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
-  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
-  return { hours, minutes };
-}
-
-function resolveLogicalDayTimestamp(dayIndex: number, timeValue: string): Date | null {
-  const parsed = parseTimeInput(timeValue);
-  if (!parsed) return null;
-  const base = store.getScheduleDate();
-  const dayOffset = parsed.hours < store.getDayStartHour() ? dayIndex : dayIndex - 1;
-  return new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayOffset, parsed.hours, parsed.minutes, 0, 0);
 }
 
 function renderAvailabilityInspectorInline(): string {
@@ -344,108 +312,6 @@ function renderAvailabilityStrip(): string {
 
   html += `</div></div>`;
   return html;
-}
-
-function statusBadge(status: AssignmentStatus): string {
-  const colors: Record<string, string> = {
-    Scheduled: '#27ae60',
-    Locked: '#2980b9',
-    Manual: '#f39c12',
-    Conflict: '#e74c3c',
-    Frozen: '#00bcd4',
-  };
-  const labels: Record<string, string> = {
-    Scheduled: 'משובץ',
-    Locked: 'נעול',
-    Manual: 'ידני',
-    Conflict: 'התנגשות',
-    Frozen: 'מוקפא',
-  };
-  return `<span class="badge badge-sm" style="background:${colors[status] || '#7f8c8d'}">${labels[status] || status}</span>`;
-}
-
-// ─── Violation Code → Hebrew Label ──────────────────────────────────────────
-
-const violationCodeLabels: Record<string, string> = {
-  SLOT_NOT_FOUND: 'משבצת חסרה',
-  LEVEL_MISMATCH: 'אי-התאמת דרגה',
-  CERT_MISSING: 'הסמכה חסרה',
-  AVAILABILITY_VIOLATION: 'חוסר זמינות',
-  GROUP_MISMATCH: 'ערבוב קבוצות',
-  EXCLUDED_CERTIFICATION: 'הסמכה אסורה',
-  DOUBLE_BOOKING: 'שיבוץ כפול',
-  SLOT_UNFILLED: 'משבצת ריקה',
-  SLOT_OVERBOOKED: 'עודף שיבוצים',
-  DUPLICATE_IN_TASK: 'משתתף כפול במשימה',
-  GROUP_INSUFFICIENT: 'קבוצה לא מספקת',
-  CONSECUTIVE_HIGH_LOAD: 'עומס רצוף',
-  CATEGORY_BREAK_VIOLATION: 'הפסקה לא מספקת',
-  PARTICIPANT_NOT_FOUND: 'משתתף לא נמצא',
-  INFEASIBLE_SLOT: 'שיבוץ בלתי אפשרי',
-  SENIOR_HARD_BLOCK: 'חסימת סגל',
-  SENIOR_IN_JUNIOR_PREFERRED: 'סגל בכיר במשימת צעירים',
-  LESS_PREFERRED_ASSIGNMENT: 'משימה לא מועדפת',
-  PREFERRED_TYPE_UNAVAILABLE: 'סוג מועדף לא קיים',
-  PREFERRED_NOT_SATISFIED: 'העדפה לא מומשה',
-};
-
-function violationLabel(code: string): string {
-  return violationCodeLabels[code] || code;
-}
-
-// ─── Day Window Helpers ──────────────────────────────────────────────────────
-
-/**
- * Filter out violations whose constraint code has been disabled by the user
- * in the Algorithm Settings panel.  This is a UI-only safety net; the engine
- * should already omit them, but we guard the display layer too.
- */
-function filterVisibleViolations(violations: ConstraintViolation[]): ConstraintViolation[] {
-  const disabledHC = store.getDisabledHCSet();
-  if (disabledHC.size === 0) return violations;
-  return violations.filter((v) => !disabledHC.has(v.code));
-}
-
-/**
- * Returns {start, end} for the 24h window of a given day index (1-based).
- * Window runs from 05:00 on day d to 05:00 on day d+1.
- */
-function getDayWindow(dayIndex: number): { start: Date; end: Date } {
-  const base = store.getScheduleDate();
-  const start = new Date(
-    base.getFullYear(),
-    base.getMonth(),
-    base.getDate() + dayIndex - 1,
-    store.getDayStartHour(),
-    0,
-  );
-  const end = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex, store.getDayStartHour(), 0);
-  return { start, end };
-}
-
-/**
- * Does a task intersect (partially or fully) with a given day window?
- */
-function taskIntersectsDay(task: Task, dayIndex: number): boolean {
-  const { start, end } = getDayWindow(dayIndex);
-  return task.timeBlock.start.getTime() < end.getTime() && task.timeBlock.end.getTime() > start.getTime();
-}
-
-/**
- * Does a task start before this day window (i.e. it's a continuation from
- * the previous day)?
- */
-function taskStartsBefore(task: Task, dayIndex: number): boolean {
-  const { start } = getDayWindow(dayIndex);
-  return task.timeBlock.start.getTime() < start.getTime();
-}
-
-/**
- * Does a task end after this day window (i.e. continues into the next day)?
- */
-function taskEndsAfter(task: Task, dayIndex: number): boolean {
-  const { end } = getDayWindow(dayIndex);
-  return task.timeBlock.end.getTime() > end.getTime();
 }
 
 // ─── Template → Task Conversion ──────────────────────────────────────────────
@@ -630,49 +496,6 @@ function getFilteredTasks(schedule: Schedule): Task[] {
 function getFilteredAssignments(schedule: Schedule): Assignment[] {
   const filteredTaskIds = new Set(getFilteredTasks(schedule).map((t) => t.id));
   return schedule.assignments.filter((a) => filteredTaskIds.has(a.taskId));
-}
-
-/**
- * Compute per-day raw clock hours for a participant.
- * Returns a Map<dayIndex, hours> for days 1..numDays.
- *
- * Intentionally uses raw (un-weighted) hours — this measures how many
- * hours of the day the participant is physically occupied, regardless
- * of load weighting. For weighted effort see computeTaskBreakdown()
- * and computeTaskEffectiveHours().
- */
-function computePerDayHours(
-  participantId: string,
-  schedule: Schedule,
-  taskMap?: Map<string, Task>,
-): Map<number, number> {
-  const numDays = store.getScheduleDays();
-  const result = new Map<number, number>();
-  for (let d = 1; d <= numDays; d++) result.set(d, 0);
-
-  const tMap = taskMap ?? new Map<string, Task>(schedule.tasks.map((t) => [t.id, t]));
-
-  for (const a of schedule.assignments) {
-    if (a.participantId !== participantId) continue;
-    const task = tMap.get(a.taskId);
-    if (!task) continue;
-
-    // Light tasks (Karovit) contribute 0 hours — only heavy tasks count
-    if (task.isLight) continue;
-
-    // Attribute hours to the day the task starts in
-    for (let d = 1; d <= numDays; d++) {
-      if (taskIntersectsDay(task, d)) {
-        // For cross-day tasks, split proportionally
-        const { start: winStart, end: winEnd } = getDayWindow(d);
-        const overlapStart = Math.max(task.timeBlock.start.getTime(), winStart.getTime());
-        const overlapEnd = Math.min(task.timeBlock.end.getTime(), winEnd.getTime());
-        const overlapHrs = Math.max(0, (overlapEnd - overlapStart) / 3600000);
-        result.set(d, (result.get(d) || 0) + overlapHrs);
-      }
-    }
-  }
-  return result;
 }
 
 // ─── Day Navigator ───────────────────────────────────────────────────────────
@@ -2369,502 +2192,7 @@ async function handleProfileSos(assignmentId: string): Promise<void> {
   openRescueModal(assignmentId);
 }
 
-function openRescueModal(assignmentId: string): void {
-  if (!currentSchedule) return;
-  const assignment = currentSchedule.assignments.find((a) => a.id === assignmentId);
-  if (!assignment) return;
-  const task = currentSchedule.tasks.find((t) => t.id === assignment.taskId);
-  if (!task) return;
-
-  const liveMode = store.getLiveModeState();
-
-  const request: RescueRequest = {
-    vacatedAssignmentId: assignmentId,
-    taskId: task.id,
-    slotId: assignment.slotId,
-    vacatedBy: assignment.participantId,
-  };
-
-  _rescuePage = 0;
-  _rescueAssignmentId = assignmentId;
-  _rescueResult = generateRescuePlans(
-    currentSchedule,
-    request,
-    liveMode.currentTimestamp,
-    _rescuePage,
-    undefined,
-    store.getDisabledHCSet(),
-    store.buildRestRuleMap(),
-    store.getDayStartHour(),
-  );
-  showRescueModal();
-}
-
-function showRescueModal(): void {
-  // Remove any existing modal
-  document.getElementById('rescue-modal-backdrop')?.remove();
-
-  if (!_rescueResult || !currentSchedule) return;
-
-  const pMap = new Map<string, Participant>();
-  for (const p of currentSchedule.participants) pMap.set(p.id, p);
-  const taskMap = new Map<string, Task>();
-  for (const t of currentSchedule.tasks) taskMap.set(t.id, t);
-
-  const { request, plans, hasMore } = _rescueResult;
-  const vacatedP = pMap.get(request.vacatedBy);
-  const task = taskMap.get(request.taskId) || null;
-
-  let html = `<div id="rescue-modal-backdrop" class="rescue-backdrop">
-    <div class="rescue-modal">
-      <div class="rescue-header">
-        <h3>🆘 תוכניות החלפה</h3>
-        <button class="rescue-close" id="btn-rescue-close">✕</button>
-      </div>
-      <div class="rescue-context">
-        <p>משבצת שהתפנתה על ידי <strong>${vacatedP?.name || '???'}</strong> ב-
-        <strong>${stripDayPrefix(task?.name || '???')}</strong></p>
-      </div>
-      <div class="rescue-plans">`;
-
-  if (plans.length === 0) {
-    html += `<div class="rescue-empty">לא נמצאו תוכניות החלפה מתאימות.</div>`;
-  }
-
-  for (const plan of plans) {
-    const isRecommended = plan.rank === 1;
-    const hasViolations = plan.violations && plan.violations.length > 0;
-
-    // Quality tier from impact score
-    const qualityTier = plan.impactScore < 3 ? 'excellent' : plan.impactScore < 7 ? 'fair' : 'significant';
-    const qualityLabel = qualityTier === 'excellent' ? 'מצוין' : qualityTier === 'fair' ? 'סביר' : 'משמעותי';
-
-    // Swap count label — friendly wording
-    const swapLabel = plan.swaps.length === 1 ? 'החלפה ישירה' : `שרשרת של ${plan.swaps.length}`;
-
-    html += `<div class="rescue-plan${isRecommended ? ' rescue-plan--recommended' : ''}" data-plan-id="${plan.id}">
-      <div class="rescue-plan-header">
-        <span class="rescue-rank">#${plan.rank}${isRecommended ? ' <span class="rescue-recommended-tag">מומלץ ✓</span>' : ''}</span>
-        <span class="rescue-quality rescue-quality--${qualityTier}">● ${qualityLabel}</span>
-        <span class="rescue-swaps">${swapLabel}</span>
-        ${hasViolations ? `<span class="rescue-violations-badge" title="${plan.violations!.length} הפרות אילוצים">⚠️</span>` : ''}
-      </div>`;
-
-    // Build swap steps as plain-language list
-    let stepsHtml = `<ol class="rescue-steps">`;
-    for (let i = 0; i < plan.swaps.length; i++) {
-      const sw = plan.swaps[i];
-      const swP = pMap.get(sw.toParticipantId);
-      const fromP = pMap.get(sw.fromParticipantId || '');
-      const assignedSpan = `<span class="rescue-participant-hover" data-pid="${sw.toParticipantId}" data-plan-id="${plan.id}"><strong>${swP?.name || '???'}</strong></span>`;
-      const fromSpan = fromP
-        ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${fromP.name}</span>`
-        : '';
-
-      if (plan.swaps.length === 1) {
-        // Direct swap: natural sentence
-        stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${stripDayPrefix(sw.taskName)}</strong> (${sw.slotLabel})</li>`;
-      } else {
-        // Chain swap: arrow style. Arrow points ← (left) to match the RTL
-        // reading flow — the participant on the right flows into the task on
-        // the left. LRI/PDI isolates have no visible effect on Hebrew-text
-        // content, so we flip the arrow character instead.
-        stepsHtml += `<li>${assignedSpan} ← <strong>${stripDayPrefix(sw.taskName)}</strong> (${sw.slotLabel})${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
-      }
-    }
-    stepsHtml += `</ol>`;
-
-    // Violations section
-    let violationsHtml = '';
-    if (hasViolations) {
-      violationsHtml = `<div class="rescue-violations-warning">
-        <span class="rescue-violations-icon">⚠️</span>
-        <span>${plan.violations!.length} הפרות אילוצים</span>
-        <details class="rescue-violations-details">
-          <summary>הצג פרטים</summary>
-          <ul>`;
-      for (const v of plan.violations!) {
-        violationsHtml += `<li><code>${violationLabel(v.code)}</code> — ${v.message}</li>`;
-      }
-      violationsHtml += `</ul></details></div>`;
-    }
-
-    // Plan #1: expanded by default. Others: collapsed.
-    if (isRecommended) {
-      html += `<div class="rescue-plan-details">
-        ${stepsHtml}
-        ${violationsHtml}
-      </div>`;
-    } else {
-      html += `<details class="rescue-plan-details rescue-plan-collapsible">
-        <summary class="rescue-plan-expand">הצג פרטים</summary>
-        ${stepsHtml}
-        ${violationsHtml}
-      </details>`;
-    }
-
-    html += `<button class="btn-apply-plan${hasViolations ? ' btn-apply-plan--warn' : ''}" data-plan-id="${plan.id}">${hasViolations ? '⚠️ החל תוכנית (יש הפרות)' : '✅ החל תוכנית'}</button>
-    </div>`;
-  }
-
-  html += `</div>
-    <div class="rescue-footer">
-      ${hasMore ? `<button class="btn-rescue-more" id="btn-rescue-more">הצג אפשרויות נוספות</button>` : ''}
-      <button class="btn-rescue-dismiss" id="btn-rescue-dismiss">סגור</button>
-    </div>
-    </div></div>`;
-
-  document.body.insertAdjacentHTML('beforeend', html);
-  wireRescueModalEvents();
-}
-
-/** Strip D-prefix (e.g. "D1 ממטרה" → "ממטרה") from task names in the rescue modal. */
-function stripDayPrefix(name: string): string {
-  return name.replace(/^D\d+\s+/, '');
-}
-
-// ─── Rescue Tooltip: Next-3-Tasks Preview ────────────────────────────────────
-
-let _rescueTooltipEl: HTMLElement | null = null;
-let _rescueTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
-
-function getRescueTooltipEl(): HTMLElement {
-  if (_rescueTooltipEl) return _rescueTooltipEl;
-  const el = document.createElement('div');
-  el.className = 'rescue-hover-tt';
-  el.style.display = 'none';
-  document.body.appendChild(el);
-  el.addEventListener('mouseenter', () => {
-    if (_rescueTooltipHideTimer) {
-      clearTimeout(_rescueTooltipHideTimer);
-      _rescueTooltipHideTimer = null;
-    }
-  });
-  el.addEventListener('mouseleave', () => {
-    el.style.display = 'none';
-  });
-  _rescueTooltipEl = el;
-  return el;
-}
-
-/**
- * Compute the next 3 tasks a participant would have after applying a plan's swaps.
- * Uses the vacated task's start as the "now" anchor so it works for future schedules.
- */
-function computePostSwapTasks(
-  participantId: string,
-  plan: RescuePlan,
-  schedule: Schedule,
-  referenceTaskId: string,
-): Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> {
-  const taskMap = new Map<string, Task>();
-  for (const t of schedule.tasks) taskMap.set(t.id, t);
-
-  // Start with the participant's current task IDs (assignment → taskId)
-  // Build a set of assignment IDs this participant currently holds
-  const myAssignmentTaskIds = new Map<string, string>(); // assignmentId → taskId
-  for (const a of schedule.assignments) {
-    if (a.participantId === participantId) {
-      myAssignmentTaskIds.set(a.id, a.taskId);
-    }
-  }
-
-  // Apply the plan's swaps
-  for (const sw of plan.swaps) {
-    // If participant is being moved OUT of an assignment
-    if (sw.fromParticipantId === participantId) {
-      myAssignmentTaskIds.delete(sw.assignmentId);
-    }
-    // If participant is being moved IN to an assignment
-    if (sw.toParticipantId === participantId) {
-      myAssignmentTaskIds.set(sw.assignmentId, sw.taskId);
-    }
-  }
-
-  // Resolve to task objects with time info, tracking which is the reference task
-  const tasks: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> = [];
-  for (const [, taskId] of myAssignmentTaskIds) {
-    const task = taskMap.get(taskId);
-    if (!task) continue;
-    tasks.push({
-      taskName: task.name,
-      start: task.timeBlock.start,
-      end: task.timeBlock.end,
-      isReference: taskId === referenceTaskId,
-    });
-  }
-
-  // Sort by start time ascending
-  tasks.sort((a, b) => a.start.getTime() - b.start.getTime());
-
-  // Find the reference task index; fall back to earliest swap task
-  let refIdx = tasks.findIndex((t) => t.isReference);
-  if (refIdx === -1) {
-    // Fallback: find the earliest swap task's start time
-    let anchorTime = Infinity;
-    for (const sw of plan.swaps) {
-      const task = taskMap.get(sw.taskId);
-      if (task) {
-        const t = task.timeBlock.start.getTime();
-        if (t < anchorTime) anchorTime = t;
-      }
-    }
-    if (anchorTime !== Infinity) {
-      refIdx = tasks.findIndex((t) => t.start.getTime() >= anchorTime);
-    }
-    if (refIdx === -1) refIdx = 0;
-  }
-
-  // Return 2 before + reference + 2 after
-  const startIdx = Math.max(0, refIdx - 2);
-  const endIdx = Math.min(tasks.length, refIdx + 3);
-  return tasks.slice(startIdx, endIdx);
-}
-
-/** Build HTML content for the rescue participant hover tooltip. */
-function buildRescueParticipantTooltip(
-  participantName: string,
-  nextTasks: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }>,
-): string {
-  let html = `<div class="rescue-hover-tt-header">${participantName} — משימות סביב המשבצת אם יוחל</div>`;
-  if (nextTasks.length === 0) {
-    html += `<div class="rescue-hover-tt-empty">אין משימות קרובות</div>`;
-  } else {
-    for (let i = 0; i < nextTasks.length; i++) {
-      const t = nextTasks[i];
-      const dayStr = 'יום ' + hebrewDayName(t.start);
-      const timeStr = `<span dir="ltr">${fmt(t.start)} – ${fmt(t.end)}</span>`;
-      const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
-      const refMarker = t.isReference ? ' ◄' : '';
-      html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${stripDayPrefix(t.taskName)}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
-    }
-  }
-  return html;
-}
-
-function wireRescueModalEvents(): void {
-  const backdrop = document.getElementById('rescue-modal-backdrop');
-  if (!backdrop) return;
-
-  // Close button
-  backdrop.querySelector('#btn-rescue-close')?.addEventListener('click', closeRescueModal);
-  backdrop.querySelector('#btn-rescue-dismiss')?.addEventListener('click', closeRescueModal);
-
-  // Click backdrop to close
-  backdrop.addEventListener('click', (e) => {
-    if (e.target === backdrop) closeRescueModal();
-  });
-
-  // Escape key to close
-  if (_rescueEscHandler) document.removeEventListener('keydown', _rescueEscHandler);
-  _rescueEscHandler = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') closeRescueModal();
-  };
-  document.addEventListener('keydown', _rescueEscHandler);
-
-  // Show More — request all plans up to the next page boundary in one shot
-  // to avoid duplicates from re-generation (engine is stateless).
-  backdrop.querySelector('#btn-rescue-more')?.addEventListener('click', () => {
-    if (!currentSchedule || !_rescueResult) return;
-    _rescuePage++;
-    const liveMode = store.getLiveModeState();
-    const wantTotal = (_rescuePage + 1) * 3; // PAGE_SIZE = 3
-    const result = generateRescuePlans(
-      currentSchedule,
-      _rescueResult.request,
-      liveMode.currentTimestamp,
-      0,
-      wantTotal,
-      store.getDisabledHCSet(),
-      store.buildRestRuleMap(),
-      store.getDayStartHour(),
-    );
-    // Ranks are already sequential from the engine (1-based per returned plan)
-    _rescueResult = result;
-    showRescueModal();
-  });
-
-  // Apply plan buttons
-  backdrop.querySelectorAll('.btn-apply-plan').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      const planId = (e.target as HTMLElement).dataset.planId;
-      if (!planId || !_rescueResult || !currentSchedule || !engine) return;
-      const plan = _rescueResult.plans.find((p) => p.id === planId);
-      if (!plan) return;
-      applyRescuePlan(plan);
-    });
-  });
-
-  // Rescue participant hover tooltip — show next 3 tasks if plan applied
-  const pMap = new Map<string, Participant>();
-  if (currentSchedule) {
-    for (const p of currentSchedule.participants) pMap.set(p.id, p);
-  }
-
-  if (isTouchDevice) {
-    // ── Touch: tap toggles inline task preview ──
-    let _expandedRescuePid: string | null = null;
-
-    backdrop.addEventListener('click', (e) => {
-      const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
-      if (!target) return;
-      const pid = target.dataset.pid;
-      const planId = target.dataset.planId;
-      if (!pid || !planId || !_rescueResult || !currentSchedule) return;
-
-      // Remove any existing inline preview
-      const existing = backdrop.querySelector('.rescue-inline-preview');
-      if (existing) existing.remove();
-
-      if (_expandedRescuePid === pid) {
-        _expandedRescuePid = null;
-        return;
-      }
-
-      const plan = _rescueResult.plans.find((p) => p.id === planId);
-      if (!plan) return;
-      const participant = pMap.get(pid);
-      if (!participant) return;
-
-      _expandedRescuePid = pid;
-      const nextTasks = computePostSwapTasks(pid, plan, currentSchedule, _rescueResult.request.taskId);
-      const detail = document.createElement('div');
-      detail.className = 'rescue-inline-preview task-inline-detail';
-      detail.innerHTML = buildRescueParticipantTooltip(participant.name, nextTasks);
-      target.insertAdjacentElement('afterend', detail);
-    });
-  } else {
-    // ── Desktop: hover shows fixed tooltip ──
-    backdrop.addEventListener('mouseover', (e) => {
-      const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
-      if (!target) return;
-      const pid = target.dataset.pid;
-      const planId = target.dataset.planId;
-      if (!pid || !planId || !_rescueResult || !currentSchedule) return;
-
-      const plan = _rescueResult.plans.find((p) => p.id === planId);
-      if (!plan) return;
-      const participant = pMap.get(pid);
-      if (!participant) return;
-
-      if (_rescueTooltipHideTimer) {
-        clearTimeout(_rescueTooltipHideTimer);
-        _rescueTooltipHideTimer = null;
-      }
-
-      const nextTasks = computePostSwapTasks(pid, plan, currentSchedule, _rescueResult.request.taskId);
-      const tooltip = getRescueTooltipEl();
-      tooltip.innerHTML = buildRescueParticipantTooltip(participant.name, nextTasks);
-      tooltip.style.display = 'block';
-
-      // Position near the target element
-      const rect = target.getBoundingClientRect();
-      let left = rect.right + 8;
-      let top = rect.top - 4;
-
-      const ttWidth = 260;
-      const ttHeight = tooltip.offsetHeight || 140;
-      if (left + ttWidth > window.innerWidth) {
-        left = rect.left - ttWidth - 8;
-      }
-      if (top + ttHeight > window.innerHeight) {
-        top = window.innerHeight - ttHeight - 8;
-      }
-      if (top < 4) top = 4;
-
-      tooltip.style.left = `${left}px`;
-      tooltip.style.top = `${top}px`;
-    });
-
-    backdrop.addEventListener('mouseout', (e) => {
-      const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
-      if (!target) return;
-      _rescueTooltipHideTimer = setTimeout(() => {
-        const tooltip = getRescueTooltipEl();
-        tooltip.style.display = 'none';
-      }, 120);
-    });
-  }
-}
-
-function showRescueError(message: string): void {
-  const errorBanner = document.createElement('div');
-  errorBanner.className = 'rescue-error-banner';
-  errorBanner.innerHTML = `<span>${escHtml(message)}</span>
-    <button class="rescue-error-dismiss">✕</button>`;
-  errorBanner.querySelector('.rescue-error-dismiss')?.addEventListener('click', () => errorBanner.remove());
-  const modal = document.querySelector('.rescue-modal');
-  if (modal) {
-    modal.insertBefore(errorBanner, modal.firstChild);
-  }
-}
-
-function applyRescuePlan(plan: RescuePlan): void {
-  if (!currentSchedule || !engine) return;
-
-  // Staleness check: verify all assignments still match the expected state
-  for (const sw of plan.swaps) {
-    const a = currentSchedule.assignments.find((a) => a.id === sw.assignmentId);
-    if (!a) {
-      showRescueError('תוכנית ההחלפה מיושנת — השיבוץ לא נמצא. נסו שוב.');
-      return;
-    }
-    if (a.participantId !== sw.fromParticipantId) {
-      showRescueError('תוכנית ההחלפה מיושנת — המשתתף השתנה. נסו שוב.');
-      return;
-    }
-    if (a.status === AssignmentStatus.Frozen) {
-      showRescueError('תוכנית ההחלפה מיושנת — השיבוץ קפוא. נסו שוב.');
-      return;
-    }
-  }
-
-  // Apply all swaps atomically via the chain method
-  const requests = plan.swaps.map((sw) => ({
-    assignmentId: sw.assignmentId,
-    newParticipantId: sw.toParticipantId,
-  }));
-  const result = engine.swapParticipantChain(requests);
-  const updated = engine.getSchedule();
-
-  if (!updated || !result.valid) {
-    console.warn('[Rescue] Chain swap failed:', result.violations);
-    showRescueError('תוכנית ההחלפה לא יושמה בהצלחה — בוצע שחזור למצב הקודם.');
-    revalidateAndRefresh();
-    return;
-  }
-
-  currentSchedule = updated;
-  closeRescueModal();
-  revalidateAndRefresh();
-}
-
-function closeRescueModal(): void {
-  document.getElementById('rescue-modal-backdrop')?.remove();
-  _rescueResult = null;
-  _rescueAssignmentId = null;
-  _rescuePage = 0;
-  // Remove Escape key handler
-  if (_rescueEscHandler) {
-    document.removeEventListener('keydown', _rescueEscHandler);
-    _rescueEscHandler = null;
-  }
-  // Hide rescue tooltip if visible
-  if (_rescueTooltipHideTimer) {
-    clearTimeout(_rescueTooltipHideTimer);
-    _rescueTooltipHideTimer = null;
-  }
-  if (_rescueTooltipEl) _rescueTooltipEl.style.display = 'none';
-}
-
 // ─── Main Render ─────────────────────────────────────────────────────────────
-
-function formatLiveClock(): string {
-  const now = new Date();
-  const date = now.toLocaleDateString('he-IL', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
-  const time = now.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
-  return `${date} · ${time}`;
-}
 
 /**
  * Scroll the schedule grid to the row closest to the current live-mode timestamp.
@@ -2984,7 +2312,7 @@ function renderAll(): void {
         handleProfileSos,
       );
       // Wire task tooltip in profile view too
-      wireTaskTooltip(root);
+      wireTaskTooltip(root, () => currentSchedule);
       return;
     }
   }
@@ -2996,7 +2324,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.8</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.0.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3596,7 +2924,7 @@ function wireScheduleEvents(container: HTMLElement): void {
         navigateToProfile(participantTarget.dataset.pid);
       }
     });
-    wireParticipantTooltip(availStrip);
+    wireParticipantTooltip(availStrip, () => currentSchedule);
   }
 
   // ── Continuity: Export day JSON ──
@@ -3704,10 +3032,10 @@ function wireScheduleEvents(container: HTMLElement): void {
   }
 
   // ── Participant Tooltip (event delegation) ──
-  wireParticipantTooltip(container);
+  wireParticipantTooltip(container, () => currentSchedule);
 
   // ── Task Tooltip (event delegation) ──
-  wireTaskTooltip(container);
+  wireTaskTooltip(container, () => currentSchedule);
 
   // ── Participant click → Profile View (desktop only; touch uses bottom sheet / long-press) ──
   if (!isTouchDevice) {
@@ -4145,20 +3473,6 @@ function wireExportModalEvents(): void {
   });
 }
 
-// ─── Global Participant Tooltip ──────────────────────────────────────────────
-
-let _tooltipEl: HTMLElement | null = null;
-let _tooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Hide the global tooltip immediately (used when switching to profile view). */
-function hideTooltip(): void {
-  if (_tooltipHideTimer) {
-    clearTimeout(_tooltipHideTimer);
-    _tooltipHideTimer = null;
-  }
-  if (_tooltipEl) _tooltipEl.style.display = 'none';
-}
-
 /** Navigate to a participant's profile view from any clickable name. */
 function navigateToProfile(participantId: string): void {
   if (!currentSchedule) return;
@@ -4169,147 +3483,6 @@ function navigateToProfile(participantId: string): void {
   hideTooltip();
   renderAll();
   window.scrollTo(0, 0);
-}
-
-/** Create or return the singleton tooltip DOM element. */
-function getTooltipEl(): HTMLElement {
-  if (_tooltipEl) return _tooltipEl;
-  const el = document.createElement('div');
-  el.className = 'participant-tooltip';
-  el.style.display = 'none';
-  document.body.appendChild(el);
-  // Keep tooltip visible while hovering over the tooltip itself
-  el.addEventListener('mouseenter', () => {
-    if (_tooltipHideTimer) {
-      clearTimeout(_tooltipHideTimer);
-      _tooltipHideTimer = null;
-    }
-  });
-  el.addEventListener('mouseleave', () => {
-    el.style.display = 'none';
-  });
-
-  // Delegate action button clicks (swap/lock/rescue) inside the tooltip
-  el.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button') as HTMLElement | null;
-    if (!btn) return;
-    const assignmentId = btn.dataset.assignmentId;
-    if (!assignmentId) return;
-    e.stopPropagation(); // prevent navigateToProfile from triggering
-    el.style.display = 'none'; // hide tooltip immediately
-
-    if (btn.classList.contains('btn-swap')) {
-      handleSwap(assignmentId);
-    } else if (btn.classList.contains('btn-lock')) {
-      handleLock(assignmentId);
-    } else if (btn.classList.contains('btn-rescue')) {
-      openRescueModal(assignmentId);
-    }
-  });
-
-  _tooltipEl = el;
-  return el;
-}
-
-/** Build tooltip HTML content for a participant. */
-function buildParticipantTooltipContent(
-  p: Participant,
-  slotCtx?: { assignmentId: string; taskId: string; isFrozen: boolean; isLocked: boolean } | null,
-): string {
-  // Workload data
-  const numDays = store.getScheduleDays();
-  const totalPeriodHours = numDays * 24;
-
-  // Build breakdown using shared utility (R1)
-  let bd = {
-    heavyHours: 0,
-    heavyCount: 0,
-    effectiveHeavyHours: 0,
-    hotHours: 0,
-    coldHours: 0,
-    lightHours: 0,
-    lightCount: 0,
-    sourceHours: {} as Record<string, number>,
-    sourceEffectiveHours: {} as Record<string, number>,
-    sourceCounts: {} as Record<string, number>,
-    sourceColors: {} as Record<string, string>,
-  };
-  if (currentSchedule) {
-    const taskMap = new Map<string, Task>();
-    for (const t of currentSchedule.tasks) taskMap.set(t.id, t);
-    const myItems = currentSchedule.assignments
-      .filter((a) => a.participantId === p.id)
-      .map((a) => ({ task: taskMap.get(a.taskId)! }))
-      .filter((x) => x.task);
-    bd = computeTaskBreakdown(myItems);
-  }
-  const {
-    heavyHours,
-    effectiveHeavyHours,
-    heavyCount,
-    lightCount,
-    sourceHours,
-    sourceEffectiveHours,
-    sourceCounts,
-    sourceColors,
-  } = bd;
-
-  // R7: Use effectiveHeavyHours for workload %, consistent with sidebar & profile
-  const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
-
-  const certsHtml =
-    p.certifications.length > 0
-      ? p.certifications
-          .map((c: string) => {
-            return `<span class="tt-cert" style="background:${store.getCertColor(c)}">${escHtml(store.getCertLabel(c))}</span>`;
-          })
-          .join(' ')
-      : '<span class="tt-dim">אין</span>';
-  const pakalHtml = renderPakalBadges(p, store.getAllPakalDefinitionsIncludeDeleted(), 'אין');
-
-  // Build per-task breakdown rows (only show sources with count > 0)
-  const breakdownRows = Object.keys(sourceCounts)
-    .filter((key) => sourceCounts[key] > 0)
-    .map((key) => {
-      const color = sourceColors[key] || '#7f8c8d';
-      return `<div class="tt-row">
-        <span class="tt-label"><span style="color:${color};font-weight:600">${key}</span></span>
-        <span class="tt-value">${sourceCounts[key]}× · ${sourceEffectiveHours[key].toFixed(1)} שע' אפקטיביות</span>
-      </div>`;
-    })
-    .join('');
-
-  // Build action buttons for the Group row (if we have slot context)
-  let actionsHtml = '';
-  if (slotCtx && !slotCtx.isFrozen) {
-    const lm = store.getLiveModeState();
-    actionsHtml = `<span class="tt-actions">
-      <button class="btn-lock ${slotCtx.isLocked ? 'active' : ''}" data-assignment-id="${slotCtx.assignmentId}" title="${slotCtx.isLocked ? 'בטל נעילה' : 'נעל'}">${slotCtx.isLocked ? '🔒' : '🔓'}</button>
-      <button class="btn-swap" data-assignment-id="${slotCtx.assignmentId}" data-task-id="${slotCtx.taskId}" title="החלף">⇄</button>
-      ${lm.enabled ? `<button class="btn-rescue" data-assignment-id="${slotCtx.assignmentId}" title="החלפה">🆘</button>` : ''}
-    </span>`;
-  } else if (slotCtx && slotCtx.isFrozen) {
-    actionsHtml = `<span class="tt-actions"><span class="tt-dim">${SVG_ICONS.snowflake}</span></span>`;
-  }
-
-  return `
-    <div class="tt-header">
-      <span class="tt-name">${p.name}</span>
-      ${actionsHtml}
-      <span class="tt-level" style="background:${LEVEL_COLORS[p.level]}">${p.level}</span>
-    </div>
-    <div class="tt-row"><span class="tt-label">קבוצה</span><span class="tt-value" style="color:${groupColor(p.group)}">${p.group}</span></div>
-    <div class="tt-row"><span class="tt-label">הסמכות</span><span class="tt-value">${certsHtml}</span></div>
-    <div class="tt-row tt-row-wrap"><span class="tt-label">פק"לים</span><span class="tt-value">${pakalHtml}</span></div>
-    <div class="tt-divider"></div>
-    ${breakdownRows}
-    <div class="tt-divider"></div>
-    <div class="tt-row"><span class="tt-label">משימות כבדות</span><span class="tt-value">${heavyCount}</span></div>
-    <div class="tt-row"><span class="tt-label">משימות קלות</span><span class="tt-value">${lightCount}</span></div>
-    <div class="tt-row"><span class="tt-label">סה"כ שעות</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)} שע' אפקטיביות</span></div>
-    <div class="tt-row"><span class="tt-label">% עומס</span><span class="tt-value">${pctOfPeriod.toFixed(1)}% מתוך ${totalPeriodHours} שע'</span></div>
-    ${isTouchDevice ? `<div class="tt-divider"></div><div class="tt-row"><button class="btn-sm btn-outline" data-action="goto-profile" data-pid="${p.id}" style="width:100%">📋 צפה בפרופיל</button></div>` : ''}
-  `;
 }
 
 function hideAvailabilityPopover(): void {
@@ -4460,363 +3633,6 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
   `;
 }
 
-/** Wire event-delegated tooltip for .participant-hover elements. */
-function wireParticipantTooltip(container: HTMLElement): void {
-  if (!currentSchedule) return;
-
-  const pMap = new Map<string, Participant>();
-  for (const p of currentSchedule.participants) pMap.set(p.id, p);
-
-  if (isTouchDevice) {
-    // ── Touch: tap opens bottom sheet with participant info ──
-    let _longPressTimer: ReturnType<typeof setTimeout> | null = null;
-    let _longPressFired = false;
-
-    container.addEventListener(
-      'touchstart',
-      (e) => {
-        const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
-        if (!target) return;
-        _longPressFired = false;
-        _longPressTimer = setTimeout(() => {
-          _longPressFired = true;
-          const pid = target.dataset.pid;
-          if (pid) navigateToProfile(pid);
-        }, 500);
-      },
-      { passive: true },
-    );
-
-    container.addEventListener('touchend', () => {
-      if (_longPressTimer) {
-        clearTimeout(_longPressTimer);
-        _longPressTimer = null;
-      }
-    });
-
-    container.addEventListener(
-      'touchmove',
-      () => {
-        if (_longPressTimer) {
-          clearTimeout(_longPressTimer);
-          _longPressTimer = null;
-        }
-      },
-      { passive: true },
-    );
-
-    container.addEventListener('click', (e) => {
-      if (_longPressFired) {
-        _longPressFired = false;
-        return;
-      }
-      const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
-      if (!target) return;
-      const pid = target.dataset.pid;
-      if (!pid) return;
-      const p = pMap.get(pid);
-      if (!p) return;
-
-      e.stopPropagation(); // prevent navigateToProfile click handler
-
-      const slotCtx = target.dataset.assignmentId
-        ? {
-            assignmentId: target.dataset.assignmentId,
-            taskId: target.dataset.taskId || '',
-            isFrozen: target.dataset.frozen === '1',
-            isLocked: target.dataset.locked === '1',
-          }
-        : null;
-
-      const content = buildParticipantTooltipContent(p, slotCtx);
-      const handle = showBottomSheet(content, {
-        title: p.name,
-        onClose: () => {},
-      });
-
-      // Wire action buttons inside the bottom sheet
-      const sheetBody = document.querySelector('.gm-bs-body');
-      if (sheetBody) {
-        sheetBody.addEventListener('click', (ev) => {
-          const btn = (ev.target as HTMLElement).closest('button') as HTMLElement | null;
-          if (!btn) return;
-          const assignmentId = btn.dataset.assignmentId;
-          if (!assignmentId) return;
-          handle.close();
-          if (btn.classList.contains('btn-swap')) handleSwap(assignmentId);
-          else if (btn.classList.contains('btn-lock')) handleLock(assignmentId);
-          else if (btn.classList.contains('btn-rescue')) openRescueModal(assignmentId);
-        });
-
-        // Wire "view profile" link if participant name is tapped inside sheet
-        sheetBody.addEventListener('click', (ev) => {
-          const profileLink = (ev.target as HTMLElement).closest('[data-action="goto-profile"]') as HTMLElement | null;
-          if (profileLink?.dataset.pid) {
-            handle.close();
-            navigateToProfile(profileLink.dataset.pid);
-          }
-        });
-      }
-    });
-    return;
-  }
-
-  // ── Desktop: hover shows fixed tooltip ──
-  container.addEventListener('mouseover', (e) => {
-    const target = (e.target as HTMLElement).closest('.participant-hover') as HTMLElement | null;
-    if (!target) return;
-    const pid = target.dataset.pid;
-    if (!pid) return;
-    const p = pMap.get(pid);
-    if (!p) return;
-
-    if (_tooltipHideTimer) {
-      clearTimeout(_tooltipHideTimer);
-      _tooltipHideTimer = null;
-    }
-
-    // Build slot context from data attributes on the participant-hover span
-    const slotCtx = target.dataset.assignmentId
-      ? {
-          assignmentId: target.dataset.assignmentId,
-          taskId: target.dataset.taskId || '',
-          isFrozen: target.dataset.frozen === '1',
-          isLocked: target.dataset.locked === '1',
-        }
-      : null;
-
-    const tooltip = getTooltipEl();
-    tooltip.innerHTML = buildParticipantTooltipContent(p, slotCtx);
-    tooltip.style.display = 'block';
-
-    // Position near the target
-    const rect = target.getBoundingClientRect();
-    let left = rect.right + 8;
-    let top = rect.top - 4;
-
-    // Clamp to viewport
-    const ttWidth = 280;
-    const ttHeight = 260;
-    if (left + ttWidth > window.innerWidth) {
-      left = rect.left - ttWidth - 8;
-    }
-    if (top + ttHeight > window.innerHeight) {
-      top = window.innerHeight - ttHeight - 8;
-    }
-    if (top < 4) top = 4;
-
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${top}px`;
-  });
-
-  container.addEventListener('mouseout', (e) => {
-    const target = (e.target as HTMLElement).closest('.participant-hover') as HTMLElement | null;
-    if (!target) return;
-    // Delay hide so user can hover onto the tooltip itself
-    _tooltipHideTimer = setTimeout(() => {
-      const tooltip = getTooltipEl();
-      tooltip.style.display = 'none';
-    }, 120);
-  });
-}
-
-// ─── Global Task Tooltip ─────────────────────────────────────────────────────
-
-let _taskTooltipEl: HTMLElement | null = null;
-let _taskTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
-
-function hideTaskTooltip(): void {
-  if (_taskTooltipHideTimer) {
-    clearTimeout(_taskTooltipHideTimer);
-    _taskTooltipHideTimer = null;
-  }
-  if (_taskTooltipEl) _taskTooltipEl.style.display = 'none';
-}
-
-function getTaskTooltipEl(): HTMLElement {
-  if (_taskTooltipEl) return _taskTooltipEl;
-  const el = document.createElement('div');
-  el.className = 'task-detail-tooltip';
-  el.style.display = 'none';
-  document.body.appendChild(el);
-  el.addEventListener('mouseenter', () => {
-    if (_taskTooltipHideTimer) {
-      clearTimeout(_taskTooltipHideTimer);
-      _taskTooltipHideTimer = null;
-    }
-  });
-  el.addEventListener('mouseleave', () => {
-    el.style.display = 'none';
-  });
-  _taskTooltipEl = el;
-  return el;
-}
-
-/** Build rich tooltip HTML for a task showing time, name, type, and all teammates. */
-function buildTaskTooltipContent(taskId: string): string {
-  if (!currentSchedule) return '';
-  const taskMap = new Map<string, Task>();
-  for (const t of currentSchedule.tasks) taskMap.set(t.id, t);
-  const task = taskMap.get(taskId);
-  if (!task) return '';
-
-  const pMap = new Map<string, Participant>();
-  for (const p of currentSchedule.participants) pMap.set(p.id, p);
-
-  const taskColor = task.color || '#7f8c8d';
-  const startStr = fmt(task.timeBlock.start);
-  const endStr = fmt(task.timeBlock.end);
-  const hrs = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
-
-  // Find all assignments for this task
-  const taskAssignments = currentSchedule.assignments.filter((a) => a.taskId === taskId);
-
-  // Build teammates list
-  let teammatesHtml = '';
-  if (taskAssignments.length === 0) {
-    teammatesHtml = '<div class="ttt-empty">אין שיבוצים</div>';
-  } else {
-    teammatesHtml = '<div class="ttt-teammates">';
-    for (const a of taskAssignments) {
-      const p = pMap.get(a.participantId);
-      if (!p) continue;
-      const slot = task.slots.find((s) => s.slotId === a.slotId);
-      const levelColors = ['#95a5a6', '#3498db', '#2ecc71', '#e67e22', '#e74c3c'];
-      const certsHtml =
-        p.certifications.length > 0
-          ? p.certifications
-              .map(
-                (c) =>
-                  `<span class="ttt-cert" style="background:${store.getCertColor(c)}">${escHtml(store.getCertLabel(c))}</span>`,
-              )
-              .join('')
-          : '';
-      teammatesHtml += `<div class="ttt-mate">
-        <div class="ttt-mate-main">
-          <span class="ttt-mate-name">${p.name}</span>
-          <span class="ttt-mate-level" style="background:${levelColors[p.level]}">${p.level}</span>
-        </div>
-        <div class="ttt-mate-meta">
-          ${slot ? `<span class="ttt-slot">${slot.label || task.name}</span>` : ''}
-          ${certsHtml}
-        </div>
-      </div>`;
-    }
-    teammatesHtml += '</div>';
-  }
-
-  return `
-    <div class="ttt-header">
-      <span class="ttt-task-name" style="border-inline-start:3px solid ${taskColor};padding-inline-start:8px">${task.name}</span>
-      <span class="badge badge-sm" style="background:${taskColor}">${task.sourceName || task.name}</span>
-      ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
-    </div>
-    <div class="ttt-time">
-      <span dir="ltr">${startStr} – ${endStr}</span>
-      <span class="ttt-dur">${hrs.toFixed(1)} שע'</span>
-    </div>
-    <div class="ttt-divider"></div>
-    <div class="ttt-section-label">צוות משמרת (${taskAssignments.length})</div>
-    ${teammatesHtml}
-  `;
-}
-
-/** Wire event-delegated tooltip for .task-tooltip-hover elements. */
-function wireTaskTooltip(container: HTMLElement): void {
-  if (!currentSchedule) return;
-
-  if (isTouchDevice) {
-    // ── Touch: tap toggles inline detail panel ──
-    let _expandedTaskId: string | null = null;
-
-    container.addEventListener('click', (e) => {
-      const target = (e.target as HTMLElement).closest('.task-tooltip-hover[data-task-id]') as HTMLElement | null;
-      if (!target) return;
-      const taskId = target.dataset.taskId;
-      if (!taskId) return;
-
-      // Remove any existing inline detail
-      const existing = container.querySelector('.task-inline-detail');
-      if (existing) existing.remove();
-
-      // If same task tapped again, just collapse
-      if (_expandedTaskId === taskId) {
-        _expandedTaskId = null;
-        return;
-      }
-
-      const content = buildTaskTooltipContent(taskId);
-      if (!content) return;
-
-      _expandedTaskId = taskId;
-      const detail = document.createElement('div');
-      detail.className = 'task-inline-detail';
-      detail.innerHTML = content;
-      target.insertAdjacentElement('afterend', detail);
-    });
-
-    // Dismiss when tapping outside a task-tooltip-hover
-    container.addEventListener('click', (e) => {
-      const target = (e.target as HTMLElement).closest('.task-tooltip-hover[data-task-id]');
-      if (target) return; // handled above
-      const existing = container.querySelector('.task-inline-detail');
-      if (existing) {
-        existing.remove();
-        _expandedTaskId = null;
-      }
-    });
-    return;
-  }
-
-  // ── Desktop: hover shows fixed tooltip ──
-  container.addEventListener('mouseover', (e) => {
-    const target = (e.target as HTMLElement).closest('.task-tooltip-hover[data-task-id]') as HTMLElement | null;
-    if (!target) return;
-    const taskId = target.dataset.taskId;
-    if (!taskId) return;
-
-    if (_taskTooltipHideTimer) {
-      clearTimeout(_taskTooltipHideTimer);
-      _taskTooltipHideTimer = null;
-    }
-
-    const content = buildTaskTooltipContent(taskId);
-    if (!content) return;
-
-    const tooltip = getTaskTooltipEl();
-    tooltip.innerHTML = content;
-    tooltip.style.display = 'block';
-
-    // Position near the target
-    const rect = target.getBoundingClientRect();
-    let left = rect.right + 8;
-    let top = rect.top - 4;
-
-    // Clamp to viewport
-    const ttWidth = 310;
-    const ttHeight = tooltip.offsetHeight || 200;
-    if (left + ttWidth > window.innerWidth) {
-      left = rect.left - ttWidth - 8;
-    }
-    if (top + ttHeight > window.innerHeight) {
-      top = window.innerHeight - ttHeight - 8;
-    }
-    if (top < 4) top = 4;
-
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${top}px`;
-  });
-
-  container.addEventListener('mouseout', (e) => {
-    const target = (e.target as HTMLElement).closest('.task-tooltip-hover[data-task-id]') as HTMLElement | null;
-    if (!target) return;
-    _taskTooltipHideTimer = setTimeout(() => {
-      const tooltip = getTaskTooltipEl();
-      tooltip.style.display = 'none';
-    }, 150);
-  });
-}
-
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 /**
@@ -4940,6 +3756,27 @@ function init(): void {
   try {
     // Set .touch-device / .pointer-device on <html> before first render
     initResponsive();
+
+    // Initialize tooltip callbacks before first render
+    initTooltips({
+      onSwap: handleSwap,
+      onLock: handleLock,
+      onRescue: openRescueModal,
+      onNavigateToProfile: navigateToProfile,
+    });
+
+    // Initialize rescue modal callbacks
+    initRescue({
+      getSchedule: () => currentSchedule,
+      getEngine: () => engine,
+      onPlanApplied: (updatedSchedule) => {
+        currentSchedule = updatedSchedule;
+        revalidateAndRefresh();
+      },
+      onPlanFailed: () => {
+        revalidateAndRefresh();
+      },
+    });
 
     // Apply saved theme before first render to prevent flash
     applyTheme(getStoredTheme());
