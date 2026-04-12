@@ -2,7 +2,7 @@
 
 ## Project Shape
 
-- Repo root: `GardenManager/`
+- Repo root: `./` (this directory)
 - Stack: TypeScript, Vite web app, Electron wrapper, Playwright E2E, Biome for lint/format
 - UI language is Hebrew, so preserve RTL behavior and text encoding when touching labels or layout
 
