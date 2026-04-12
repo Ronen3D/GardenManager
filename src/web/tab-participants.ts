@@ -1433,7 +1433,17 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
           });
           if (okRm) {
             store.removeParticipant(pid);
-            showToast(`${p.name} הוסר/ה`, { type: 'success' });
+            showToast(`${p.name} הוסר/ה`, {
+              type: 'success',
+              duration: 6000,
+              action: {
+                label: 'בטל',
+                callback: () => {
+                  store.undo();
+                  rerender();
+                },
+              },
+            });
             rerender();
           }
         }
@@ -1613,7 +1623,17 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         _lastClickedId = null;
 
         rerender();
-        showToast(`${deleted} משתתפים נמחקו בהצלחה.`, { type: 'success' });
+        showToast(`${deleted} משתתפים נמחקו בהצלחה.`, {
+          type: 'success',
+          duration: 6000,
+          action: {
+            label: 'בטל',
+            callback: () => {
+              store.undo();
+              rerender();
+            },
+          },
+        });
         break;
       }
       case 'bulk-dialog-dismiss': {
@@ -1716,7 +1736,17 @@ async function _handlePsetItemAction(action: string, id: string, rerender: () =>
       _setsFormMode = 'none';
       _setsFormError = '';
       _setsRenameTargetId = null;
-      showToast('הסט נמחק', { type: 'success' });
+      showToast('הסט נמחק', {
+        type: 'success',
+        duration: 6000,
+        action: {
+          label: 'בטל',
+          callback: () => {
+            store.undo();
+            rerender();
+          },
+        },
+      });
       rerender();
       break;
     }

@@ -1849,7 +1849,7 @@ export function seedDefaultTaskTemplates(): void {
     durationHours: 4,
     shiftsPerDay: 6,
     startHour: 5,
-    sameGroupRequired: true,
+    sameGroupRequired: false,
     isLight: false,
     baseLoadWeight: 1,
     loadWindows: [],

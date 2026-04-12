@@ -4368,11 +4368,13 @@ tr.now-row-animate > td.time-cell {
   flex-wrap: wrap;
 }
 .cert-color-swatch {
+  position: relative;
   width: 24px;
   height: 24px;
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
+  padding: 0;
   transition:
     border-color 0.15s,
     transform 0.15s;
@@ -4400,19 +4402,75 @@ tr.now-row-animate > td.time-cell {
   font-size: 0.85em;
 }
 
-/* Color swatch in-use indicator (dimmed) */
-.cert-color-swatch.in-use {
-  opacity: 0.5;
+/* In-use swatch marker — full opacity with a clear checkmark overlay. The
+ * swatch is `disabled` at the markup level (not clickable); duplicates are
+ * only reachable via the custom color picker. */
+.cert-color-swatch.in-use::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fff;
+  text-shadow:
+    0 0 2px rgba(0, 0, 0, 0.8),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 50%;
+  pointer-events: none;
 }
-.cert-color-swatch.in-use.selected {
-  opacity: 1;
+.cert-color-swatch[disabled] {
+  cursor: not-allowed;
+}
+.cert-color-swatch[disabled]:hover {
+  transform: none;
 }
 
-/* Palette exhaustion note */
+/* Custom-color swatch: opens the native color picker. Uses a conic-gradient
+ * rainbow background unless a specific custom color has been picked. */
+.cert-color-swatch.cert-color-custom {
+  background: conic-gradient(from 0deg, #ff4d4d, #ffaa33, #ffee55, #66dd55, #33bbee, #6a5acd, #cc55cc, #ff4d4d);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cert-color-swatch.cert-color-custom .cert-color-custom-icon {
+  font-size: 0.72rem;
+  line-height: 1;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+}
+
+/* Hide the native color input — we trigger it programmatically via the swatch. */
+.cert-custom-color-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Palette note — used for gentle info (e.g., "color shared with X"). */
 .cert-palette-note {
   font-size: 0.75rem;
   color: var(--text-secondary, #7f8c8d);
   margin-top: 0.25rem;
+}
+
+/* Contrast-too-low warning for custom color picks. */
+.cert-contrast-warning {
+  font-size: 0.78rem;
+  color: #e74c3c;
+  background: rgba(231, 76, 60, 0.12);
+  border-inline-start: 3px solid #e74c3c;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  margin-top: 0.35rem;
 }
 
 /* Mobile responsive — cert management */

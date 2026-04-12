@@ -246,8 +246,29 @@ const CERT_COLOR_PALETTE = [
   '#34495e',
 ];
 
+// Relative luminance per WCAG formula (for contrast validation of custom colors).
+function hexLuminance(hex: string): number {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return 0;
+  const n = parseInt(m[1], 16);
+  const toLinear = (c: number): number => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const r = toLinear((n >> 16) & 0xff);
+  const g = toLinear((n >> 8) & 0xff);
+  const b = toLinear(n & 0xff);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+/** Contrast ratio of `hex` against white (#ffffff). Higher is better; 3.0 = WCAG AA large text. */
+function contrastOnWhite(hex: string): number {
+  return 1.05 / (hexLuminance(hex) + 0.05);
+}
+const MIN_CONTRAST = 3.0;
+
 let _selectedCertColor = '';
 let _certColorEditId: string | null = null;
+let _customColorWarning = '';
 
 // Old renderCertificationSection / renderPakalSection removed —
 // replaced by renderCertificationContent() / renderPakalContent() above.
@@ -429,9 +450,17 @@ function renderHardConstraints(disabledHC: Set<HardConstraintCode>): string {
 }
 
 function renderCertificationContent(): string {
-  const defs = store.getCertificationDefinitions();
+  const defs = store.getCertificationDefinitions().filter((d) => !d.deleted);
   const usedColors = new Set(defs.map((d) => d.color));
-  if (!_selectedCertColor || usedColors.has(_selectedCertColor)) {
+  // Color owners keyed by hex, for tooltip labels on in-use swatches.
+  const colorOwner = new Map<string, string>();
+  for (const d of defs) {
+    if (!colorOwner.has(d.color)) colorOwner.set(d.color, d.label);
+  }
+  // Custom (non-palette) picks are preserved across renders. Palette picks auto-swap to the
+  // next unused color if a newly-added cert claimed the one the user had selected.
+  const selectedIsCustom = !!_selectedCertColor && !CERT_COLOR_PALETTE.includes(_selectedCertColor);
+  if (!_selectedCertColor || (!selectedIsCustom && usedColors.has(_selectedCertColor))) {
     _selectedCertColor = CERT_COLOR_PALETTE.find((c) => !usedColors.has(c)) || CERT_COLOR_PALETTE[0];
   }
 
@@ -450,17 +479,34 @@ function renderCertificationContent(): string {
           <span class="badge" style="background:${def.color}">${escHtml(def.label)}</span>
           <span class="cert-usage-count">${usageText}</span>
           <button class="btn-icon btn-sm" data-action="cert-remove" data-cert-id="${def.id}" title="הסר הסמכה">✕</button>
-        </div>
-        ${
-          isEditingColor
-            ? `<div class="cert-color-edit-palette">${CERT_COLOR_PALETTE.map(
-                (c) =>
-                  `<button type="button" class="cert-color-swatch${c === def.color ? ' selected' : ''}" data-action="cert-pick-color" data-cert-id="${def.id}" data-color="${c}" style="background:${c}" title="${c}"></button>`,
-              ).join('')}</div>`
-            : ''
-        }
+        </div>`;
+    if (isEditingColor) {
+      const editSelectedIsCustom = !CERT_COLOR_PALETTE.includes(def.color);
+      html += `
+        <div class="cert-color-edit-palette">`;
+      for (const c of CERT_COLOR_PALETTE) {
+        // In edit mode, "in-use" means *another* cert owns this color (not the one being edited).
+        const otherOwner = defs.find((d) => d.id !== def.id && d.color === c);
+        const isSelected = c === def.color;
+        const classes = ['cert-color-swatch'];
+        if (isSelected) classes.push('selected');
+        if (otherOwner) classes.push('in-use');
+        const title = otherOwner ? `${c} (בשימוש: ${otherOwner.label})` : c;
+        const disabledAttr = otherOwner ? ' disabled' : '';
+        html += `<button type="button"${disabledAttr} class="${classes.join(' ')}" data-action="cert-pick-color" data-cert-id="${def.id}" data-color="${c}" style="background:${c}" title="${escHtml(title)}" aria-label="${escHtml(title)}"></button>`;
+      }
+      // Custom color trigger + hidden native color input, scoped to this cert.
+      html += `
+          <button type="button" class="cert-color-swatch cert-color-custom${editSelectedIsCustom ? ' selected' : ''}" data-action="cert-edit-custom-color" data-cert-id="${def.id}" title="צבע מותאם אישית" aria-label="צבע מותאם אישית">
+            <span class="cert-color-custom-icon" aria-hidden="true">🎨</span>
+          </button>
+          <input type="color" class="cert-custom-color-input" data-action="cert-edit-custom-change" data-cert-id="${def.id}" value="${def.color}" tabindex="-1" aria-hidden="true" />
+        </div>`;
+    }
+    html += `
       </div>`;
   }
+  const duplicateOwner = usedColors.has(_selectedCertColor) ? colorOwner.get(_selectedCertColor) : null;
   html += `
     </div>
     <div class="cert-add-form">
@@ -468,13 +514,33 @@ function renderCertificationContent(): string {
         <input type="text" class="input-sm" data-field="cert-name" placeholder="שם הסמכה חדשה" />
         <button class="btn-sm btn-primary" data-action="cert-add">+ הוסף</button>
       </div>
-      <div class="cert-color-palette">
-        ${CERT_COLOR_PALETTE.map((c) => {
-          const inUse = usedColors.has(c);
-          return `<button type="button" class="cert-color-swatch${c === _selectedCertColor ? ' selected' : ''}${inUse ? ' in-use' : ''}" data-action="cert-select-color" data-color="${c}" style="background:${c}" title="${c}${inUse ? ' (בשימוש)' : ''}"></button>`;
-        }).join('')}
-      </div>
-      ${usedColors.size >= CERT_COLOR_PALETTE.length ? '<p class="cert-palette-note">כל הצבעים בשימוש — צבע ישותף עם הסמכה קיימת</p>' : ''}
+      <div class="cert-color-palette">`;
+  for (const c of CERT_COLOR_PALETTE) {
+    const inUse = usedColors.has(c);
+    const isSelected = c === _selectedCertColor;
+    const classes = ['cert-color-swatch'];
+    if (isSelected) classes.push('selected');
+    if (inUse) classes.push('in-use');
+    const owner = inUse ? colorOwner.get(c) : null;
+    const title = owner ? `${c} (בשימוש: ${owner})` : c;
+    const disabledAttr = inUse ? ' disabled' : '';
+    html += `<button type="button"${disabledAttr} class="${classes.join(' ')}" data-action="cert-select-color" data-color="${c}" style="background:${c}" title="${escHtml(title)}" aria-label="${escHtml(title)}"></button>`;
+  }
+  // Custom color trigger (native <input type="color">). Shows the picked color when a custom one is active.
+  const customSwatchStyle = selectedIsCustom ? ` style="background:${_selectedCertColor}"` : '';
+  html += `
+        <button type="button" class="cert-color-swatch cert-color-custom${selectedIsCustom ? ' selected' : ''}" data-action="cert-custom-color-trigger" title="צבע מותאם אישית" aria-label="צבע מותאם אישית"${customSwatchStyle}>
+          <span class="cert-color-custom-icon" aria-hidden="true">🎨</span>
+        </button>
+        <input type="color" class="cert-custom-color-input" data-action="cert-custom-color-change" value="${selectedIsCustom ? _selectedCertColor : CERT_COLOR_PALETTE[0]}" tabindex="-1" aria-hidden="true" />
+      </div>`;
+  if (_customColorWarning) {
+    html += `<p class="cert-contrast-warning">⚠ ${escHtml(_customColorWarning)}</p>`;
+  }
+  if (duplicateOwner) {
+    html += `<p class="cert-palette-note">הצבע הנבחר משותף עם הסמכה "${escHtml(duplicateOwner)}"</p>`;
+  }
+  html += `
     </div>`;
   return html;
 }
@@ -927,6 +993,7 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
       }
       case 'cert-select-color': {
         _selectedCertColor = btn.dataset.color || CERT_COLOR_PALETTE[0];
+        _customColorWarning = '';
         rerender();
         break;
       }
@@ -944,6 +1011,23 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         }
         _certColorEditId = null;
         rerender();
+        break;
+      }
+      case 'cert-custom-color-trigger': {
+        // Programmatically open the native color picker paired with this swatch.
+        const input = container.querySelector<HTMLInputElement>(
+          'input.cert-custom-color-input[data-action="cert-custom-color-change"]',
+        );
+        input?.click();
+        break;
+      }
+      case 'cert-edit-custom-color': {
+        const certId = btn.dataset.certId;
+        if (!certId) break;
+        const input = container.querySelector<HTMLInputElement>(
+          `input.cert-custom-color-input[data-action="cert-edit-custom-change"][data-cert-id="${certId}"]`,
+        );
+        input?.click();
         break;
       }
 
@@ -1080,6 +1164,37 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         const clamped = Math.min(50000, Math.max(50, val));
         inp.value = String(clamped);
         setDefaultAttempts(clamped);
+        rerender();
+        break;
+      }
+      case 'cert-custom-color-change': {
+        // Native <input type="color"> committed a value for the "add new cert" form.
+        const color = ((el as HTMLInputElement).value || '').toLowerCase();
+        if (!/^#[0-9a-f]{6}$/.test(color)) break;
+        const ratio = contrastOnWhite(color);
+        if (ratio < MIN_CONTRAST) {
+          _customColorWarning = `ניגודיות נמוכה מדי (${ratio.toFixed(1)}:1) — טקסט לבן על הצבע הזה לא יהיה קריא.`;
+          showToast('צבע בהיר מדי — טקסט לבן על התג לא יהיה קריא', { type: 'warning' });
+          rerender();
+          break;
+        }
+        _customColorWarning = '';
+        _selectedCertColor = color;
+        rerender();
+        break;
+      }
+      case 'cert-edit-custom-change': {
+        // Native <input type="color"> committed a value for an existing cert's color.
+        const certId = el.dataset.certId;
+        const color = ((el as HTMLInputElement).value || '').toLowerCase();
+        if (!certId || !/^#[0-9a-f]{6}$/.test(color)) break;
+        const ratio = contrastOnWhite(color);
+        if (ratio < MIN_CONTRAST) {
+          showToast(`צבע בהיר מדי — ניגודיות ${ratio.toFixed(1)}:1 מול טקסט לבן`, { type: 'warning' });
+          break;
+        }
+        store.updateCertificationColor(certId, color);
+        _certColorEditId = null;
         rerender();
         break;
       }
