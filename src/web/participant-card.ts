@@ -49,7 +49,6 @@ export function renderParticipantCard(data: ParticipantCardData): string {
     eligible,
     rejectionReason,
     workload,
-    capacity,
     dayAssignmentCount,
     loadBadge,
     selected,
@@ -62,7 +61,6 @@ export function renderParticipantCard(data: ParticipantCardData): string {
   if (selected) classes.push('wc-selected');
   if (extraClass) classes.push(extraClass);
 
-  const workloadBar = workload ? renderWorkloadBar(workload, capacity) : '';
   const workloadText = workload ? renderWorkloadText(workload) : '';
   const dayBadge = loadBadge
     ? `<span class="wc-load" title="${escHtml(loadBadge.tooltip)}">${escHtml(loadBadge.text)}</span>`
@@ -80,7 +78,7 @@ export function renderParticipantCard(data: ParticipantCardData): string {
       <span class="wc-badges">${levelBadge(p.level)} ${certBadges(p.certifications, '')}</span>
       ${dayBadge}
     </div>
-    ${workloadText ? `<div class="wc-row-workload">${workloadText}${workloadBar}</div>` : ''}
+    ${workloadText ? `<div class="wc-row-workload">${workloadText}</div>` : ''}
     ${reasonOverlay}
   </div>`;
 }
@@ -97,18 +95,3 @@ function renderWorkloadText(workload: WeeklyWorkload): string {
   return `<span class="wc-workload-text" title="שעות אפקטיביות: ${eff}; חמות: ${hot}; קרות: ${cold}">שע׳: ${eff}${ratio}</span>`;
 }
 
-/**
- * Render a 2-segment workload bar (hot + cold) filled against the
- * participant's available hours. Falls back to a simple bar when
- * capacity is not supplied.
- */
-function renderWorkloadBar(workload: WeeklyWorkload, capacity?: ParticipantCapacity): string {
-  const available = capacity?.totalAvailableHours ?? workload.availableHours;
-  if (!available || available <= 0) return '';
-  const hotPct = Math.min(100, (workload.hotHours / available) * 100);
-  const coldPct = Math.min(100 - hotPct, (workload.coldHours / available) * 100);
-  return `<span class="wc-workload-bar" aria-hidden="true">
-    <span class="wc-workload-bar-hot" style="width:${hotPct.toFixed(1)}%"></span>
-    <span class="wc-workload-bar-cold" style="width:${coldPct.toFixed(1)}%"></span>
-  </span>`;
-}

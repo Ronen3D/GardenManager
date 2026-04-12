@@ -62,7 +62,7 @@ The web build uses Vite with path alias `@/` mapping to `src/`. All configs use 
 
 ```
 Web UI (src/web/app.ts)
-  ├── Tab views: participants, task-rules, schedule-grid, algorithm, profile
+  ├── Tab views: participants, task-rules, schedule, algorithm (+ profile overlay)
   ├── Config persistence: config-store.ts (localStorage singleton)
   └── PDF export, snapshot versioning, rescue planning UI
         │
@@ -74,8 +74,8 @@ Scheduling Engine (src/engine/)
   └── rescue.ts        — Minimum-disruption replanning (depth 1→2→3 swap chains)
         │
 Constraints (src/constraints/)
-  ├── hard-constraints.ts  — HC-1 through HC-14 (must pass or schedule is invalid)
-  ├── soft-constraints.ts  — SC-1 through SC-7 (penalties guiding optimization)
+  ├── hard-constraints.ts  — HC-1..HC-8, HC-11, HC-12, HC-14 (must pass or schedule is invalid)
+  ├── soft-constraints.ts  — SC-3, SC-6..SC-10 (penalties guiding optimization)
   └── senior-policy.ts     — Senior soft penalty (lowPriority last-resort) + isNaturalRole classification
         │
 Foundation
@@ -95,8 +95,8 @@ Foundation
 
 - **Levels:** L0 (junior), L2, L3, L4 (senior). No L1 exists.
 - **Certifications:** Nitzan, Salsala, Hamama, Horesh — gate eligibility for specific task types (configured per slot, not per task type).
-- **Hard constraints** (HC-1 to HC-14): Binary pass/fail. Violations make a schedule invalid. HC-1 is the sole level gate for all participants.
-- **Soft constraints** (SC-1 to SC-7): Numeric penalties. The optimizer minimizes total penalty.
+- **Hard constraints** (HC-1..HC-8, HC-11, HC-12, HC-14): Binary pass/fail. Violations make a schedule invalid. HC-1 is the sole level gate for all participants. Note: HC-9, HC-10, HC-13 do not exist (removed or never created).
+- **Soft constraints** (SC-3, SC-6..SC-10): Numeric penalties. The optimizer minimizes total penalty. SC-7 is a warning-only safety net. SC-1, SC-2, SC-4, SC-5 do not exist.
 - **Senior policy:** Seniors have "natural roles" determined by `isNaturalRole()`. Slots can mark a senior level as `lowPriority` (last-resort) — the soft penalty `lowPriorityLevelPenalty` heavily discourages these placements. Hard level-gating is handled by HC-1.
 - **Optimizer:** Two-phase — greedy assignment followed by swap-based local search with simulated annealing. Multi-attempt runs pick the best result.
 - **Temporal (live mode):** A time anchor divides the schedule into frozen past and modifiable future.
@@ -105,6 +105,6 @@ Foundation
 
 ### Web UI Structure
 
-`src/web/app.ts` is the main UI orchestrator (~3000 lines). It manages a tabbed interface with day navigation (days 1-7), schedule grid rendering, manual drag-drop swaps, live mode controls, and triggers full 7-day re-validation after every change. State is persisted in localStorage via `src/web/config-store.ts`.
+`src/web/app.ts` is the main UI orchestrator (~5000 lines). It manages a tabbed interface (participants, task-rules, schedule, algorithm) with day navigation (days 1-7), schedule grid rendering, manual drag-drop swaps, live mode controls, and triggers full 7-day re-validation after every change. A profile view is rendered as a separate overlay, not as a tab. State is persisted in localStorage via `src/web/config-store.ts`.
 
 Debug helpers available in browser console: `toggleSchedulerDiag()`, `gardenWisdom()`.

@@ -7268,12 +7268,7 @@ tr.now-row-animate > td.time-cell {
   background: color-mix(in srgb, var(--border) 50%, transparent);
 }
 
-.wc-workload-bar-hot {
-  background: var(--danger);
-  height: 100%;
-}
-
-.wc-workload-bar-cold {
+.wc-workload-bar-fill {
   background: var(--accent);
   height: 100%;
 }
