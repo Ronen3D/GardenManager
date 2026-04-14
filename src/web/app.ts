@@ -2307,7 +2307,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.1.8</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.1.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2487,7 +2487,7 @@ function wireEasterEgg(container: HTMLElement): void {
     _easterEggTimer = setTimeout(() => {
       _easterEggClicks = 0;
     }, 2500);
-    if (_easterEggClicks >= 7) {
+    if (_easterEggClicks >= 3) {
       _easterEggClicks = 0;
       if (_easterEggTimer) {
         clearTimeout(_easterEggTimer);
