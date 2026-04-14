@@ -242,10 +242,6 @@ let _optimProgress: {
 /** The 24h window boundary hour (05:00–05:00 by default) */
 // Day boundary hour is now configurable via store.getDayStartHour()
 
-/** Sidebar workload bar thresholds (fraction of total period hours). */
-const WORKLOAD_OVER_THRESHOLD = 0.18;
-const WORKLOAD_UNDER_THRESHOLD = 0.08;
-
 // ─── Manual Build Mode State ────────────────────────────────────────────────
 
 let _manualBuildActive = false;
@@ -673,9 +669,6 @@ function renderSidebarEntry(
   const p = entry.p;
   const barPct = Math.min(entry.pctOfPeriod * (100 / 30), 100);
   const barWidth = barPct;
-  const overloaded = entry.pctOfPeriod > 25;
-  const underloaded = entry.pctOfPeriod < 5;
-  const barClass = overloaded ? 'wbar-over' : underloaded ? 'wbar-under' : 'wbar-normal';
 
   const tooltipParts: string[] = [];
   for (let d = 1; d <= store.getScheduleDays(); d++) {
@@ -700,7 +693,7 @@ function renderSidebarEntry(
     </div>
     <div class="sidebar-bar-row">
       <div class="sidebar-bar-bg" title="${diagTooltip}">
-        <div class="sidebar-bar-fill ${barClass}" style="width:${barWidth}%"></div>
+        <div class="sidebar-bar-fill" style="width:${barWidth}%"></div>
         <div class="sidebar-bar-today" style="width:${todayBarWidth}%"></div>
         <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfPeriod.toFixed(1)}%)</span>
       </div>
@@ -765,10 +758,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
     // Mini bars — tiny workload indicators for each L0 participant
     html += `<div class="sidebar-mini">`;
     for (const entry of l0Entries) {
-      const pct = entry.w.effectiveHours / totalPeriodHours;
-      const cls =
-        pct > WORKLOAD_OVER_THRESHOLD ? 'mini-over' : pct < WORKLOAD_UNDER_THRESHOLD ? 'mini-under' : 'mini-normal';
-      html += `<div class="sidebar-mini-bar ${cls}" title="${entry.p.name}: ${entry.w.effectiveHours.toFixed(1)} שעות עומס"></div>`;
+      html += `<div class="sidebar-mini-bar" title="${entry.p.name}: ${entry.w.effectiveHours.toFixed(1)} שעות עומס"></div>`;
     }
     html += `</div></div>`;
     return html;
@@ -2349,7 +2339,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.0</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

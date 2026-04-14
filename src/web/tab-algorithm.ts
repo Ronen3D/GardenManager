@@ -269,6 +269,7 @@ const MIN_CONTRAST = 3.0;
 let _selectedCertColor = '';
 let _certColorEditId: string | null = null;
 let _customColorWarning = '';
+let _pendingCertName = '';
 
 // Old renderCertificationSection / renderPakalSection removed —
 // replaced by renderCertificationContent() / renderPakalContent() above.
@@ -511,7 +512,7 @@ function renderCertificationContent(): string {
     </div>
     <div class="cert-add-form">
       <div class="cert-add-row">
-        <input type="text" class="input-sm" data-field="cert-name" placeholder="שם הסמכה חדשה" />
+        <input type="text" class="input-sm" data-field="cert-name" placeholder="שם הסמכה חדשה" value="${escHtml(_pendingCertName)}" />
         <button class="btn-sm btn-primary" data-action="cert-add">+ הוסף</button>
       </div>
       <div class="cert-color-palette">`;
@@ -551,20 +552,20 @@ function renderPakalContent(): string {
   let html = `
     <h3 class="algo-section-title">פק"לים</h3>
     <p class="algo-section-desc">הוסף, ערוך או הסר פק"לים. שינויים זמינים מיד בלשונית משתתפים.</p>
-    <div class="cert-def-list">`;
+    <div class="pakal-def-list">`;
   for (const def of defs) {
     const usageCount = store.getPakalUsageCount(def.id);
     const usageText = `${usageCount} משתתפים`;
     const editing = _pakalEditingId === def.id;
     html += `
-      <div class="cert-def-item">
+      <div class="pakal-def-item">
         ${
           editing
             ? `<input type="text" class="input-sm pakal-edit-input" data-field="pakal-edit-label" data-pakal-id="${def.id}" value="${escHtml(def.label)}" maxlength="40" />`
-            : `<span class="badge" style="background:#1f6feb">${escHtml(def.label)}</span>`
+            : `<span class="badge pakal-badge" style="background:#1f6feb">${escHtml(def.label)}</span>`
         }
-        <span class="cert-usage-count">${usageText}</span>
-        <div class="cert-def-item-actions">
+        <span class="pakal-usage-count">${usageText}</span>
+        <div class="pakal-def-item-actions">
           ${!editing ? `<button class="btn-icon btn-sm" data-action="pakal-edit" data-pakal-id="${def.id}" title="ערוך">✎</button>` : ''}
           ${editing ? `<button class="btn-icon btn-sm" data-action="pakal-save" data-pakal-id="${def.id}" title="שמור">✓</button>` : ''}
           ${editing ? `<button class="btn-icon btn-sm" data-action="pakal-cancel" title="ביטול">✕</button>` : ''}
@@ -575,8 +576,8 @@ function renderPakalContent(): string {
   html += `
     </div>
     ${_pakalError ? `<div class="preset-validation-error">${escHtml(_pakalError)}</div>` : ''}
-    <div class="cert-add-form">
-      <div class="cert-add-row">
+    <div class="pakal-add-form">
+      <div class="pakal-add-row">
         <input type="text" class="input-sm" data-field="pakal-new-label" maxlength="40" placeholder="שם פק&quot;ל חדש" />
         <button class="btn-sm btn-primary" data-action="pakal-add">+ הוסף</button>
       </div>
@@ -836,6 +837,10 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
 
   container.addEventListener('input', (e) => {
     const target = e.target as HTMLInputElement;
+    if (target.dataset.field === 'cert-name') {
+      _pendingCertName = target.value;
+      return;
+    }
     if (target.dataset.field !== 'saveas-name' && target.dataset.field !== 'rename-name') return;
     if (!_presetFormError) return;
     _presetFormError = '';
@@ -955,8 +960,7 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
 
       // ── Certification management ──
       case 'cert-add': {
-        const nameInput = container.querySelector<HTMLInputElement>('[data-field="cert-name"]');
-        const name = nameInput?.value.trim() ?? '';
+        const name = _pendingCertName.trim();
         if (!name) {
           showToast('יש להזין שם להסמכה', { type: 'error' });
           break;
@@ -964,6 +968,7 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         try {
           store.addCertification(name, _selectedCertColor);
           showToast(`הסמכה "${name}" נוספה`, { type: 'success' });
+          _pendingCertName = '';
         } catch (err: any) {
           showToast(err.message || 'שגיאה', { type: 'error' });
         }
