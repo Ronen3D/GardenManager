@@ -317,6 +317,7 @@ let filterGroup: string = '';
 let sortColumn: 'name' | 'group' | 'level' | '' = '';
 let sortDirection: 'asc' | 'desc' = 'asc';
 let showNotWithColumn = false;
+let _pulseCountBadgeOnNextWire = false;
 
 // ─── Multi-Select State ──────────────────────────────────────────────────────
 
@@ -1068,6 +1069,19 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
   // ─── Easter egg: triple-tap on count badge toggles "אי התאמה" column ──
   const countBadge = container.querySelector('.tab-toolbar h2 .count') as HTMLElement | null;
   if (countBadge) {
+    if (_pulseCountBadgeOnNextWire) {
+      _pulseCountBadgeOnNextWire = false;
+      requestAnimationFrame(() => {
+        countBadge.classList.remove('count-pulse');
+        void countBadge.offsetWidth;
+        countBadge.classList.add('count-pulse');
+        countBadge.addEventListener(
+          'animationend',
+          () => countBadge.classList.remove('count-pulse'),
+          { once: true },
+        );
+      });
+    }
     let tapCount = 0;
     let tapTimer: ReturnType<typeof setTimeout> | undefined;
     countBadge.addEventListener('click', () => {
@@ -1076,6 +1090,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       if (tapCount >= 3) {
         tapCount = 0;
         showNotWithColumn = !showNotWithColumn;
+        _pulseCountBadgeOnNextWire = true;
         rerender();
       } else {
         tapTimer = setTimeout(() => {
