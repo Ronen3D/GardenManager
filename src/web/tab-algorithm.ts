@@ -655,6 +655,10 @@ export function renderAlgorithmTab(): string {
       ${dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
       <button class="btn-sm ${_presetPanelOpen ? 'btn-primary' : 'btn-outline'}" data-action="algo-preset-panel-toggle" title="ניהול הגדרות שמורות">💾${presetCount > 0 ? ` (${presetCount})` : ''}</button>
     </div>
+    <div class="settings-autotune-row">
+      <button class="btn-sm btn-primary" data-action="algo-auto-tune" title="כייל את המשקלות אוטומטית לפי הנתונים הנוכחיים">🎯 כיול אוטומטי</button>
+      <span class="settings-autotune-hint">ירוץ מספר דקות ויציע הגדרות מותאמות לנתונים שלך.</span>
+    </div>
     ${_presetPanelOpen ? renderPresetPanel(presets, activeId, dirty, isBuiltIn) : ''}
     ${renderNestedAccordion({
       id: 'acc-general',
@@ -877,6 +881,12 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         _presetFormError = '';
         _presetRenameTargetId = null;
         rerender();
+        break;
+      }
+
+      // ── Auto-tune (dispatch to app-level handler) ──
+      case 'algo-auto-tune': {
+        document.dispatchEvent(new CustomEvent('gm:auto-tune-request'));
         break;
       }
 

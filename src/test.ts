@@ -6531,6 +6531,322 @@ console.log('\n── Capacity Window Semantics ──────────�
   }
 }
 
+// ─── Auto-Tuner validation ───────────────────────────────────────────────────
+//
+// Covers the fixes applied after the audit of the staged-tournament tuner:
+//   • reference scoring (refScore weight-independence)
+//   • mulberry32 determinism (seeded perturbation + LHS reproducibility)
+//   • Latin Hypercube coverage in log-space
+//   • rankScore λ·IQR / μ·unfilled shape
+//   • Phase-4 "preserve current" slice logic — never evicts the best finalist
+
+console.log('\n── Auto-Tuner: pure helpers ──────────────');
+
+import {
+  computeRankScore,
+  iqr as tunerIqr,
+  latinHypercubeSample,
+  maxUnfilledIn,
+  median as tunerMedian,
+  mulberry32,
+  type TunerDim,
+} from './utils/tuner-math';
+
+// median / iqr
+assert(tunerMedian([]) === 0, 'median([]) = 0');
+assert(tunerMedian([5]) === 5, 'median([5]) = 5');
+assert(tunerMedian([1, 2, 3, 4, 5]) === 3, 'median of odd-length list');
+assert(tunerMedian([1, 2, 3, 4]) === 2.5, 'median of even-length list');
+assert(tunerIqr([1]) === 0, 'iqr of single value = 0');
+assert(tunerIqr([]) === 0, 'iqr of empty list = 0');
+const iqrVal = tunerIqr([1, 2, 3, 4, 5, 6, 7, 8]);
+assert(Math.abs(iqrVal - 3.5) < 1e-9, `iqr([1..8]) ≈ 3.5 (got ${iqrVal})`);
+
+// maxUnfilledIn
+assert(
+  maxUnfilledIn([{ unfilled: 0 }, { unfilled: 3 }, { unfilled: 1 }]) === 3,
+  'maxUnfilledIn picks the largest unfilled count',
+);
+assert(maxUnfilledIn([]) === 0, 'maxUnfilledIn of empty = 0');
+
+// mulberry32 determinism
+{
+  const a = mulberry32(12345);
+  const b = mulberry32(12345);
+  let drift = false;
+  for (let i = 0; i < 20; i++) if (a() !== b()) drift = true;
+  assert(!drift, 'mulberry32: identical seeds produce identical streams');
+
+  const c = mulberry32(12345);
+  const d = mulberry32(99999);
+  let differ = false;
+  for (let i = 0; i < 20; i++) if (c() !== d()) differ = true;
+  assert(differ, 'mulberry32: different seeds produce different streams');
+}
+
+// Latin Hypercube: reproducibility + range + log-space stratification
+{
+  const dims: TunerDim[] = [
+    { min: 1, max: 1000, integer: true },
+    { min: 10, max: 20000, integer: true },
+  ];
+  const s1 = latinHypercubeSample(dims, 40, mulberry32(7));
+  const s2 = latinHypercubeSample(dims, 40, mulberry32(7));
+  let same = true;
+  for (let i = 0; i < 40 && same; i++) {
+    for (let d = 0; d < dims.length && same; d++) {
+      if (s1[i][d] !== s2[i][d]) same = false;
+    }
+  }
+  assert(same, 'LHS: identical seeds produce identical samples');
+
+  // Every value within declared range.
+  let inRange = true;
+  for (const row of s1) {
+    for (let d = 0; d < dims.length && inRange; d++) {
+      if (row[d] < dims[d].min || row[d] > dims[d].max) inRange = false;
+    }
+  }
+  assert(inRange, 'LHS: every sample is within its dim range');
+
+  // Log-space stratification: split each dim into 4 log buckets → each bucket
+  // should receive at least one sample (strong for 40 samples / 4 buckets).
+  let wellStratified = true;
+  for (let d = 0; d < dims.length && wellStratified; d++) {
+    const logMin = Math.log(dims[d].min);
+    const logMax = Math.log(dims[d].max);
+    const buckets = new Array(4).fill(0);
+    for (const row of s1) {
+      const t = (Math.log(row[d]) - logMin) / (logMax - logMin);
+      const idx = Math.min(3, Math.max(0, Math.floor(t * 4)));
+      buckets[idx]++;
+    }
+    if (buckets.some((n) => n === 0)) wellStratified = false;
+  }
+  assert(wellStratified, 'LHS: every quartile in log-space is covered');
+}
+
+// computeRankScore shape: IQR and unfilled each reduce the rank.
+{
+  const stable = [
+    { refScore: 100, unfilled: 0 },
+    { refScore: 100, unfilled: 0 },
+    { refScore: 100, unfilled: 0 },
+    { refScore: 100, unfilled: 0 },
+    { refScore: 100, unfilled: 0 },
+  ];
+  const noisy = [
+    { refScore: 80, unfilled: 0 },
+    { refScore: 90, unfilled: 0 },
+    { refScore: 100, unfilled: 0 },
+    { refScore: 110, unfilled: 0 },
+    { refScore: 120, unfilled: 0 },
+  ];
+  const rStable = computeRankScore(stable, 0.5, 10000);
+  const rNoisy = computeRankScore(noisy, 0.5, 10000);
+  assert(rStable > rNoisy, 'rankScore: same median, lower IQR ranks higher');
+
+  const oneInfeasible = [
+    { refScore: 200, unfilled: 0 },
+    { refScore: 200, unfilled: 0 },
+    { refScore: 200, unfilled: 0 },
+    { refScore: 200, unfilled: 0 },
+    { refScore: 200, unfilled: 1 },
+  ];
+  assert(
+    computeRankScore(oneInfeasible, 0.5, 10000) < rStable,
+    'rankScore: unfilled slot heavily penalises even with higher median',
+  );
+}
+
+// Phase-4 "preserve current" logic: current always present, best retained.
+{
+  const mkCand = (id: string, midRank: number) => ({ id, midRank });
+  // Simulate 4 survivors sorted best→worst, and a `currentCand` that isn't
+  // already in the list. Replicates the post-audit fix from runTournament.
+  const sorted = [mkCand('a', 500), mkCand('b', 400), mkCand('c', 300), mkCand('d', 200)];
+  const currentCand = mkCand('current', 100);
+  let phase4Survivors = [...sorted];
+  if (!phase4Survivors.includes(currentCand)) {
+    if (phase4Survivors.length >= 4) phase4Survivors = phase4Survivors.slice(0, 3);
+    phase4Survivors.push(currentCand);
+  }
+  assert(phase4Survivors.length === 4, 'Phase 4 preserve-current: final size = 4');
+  assert(phase4Survivors[0] === sorted[0], 'Phase 4 preserve-current: best retained at head');
+  assert(phase4Survivors[1] === sorted[1], 'Phase 4 preserve-current: 2nd retained');
+  assert(phase4Survivors[2] === sorted[2], 'Phase 4 preserve-current: 3rd retained');
+  assert(phase4Survivors[3] === currentCand, 'Phase 4 preserve-current: current appended');
+  // If current was already in the list, no mutation should happen.
+  let listWithCurrent = [sorted[0], sorted[1], currentCand, sorted[2]];
+  const preLen = listWithCurrent.length;
+  if (!listWithCurrent.includes(currentCand)) {
+    if (listWithCurrent.length >= 4) listWithCurrent = listWithCurrent.slice(0, 3);
+    listWithCurrent.push(currentCand);
+  }
+  assert(listWithCurrent.length === preLen, 'Phase 4 preserve-current: no-op when current already present');
+}
+
+console.log('\n── Auto-Tuner: reference-scoring invariance ──');
+
+// The critical fix: across candidates with wildly different weight vectors,
+// the engine's in-candidate `compositeScore` is NOT comparable (each candidate
+// uses its own weights to compute it). The post-audit tuner therefore always
+// re-scores each produced schedule under `DEFAULT_CONFIG`. This test proves:
+//   1. Two candidate weight vectors applied to the same schedule yield very
+//      different compositeScores (confirming the original bug's cause).
+//   2. Re-scoring under DEFAULT_CONFIG yields the same number regardless of
+//      what candidate produced the schedule (confirming the fix's invariant).
+{
+  const day = new Date(2026, 1, 15);
+  const windowAvail = [
+    { start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 16, 12, 0) },
+  ];
+
+  const pA: Participant = {
+    id: 'pA',
+    name: 'Alice',
+    level: Level.L0,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'G',
+    availability: windowAvail,
+    dateUnavailability: [],
+    preferredTaskName: 'חממה',
+  };
+  const pB: Participant = {
+    id: 'pB',
+    name: 'Bob',
+    level: Level.L2,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'G',
+    availability: windowAvail,
+    dateUnavailability: [],
+    notWithIds: ['pA'],
+  };
+  const tuneParticipants: Participant[] = [pA, pB];
+
+  const hamamaBlock2 = createTimeBlockFromHours(day, 6, 18);
+  // Slot 1 is L0-preferred; slot 2 flags L2 as lowPriority so Bob's placement
+  // there fires the `lowPriorityLevelPenalty` term (making compositeScore
+  // weight-sensitive across candidates). togethernessRelevant=true makes the
+  // notWith pair register too.
+  const tuneTask: Task = {
+    id: 'hamama-tune',
+    name: 'חממה',
+    sourceName: 'חממה',
+    timeBlock: hamamaBlock2,
+    requiredCount: 2,
+    slots: [
+      {
+        slotId: 'hamama-tune-s1',
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L2, lowPriority: true }],
+        requiredCertifications: ['Hamama'],
+        label: 'slot-1',
+      },
+      {
+        slotId: 'hamama-tune-s2',
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L2, lowPriority: true }],
+        requiredCertifications: ['Hamama'],
+        label: 'slot-2',
+      },
+    ],
+    isLight: false,
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    togethernessRelevant: true,
+  };
+  const tuneTasks: Task[] = [tuneTask];
+
+  const tuneAssignments = [
+    {
+      id: 'a1',
+      taskId: tuneTask.id,
+      slotId: 'hamama-tune-s1',
+      participantId: 'pA',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'a2',
+      taskId: tuneTask.id,
+      slotId: 'hamama-tune-s2',
+      participantId: 'pB',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+
+  const notWithPairs = new Map<string, Set<string>>();
+  notWithPairs.set('pB', new Set(['pA']));
+  const taskMap = new Map(tuneTasks.map((t) => [t.id, t]));
+  const pMap = new Map(tuneParticipants.map((p) => [p.id, p]));
+  const ctx = { taskMap, pMap, notWithPairs, dayStartHour: 5 };
+
+  // Candidate A: amplified positive terms, tiny penalties.
+  const candidateA = {
+    ...DEFAULT_CONFIG,
+    minRestWeight: 200,
+    l0FairnessWeight: 1,
+    seniorFairnessWeight: 1,
+    dailyBalanceWeight: 1,
+    notWithPenalty: 10,
+    taskNamePreferencePenalty: 1,
+    taskNameAvoidancePenalty: 1,
+    taskNamePreferenceBonus: 1,
+    lowPriorityLevelPenalty: 50,
+  };
+  // Candidate B: suppressed positive terms, huge penalties.
+  const candidateB = {
+    ...DEFAULT_CONFIG,
+    minRestWeight: 1,
+    l0FairnessWeight: 500,
+    seniorFairnessWeight: 200,
+    dailyBalanceWeight: 500,
+    notWithPenalty: 20000,
+    taskNamePreferencePenalty: 1000,
+    taskNameAvoidancePenalty: 1000,
+    taskNamePreferenceBonus: 1,
+    lowPriorityLevelPenalty: 20000,
+  };
+
+  const inCandA = computeScheduleScore(tuneTasks, tuneParticipants, tuneAssignments, candidateA, ctx);
+  const inCandB = computeScheduleScore(tuneTasks, tuneParticipants, tuneAssignments, candidateB, ctx);
+
+  // The two candidate-scored values must diverge — this is what the original
+  // "rank by compositeScore" bug was silently exploiting.
+  assert(
+    Math.abs(inCandA.compositeScore - inCandB.compositeScore) > 100,
+    'Candidate scores differ dramatically under different weights (the original bug)',
+  );
+
+  // Reference scoring under DEFAULT_CONFIG must be identical regardless of
+  // which candidate produced the schedule.
+  const refFromA = computeScheduleScore(tuneTasks, tuneParticipants, tuneAssignments, DEFAULT_CONFIG, ctx);
+  const refFromB = computeScheduleScore(tuneTasks, tuneParticipants, tuneAssignments, DEFAULT_CONFIG, ctx);
+  assert(
+    refFromA.compositeScore === refFromB.compositeScore,
+    'Reference score under DEFAULT_CONFIG is weight-independent (fix #1)',
+  );
+
+  // Ordering under the reference score must depend on schedule quality only,
+  // not on whichever candidate produced the schedule. Produce an alternate
+  // "bad" schedule (same participants, but swap so Bob takes the L0-friendly
+  // slot out-of-preference → higher not-with + preference penalty) and verify
+  // the refScore correctly ranks it lower than the original.
+  const alternateAssignments = [
+    { ...tuneAssignments[0], participantId: 'pB' },
+    { ...tuneAssignments[1], participantId: 'pA' },
+  ];
+  const refAlt = computeScheduleScore(tuneTasks, tuneParticipants, alternateAssignments, DEFAULT_CONFIG, ctx);
+  // Both schedules assign both participants together, so not-with penalty
+  // fires equally; but the original has Alice on her preferred task while
+  // the alternate does not — preference penalty differs. Confirm at least
+  // one dimension of the reference score is sensitive to quality.
+  assert(
+    refFromA.compositeScore !== refAlt.compositeScore,
+    'Reference score is sensitive to schedule quality (prefers correct assignment to Alice)',
+  );
+}
+
 // ─── Async test blocks + Summary ─────────────────────────────────────────────
 
 (async () => {

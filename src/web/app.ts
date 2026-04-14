@@ -36,6 +36,7 @@ import {
 } from '../index';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { hebrewDayName } from '../utils/date-utils';
+import { runAutoTune, setAutoTunerTaskFactory, type TuneRecommendation } from './auto-tuner';
 import * as store from './config-store';
 import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
@@ -1869,6 +1870,10 @@ function updateOverlay(): void {
 async function doGenerate(): Promise<void> {
   // Prevent double-click
   if (_isOptimizing) return;
+  if (_isAutoTuningApp) {
+    showToast('לא ניתן ליצור שבצ"ק בזמן כיול אוטומטי.', { type: 'warning' });
+    return;
+  }
 
   // Read user-configured scenario count
   const scenarioInput = document.getElementById('input-scenarios') as HTMLInputElement | null;
@@ -2122,6 +2127,123 @@ function revalidateAndRefresh(): void {
   renderAll();
 }
 
+// ─── Auto-Tuner ──────────────────────────────────────────────────────────────
+
+let _isAutoTuningApp = false;
+
+async function handleAutoTune(): Promise<void> {
+  if (_isAutoTuningApp) return;
+  if (_isOptimizing) {
+    showToast('לא ניתן לכייל בזמן יצירת שבצ"ק.', { type: 'warning' });
+    return;
+  }
+  const ok = await showConfirm(
+    'הכיול יבחן עשרות סטים של משקלות מול הנתונים שלך, ועשוי להימשך מספר דקות. ההגדרות הנוכחיות לא ישונו — תקבל המלצה שתוכל ליישם.',
+    { title: 'כיול אוטומטי של הגדרות', confirmLabel: 'התחל כיול' },
+  );
+  if (!ok) return;
+
+  _isAutoTuningApp = true;
+  try {
+    const recommendation = await runAutoTune();
+    if (!recommendation) {
+      // User cancelled or the tuner bailed out before any verdict.
+      showToast('הכיול בוטל.', { type: 'warning' });
+      return;
+    }
+    showTuneResultModal(recommendation);
+  } catch (err) {
+    console.error('[AutoTuner] failure:', err);
+    const msg = err instanceof Error ? err.message : 'שגיאה לא צפויה בכיול אוטומטי.';
+    showToast(msg, { type: 'error', duration: 6000 });
+  } finally {
+    _isAutoTuningApp = false;
+  }
+}
+
+function formatWeightKey(key: string): string {
+  const labels: Record<string, string> = {
+    minRestWeight: 'משקל מנוחה מינימלית',
+    l0FairnessWeight: 'שיוויוניות כללי',
+    seniorFairnessWeight: 'שיוויוניות סגל',
+    lowPriorityLevelPenalty: 'עונש דרגה בעדיפות נמוכה',
+    dailyBalanceWeight: 'איזון יומי',
+    notWithPenalty: 'עונש "אי התאמה"',
+    taskNamePreferencePenalty: 'עונש אי-קיום העדפה',
+    taskNameAvoidancePenalty: 'עונש שיבוץ לא-מועדף',
+    taskNamePreferenceBonus: 'בונוס שיבוץ מועדף',
+  };
+  return labels[key] ?? key;
+}
+
+function showTuneResultModal(rec: TuneRecommendation): void {
+  const deltaSign = rec.medianDelta >= 0 ? '+' : '';
+  const deltaClass = rec.medianDelta >= 0 ? 'tune-delta-good' : 'tune-delta-bad';
+  const diffRows = rec.diff
+    .map((d) => {
+      const arrow = d.tuned > d.baseline ? '↑' : '↓';
+      return `<tr>
+        <td class="tune-diff-key">${escHtml(formatWeightKey(String(d.key)))}</td>
+        <td class="tune-diff-baseline">${d.baseline}</td>
+        <td class="tune-diff-arrow">${arrow}</td>
+        <td class="tune-diff-tuned">${d.tuned}</td>
+      </tr>`;
+    })
+    .join('');
+
+  const diffTable = rec.diff.length
+    ? `<table class="tune-diff-table">
+        <thead><tr><th>משקל</th><th>נוכחי</th><th></th><th>מומלץ</th></tr></thead>
+        <tbody>${diffRows}</tbody>
+      </table>`
+    : `<p class="tune-result-note">אין הבדלים מול ההגדרות הנוכחיות.</p>`;
+
+  const html = `
+    <div class="tune-result-modal">
+      <div class="tune-result-header">
+        <h3>${rec.recommend ? 'נמצאה המלצה' : 'אין צורך בשינוי'}</h3>
+        <p class="tune-result-reason">${escHtml(rec.reason)}</p>
+      </div>
+      <p class="tune-result-fingerprint">${escHtml(rec.fingerprintSummary)}</p>
+      <div class="tune-result-stats">
+        <div class="tune-stat">
+          <span class="tune-stat-label">ציון ההגדרות הנוכחיות</span>
+          <span class="tune-stat-value">${rec.baselineMedian.toFixed(1)}</span>
+          <span class="tune-stat-sub" title="טווח הפיזור בין ריצות חוזרות — נמוך יותר משמעו תוצאות יציבות יותר">טווח פיזור ${rec.baselineIQR.toFixed(1)}</span>
+        </div>
+        <div class="tune-stat">
+          <span class="tune-stat-label">ציון ההגדרות המומלצות</span>
+          <span class="tune-stat-value">${rec.winnerMedian.toFixed(1)}</span>
+          <span class="tune-stat-sub" title="טווח הפיזור בין ריצות חוזרות — נמוך יותר משמעו תוצאות יציבות יותר">טווח פיזור ${rec.winnerIQR.toFixed(1)}</span>
+        </div>
+        <div class="tune-stat">
+          <span class="tune-stat-label">שיפור</span>
+          <span class="tune-stat-value ${deltaClass}">${deltaSign}${rec.medianDelta.toFixed(1)}</span>
+          <span class="tune-stat-sub">${(rec.durationMs / 1000).toFixed(0)} שניות</span>
+        </div>
+      </div>
+      ${diffTable}
+      <div class="tune-result-actions">
+        ${rec.recommend ? '<button class="btn-sm btn-primary" data-action="tune-apply">החל הגדרות מומלצות</button>' : ''}
+        <button class="btn-sm btn-outline" data-action="tune-close">סגור</button>
+      </div>
+    </div>`;
+
+  const sheet = showBottomSheet(html, { title: 'תוצאות הכיול האוטומטי' });
+  sheet.el.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!btn) return;
+    if (btn.dataset.action === 'tune-close') {
+      sheet.close();
+    } else if (btn.dataset.action === 'tune-apply') {
+      store.setAlgorithmSettings({ config: rec.config });
+      sheet.close();
+      showToast('ההגדרות המומלצות הוחלו. צור שבצ"ק חדש כדי לראות את ההשפעה.', { type: 'success' });
+      if (currentTab === 'algorithm') renderAll();
+    }
+  });
+}
+
 async function handleSwap(assignmentId: string): Promise<void> {
   if (!currentSchedule || !engine) return;
   const assignment = currentSchedule.assignments.find((a) => a.id === assignmentId);
@@ -2339,7 +2461,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.2</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3703,6 +3825,15 @@ function init(): void {
       onSwap: handleSwap,
       onRescue: openRescueModal,
       onNavigateToProfile: navigateToProfile,
+    });
+
+    // Inject the live template-expansion into the auto-tuner so it can
+    // build identical tasks without importing app.ts (avoids a cycle).
+    setAutoTunerTaskFactory(() => generateTasksFromTemplates());
+
+    // Listen for auto-tune button clicks from the algorithm tab.
+    document.addEventListener('gm:auto-tune-request', () => {
+      void handleAutoTune();
     });
 
     // Initialize rescue modal callbacks

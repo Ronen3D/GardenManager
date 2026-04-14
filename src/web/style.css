@@ -2305,6 +2305,361 @@ tr.row-rest td {
   text-align: center;
 }
 
+/* ═══ Auto-Tuner Overlay ═══════════════════════════════════════════════ */
+
+.tune-card {
+  max-width: 560px;
+  width: 92%;
+  text-align: start;
+  padding: 28px 32px;
+}
+
+.tune-card h3 {
+  text-align: center;
+  margin: 0 0 12px;
+}
+
+.tune-fingerprint {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-bottom: 20px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  direction: rtl;
+}
+
+.tune-phase-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+  text-align: start;
+}
+
+.tune-bracket {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  margin: 16px 0 18px;
+}
+
+.tune-bracket-seg {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  opacity: 0.45;
+  transition: opacity 0.2s ease;
+}
+
+.tune-bracket-seg.tune-bracket-done {
+  opacity: 0.85;
+  border-color: var(--success);
+}
+
+.tune-bracket-seg.tune-bracket-active {
+  opacity: 1;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  animation: tune-bracket-pulse 1.8s ease-in-out infinite;
+}
+
+/* Subtle pulse on the active phase segment. Animates box-shadow only —
+ * one element at a time, GPU-composited on modern browsers, negligible CPU. */
+@keyframes tune-bracket-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.35);
+  }
+}
+
+/* Respect user motion preferences — stop the pulse, keep the static ring. */
+@media (prefers-reduced-motion: reduce) {
+  .tune-bracket-seg.tune-bracket-active {
+    animation: none;
+  }
+}
+
+.tune-bracket-num {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1ch;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--text);
+}
+
+.tune-bracket-num-pending,
+.tune-bracket-num-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Stack the two markers so the crossfade animates in place instead of
+ * reflowing surrounding layout. */
+.tune-bracket-num-check {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  color: var(--success);
+}
+
+/* One-shot crossfade when a segment becomes "done". Only fires on phase
+ * change (the bracket is rebuilt at most 5 times per run). */
+.tune-bracket-seg.tune-bracket-done .tune-bracket-num-pending {
+  animation: tune-num-out 0.35s ease forwards;
+}
+.tune-bracket-seg.tune-bracket-done .tune-bracket-num-check {
+  animation: tune-check-in 0.35s ease forwards;
+}
+
+@keyframes tune-num-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+}
+
+@keyframes tune-check-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tune-bracket-seg.tune-bracket-done .tune-bracket-num-pending,
+  .tune-bracket-seg.tune-bracket-done .tune-bracket-num-check {
+    animation: none;
+  }
+  .tune-bracket-seg.tune-bracket-done .tune-bracket-num-pending {
+    opacity: 0;
+  }
+  .tune-bracket-seg.tune-bracket-done .tune-bracket-num-check {
+    opacity: 1;
+  }
+}
+
+.tune-bracket-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.tune-metrics {
+  margin-top: 8px;
+}
+
+.tune-leader-diff {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text);
+  min-height: 1.2em;
+  font-variant-numeric: tabular-nums;
+  direction: rtl;
+}
+
+.tune-leader-diff:empty {
+  /* Collapse when the tuner hasn't surfaced a diff yet — avoids a reserved
+   * empty line pushing the card taller than needed. */
+  margin: 0;
+  min-height: 0;
+}
+
+.tune-elapsed {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One-shot flash when the leading score improves. Reuses the existing
+ * `pulse` keyframe already defined for the optimizer overlay. */
+.tune-score-pulse {
+  animation: pulse 0.5s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tune-score-pulse {
+    animation: none;
+  }
+}
+
+.tune-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+/* ═══ Auto-Tuner Algorithm Tab Button ════════════════════════════════ */
+
+.settings-autotune-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  background: rgba(74, 144, 217, 0.08);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+.settings-autotune-hint {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* ═══ Auto-Tuner Result Modal ════════════════════════════════════════ */
+
+.tune-result-modal {
+  padding: 4px 2px;
+  direction: rtl;
+}
+
+.tune-result-header h3 {
+  margin: 0 0 6px;
+  color: var(--text);
+}
+
+.tune-result-reason {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin: 0 0 14px;
+}
+
+.tune-result-fingerprint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+}
+
+.tune-result-stats {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.tune-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+}
+
+.tune-stat-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.tune-stat-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.tune-stat-value.tune-delta-good {
+  color: var(--success);
+}
+
+.tune-stat-value.tune-delta-bad {
+  color: var(--danger);
+}
+
+.tune-stat-sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.tune-diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 14px;
+  font-size: 0.88rem;
+}
+
+.tune-diff-table th {
+  text-align: start;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tune-diff-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-variant-numeric: tabular-nums;
+}
+
+.tune-diff-key {
+  color: var(--text);
+}
+
+.tune-diff-baseline {
+  color: var(--text-muted);
+}
+
+.tune-diff-arrow {
+  color: var(--accent);
+  font-weight: 700;
+  text-align: center;
+  width: 1.5em;
+}
+
+.tune-diff-tuned {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tune-result-note {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.tune-result-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
 .optim-error h3 {
   color: var(--danger);
   margin-bottom: 12px;
