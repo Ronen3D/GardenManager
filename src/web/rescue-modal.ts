@@ -77,16 +77,19 @@ export function openRescueModal(assignmentId: string): void {
 
   _rescuePage = 0;
   _rescueAssignmentId = assignmentId;
+  // Read frozen engine state so rescue planning uses the schedule's generation-
+  // time settings; external edits since then are deliberately ignored.
+  const engine = _ctx?.getEngine();
   _rescueResult = generateRescuePlans(
     currentSchedule,
     request,
     liveMode.currentTimestamp,
     _rescuePage,
     undefined,
-    store.getDisabledHCSet(),
-    store.buildRestRuleMap(),
-    store.getDayStartHour(),
-    store.getCertLabel,
+    engine?.getDisabledHC(),
+    engine?.getRestRuleMap(),
+    engine?.getDayStartHour() ?? store.getDayStartHour(),
+    engine?.getCertLabelResolver() ?? ((id: string) => id),
   );
   showRescueModal();
 }
@@ -374,16 +377,17 @@ function wireRescueModalEvents(): void {
     _rescuePage++;
     const liveMode = store.getLiveModeState();
     const wantTotal = (_rescuePage + 1) * 3; // PAGE_SIZE = 3
+    const engine = _ctx?.getEngine();
     const result = generateRescuePlans(
       currentSchedule,
       _rescueResult.request,
       liveMode.currentTimestamp,
       0,
       wantTotal,
-      store.getDisabledHCSet(),
-      store.buildRestRuleMap(),
-      store.getDayStartHour(),
-      store.getCertLabel,
+      engine?.getDisabledHC(),
+      engine?.getRestRuleMap(),
+      engine?.getDayStartHour() ?? store.getDayStartHour(),
+      engine?.getCertLabelResolver() ?? ((id: string) => id),
     );
     // Ranks are already sequential from the engine (1-based per returned plan)
     _rescueResult = result;

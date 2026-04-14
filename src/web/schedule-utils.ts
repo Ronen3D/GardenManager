@@ -45,26 +45,25 @@ export function resolveLogicalDayTimestamp(dayIndex: number, timeValue: string):
 
 /**
  * Returns {start, end} for the 24h window of a given day index (1-based).
- * Window runs from 05:00 on day d to 05:00 on day d+1.
+ * Window runs from `dayStartHour` on day d to `dayStartHour` on day d+1.
+ * When omitted, `dayStartHour` falls back to the live store — callers in
+ * the schedule-display path MUST pass the schedule's frozen dayStartHour
+ * (`schedule.algorithmSettings.dayStartHour`) so day grouping stays stable
+ * across external edits.
  */
-export function getDayWindow(dayIndex: number): { start: Date; end: Date } {
+export function getDayWindow(dayIndex: number, dayStartHour?: number): { start: Date; end: Date } {
   const base = store.getScheduleDate();
-  const start = new Date(
-    base.getFullYear(),
-    base.getMonth(),
-    base.getDate() + dayIndex - 1,
-    store.getDayStartHour(),
-    0,
-  );
-  const end = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex, store.getDayStartHour(), 0);
+  const dsh = dayStartHour ?? store.getDayStartHour();
+  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex - 1, dsh, 0);
+  const end = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex, dsh, 0);
   return { start, end };
 }
 
 /**
  * Does a task intersect (partially or fully) with a given day window?
  */
-export function taskIntersectsDay(task: Task, dayIndex: number): boolean {
-  const { start, end } = getDayWindow(dayIndex);
+export function taskIntersectsDay(task: Task, dayIndex: number, dayStartHour?: number): boolean {
+  const { start, end } = getDayWindow(dayIndex, dayStartHour);
   return task.timeBlock.start.getTime() < end.getTime() && task.timeBlock.end.getTime() > start.getTime();
 }
 
@@ -72,16 +71,16 @@ export function taskIntersectsDay(task: Task, dayIndex: number): boolean {
  * Does a task start before this day window (i.e. it's a continuation from
  * the previous day)?
  */
-export function taskStartsBefore(task: Task, dayIndex: number): boolean {
-  const { start } = getDayWindow(dayIndex);
+export function taskStartsBefore(task: Task, dayIndex: number, dayStartHour?: number): boolean {
+  const { start } = getDayWindow(dayIndex, dayStartHour);
   return task.timeBlock.start.getTime() < start.getTime();
 }
 
 /**
  * Does a task end after this day window (i.e. continues into the next day)?
  */
-export function taskEndsAfter(task: Task, dayIndex: number): boolean {
-  const { end } = getDayWindow(dayIndex);
+export function taskEndsAfter(task: Task, dayIndex: number, dayStartHour?: number): boolean {
+  const { end } = getDayWindow(dayIndex, dayStartHour);
   return task.timeBlock.end.getTime() > end.getTime();
 }
 
@@ -137,11 +136,21 @@ export function violationLabel(code: string): string {
  * Filter out violations whose constraint code has been disabled by the user
  * in the Algorithm Settings panel.  This is a UI-only safety net; the engine
  * should already omit them, but we guard the display layer too.
+ *
+ * Callers displaying a frozen schedule MUST pass the schedule's own
+ * `algorithmSettings.disabledHardConstraints` — otherwise a user editing the
+ * disabled-HC set after generation would silently hide violations from a
+ * schedule that was actually generated with those constraints enabled.
+ * When `disabledHC` is omitted, falls back to the live store for back-compat
+ * with contexts that don't have a schedule in scope.
  */
-export function filterVisibleViolations(violations: ConstraintViolation[]): ConstraintViolation[] {
-  const disabledHC = store.getDisabledHCSet();
-  if (disabledHC.size === 0) return violations;
-  return violations.filter((v) => !disabledHC.has(v.code));
+export function filterVisibleViolations(
+  violations: ConstraintViolation[],
+  disabledHC?: Set<string> | ReadonlySet<string>,
+): ConstraintViolation[] {
+  const effective = disabledHC ?? store.getDisabledHCSet();
+  if (effective.size === 0) return violations;
+  return violations.filter((v) => !effective.has(v.code));
 }
 
 // ─── Live Clock ─────────────────────────────────────────────────────────────
@@ -174,6 +183,8 @@ export function computePerDayHours(
   for (let d = 1; d <= numDays; d++) result.set(d, 0);
 
   const tMap = taskMap ?? new Map<string, Task>(schedule.tasks.map((t) => [t.id, t]));
+  // Use the schedule's own frozen dayStartHour so day attribution stays stable.
+  const dsh = schedule.algorithmSettings.dayStartHour;
 
   for (const a of schedule.assignments) {
     if (a.participantId !== participantId) continue;
@@ -185,9 +196,9 @@ export function computePerDayHours(
 
     // Attribute hours to the day the task starts in
     for (let d = 1; d <= numDays; d++) {
-      if (taskIntersectsDay(task, d)) {
+      if (taskIntersectsDay(task, d, dsh)) {
         // For cross-day tasks, split proportionally
-        const { start: winStart, end: winEnd } = getDayWindow(d);
+        const { start: winStart, end: winEnd } = getDayWindow(d, dsh);
         const overlapStart = Math.max(task.timeBlock.start.getTime(), winStart.getTime());
         const overlapEnd = Math.min(task.timeBlock.end.getTime(), winEnd.getTime());
         const overlapHrs = Math.max(0, (overlapEnd - overlapStart) / 3600000);

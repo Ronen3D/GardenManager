@@ -3086,7 +3086,6 @@ export function setActiveSnapshotId(id: string | null): void {
  */
 export function saveScheduleAsSnapshot(
   schedule: Schedule,
-  algorithmSettings: AlgorithmSettings,
   name: string,
   description: string,
 ): ScheduleSnapshot | 'storage-full' | null {
@@ -3120,11 +3119,6 @@ export function saveScheduleAsSnapshot(
     name: trimmed,
     description: description.trim(),
     schedule: deepCopiedSchedule,
-    algorithmSettings: {
-      config: { ...algorithmSettings.config },
-      disabledHardConstraints: [...algorithmSettings.disabledHardConstraints],
-      dayStartHour: algorithmSettings.dayStartHour,
-    },
     createdAt: Date.now(),
   };
 
@@ -3141,27 +3135,21 @@ export function saveScheduleAsSnapshot(
 }
 
 /**
- * Overwrite an existing snapshot's schedule and algorithm settings.
+ * Overwrite an existing snapshot's schedule. Algorithm settings are embedded
+ * in the schedule itself (see Schedule.algorithmSettings).
  * Returns false if snapshot not found or is built-in.
  */
-export function updateSnapshot(id: string, schedule: Schedule, algorithmSettings: AlgorithmSettings): boolean {
+export function updateSnapshot(id: string, schedule: Schedule): boolean {
   const snapshots = _initSnapshots();
   const idx = snapshots.findIndex((s) => s.id === id);
   if (idx === -1) return false;
   if (snapshots[idx].builtIn) return false;
 
   const oldSchedule = snapshots[idx].schedule;
-  const oldSettings = snapshots[idx].algorithmSettings;
 
   snapshots[idx].schedule = jsonDeserialize<Schedule>(jsonSerialize(schedule));
-  snapshots[idx].algorithmSettings = {
-    config: { ...algorithmSettings.config },
-    disabledHardConstraints: [...algorithmSettings.disabledHardConstraints],
-    dayStartHour: algorithmSettings.dayStartHour,
-  };
   if (!_saveSnapshots()) {
     snapshots[idx].schedule = oldSchedule; // rollback
-    snapshots[idx].algorithmSettings = oldSettings;
     return false;
   }
   return true;
@@ -3214,8 +3202,7 @@ export function duplicateSnapshot(id: string): ScheduleSnapshot | null {
     id: uid('snap'),
     name: newName,
     description: source.description,
-    schedule: source.schedule, // already a deep copy from getSnapshotById
-    algorithmSettings: source.algorithmSettings,
+    schedule: source.schedule, // already a deep copy from getSnapshotById; embeds algorithmSettings
     builtIn: false,
     createdAt: Date.now(),
   };

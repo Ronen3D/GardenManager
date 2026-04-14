@@ -56,6 +56,8 @@ export function renderProfileView(ctx: ProfileContext): string {
 
   // Left column: Agenda
   html += '<div class="profile-left">';
+  // Use the schedule's frozen dayStartHour so the agenda groups tasks
+  // the same way they were at generation time.
   html += renderPersonalAgenda(
     p,
     myTasks,
@@ -63,7 +65,7 @@ export function renderProfileView(ctx: ProfileContext): string {
     baseDate,
     ctx.frozenAssignmentIds,
     ctx.showSosButtons,
-    store.getDayStartHour(),
+    schedule.algorithmSettings.dayStartHour,
   );
   html += '</div>';
 

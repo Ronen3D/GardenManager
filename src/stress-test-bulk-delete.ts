@@ -13,7 +13,15 @@
  * Usage: npx tsx src/stress-test-bulk-delete.ts
  */
 
-import { type Assignment, AssignmentStatus, Level, Participant, type Schedule, type Task } from './models/types';
+import {
+  type Assignment,
+  AssignmentStatus,
+  DEFAULT_CONFIG,
+  Level,
+  Participant,
+  type Schedule,
+  type Task,
+} from './models/types';
 import * as store from './web/config-store';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -114,6 +122,13 @@ const fakeSchedule: Schedule = {
     dailyPerParticipantStdDev: 0,
     dailyGlobalStdDev: 0,
   },
+  algorithmSettings: {
+    config: { ...DEFAULT_CONFIG },
+    disabledHardConstraints: [],
+    dayStartHour: 5,
+  },
+  restRuleSnapshot: {},
+  certLabelSnapshot: {},
 };
 
 // ─── Test 1: Measure captureSnapshot alone ───────────────────────────────────

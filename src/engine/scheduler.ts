@@ -13,6 +13,7 @@ import {
   AssignmentStatus,
   type ConstraintViolation,
   DEFAULT_CONFIG,
+  type HardConstraintCode,
   type Participant,
   type ReScheduleRequest,
   type Schedule,
@@ -69,7 +70,8 @@ export class SchedulingEngine {
   private phantomContext: PhantomContext | null = null;
   private restRuleMap?: Map<string, number>;
   private dayStartHour: number;
-  certLabelResolver: (certId: string) => string = (id) => id;
+  private _certLabelSnapshot: Record<string, string> = {};
+  certLabelResolver: (certId: string) => string = (id) => this._certLabelSnapshot[id] ?? id;
 
   constructor(
     config: Partial<SchedulerConfig> = {},
@@ -88,6 +90,41 @@ export class SchedulingEngine {
   /** Operational day boundary hour currently used by this engine instance. */
   getDayStartHour(): number {
     return this.dayStartHour;
+  }
+
+  /** Frozen set of disabled hard-constraint codes captured at engine construction. */
+  getDisabledHC(): Set<string> | undefined {
+    return this.disabledHC;
+  }
+
+  /** Frozen rest-rule map (ruleId → minimum gap hours) captured at engine construction. */
+  getRestRuleMap(): Map<string, number> | undefined {
+    return this.restRuleMap;
+  }
+
+  /** Frozen scheduler config captured at engine construction. */
+  getConfig(): SchedulerConfig {
+    return this.config;
+  }
+
+  /** Frozen cert-id → label resolver backed by the construction-time snapshot. */
+  getCertLabelResolver(): (certId: string) => string {
+    return this.certLabelResolver;
+  }
+
+  /**
+   * Install the frozen cert-id → label snapshot. Called once at engine
+   * construction (from live config) or on reload (from the schedule's
+   * embedded `certLabelSnapshot`). The resolver reads from this map on
+   * every call, so it never consults the live store post-generation.
+   */
+  setCertLabelSnapshot(snapshot: Record<string, string>): void {
+    this._certLabelSnapshot = { ...snapshot };
+  }
+
+  /** Current cert-label snapshot — used by the finalizer to embed it into the Schedule. */
+  getCertLabelSnapshot(): Record<string, string> {
+    return this._certLabelSnapshot;
   }
 
   /**
@@ -278,6 +315,13 @@ export class SchedulingEngine {
       violations: allViolations,
       generatedAt: new Date(),
       actualAttempts: result.actualAttempts,
+      algorithmSettings: {
+        config: { ...this.config },
+        disabledHardConstraints: [...((this.disabledHC ?? new Set()) as Set<HardConstraintCode>)],
+        dayStartHour: this.dayStartHour,
+      },
+      restRuleSnapshot: Object.fromEntries(this.restRuleMap ?? new Map()),
+      certLabelSnapshot: { ...this._certLabelSnapshot },
     };
 
     this.currentSchedule = schedule;
@@ -911,6 +955,13 @@ export class SchedulingEngine {
       score: result.score,
       violations: [...hardValidation.violations, ...softWarnings],
       generatedAt: new Date(),
+      algorithmSettings: {
+        config: { ...this.config },
+        disabledHardConstraints: [...((this.disabledHC ?? new Set()) as Set<HardConstraintCode>)],
+        dayStartHour: this.dayStartHour,
+      },
+      restRuleSnapshot: Object.fromEntries(this.restRuleMap ?? new Map()),
+      certLabelSnapshot: { ...this._certLabelSnapshot },
     };
 
     this.currentSchedule = schedule;

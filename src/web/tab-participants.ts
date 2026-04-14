@@ -1075,11 +1075,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         countBadge.classList.remove('count-pulse');
         void countBadge.offsetWidth;
         countBadge.classList.add('count-pulse');
-        countBadge.addEventListener(
-          'animationend',
-          () => countBadge.classList.remove('count-pulse'),
-          { once: true },
-        );
+        countBadge.addEventListener('animationend', () => countBadge.classList.remove('count-pulse'), { once: true });
       });
     }
     let tapCount = 0;

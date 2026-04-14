@@ -225,6 +225,12 @@ export interface Schedule {
   generatedAt: Date;
   /** How many optimizer attempts actually ran (may be less than requested on early termination) */
   actualAttempts?: number;
+  /** Algorithm settings frozen at generation time (config, disabled HCs, dayStartHour). */
+  algorithmSettings: AlgorithmSettings;
+  /** Serialized rest-rule map (derived from templates at generation; frozen thereafter). */
+  restRuleSnapshot: Record<string, number>;
+  /** Certification id → label map, frozen at generation. Drives cert badges/tooltips. */
+  certLabelSnapshot: Record<string, string>;
 }
 
 export interface ScheduleScore {
@@ -422,15 +428,13 @@ export const DEFAULT_PRESET: AlgorithmPreset = {
 
 // ─── Schedule Snapshots ──────────────────────────────────────────────────────
 
-/** A named, saveable snapshot of a complete Schedule + algorithm settings */
+/** A named, saveable snapshot of a complete Schedule (algorithm settings are embedded in schedule). */
 export interface ScheduleSnapshot {
   id: string;
   name: string;
   description: string;
-  /** The full schedule state at the time of the snapshot */
+  /** The full schedule state at the time of the snapshot (includes frozen algorithmSettings). */
   schedule: Schedule;
-  /** Algorithm settings that were active when the snapshot was saved */
-  algorithmSettings: AlgorithmSettings;
   /** If true the snapshot cannot be deleted or renamed */
   builtIn?: boolean;
   /** Epoch ms — used for ordering snapshots */

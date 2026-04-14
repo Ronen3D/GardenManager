@@ -34,6 +34,7 @@ import {
   ViolationSeverity,
   validateHardConstraints,
 } from './index';
+import { allowedLevels, hasAnyLowPriority, isAcceptedLevel, isLowPriority } from './models/level-utils';
 import {
   type CertificationDefinition,
   DEFAULT_CERTIFICATION_DEFINITIONS,
@@ -42,7 +43,6 @@ import {
   type SlotRequirement,
   type TimeBlock,
 } from './models/types';
-import { allowedLevels, hasAnyLowPriority, isAcceptedLevel, isLowPriority } from './models/level-utils';
 
 // ─── Local test task factories (replacing deleted task-definitions.ts) ───────
 
@@ -4244,6 +4244,223 @@ console.log('\n── Engine: Extended Integration ─────────')
   assert(stats.totalParticipants === 2, 'Engine stats: 2 participants');
 }
 
+// Frozen snapshot: generated Schedule embeds algorithmSettings, rest rules, cert labels
+{
+  const frozenDisabledHC = new Set<string>(['HC-11']);
+  const frozenRestRules = new Map<string, number>([
+    ['rule-a', 7],
+    ['rule-b', 11],
+  ]);
+  const frozenEngine = new SchedulingEngine(
+    { maxIterations: 100, maxSolverTimeMs: 1000 },
+    frozenDisabledHC,
+    frozenRestRules,
+    6,
+  );
+  frozenEngine.setCertLabelSnapshot({ Nitzan: 'ניצן', Hamama: 'חממה' });
+  const fp1: Participant = {
+    id: 'fz-p1',
+    name: 'Fz1',
+    level: Level.L0,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'A',
+    availability: dayWindow,
+    dateUnavailability: [],
+  };
+  const fp2: Participant = {
+    id: 'fz-p2',
+    name: 'Fz2',
+    level: Level.L0,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'A',
+    availability: dayWindow,
+    dateUnavailability: [],
+  };
+  frozenEngine.addParticipants([fp1, fp2]);
+  frozenEngine.addTask(createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18)));
+  const frozenSched = frozenEngine.generateSchedule();
+
+  assert(frozenSched.algorithmSettings !== undefined, 'Frozen: schedule has algorithmSettings');
+  assert(frozenSched.algorithmSettings.dayStartHour === 6, 'Frozen: embedded dayStartHour matches engine (6)');
+  assert(
+    frozenSched.algorithmSettings.disabledHardConstraints.includes('HC-11'),
+    'Frozen: embedded disabled HCs include HC-11',
+  );
+  assert(
+    frozenSched.restRuleSnapshot['rule-a'] === 7 && frozenSched.restRuleSnapshot['rule-b'] === 11,
+    'Frozen: restRuleSnapshot preserves rule→hours mapping',
+  );
+  assert(
+    frozenSched.certLabelSnapshot.Nitzan === 'ניצן' && frozenSched.certLabelSnapshot.Hamama === 'חממה',
+    'Frozen: certLabelSnapshot captures cert labels by id',
+  );
+
+  // Mutating engine-external data after generation must not leak into the frozen schedule.
+  frozenEngine.setCertLabelSnapshot({ Nitzan: 'changed' });
+  assert(
+    frozenSched.certLabelSnapshot.Nitzan === 'ניצן',
+    'Frozen: changing engine cert snapshot does not mutate already-generated schedule',
+  );
+  frozenEngine.setDayStartHour(9);
+  assert(
+    frozenSched.algorithmSettings.dayStartHour === 6,
+    'Frozen: changing engine dayStartHour does not mutate already-generated schedule',
+  );
+
+  // Mutating the caller's disabledHC Set after generation must not leak in
+  // (snapshot field is copied by value, not referenced).
+  frozenDisabledHC.add('HC-12');
+  assert(
+    !frozenSched.algorithmSettings.disabledHardConstraints.includes('HC-12'),
+    'Frozen: mutating caller disabledHC Set does not mutate schedule snapshot',
+  );
+  assert(
+    frozenSched.algorithmSettings.disabledHardConstraints.length === 1,
+    'Frozen: snapshot disabledHardConstraints length unchanged after caller mutation',
+  );
+
+  // Mutating the caller's restRuleMap after generation must not leak in.
+  frozenRestRules.set('rule-c', 99);
+  assert(
+    frozenSched.restRuleSnapshot['rule-c'] === undefined,
+    'Frozen: mutating caller restRuleMap does not mutate schedule snapshot',
+  );
+}
+
+// Frozen snapshot: engine's internal participants/tasks remain unchanged after generation
+{
+  const isolationEngine = new SchedulingEngine({ maxIterations: 100, maxSolverTimeMs: 1000 });
+  const ip1: Participant = {
+    id: 'iso-p1',
+    name: 'Iso1',
+    level: Level.L0,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'A',
+    availability: dayWindow,
+    dateUnavailability: [],
+  };
+  const ip2: Participant = {
+    id: 'iso-p2',
+    name: 'Iso2',
+    level: Level.L0,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'A',
+    availability: dayWindow,
+    dateUnavailability: [],
+  };
+  isolationEngine.addParticipants([ip1, ip2]);
+  isolationEngine.addTask(createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18)));
+  const beforeSched = isolationEngine.generateSchedule();
+  const beforeParticipants = beforeSched.participants.length;
+  const beforeAssignments = beforeSched.assignments.length;
+  const beforeTasks = beforeSched.tasks.length;
+
+  // Mutate the caller's Participant objects (this was the original bug class:
+  // caller mutations leaking into engine-owned data).
+  ip1.level = Level.L4;
+  ip1.certifications = [];
+
+  // Fetch the engine's current schedule; it should match what we already
+  // received — no silent mutation of participants/assignments/tasks.
+  const afterSched = isolationEngine.getSchedule()!;
+  assert(afterSched === beforeSched, 'Isolation: getSchedule() returns same schedule object');
+  assert(afterSched.participants.length === beforeParticipants, 'Isolation: participant count unchanged');
+  assert(afterSched.assignments.length === beforeAssignments, 'Isolation: assignment count unchanged');
+  assert(afterSched.tasks.length === beforeTasks, 'Isolation: task count unchanged');
+
+  // Engine stores its own participant reference — if the caller mutates the
+  // participant object, the engine's view also reflects it (we only copy
+  // the *assignments/tasks* frozen fields into snapshot, not participant
+  // objects). Document this invariant: orphan detection runs against the
+  // store's participant list, so stale per-participant data is detected at
+  // regenerate-time, not at display-time.
+  const engineP1 = isolationEngine.getParticipant('iso-p1');
+  assert(engineP1 !== undefined, 'Isolation: engine still has participant iso-p1');
+}
+
+// Frozen snapshot: defaults for undefined disabledHC / restRuleMap / certLabel
+{
+  const defaultsEngine = new SchedulingEngine({ maxIterations: 100, maxSolverTimeMs: 1000 });
+  const dp1: Participant = {
+    id: 'df-p1',
+    name: 'Df1',
+    level: Level.L0,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'A',
+    availability: dayWindow,
+    dateUnavailability: [],
+  };
+  const dp2: Participant = {
+    id: 'df-p2',
+    name: 'Df2',
+    level: Level.L0,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'A',
+    availability: dayWindow,
+    dateUnavailability: [],
+  };
+  defaultsEngine.addParticipants([dp1, dp2]);
+  defaultsEngine.addTask(createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18)));
+  const defSched = defaultsEngine.generateSchedule();
+
+  assert(
+    Array.isArray(defSched.algorithmSettings.disabledHardConstraints),
+    'Defaults: disabledHardConstraints is an array',
+  );
+  assert(
+    defSched.algorithmSettings.disabledHardConstraints.length === 0,
+    'Defaults: undefined engine disabledHC → empty array in snapshot',
+  );
+  assert(
+    typeof defSched.restRuleSnapshot === 'object' && Object.keys(defSched.restRuleSnapshot).length === 0,
+    'Defaults: undefined engine restRuleMap → empty object in snapshot',
+  );
+  assert(
+    typeof defSched.certLabelSnapshot === 'object' && Object.keys(defSched.certLabelSnapshot).length === 0,
+    'Defaults: no setCertLabelSnapshot call → empty object in snapshot',
+  );
+  assert(defSched.algorithmSettings.dayStartHour === 5, 'Defaults: constructor defaults dayStartHour to 5');
+}
+
+// Frozen snapshot: sequential generations produce independent frozen fields
+{
+  const seqEngine = new SchedulingEngine({ maxIterations: 100, maxSolverTimeMs: 1000 }, new Set(['HC-11']));
+  seqEngine.setCertLabelSnapshot({ Nitzan: 'first' });
+  const sp1: Participant = {
+    id: 'seq-p1',
+    name: 'Seq1',
+    level: Level.L0,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'A',
+    availability: dayWindow,
+    dateUnavailability: [],
+  };
+  const sp2: Participant = {
+    id: 'seq-p2',
+    name: 'Seq2',
+    level: Level.L0,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'A',
+    availability: dayWindow,
+    dateUnavailability: [],
+  };
+  seqEngine.addParticipants([sp1, sp2]);
+  seqEngine.addTask(createHamamaTask(createTimeBlockFromHours(baseDate, 6, 18)));
+  const sched1 = seqEngine.generateSchedule();
+
+  // Second generation with different cert labels
+  seqEngine.setCertLabelSnapshot({ Nitzan: 'second' });
+  const sched2 = seqEngine.generateSchedule();
+
+  assert(sched1.certLabelSnapshot.Nitzan === 'first', 'Seq: schedule1 retains original cert label');
+  assert(sched2.certLabelSnapshot.Nitzan === 'second', 'Seq: schedule2 reflects new cert label');
+  assert(sched1 !== sched2, 'Seq: generations produce distinct Schedule objects');
+  assert(
+    sched1.algorithmSettings !== sched2.algorithmSettings,
+    'Seq: each generation produces a fresh algorithmSettings object',
+  );
+}
+
 // ─── Dynamic Certifications ──────────────────────────────────────────────────
 
 console.log('\n── Dynamic Certifications ──────────────────');
@@ -4698,6 +4915,9 @@ console.log('\n── Temporal Engine (Live Mode) ──────────
     violations: [],
     feasible: true,
     generatedAt: new Date(),
+    algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+    restRuleSnapshot: {},
+    certLabelSnapshot: {},
   };
 
   const changed = freezeAssignments(schedule, anchor);
@@ -5355,6 +5575,9 @@ console.log('\n── Rescue Plans ───────────────
     score: dummyScore,
     violations: [],
     generatedAt: new Date(),
+    algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+    restRuleSnapshot: {},
+    certLabelSnapshot: {},
   };
 
   // Vacate p1's slot → p3 is the only eligible replacement (p2 already in the task → HC-7)
@@ -5990,16 +6213,15 @@ console.log('\n── getCandidatesWithEligibility ────────');
 
 console.log('\n── Level Utils ─────────────────────────');
 {
-  const mixed: LevelEntry[] = [
-    { level: Level.L0 },
-    { level: Level.L2, lowPriority: true },
-    { level: Level.L4 },
-  ];
+  const mixed: LevelEntry[] = [{ level: Level.L0 }, { level: Level.L2, lowPriority: true }, { level: Level.L4 }];
 
   // allowedLevels: preserves order, strips metadata
   const flat = allowedLevels(mixed);
   assert(flat.length === 3, 'level-utils: allowedLevels returns all entries');
-  assert(flat[0] === Level.L0 && flat[1] === Level.L2 && flat[2] === Level.L4, 'level-utils: allowedLevels preserves order');
+  assert(
+    flat[0] === Level.L0 && flat[1] === Level.L2 && flat[2] === Level.L4,
+    'level-utils: allowedLevels preserves order',
+  );
   assert(allowedLevels([]).length === 0, 'level-utils: allowedLevels on empty → []');
 
   // isLowPriority: only true when entry exists AND lowPriority=true
@@ -6023,9 +6245,18 @@ console.log('\n── Level Utils ───────────────�
 
   // Explicit lowPriority=false should be treated the same as unset (strict ===true check)
   const explicitFalse: LevelEntry[] = [{ level: Level.L0, lowPriority: false }];
-  assert(isLowPriority(explicitFalse, Level.L0) === false, 'level-utils: isLowPriority → false for explicit lowPriority=false');
-  assert(hasAnyLowPriority(explicitFalse) === false, 'level-utils: hasAnyLowPriority → false for explicit lowPriority=false');
-  assert(isAcceptedLevel(explicitFalse, Level.L0) === true, 'level-utils: isAcceptedLevel → true for explicit lowPriority=false');
+  assert(
+    isLowPriority(explicitFalse, Level.L0) === false,
+    'level-utils: isLowPriority → false for explicit lowPriority=false',
+  );
+  assert(
+    hasAnyLowPriority(explicitFalse) === false,
+    'level-utils: hasAnyLowPriority → false for explicit lowPriority=false',
+  );
+  assert(
+    isAcceptedLevel(explicitFalse, Level.L0) === true,
+    'level-utils: isAcceptedLevel → true for explicit lowPriority=false',
+  );
 }
 
 // ─── HC-14: cross-boundary + cross-rule coverage ────────────────────────────
@@ -6075,8 +6306,22 @@ console.log('\n── HC-14: Cross-Boundary & Cross-Rule ──');
     [taskMon.id, taskMon],
   ]);
   const assignsX: Assignment[] = [
-    { id: 'hc14x-a1', taskId: taskSun.id, slotId: 'hc14x-s1', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'hc14x-a2', taskId: taskMon.id, slotId: 'hc14x-s2', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    {
+      id: 'hc14x-a1',
+      taskId: taskSun.id,
+      slotId: 'hc14x-s1',
+      participantId: hc14xP.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'hc14x-a2',
+      taskId: taskMon.id,
+      slotId: 'hc14x-s2',
+      participantId: hc14xP.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
   ];
   const ruleMapX = new Map([['boundary-rule', 5 * 3600000]]);
 
@@ -6096,8 +6341,22 @@ console.log('\n── HC-14: Cross-Boundary & Cross-Rule ──');
     [taskMonLate.id, taskMonLate],
   ]);
   const assignsXok: Assignment[] = [
-    { id: 'hc14x-a3', taskId: taskSun.id, slotId: 'hc14x-s1', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'hc14x-a4', taskId: taskMonLate.id, slotId: 'hc14x-s2', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    {
+      id: 'hc14x-a3',
+      taskId: taskSun.id,
+      slotId: 'hc14x-s1',
+      participantId: hc14xP.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'hc14x-a4',
+      taskId: taskMonLate.id,
+      slotId: 'hc14x-s2',
+      participantId: hc14xP.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
   ];
   assert(
     checkRestRules(hc14xP.id, assignsXok, tMapXok, ruleMapX).length === 0,
@@ -6134,8 +6393,22 @@ console.log('\n── HC-14: Cross-Boundary & Cross-Rule ──');
     [taskRuleB.id, taskRuleB],
   ]);
   const assignsCross: Assignment[] = [
-    { id: 'hc14x-a5', taskId: taskRuleA.id, slotId: 'hc14x-sa', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'hc14x-a6', taskId: taskRuleB.id, slotId: 'hc14x-sb', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    {
+      id: 'hc14x-a5',
+      taskId: taskRuleA.id,
+      slotId: 'hc14x-sa',
+      participantId: hc14xP.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'hc14x-a6',
+      taskId: taskRuleB.id,
+      slotId: 'hc14x-sb',
+      participantId: hc14xP.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
   ];
   const ruleMapCross = new Map([
     ['rule-a', 6 * 3600000],
@@ -6157,8 +6430,22 @@ console.log('\n── HC-14: Cross-Boundary & Cross-Rule ──');
     [taskRuleB2.id, taskRuleB2],
   ]);
   const assignsCrossOk: Assignment[] = [
-    { id: 'hc14x-a7', taskId: taskRuleA.id, slotId: 'hc14x-sa', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'hc14x-a8', taskId: taskRuleB2.id, slotId: 'hc14x-sb', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    {
+      id: 'hc14x-a7',
+      taskId: taskRuleA.id,
+      slotId: 'hc14x-sa',
+      participantId: hc14xP.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'hc14x-a8',
+      taskId: taskRuleB2.id,
+      slotId: 'hc14x-sb',
+      participantId: hc14xP.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
   ];
   assert(
     checkRestRules(hc14xP.id, assignsCrossOk, tMapCrossOk, ruleMapCross).length === 0,

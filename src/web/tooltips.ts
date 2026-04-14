@@ -28,6 +28,20 @@ export function initTooltips(cb: TooltipCallbacks): void {
   _callbacks = cb;
 }
 
+/**
+ * Resolve a cert id to a human label, preferring the schedule's frozen
+ * snapshot so labels for certs deleted after generation still render.
+ * Falls back to the live store (covers cert-color + renaming live), and
+ * finally to the raw id with a "(נמחק)" suffix.
+ */
+function resolveCertLabel(certId: string, schedule: Schedule | null): string {
+  const snap = schedule?.certLabelSnapshot?.[certId];
+  if (snap) return snap;
+  const liveDef = store.getCertificationById(certId);
+  if (liveDef) return liveDef.label;
+  return `${certId} (נמחק)`;
+}
+
 // ─── Global Participant Tooltip ─────────────────────────────────────────────
 
 let _tooltipEl: HTMLElement | null = null;
@@ -131,7 +145,7 @@ export function buildParticipantTooltipContent(
     p.certifications.length > 0
       ? p.certifications
           .map((c: string) => {
-            return `<span class="tt-cert" style="background:${store.getCertColor(c)}">${escHtml(store.getCertLabel(c))}</span>`;
+            return `<span class="tt-cert" style="background:${store.getCertColor(c)}">${escHtml(resolveCertLabel(c, schedule))}</span>`;
           })
           .join(' ')
       : '<span class="tt-dim">אין</span>';
@@ -406,7 +420,7 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
           ? p.certifications
               .map(
                 (c) =>
-                  `<span class="ttt-cert" style="background:${store.getCertColor(c)}">${escHtml(store.getCertLabel(c))}</span>`,
+                  `<span class="ttt-cert" style="background:${store.getCertColor(c)}">${escHtml(resolveCertLabel(c, schedule))}</span>`,
               )
               .join('')
           : '';

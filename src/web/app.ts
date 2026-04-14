@@ -23,7 +23,6 @@ import {
 } from '../engine/temporal';
 import { getEligibleParticipantsForSlot, getRejectionReason, REJECTION_REASONS_HE } from '../engine/validator';
 import {
-  AlgorithmSettings,
   type Assignment,
   AssignmentStatus,
   Level,
@@ -154,6 +153,50 @@ let _scheduleDirty = false;
 
 /** True when the current schedule differs from the active snapshot */
 let _snapshotDirty = false;
+
+/**
+ * Build a frozen cert-id → label snapshot from the live store. Called once
+ * at engine construction so the engine's resolver never consults the store
+ * again — edits to cert labels after generation do not leak into tooltips.
+ */
+function buildCertLabelSnapshot(): Record<string, string> {
+  const snapshot: Record<string, string> = {};
+  for (const def of store.getCertificationDefinitions()) {
+    snapshot[def.id] = def.label;
+  }
+  return snapshot;
+}
+
+/**
+ * A persisted Schedule produced before the frozen-snapshot schema change
+ * won't have `algorithmSettings` / `restRuleSnapshot` / `certLabelSnapshot`.
+ * Rather than crashing on init, we detect that case and drop the schedule —
+ * the user sees no schedule and regenerates. Pre-release: no migration.
+ */
+function hasFrozenFields(sched: Schedule | null | undefined): boolean {
+  if (!sched) return false;
+  const s = sched as Partial<Schedule>;
+  return (
+    !!s.algorithmSettings &&
+    !!s.algorithmSettings.config &&
+    s.restRuleSnapshot !== undefined &&
+    s.certLabelSnapshot !== undefined
+  );
+}
+
+/**
+ * True if the schedule references a participant whose id is no longer in the
+ * live store, or a task whose source template / one-time task is gone.
+ * Drives the dirty warning on snapshot load and page reload.
+ */
+function scheduleHasOrphans(sched: Schedule): boolean {
+  const liveParticipantIds = new Set(store.getAllParticipants().map((p) => p.id));
+  if (sched.participants.some((p) => !liveParticipantIds.has(p.id))) return true;
+  const liveSources = new Set<string>();
+  for (const t of store.getAllTaskTemplates()) liveSources.add(t.name);
+  for (const ot of store.getAllOneTimeTasks()) liveSources.add(ot.name);
+  return sched.tasks.some((t) => t.sourceName !== undefined && !liveSources.has(t.sourceName));
+}
 /** State for inline snapshot forms */
 let _snapshotFormMode: 'none' | 'save-as' | 'rename' = 'none';
 let _snapshotFormError = '';
@@ -487,9 +530,10 @@ function generateTasksFromTemplates(): Task[] {
 
 // ─── Day Filtering ───────────────────────────────────────────────────────────
 
-/** Get tasks that intersect the current day's 05:00–05:00 window */
+/** Get tasks that intersect the current day's window (uses schedule's frozen dayStartHour). */
 function getFilteredTasks(schedule: Schedule): Task[] {
-  return schedule.tasks.filter((t) => taskIntersectsDay(t, currentDay));
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  return schedule.tasks.filter((t) => taskIntersectsDay(t, currentDay, dsh));
 }
 
 /** Get assignments for tasks visible in the current day */
@@ -515,9 +559,11 @@ function renderDayNavigator(): string {
     let taskCount = 0;
     let violationCount = 0;
     if (currentSchedule) {
-      taskCount = currentSchedule.tasks.filter((t) => taskIntersectsDay(t, d)).length;
-      const dayTaskIds = new Set(currentSchedule.tasks.filter((t) => taskIntersectsDay(t, d)).map((t) => t.id));
-      violationCount = filterVisibleViolations(currentSchedule.violations).filter(
+      const dsh = currentSchedule.algorithmSettings.dayStartHour;
+      const frozenDisabled = new Set(currentSchedule.algorithmSettings.disabledHardConstraints);
+      taskCount = currentSchedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh)).length;
+      const dayTaskIds = new Set(currentSchedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh)).map((t) => t.id));
+      violationCount = filterVisibleViolations(currentSchedule.violations, frozenDisabled).filter(
         (v) => v.severity === ViolationSeverity.Error && v.taskId && dayTaskIds.has(v.taskId),
       ).length;
     }
@@ -556,7 +602,9 @@ function renderDayNavigator(): string {
 function renderWeeklyDashboard(schedule: Schedule): string {
   const score = schedule.score;
   const numDays = store.getScheduleDays();
-  const visibleViolations = filterVisibleViolations(schedule.violations);
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  const frozenDisabled = new Set(schedule.algorithmSettings.disabledHardConstraints);
+  const visibleViolations = filterVisibleViolations(schedule.violations, frozenDisabled);
   const totalViolations = visibleViolations.filter((v) => v.severity === ViolationSeverity.Error).length;
   const warnings = visibleViolations.filter((v) => v.severity === ViolationSeverity.Warning).length;
   const feasibleClass = schedule.feasible ? 'kpi-ok' : 'kpi-error';
@@ -565,11 +613,11 @@ function renderWeeklyDashboard(schedule: Schedule): string {
   // Per-day task counts
   let dayDots = '';
   for (let d = 1; d <= numDays; d++) {
-    const count = schedule.tasks.filter((t) => taskIntersectsDay(t, d)).length;
-    const dayViolations = filterVisibleViolations(schedule.violations).filter((v) => {
+    const count = schedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh)).length;
+    const dayViolations = visibleViolations.filter((v) => {
       if (v.severity !== ViolationSeverity.Error || !v.taskId) return false;
       const task = schedule.tasks.find((t) => t.id === v.taskId);
-      return task ? taskIntersectsDay(task, d) : false;
+      return task ? taskIntersectsDay(task, d, dsh) : false;
     }).length;
     const dotClass = dayViolations > 0 ? 'dot-error' : count > 0 ? 'dot-ok' : 'dot-empty';
     dayDots += `<span class="week-dot ${dotClass}" title="יום ${d}: ${count} משימות, ${dayViolations} הפרות"></span>`;
@@ -921,7 +969,9 @@ function renderScheduleTab(): string {
   };
   html += `<div class="schedule-layout">`;
   html += `<div class="schedule-main">`;
-  html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState(), manualCtx, store.getDayStartHour())}</section>`;
+  // Use the schedule's frozen dayStartHour so day grouping stays consistent
+  // with how the schedule was generated, even if the live setting was edited.
+  html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState(), manualCtx, s.algorithmSettings.dayStartHour)}</section>`;
   // Participant warehouse (desktop: inline; mobile: hidden, shown via bottom sheet)
   if (_manualBuildActive) {
     html += renderParticipantWarehouse(s);
@@ -936,7 +986,10 @@ function renderScheduleTab(): string {
   html += `<div class="gantt-section-content"${_manualBuildActive ? ' style="display:none"' : ''}><h2 class="gantt-desktop-title">מערכת שעות כללית</h2>${renderGanttChart(s)}</div>`;
   html += `</section>`;
   // In manual build mode, collapse violations by default (empty schedule generates hundreds)
-  const violationCount = filterVisibleViolations(s.violations).length;
+  const violationCount = filterVisibleViolations(
+    s.violations,
+    new Set(s.algorithmSettings.disabledHardConstraints),
+  ).length;
   if (_manualBuildActive) {
     html += `<section class="violations-section violations-collapsed">
       <button class="violations-toggle" data-action="toggle-violations" aria-expanded="false">
@@ -966,8 +1019,8 @@ function renderParticipantWarehouse(schedule: Schedule): string {
   const l0Pool = participants.filter((p) => p.level === Level.L0);
   const seniorPool = participants.filter((p) => p.level !== Level.L0);
 
-  // Count current-day assignments per participant
-  const { start: dayStart, end: dayEnd } = getDayWindow(currentDay);
+  // Count current-day assignments per participant (schedule's frozen dayStartHour)
+  const { start: dayStart, end: dayEnd } = getDayWindow(currentDay, schedule.algorithmSettings.dayStartHour);
   const dayTaskIds = new Set(
     schedule.tasks
       .filter((t) => {
@@ -1119,7 +1172,9 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
   _manualSelectedSlotId = slotId;
 
   const allTasks = currentSchedule.tasks;
-  const disabledHC = engine ? new Set(store.getAlgorithmSettings().disabledHardConstraints) : undefined;
+  // Use engine's frozen state so external edits don't change eligibility.
+  const disabledHC = engine ? engine.getDisabledHC() : undefined;
+  const restRuleMap = engine ? engine.getRestRuleMap() : undefined;
   const eligible = getEligibleParticipantsForSlot(
     task,
     slotId,
@@ -1127,7 +1182,7 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
     currentSchedule.assignments,
     allTasks,
     disabledHC,
-    store.buildRestRuleMap(),
+    restRuleMap,
   );
   _eligibleForSelectedSlot = new Set(eligible.map((p) => p.id));
 
@@ -1164,14 +1219,14 @@ async function handleManualParticipantClick(participantId: string): Promise<bool
   );
 
   const taskAssignments = currentSchedule.assignments.filter((a) => a.taskId === task.id);
-  const disabledHC = new Set(store.getAlgorithmSettings().disabledHardConstraints);
+  const disabledHC = engine.getDisabledHC() ?? new Set();
 
   const reason = getRejectionReason(participant, task, slot, pAssignments, taskMap, {
     checkSameGroup: true,
     taskAssignments,
     participantMap: pMap,
     disabledHC,
-    restRuleMap: store.buildRestRuleMap(),
+    restRuleMap: engine.getRestRuleMap(),
   });
 
   if (reason) {
@@ -1470,73 +1525,77 @@ function loadScheduleSnapshot(snapshotId: string): void {
   const snapshot = store.getSnapshotById(snapshotId);
   if (!snapshot) return;
 
-  // 1. Restore algorithm settings (including the operational day boundary so
-  //    day grouping, scoring, and the engine all match what was saved).
+  // Reject pre-schema snapshots (missing frozen fields) — pre-release, no migration.
+  if (!hasFrozenFields(snapshot.schedule)) {
+    showToast('תמונת מצב ישנה — יש ליצור תמונה חדשה לאחר יצירת שבצ"ק.', {
+      type: 'error',
+      duration: 6000,
+    });
+    return;
+  }
+
+  // 1. Restore algorithm settings from the frozen snapshot embedded in the
+  //    schedule itself, so day grouping/scoring/engine all match what was saved.
+  const frozen = snapshot.schedule.algorithmSettings;
   store.setAlgorithmSettings({
-    config: snapshot.algorithmSettings.config,
-    disabledHardConstraints: snapshot.algorithmSettings.disabledHardConstraints,
-    dayStartHour: snapshot.algorithmSettings.dayStartHour,
+    config: frozen.config,
+    disabledHardConstraints: frozen.disabledHardConstraints,
+    dayStartHour: frozen.dayStartHour,
   });
 
-  // 2. Reconcile with current participants
-  const currentParticipants = store.getAllParticipants();
-  const storeIds = new Set(currentParticipants.map((p) => p.id));
-  const storeMap = new Map(currentParticipants.map((p) => [p.id, p]));
+  // 2. Use the snapshot's embedded data as-is — no filtering against the
+  //    live store. Orphaned participants/tasks remain visible in the grid;
+  //    the dirty warning communicates regeneration is needed.
+  const loadedSchedule = snapshot.schedule;
 
-  const reconciledAssignments = snapshot.schedule.assignments.filter((a) => storeIds.has(a.participantId));
-  const reconciledParticipants = currentParticipants.filter((p) =>
-    snapshot.schedule.participants.some((sp) => sp.id === p.id),
-  );
-
-  const reconciledSchedule: Schedule = {
-    ...snapshot.schedule,
-    participants: reconciledParticipants,
-    assignments: reconciledAssignments,
-  };
-
-  // 3. Create engine with restored algorithm settings
-  const algoSettings = store.getAlgorithmSettings();
+  // 3. Create engine from the schedule's embedded frozen settings.
   engine = new SchedulingEngine(
-    algoSettings.config,
-    store.getDisabledHCSet(),
-    store.buildRestRuleMap(),
-    store.getDayStartHour(),
+    frozen.config,
+    new Set(frozen.disabledHardConstraints),
+    new Map(Object.entries(loadedSchedule.restRuleSnapshot)),
+    frozen.dayStartHour,
   );
-  engine.certLabelResolver = store.getCertLabel;
+  engine.setCertLabelSnapshot(loadedSchedule.certLabelSnapshot);
 
-  // 4. Load data into engine
-  engine.addParticipants(reconciledParticipants);
-  engine.addTasks(snapshot.schedule.tasks);
-  engine.importSchedule(reconciledSchedule);
+  // 4. Load the schedule's own data into the engine (including any
+  //    participants/tasks no longer present in the live store).
+  engine.addParticipants(loadedSchedule.participants);
+  engine.addTasks(loadedSchedule.tasks);
+  engine.importSchedule(loadedSchedule);
 
   // 5. Re-validate
   engine.revalidateFull();
   closeRescueModal();
   currentSchedule = engine.getSchedule()!;
   currentDay = 1;
-  _scheduleDirty = false;
   _snapshotDirty = false;
 
-  // 6. Apply live mode freeze if active
+  // 6. Detect orphans against the live store; mark dirty if any are present.
+  _scheduleDirty = scheduleHasOrphans(loadedSchedule);
+
+  // 7. Apply live mode freeze if active
   const liveMode = store.getLiveModeState();
   if (liveMode.enabled && currentSchedule) {
     freezeAssignments(currentSchedule, liveMode.currentTimestamp);
   }
 
-  // 7. Persist as current schedule
+  // 8. Persist as current schedule
   if (!store.saveSchedule(currentSchedule)) {
     showToast('טעינת התמונה הצליחה אך השמירה נכשלה — נפח האחסון מלא.', { type: 'warning', duration: 6000 });
   }
   store.setActiveSnapshotId(snapshotId);
 
-  // 8. Re-render
+  // 9. Re-render
   renderAll();
 }
 
 // ─── Violations ──────────────────────────────────────────────────────────────
 
 function renderViolations(schedule: Schedule): string {
-  const visible = filterVisibleViolations(schedule.violations);
+  const visible = filterVisibleViolations(
+    schedule.violations,
+    new Set(schedule.algorithmSettings.disabledHardConstraints),
+  );
   const hard = visible.filter((v) => v.severity === ViolationSeverity.Error);
   const warn = visible.filter((v) => v.severity === ViolationSeverity.Warning);
 
@@ -1705,10 +1764,11 @@ function renderGanttChart(schedule: Schedule): string {
       const left = ((block.startMs - ganttData.timelineStartMs) / totalMs) * 100;
       const width = (block.durationMs / totalMs) * 100;
 
-      // Cross-day indicator on gantt blocks
+      // Cross-day indicator on gantt blocks (schedule's frozen dayStartHour)
       const task = filteredTasks.find((t) => t.id === block.taskId);
-      const crossFrom = task && taskStartsBefore(task, currentDay);
-      const crossTo = task && taskEndsAfter(task, currentDay);
+      const dsh = schedule.algorithmSettings.dayStartHour;
+      const crossFrom = task && taskStartsBefore(task, currentDay, dsh);
+      const crossTo = task && taskEndsAfter(task, currentDay, dsh);
       const crossClass = crossFrom ? 'gantt-cross-from' : crossTo ? 'gantt-cross-to' : '';
 
       // Browser title tooltips render as plain text (no HTML), so we use
@@ -1837,7 +1897,7 @@ async function doGenerate(): Promise<void> {
     store.buildRestRuleMap(),
     store.getDayStartHour(),
   );
-  engine.certLabelResolver = store.getCertLabel;
+  engine.setCertLabelSnapshot(buildCertLabelSnapshot());
   engine.addParticipants(participants);
   engine.addTasks(tasks);
 
@@ -1969,7 +2029,7 @@ function doCreateManualSchedule(): void {
     store.buildRestRuleMap(),
     store.getDayStartHour(),
   );
-  engine.certLabelResolver = store.getCertLabel;
+  engine.setCertLabelSnapshot(buildCertLabelSnapshot());
   engine.addParticipants(participants);
   engine.addTasks(tasks);
 
@@ -1995,6 +2055,13 @@ function doCreateManualSchedule(): void {
     },
     violations: [],
     generatedAt: new Date(),
+    algorithmSettings: {
+      config: { ...algoSettings.config },
+      disabledHardConstraints: [...algoSettings.disabledHardConstraints],
+      dayStartHour: algoSettings.dayStartHour,
+    },
+    restRuleSnapshot: Object.fromEntries(store.buildRestRuleMap()),
+    certLabelSnapshot: buildCertLabelSnapshot(),
   };
 
   engine.importSchedule(emptySchedule);
@@ -2074,15 +2141,16 @@ async function handleSwap(assignmentId: string): Promise<void> {
     return;
   }
 
-  const disabledHC = new Set(store.getAlgorithmSettings().disabledHardConstraints);
-  const restRuleMap = store.buildRestRuleMap();
+  // Read frozen engine state — external store edits don't leak into swap previews.
+  const disabledHC = engine.getDisabledHC() ?? new Set();
+  const restRuleMap = engine.getRestRuleMap() ?? new Map();
 
   await openSwapPicker(assignmentId, {
     engine,
     schedule: currentSchedule,
     disabledHC,
     restRuleMap,
-    dayStartHour: store.getDayStartHour(),
+    dayStartHour: engine.getDayStartHour(),
     onCommit: ({ label, preCommitAssignments }) => {
       if (!currentSchedule) return;
       // Record a pre-commit schedule snapshot on the parallel stack and push
@@ -2223,29 +2291,6 @@ function scrollToNow(storeRef: typeof store, scroll = true): void {
   }
 }
 
-/**
- * Passive repair: if the operational day boundary in settings has drifted
- * from the engine's cached value (e.g., the user changed `dayStartHour`
- * while a schedule is loaded), update the engine and re-validate so the
- * score, soft warnings, and all downstream display are consistent with
- * the new boundary.
- */
-function _syncEngineDayStartHour(): void {
-  if (!engine || !currentSchedule) return;
-  const storeDsh = store.getDayStartHour();
-  if (engine.getDayStartHour() !== storeDsh) {
-    engine.setDayStartHour(storeDsh);
-    engine.revalidateFull();
-    const updated = engine.getSchedule();
-    if (updated) {
-      currentSchedule = updated;
-      if (!store.saveSchedule(currentSchedule)) {
-        showToast('השינוי בוצע אך לא נשמר — נפח האחסון מלא.', { type: 'warning', duration: 6000 });
-      }
-    }
-  }
-}
-
 function renderAll(): void {
   const app = document.getElementById('app')!;
 
@@ -2253,9 +2298,6 @@ function renderAll(): void {
   hideTooltip();
   hideTaskTooltip();
   hideAvailabilityPopover();
-
-  // Keep engine in sync with the configured day boundary hour
-  _syncEngineDayStartHour();
 
   // ── Profile View: completely different layout, no re-optimization ──
   if (_viewMode === 'PROFILE_VIEW' && _profileParticipantId && currentSchedule) {
@@ -2307,7 +2349,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.1.9</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.0</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2706,8 +2748,7 @@ function wireSnapshotEvents(container: HTMLElement): void {
         renderAll();
         return;
       }
-      const algoSettings = store.getAlgorithmSettings();
-      const result = store.saveScheduleAsSnapshot(currentSchedule, algoSettings, name, desc);
+      const result = store.saveScheduleAsSnapshot(currentSchedule, name, desc);
       if (result === 'storage-full') {
         const hasSnapshots = store.getAllSnapshots().length > 0;
         _snapshotFormError = store.isStorageWedged()
@@ -2789,8 +2830,7 @@ function wireSnapshotEvents(container: HTMLElement): void {
       }
       case 'update': {
         if (!currentSchedule) return;
-        const algoSettings = store.getAlgorithmSettings();
-        const ok = store.updateSnapshot(snapId, currentSchedule, algoSettings);
+        const ok = store.updateSnapshot(snapId, currentSchedule);
         if (ok) {
           _snapshotDirty = false;
           showToast('תמונת מצב עודכנה', { type: 'success' });
@@ -2919,8 +2959,8 @@ function wireScheduleEvents(container: HTMLElement): void {
         currentSchedule,
         currentDay,
         store.getScheduleDate(),
-        store.getDayStartHour(),
-        store.buildRestRuleMap(),
+        currentSchedule.algorithmSettings.dayStartHour,
+        new Map(Object.entries(currentSchedule.restRuleSnapshot)),
       );
       const json = JSON.stringify(snapshot, null, 2);
       navigator.clipboard
@@ -2950,13 +2990,13 @@ function wireScheduleEvents(container: HTMLElement): void {
         currentSchedule,
         currentDay,
         store.getScheduleDate(),
-        store.getDayStartHour(),
-        store.buildRestRuleMap(),
+        currentSchedule.algorithmSettings.dayStartHour,
+        new Map(Object.entries(currentSchedule.restRuleSnapshot)),
       );
       _continuityJson = JSON.stringify(snapshot, null, 2);
 
-      // 2. Update schedule start date to end of current day
-      const dayWindow = getDayWindow(currentDay);
+      // 2. Update schedule start date to end of current day (frozen dayStartHour)
+      const dayWindow = getDayWindow(currentDay, currentSchedule.algorithmSettings.dayStartHour);
       store.setScheduleDate(dayWindow.end);
       // Last day: start a fresh full-cycle schedule; otherwise only remaining days
       store.setScheduleDays(remainingDays > 0 ? remainingDays : numDaysNow);
@@ -3429,7 +3469,8 @@ function wireExportModalEvents(): void {
 
     const selectedFormat = (backdrop.querySelector('input[name="export-format"]:checked') as HTMLInputElement)?.value;
     const selectedMode = (backdrop.querySelector('input[name="export-mode"]:checked') as HTMLInputElement)?.value;
-    const dayStartHour = store.getDayStartHour();
+    // Export uses the schedule's frozen dayStartHour so grouping matches the grid.
+    const dayStartHour = currentSchedule.algorithmSettings.dayStartHour;
     const getSelectedDay = (): number => {
       const daySelectEl = backdrop.querySelector('#gm-export-day-select') as HTMLElement | null;
       return parseInt(daySelectEl?.dataset.value || '1', 10);
@@ -3625,19 +3666,20 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
 
 /**
  * Store-change subscriber — called by config-store.notify() after every
- * mutation.  Marks the schedule as dirty so the UI can prompt for
- * re-generation, and strips assignments whose participant was deleted.
+ * mutation. The displayed schedule is a frozen snapshot: we never mutate
+ * its data here. External edits only flip the dirty flag so the existing
+ * warning prompts the user to regenerate.
  */
 function onStoreChanged(): void {
   // Never mess with schedule during optimization
   if (_isOptimizing) return;
 
   // During undo/redo the schedule is restored from the parallel stack
-  // in doUndoRedo(), so skip reconciliation here.
+  // in doUndoRedo(), so skip here.
   if (_undoRedoInProgress) return;
 
-  // Push pre-reconciliation schedule so undo can perfectly restore it.
-  // Must push even when null to keep in sync with the store's undo stack.
+  // Push pre-change schedule so undo can restore it alongside the store's
+  // undo stack. Capture dirty flag pre-mutation.
   _scheduleUndoStack.push({
     schedule: currentSchedule ? structuredClone(currentSchedule) : null,
     dirty: _scheduleDirty,
@@ -3648,85 +3690,6 @@ function onStoreChanged(): void {
   if (!currentSchedule) return;
 
   _scheduleDirty = true;
-
-  // ── 1. Refresh participants ──────────────────────────────────────────────
-  const currentParticipants = store.getAllParticipants();
-  const storeIds = new Set(currentParticipants.map((p) => p.id));
-  const storeMap = new Map(currentParticipants.map((p) => [p.id, p]));
-
-  let cleanedAssignments = currentSchedule.assignments.filter((a) => storeIds.has(a.participantId));
-
-  const refreshedParticipants = currentSchedule.participants
-    .filter((p) => storeIds.has(p.id))
-    .map((p) => storeMap.get(p.id)!);
-
-  // ── 2. Sync tasks with current templates ─────────────────────────────────
-  // Regenerate tasks from current template definitions so added/removed
-  // sub-teams are reflected immediately in the schedule grid.
-  const freshTasks = generateTasksFromTemplates();
-
-  // Build a lookup: old task name → old task (names are stable across edits)
-  const oldTaskByName = new Map(currentSchedule.tasks.map((t) => [t.name, t]));
-
-  // Build a lookup: old slotId → assignment  (for remapping)
-  const assignBySlot = new Map(cleanedAssignments.map((a) => [a.slotId, a]));
-
-  const remappedAssignments: typeof cleanedAssignments = [];
-  const newTasks: Task[] = freshTasks.map((freshTask) => {
-    const oldTask = oldTaskByName.get(freshTask.name);
-    if (!oldTask) return freshTask; // brand-new task, no assignments to carry
-
-    // Map old slots by subTeamId+label for stable matching
-    const oldSlotKey = (s: SlotRequirement) => `${s.subTeamId ?? ''}::${s.label ?? ''}`;
-    // Track which old slots have been consumed (to handle duplicates)
-    const oldSlotsByKey = new Map<string, SlotRequirement[]>();
-    for (const s of oldTask.slots) {
-      const key = oldSlotKey(s);
-      if (!oldSlotsByKey.has(key)) oldSlotsByKey.set(key, []);
-      oldSlotsByKey.get(key)!.push(s);
-    }
-
-    // For each new slot, try to find a matching old slot and carry its assignment
-    const mappedSlots = freshTask.slots.map((newSlot) => {
-      const key = oldSlotKey(newSlot);
-      const candidates = oldSlotsByKey.get(key);
-      if (candidates && candidates.length > 0) {
-        const oldSlot = candidates.shift()!;
-        const oldAssign = assignBySlot.get(oldSlot.slotId);
-        if (oldAssign) {
-          remappedAssignments.push({
-            ...oldAssign,
-            taskId: freshTask.id,
-            slotId: newSlot.slotId,
-          });
-        }
-      }
-      return newSlot;
-    });
-
-    return { ...freshTask, slots: mappedSlots };
-  });
-
-  // Also carry over assignments that were already remapped above
-  // (drop old assignments — they've been remapped or belong to deleted slots)
-  cleanedAssignments = remappedAssignments;
-
-  // ── 3. Rebuild schedule ──────────────────────────────────────────────────
-  currentSchedule = {
-    ...currentSchedule,
-    tasks: newTasks,
-    assignments: cleanedAssignments,
-    participants: refreshedParticipants,
-  };
-
-  // Revalidate violations/score after reconciliation
-  closeRescueModal();
-  if (engine) {
-    engine.importSchedule(currentSchedule);
-    engine.addParticipants(refreshedParticipants);
-    engine.revalidateFull();
-    currentSchedule = engine.getSchedule()!;
-  }
 }
 
 function init(): void {
@@ -3792,38 +3755,30 @@ function init(): void {
 
     // Restore persisted schedule (if any) so it survives page reloads
     const savedSchedule = store.loadSchedule();
-    if (savedSchedule) {
-      const algoSettings = store.getAlgorithmSettings();
-      const currentParticipants = store.getAllParticipants();
-
-      // Reconcile with current participant roster (participants may have been
-      // added/removed since the schedule was saved)
-      const storeIds = new Set(currentParticipants.map((p) => p.id));
-      const reconciledAssignments = savedSchedule.assignments.filter((a) => storeIds.has(a.participantId));
-      const reconciledParticipants = currentParticipants.filter((p) =>
-        savedSchedule.participants.some((sp) => sp.id === p.id),
-      );
-
-      const reconciledSchedule: Schedule = {
-        ...savedSchedule,
-        participants: reconciledParticipants,
-        assignments: reconciledAssignments,
-      };
-
+    if (savedSchedule && !hasFrozenFields(savedSchedule)) {
+      // Stale pre-schema schedule: drop it and tell the user to regenerate.
+      // Pre-release; no migration path supported.
+      store.clearSchedule();
+      showToast('שבצ"ק ישן זוהה ונמחק. יש ליצור שבצ"ק חדש.', { type: 'warning', duration: 6000 });
+    } else if (savedSchedule) {
+      // Use the schedule's embedded frozen settings — never consult the live
+      // store here. External edits since the last generation are captured by
+      // the orphan check below and surface via the dirty warning.
+      const frozen = savedSchedule.algorithmSettings;
       engine = new SchedulingEngine(
-        algoSettings.config,
-        store.getDisabledHCSet(),
-        store.buildRestRuleMap(),
-        store.getDayStartHour(),
+        frozen.config,
+        new Set(frozen.disabledHardConstraints),
+        new Map(Object.entries(savedSchedule.restRuleSnapshot)),
+        frozen.dayStartHour,
       );
-      engine.certLabelResolver = store.getCertLabel;
-      engine.addParticipants(reconciledParticipants);
+      engine.setCertLabelSnapshot(savedSchedule.certLabelSnapshot);
+      engine.addParticipants(savedSchedule.participants);
       engine.addTasks(savedSchedule.tasks);
-      engine.importSchedule(reconciledSchedule);
+      engine.importSchedule(savedSchedule);
       engine.revalidateFull();
       currentSchedule = engine.getSchedule()!;
       currentDay = 1;
-      _scheduleDirty = false;
+      _scheduleDirty = scheduleHasOrphans(savedSchedule);
 
       // Apply live mode freeze if active
       const liveMode = store.getLiveModeState();
