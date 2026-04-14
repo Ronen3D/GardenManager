@@ -197,7 +197,7 @@ function buildDaySheet(ws: Worksheet, schedule: Schedule, dayIndex: number, dayS
 function buildSummarySheet(ws: Worksheet, schedule: Schedule, dayStartHour: number): void {
   ws.views = [{ rightToLeft: true, state: 'frozen', ySplit: 1, xSplit: 1 }];
 
-  const numDays = getNumDays(schedule);
+  const numDays = getNumDays(schedule, dayStartHour);
 
   // Precompute day → tasks so we don't recompute per participant
   const tasksByDay: Task[][] = [];
@@ -284,7 +284,7 @@ function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
   ];
   ws.addRow(headers);
 
-  const numDays = getNumDays(schedule);
+  const numDays = getNumDays(schedule, dayStartHour);
   for (let d = 1; d <= numDays; d++) {
     const { start: dayStart } = getDayWindow(schedule, d, dayStartHour);
     const dayTasks = getTasksForDay(schedule, d, dayStartHour);
@@ -389,7 +389,7 @@ export async function exportWeeklyExcel(schedule: Schedule, dayStartHour: number
   buildSummarySheet(summaryWs, schedule, dayStartHour);
 
   // 2. One presentation sheet per day
-  const numDays = getNumDays(schedule);
+  const numDays = getNumDays(schedule, dayStartHour);
   for (let d = 1; d <= numDays; d++) {
     const { start } = getDayWindow(schedule, d, dayStartHour);
     const sheetName = safeSheetName(`יום ${d} ${hebrewDayName(start)}`);

@@ -452,7 +452,7 @@ function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
 function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStartHour: number = 5): void {
   const { start } = getDayWindow(schedule, dayIndex, dayStartHour);
   const dayName = HEBREW_DAYS[start.getDay()];
-  const numDays = getNumDays(schedule);
+  const numDays = getNumDays(schedule, dayStartHour);
 
   const topY = drawTitle(doc, `יום ${dayName}`, `יום ${dayIndex} / ${numDays}`);
 
@@ -497,7 +497,7 @@ export function exportDailyDetail(schedule: Schedule, dayIndex: number, dayStart
  */
 export function exportWeeklyOverview(schedule: Schedule, dayStartHour: number = 5): void {
   const doc = createDoc();
-  const numDays = getNumDays(schedule);
+  const numDays = getNumDays(schedule, dayStartHour);
 
   for (let d = 1; d <= numDays; d++) {
     if (d > 1) doc.addPage();

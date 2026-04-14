@@ -9,7 +9,7 @@
 
 import { addDays } from 'date-fns';
 import type { Schedule, Task } from '../models/types';
-import { fmtTime } from '../utils/date-utils';
+import { fmtTime, operationalDateKey } from '../utils/date-utils';
 
 // ─── Day windowing ───────────────────────────────────────────────────────────
 
@@ -37,11 +37,19 @@ export function getTasksForDay(schedule: Schedule, dayIndex: number, dayStartHou
   });
 }
 
-/** Compute how many operational days the schedule spans. */
-export function getNumDays(schedule: Schedule): number {
-  const starts = schedule.tasks.map((t) => new Date(t.timeBlock.start).getTime());
-  const ends = schedule.tasks.map((t) => new Date(t.timeBlock.end).getTime());
-  return Math.ceil((Math.max(...ends) - Math.min(...starts)) / (24 * 3600_000));
+/**
+ * Compute how many operational days the schedule spans, grouping tasks by
+ * `operationalDateKey(start)`. Must be used instead of a wall-clock span:
+ * a night task that crosses midnight would otherwise inflate the count and
+ * produce a phantom empty day.
+ */
+export function getNumDays(schedule: Schedule, dayStartHour: number = 5): number {
+  if (schedule.tasks.length === 0) return 0;
+  const keys = new Set<string>();
+  for (const t of schedule.tasks) {
+    keys.add(operationalDateKey(new Date(t.timeBlock.start), dayStartHour));
+  }
+  return keys.size;
 }
 
 // ─── Colour helpers ──────────────────────────────────────────────────────────
