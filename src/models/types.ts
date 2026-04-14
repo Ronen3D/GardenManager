@@ -571,6 +571,62 @@ export interface LoadWindow {
   endHour: number;
   endMinute: number;
   weight: number;
+  /** Optional comparison formula that derived `weight`. Input-layer only. */
+  loadFormula?: LoadFormula;
+}
+
+/** Reference to a rate on another TaskTemplate: either its base or a specific window. */
+export type LoadFormulaRateRef = { kind: 'base' } | { kind: 'window'; windowId: string };
+
+/** One component of a comparison formula: N hours of referenced rate. */
+export interface LoadFormulaComponent {
+  refTemplateId: string;
+  refRate: LoadFormulaRateRef;
+  hours: number;
+}
+
+/** Frozen snapshot of a referenced rate at formula save time. */
+export interface LoadFormulaSnapshotEntry {
+  templateId: string;
+  templateName: string;
+  rate: { kind: 'base'; value: number } | { kind: 'window'; windowId: string; windowLabel: string; value: number };
+  missing?: boolean;
+  /**
+   * Whether the referenced template had any hot windows at snapshot time.
+   * Used to warn when the ref task *gained* hot windows after the formula was saved
+   * (so the previously-unambiguous "base" now needs disambiguation).
+   * Optional for backward compatibility with pre-field snapshots.
+   */
+  refHadLoadWindows?: boolean;
+}
+
+/**
+ * Comparison-based definition of a per-hour load value (0..1).
+ * Lives on TaskTemplate (for baseLoadWeight) or LoadWindow (for window.weight).
+ * Never copied onto Task instances — this is an input-layer construct.
+ */
+export interface LoadFormula {
+  /** Right-hand side: "X hours of THIS + sum(lhsExtras) = sum(components)". */
+  components: LoadFormulaComponent[];
+  /** Index-aligned with `components` (the RHS). */
+  snapshot: LoadFormulaSnapshotEntry[];
+  /** Clamped [0..1]; equals the sibling numeric field. */
+  computedValue: number;
+  /** ms since epoch. */
+  computedAt: number;
+  /**
+   * How many hours of the target task the equation expresses.
+   * Per-hour engine value = (rhs raw sum − lhs extras raw sum) / targetHours, clamped to [0..1].
+   * Default 1.
+   */
+  targetHours?: number;
+  /**
+   * Extra LHS terms beyond the target task's X hours. Each contributes
+   * `hours × rate` that is SUBTRACTED from the RHS raw sum before dividing by targetHours.
+   */
+  lhsExtras?: LoadFormulaComponent[];
+  /** Index-aligned with `lhsExtras`. */
+  lhsExtrasSnapshot?: LoadFormulaSnapshotEntry[];
 }
 
 /** A sub-team definition within a task template */
@@ -598,6 +654,8 @@ export interface TaskTemplate {
   isLight: boolean;
   /** Base load weight outside hot windows (0..1). */
   baseLoadWeight?: number;
+  /** Optional comparison formula that derived `baseLoadWeight`. Input-layer only. */
+  loadFormula?: LoadFormula;
   /** Optional weighted windows (typically "hot" windows). */
   loadWindows?: LoadWindow[];
   /**
@@ -610,8 +668,6 @@ export interface TaskTemplate {
   subTeams: SubTeamTemplate[];
   /** Top-level slots (used when there are no sub-teams) */
   slots: SlotTemplate[];
-  /** Custom notes / description */
-  description?: string;
   /** Scheduling priority (0 = first). If unset, computed from task constraints. */
   schedulingPriority?: number;
   /** Whether "not with" togetherness preferences apply to this task template */

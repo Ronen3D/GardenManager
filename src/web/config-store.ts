@@ -1221,6 +1221,21 @@ export function sanitizeTemplateNumericFields<
   return out;
 }
 
+function cloneLoadFormula(f: TaskTemplate['loadFormula']): TaskTemplate['loadFormula'] {
+  if (!f) return undefined;
+  const sc = (globalThis as { structuredClone?: <T>(v: T) => T }).structuredClone;
+  if (typeof sc === 'function') return sc(f);
+  return {
+    computedValue: f.computedValue,
+    computedAt: f.computedAt,
+    targetHours: f.targetHours,
+    components: f.components.map((c) => ({ ...c, refRate: { ...c.refRate } })),
+    snapshot: f.snapshot.map((s) => ({ ...s, rate: { ...s.rate } })),
+    lhsExtras: f.lhsExtras?.map((c) => ({ ...c, refRate: { ...c.refRate } })),
+    lhsExtrasSnapshot: f.lhsExtrasSnapshot?.map((s) => ({ ...s, rate: { ...s.rate } })),
+  };
+}
+
 export function addTaskTemplate(tpl: Omit<TaskTemplate, 'id'>): TaskTemplate {
   pushSnapshot();
   const id = uid('tpl');
@@ -1230,7 +1245,11 @@ export function addTaskTemplate(tpl: Omit<TaskTemplate, 'id'>): TaskTemplate {
     id,
     color: sanitized.color || getNextAvailableColor(),
     baseLoadWeight: sanitized.isLight ? 0 : (sanitized.baseLoadWeight ?? 1),
-    loadWindows: (sanitized.loadWindows || []).map((w) => ({ ...w })),
+    loadFormula: sanitized.isLight ? undefined : cloneLoadFormula(sanitized.loadFormula),
+    loadWindows: (sanitized.loadWindows || []).map((w) => ({
+      ...w,
+      loadFormula: cloneLoadFormula(w.loadFormula),
+    })),
   };
   taskTemplates.set(id, full);
   notify();
@@ -1245,13 +1264,34 @@ export function updateTaskTemplate(id: string, patch: Partial<Omit<TaskTemplate,
   patch = sanitized;
   Object.assign(tpl, patch);
   if (patch.loadWindows) {
-    tpl.loadWindows = patch.loadWindows.map((w) => ({ ...w }));
+    tpl.loadWindows = patch.loadWindows.map((w) => ({
+      ...w,
+      loadFormula: cloneLoadFormula(w.loadFormula),
+    }));
   }
   if (patch.isLight !== undefined && patch.isLight) {
     tpl.baseLoadWeight = 0;
+    tpl.loadFormula = undefined;
   }
   if (patch.baseLoadWeight !== undefined && !tpl.isLight) {
     tpl.baseLoadWeight = Math.max(0, Math.min(1, patch.baseLoadWeight));
+  }
+  // Invariant: if a formula was set in the patch, base weight must match its computedValue.
+  if ('loadFormula' in patch) {
+    if (patch.loadFormula) {
+      const cloned = cloneLoadFormula(patch.loadFormula);
+      tpl.loadFormula = cloned;
+      if (!tpl.isLight) tpl.baseLoadWeight = cloned!.computedValue;
+    } else {
+      tpl.loadFormula = undefined;
+    }
+  } else if (
+    patch.baseLoadWeight !== undefined &&
+    tpl.loadFormula &&
+    Math.abs(tpl.baseLoadWeight! - tpl.loadFormula.computedValue) > 1e-9
+  ) {
+    // Manual edit to baseLoadWeight that diverges from the formula → drop formula.
+    tpl.loadFormula = undefined;
   }
   notify();
 }
@@ -1811,7 +1851,6 @@ export function seedDefaultTaskTemplates(): void {
     displayCategory: 'patrol',
     color: '#4A90D9',
     displayOrder: 0,
-    description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. שתי תת-קבוצות. כל 6 חייבים ניצן. אותה קבוצה.',
   });
 
   // Hamama
@@ -1839,7 +1878,6 @@ export function seedDefaultTaskTemplates(): void {
     displayCategory: 'hamama',
     color: '#E74C3C',
     displayOrder: 1,
-    description: 'משמרות 12 שעות (06:00-18:00, 18:00-06:00). דורש הסמכת חממה. L2/L4 אסור. ללא דרישת ניצן.',
   });
 
   // Shemesh
@@ -1874,7 +1912,6 @@ export function seedDefaultTaskTemplates(): void {
     displayCategory: 'shemesh',
     color: '#F39C12',
     displayOrder: 4,
-    description: 'משמרות 4 שעות (מחזור 05:00), 6 ביום. דורש ניצן.',
   });
 
   // Mamtera
@@ -1886,7 +1923,7 @@ export function seedDefaultTaskTemplates(): void {
     startHour: 9,
     sameGroupRequired: false,
     isLight: false,
-    baseLoadWeight: 4 / 9,
+    baseLoadWeight: 0.64,
     loadWindows: [],
     blocksConsecutive: true,
     schedulingPriority: 2,
@@ -1910,7 +1947,6 @@ export function seedDefaultTaskTemplates(): void {
     displayCategory: 'mamtera',
     color: '#27AE60',
     displayOrder: 3,
-    description: '09:00-23:00. 2× L0.',
   });
 
   // Karov
@@ -1973,8 +2009,6 @@ export function seedDefaultTaskTemplates(): void {
     displayCategory: 'patrol',
     color: '#8E44AD',
     displayOrder: 0,
-    description:
-      'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 1× L0 עם סלסלה, 2× L0. דורש ניצן. חלונות חמים 05:00-06:30 ו-17:00-18:30 ב-100%; מחוץ לחלון ~33% עומס.',
   });
 
   // Karovit
@@ -2020,7 +2054,6 @@ export function seedDefaultTaskTemplates(): void {
     displayCategory: 'patrol',
     color: '#BDC3C7',
     displayOrder: 0,
-    description: 'משמרות 8 שעות (מחזור 05:00), 3 ביום. 1× L2+, 3× L0. דורש ניצן. קל — ללא השפעה על מנוחה.',
   });
 
   // ערוגת בוקר
@@ -2054,7 +2087,6 @@ export function seedDefaultTaskTemplates(): void {
     displayCategory: 'aruga',
     color: '#1ABC9C',
     displayOrder: 2,
-    description: '1.5 שעות, משמרת אחת ביום (05:00-06:30). 2× L0. דורש ניצן.',
   });
 
   // ערוגת ערב
@@ -2088,7 +2120,6 @@ export function seedDefaultTaskTemplates(): void {
     displayCategory: 'aruga',
     color: '#1ABC9C',
     displayOrder: 2,
-    description: '1.5 שעות, משמרת אחת ביום (17:00-18:30). 2× L0. דורש ניצן.',
   });
 }
 

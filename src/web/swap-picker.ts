@@ -300,7 +300,7 @@ function renderHeader(_state: PickerState, ctx: ResolvedContext): string {
 
 function renderTabs(state: PickerState): string {
   return `<div class="swap-picker-tabs" role="tablist">
-    <button class="swap-picker-tab ${state.mode === 'free' ? 'swap-picker-tab-active' : ''}" data-mode="free" role="tab">החלפה חופשית</button>
+    <button class="swap-picker-tab ${state.mode === 'free' ? 'swap-picker-tab-active' : ''}" data-mode="free" role="tab">שיבוץ חדש</button>
     <button class="swap-picker-tab ${state.mode === 'trade' ? 'swap-picker-tab-active' : ''}" data-mode="trade" role="tab">החלפה הדדית</button>
   </div>`;
 }

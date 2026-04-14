@@ -7990,3 +7990,711 @@ tr.now-row-animate > td.time-cell {
     0 24px 64px rgba(60, 40, 10, 0.22),
     0 8px 18px rgba(60, 40, 10, 0.12);
 }
+
+/* ─── Load Formula (by-comparison) ──────────────────────── */
+.lf-controls {
+  display: inline-flex;
+  gap: 4px;
+  margin-inline-start: 4px;
+  vertical-align: middle;
+}
+.lf-open-btn,
+.lf-info-btn {
+  padding: 2px 6px;
+  font-size: 0.85rem;
+  line-height: 1.1;
+  cursor: pointer;
+}
+.lf-open-btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lf-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+.lf-modal {
+  background: var(--bg-card, #fff);
+  border-radius: 12px;
+  width: min(560px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  color: var(--text, inherit);
+}
+.lf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border, #e0e0e0);
+}
+.lf-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.lf-close {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  color: var(--text-muted, #999);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.lf-close:hover {
+  background: var(--bg-hover, #f0f0f0);
+}
+.lf-body {
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lf-target-line {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+/* Equation header: [- X +] stepper + "שעות של TASK שוות ל:" text. */
+.lf-target-equation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.95rem;
+}
+.lf-target-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--border, #ccc);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-card, transparent);
+  flex: 0 0 auto;
+}
+.lf-target-stepper .lf-stepper-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 1.05rem;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  color: var(--text, inherit);
+  cursor: pointer;
+}
+.lf-target-stepper .lf-stepper-btn:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+.lf-target-stepper .lf-stepper-input {
+  width: 44px;
+  height: 32px;
+  text-align: center;
+  border: none;
+  border-left: 1px solid var(--border, #ccc);
+  border-right: 1px solid var(--border, #ccc);
+  background: transparent;
+  color: var(--text, inherit);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.lf-target-stepper .lf-stepper-input::-webkit-outer-spin-button,
+.lf-target-stepper .lf-stepper-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.lf-target-text {
+  flex: 1 1 auto;
+}
+
+/* Context bar: shows the task's baseline when editing a window. */
+.lf-context-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  padding: 6px 8px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.03));
+  border-radius: 6px;
+}
+.lf-context-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.lf-context-track {
+  flex: 1 1 auto;
+  height: 6px;
+  background: rgba(128, 128, 128, 0.18);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+.lf-context-fill {
+  height: 100%;
+  opacity: 0.55;
+  border-radius: 3px;
+}
+.lf-context-value {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The load bar itself. */
+.lf-bar-wrap {
+  position: relative;
+  padding: 0 4px;
+}
+.lf-bar-track {
+  position: relative;
+  height: 36px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+  border-radius: 8px;
+  overflow: hidden;
+}
+.lf-bar-spill {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0 6px,
+    rgba(231, 76, 60, 0.18) 6px 12px
+  );
+  pointer-events: none;
+  transition: background 0.2s ease;
+  z-index: 4;
+}
+.lf-bar-track[data-lf-clamped='1'] .lf-bar-spill {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(231, 76, 60, 0.55) 0 6px,
+    rgba(231, 76, 60, 0.15) 6px 12px
+  );
+}
+.lf-bar-cap {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--text-muted, #888);
+  border-radius: 1px;
+  opacity: 0.8;
+  pointer-events: none;
+  z-index: 5;
+}
+.lf-bar-track[data-lf-clamped='1'] .lf-bar-cap {
+  background: var(--danger, #e74c3c);
+  opacity: 1;
+  width: 3px;
+}
+.lf-bar-segments {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  z-index: 2;
+}
+.lf-bar-seg {
+  background: var(--seg-color, var(--accent, #3a7cc5));
+  border: none;
+  border-inline-end: 1px solid rgba(0, 0, 0, 0.25);
+  padding: 0;
+  cursor: pointer;
+  transition:
+    filter 0.15s ease,
+    box-shadow 0.15s ease;
+  min-width: 0;
+}
+.lf-bar-seg:last-child {
+  border-inline-end: none;
+}
+.lf-bar-seg:hover {
+  filter: brightness(1.12);
+}
+.lf-bar-seg-active {
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6);
+  filter: brightness(1.15);
+}
+.lf-bar-ticks {
+  position: relative;
+  height: 16px;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: var(--text-muted, #888);
+  font-variant-numeric: tabular-nums;
+}
+.lf-bar-ticks span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.lf-bar-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.lf-bar-number {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.lf-bar-number-label {
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+}
+.lf-bar-number-value {
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text, inherit);
+}
+.lf-bar-breakdown {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+}
+.lf-bar-clamp-warn {
+  font-size: 0.8rem;
+  color: var(--warning, #b87000);
+}
+
+/* Stack of component rows below the bar. */
+.lf-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lf-stack-row {
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+  border-radius: 8px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.02));
+  padding: 8px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.lf-stack-row.active {
+  border-color: var(--accent, #3a7cc5);
+  box-shadow: 0 0 0 2px rgba(58, 124, 197, 0.18);
+}
+.lf-stack-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.lf-stack-main > .lf-ref-chip {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.lf-stack-hours {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+/* Before a reference is picked, the chip takes the whole row so the picker is the focus. */
+.lf-stack-row-empty .lf-stack-main > .lf-ref-chip {
+  flex: 1 1 100%;
+}
+.lf-stack-unit {
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+}
+.lf-stack-eq {
+  font-size: 0.9rem;
+  color: var(--text-muted, #888);
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  text-align: end;
+}
+.lf-stack-eq strong {
+  color: var(--text, inherit);
+  font-size: 1rem;
+}
+.lf-stack-remove {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-muted, #888);
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0;
+}
+.lf-stack-remove:hover {
+  color: var(--danger, #e74c3c);
+  border-color: var(--danger, #e74c3c);
+}
+.lf-stack-add {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed var(--border, rgba(0, 0, 0, 0.2));
+  color: var(--text-muted, #888);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.lf-stack-add:hover {
+  border-color: var(--accent, #3a7cc5);
+  color: var(--accent, #3a7cc5);
+}
+
+/* LHS extras: additive "+ task" chips shown under the target-hours line. */
+.lf-lhs-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+.lf-lhs-extras .lf-stack-row-lhs {
+  padding: 6px 8px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.02));
+  border-style: dashed;
+}
+.lf-lhs-extras .lf-stack-row-lhs .lf-stack-main {
+  font-size: 0.9rem;
+}
+.lf-stack-plus {
+  font-weight: 700;
+  color: var(--accent, #3a7cc5);
+  font-size: 1rem;
+  padding-inline-end: 2px;
+}
+.lf-stack-add-lhs {
+  align-self: flex-start;
+  font-size: 0.8rem;
+  padding: 4px 10px;
+}
+.lf-lhs-eq-label {
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+  padding-top: 2px;
+}
+
+/* Phone: chip goes full-width, hours controls drop to a second line. */
+@media (max-width: 520px) {
+  .lf-stack-main > .lf-ref-chip {
+    flex: 1 1 100%;
+  }
+  .lf-stack-hours {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+  }
+  .lf-stack-remove {
+    position: absolute;
+    inset-inline-end: 8px;
+    inset-block-start: 8px;
+  }
+  .lf-stack-row {
+    position: relative;
+    padding-inline-end: 36px;
+  }
+}
+
+/* Stepper: [ − ] N [ + ] */
+.lf-stepper {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.15));
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-card, #fff);
+}
+.lf-stepper-btn {
+  background: none;
+  border: none;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--text, inherit);
+  line-height: 1;
+  padding: 0;
+}
+.lf-stepper-btn:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+}
+.lf-stepper-input {
+  width: 44px;
+  border: none;
+  border-inline: 1px solid var(--border, rgba(0, 0, 0, 0.15));
+  background: none;
+  color: var(--text, inherit);
+  text-align: center;
+  font-size: 0.9rem;
+  padding: 4px 2px;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+.lf-stepper-input::-webkit-outer-spin-button,
+.lf-stepper-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Reference chip: shows the selected task, click to expand picker. */
+.lf-ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.15));
+  border-radius: 999px;
+  background: var(--bg-card, #fff);
+  color: var(--text, inherit);
+  cursor: pointer;
+  font-size: 0.85rem;
+  min-height: 28px;
+}
+.lf-ref-chip:hover {
+  border-color: var(--accent, #3a7cc5);
+}
+.lf-ref-chip.empty {
+  border-style: dashed;
+  color: var(--text-muted, #888);
+}
+.lf-ref-chip-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.lf-ref-chip-name {
+  font-weight: 500;
+}
+.lf-ref-chip-rate {
+  color: var(--text-muted, #888);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+}
+.lf-ref-chip-caret {
+  color: var(--text-muted, #888);
+  font-size: 0.75rem;
+  margin-inline-start: 2px;
+}
+
+/* Expanded picker below a stack row. */
+.lf-picker {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border, rgba(0, 0, 0, 0.12));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lf-picker-title {
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+}
+.lf-picker-empty {
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+  font-style: italic;
+}
+.lf-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lf-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.15));
+  border-radius: 6px;
+  background: var(--bg-card, #fff);
+  color: var(--text, inherit);
+  cursor: pointer;
+  font-size: 0.8rem;
+  min-width: 120px;
+  border-inline-start: 3px solid var(--chip-color, var(--accent, #3a7cc5));
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    transform 0.12s ease;
+}
+.lf-chip:hover {
+  border-color: var(--chip-color, var(--accent, #3a7cc5));
+  transform: translateY(-1px);
+}
+.lf-chip.selected {
+  border-color: var(--accent, #3a7cc5);
+  box-shadow: 0 0 0 2px rgba(58, 124, 197, 0.22);
+}
+.lf-chip-name {
+  flex: 0 0 auto;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.lf-chip-mini-bar {
+  flex: 1 1 auto;
+  height: 6px;
+  background: rgba(128, 128, 128, 0.18);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 40px;
+}
+.lf-chip-mini-fill {
+  display: block;
+  height: 100%;
+  background: var(--chip-color, var(--accent, #3a7cc5));
+  border-radius: 3px;
+}
+.lf-chip-value {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, #888);
+  font-size: 0.75rem;
+}
+
+/* Rate picker (base vs hot windows) for the selected chip. */
+.lf-rate-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+.lf-rate-label {
+  color: var(--text-muted, #888);
+}
+.lf-rate-opt {
+  padding: 3px 8px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.15));
+  border-radius: 999px;
+  background: var(--bg-card, #fff);
+  color: var(--text, inherit);
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+.lf-rate-opt:hover {
+  border-color: var(--accent, #3a7cc5);
+}
+.lf-rate-opt.selected {
+  background: var(--accent, #3a7cc5);
+  color: #fff;
+  border-color: var(--accent, #3a7cc5);
+}
+
+.lf-validation-msg {
+  font-size: 0.85rem;
+  color: var(--danger, #e74c3c);
+  padding: 6px 10px;
+  background: rgba(231, 76, 60, 0.08);
+  border-inline-start: 3px solid var(--danger, #e74c3c);
+  border-radius: 4px;
+}
+
+.lf-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border, #e0e0e0);
+}
+.lf-footer-right {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 480px) {
+  .lf-stack-main {
+    row-gap: 10px;
+  }
+  .lf-stack-eq {
+    margin-inline-start: 0;
+  }
+  .lf-chip {
+    min-width: 100%;
+  }
+}
+
+.lf-info-popover-wrap {
+  width: min(380px, 92vw);
+}
+.lf-info-popover {
+  background: var(--bg-card, #fff);
+  color: var(--text, inherit);
+  border: 1px solid var(--border, #d0d0d0);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 10px 12px;
+  font-size: 0.9rem;
+}
+.lf-info-header {
+  font-size: 0.95rem;
+}
+.lf-info-subheader {
+  font-size: 0.8rem;
+  color: var(--text-muted, #666);
+  margin-bottom: 6px;
+}
+.lf-info-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 4px;
+}
+.lf-info-row {
+  padding: 3px 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+.lf-info-intro {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  margin-bottom: 6px;
+}
+.lf-info-summary {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border, rgba(0, 0, 0, 0.1));
+}
+.lf-info-when {
+  font-size: 0.75rem;
+  color: var(--text-muted, #888);
+  margin-top: 6px;
+  text-align: end;
+}
+.lf-info-missing {
+  opacity: 0.6;
+}
+.lf-info-note {
+  color: var(--text-muted, #888);
+  font-style: italic;
+}
+.lf-info-stale {
+  color: var(--warning, #b87000);
+  font-family: inherit;
+}
+.lf-info-clamp {
+  font-size: 0.85rem;
+  color: var(--text-muted, #666);
+  margin-top: 4px;
+}
+.lf-info-warn {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 190, 0, 0.12);
+  border-inline-start: 3px solid var(--warning, #b87000);
+  font-size: 0.85rem;
+}

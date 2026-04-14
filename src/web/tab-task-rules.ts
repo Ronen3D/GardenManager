@@ -13,15 +13,18 @@ import {
   type PreflightResult,
   PreflightSeverity,
   RestRule,
+  type LoadFormulaSnapshotEntry,
   type SlotTemplate,
   type SubTeamTemplate,
   type TaskSet,
   type TaskTemplate,
 } from '../models/types';
 import * as store from './config-store';
+import { initLoadFormulaModal, openLoadFormulaModal } from './load-formula-modal';
 import { runPreflight } from './preflight';
 import { escHtml, SVG_ICONS } from './ui-helpers';
 import { showConfirm, showPrompt, showToast } from './ui-modal';
+import { detectStale } from './utils/load-formula';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -394,16 +397,13 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
 
   if (isExpanded) {
     html += `<div class="template-body">`;
-    if (tpl.description) {
-      html += `<p class="text-muted" style="margin-bottom:12px;">${escHtml(tpl.description!)}</p>`;
-    }
 
     // Template properties
     html += `<div class="template-props">
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" data-tpl-field="durationHours" value="${tpl.durationHours}" data-tid="${tpl.id}" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" /></label>
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" data-tpl-field="startHour" value="${tpl.startHour}" data-tid="${tpl.id}" /></label>
-      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" /></label>
+      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" />${renderLoadFormulaControls({ kind: 'base', tpl, disabled: tpl.isLight })}</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
       <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חוסם רצף משימות</label>
@@ -456,6 +456,159 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
   return html;
 }
 
+type LoadFormulaControlTarget =
+  | { kind: 'base'; tpl: TaskTemplate; disabled: boolean }
+  | { kind: 'window'; tpl: TaskTemplate; window: LoadWindow; disabled: boolean };
+
+function renderLoadFormulaControls(target: LoadFormulaControlTarget): string {
+  const { kind, tpl, disabled } = target;
+  const formula = kind === 'base' ? tpl.loadFormula : target.window.loadFormula;
+  const lwid = kind === 'window' ? ` data-lwid="${target.window.id}"` : '';
+  const openBtn = `<button class="btn-xs btn-outline lf-open-btn" type="button" data-action="open-load-formula" data-lf-kind="${kind}" data-tid="${tpl.id}"${lwid}${disabled ? ' disabled' : ''} title="הגדר לפי השוואה" aria-label="הגדר לפי השוואה">🧮</button>`;
+  const infoBtn = formula
+    ? `<button class="btn-xs btn-outline lf-info-btn" type="button" data-action="toggle-load-formula-info" data-lf-kind="${kind}" data-tid="${tpl.id}"${lwid} title="הצג הסבר" aria-label="הצג הסבר">ℹ️</button>`
+    : '';
+  return `<span class="lf-controls">${openBtn}${infoBtn}</span>`;
+}
+
+function renderLoadFormulaExplanation(tpl: TaskTemplate, kind: 'base' | 'window', windowId: string | null): string {
+  const formula =
+    kind === 'base' ? tpl.loadFormula : (tpl.loadWindows ?? []).find((w) => w.id === windowId)?.loadFormula;
+  if (!formula) return '';
+
+  const templates = new Map<string, TaskTemplate>();
+  for (const t of store.getAllTaskTemplates()) templates.set(t.id, t);
+  const stale = detectStale(formula, templates);
+
+  const d = new Date(formula.computedAt);
+  const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+  const when = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  const targetHours = formula.targetHours && formula.targetHours > 0 ? formula.targetHours : 1;
+  const hoursPhrase = (n: number): string => {
+    if (n === 1) return 'שעה אחת';
+    if (n === 0.5) return 'חצי שעה';
+    if (n === 0.25) return 'רבע שעה';
+    if (n === 0.75) return 'שלושת רבעי שעה';
+    if (n === 2) return 'שעתיים';
+    return `${n} שעות`;
+  };
+  // "במצב בסיס" is only meaningful if the ref task has (or had) hot windows to distinguish from.
+  // Checks current state so drifted refs read naturally.
+  const rateText = (snap: LoadFormulaSnapshotEntryLocal & { templateId?: string }): string => {
+    if (snap.rate.kind === 'window') {
+      return `בחלון החם ${escHtml(snap.rate.windowLabel)} (קצב ${snap.rate.value.toFixed(2)} לשעה)`;
+    }
+    const refTpl = snap.templateId ? templates.get(snap.templateId) : undefined;
+    const currentHasWindows = !!refTpl && (refTpl.loadWindows ?? []).length > 0;
+    const where = currentHasWindows ? 'במצב בסיס ' : '';
+    return `${where}(קצב ${snap.rate.value.toFixed(2)} לשעה)`;
+  };
+
+  // Detect ref tasks that gained hot windows since save — those now need "במצב בסיס" disambiguation
+  // that wasn't needed at save time.
+  const gainedWindows = (snap: LoadFormulaSnapshotEntry): boolean => {
+    if (snap.rate.kind !== 'base') return false;
+    if (snap.refHadLoadWindows !== false) return false;
+    const refTpl = templates.get(snap.templateId);
+    return !!refTpl && (refTpl.loadWindows ?? []).length > 0;
+  };
+  const gainedList: string[] = [];
+
+  const lhsExtras = formula.lhsExtras ?? [];
+  const lhsSnap = formula.lhsExtrasSnapshot ?? [];
+  let body = `<div class="lf-info-header">עומס לשעה: <strong>${formula.computedValue.toFixed(2)}</strong></div>`;
+
+  // Intro sentence — state the equation's left side verbally.
+  const targetPhrase = hoursPhrase(targetHours) + ' של המשימה';
+  if (lhsExtras.length) {
+    const parts = lhsExtras
+      .map((c, i) => {
+        const snap = lhsSnap[i];
+        if (!snap) return '';
+        if (snap.missing)
+          return `${hoursPhrase(c.hours)} של ${escHtml(snap.templateName)} <span class="lf-info-note">(נמחק)</span>`;
+        if (gainedWindows(snap) && !gainedList.includes(snap.templateName)) gainedList.push(snap.templateName);
+        return `${hoursPhrase(c.hours)} של ${escHtml(snap.templateName)} ${rateText(snap)}`;
+      })
+      .filter(Boolean);
+    body += `<div class="lf-info-intro">${targetPhrase}, בצירוף ${parts.join(' ובצירוף ')}, שקולות בעומס לסכום של:</div>`;
+  } else if (targetHours !== 1) {
+    body += `<div class="lf-info-intro">${targetPhrase} שקולות בעומס לסכום של:</div>`;
+  } else {
+    body += `<div class="lf-info-intro">${targetPhrase} שקולה בעומס לסכום של:</div>`;
+  }
+
+  body += '<ul class="lf-info-list">';
+  let rawSum = 0;
+  let lhsSum = 0;
+  for (let i = 0; i < formula.components.length; i++) {
+    const c = formula.components[i];
+    const snap = formula.snapshot[i];
+    if (!snap) continue;
+    if (snap.missing) {
+      body += `<li class="lf-info-row lf-info-missing">${hoursPhrase(c.hours)} של ${escHtml(snap.templateName)} <span class="lf-info-note">(נמחק)</span></li>`;
+      continue;
+    }
+    const product = c.hours * snap.rate.value;
+    rawSum += product;
+    const driftHint =
+      stale.entries[i] &&
+      stale.entries[i].currentValue !== null &&
+      Math.abs((stale.entries[i].currentValue as number) - snap.rate.value) > 1e-9
+        ? ` <span class="lf-info-stale">(הקצב כעת ${(stale.entries[i].currentValue as number).toFixed(2)})</span>`
+        : '';
+    if (gainedWindows(snap) && !gainedList.includes(snap.templateName)) gainedList.push(snap.templateName);
+    body += `<li class="lf-info-row">${hoursPhrase(c.hours)} של <strong>${escHtml(snap.templateName)}</strong> ${rateText(snap)} — תרומה <strong>${product.toFixed(2)}</strong>${driftHint}</li>`;
+  }
+  body += '</ul>';
+
+  // Sum LHS extras (for the arithmetic in the summary below).
+  for (let i = 0; i < lhsExtras.length; i++) {
+    const c = lhsExtras[i];
+    const snap = lhsSnap[i];
+    if (!snap || snap.missing) continue;
+    lhsSum += c.hours * snap.rate.value;
+  }
+  const netRaw = rawSum - lhsSum;
+  const perHourRaw = netRaw / targetHours;
+
+  // Summary in plain language.
+  let summary = `סך תרומות הרכיבים: <strong>${rawSum.toFixed(2)}</strong>`;
+  if (lhsExtras.length) {
+    summary += `. תרומת הצד העליון הנוסף מקוזזת (${lhsSum.toFixed(2)}), ונשאר ${netRaw.toFixed(2)} עבור ${hoursPhrase(targetHours)} של המשימה`;
+  } else if (targetHours !== 1) {
+    summary += ` עבור ${hoursPhrase(targetHours)} של המשימה`;
+  }
+  if (targetHours !== 1 || lhsExtras.length) {
+    summary += `. לשעה בודדת: <strong>${perHourRaw.toFixed(2)}</strong>`;
+  } else {
+    summary += ` לשעה`;
+  }
+  summary += '.';
+  body += `<div class="lf-info-summary">${summary}</div>`;
+
+  if (perHourRaw > 1 + 1e-9) {
+    body += `<div class="lf-info-clamp">הערך חורג מהמקסימום (1.00) ולכן נחתך ל-1.00.</div>`;
+  } else if (perHourRaw < -1e-9) {
+    body += `<div class="lf-info-clamp">הצד העליון גדול מסכום הרכיבים, לכן הערך נחתך ל-0.00.</div>`;
+  }
+  if (stale.stale) {
+    body += `<div class="lf-info-warn">⚠ ערכי הקצב של רכיבי ההשוואה השתנו מאז שנשמר. פתח ושמור מחדש כדי לעדכן.</div>`;
+  }
+  if (gainedList.length) {
+    const names = gainedList.map((n) => escHtml(n)).join(', ');
+    body += `<div class="lf-info-warn">⚠ ל-${names} נוספו חלונות עומס מוגבר אחרי חישוב העומס. שמור מחדש את ההשוואה כדי לרענן.</div>`;
+  }
+  body += `<div class="lf-info-when">נשמר ב-${when}</div>`;
+  return `<div class="lf-info-popover">${body}</div>`;
+}
+
+// Local structural alias used for the rate-text helper (avoids importing the snapshot entry type here).
+type LoadFormulaSnapshotEntryLocal = {
+  rate: { kind: 'base'; value: number } | { kind: 'window'; windowId: string; windowLabel: string; value: number };
+};
+
 function renderLoadWindowsEditor(tpl: TaskTemplate): string {
   const windows = tpl.loadWindows ?? [];
   let html = `<h4 style="margin:12px 0 8px;">חלונות עומס מוגבר</h4>`;
@@ -473,7 +626,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
           -
           <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-end" data-lwid="${w.id}" value="${fmtHm(w.endHour, w.endMinute)}" />
         </td>
-        <td><input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-edit-weight" data-lwid="${w.id}" value="${w.weight.toFixed(2)}" /></td>
+        <td><input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-edit-weight" data-lwid="${w.id}" value="${w.weight.toFixed(2)}" />${renderLoadFormulaControls({ kind: 'window', tpl, window: w, disabled: false })}</td>
         <td>
           <button class="btn-sm btn-primary" data-action="update-load-window" data-tid="${tpl.id}" data-lwid="${w.id}">שמור</button>
           <button class="btn-sm btn-danger-outline" data-action="remove-load-window" data-tid="${tpl.id}" data-lwid="${w.id}">✕</button>
@@ -601,9 +754,6 @@ function renderAddTemplateForm(): string {
       <label class="checkbox-label"><input type="checkbox" data-field="tpl-light" /> משימה קלה</label>
     </div>
     <div class="form-row">
-      <label>תיאור: <input class="input-sm" type="text" data-field="tpl-desc" placeholder="אופציונלי" style="width:300px;" /></label>
-    </div>
-    <div class="form-row">
       <button class="btn-sm btn-primary" data-action="confirm-add-template">צור</button>
       <button class="btn-sm btn-outline" data-action="cancel-add-template">ביטול</button>
     </div>
@@ -700,6 +850,8 @@ function renderOneTimeCard(ot: OneTimeTask): string {
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
 export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void): void {
+  initLoadFormulaModal({ onChanged: rerender });
+
   container.addEventListener('input', (e) => {
     const target = e.target as HTMLInputElement;
     if (target.dataset.field !== 'tset-saveas-name' && target.dataset.field !== 'tset-rename-name') return;
@@ -894,11 +1046,17 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         });
         notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
 
+        const clampedBaseLoad = isLight ? 0 : Math.max(0, Math.min(1, baseLoad));
+        const existingTpl = store.getTaskTemplate(tid);
+        const existingFormulaValue = existingTpl?.loadFormula?.computedValue;
+        const formulaDroppedByManualEdit =
+          !isLight && existingFormulaValue !== undefined && Math.abs(clampedBaseLoad - existingFormulaValue) > 1e-9;
         store.updateTaskTemplate(tid, {
           durationHours: sanitized.durationHours,
           shiftsPerDay: sanitized.shiftsPerDay,
           startHour: sanitized.startHour,
-          baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
+          baseLoadWeight: clampedBaseLoad,
+          ...(isLight || formulaDroppedByManualEdit ? { loadFormula: undefined } : {}),
           sameGroupRequired: sameGroup,
           isLight,
           blocksConsecutive,
@@ -906,6 +1064,64 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           restRuleId,
         });
         rerender();
+        break;
+      }
+      case 'open-load-formula': {
+        const tid = actionButton?.dataset.tid;
+        const kind = actionButton?.dataset.lfKind as 'base' | 'window' | undefined;
+        if (!tid || !kind) break;
+        if (kind === 'base') {
+          openLoadFormulaModal({ kind: 'base', templateId: tid });
+        } else {
+          const lwid = actionButton?.dataset.lwid;
+          if (!lwid) break;
+          openLoadFormulaModal({ kind: 'window', templateId: tid, windowId: lwid });
+        }
+        break;
+      }
+      case 'toggle-load-formula-info': {
+        const tid = actionButton?.dataset.tid;
+        const kind = actionButton?.dataset.lfKind as 'base' | 'window' | undefined;
+        if (!tid || !kind) break;
+        const tpl = store.getTaskTemplate(tid);
+        if (!tpl) break;
+        const lwid = actionButton?.dataset.lwid ?? null;
+        // Remove any existing popover; if it was anchored to this same button, we're done (toggle off).
+        const existing = document.querySelector('.lf-info-popover-wrap');
+        const wasSameAnchor = existing?.getAttribute('data-anchor-key') === `${tid}:${kind}:${lwid ?? ''}`;
+        existing?.remove();
+        if (wasSameAnchor) break;
+        const html = renderLoadFormulaExplanation(tpl, kind, lwid);
+        if (!html) break;
+        const wrap = document.createElement('div');
+        wrap.className = 'lf-info-popover-wrap';
+        wrap.setAttribute('data-anchor-key', `${tid}:${kind}:${lwid ?? ''}`);
+        wrap.innerHTML = html;
+        document.body.appendChild(wrap);
+        const btnRect = actionButton!.getBoundingClientRect();
+        wrap.style.position = 'fixed';
+        wrap.style.top = `${btnRect.bottom + 6}px`;
+        wrap.style.left = `${Math.max(8, btnRect.left - 220)}px`;
+        wrap.style.zIndex = '100';
+        // Dismiss when clicking outside.
+        const offClick = (ev: MouseEvent) => {
+          if (wrap.contains(ev.target as Node)) return;
+          if ((ev.target as HTMLElement).closest('[data-action="toggle-load-formula-info"]')) return;
+          wrap.remove();
+          document.removeEventListener('click', offClick, true);
+          document.removeEventListener('keydown', offKey);
+        };
+        const offKey = (ev: KeyboardEvent) => {
+          if (ev.key === 'Escape') {
+            wrap.remove();
+            document.removeEventListener('click', offClick, true);
+            document.removeEventListener('keydown', offKey);
+          }
+        };
+        setTimeout(() => {
+          document.addEventListener('click', offClick, true);
+          document.addEventListener('keydown', offKey);
+        }, 0);
         break;
       }
       case 'add-load-window': {
@@ -971,18 +1187,23 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         }
 
         store.updateTaskTemplate(tid, {
-          loadWindows: (tpl.loadWindows || []).map((w) =>
-            w.id === lwid
-              ? {
-                  ...w,
-                  startHour: ps.h,
-                  startMinute: ps.m,
-                  endHour: pe.h,
-                  endMinute: pe.m,
-                  weight: Math.max(0, Math.min(1, weight)),
-                }
-              : w,
-          ),
+          loadWindows: (tpl.loadWindows || []).map((w) => {
+            if (w.id !== lwid) return w;
+            const nextWeight = Math.max(0, Math.min(1, weight));
+            const next: LoadWindow = {
+              ...w,
+              startHour: ps.h,
+              startMinute: ps.m,
+              endHour: pe.h,
+              endMinute: pe.m,
+              weight: nextWeight,
+            };
+            // Manual edit of window weight clears any stored formula.
+            if (w.loadFormula && Math.abs(nextWeight - w.loadFormula.computedValue) > 1e-9) {
+              delete next.loadFormula;
+            }
+            return next;
+          }),
         });
         rerender();
         break;
@@ -1149,7 +1370,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         );
         const sameGroup = (form.querySelector('[data-field="tpl-samegroup"]') as HTMLInputElement)?.checked || false;
         const isLight = (form.querySelector('[data-field="tpl-light"]') as HTMLInputElement)?.checked || false;
-        const desc = (form.querySelector('[data-field="tpl-desc"]') as HTMLInputElement)?.value.trim();
 
         const sanitized = store.sanitizeTemplateNumericFields({
           durationHours: dur,
@@ -1175,7 +1395,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           displayCategory,
           subTeams: [],
           slots: [],
-          description: desc || undefined,
         });
         showAddTemplate = false;
         rerender();

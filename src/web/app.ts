@@ -892,7 +892,7 @@ function renderScheduleTab(): string {
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
         <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾 שמירת שבצקים${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
         ${renderContinuityChip()}
-        ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="ייבוא נתוני המשכיות מהשבצ"ק הקודם">📋 ייבוא המשכיות</button>` : ''}
+        ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="חיבור לשבצ\"ק קודם — ייבוא נתוני המשכיות">📋 חיבור לשבצ"ק קודם</button>` : ''}
       </span>
       <span class="toolbar-group toolbar-group--day-actions">
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
@@ -1067,7 +1067,7 @@ function renderParticipantWarehouse(schedule: Schedule): string {
       <input type="search" class="warehouse-filter" id="warehouse-filter" placeholder="🔍 חפש..." value="${escHtml(_warehouseFilter)}" />
     </div>
     ${renderPool(l0Pool, 'דרגה 0')}
-    ${renderPool(seniorPool, 'סגל (L2-L4)')}
+    ${renderPool(seniorPool, 'סגל (דרגה 2–4)')}
   </section>`;
 }
 
@@ -1805,7 +1805,7 @@ function renderOptimOverlay(): string {
           <div class="cube-cell" style="--cell-color:#2ecc71"></div>
         </div>
       </div>
-      <h3>מעריך ${totalAttempts} ניסיונות לשיוויוניות מרבית…</h3>
+      <h3>מחפש את השיבוץ האיכותי ביותר — ניסיון ${attempt} מתוך ${totalAttempts}…</h3>
       <div class="optim-progress-bar">
         <div class="optim-progress-fill" style="width:${pct}%"></div>
       </div>
@@ -1819,7 +1819,7 @@ function renderOptimOverlay(): string {
           <span class="optim-metric-value">${bestScore.toFixed(1)}</span>
         </div>
         <div class="optim-metric">
-          <span class="optim-metric-label">משבצות ריקות</span>
+          <span class="optim-metric-label">משבצות לא מאוישות</span>
           <span class="optim-metric-value ${bestUnfilled === 0 ? 'optim-ok' : 'optim-warn'}">${bestUnfilled}</span>
         </div>
       </div>
@@ -2339,7 +2339,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.1</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2374,9 +2374,9 @@ function renderAll(): void {
       <span class="tab-label">שבצ"ק
       ${currentSchedule ? '<span class="badge badge-sm" style="background:var(--success);margin-inline-start:4px">✓</span>' : ''}</span>
     </button>
-    <button class="tab-btn ${currentTab === 'algorithm' ? 'tab-active' : ''}" data-tab="algorithm" aria-label="אלגוריתם">
+    <button class="tab-btn ${currentTab === 'algorithm' ? 'tab-active' : ''}" data-tab="algorithm" aria-label="הגדרות">
       <span class="tab-icon">${SVG_ICONS.settings}</span>
-      <span class="tab-label">אלגוריתם</span>
+      <span class="tab-label">הגדרות</span>
     </button>
   </nav>
 
