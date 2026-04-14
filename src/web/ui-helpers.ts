@@ -176,7 +176,7 @@ export function getStoredDefaultAttempts(): number {
   const stored = localStorage.getItem(DEFAULT_ATTEMPTS_STORAGE_KEY);
   if (stored !== null) {
     const val = parseInt(stored, 10);
-    if (val >= 50 && val <= 50000) return val;
+    if (Number.isInteger(val) && val > 0) return val;
   }
   return FALLBACK_DEFAULT_ATTEMPTS;
 }

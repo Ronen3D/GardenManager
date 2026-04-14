@@ -603,7 +603,7 @@ function renderDisplayContent(): string {
     <p class="algo-section-desc">מספר ניסיונות ברירת מחדל ביצירת שבצ"ק. ניתן לשנות גם בעת הייצור עצמו.</p>
     <label class="scenarios-label" for="input-default-attempts" style="display:inline-flex;align-items:center;gap:8px">
       ניסיונות ברירת מחדל
-      <input type="number" id="input-default-attempts" class="input-sm" data-action="set-default-attempts" min="50" max="50000" step="50" value="${defaultAttempts}" style="width:100px" />
+      <input type="number" id="input-default-attempts" class="input-sm" data-action="set-default-attempts" min="1" step="1" value="${defaultAttempts}" style="width:100px" />
     </label>`;
 }
 
@@ -1157,13 +1157,12 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
       case 'set-default-attempts': {
         const inp = el as HTMLInputElement;
         const val = parseInt(inp.value, 10);
-        if (isNaN(val) || val < 50) {
+        if (!Number.isInteger(val) || val <= 0) {
           inp.value = String(getStoredDefaultAttempts());
           break;
         }
-        const clamped = Math.min(50000, Math.max(50, val));
-        inp.value = String(clamped);
-        setDefaultAttempts(clamped);
+        inp.value = String(val);
+        setDefaultAttempts(val);
         rerender();
         break;
       }

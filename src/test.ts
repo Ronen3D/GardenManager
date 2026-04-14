@@ -10,6 +10,7 @@ import {
   blockDurationMinutes,
   blocksOverlap,
   computeAllRestProfiles,
+  computeParticipantCapacity,
   computeRestFairness,
   computeScheduleScore,
   createTimeBlock,
@@ -36,10 +37,12 @@ import {
 import {
   type CertificationDefinition,
   DEFAULT_CERTIFICATION_DEFINITIONS,
+  type LevelEntry,
   type Schedule,
   type SlotRequirement,
   type TimeBlock,
 } from './models/types';
+import { allowedLevels, hasAnyLowPriority, isAcceptedLevel, isLowPriority } from './models/level-utils';
 
 // ─── Local test task factories (replacing deleted task-definitions.ts) ───────
 
@@ -5981,6 +5984,264 @@ console.log('\n── getCandidatesWithEligibility ────────');
     regEligible.length === 1 && regEligible[0].id === pFree.id,
     'Bug1 regression: getEligibleParticipantsForSlot excludes the already-in participant',
   );
+}
+
+// ─── level-utils: LevelEntry[] helpers ──────────────────────────────────────
+
+console.log('\n── Level Utils ─────────────────────────');
+{
+  const mixed: LevelEntry[] = [
+    { level: Level.L0 },
+    { level: Level.L2, lowPriority: true },
+    { level: Level.L4 },
+  ];
+
+  // allowedLevels: preserves order, strips metadata
+  const flat = allowedLevels(mixed);
+  assert(flat.length === 3, 'level-utils: allowedLevels returns all entries');
+  assert(flat[0] === Level.L0 && flat[1] === Level.L2 && flat[2] === Level.L4, 'level-utils: allowedLevels preserves order');
+  assert(allowedLevels([]).length === 0, 'level-utils: allowedLevels on empty → []');
+
+  // isLowPriority: only true when entry exists AND lowPriority=true
+  assert(isLowPriority(mixed, Level.L2) === true, 'level-utils: isLowPriority → true for lowPriority entry');
+  assert(isLowPriority(mixed, Level.L0) === false, 'level-utils: isLowPriority → false for normal-priority entry');
+  assert(isLowPriority(mixed, Level.L4) === false, 'level-utils: isLowPriority → false when flag absent');
+  assert(isLowPriority(mixed, Level.L3) === false, 'level-utils: isLowPriority → false for missing level');
+  assert(isLowPriority([], Level.L0) === false, 'level-utils: isLowPriority on empty → false');
+
+  // isAcceptedLevel: true regardless of lowPriority flag
+  assert(isAcceptedLevel(mixed, Level.L0) === true, 'level-utils: isAcceptedLevel → true for normal entry');
+  assert(isAcceptedLevel(mixed, Level.L2) === true, 'level-utils: isAcceptedLevel → true for lowPriority entry');
+  assert(isAcceptedLevel(mixed, Level.L3) === false, 'level-utils: isAcceptedLevel → false for missing level');
+  assert(isAcceptedLevel([], Level.L0) === false, 'level-utils: isAcceptedLevel on empty → false');
+
+  // hasAnyLowPriority: true if ≥1 entry has lowPriority=true
+  assert(hasAnyLowPriority(mixed) === true, 'level-utils: hasAnyLowPriority → true when any entry is lowPriority');
+  const noneLow: LevelEntry[] = [{ level: Level.L0 }, { level: Level.L4 }];
+  assert(hasAnyLowPriority(noneLow) === false, 'level-utils: hasAnyLowPriority → false when none are lowPriority');
+  assert(hasAnyLowPriority([]) === false, 'level-utils: hasAnyLowPriority on empty → false');
+
+  // Explicit lowPriority=false should be treated the same as unset (strict ===true check)
+  const explicitFalse: LevelEntry[] = [{ level: Level.L0, lowPriority: false }];
+  assert(isLowPriority(explicitFalse, Level.L0) === false, 'level-utils: isLowPriority → false for explicit lowPriority=false');
+  assert(hasAnyLowPriority(explicitFalse) === false, 'level-utils: hasAnyLowPriority → false for explicit lowPriority=false');
+  assert(isAcceptedLevel(explicitFalse, Level.L0) === true, 'level-utils: isAcceptedLevel → true for explicit lowPriority=false');
+}
+
+// ─── HC-14: cross-boundary + cross-rule coverage ────────────────────────────
+
+console.log('\n── HC-14: Cross-Boundary & Cross-Rule ──');
+{
+  const hc14xP: Participant = {
+    id: 'hc14x-p1',
+    name: 'HC14BoundaryTester',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: [{ start: new Date(2026, 3, 12, 0, 0), end: new Date(2026, 3, 14, 12, 0) }],
+    dateUnavailability: [],
+  };
+
+  // ── Case A: gap spans the 05:00 operational-day boundary ───────────────
+  // Task ends Sunday 22:00, next task starts Monday 02:00 — the 4-hour gap
+  // crosses midnight AND the 05:00 op-day boundary. A 5h rest rule must fire
+  // based on wall-clock gap, not operational-day index.
+  const sunEve = new Date(2026, 3, 12, 0, 0);
+  const monMorn = new Date(2026, 3, 13, 0, 0);
+  const taskSun: Task = {
+    id: 'hc14x-t-sun',
+    name: 'SundayLate',
+    timeBlock: createTimeBlockFromHours(sunEve, 18, 22),
+    requiredCount: 1,
+    slots: [{ slotId: 'hc14x-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    isLight: false,
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+    restRuleId: 'boundary-rule',
+  };
+  const taskMon: Task = {
+    id: 'hc14x-t-mon',
+    name: 'MondayEarly',
+    timeBlock: createTimeBlockFromHours(monMorn, 2, 6),
+    requiredCount: 1,
+    slots: [{ slotId: 'hc14x-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    isLight: false,
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+    restRuleId: 'boundary-rule',
+  };
+  const tMapX = new Map([
+    [taskSun.id, taskSun],
+    [taskMon.id, taskMon],
+  ]);
+  const assignsX: Assignment[] = [
+    { id: 'hc14x-a1', taskId: taskSun.id, slotId: 'hc14x-s1', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc14x-a2', taskId: taskMon.id, slotId: 'hc14x-s2', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const ruleMapX = new Map([['boundary-rule', 5 * 3600000]]);
+
+  const vBoundary = checkRestRules(hc14xP.id, assignsX, tMapX, ruleMapX);
+  assert(vBoundary.length === 1, 'HC-14: 4h gap across 05:00 op-day boundary → violation (gap is wall-clock)');
+  assert(vBoundary[0].code === 'CATEGORY_BREAK_VIOLATION', 'HC-14: cross-boundary violation code correct');
+
+  // Same pair with 6h gap (Monday task starts 04:00 → 6h after Sunday 22:00)
+  // straddles the boundary but satisfies the rule.
+  const taskMonLate: Task = {
+    ...taskMon,
+    id: 'hc14x-t-mon-late',
+    timeBlock: createTimeBlockFromHours(monMorn, 4, 8),
+  };
+  const tMapXok = new Map([
+    [taskSun.id, taskSun],
+    [taskMonLate.id, taskMonLate],
+  ]);
+  const assignsXok: Assignment[] = [
+    { id: 'hc14x-a3', taskId: taskSun.id, slotId: 'hc14x-s1', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc14x-a4', taskId: taskMonLate.id, slotId: 'hc14x-s2', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  assert(
+    checkRestRules(hc14xP.id, assignsXok, tMapXok, ruleMapX).length === 0,
+    'HC-14: 6h gap across 05:00 op-day boundary → no violation',
+  );
+
+  // ── Case B: Phase-2 cross-rule adjacent pair ───────────────────────────
+  // Two tasks carrying DIFFERENT restRuleIds. Required gap = min(rule1, rule2)
+  // = min(6h, 4h) = 4h. Actual gap = 3h → should violate via the phase-2 branch.
+  const taskRuleA: Task = {
+    id: 'hc14x-ra',
+    name: 'RuleA-Task',
+    timeBlock: createTimeBlockFromHours(sunEve, 6, 10),
+    requiredCount: 1,
+    slots: [{ slotId: 'hc14x-sa', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    isLight: false,
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+    restRuleId: 'rule-a',
+  };
+  const taskRuleB: Task = {
+    id: 'hc14x-rb',
+    name: 'RuleB-Task',
+    timeBlock: createTimeBlockFromHours(sunEve, 13, 17),
+    requiredCount: 1,
+    slots: [{ slotId: 'hc14x-sb', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    isLight: false,
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+    restRuleId: 'rule-b',
+  };
+  const tMapCross = new Map([
+    [taskRuleA.id, taskRuleA],
+    [taskRuleB.id, taskRuleB],
+  ]);
+  const assignsCross: Assignment[] = [
+    { id: 'hc14x-a5', taskId: taskRuleA.id, slotId: 'hc14x-sa', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc14x-a6', taskId: taskRuleB.id, slotId: 'hc14x-sb', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const ruleMapCross = new Map([
+    ['rule-a', 6 * 3600000],
+    ['rule-b', 4 * 3600000],
+  ]);
+  const vCross = checkRestRules(hc14xP.id, assignsCross, tMapCross, ruleMapCross);
+  assert(vCross.length === 1, 'HC-14 phase-2: cross-rule pair with gap < min(rules) → violation');
+  assert(vCross[0].code === 'CATEGORY_BREAK_VIOLATION', 'HC-14 phase-2: correct violation code');
+
+  // Same two rules with 5h gap — between the two rule thresholds. min=4h, gap=5h
+  // → no violation (phase-2 uses the MINIMUM, not the maximum).
+  const taskRuleB2: Task = {
+    ...taskRuleB,
+    id: 'hc14x-rb2',
+    timeBlock: createTimeBlockFromHours(sunEve, 15, 19),
+  };
+  const tMapCrossOk = new Map([
+    [taskRuleA.id, taskRuleA],
+    [taskRuleB2.id, taskRuleB2],
+  ]);
+  const assignsCrossOk: Assignment[] = [
+    { id: 'hc14x-a7', taskId: taskRuleA.id, slotId: 'hc14x-sa', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'hc14x-a8', taskId: taskRuleB2.id, slotId: 'hc14x-sb', participantId: hc14xP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  assert(
+    checkRestRules(hc14xP.id, assignsCrossOk, tMapCrossOk, ruleMapCross).length === 0,
+    'HC-14 phase-2: cross-rule pair with gap ≥ min(rules) → no violation',
+  );
+}
+
+// ─── Capacity: scheduleEnd is exclusive (preflight off-by-one regression) ───
+
+console.log('\n── Capacity Window Semantics ──────────────────');
+{
+  // Mirrors the production preflight scenario that produced the 442/240 false
+  // negative: schedule starts on Sunday 00:00 with dayStartHour=5. The
+  // participant's availability runs from Sunday 00:00 through Monday 12:00
+  // (this is exactly what config-store.getDefaultAvailability() produces for
+  // scheduleDays=1: start..start+scheduleDays at 12:00).
+  const schedStart = new Date(2026, 3, 12, 0, 0); // Sunday 2026-04-12 00:00
+  const availEnd = new Date(2026, 3, 13, 12, 0); // Monday 2026-04-13 12:00
+  const participant: Participant = {
+    id: 'cap-p',
+    name: 'CapTest',
+    level: Level.L0,
+    certifications: [],
+    group: 'G',
+    availability: [{ start: schedStart, end: availEnd }],
+    dateUnavailability: [],
+  };
+
+  // Correct call: scheduleEnd is exclusive — to cover 1 operational day, pass
+  // scheduleStart + 1 day. Expected coverage:
+  //   • Sat op day (Sat 05 → Sun 05) overlaps avail only Sun 00 → Sun 05 = 5h
+  //   • Sun op day (Sun 05 → Mon 05) fully inside avail = 24h
+  // Total = 29h. The buggy preflight passed scheduleStart + 0, collapsing the
+  // window to zero length; the cursor still emitted the Saturday op day (5h)
+  // and nothing else, yielding the 240h/48 = 5h-per-participant artifact.
+  const oneDayEnd = new Date(2026, 3, 13, 0, 0); // Monday 00:00 (exclusive)
+  const capOneDay = computeParticipantCapacity(participant, schedStart, oneDayEnd, 5);
+  assert(
+    Math.abs(capOneDay.totalAvailableHours - 29) < 1e-6,
+    `1-day window (exclusive end) yields 29h of capacity (got ${capOneDay.totalAvailableHours})`,
+  );
+
+  // Regression guard for the off-by-one: passing scheduleEnd === scheduleStart
+  // is what the broken preflight did for numDays=1. Must NOT return 24h or 29h
+  // — the function intentionally walks only the Saturday op day there.
+  const zeroWindowEnd = new Date(schedStart);
+  const capZero = computeParticipantCapacity(participant, schedStart, zeroWindowEnd, 5);
+  assert(
+    Math.abs(capZero.totalAvailableHours - 5) < 1e-6,
+    `Zero-length window reveals off-by-one symptom (got ${capZero.totalAvailableHours}h, expected 5h) — document the bug so preflight callers don't re-introduce it`,
+  );
+
+  // 7-day window — the same +N (exclusive) convention must hold for realistic
+  // schedules. Availability extends to start + 7 days + 12h to mirror defaults.
+  const avail7End = new Date(2026, 3, 19, 12, 0); // Sunday 2026-04-19 12:00
+  const participant7: Participant = { ...participant, availability: [{ start: schedStart, end: avail7End }] };
+  const sevenDayEnd = new Date(2026, 3, 19, 0, 0); // next Sunday 00:00 (exclusive)
+  const cap7 = computeParticipantCapacity(participant7, schedStart, sevenDayEnd, 5);
+  // Sat op day: 5h + Sun..Sat op days (7 × 24h = 168h) = 173h
+  assert(
+    Math.abs(cap7.totalAvailableHours - 173) < 1e-6,
+    `7-day window yields 173h of capacity (got ${cap7.totalAvailableHours})`,
+  );
+
+  // The preflight's window computation must match this "scheduleStart + numDays"
+  // convention. Simulate preflight for numDays in {1, 3, 7} and verify that the
+  // utilization never crosses the 100% threshold when required hours are small.
+  // This is the end-to-end guard against the original bug.
+  for (const numDays of [1, 3, 7]) {
+    const end = new Date(schedStart);
+    end.setDate(end.getDate() + numDays); // fixed: was numDays - 1
+    const availEndN = new Date(schedStart);
+    availEndN.setDate(availEndN.getDate() + numDays);
+    availEndN.setHours(12, 0, 0, 0);
+    const pN: Participant = { ...participant, availability: [{ start: schedStart, end: availEndN }] };
+    const capN = computeParticipantCapacity(pN, schedStart, end, 5);
+    // Expected: Sat op day (5h) + numDays full op days (24h each) = 5 + 24*numDays
+    const expected = 5 + 24 * numDays;
+    assert(
+      Math.abs(capN.totalAvailableHours - expected) < 1e-6,
+      `preflight-style window numDays=${numDays}: capacity = ${expected}h (got ${capN.totalAvailableHours})`,
+    );
+  }
 }
 
 // ─── Async test blocks + Summary ─────────────────────────────────────────────

@@ -153,7 +153,10 @@ function checkCapacity(
   // holes, giving a more accurate picture than raw availability windows.
   const scheduleStart = getScheduleDate();
   const scheduleEnd = new Date(scheduleStart);
-  scheduleEnd.setDate(scheduleEnd.getDate() + numDays - 1);
+  // scheduleEnd is exclusive (see computeParticipantCapacity): advance by numDays
+  // so every operational day in the window is walked. Using numDays-1 previously
+  // collapsed the window to zero for numDays=1 and dropped the final day otherwise.
+  scheduleEnd.setDate(scheduleEnd.getDate() + numDays);
   const capacities = computeAllCapacities(participants, scheduleStart, scheduleEnd, getDayStartHour());
   let totalAvailableParticipantHours = 0;
   for (const cap of capacities.values()) {
