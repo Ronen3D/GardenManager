@@ -1468,6 +1468,9 @@
   .template-title > .text-muted {
     display: none;
   }
+  .onetime-card .template-title > .text-muted {
+    display: inline;
+  }
 
   /* ── Level toggle — larger touch target on phones ──────────────────── */
   .level-toggle {

@@ -871,7 +871,7 @@ function renderOneTimeCard(ot: OneTimeTask): string {
   if (ot.sameGroupRequired) flags.push('קבוצה');
   if (ot.blocksConsecutive) flags.push('חוסמת');
 
-  return `<div class="template-card">
+  return `<div class="template-card onetime-card">
     <div class="template-header">
       <div class="template-title">
         ${templateBadge({ color: ot.color, name: ot.name })}
