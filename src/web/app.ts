@@ -71,6 +71,7 @@ import {
   wireParticipantsEvents,
 } from './tab-participants';
 import { type ProfileContext, renderProfileView, wireProfileEvents } from './tab-profile';
+import { renderTaskPanel, TASK_PANEL_EMPTY, type TaskPanelContext, wireTaskPanelEvents } from './tab-task-panel';
 import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
 import { hideTaskTooltip, hideTooltip, initTooltips, wireParticipantTooltip, wireTaskTooltip } from './tooltips';
 import {
@@ -91,6 +92,7 @@ import {
   showBottomSheet,
   showConfirm,
   showContinuityImport,
+  showPrompt,
   showTimePicker,
   showToast,
   wireCustomSelect,
@@ -224,9 +226,11 @@ let _liveClockInterval: ReturnType<typeof setInterval> | null = null;
 
 // ─── View Router ─────────────────────────────────────────────────────────────
 
-type ViewMode = 'SCHEDULE_VIEW' | 'PROFILE_VIEW';
+type ViewMode = 'SCHEDULE_VIEW' | 'PROFILE_VIEW' | 'TASK_PANEL_VIEW';
 let _viewMode: ViewMode = 'SCHEDULE_VIEW';
 let _profileParticipantId: string | null = null;
+/** Source name of the task currently shown in the per-task panel (null when not in TASK_PANEL_VIEW). */
+let _taskPanelSourceName: string | null = null;
 /** Saved scroll position of the schedule view for seamless return */
 let _scheduleScrollY = 0;
 /** When true, renderAll() will restore _scheduleScrollY after DOM replacement */
@@ -553,12 +557,10 @@ function renderDayNavigator(): string {
     const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
     const dayName = hebrewDayName(date);
 
-    let taskCount = 0;
     let violationCount = 0;
     if (currentSchedule) {
       const dsh = currentSchedule.algorithmSettings.dayStartHour;
       const frozenDisabled = new Set(currentSchedule.algorithmSettings.disabledHardConstraints);
-      taskCount = currentSchedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh)).length;
       const dayTaskIds = new Set(currentSchedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh)).map((t) => t.id));
       violationCount = filterVisibleViolations(currentSchedule.violations, frozenDisabled).filter(
         (v) => v.severity === ViolationSeverity.Error && v.taskId && dayTaskIds.has(v.taskId),
@@ -583,7 +585,6 @@ function renderDayNavigator(): string {
     html += `<button class="day-tab ${currentDay === d ? 'day-tab-active' : ''}${frozenClass}" data-day="${d}">
       <span class="day-tab-name">${dayName}</span>
       <span class="day-tab-label">יום ${d}</span>
-      ${taskCount > 0 ? `<span class="day-tab-count">${taskCount} משימות</span>` : ''}
       ${violationDot}
       ${frozenTag}
     </button>`;
@@ -2230,7 +2231,7 @@ function showTuneResultModal(rec: TuneRecommendation): void {
     </div>`;
 
   const sheet = showBottomSheet(html, { title: 'תוצאות הכיול האוטומטי' });
-  sheet.el.addEventListener('click', (e) => {
+  sheet.el.addEventListener('click', async (e) => {
     const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (!btn) return;
     if (btn.dataset.action === 'tune-close') {
@@ -2240,8 +2241,54 @@ function showTuneResultModal(rec: TuneRecommendation): void {
       sheet.close();
       showToast('ההגדרות המומלצות הוחלו. צור שבצ"ק חדש כדי לראות את ההשפעה.', { type: 'success' });
       if (currentTab === 'algorithm') renderAll();
+      await offerSaveTuneAsPreset();
     }
   });
+}
+
+/**
+ * After the user applies a tuned config, offer to save it as a named preset.
+ * Retries the name prompt on collision; a null prompt result (user cancelled)
+ * ends the flow silently. The applied config stays in effect either way.
+ */
+async function offerSaveTuneAsPreset(): Promise<void> {
+  const wantsSave = await showConfirm('לשמור את ההגדרות הללו כפריסט בעל שם, כדי לחזור אליהן בקלות בעתיד?', {
+    title: 'שמירת ההגדרות',
+    confirmLabel: 'שמור כפריסט',
+    cancelLabel: 'לא עכשיו',
+  });
+  if (!wantsSave) return;
+
+  const todayHe = new Date().toLocaleDateString('he-IL');
+  const defaultName = `כיול אוטומטי ${todayHe}`;
+  const description = `נוצר מכיול אוטומטי בתאריך ${todayHe}`;
+
+  // Loop until the user supplies an unused name or cancels.
+  let pendingDefault = defaultName;
+  while (true) {
+    const name = await showPrompt('בחר שם לפריסט:', {
+      title: 'שמירת הגדרות כפריסט',
+      placeholder: 'שם הפריסט',
+      defaultValue: pendingDefault,
+    });
+    if (name == null) return; // user cancelled
+    const trimmed = name.trim();
+    if (!trimmed) {
+      await showAlert('שם הפריסט לא יכול להיות ריק.', { icon: '⚠️' });
+      pendingDefault = defaultName;
+      continue;
+    }
+    const saved = store.saveCurrentAsPreset(trimmed, description);
+    if (saved) {
+      showToast(`ההגדרות נשמרו כפריסט "${saved.name}".`, { type: 'success' });
+      if (currentTab === 'algorithm') renderAll();
+      return;
+    }
+    // saveCurrentAsPreset returns null only on name collision (empty name is
+    // already guarded above). Surface a clear prompt and retry.
+    await showAlert('שם זה כבר בשימוש על ידי פריסט אחר. בחר שם אחר.', { icon: '⚠️' });
+    pendingDefault = trimmed;
+  }
 }
 
 async function handleSwap(assignmentId: string): Promise<void> {
@@ -2454,6 +2501,57 @@ function renderAll(): void {
     }
   }
 
+  // ── Task Panel View: per-task weekly dashboard ──
+  if (_viewMode === 'TASK_PANEL_VIEW' && _taskPanelSourceName && currentSchedule) {
+    const lmPanel = store.getLiveModeState();
+    const frozenIds = new Set<string>();
+    if (lmPanel.enabled) {
+      const tMap = new Map(currentSchedule.tasks.map((t) => [t.id, t]));
+      for (const a of currentSchedule.assignments) {
+        const t = tMap.get(a.taskId);
+        if (t && !isFutureTask(t, lmPanel.currentTimestamp)) frozenIds.add(a.id);
+      }
+    }
+
+    const panelCtx: TaskPanelContext = {
+      sourceName: _taskPanelSourceName,
+      schedule: currentSchedule,
+      numDays: store.getScheduleDays(),
+      baseDate: store.getScheduleDate(),
+      frozenAssignmentIds: frozenIds,
+      showSosButtons: true,
+      isSmallScreen,
+    };
+    const rendered = renderTaskPanel(panelCtx);
+    if (rendered === TASK_PANEL_EMPTY) {
+      // Source name no longer resolves — drop back to schedule.
+      _viewMode = 'SCHEDULE_VIEW';
+      _taskPanelSourceName = null;
+      _restoreScheduleScroll = true;
+      // Fall through to normal render
+    } else {
+      app.innerHTML = `<div class="task-panel-view-root">${rendered}</div>`;
+      const root = app.querySelector('.task-panel-view-root') as HTMLElement;
+      wireTaskPanelEvents(root, () => {
+        _viewMode = 'SCHEDULE_VIEW';
+        _taskPanelSourceName = null;
+        _restoreScheduleScroll = true;
+        renderAll();
+      }, handleSwap, openRescueModal);
+      wireParticipantTooltip(root, () => currentSchedule);
+      wireTaskTooltip(root, () => currentSchedule);
+      if (!isTouchDevice) {
+        root.addEventListener('click', (e) => {
+          const target = (e.target as HTMLElement).closest('.participant-hover[data-pid]') as HTMLElement | null;
+          if (!target) return;
+          const pid = target.dataset.pid;
+          if (pid) navigateToProfile(pid);
+        });
+      }
+      return;
+    }
+  }
+
   const participants = store.getAllParticipants();
   const templates = store.getAllTaskTemplates();
   const preflight = runPreflight();
@@ -2461,7 +2559,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.3</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3182,6 +3280,20 @@ function wireScheduleEvents(container: HTMLElement): void {
     });
   }
 
+  // ── Task source chip → Task Panel View (desktop + touch) ──
+  container.addEventListener('click', (e) => {
+    const chip = (e.target as HTMLElement).closest('.task-panel-hover[data-source-name]') as HTMLElement | null;
+    if (!chip?.dataset.sourceName) return;
+    navigateToTaskPanel(chip.dataset.sourceName);
+  });
+  container.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const chip = (e.target as HTMLElement).closest('.task-panel-hover[data-source-name]') as HTMLElement | null;
+    if (!chip?.dataset.sourceName) return;
+    e.preventDefault();
+    navigateToTaskPanel(chip.dataset.sourceName);
+  });
+
   container.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest('.time-cell-inspectable[data-time-ms]') as HTMLElement | null;
     if (!target) return;
@@ -3626,6 +3738,18 @@ function navigateToProfile(participantId: string): void {
   window.scrollTo(0, 0);
 }
 
+/** Navigate to the per-task panel (grouped by task sourceName). */
+function navigateToTaskPanel(sourceName: string): void {
+  if (!currentSchedule) return;
+  _scheduleScrollY = window.scrollY;
+  _viewMode = 'TASK_PANEL_VIEW';
+  _taskPanelSourceName = sourceName;
+  hideTooltip();
+  hideTaskTooltip();
+  renderAll();
+  window.scrollTo(0, 0);
+}
+
 function hideAvailabilityPopover(): void {
   if (_availabilityPopoverKeyHandler) {
     document.removeEventListener('keydown', _availabilityPopoverKeyHandler);
@@ -3834,6 +3958,12 @@ function init(): void {
     // Listen for auto-tune button clicks from the algorithm tab.
     document.addEventListener('gm:auto-tune-request', () => {
       void handleAutoTune();
+    });
+
+    // Listen for "open task panel" requests from the mobile task tooltip CTA.
+    document.addEventListener('gm:open-task-panel', (e: Event) => {
+      const detail = (e as CustomEvent<{ sourceName?: string }>).detail;
+      if (detail?.sourceName) navigateToTaskPanel(detail.sourceName);
     });
 
     // Initialize rescue modal callbacks

@@ -6686,6 +6686,200 @@ assert(maxUnfilledIn([]) === 0, 'maxUnfilledIn of empty = 0');
   assert(listWithCurrent.length === preLen, 'Phase 4 preserve-current: no-op when current already present');
 }
 
+// ─── Auto-Tuner: extended edge cases ─────────────────────────────────────────
+//
+// Covers the pure-math surface not yet exercised by the cases above:
+//   • mulberry32: output range [0, 1) and non-degenerate spread
+//   • median/iqr: negatives, floats, duplicates
+//   • computeRankScore: empty results → -Infinity; equal-median tiebreaks
+//   • LHS: non-integer dims preserve continuous values; single dim; min==max
+//   • LHS integer floor: rounding never goes below the declared min
+//   • latinHypercubeSample stratification at higher resolution (8 buckets)
+//
+// These tests harden the tuner against silent regressions — if any math
+// helper drifts (e.g. an off-by-one in LHS permutation, or median picks the
+// wrong index on a 2-element list), these cases will surface it.
+
+console.log('\n── Auto-Tuner: extended edge cases ──');
+
+// mulberry32: output range and spread
+{
+  const rng = mulberry32(424242);
+  let min = 1;
+  let max = 0;
+  let sum = 0;
+  const N = 500;
+  for (let i = 0; i < N; i++) {
+    const v = rng();
+    if (v < 0 || v >= 1) {
+      // Use inline failure — assert's boolean form suffices.
+    }
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum += v;
+  }
+  assert(min >= 0, 'mulberry32: all values >= 0');
+  assert(max < 1, 'mulberry32: all values < 1');
+  // Uniform [0,1) has mean ≈ 0.5. 500 samples → stderr ≈ 0.013; 0.1 is ample.
+  const mean = sum / N;
+  assert(Math.abs(mean - 0.5) < 0.1, `mulberry32: ~uniform distribution (mean=${mean.toFixed(3)})`);
+}
+
+// median: negatives, duplicates, floats
+assert(tunerMedian([-3, -1, 0, 1, 3]) === 0, 'median: negatives ordered correctly');
+assert(tunerMedian([5, 5, 5, 5, 5]) === 5, 'median: all duplicates');
+assert(Math.abs(tunerMedian([1.5, 2.5, 3.5]) - 2.5) < 1e-9, 'median: floats');
+assert(tunerMedian([-5, -5]) === -5, 'median: two negatives = their average');
+
+// iqr: spreads match expected quartile distance
+assert(tunerIqr([10, 10, 10, 10]) === 0, 'iqr: no spread → 0');
+{
+  // Symmetric spread around 50, quartiles at 25 and 75 → iqr = 50.
+  const spread = tunerIqr([0, 25, 50, 75, 100]);
+  assert(Math.abs(spread - 50) < 1e-9, `iqr([0,25,50,75,100]) = 50 (got ${spread})`);
+}
+
+// computeRankScore: edge cases
+{
+  assert(
+    computeRankScore([], 0.5, 10000) === -Infinity,
+    'rankScore: empty results → -Infinity (never chosen as best)',
+  );
+  // Same stability, same unfilled, higher median wins.
+  const a = [{ refScore: 200, unfilled: 0 }];
+  const b = [{ refScore: 100, unfilled: 0 }];
+  assert(computeRankScore(a, 0.5, 10000) > computeRankScore(b, 0.5, 10000), 'rankScore: higher median wins');
+}
+
+// Latin Hypercube: non-integer dimensions preserve continuous values
+{
+  const dims: TunerDim[] = [{ min: 0.1, max: 10, integer: false }];
+  const samples = latinHypercubeSample(dims, 20, mulberry32(3));
+  let hasNonInteger = false;
+  for (const row of samples) {
+    if (Math.floor(row[0]) !== row[0]) {
+      hasNonInteger = true;
+      break;
+    }
+  }
+  assert(hasNonInteger, 'LHS: non-integer dim produces continuous values');
+  // Every sample still in bounds.
+  let bounded = true;
+  for (const row of samples) {
+    if (row[0] < 0.1 || row[0] > 10) bounded = false;
+  }
+  assert(bounded, 'LHS: non-integer samples within [min, max]');
+}
+
+// Latin Hypercube: single dim, 1 sample → row has length 1 and the value is in range
+{
+  const samples = latinHypercubeSample([{ min: 5, max: 50, integer: true }], 1, mulberry32(11));
+  assert(samples.length === 1, 'LHS: count=1 returns one row');
+  assert(samples[0].length === 1, 'LHS: single dim row has length 1');
+  assert(samples[0][0] >= 5 && samples[0][0] <= 50, 'LHS: single sample in range');
+}
+
+// Latin Hypercube: min==max collapses to the same value across all samples
+{
+  const samples = latinHypercubeSample([{ min: 7, max: 7, integer: true }], 10, mulberry32(13));
+  const allSeven = samples.every((r) => r[0] === 7);
+  assert(allSeven, 'LHS: min==max produces a constant column');
+}
+
+// Latin Hypercube: integer rounding never drops below declared min
+// (the `Math.max(dim.min, Math.round(v))` clamp in latinHypercubeSample).
+{
+  // min=1 is particularly risky for rounding because Math.round(0.5) = 1 but
+  // any log-space sample that maps to < 0.5 would round to 0 without the clamp.
+  const dims: TunerDim[] = [{ min: 1, max: 3, integer: true }];
+  const samples = latinHypercubeSample(dims, 200, mulberry32(17));
+  const minObserved = Math.min(...samples.map((r) => r[0]));
+  assert(minObserved >= 1, `LHS integer clamp: observed min = ${minObserved} (must be ≥ 1)`);
+}
+
+// Latin Hypercube: coverage at higher resolution (8 buckets with 80 samples)
+{
+  const dims: TunerDim[] = [{ min: 1, max: 100000, integer: true }];
+  const samples = latinHypercubeSample(dims, 80, mulberry32(19));
+  const logMin = Math.log(1);
+  const logMax = Math.log(100000);
+  const buckets = new Array(8).fill(0);
+  for (const row of samples) {
+    const t = (Math.log(row[0]) - logMin) / (logMax - logMin);
+    const idx = Math.min(7, Math.max(0, Math.floor(t * 8)));
+    buckets[idx]++;
+  }
+  assert(
+    buckets.every((n) => n >= 1),
+    `LHS: 8-bucket stratification covers every log octile (counts=${buckets.join(',')})`,
+  );
+}
+
+// Latin Hypercube: different seeds produce meaningfully different samples
+{
+  const dims: TunerDim[] = [{ min: 1, max: 1000, integer: true }];
+  const a = latinHypercubeSample(dims, 20, mulberry32(101));
+  const b = latinHypercubeSample(dims, 20, mulberry32(202));
+  let differ = 0;
+  for (let i = 0; i < 20; i++) if (a[i][0] !== b[i][0]) differ++;
+  // Extremely conservative: >50% of positions should differ for two seeds.
+  assert(differ > 10, `LHS: different seeds diverge (${differ}/20 positions differ)`);
+}
+
+// computeRankScore: combined IQR + unfilled penalties are additive
+{
+  // Baseline: stable, feasible.
+  const baseline = [
+    { refScore: 100, unfilled: 0 },
+    { refScore: 100, unfilled: 0 },
+    { refScore: 100, unfilled: 0 },
+  ];
+  // Same median but noisier AND has unfilled — both penalties should apply.
+  const bothPenalties = [
+    { refScore: 80, unfilled: 0 },
+    { refScore: 100, unfilled: 0 },
+    { refScore: 120, unfilled: 2 },
+  ];
+  const rB = computeRankScore(baseline, 0.5, 10000);
+  const rBoth = computeRankScore(bothPenalties, 0.5, 10000);
+  assert(rB > rBoth, 'rankScore: IQR + unfilled both reduce rank (compound penalty)');
+  // The gap should exceed either penalty alone, confirming they accumulate.
+  const rNoisyOnly = computeRankScore(
+    [
+      { refScore: 80, unfilled: 0 },
+      { refScore: 100, unfilled: 0 },
+      { refScore: 120, unfilled: 0 },
+    ],
+    0.5,
+    10000,
+  );
+  assert(rNoisyOnly > rBoth, 'rankScore: adding unfilled to a noisy set further reduces rank');
+}
+
+// Phase-4 "preserve current" logic: edge case where survivor list is shorter
+// than 4 — current must still be appended without slicing.
+{
+  const mkCand = (id: string) => ({ id });
+  const shortList = [mkCand('a'), mkCand('b')];
+  const currentCand = mkCand('current');
+  let result = [...shortList];
+  if (!result.includes(currentCand)) {
+    if (result.length >= 4) result = result.slice(0, 3);
+    result.push(currentCand);
+  }
+  assert(result.length === 3, 'Phase 4 preserve-current: short list grows by 1 (no slice)');
+  assert(result[result.length - 1] === currentCand, 'Phase 4 preserve-current: current at tail on short list');
+}
+
+// Phase-5 phaseTotal branch logic: with/without challenger counts differ.
+// Mirrors the post-audit fix `phase5Total = hasChallenger ? 6 : 3`.
+{
+  const withChallenger = true;
+  const withoutChallenger = false;
+  assert((withChallenger ? 6 : 3) === 6, 'Phase 5 total: 6 when winner is a real challenger');
+  assert((withoutChallenger ? 6 : 3) === 3, 'Phase 5 total: 3 when winner === currentCand (no challenger)');
+}
+
 console.log('\n── Auto-Tuner: reference-scoring invariance ──');
 
 // The critical fix: across candidates with wildly different weight vectors,

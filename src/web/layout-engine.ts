@@ -622,9 +622,19 @@ export function renderSectionTable(
   const catColors = getCategoryColorMap();
   const sectionColor = catColors[section.id] || '#999';
 
+  // Clickable chips per unique sourceName — opens the per-task panel.
+  const uniqueSources = [...new Set(section.tasks.map((t) => t.sourceName).filter((s): s is string => !!s))];
+  const titleChips = uniqueSources
+    .map(
+      (sn) =>
+        `<span class="task-panel-hover" role="button" tabindex="0" data-source-name="${escHtml(sn)}" title="פתח חלונית משימה: ${escHtml(sn)}">${escHtml(sn)}</span>`,
+    )
+    .join('');
+
   return `
     <div class="${wrapperClass}" data-section="${section.id}" data-columns="${columns.length}" style="--section-color: ${sectionColor}; --col-count: ${columns.length}">
       <h3 class="table-title">${section.title}</h3>
+      ${titleChips ? `<div class="table-title-chips">${titleChips}</div>` : ''}
       <table class="table schedule-grid-table">
         <thead><tr><th class="col-time">זמן</th>${headerCells}</tr></thead>
         <tbody>${rows}</tbody>

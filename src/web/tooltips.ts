@@ -381,6 +381,13 @@ function getTaskTooltipEl(): HTMLElement {
   el.addEventListener('mouseleave', () => {
     el.style.display = 'none';
   });
+  // Delegate "open task panel" CTA clicks from the tooltip body.
+  el.addEventListener('click', (e) => {
+    const cta = (e.target as HTMLElement).closest('.ttt-action-open-panel') as HTMLElement | null;
+    if (!cta?.dataset.sourceName) return;
+    document.dispatchEvent(new CustomEvent('gm:open-task-panel', { detail: { sourceName: cta.dataset.sourceName } }));
+    el.style.display = 'none';
+  });
   _taskTooltipEl = el;
   return el;
 }
@@ -438,6 +445,13 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
     teammatesHtml += '</div>';
   }
 
+  const sourceName = task.sourceName || task.name;
+  const openPanelBtn = sourceName
+    ? `<div class="ttt-actions">
+        <button class="ttt-action-open-panel" data-source-name="${escHtml(sourceName)}">📋 פתח חלונית משימה</button>
+      </div>`
+    : '';
+
   return `
     <div class="ttt-header">
       <span class="ttt-task-name" style="border-inline-start:3px solid ${taskColor};padding-inline-start:8px">${task.name}</span>
@@ -451,6 +465,7 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
     <div class="ttt-divider"></div>
     <div class="ttt-section-label">צוות משמרת (${taskAssignments.length})</div>
     ${teammatesHtml}
+    ${openPanelBtn}
   `;
 }
 
@@ -487,6 +502,16 @@ export function wireTaskTooltip(container: HTMLElement, getSchedule: () => Sched
       detail.className = 'task-inline-detail';
       detail.innerHTML = content;
       target.insertAdjacentElement('afterend', detail);
+
+      // Hook the CTA (rendered inside buildTaskTooltipContent) to dispatch the global event.
+      const cta = detail.querySelector('.ttt-action-open-panel') as HTMLElement | null;
+      if (cta) {
+        cta.addEventListener('click', (evt) => {
+          evt.stopPropagation();
+          const sn = cta.dataset.sourceName;
+          if (sn) document.dispatchEvent(new CustomEvent('gm:open-task-panel', { detail: { sourceName: sn } }));
+        });
+      }
     });
 
     // Dismiss when tapping outside a task-tooltip-hover

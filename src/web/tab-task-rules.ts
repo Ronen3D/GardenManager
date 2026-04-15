@@ -147,6 +147,28 @@ function parseHm(value: string): { h: number; m: number } | null {
   return { h, m };
 }
 
+/** Treat a load window as a half-open clock-time interval and return the set of
+ *  minutes (mod 1440) it covers. End-touching windows (e.g. 05:00–06:30 and
+ *  06:30–07:00) do not share any minute, so they don't overlap. Windows where
+ *  end ≤ start are interpreted as crossing midnight. */
+function loadWindowMinuteSet(w: { startHour: number; startMinute: number; endHour: number; endMinute: number }): Set<number> {
+  const start = w.startHour * 60 + w.startMinute;
+  let end = w.endHour * 60 + w.endMinute;
+  if (end <= start) end += 1440;
+  const out = new Set<number>();
+  for (let m = start; m < end; m++) out.add(m % 1440);
+  return out;
+}
+
+function loadWindowsOverlap(
+  a: { startHour: number; startMinute: number; endHour: number; endMinute: number },
+  b: { startHour: number; startMinute: number; endHour: number; endMinute: number },
+): boolean {
+  const aMin = loadWindowMinuteSet(a);
+  for (const m of loadWindowMinuteSet(b)) if (aMin.has(m)) return true;
+  return false;
+}
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 let expandedTemplateId: string | null = null;
@@ -611,38 +633,60 @@ type LoadFormulaSnapshotEntryLocal = {
 
 function renderLoadWindowsEditor(tpl: TaskTemplate): string {
   const windows = tpl.loadWindows ?? [];
-  let html = `<h4 style="margin:12px 0 8px;">חלונות עומס מוגבר</h4>`;
+  let html = `<div class="lw-editor">
+    <div class="lw-editor-header">
+      <h4 class="lw-editor-title">חלונות עומס מוגבר</h4>
+      <span class="lw-editor-count">${windows.length === 0 ? 'אין חלונות' : windows.length === 1 ? 'חלון אחד' : `${windows.length} חלונות`}</span>
+    </div>
+    <p class="lw-editor-help text-muted">טווחי שעות בהם המשימה נחשבת עומס מוגבר. לכל חלון משקל בין 0 ל-1.</p>`;
 
   if (windows.length === 0) {
-    html += '<p class="text-muted" style="padding:4px 0;">לא הוגדרו חלונות עומס. משקל העומס חל על כל המשימה.</p>';
+    html += '<p class="lw-empty">לא הוגדרו חלונות עומס. משקל העומס חל על כל המשימה.</p>';
   } else {
-    html += `<div class="table-responsive"><table class="table table-slots" style="margin-bottom:8px;">
-      <thead><tr><th>חלון</th><th>משקל</th><th></th></tr></thead>
-      <tbody>`;
+    html += `<div class="lw-list" role="list">
+      <div class="lw-row lw-row-head" aria-hidden="true">
+        <span class="lw-col-label lw-col-time">טווח שעות</span>
+        <span class="lw-col-label lw-col-weight">משקל</span>
+        <span class="lw-col-label lw-col-actions">פעולות</span>
+      </div>`;
     for (const w of windows) {
-      html += `<tr>
-        <td>
-          <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-start" data-lwid="${w.id}" value="${fmtHm(w.startHour, w.startMinute)}" />
-          -
-          <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-end" data-lwid="${w.id}" value="${fmtHm(w.endHour, w.endMinute)}" />
-        </td>
-        <td><input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-edit-weight" data-lwid="${w.id}" value="${w.weight.toFixed(2)}" />${renderLoadFormulaControls({ kind: 'window', tpl, window: w, disabled: false })}</td>
-        <td>
-          <button class="btn-sm btn-primary" data-action="update-load-window" data-tid="${tpl.id}" data-lwid="${w.id}">שמור</button>
-          <button class="btn-sm btn-danger-outline" data-action="remove-load-window" data-tid="${tpl.id}" data-lwid="${w.id}">✕</button>
-        </td>
-      </tr>`;
+      html += `<div class="lw-row" role="listitem">
+        <div class="lw-time">
+          <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-start" data-lwid="${w.id}" value="${fmtHm(w.startHour, w.startMinute)}" aria-label="שעת התחלה" />
+          <span class="lw-sep" aria-hidden="true">–</span>
+          <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-end" data-lwid="${w.id}" value="${fmtHm(w.endHour, w.endMinute)}" aria-label="שעת סיום" />
+        </div>
+        <div class="lw-weight">
+          <input class="input-sm lw-weight-input" type="number" step="0.05" min="0" max="1" data-field="lw-edit-weight" data-lwid="${w.id}" value="${w.weight.toFixed(2)}" aria-label="משקל" />
+          ${renderLoadFormulaControls({ kind: 'window', tpl, window: w, disabled: false })}
+        </div>
+        <div class="lw-actions">
+          <button class="lw-btn lw-save" data-action="update-load-window" data-tid="${tpl.id}" data-lwid="${w.id}" title="שמור שינויים" aria-label="שמור שינויים">✓</button>
+          <button class="lw-btn lw-remove" data-action="remove-load-window" data-tid="${tpl.id}" data-lwid="${w.id}" title="מחק חלון" aria-label="מחק חלון">✕</button>
+        </div>
+      </div>`;
     }
-    html += '</tbody></table></div>';
+    html += '</div>';
   }
 
-  html += `<div class="add-slot-form" style="margin-top:8px;">
-    <div class="form-row">
-      <label>התחלה <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-start" value="05:00" /></label>
-      <label>סיום <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-end" value="06:30" /></label>
-      <label>משקל (0-1) <input class="input-sm" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" /></label>
-      <button class="btn-sm btn-primary" data-action="add-load-window" data-tid="${tpl.id}">הוסף חלון עומס מוגבר</button>
+  html += `<div class="lw-add-form add-slot-form">
+    <div class="lw-add-caption">הוספת חלון חדש</div>
+    <div class="lw-add-grid">
+      <div class="lw-add-field">
+        <label class="lw-add-label">התחלה</label>
+        <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-start" value="05:00" />
+      </div>
+      <div class="lw-add-field">
+        <label class="lw-add-label">סיום</label>
+        <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-end" value="06:30" />
+      </div>
+      <div class="lw-add-field">
+        <label class="lw-add-label">משקל (0-1)</label>
+        <input class="input-sm lw-weight-input" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" />
+      </div>
+      <button class="btn-sm btn-primary lw-add-btn" data-action="add-load-window" data-tid="${tpl.id}">+ הוסף חלון</button>
     </div>
+  </div>
   </div>`;
 
   return html;
@@ -1144,12 +1188,19 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           break;
         }
 
+        const candidate = { startHour: ps.h, startMinute: ps.m, endHour: pe.h, endMinute: pe.m };
+        const conflict = (tpl.loadWindows || []).find((w) => loadWindowsOverlap(w, candidate));
+        if (conflict) {
+          showToast(
+            `החלון חופף לחלון קיים (${fmtHm(conflict.startHour, conflict.startMinute)}–${fmtHm(conflict.endHour, conflict.endMinute)}) — לא נוסף`,
+            { type: 'error' },
+          );
+          break;
+        }
+
         const newWindow: LoadWindow = {
           id: `lw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          startHour: ps.h,
-          startMinute: ps.m,
-          endHour: pe.h,
-          endMinute: pe.m,
+          ...candidate,
           weight: Math.max(0, Math.min(1, weight)),
         };
 
@@ -1183,6 +1234,17 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const weight = parseFloat(weightInput.value || '1');
         if (!ps || !pe) {
           showToast('שעה לא תקינה — יש להזין בפורמט HH:MM (00:00–23:59)', { type: 'error' });
+          break;
+        }
+
+        const candidate = { startHour: ps.h, startMinute: ps.m, endHour: pe.h, endMinute: pe.m };
+        const conflict = (tpl.loadWindows || []).find((w) => w.id !== lwid && loadWindowsOverlap(w, candidate));
+        if (conflict) {
+          showToast(
+            `החלון חופף לחלון קיים (${fmtHm(conflict.startHour, conflict.startMinute)}–${fmtHm(conflict.endHour, conflict.endMinute)}) — השינוי לא נשמר`,
+            { type: 'error' },
+          );
+          rerender();
           break;
         }
 
