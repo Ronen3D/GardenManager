@@ -1344,6 +1344,15 @@ select.input-sm {
   margin-inline-start: 4px;
 }
 
+.template-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 18px 10px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
 .template-body {
   padding: 0 18px 18px;
   border-top: 1px solid var(--border);
