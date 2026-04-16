@@ -1142,6 +1142,7 @@ export function localSearchOptimize(
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
   pinnedIds: Set<string> = new Set(),
+  abortSignal?: AbortSignal,
 ): { assignments: Assignment[]; filledSlots: string[] } {
   const current = [...assignments.map((a) => ({ ...a }))];
 
@@ -1238,7 +1239,7 @@ export function localSearchOptimize(
   }
 
   while (iterations < maxIter) {
-    if (Date.now() - startTime > config.maxSolverTimeMs) break;
+    if (Date.now() - startTime > config.maxSolverTimeMs || abortSignal?.aborted) break;
 
     // Geometric temperature decay with reheating
     temperature *= SA_COOLING_RATE;
@@ -1370,7 +1371,7 @@ export function localSearchOptimize(
       const i = idxOrder[ii];
       for (let jj = ii + 1; jj < idxOrder.length && !accepted; jj++) {
         const j = idxOrder[jj];
-        if (Date.now() - startTime > config.maxSolverTimeMs) break;
+        if (Date.now() - startTime > config.maxSolverTimeMs || abortSignal?.aborted) break;
 
         const ai = current[i];
         const aj = current[j];
@@ -1581,6 +1582,7 @@ export function optimize(
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
   certLabelResolver?: (certId: string) => string,
+  abortSignal?: AbortSignal,
 ): OptimizationResult {
   const startTime = Date.now();
 
@@ -1608,6 +1610,7 @@ export function optimize(
     restRuleMap,
     dayStartHour,
     greedy.pinnedIds,
+    abortSignal,
   );
 
   // Remove slots that SA managed to fill
@@ -1843,6 +1846,7 @@ export function optimizeMultiAttemptAsync(
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
   certLabelResolver?: (certId: string) => string,
+  abortSignal?: AbortSignal,
 ): Promise<OptimizationResult> {
   return new Promise((resolve, reject) => {
     let best: OptimizationResult | null = null;
@@ -1863,9 +1867,21 @@ export function optimizeMultiAttemptAsync(
 
     function runBatch(): void {
       try {
+        // Check abort before starting a new batch
+        if (abortSignal?.aborted) {
+          reject(new DOMException('Schedule generation cancelled', 'AbortError'));
+          return;
+        }
+
         const batchEnd = Math.min(i + ASYNC_BATCH_SIZE, attempts);
 
         while (i < batchEnd) {
+          // Check abort between attempts within a batch
+          if (abortSignal?.aborted) {
+            reject(new DOMException('Schedule generation cancelled', 'AbortError'));
+            return;
+          }
+
           // Update elite boost set every ELITE_INTERVAL attempts
           if (best && i > 0 && i % ELITE_INTERVAL === 0 && best.unfilledSlots.length > 0) {
             eliteBoostTaskIds = new Set(best.unfilledSlots.map((uf) => uf.taskId));
@@ -1900,6 +1916,7 @@ export function optimizeMultiAttemptAsync(
             restRuleMap,
             dayStartHour,
             certLabelResolver,
+            abortSignal,
           );
 
           const improved = best === null || isBetterResult(result, best);

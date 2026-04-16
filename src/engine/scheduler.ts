@@ -373,7 +373,7 @@ export class SchedulingEngine {
    * @param attempts Number of optimization attempts (default: 2000)
    * @param onProgress Callback fired after each attempt for progress UI
    */
-  async generateScheduleAsync(attempts: number = 2000, onProgress?: MultiAttemptProgressCallback): Promise<Schedule> {
+  async generateScheduleAsync(attempts: number = 2000, onProgress?: MultiAttemptProgressCallback, abortSignal?: AbortSignal): Promise<Schedule> {
     const tasks = this.getAllTasks();
     const participants = this.getAllParticipants();
     this._validateInputs(tasks, participants);
@@ -390,6 +390,7 @@ export class SchedulingEngine {
       this.restRuleMap,
       this.dayStartHour,
       this.certLabelResolver,
+      abortSignal,
     );
 
     return this._commitOptimizationResult(tasks, participants, result);

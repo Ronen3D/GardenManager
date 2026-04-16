@@ -44,7 +44,7 @@ export interface SwapPickerDeps {
    * passes the pre-commit assignments snapshot so the caller can push
    * it onto the unified undo stack.
    */
-  onCommit: (info: { label: string; preCommitAssignments: Assignment[] }) => void;
+  onCommit: (info: { label: string; preCommitAssignments: Assignment[]; swappedAssignmentIds: string[] }) => void;
 }
 
 type PickerMode = 'free' | 'trade';
@@ -644,6 +644,7 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
 
   let result: ReturnType<SchedulingEngine['swapParticipant']>;
   let label: string;
+  let swappedAssignmentIds: string[];
   if (state.mode === 'trade' && state.selectedTradeAssignmentId) {
     const other = deps.schedule.assignments.find((a) => a.id === state.selectedTradeAssignmentId);
     if (!other) {
@@ -656,17 +657,18 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
       { assignmentId: other.id, newParticipantId: ctx.sourceParticipant.id },
     ]);
     label = `החלפה הדדית: ${ctx.sourceParticipant.name} ⇄ ${otherP?.name ?? ''}`;
+    swappedAssignmentIds = [state.assignmentId, state.selectedTradeAssignmentId];
   } else if (state.selectedCandidateId) {
     const inc = deps.schedule.participants.find((p) => p.id === state.selectedCandidateId);
     result = deps.engine.swapParticipant({
       assignmentId: state.assignmentId,
       newParticipantId: state.selectedCandidateId,
     });
-    // Arrow points ← (left) to match the RTL reading flow: the name on the
-    // right is the one being replaced, the name on the left is the replacement.
-    // LRI/PDI isolates have no visible effect on Hebrew-name content (verified
-    // empirically via pixel measurements), so we flip the arrow character.
-    label = `החלפה: ${ctx.sourceParticipant.name} ← ${inc?.name ?? ''}`;
+    // RTL reading: rightmost name is read first. We put the incoming
+    // participant on the right and the outgoing (source) on the left so
+    // the arrow reads "incoming ← outgoing" = "incoming replaces outgoing".
+    label = `החלפה: ${inc?.name ?? ''} ← ${ctx.sourceParticipant.name}`;
+    swappedAssignmentIds = [state.assignmentId];
   } else {
     state.committing = false;
     return;
@@ -680,7 +682,7 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
   }
 
   close();
-  deps.onCommit({ label, preCommitAssignments });
+  deps.onCommit({ label, preCommitAssignments, swappedAssignmentIds });
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

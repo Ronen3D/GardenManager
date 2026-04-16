@@ -46,7 +46,7 @@ import { getEffectivePakalDefinitions } from './pakal-utils';
 import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
 import { runPreflight } from './preflight';
-import { closeRescueModal, initRescue, openRescueModal } from './rescue-modal';
+import { closeRescueModal, initRescue, openRescueModal, type RescueSwapLabel } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice } from './responsive';
 import { renderScheduleGrid } from './schedule-grid-view';
 import {
@@ -138,6 +138,8 @@ function readHash(): void {
 }
 /** True while multi-attempt optimization is running */
 let _isOptimizing = false;
+/** AbortController for cancelling a running optimization */
+let _optimAbortController: AbortController | null = null;
 /** True while undo/redo is executing — prevents onStoreChanged from reconciling */
 let _undoRedoInProgress = false;
 /** Parallel schedule snapshots kept in sync with the store's undo/redo stacks */
@@ -147,6 +149,8 @@ interface ScheduleSnapshot {
 }
 const _scheduleUndoStack: ScheduleSnapshot[] = [];
 const _scheduleRedoStack: ScheduleSnapshot[] = [];
+/** Assignment IDs to animate after the next renderAll() — consumed once. */
+let _pendingSwapAnimIds: Set<string> = new Set();
 /**
  * True when the config store has been mutated after the latest schedule
  * generation.  Signals that the current schedule may be out of sync with
@@ -1820,13 +1824,27 @@ function renderOptimOverlay(): string {
           <span class="optim-metric-label">ציון הטוב ביותר</span>
           <span class="optim-metric-value">${bestScore.toFixed(1)}</span>
         </div>
-        ${bestUnfilled > 0 ? `<div class="optim-metric">
+        ${
+          bestUnfilled > 0
+            ? `<div class="optim-metric">
           <span class="optim-metric-label">משבצות לא מאוישות</span>
           <span class="optim-metric-value optim-warn">${bestUnfilled}</span>
-        </div>` : ''}
+        </div>`
+            : ''
+        }
       </div>
+      <button class="btn-cancel-optim" id="btn-cancel-optim">ביטול</button>
     </div>
   </div>`;
+}
+
+/** Wire the cancel button inside the optimization overlay (idempotent). */
+function wireOptimCancelButton(): void {
+  const btn = document.getElementById('btn-cancel-optim') as HTMLButtonElement | null;
+  if (btn && !btn.dataset.wired) {
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => _optimAbortController?.abort());
+  }
 }
 
 /**
@@ -1864,6 +1882,7 @@ function updateOverlay(): void {
     const content = document.getElementById('tab-content');
     if (content) {
       content.insertAdjacentHTML('beforeend', html);
+      wireOptimCancelButton();
     }
   }
 }
@@ -1914,6 +1933,7 @@ async function doGenerate(): Promise<void> {
   currentTab = 'schedule';
   pushHash();
   _isOptimizing = true;
+  _optimAbortController = new AbortController();
   _optimProgress = {
     attempt: 0,
     totalAttempts: OPTIM_ATTEMPTS,
@@ -1924,6 +1944,7 @@ async function doGenerate(): Promise<void> {
 
   // Render the tab (with old schedule or empty state) + overlay
   renderAll();
+  wireOptimCancelButton();
 
   // Disable generate button during optimization
   const genBtn = document.getElementById('btn-generate') as HTMLButtonElement | null;
@@ -1934,20 +1955,25 @@ async function doGenerate(): Promise<void> {
 
   const t0 = performance.now();
   let scheduleSaved = false;
+  let wasCancelled = false;
 
   try {
-    const schedule = await engine.generateScheduleAsync(OPTIM_ATTEMPTS, (info) => {
-      // Update progress state (in-memory only, no DOM thrash on renderAll)
-      _optimProgress = {
-        attempt: info.attempt,
-        totalAttempts: info.totalAttempts,
-        bestScore: info.currentBestScore,
-        bestUnfilled: info.currentBestUnfilled,
-        lastImproved: info.improved,
-      };
-      // Surgically update just the overlay
-      updateOverlay();
-    });
+    const schedule = await engine.generateScheduleAsync(
+      OPTIM_ATTEMPTS,
+      (info) => {
+        // Update progress state (in-memory only, no DOM thrash on renderAll)
+        _optimProgress = {
+          attempt: info.attempt,
+          totalAttempts: info.totalAttempts,
+          bestScore: info.currentBestScore,
+          bestUnfilled: info.currentBestUnfilled,
+          lastImproved: info.improved,
+        };
+        // Surgically update just the overlay
+        updateOverlay();
+      },
+      _optimAbortController!.signal,
+    );
 
     // ── Atomic commit: update state in one go, then render once ──
     closeRescueModal();
@@ -1968,30 +1994,43 @@ async function doGenerate(): Promise<void> {
       freezeAssignments(currentSchedule, liveMode.currentTimestamp);
     }
   } catch (err) {
-    // Safety buffer: if all attempts fail, show error without clearing board
-    console.error('[Scheduler] All optimization attempts failed:', err);
-    const errDiv = document.querySelector('.optim-overlay .optim-card');
-    if (errDiv) {
-      errDiv.innerHTML = `
-        <div class="optim-error">
-          <h3>⚠ האופטימיזציה נכשלה</h3>
-          <p>לא נמצא פתרון תקין ב-${OPTIM_ATTEMPTS} ניסיונות.</p>
-          <p>בדוק את האילוצים ואת זמינות המשתתפים.</p>
-          <button class="btn-primary" id="btn-dismiss-error">סגור</button>
-        </div>`;
-      const dismissBtn = document.getElementById('btn-dismiss-error');
-      if (dismissBtn) {
-        dismissBtn.addEventListener('click', () => {
-          _isOptimizing = false;
-          _optimProgress = null;
-          renderAll();
-        });
+    // User cancelled — clean up without error display
+    if (_optimAbortController?.signal.aborted) {
+      wasCancelled = true;
+    } else {
+      // Safety buffer: if all attempts fail, show error without clearing board
+      console.error('[Scheduler] All optimization attempts failed:', err);
+      const errDiv = document.querySelector('.optim-overlay .optim-card');
+      if (errDiv) {
+        errDiv.innerHTML = `
+          <div class="optim-error">
+            <h3>⚠ האופטימיזציה נכשלה</h3>
+            <p>לא נמצא פתרון תקין ב-${OPTIM_ATTEMPTS} ניסיונות.</p>
+            <p>בדוק את האילוצים ואת זמינות המשתתפים.</p>
+            <button class="btn-primary" id="btn-dismiss-error">סגור</button>
+          </div>`;
+        const dismissBtn = document.getElementById('btn-dismiss-error');
+        if (dismissBtn) {
+          dismissBtn.addEventListener('click', () => {
+            _isOptimizing = false;
+            _optimProgress = null;
+            _optimAbortController = null;
+            renderAll();
+          });
+        }
+        return; // Don't remove overlay yet
       }
-      return; // Don't remove overlay yet
     }
   } finally {
     _isOptimizing = false;
     _optimProgress = null;
+    _optimAbortController = null;
+  }
+
+  if (wasCancelled) {
+    renderAll();
+    showToast('יצירת השבצ"ק בוטלה', { type: 'info' });
+    return;
   }
 
   // Final atomic render with the winning schedule
@@ -2310,7 +2349,7 @@ async function handleSwap(assignmentId: string): Promise<void> {
     disabledHC,
     restRuleMap,
     dayStartHour: engine.getDayStartHour(),
-    onCommit: ({ label, preCommitAssignments }) => {
+    onCommit: ({ label, preCommitAssignments, swappedAssignmentIds }) => {
       if (!currentSchedule) return;
       // Record a pre-commit schedule snapshot on the parallel stack and push
       // a (no-op) checkpoint onto the store's undo stack so the header
@@ -2330,6 +2369,7 @@ async function handleSwap(assignmentId: string): Promise<void> {
       _scheduleRedoStack.length = 0;
       store.pushUndoCheckpoint();
 
+      for (const id of swappedAssignmentIds) _pendingSwapAnimIds.add(id);
       revalidateAndRefresh();
 
       showToast(label, {
@@ -2532,12 +2572,17 @@ function renderAll(): void {
     } else {
       app.innerHTML = `<div class="task-panel-view-root">${rendered}</div>`;
       const root = app.querySelector('.task-panel-view-root') as HTMLElement;
-      wireTaskPanelEvents(root, () => {
-        _viewMode = 'SCHEDULE_VIEW';
-        _taskPanelSourceName = null;
-        _restoreScheduleScroll = true;
-        renderAll();
-      }, handleSwap, openRescueModal);
+      wireTaskPanelEvents(
+        root,
+        () => {
+          _viewMode = 'SCHEDULE_VIEW';
+          _taskPanelSourceName = null;
+          _restoreScheduleScroll = true;
+          renderAll();
+        },
+        handleSwap,
+        openRescueModal,
+      );
       wireParticipantTooltip(root, () => currentSchedule);
       wireTaskTooltip(root, () => currentSchedule);
       if (!isTouchDevice) {
@@ -2559,7 +2604,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.0</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2655,6 +2700,23 @@ function renderAll(): void {
   // Run KPI count-up animations when on schedule tab
   if (currentTab === 'schedule' && currentSchedule) {
     requestAnimationFrame(runKpiAnimations);
+  }
+
+  // Animate swapped slots (post-render crossfade-slide)
+  if (_pendingSwapAnimIds.size > 0) {
+    requestAnimationFrame(applySwapAnimations);
+  }
+}
+
+function applySwapAnimations(): void {
+  if (_pendingSwapAnimIds.size === 0) return;
+  const ids = _pendingSwapAnimIds;
+  _pendingSwapAnimIds = new Set();
+  for (const id of ids) {
+    const els = document.querySelectorAll(`[data-assignment-id="${id}"]`);
+    for (const el of els) {
+      (el as HTMLElement).classList.add('swap-anim-in');
+    }
   }
 }
 
@@ -3970,9 +4032,32 @@ function init(): void {
     initRescue({
       getSchedule: () => currentSchedule,
       getEngine: () => engine,
-      onPlanApplied: (updatedSchedule) => {
+      onPlanApplied: (updatedSchedule, swapLabels, swappedAssignmentIds) => {
+        if (currentSchedule) {
+          _scheduleUndoStack.push({
+            schedule: structuredClone(currentSchedule),
+            dirty: _scheduleDirty,
+          });
+          if (_scheduleUndoStack.length > 80) _scheduleUndoStack.shift();
+          _scheduleRedoStack.length = 0;
+          store.pushUndoCheckpoint();
+        }
         currentSchedule = updatedSchedule;
+        for (const id of swappedAssignmentIds) _pendingSwapAnimIds.add(id);
         revalidateAndRefresh();
+
+        for (const sl of swapLabels) {
+          showToast(sl.label, {
+            type: 'success',
+            duration: 5000,
+            action: {
+              label: 'בטל',
+              callback: () => {
+                doUndoRedo('undo');
+              },
+            },
+          });
+        }
       },
       onPlanFailed: () => {
         revalidateAndRefresh();

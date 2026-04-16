@@ -2573,9 +2573,9 @@ export function clearStorage(): void {
 }
 
 /**
- * Full factory reset: clear ALL persisted data and in-memory caches.
+ * Full factory reset: clear ALL persisted data and in-memory caches,
+ * including UI preferences (theme, sidebar, default attempts).
  * After calling this, a page reload will re-seed default data via initStore().
- * UI preferences (theme, sidebar) are intentionally preserved.
  */
 export function factoryReset(): void {
   if (_saveDebounceTimer) {
@@ -2595,6 +2595,9 @@ export function factoryReset(): void {
     localStorage.removeItem(STORAGE_KEY_ACTIVE_PSET);
     localStorage.removeItem(STORAGE_KEY_TASK_SETS);
     localStorage.removeItem(STORAGE_KEY_ACTIVE_TASK_SET);
+    localStorage.removeItem('gardenmanager_default_attempts');
+    localStorage.removeItem('gardenmanager_theme');
+    localStorage.removeItem('gm-sidebar-collapsed');
     // A factory reset frees space, so clear the wedge latch to resume saves.
     onSaveSuccess();
   } catch (err) {

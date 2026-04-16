@@ -25,11 +25,17 @@ import { escHtml, fmt } from './ui-helpers';
 
 // ─── Context injection ──────────────────────────────────────────────────────
 
+/** One swap step label for the post-rescue toast. */
+export interface RescueSwapLabel {
+  /** e.g. "החלפה: שירה אדרי ← דניאל וייס" */
+  label: string;
+}
+
 export interface RescueContext {
   getSchedule: () => Schedule | null;
   getEngine: () => SchedulingEngine | null;
   /** Called after a rescue plan is successfully applied (swaps done, schedule updated). */
-  onPlanApplied: (updatedSchedule: Schedule) => void;
+  onPlanApplied: (updatedSchedule: Schedule, swapLabels: RescueSwapLabel[], swappedAssignmentIds: string[]) => void;
   /** Called when a rescue plan swap fails and the engine rolled back. */
   onPlanFailed: () => void;
 }
@@ -536,6 +542,13 @@ function applyRescuePlan(plan: RescuePlan): void {
     }
   }
 
+  // Build per-step labels before applying (participant names from current state)
+  const swapLabels: RescueSwapLabel[] = plan.swaps.map((sw) => {
+    const fromName = currentSchedule.participants.find((p) => p.id === sw.fromParticipantId)?.name ?? '';
+    const toName = currentSchedule.participants.find((p) => p.id === sw.toParticipantId)?.name ?? '';
+    return { label: `החלפה: ${toName} ← ${fromName}` };
+  });
+
   // Apply all swaps atomically via the chain method
   const requests = plan.swaps.map((sw) => ({
     assignmentId: sw.assignmentId,
@@ -552,5 +565,9 @@ function applyRescuePlan(plan: RescuePlan): void {
   }
 
   closeRescueModal();
-  _ctx?.onPlanApplied(updated);
+  _ctx?.onPlanApplied(
+    updated,
+    swapLabels,
+    plan.swaps.map((sw) => sw.assignmentId),
+  );
 }
