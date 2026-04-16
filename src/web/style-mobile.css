@@ -306,6 +306,7 @@
 
 .gm-bs-body {
   padding: 12px 16px;
+  overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -1508,15 +1509,44 @@
     min-height: 44px;
   }
 
-  /* Bottom sheet warehouse cards — 2-column, large touch targets */
+  /* Bottom sheet warehouse cards — 2-column, compact fit */
   .warehouse-sheet-cards {
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 6px;
+    overflow: hidden;
   }
 
   .warehouse-card-sheet {
-    min-height: 48px;
-    padding: 10px 10px;
+    min-height: 44px;
+    padding: 8px;
+    min-width: 0;       /* let grid cell shrink below content width */
+    overflow: hidden;
+  }
+
+  /* Allow name to wrap so cards fit in narrow grid cells */
+  .warehouse-card-sheet .wc-name {
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.25;
+  }
+
+  /* Badges can flow to a second line when name + badges don't fit */
+  .warehouse-card-sheet .wc-row-main {
+    flex-wrap: wrap;
+    gap: 3px 5px;
+  }
+
+  /* Slightly smaller badges to reclaim space */
+  .warehouse-card-sheet .wc-badges .badge {
+    font-size: 0.55rem;
+    padding: 1px 3px;
+  }
+
+  /* Slightly smaller day-load circle */
+  .warehouse-card-sheet .wc-load {
+    width: 16px;
+    height: 16px;
+    font-size: 0.6rem;
   }
 
   /* Remove button in bottom sheet — full width, large */

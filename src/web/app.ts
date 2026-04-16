@@ -1820,10 +1820,10 @@ function renderOptimOverlay(): string {
           <span class="optim-metric-label">ציון הטוב ביותר</span>
           <span class="optim-metric-value">${bestScore.toFixed(1)}</span>
         </div>
-        <div class="optim-metric">
+        ${bestUnfilled > 0 ? `<div class="optim-metric">
           <span class="optim-metric-label">משבצות לא מאוישות</span>
-          <span class="optim-metric-value ${bestUnfilled === 0 ? 'optim-ok' : 'optim-warn'}">${bestUnfilled}</span>
-        </div>
+          <span class="optim-metric-value optim-warn">${bestUnfilled}</span>
+        </div>` : ''}
       </div>
     </div>
   </div>`;
@@ -2559,7 +2559,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.5</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

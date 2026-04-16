@@ -15,27 +15,30 @@ You are performing a push workflow for the GardenManager project. Follow these s
 4. Edit the file to replace the old version with the new one, keeping the exact same format (`v` prefix, inside the `beta-badge` span).
 5. Stage this change with `git add`.
 
-## Step 2: Review all staged files
+## Step 2: Stage ALL modified files
 
-1. Run `git diff --cached --name-only` to list all files staged for commit.
-2. Run `git diff --cached --stat` for an overview of changes.
-3. For each staged file, evaluate whether it is appropriate to push:
-   - **Exclude** (unstage with `git reset HEAD <file>`) any files that are clearly: temporary files, debug artifacts, generated/build output, log files, `.env` or credential files, or other unintended changes.
-   - **If uncertain** about any file — ask the user before proceeding. Do not silently exclude or include ambiguous files.
-4. Show the user the final list of staged files and a brief summary of changes per file.
+1. Run `git status` to see all modified, staged, and untracked files.
+2. Stage **all** modified and previously-staged files — not just files changed in the current conversation. The push captures the full state of the working tree.
+3. **Exclude** (unstage with `git reset HEAD <file>`) only files that are clearly: temporary files, debug artifacts, generated/build output, log files, `.env` or credential files, screenshots/images, or other unintended changes.
+4. **If uncertain** about any file — ask the user before proceeding. Do not silently exclude or include ambiguous files.
+5. Run `git diff --cached --stat` for an overview of what will be committed.
 
 ## Step 3: Generate push description and commit
 
-1. Compose a concise commit message in this format:
+1. Review all staged changes (read the diffs, not just file names) and identify distinct **change topics** — logical themes that group related changes regardless of which files they touch.
+2. Compose a concise commit message in this format:
    ```
    Version X.Y.Z
 
-   <high-level summary of the changes in 1-3 sentences>
+   1. <change topic — what changed and why>
+   2. <change topic — what changed and why>
+   ...
    ```
    - Start with `Version X.Y.Z` matching the new UI version.
-   - Summarize at a high level what was changed and why — not a file-by-file list (unless the changes are so diverse that a summary would be unclear).
-2. Present the commit message to the user for approval before committing.
-3. Once approved, commit and push to the remote.
+   - List changes as **numbered topics**, not per-file. Each item describes a logical change (e.g. "Removed ETA display from calibration overlay" or "Compact mobile warehouse cards for narrow screens").
+   - Keep each item to one sentence. Aim for 2-5 items total.
+3. Present the commit message to the user for approval before committing.
+4. Once approved, commit and push to the remote.
 
 ## Important notes
 

@@ -89,12 +89,6 @@ interface TuneState {
   phaseTotal: number;
   /** Evaluations completed in current phase. */
   phaseDone: number;
-  /** Cumulative evaluations so far across the whole run. */
-  totalEvalsDone: number;
-  /** Estimated total evaluations for the whole run. */
-  totalEvalsEstimate: number;
-  /** Average wall-time per evaluation (ms). */
-  avgEvalMs: number;
   /** Fingerprint summary HTML line. */
   fingerprintSummary: string;
   /** Current leading candidate (by its best-known median). */
@@ -242,7 +236,6 @@ function buildFingerprint(participants: Participant[], tasks: Task[]): Fingerpri
   if (seniorCount > 0) parts.push(`${seniorCount} סגל`);
   if (notWithPairCount > 0) parts.push(`${notWithPairCount} זוגות "אי התאמה"`);
   if (preferenceCount > 0) parts.push(`${preferenceCount} העדפות משימה`);
-  if (lowPrioritySlotCount > 0) parts.push(`${lowPrioritySlotCount} משבצות עדיפות נמוכה`);
   parts.push(`${tasks.length} משימות`);
   const summaryHebrew = parts.join(' · ');
 
@@ -440,13 +433,9 @@ function renderOverlayHtml(): string {
         <span class="optim-metric-label">הציון הטוב ביותר</span>
         <span class="optim-metric-value" id="tune-best-score">—</span>
       </div>
-      <div class="optim-metric">
+      <div class="optim-metric" id="tune-unfilled-metric" style="display:none">
         <span class="optim-metric-label">משבצות לא מאוישות</span>
-        <span class="optim-metric-value" id="tune-best-unfilled">—</span>
-      </div>
-      <div class="optim-metric">
-        <span class="optim-metric-label">זמן נותר</span>
-        <span class="optim-metric-value" id="tune-eta">—</span>
+        <span class="optim-metric-value" id="tune-best-unfilled">0</span>
       </div>
     </div>
     <div class="tune-leader-diff" id="tune-leader-diff" aria-live="polite"></div>
@@ -490,14 +479,18 @@ function updateOverlay(): void {
     }
   }
 
-  const un = document.getElementById('tune-best-unfilled');
-  if (un) {
-    un.textContent = s.bestMedian == null ? '—' : String(s.bestUnfilled);
-    un.className = `optim-metric-value ${s.bestUnfilled === 0 ? 'optim-ok' : 'optim-warn'}`;
+  const unMetric = document.getElementById('tune-unfilled-metric');
+  if (unMetric) {
+    const show = s.bestMedian != null && s.bestUnfilled > 0;
+    unMetric.style.display = show ? '' : 'none';
+    if (show) {
+      const un = document.getElementById('tune-best-unfilled');
+      if (un) {
+        un.textContent = String(s.bestUnfilled);
+        un.className = 'optim-metric-value optim-warn';
+      }
+    }
   }
-
-  const eta = document.getElementById('tune-eta');
-  if (eta) eta.textContent = formatEta(s);
 
   const elapsed = document.getElementById('tune-elapsed');
   if (elapsed) elapsed.textContent = formatElapsed(performance.now() - s.startMs);
@@ -525,16 +518,6 @@ function formatElapsed(ms: number): string {
   return `חלפו ${minutes}:${String(seconds).padStart(2, '0')} דק'`;
 }
 
-function formatEta(s: TuneState): string {
-  if (s.avgEvalMs <= 0 || s.totalEvalsEstimate <= s.totalEvalsDone) return '—';
-  const remainingEvals = s.totalEvalsEstimate - s.totalEvalsDone;
-  const lowMs = remainingEvals * s.avgEvalMs * 0.85;
-  const highMs = remainingEvals * s.avgEvalMs * 1.2;
-  const lo = Math.max(1, Math.round(lowMs / 60000));
-  const hi = Math.max(lo, Math.round(highMs / 60000));
-  if (lo === hi) return `~${lo} דק'`;
-  return `${lo}–${hi} דק'`;
-}
 
 function renderBracketHtml(s: TuneState): string {
   const labels = ['סקירה', 'דגימה', 'ניפוי', 'סינון', 'יציבות', 'אימות'];
@@ -573,9 +556,6 @@ function newState(): TuneState {
     phaseLabel: 'סקירת הנתונים שלך',
     phaseTotal: 0,
     phaseDone: 0,
-    totalEvalsDone: 0,
-    totalEvalsEstimate: 0,
-    avgEvalMs: 0,
     fingerprintSummary: '',
     leader: null,
     bestMedian: null,
@@ -603,13 +583,9 @@ function setPhase(phase: TunerPhase, label: string, total: number): void {
   _state.leaderDiffLabel = null;
 }
 
-function recordEval(result: EvalResult): void {
+function recordEval(_result: EvalResult): void {
   if (!_state) return;
   _state.phaseDone++;
-  _state.totalEvalsDone++;
-  const prevAvg = _state.avgEvalMs;
-  const n = _state.totalEvalsDone;
-  _state.avgEvalMs = prevAvg + (result.wallMs - prevAvg) / n;
 }
 
 /**
@@ -807,16 +783,7 @@ async function runTournament(participants: Participant[], tasks: Task[]): Promis
     candidates.push(makeCandidateFromVector(cid++, `lhs-${i}`, currentSettings.config, fp.activeDims, vectors[i]));
   }
 
-  // Estimate total evaluation volume for ETA. Values are upper bounds so the
-  // ETA gently over-estimates rather than undershoots; the estimate is
-  // refined after Phase 2 once the real survivor count is known.
   const perturbDimCount = Math.min(3, fp.activeDims.length);
-  const estCheapSurvivors = Math.min(15, Math.max(8, Math.round(candidates.length * 0.3))) + 1;
-  const estPhase2 = candidates.length;
-  const estPhase3 = estCheapSurvivors * 2 + Math.min(3, estCheapSurvivors) * perturbDimCount;
-  const estPhase4 = 4 * 5;
-  const estPhase5 = 6; // worst case (winner+baseline × 3)
-  s.totalEvalsEstimate = estPhase2 + estPhase3 + estPhase4 + estPhase5;
   s.phaseDone = 1;
   updateOverlay();
   if (s.canceled) return null;
@@ -858,9 +825,6 @@ async function runTournament(participants: Participant[], tasks: Task[]): Promis
   const phase3SurvivorEvals = cheapSurvivors.length * 2;
   const phase3PerturbUpper = Math.min(3, cheapSurvivors.length) * perturbDimCount;
   setPhase(3, 'סינון מעמיק', phase3SurvivorEvals + phase3PerturbUpper);
-  // Refine the whole-run estimate using the real survivor count so the ETA
-  // tightens as soon as Phase 2 has culled the field.
-  s.totalEvalsEstimate = s.totalEvalsDone + phase3SurvivorEvals + phase3PerturbUpper + estPhase4 + estPhase5;
   updateOverlay();
 
   for (const c of cheapSurvivors) {
@@ -951,8 +915,6 @@ async function runTournament(participants: Participant[], tasks: Task[]): Promis
   const hasChallenger = winner != null && winner !== currentCand;
   const phase5Total = hasChallenger ? 6 : 3;
   setPhase(5, 'אימות מול הנוכחי', phase5Total);
-  // Refine the whole-run estimate now that the Phase-5 branch is known.
-  s.totalEvalsEstimate = s.totalEvalsDone + phase5Total;
   updateOverlay();
 
   let verdict: TuneRecommendation;
