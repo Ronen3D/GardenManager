@@ -2284,10 +2284,9 @@ export function jsonDeserialize<T>(json: string): T {
  * Called automatically (debounced) after every store mutation.
  */
 export function saveToStorage(): void {
-  // If the quota is currently exhausted, skip this save rather than flooding
-  // the UI with "storage full" toasts on every downstream mutation. The wedge
-  // is cleared automatically when any subsequent save succeeds.
-  if (_storageWedged) return;
+  // When the quota is exhausted, _storageWedged is true. We still attempt the
+  // write so that onSaveSuccess() can clear the wedge once space is freed.
+  // Toast flooding is prevented by the cooldown in reportSaveError().
   try {
     const state = {
       version: 7,
@@ -2389,7 +2388,7 @@ export function loadFromStorage(): boolean {
       state.certificationDefinitions?.length ? state.certificationDefinitions : DEFAULT_CERTIFICATION_DEFINITIONS
     ).map((d: CertificationDefinition) => ({ ...d }));
 
-    for (const pData of state.participants || []) {
+    for (const pData of Array.isArray(state.participants) ? state.participants : []) {
       const p: Participant = {
         ...pData,
         pakalIds: sanitizePakalIds(pData.pakalIds, pakalDefinitions),
@@ -2403,7 +2402,8 @@ export function loadFromStorage(): boolean {
     }
 
     // Restore date unavailabilities
-    for (const entry of state.dateUnavailabilities || []) {
+    const duList = Array.isArray(state.dateUnavailabilities) ? state.dateUnavailabilities : [];
+    for (const entry of duList) {
       const rules: DateUnavailability[] = (entry.rules || [])
         .map((rule: Partial<Omit<DateUnavailability, 'id'>>) => normalizeDateUnavailabilityRule(rule))
         .filter((rule: Omit<DateUnavailability, 'id'> | null): rule is Omit<DateUnavailability, 'id'> => !!rule)
@@ -2421,13 +2421,13 @@ export function loadFromStorage(): boolean {
 
     // Restore task templates
     taskTemplates.clear();
-    for (const tpl of state.taskTemplates || []) {
+    for (const tpl of Array.isArray(state.taskTemplates) ? state.taskTemplates : []) {
       taskTemplates.set(tpl.id, tpl);
     }
 
     // Restore one-time tasks
     oneTimeTasks.clear();
-    for (const ot of state.oneTimeTasks || []) {
+    for (const ot of Array.isArray(state.oneTimeTasks) ? state.oneTimeTasks : []) {
       oneTimeTasks.set(ot.id, {
         ...ot,
         scheduledDate: new Date(ot.scheduledDate),
@@ -2450,7 +2450,7 @@ export function loadFromStorage(): boolean {
 
     // Restore notWithPairs
     notWithPairs.clear();
-    for (const entry of state.notWithPairs || []) {
+    for (const entry of Array.isArray(state.notWithPairs) ? state.notWithPairs : []) {
       if (entry.pid && Array.isArray(entry.targets) && entry.targets.length > 0) {
         notWithPairs.set(entry.pid, new Set(entry.targets));
       }
@@ -2572,6 +2572,10 @@ export function factoryReset(): void {
  * Called from notify() so every store mutation triggers persistence.
  */
 function debouncedSave(): void {
+  // While wedged, skip debounced auto-saves to avoid repeated serialization
+  // of data that will fail anyway. The wedge is cleared when an explicit
+  // saveToStorage() call (or saveSchedule, etc.) succeeds.
+  if (_storageWedged) return;
   if (_saveDebounceTimer) clearTimeout(_saveDebounceTimer);
   _saveDebounceTimer = setTimeout(() => {
     saveToStorage();

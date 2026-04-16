@@ -37,6 +37,7 @@ You are performing a push workflow for the GardenManager project. Follow these s
    - Start with `Version X.Y.Z` matching the new UI version.
    - List changes as **numbered topics**, not per-file. Each item describes a logical change (e.g. "Removed ETA display from calibration overlay" or "Compact mobile warehouse cards for narrow screens").
    - Keep each item to one sentence. Aim for 2-5 items total.
+   - **Under each numbered item**, add an indented plain-English explanation (non-technical) that a non-developer stakeholder could understand. Focus on the user-facing impact, not implementation details.
 3. Present the commit message to the user for approval before committing.
 4. Once approved, commit and push to the remote.
 

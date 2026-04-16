@@ -7,14 +7,11 @@
 import {
   type AlgorithmExportPayload,
   type AlgorithmPreset,
-  AlgorithmSettings,
-  CertificationDefinition,
   type ExportType,
   type FullBackupPayload,
   type GardenManagerExport,
   type ImportResult,
   type ImportValidationResult,
-  PakalDefinition,
   type ParticipantSet,
   type ParticipantSetExportPayload,
   type ScheduleSnapshot,
@@ -23,6 +20,13 @@ import {
   type TaskSetExportPayload,
 } from '../models/types';
 import * as store from './config-store';
+import {
+  validateAlgorithmPayload,
+  validateFullBackupPayload,
+  validateParticipantSetPayload,
+  validateScheduleSnapshotPayload,
+  validateTaskSetPayload,
+} from './import-validators';
 
 // ─── Envelope Helpers ───────────────────────────────────────────────────────
 
@@ -312,19 +316,17 @@ export function validateImportFile(json: string): ImportValidationResult {
   let summary = '';
   switch (exportType) {
     case 'algorithm': {
+      const deepErr = validateAlgorithmPayload(payload);
+      if (deepErr) return { ok: false, error: deepErr };
       const p = payload as Partial<AlgorithmExportPayload>;
-      if (!p.currentSettings || typeof p.currentSettings !== 'object') {
-        return { ok: false, error: 'נתוני הגדרות אלגוריתם חסרים.' };
-      }
       const presetCount = Array.isArray(p.presets) ? p.presets.length : 0;
       summary = `הגדרות אלגוריתם + ${presetCount} סטים`;
       break;
     }
     case 'taskSet': {
+      const deepErr = validateTaskSetPayload(payload);
+      if (deepErr) return { ok: false, error: deepErr };
       const p = payload as Partial<TaskSetExportPayload>;
-      if (!p.taskSet || typeof p.taskSet !== 'object') {
-        return { ok: false, error: 'נתוני סט משימות חסרים.' };
-      }
       const ts = p.taskSet as Partial<TaskSet>;
       const tplCount = Array.isArray(ts.templates) ? ts.templates.length : 0;
       const otCount = Array.isArray(ts.oneTimeTasks) ? ts.oneTimeTasks.length : 0;
@@ -332,10 +334,9 @@ export function validateImportFile(json: string): ImportValidationResult {
       break;
     }
     case 'participantSet': {
+      const deepErr = validateParticipantSetPayload(payload);
+      if (deepErr) return { ok: false, error: deepErr };
       const p = payload as Partial<ParticipantSetExportPayload>;
-      if (!p.participantSet || typeof p.participantSet !== 'object') {
-        return { ok: false, error: 'נתוני סט משתתפים חסרים.' };
-      }
       const ps = p.participantSet as Partial<ParticipantSet>;
       const count = Array.isArray(ps.participants) ? ps.participants.length : 0;
       const certCount = Array.isArray(ps.certificationCatalog) ? ps.certificationCatalog.length : 0;
@@ -343,10 +344,9 @@ export function validateImportFile(json: string): ImportValidationResult {
       break;
     }
     case 'scheduleSnapshot': {
+      const deepErr = validateScheduleSnapshotPayload(payload);
+      if (deepErr) return { ok: false, error: deepErr };
       const p = payload as Partial<ScheduleSnapshotExportPayload>;
-      if (!p.snapshot || typeof p.snapshot !== 'object') {
-        return { ok: false, error: 'נתוני תמונת מצב חסרים.' };
-      }
       const s = p.snapshot as Partial<ScheduleSnapshot>;
       const sched = s.schedule as Record<string, unknown> | undefined;
       const taskCount = Array.isArray(sched?.tasks) ? (sched.tasks as unknown[]).length : 0;
@@ -355,11 +355,10 @@ export function validateImportFile(json: string): ImportValidationResult {
       break;
     }
     case 'fullBackup': {
+      const deepErr = validateFullBackupPayload(payload);
+      if (deepErr) return { ok: false, error: deepErr };
       const p = payload as Partial<FullBackupPayload>;
-      if (!p.storageEntries || typeof p.storageEntries !== 'object') {
-        return { ok: false, error: 'נתוני גיבוי חסרים.' };
-      }
-      const keyCount = Object.keys(p.storageEntries).length;
+      const keyCount = Object.keys(p.storageEntries ?? {}).length;
       summary = `גיבוי מלא — ${keyCount} רשומות`;
       break;
     }

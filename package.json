@@ -11,6 +11,7 @@
     "start": "ts-node src/index.ts",
     "demo": "ts-node src/demo.ts",
     "test": "ts-node src/test.ts",
+    "test:persistence": "ts-node --project tsconfig.test-persistence.json src/test-persistence.ts",
     "test:e2e": "playwright test",
     "test:e2e:phone": "playwright test --project=phone",
     "test:e2e:desktop": "playwright test --project=desktop",

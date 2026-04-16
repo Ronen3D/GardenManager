@@ -608,6 +608,98 @@ function renderDisplayContent(): string {
     </label>`;
 }
 
+function renderStorageUsageContent(): string {
+  const usage = store.getStorageUsage();
+  const QUOTA = 5 * 1024 * 1024; // 5 MB typical localStorage limit
+  const pct = Math.min(100, (usage.total / QUOTA) * 100);
+  const wedged = store.isStorageWedged();
+
+  // Friendly labels for storage keys (ordered by expected size)
+  const KEY_LABELS: Record<string, string> = {
+    gardenmanager_schedule: 'שבצ"ק',
+    gardenmanager_schedule_snapshots: 'גרסאות שמורות',
+    gardenmanager_state: 'משתתפים ומשימות',
+    gardenmanager_task_sets: 'סטי משימות',
+    gardenmanager_participant_sets: 'סטי משתתפים',
+    gardenmanager_algorithm: 'הגדרות אלגוריתם',
+    gardenmanager_algorithm_presets: 'סטים של הגדרות שמורות',
+    gardenmanager_live_mode: 'מצב חי',
+    gardenmanager_active_preset_id: 'סט הגדרות פעיל',
+    gardenmanager_active_snapshot_id: 'גרסה פעילה',
+    gardenmanager_active_participant_set_id: 'סט משתתפים פעיל',
+    gardenmanager_active_task_set_id: 'סט משימות פעיל',
+  };
+
+  // Sort by size descending, filter out empty
+  const rows = usage
+    .filter((r) => r.bytes > 0)
+    .sort((a, b) => b.bytes - a.bytes);
+
+  const maxBytes = rows.length > 0 ? rows[0].bytes : 1;
+
+  // Color tiers for the main gauge
+  const tierClass = pct >= 90 ? 'storage-tier-danger' : pct >= 70 ? 'storage-tier-warning' : 'storage-tier-ok';
+
+  let html = `
+    <hr class="settings-divider">
+    <div class="storage-usage-section">
+      <div class="storage-usage-header">
+        <h3 class="algo-section-title">שימוש באחסון</h3>
+        <button class="btn-icon btn-sm storage-refresh-btn" data-action="storage-refresh" title="רענן נתוני אחסון">⟳</button>
+      </div>
+      <p class="algo-section-desc">נפח האחסון המקומי של הדפדפן המשמש את המערכת.</p>`;
+
+  if (wedged) {
+    html += `
+      <div class="storage-wedge-alert">
+        <span class="storage-wedge-icon">⚠</span>
+        <span>האחסון מלא — חלק מהנתונים לא נשמרים. מחק גרסאות שמורות או סטים לא נחוצים כדי לפנות מקום.</span>
+      </div>`;
+  }
+
+  // Main gauge
+  html += `
+      <div class="storage-gauge">
+        <div class="storage-gauge-labels">
+          <span class="storage-gauge-used">${formatBytes(usage.total)}</span>
+          <span class="storage-gauge-limit">${formatBytes(QUOTA)}</span>
+        </div>
+        <div class="storage-gauge-track">
+          <div class="storage-gauge-fill ${tierClass}" style="width:${pct.toFixed(1)}%"></div>
+        </div>
+        <span class="storage-gauge-pct">${pct.toFixed(1)}%</span>
+      </div>`;
+
+  // Breakdown rows
+  if (rows.length > 0) {
+    html += '<div class="storage-breakdown">';
+    for (const row of rows) {
+      const label = KEY_LABELS[row.key] || row.key;
+      const rowPct = (row.bytes / maxBytes) * 100;
+      html += `
+        <div class="storage-breakdown-row">
+          <span class="storage-breakdown-label">${escHtml(label)}</span>
+          <div class="storage-breakdown-bar-bg">
+            <div class="storage-breakdown-bar-fill" style="width:${rowPct.toFixed(1)}%"></div>
+          </div>
+          <span class="storage-breakdown-value">${formatBytes(row.bytes)}</span>
+        </div>`;
+    }
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(2)} MB`;
+}
+
 function renderDangerContent(): string {
   return `
     <div class="settings-danger-area">
@@ -705,7 +797,7 @@ export function renderAlgorithmTab(): string {
     icon: '🎨',
     title: 'הגדרות נוספות',
     summary: getDisplaySummary(),
-    body: renderDisplayContent() + renderDangerContent(),
+    body: renderDisplayContent() + renderStorageUsageContent() + renderDangerContent(),
   });
 
   // ── Section 4: Data Transfer ──
@@ -897,6 +989,12 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
           setTheme(theme);
           rerender();
         }
+        break;
+      }
+
+      // ── Storage refresh ──
+      case 'storage-refresh': {
+        rerender();
         break;
       }
 
