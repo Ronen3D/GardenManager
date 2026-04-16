@@ -402,6 +402,10 @@ function renderGeneralSettings(dayStartHour: number): string {
         </div>
         <p class="algo-weight-desc">"יום" במערכת מוגדר כ-24 שעות מהשעה הנבחרת. לדוגמה, 05:00 = היום רץ מ-05:00 עד 05:00 למחרת. משפיע על תצוגת יום, הקפאת מצב חי, איזון עומס יומי וייצוא.</p>
       </div>
+    </div>
+    <div class="settings-autotune-row">
+      <button class="btn-sm btn-primary" data-action="algo-auto-tune" title="כייל את המשקלות אוטומטית לפי הנתונים הנוכחיים">🎯 כיול אוטומטי</button>
+      <span class="settings-autotune-hint">המערכת תפעל במשך מספר דקות (בערך רבע שעה) למציאת סט הגדרות האלגוריתם האופטימלי למשימות והמשתתפים המוגדרים</span>
     </div>`;
 }
 
@@ -746,10 +750,6 @@ export function renderAlgorithmTab(): string {
       })}
       ${dirty ? '<span class="preset-dirty-badge">שונה</span>' : ''}
       <button class="btn-sm ${_presetPanelOpen ? 'btn-primary' : 'btn-outline'}" data-action="algo-preset-panel-toggle" title="ניהול הגדרות שמורות">💾${presetCount > 0 ? ` (${presetCount})` : ''}</button>
-    </div>
-    <div class="settings-autotune-row">
-      <button class="btn-sm btn-primary" data-action="algo-auto-tune" title="כייל את המשקלות אוטומטית לפי הנתונים הנוכחיים">🎯 כיול אוטומטי</button>
-      <span class="settings-autotune-hint">המערכת תפעל במשך מספר דקות (בערך רבע שעה) למציאת סט הגדרות האלגוריתם האופטימלי למשימות והמשתתפים המוגדרים</span>
     </div>
     ${_presetPanelOpen ? renderPresetPanel(presets, activeId, dirty, isBuiltIn) : ''}
     ${renderNestedAccordion({

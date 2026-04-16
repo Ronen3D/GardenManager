@@ -1555,6 +1555,63 @@ export function removeSlotFromSubTeam(templateId: string, subTeamId: string, slo
   notify();
 }
 
+// ─── One-Time Task Slot / Sub-Team helpers ──────────────────────────────────
+
+export function addSlotToOneTimeTask(otId: string, slot: Omit<SlotTemplate, 'id'>): void {
+  const ot = oneTimeTasks.get(otId);
+  if (!ot) return;
+  pushSnapshot();
+  ot.slots.push({ ...slot, id: uid('slot') });
+  notify();
+}
+
+export function removeSlotFromOneTimeTask(otId: string, slotId: string): void {
+  const ot = oneTimeTasks.get(otId);
+  if (!ot) return;
+  pushSnapshot();
+  ot.slots = ot.slots.filter((s) => s.id !== slotId);
+  notify();
+}
+
+export function addSubTeamToOneTimeTask(otId: string, name: string): SubTeamTemplate {
+  const ot = oneTimeTasks.get(otId);
+  const st: SubTeamTemplate = { id: uid('st'), name, slots: [] };
+  if (ot) {
+    pushSnapshot();
+    ot.subTeams.push(st);
+    notify();
+  }
+  return st;
+}
+
+export function removeSubTeamFromOneTimeTask(otId: string, subTeamId: string): void {
+  const ot = oneTimeTasks.get(otId);
+  if (!ot) return;
+  pushSnapshot();
+  ot.subTeams = ot.subTeams.filter((s) => s.id !== subTeamId);
+  notify();
+}
+
+export function addSlotToOneTimeSubTeam(otId: string, subTeamId: string, slot: Omit<SlotTemplate, 'id'>): void {
+  const ot = oneTimeTasks.get(otId);
+  if (!ot) return;
+  const st = ot.subTeams.find((s) => s.id === subTeamId);
+  if (!st) return;
+  pushSnapshot();
+  st.slots.push({ ...slot, id: uid('slot') });
+  notify();
+}
+
+export function removeSlotFromOneTimeSubTeam(otId: string, subTeamId: string, slotId: string): void {
+  const ot = oneTimeTasks.get(otId);
+  if (!ot) return;
+  const st = ot.subTeams.find((s) => s.id === subTeamId);
+  if (!st) return;
+  pushSnapshot();
+  st.slots = st.slots.filter((s) => s.id !== slotId);
+  notify();
+}
+
 // ─── Seed Default Data ───────────────────────────────────────────────────────
 
 const defaultNames: string[] = [

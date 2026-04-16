@@ -172,7 +172,8 @@ function loadWindowsOverlap(
 // ─── State ───────────────────────────────────────────────────────────────────
 
 let expandedTemplateId: string | null = null;
-let addingSlotTo: { templateId: string; subTeamId?: string } | null = null;
+let expandedOtId: string | null = null;
+let addingSlotTo: { templateId: string; subTeamId?: string; isOneTime?: boolean } | null = null;
 let showAddTemplate = false;
 let showAddOneTime = false;
 
@@ -242,7 +243,7 @@ export function renderTaskRulesTab(): string {
   if (oneTimeTasks.length > 0) {
     html += '<div class="template-list">';
     for (const ot of oneTimeTasks) {
-      html += renderOneTimeCard(ot);
+      html += renderOneTimeCard(ot, preflight);
     }
     html += '</div>';
   }
@@ -692,19 +693,21 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
   return html;
 }
 
-function renderSubTeam(templateId: string, st: SubTeamTemplate, pf: PreflightResult): string {
+function renderSubTeam(templateId: string, st: SubTeamTemplate, pf: PreflightResult, opts?: { isOneTime?: boolean }): string {
+  const idAttr = opts?.isOneTime ? `data-ot-id="${templateId}"` : `data-tid="${templateId}"`;
   let html = `<div class="subteam-card">
     <div class="subteam-header">
       <strong>${escHtml(st.name)}</strong>
       <span class="text-muted">(${st.slots.length} משבצות)</span>
-      <button class="btn-sm btn-outline" data-action="add-slot-subteam" data-tid="${templateId}" data-stid="${st.id}">+ משבצת</button>
-      <button class="btn-sm btn-danger-outline" data-action="remove-subteam" data-tid="${templateId}" data-stid="${st.id}">✕</button>
+      <button class="btn-sm btn-outline" data-action="add-slot-subteam" ${idAttr} data-stid="${st.id}">+ משבצת</button>
+      <button class="btn-sm btn-danger-outline" data-action="remove-subteam" ${idAttr} data-stid="${st.id}">✕</button>
     </div>`;
 
-  html += renderSlotTable(templateId, st.slots, st.id, pf);
+  html += renderSlotTable(templateId, st.slots, st.id, pf, opts);
 
-  if (addingSlotTo && addingSlotTo.templateId === templateId && addingSlotTo.subTeamId === st.id) {
-    html += renderAddSlotForm(templateId, st.id);
+  const isOtMatch = opts?.isOneTime ? addingSlotTo?.isOneTime : !addingSlotTo?.isOneTime;
+  if (addingSlotTo && addingSlotTo.templateId === templateId && addingSlotTo.subTeamId === st.id && isOtMatch) {
+    html += renderAddSlotForm(templateId, st.id, opts);
   }
 
   html += `</div>`;
@@ -716,6 +719,7 @@ function renderSlotTable(
   slots: SlotTemplate[],
   subTeamId: string | undefined,
   pf: PreflightResult,
+  opts?: { isOneTime?: boolean },
 ): string {
   if (slots.length === 0) return '<p class="text-muted" style="padding:4px 0;">אין משבצות מוגדרות.</p>';
 
@@ -737,7 +741,7 @@ function renderSlotTable(
       <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map((c) => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${forbiddenCerts.length > 0 ? forbiddenCerts.map((c) => forbiddenCertBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${statusHtml}</td>
-      <td><button class="btn-sm btn-danger-outline" data-action="remove-slot" data-tid="${templateId}" ${subTeamId ? `data-stid="${subTeamId}"` : ''} data-slotid="${slot.id}">✕</button></td>
+      <td><button class="btn-sm btn-danger-outline" data-action="remove-slot" ${opts?.isOneTime ? `data-ot-id="${templateId}"` : `data-tid="${templateId}"`} ${subTeamId ? `data-stid="${subTeamId}"` : ''} data-slotid="${slot.id}">✕</button></td>
     </tr>`;
   }
 
@@ -745,7 +749,8 @@ function renderSlotTable(
   return html;
 }
 
-function renderAddSlotForm(templateId: string, subTeamId?: string): string {
+function renderAddSlotForm(templateId: string, subTeamId?: string, opts?: { isOneTime?: boolean }): string {
+  const idAttr = opts?.isOneTime ? `data-ot-id="${templateId}"` : `data-tid="${templateId}"`;
   return `<div class="add-slot-form">
     <h5>הוסף משבצת</h5>
     <div class="form-row">
@@ -777,7 +782,7 @@ function renderAddSlotForm(templateId: string, subTeamId?: string): string {
         .join('')}
     </div>
     <div class="form-row">
-      <button class="btn-sm btn-primary" data-action="confirm-add-slot" data-tid="${templateId}" ${subTeamId ? `data-stid="${subTeamId}"` : ''}>הוסף</button>
+      <button class="btn-sm btn-primary" data-action="confirm-add-slot" ${idAttr} ${subTeamId ? `data-stid="${subTeamId}"` : ''}>הוסף</button>
       <button class="btn-sm btn-outline" data-action="cancel-add-slot">ביטול</button>
     </div>
   </div>`;
@@ -850,7 +855,8 @@ function renderAddOneTimeForm(): string {
   </div>`;
 }
 
-function renderOneTimeCard(ot: OneTimeTask): string {
+function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
+  const isExpanded = expandedOtId === ot.id;
   const schedDate = store.getScheduleDate();
   const otDay = new Date(ot.scheduledDate.getFullYear(), ot.scheduledDate.getMonth(), ot.scheduledDate.getDate());
   const schedStart = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate());
@@ -871,24 +877,102 @@ function renderOneTimeCard(ot: OneTimeTask): string {
   if (ot.sameGroupRequired) flags.push('קבוצה');
   if (ot.blocksConsecutive) flags.push('חוסמת');
 
-  return `<div class="template-card onetime-card">
-    <div class="template-header">
+  const relatedFindings = pf.findings.filter((f) => {
+    const slotIds = new Set(allSlots.map((s) => s.id));
+    return f.slotId && slotIds.has(f.slotId);
+  });
+  const hasCritical = relatedFindings.some((f) => f.severity === PreflightSeverity.Critical);
+  const hasWarning = relatedFindings.some((f) => f.severity === PreflightSeverity.Warning);
+  const alertClass = hasCritical ? 'template-card-error' : hasWarning ? 'template-card-warn' : '';
+
+  let html = `<div class="template-card onetime-card ${alertClass}" data-ot-id="${ot.id}">
+    <div class="template-header" data-action="toggle-onetime" data-ot-id="${ot.id}">
       <div class="template-title">
         ${templateBadge({ color: ot.color, name: ot.name })}
         <strong>${escHtml(ot.name)}</strong>
         <span class="text-muted" style="font-size:0.85em;">📅 ${dateStr} <span dir="ltr">${timeStr}–${endStr}</span> (${ot.durationHours} שע')</span>
+        ${hasCritical ? '<span class="badge badge-sm" style="background:var(--danger)">!</span>' : ''}
+        ${hasWarning && !hasCritical ? '<span class="badge badge-sm" style="background:var(--warning)">⚠</span>' : ''}
       </div>
-      <div class="template-actions">
-        <button class="btn-xs btn-danger-outline" data-action="delete-onetime" data-ot-id="${ot.id}" title="מחק">✕</button>
+      <div class="template-toggles">
+        ${flags.length > 0 ? flags.map((f) => `<span class="badge badge-sm badge-outline">${f}</span>`).join('') : ''}
+        ${_restRuleBadge(ot.restRuleId)}
+        <span class="expand-arrow">${isExpanded ? '▼' : '▶'}</span>
       </div>
-    </div>
-    <div class="template-meta">
+    </div>`;
+
+  if (!isExpanded) {
+    html += `<div class="template-meta">
       <span class="meta-item">${totalSlots} משבצות</span>
-      ${flags.length > 0 ? `<span class="meta-item text-muted">${flags.join(' · ')}</span>` : ''}
-      ${_restRuleBadge(ot.restRuleId)}
       ${ot.description ? `<span class="meta-item text-muted">${escHtml(ot.description)}</span>` : ''}
-    </div>
-  </div>`;
+    </div>`;
+  }
+
+  if (isExpanded) {
+    html += `<div class="template-body">`;
+
+    // Day options (1-7)
+    const dayOptions = Array.from({ length: 7 }, (_, i) => {
+      const d = i + 1;
+      return `<option value="${d}"${d === dayNum ? ' selected' : ''}>יום ${d}</option>`;
+    }).join('');
+
+    // Properties
+    html += `<div class="template-props">
+      <label>שם: <input class="input-sm" type="text" data-ot-field="name" value="${escHtml(ot.name)}" data-ot-id="${ot.id}" /></label>
+      <label>יום: <select class="input-sm" data-ot-field="dayNum" data-ot-id="${ot.id}">${dayOptions}</select></label>
+      <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" data-ot-field="startHour" value="${ot.startHour}" data-ot-id="${ot.id}" /></label>
+      <label>דקת התחלה: <input class="input-sm" type="number" min="0" max="59" data-ot-field="startMinute" value="${ot.startMinute}" data-ot-id="${ot.id}" /></label>
+      <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" data-ot-field="durationHours" value="${ot.durationHours}" data-ot-id="${ot.id}" /></label>
+      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-ot-field="baseLoadWeight" value="${(ot.baseLoadWeight ?? (ot.isLight ? 0 : 1)).toFixed(2)}" data-ot-id="${ot.id}" /></label>
+      <label class="checkbox-label"><input type="checkbox" data-ot-field="sameGroupRequired" data-ot-id="${ot.id}" ${ot.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
+      <label class="checkbox-label"><input type="checkbox" data-ot-field="isLight" data-ot-id="${ot.id}" ${ot.isLight ? 'checked' : ''} /> משימה קלה</label>
+      <label class="checkbox-label"><input type="checkbox" data-ot-field="blocksConsecutive" data-ot-id="${ot.id}" ${(ot.blocksConsecutive ?? true) ? 'checked' : ''} /> חוסם רצף משימות</label>
+      <label>כלל מרווח: <select class="input-sm" data-ot-field="restRuleId" data-ot-id="${ot.id}">
+        <option value=""${!ot.restRuleId ? ' selected' : ''}>ללא</option>
+        ${store
+          .getRestRules()
+          .map(
+            (r) =>
+              `<option value="${r.id}"${ot.restRuleId === r.id ? ' selected' : ''}>${escHtml(r.label)} (${r.durationHours} שע׳)</option>`,
+          )
+          .join('')}
+      </select></label>${_restRuleOrphanNote(ot.restRuleId)}
+      <label>תיאור: <input class="input-sm" type="text" data-ot-field="description" value="${escHtml(ot.description || '')}" data-ot-id="${ot.id}" /></label>
+      <button class="btn-sm btn-primary" data-action="save-onetime-props" data-ot-id="${ot.id}">שמור</button>
+    </div>`;
+
+    // Sub-teams
+    if (ot.subTeams.length > 0) {
+      html += '<h4 style="margin:12px 0 8px;">תת-צוותים</h4>';
+      for (const st of ot.subTeams) {
+        html += renderSubTeam(ot.id, st, pf, { isOneTime: true });
+      }
+    }
+
+    // Top-level slots
+    if (ot.slots.length > 0 || ot.subTeams.length === 0) {
+      html += `<h4 style="margin:12px 0 8px;">משבצות${ot.subTeams.length > 0 ? ' נוספות' : ''}</h4>`;
+      html += renderSlotTable(ot.id, ot.slots, undefined, pf, { isOneTime: true });
+    }
+
+    // Add sub-team / slot / delete buttons
+    html += `<div class="template-actions">
+      <button class="btn-sm btn-outline" data-action="add-subteam" data-ot-id="${ot.id}">+ תת-צוות</button>
+      <button class="btn-sm btn-outline" data-action="add-slot" data-ot-id="${ot.id}">+ משבצת</button>
+      <button class="btn-sm btn-danger-outline" data-action="delete-onetime" data-ot-id="${ot.id}">הסר משימה</button>
+    </div>`;
+
+    // Inline add-slot form
+    if (addingSlotTo && addingSlotTo.templateId === ot.id && addingSlotTo.isOneTime && !addingSlotTo.subTeamId) {
+      html += renderAddSlotForm(ot.id, undefined, { isOneTime: true });
+    }
+
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  return html;
 }
 
 // ─── Event Wiring ────────────────────────────────────────────────────────────
@@ -1056,7 +1140,55 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'toggle-template': {
         const tid = actionButton?.closest('[data-tid]')?.getAttribute('data-tid') || actionButton?.dataset.tid!;
         expandedTemplateId = expandedTemplateId === tid ? null : tid;
+        expandedOtId = null;
         addingSlotTo = null;
+        rerender();
+        break;
+      }
+      case 'toggle-onetime': {
+        const otId = actionButton?.dataset.otId!;
+        expandedOtId = expandedOtId === otId ? null : otId;
+        expandedTemplateId = null;
+        addingSlotTo = null;
+        rerender();
+        break;
+      }
+      case 'save-onetime-props': {
+        const otId = actionButton?.dataset.otId!;
+        const body = actionButton?.closest('.template-body')!;
+        const name = (body.querySelector('[data-ot-field="name"]') as HTMLInputElement)?.value.trim();
+        if (!name) { showToast('שם משימה נדרש', { type: 'error' }); break; }
+        const dayNumVal = parseInt((body.querySelector('[data-ot-field="dayNum"]') as HTMLSelectElement)?.value || '1');
+        const schedDate = store.getScheduleDate();
+        const scheduledDate = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate() + dayNumVal - 1);
+        const rawStartHour = parseInt((body.querySelector('[data-ot-field="startHour"]') as HTMLInputElement)?.value || '6');
+        const rawStartMinute = parseInt((body.querySelector('[data-ot-field="startMinute"]') as HTMLInputElement)?.value || '0');
+        const rawDur = parseFloat((body.querySelector('[data-ot-field="durationHours"]') as HTMLInputElement)?.value || '4');
+        const baseLoad = parseFloat((body.querySelector('[data-ot-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1');
+        const sameGroup = (body.querySelector('[data-ot-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
+        const isLight = (body.querySelector('[data-ot-field="isLight"]') as HTMLInputElement)?.checked || false;
+        const blocksConsecutive = (body.querySelector('[data-ot-field="blocksConsecutive"]') as HTMLInputElement)?.checked ?? true;
+        const otRestRuleId = (body.querySelector('[data-ot-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
+        const desc = (body.querySelector('[data-ot-field="description"]') as HTMLInputElement)?.value.trim();
+
+        const otSanitized = store.sanitizeTemplateNumericFields({ durationHours: rawDur, startHour: rawStartHour });
+        const startMinute = Math.max(0, Math.min(59, Math.round(Number.isNaN(rawStartMinute) ? 0 : rawStartMinute)));
+
+        store.updateOneTimeTask(otId, {
+          name,
+          scheduledDate,
+          startHour: otSanitized.startHour,
+          startMinute,
+          durationHours: otSanitized.durationHours,
+          sameGroupRequired: sameGroup,
+          isLight,
+          baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
+          blocksConsecutive,
+          restRuleId: otRestRuleId,
+          description: desc || undefined,
+          displayCategory: name.toLowerCase(),
+        });
+        showToast('המשימה עודכנה', { type: 'success' });
         rerender();
         break;
       }
@@ -1282,15 +1414,21 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'add-subteam': {
-        const tid = actionButton?.dataset.tid!;
+        const otIdSt = actionButton?.dataset.otId;
+        const tidSt = otIdSt || actionButton?.dataset.tid!;
         const name = await showPrompt('הזן שם לתת-צוות:', { title: 'הוספת תת-צוות' });
         if (!name) return;
-        store.addSubTeamToTemplate(tid, name.trim());
+        if (otIdSt) {
+          store.addSubTeamToOneTimeTask(otIdSt, name.trim());
+        } else {
+          store.addSubTeamToTemplate(tidSt, name.trim());
+        }
         rerender();
         break;
       }
       case 'remove-subteam': {
-        const tid = actionButton?.dataset.tid!;
+        const otIdRst = actionButton?.dataset.otId;
+        const tidRst = otIdRst || actionButton?.dataset.tid!;
         const stid = actionButton?.dataset.stid!;
         const okSub = await showConfirm('למחוק את תת-הצוות הזה ואת כל המשבצות שלו?', {
           danger: true,
@@ -1298,21 +1436,35 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           confirmLabel: 'מחק',
         });
         if (okSub) {
-          store.removeSubTeamFromTemplate(tid, stid);
+          if (otIdRst) {
+            store.removeSubTeamFromOneTimeTask(otIdRst, stid);
+          } else {
+            store.removeSubTeamFromTemplate(tidRst, stid);
+          }
           rerender();
         }
         break;
       }
       case 'add-slot': {
-        const tid = actionButton?.dataset.tid!;
-        addingSlotTo = { templateId: tid };
+        const otIdAs = actionButton?.dataset.otId;
+        if (otIdAs) {
+          addingSlotTo = { templateId: otIdAs, isOneTime: true };
+        } else {
+          const tid = actionButton?.dataset.tid!;
+          addingSlotTo = { templateId: tid };
+        }
         rerender();
         break;
       }
       case 'add-slot-subteam': {
-        const tid = actionButton?.dataset.tid!;
+        const otIdAss = actionButton?.dataset.otId;
         const stid = actionButton?.dataset.stid!;
-        addingSlotTo = { templateId: tid, subTeamId: stid };
+        if (otIdAss) {
+          addingSlotTo = { templateId: otIdAss, subTeamId: stid, isOneTime: true };
+        } else {
+          const tid = actionButton?.dataset.tid!;
+          addingSlotTo = { templateId: tid, subTeamId: stid };
+        }
         rerender();
         break;
       }
@@ -1330,7 +1482,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'confirm-add-slot': {
-        const tid = actionButton?.dataset.tid!;
+        const otIdCas = actionButton?.dataset.otId;
+        const tid = otIdCas || actionButton?.dataset.tid!;
         const stid = actionButton?.dataset.stid;
         const form = actionButton?.closest('.add-slot-form')!;
         const label = (form.querySelector('[data-field="slot-label"]') as HTMLInputElement)?.value.trim() || 'משבצת';
@@ -1367,7 +1520,13 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           forbiddenCertifications: forbiddenCerts.length > 0 ? forbiddenCerts : undefined,
         };
 
-        if (stid) {
+        if (otIdCas) {
+          if (stid) {
+            store.addSlotToOneTimeSubTeam(otIdCas, stid, slot);
+          } else {
+            store.addSlotToOneTimeTask(otIdCas, slot);
+          }
+        } else if (stid) {
           store.addSlotToSubTeam(tid, stid, slot);
         } else {
           store.addSlotToTemplate(tid, slot);
@@ -1382,13 +1541,20 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'remove-slot': {
-        const tid = actionButton?.dataset.tid!;
+        const otIdRs = actionButton?.dataset.otId;
+        const tidRs = otIdRs || actionButton?.dataset.tid!;
         const stid = actionButton?.dataset.stid;
         const slotId = actionButton?.dataset.slotid!;
-        if (stid) {
-          store.removeSlotFromSubTeam(tid, stid, slotId);
+        if (otIdRs) {
+          if (stid) {
+            store.removeSlotFromOneTimeSubTeam(otIdRs, stid, slotId);
+          } else {
+            store.removeSlotFromOneTimeTask(otIdRs, slotId);
+          }
+        } else if (stid) {
+          store.removeSlotFromSubTeam(tidRs, stid, slotId);
         } else {
-          store.removeSlotFromTemplate(tid, slotId);
+          store.removeSlotFromTemplate(tidRs, slotId);
         }
         rerender();
         break;
@@ -1544,6 +1710,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           confirmLabel: 'מחק',
         });
         if (!ok) return;
+        if (expandedOtId === otId) expandedOtId = null;
         store.removeOneTimeTask(otId);
         rerender();
         break;

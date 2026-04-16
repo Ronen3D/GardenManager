@@ -1280,6 +1280,16 @@ export function localSearchOptimize(
             const taskAssigns = byTask.get(uf.taskId) || [];
             if (taskAssigns.some((a) => a.participantId === p.id)) continue;
 
+            // HC-4: Same-group constraint for insert moves
+            if (!disabledHC?.has('HC-4') && ufTask.sameGroupRequired) {
+              const existingGroups = new Set<string>();
+              for (const a of taskAssigns) {
+                const ep = pMap.get(a.participantId);
+                if (ep) existingGroups.add(ep.group);
+              }
+              if (existingGroups.size > 0 && !existingGroups.has(p.group)) continue;
+            }
+
             // Create new assignment and score
             const newA: Assignment = {
               id: nextAssignmentId(),
@@ -1471,6 +1481,22 @@ export function localSearchOptimize(
     if (!accepted && temperature < 0.5 && itersSinceImprovement > SA_REHEAT_THRESHOLD) break;
   }
 
+  // ── Reconcile filledSlots with best ──────────────────────────────────────
+  // SA insert moves update filledSlots/remainingUnfilled eagerly on `current`,
+  // but `best` is only snapshotted when currentComposite exceeds bestScore.
+  // Slots accepted via the insert bonus that never made it to `best` must be
+  // restored to remainingUnfilled so the post-SA sweep can retry them.
+  for (let k = filledSlots.length - 1; k >= 0; k--) {
+    const slotId = filledSlots[k];
+    if (!best.some((a) => a.slotId === slotId)) {
+      const original = (unfilledSlots || []).find((uf) => uf.slotId === slotId);
+      if (original) {
+        remainingUnfilled.push(original);
+      }
+      filledSlots.splice(k, 1);
+    }
+  }
+
   // ── Post-SA Insert Sweep ─────────────────────────────────────────────────
   // SA swaps may have freed participants that no stochastic insert iteration
   // happened to find. Build fresh indices from `best` and deterministically
@@ -1496,6 +1522,16 @@ export function localSearchOptimize(
         // HC-7: no duplicate participant in same task
         const taskAssigns = sweepByTask.get(uf.taskId) || [];
         if (taskAssigns.some((a) => a.participantId === p.id)) continue;
+
+        // HC-4: Same-group constraint for sweep inserts
+        if (!disabledHC?.has('HC-4') && ufTask.sameGroupRequired) {
+          const existingGroups = new Set<string>();
+          for (const a of taskAssigns) {
+            const ep = pMap.get(a.participantId);
+            if (ep) existingGroups.add(ep.group);
+          }
+          if (existingGroups.size > 0 && !existingGroups.has(p.group)) continue;
+        }
 
         const newA: Assignment = {
           id: nextAssignmentId(),
