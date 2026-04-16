@@ -2252,9 +2252,9 @@ function showTuneResultModal(rec: TuneRecommendation): void {
  * ends the flow silently. The applied config stays in effect either way.
  */
 async function offerSaveTuneAsPreset(): Promise<void> {
-  const wantsSave = await showConfirm('לשמור את ההגדרות הללו כפריסט בעל שם, כדי לחזור אליהן בקלות בעתיד?', {
+  const wantsSave = await showConfirm('לשמור את ההגדרות הללו כסט הגדרות בעל שם, כדי לחזור אליהן בקלות בעתיד?', {
     title: 'שמירת ההגדרות',
-    confirmLabel: 'שמור כפריסט',
+    confirmLabel: 'שמור כסט',
     cancelLabel: 'לא עכשיו',
   });
   if (!wantsSave) return;
@@ -2266,27 +2266,27 @@ async function offerSaveTuneAsPreset(): Promise<void> {
   // Loop until the user supplies an unused name or cancels.
   let pendingDefault = defaultName;
   while (true) {
-    const name = await showPrompt('בחר שם לפריסט:', {
-      title: 'שמירת הגדרות כפריסט',
-      placeholder: 'שם הפריסט',
+    const name = await showPrompt('בחר שם לסט:', {
+      title: 'שמירת סט הגדרות',
+      placeholder: 'שם הסט',
       defaultValue: pendingDefault,
     });
     if (name == null) return; // user cancelled
     const trimmed = name.trim();
     if (!trimmed) {
-      await showAlert('שם הפריסט לא יכול להיות ריק.', { icon: '⚠️' });
+      await showAlert('שם הסט לא יכול להיות ריק.', { icon: '⚠️' });
       pendingDefault = defaultName;
       continue;
     }
     const saved = store.saveCurrentAsPreset(trimmed, description);
     if (saved) {
-      showToast(`ההגדרות נשמרו כפריסט "${saved.name}".`, { type: 'success' });
+      showToast(`ההגדרות נשמרו כסט "${saved.name}".`, { type: 'success' });
       if (currentTab === 'algorithm') renderAll();
       return;
     }
     // saveCurrentAsPreset returns null only on name collision (empty name is
     // already guarded above). Surface a clear prompt and retry.
-    await showAlert('שם זה כבר בשימוש על ידי פריסט אחר. בחר שם אחר.', { icon: '⚠️' });
+    await showAlert('שם זה כבר בשימוש על ידי סט אחר. בחר שם אחר.', { icon: '⚠️' });
     pendingDefault = trimmed;
   }
 }
@@ -2559,7 +2559,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.6</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.2.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -2855,7 +2855,7 @@ function wireFactoryReset(container: HTMLElement): void {
         'פעולה זו תמחק את כל הנתונים במערכת:\n' +
           '• כל המשתתפים והגדרותיהם\n' +
           '• כל המשימות והשיבוצים\n' +
-          '• כל הגדרות האלגוריתם והפריסטים\n' +
+          '• כל הגדרות האלגוריתם וסטים שמורים\n' +
           '• כל תמונות המצב השמורות\n' +
           '• כל סטי המשתתפים וסטי המשימות\n\n' +
           'המערכת תחזור למצב ההתחלתי כאילו הותקנה מחדש.\n' +

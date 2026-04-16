@@ -77,7 +77,7 @@ function openExportSheet(): void {
         <span class="transfer-scope-icon">⚙</span>
         <span class="transfer-scope-text">
           <span class="transfer-scope-title">הגדרות אלגוריתם</span>
-          <span class="transfer-scope-desc">הגדרות נוכחיות + פריסטים שמורים</span>
+          <span class="transfer-scope-desc">הגדרות נוכחיות + סטים שמורים</span>
         </span>
       </button>
       <button class="transfer-scope-item" data-export-type="taskSet" ${taskSets.length === 0 ? 'disabled' : ''}>
@@ -399,14 +399,14 @@ function openAlgorithmImportSheet(json: string, summary: string): void {
         <span class="transfer-import-option-icon">🔄</span>
         <span class="transfer-import-option-text">
           <span class="transfer-import-option-title">החלף הגדרות נוכחיות</span>
-          <span class="transfer-import-option-desc">כל ההגדרות והפריסטים יוחלפו</span>
+          <span class="transfer-import-option-desc">כל ההגדרות והסטים יוחלפו</span>
         </span>
       </button>
       <button class="transfer-import-option" data-import-mode="add-preset">
         <span class="transfer-import-option-icon">➕</span>
         <span class="transfer-import-option-text">
-          <span class="transfer-import-option-title">הוסף כפריסט חדש</span>
-          <span class="transfer-import-option-desc">ההגדרות ישמרו כפריסט נוסף</span>
+          <span class="transfer-import-option-title">הוסף כסט חדש</span>
+          <span class="transfer-import-option-desc">ההגדרות ישמרו כסט נוסף</span>
         </span>
       </button>
     </div>`;

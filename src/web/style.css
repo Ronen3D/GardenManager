@@ -2484,6 +2484,65 @@ tr.row-rest td {
   width: 92%;
   text-align: start;
   padding: 28px 32px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Breathing border — slow pulsing glow around the card */
+.tune-card-breathing {
+  animation: tune-breathe 4s ease-in-out infinite;
+}
+
+@keyframes tune-breathe {
+  0%, 100% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      0 25px 50px rgba(0, 0, 0, 0.4),
+      0 0 0 1px rgba(74, 144, 217, 0.15);
+  }
+  50% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      0 25px 50px rgba(0, 0, 0, 0.4),
+      0 0 20px 2px rgba(74, 144, 217, 0.25),
+      0 0 0 1px rgba(74, 144, 217, 0.35);
+  }
+}
+
+/* Floating bubbles — drift upward behind content */
+.tune-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.tune-card > *:not(.tune-particles) {
+  position: relative;
+  z-index: 1;
+}
+
+.tune-bubble {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  background: rgba(74, 144, 217, 0.12);
+  will-change: transform, opacity;
+  animation: tune-float linear infinite;
+}
+
+.tune-bubble:nth-child(1) { width: 10px; height: 10px; left: 12%; bottom: -12px; animation-duration: 9s;  animation-delay: 0s;   opacity: 0.5; }
+.tune-bubble:nth-child(2) { width: 14px; height: 14px; left: 35%; bottom: -16px; animation-duration: 11s; animation-delay: 2s;   opacity: 0.4; }
+.tune-bubble:nth-child(3) { width:  8px; height:  8px; left: 58%; bottom: -10px; animation-duration: 8s;  animation-delay: 4s;   opacity: 0.6; }
+.tune-bubble:nth-child(4) { width: 12px; height: 12px; left: 78%; bottom: -14px; animation-duration: 10s; animation-delay: 1s;   opacity: 0.35; }
+.tune-bubble:nth-child(5) { width:  6px; height:  6px; left: 25%; bottom: -8px;  animation-duration: 7s;  animation-delay: 3.5s; opacity: 0.55; }
+.tune-bubble:nth-child(6) { width: 10px; height: 10px; left: 68%; bottom: -12px; animation-duration: 12s; animation-delay: 5s;   opacity: 0.3; }
+
+@keyframes tune-float {
+  0%   { transform: translateY(0)    scale(1);   opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(-420px) scale(0.6); opacity: 0; }
 }
 
 .tune-card h3 {
@@ -2691,8 +2750,9 @@ tr.row-rest td {
 
 .settings-autotune-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   margin: 10px 0 4px;
   padding: 10px 12px;
   background: rgba(74, 144, 217, 0.08);
@@ -4824,6 +4884,30 @@ tr.now-row-animate > td.time-cell {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.8),
     0 25px 50px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .tune-card-breathing {
+  animation-name: tune-breathe-light;
+}
+
+@keyframes tune-breathe-light {
+  0%, 100% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.8),
+      0 25px 50px rgba(0, 0, 0, 0.12),
+      0 0 0 1px rgba(74, 144, 217, 0.2);
+  }
+  50% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.8),
+      0 25px 50px rgba(0, 0, 0, 0.12),
+      0 0 24px 4px rgba(74, 144, 217, 0.25),
+      0 0 0 1px rgba(74, 144, 217, 0.4);
+  }
+}
+
+[data-theme="light"] .tune-bubble {
+  background: rgba(74, 144, 217, 0.2);
 }
 
 [data-theme="light"] .weekly-dashboard {

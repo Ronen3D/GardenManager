@@ -2915,12 +2915,12 @@ export function updatePreset(id: string): boolean {
 export function renamePreset(id: string, name: string, description: string): string | null {
   const presets = _initPresets();
   const preset = presets.find((p) => p.id === id);
-  if (!preset) return 'פריסט לא נמצא';
-  if (preset.builtIn) return 'לא ניתן לשנות שם של פריסט מובנה';
+  if (!preset) return 'סט לא נמצא';
+  if (preset.builtIn) return 'לא ניתן לשנות שם של סט מובנה';
 
   const trimmed = name.trim();
   if (!trimmed) return 'השם לא יכול להיות ריק';
-  if (_isPresetNameTaken(trimmed, id)) return 'פריסט עם שם זה כבר קיים';
+  if (_isPresetNameTaken(trimmed, id)) return 'סט עם שם זה כבר קיים';
 
   const prevName = preset.name;
   const prevDesc = preset.description;

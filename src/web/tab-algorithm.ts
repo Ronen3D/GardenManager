@@ -657,7 +657,7 @@ export function renderAlgorithmTab(): string {
     </div>
     <div class="settings-autotune-row">
       <button class="btn-sm btn-primary" data-action="algo-auto-tune" title="כייל את המשקלות אוטומטית לפי הנתונים הנוכחיים">🎯 כיול אוטומטי</button>
-      <span class="settings-autotune-hint">ירוץ מספר דקות ויציע הגדרות מותאמות לנתונים שלך.</span>
+      <span class="settings-autotune-hint">המערכת תפעל במשך מספר דקות (בערך רבע שעה) למציאת סט הגדרות האלגוריתם האופטימלי למשימות והמשתתפים המוגדרים</span>
     </div>
     ${_presetPanelOpen ? renderPresetPanel(presets, activeId, dirty, isBuiltIn) : ''}
     ${renderNestedAccordion({

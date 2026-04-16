@@ -419,7 +419,15 @@ function removeOverlay(): void {
 
 function renderOverlayHtml(): string {
   return `
-  <div class="optim-card tune-card" role="dialog" aria-label="כיול אוטומטי">
+  <div class="optim-card tune-card tune-card-breathing" role="dialog" aria-label="כיול אוטומטי">
+    <div class="tune-particles" aria-hidden="true">
+      <span class="tune-bubble"></span>
+      <span class="tune-bubble"></span>
+      <span class="tune-bubble"></span>
+      <span class="tune-bubble"></span>
+      <span class="tune-bubble"></span>
+      <span class="tune-bubble"></span>
+    </div>
     <h3 id="tune-title">כיול הגדרות עבור הנתונים שלך…</h3>
     <div class="tune-fingerprint" id="tune-fingerprint"></div>
     <div class="tune-phase-label" id="tune-phase-label"></div>

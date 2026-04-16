@@ -317,7 +317,7 @@ export function validateImportFile(json: string): ImportValidationResult {
         return { ok: false, error: 'נתוני הגדרות אלגוריתם חסרים.' };
       }
       const presetCount = Array.isArray(p.presets) ? p.presets.length : 0;
-      summary = `הגדרות אלגוריתם + ${presetCount} פריסטים`;
+      summary = `הגדרות אלגוריתם + ${presetCount} סטים`;
       break;
     }
     case 'taskSet': {
@@ -474,7 +474,7 @@ export function importAlgorithm(json: string, mode: 'replace' | 'add-preset'): I
 
   // mode === 'add-preset'
   const existingNames = store.getAllPresets().map((p) => p.name);
-  const name = deduplicateName(payload.currentSettings ? 'הגדרות מיובאות' : 'פריסט מיובא', existingNames);
+  const name = deduplicateName(payload.currentSettings ? 'הגדרות מיובאות' : 'סט מיובא', existingNames);
   const preset: AlgorithmPreset = {
     id: store.uid('preset'),
     name,
