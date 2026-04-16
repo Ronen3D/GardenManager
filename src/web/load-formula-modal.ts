@@ -54,6 +54,8 @@ let _escHandler: ((e: KeyboardEvent) => void) | null = null;
 let _activeRow: { side: Side; idx: number } | null = null;
 /** "X hours of this task = ..." — the equation's primary LHS term. */
 let _targetHours: number = 1;
+/** Whether the raw arithmetic breakdown is expanded; collapsed by default. */
+let _showBreakdown: boolean = false;
 
 function listFor(side: Side): LoadFormulaComponent[] {
   return side === 'lhs' ? _lhsExtras : _components;
@@ -97,6 +99,7 @@ export function closeLoadFormulaModal(): void {
   _lhsExtras = [];
   _activeRow = null;
   _targetHours = 1;
+  _showBreakdown = false;
   if (_escHandler) {
     document.removeEventListener('keydown', _escHandler);
     _escHandler = null;
@@ -239,7 +242,7 @@ function render(): void {
 
           <div class="lf-lhs-extras">
             ${lhsStackHtml}
-            <button class="lf-stack-add lf-stack-add-lhs" data-lf-action="add-row" data-lf-side="lhs">+ הוסף משימה לצד העליון</button>
+            ${_lhsExtras.every((c) => c.refTemplateId) ? '<button class="lf-stack-add lf-stack-add-lhs" data-lf-action="add-row" data-lf-side="lhs">+ הוסף משימה לצד העליון</button>' : ''}
             ${_lhsExtras.length ? '<div class="lf-lhs-eq-label">שוות ל:</div>' : ''}
           </div>
 
@@ -264,14 +267,19 @@ function render(): void {
             <div class="lf-bar-number">
               <span class="lf-bar-number-label">עומס מחושב לשעה</span>
               <strong class="lf-bar-number-value">${computed.toFixed(2)}</strong>
+              ${
+                rhsBreakdown || lhsBreakdown
+                  ? `<button type="button" class="lf-bar-breakdown-toggle" data-lf-action="toggle-breakdown" aria-expanded="${_showBreakdown}">${_showBreakdown ? 'הסתר חישוב ▴' : 'הצג חישוב ▾'}</button>`
+                  : ''
+              }
             </div>
-            <div class="lf-bar-breakdown" dir="ltr">${renderBreakdownLine(rhsBreakdown, lhsBreakdown, rhsRaw, lhsRaw, netRaw, targetHours, clampedHigh, clampedLow)}</div>
+            <div class="lf-bar-breakdown" dir="ltr"${_showBreakdown ? '' : ' hidden'}>${renderBreakdownLine(rhsBreakdown, lhsBreakdown, rhsRaw, lhsRaw, netRaw, targetHours, clampedHigh, clampedLow)}</div>
             ${clampedHigh ? `<div class="lf-bar-clamp-warn">⚠ ערך לשעה חורג מ-1, נחתך ל-1.00</div>` : ''}
             ${clampedLow ? `<div class="lf-bar-clamp-warn">⚠ צד שמאל גדול מצד ימין — ערך לשעה נחתך ל-0.00</div>` : ''}
           </div>
 
           <div class="lf-stack">${rhsStackHtml}</div>
-          <button class="lf-stack-add" data-lf-action="add-row" data-lf-side="rhs">+ הוסף רכיב השוואה</button>
+          ${_components.every((c) => c.refTemplateId) ? '<button class="lf-stack-add" data-lf-action="add-row" data-lf-side="rhs">+ הוסף רכיב השוואה</button>' : ''}
 
           ${!validation.ok ? `<div class="lf-validation-msg">${escAttr(validation.reason)}</div>` : ''}
         </div>
@@ -587,6 +595,10 @@ function wireEvents(): void {
         render();
         break;
       }
+      case 'toggle-breakdown':
+        _showBreakdown = !_showBreakdown;
+        render();
+        break;
       case 'clear':
         clearFormula();
         break;

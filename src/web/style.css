@@ -9038,6 +9038,25 @@ tr.now-row-animate > td.time-cell {
   font-size: 0.8rem;
   color: var(--text-muted, #888);
 }
+.lf-bar-breakdown[hidden] {
+  display: none;
+}
+.lf-bar-breakdown-toggle {
+  margin-inline-start: auto;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-muted, #888);
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+.lf-bar-breakdown-toggle:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border, rgba(255, 255, 255, 0.1));
+  color: var(--text, inherit);
+}
 .lf-bar-clamp-warn {
   font-size: 0.8rem;
   color: var(--warning, #b87000);
