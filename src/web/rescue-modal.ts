@@ -96,6 +96,8 @@ export function openRescueModal(assignmentId: string): void {
     engine?.getRestRuleMap(),
     engine?.getDayStartHour() ?? store.getDayStartHour(),
     engine?.getCertLabelResolver() ?? ((id: string) => id),
+    engine?.getConfig(),
+    engine?.buildScoreContext(),
   );
   showRescueModal();
 }
@@ -152,12 +154,22 @@ function showRescueModal(): void {
     html += `<div class="rescue-empty">לא נמצאו תוכניות החלפה מתאימות.</div>`;
   }
 
+  // Dynamic quality-tier thresholds derived from actual penalty weights.
+  // Reference scale = smallest active major penalty (lowPriority / notWith).
+  // If both are disabled, fall back to the largest minor weight.
+  const cfg = _ctx?.getEngine()?.getConfig();
+  const activeMajors = [cfg?.lowPriorityLevelPenalty ?? 1166, cfg?.notWithPenalty ?? 1929].filter(v => v > 0);
+  const refPenalty = activeMajors.length > 0
+    ? Math.min(...activeMajors)
+    : Math.max(cfg?.taskNamePreferencePenalty ?? 140, cfg?.dailyBalanceWeight ?? 144, 100);
+  const excellentCap = Math.round(refPenalty * 0.04);
+  const fairCap = Math.round(refPenalty * 0.43);
+
   for (const plan of plans) {
     const isRecommended = plan.rank === 1;
     const hasViolations = plan.violations && plan.violations.length > 0;
 
-    // Quality tier from impact score
-    const qualityTier = plan.impactScore < 3 ? 'excellent' : plan.impactScore < 7 ? 'fair' : 'significant';
+    const qualityTier = plan.impactScore < excellentCap ? 'excellent' : plan.impactScore < fairCap ? 'fair' : 'significant';
     const qualityLabel = qualityTier === 'excellent' ? 'מצוין' : qualityTier === 'fair' ? 'סביר' : 'משמעותי';
 
     // Swap count label — friendly wording
@@ -394,6 +406,8 @@ function wireRescueModalEvents(): void {
       engine?.getRestRuleMap(),
       engine?.getDayStartHour() ?? store.getDayStartHour(),
       engine?.getCertLabelResolver() ?? ((id: string) => id),
+      engine?.getConfig(),
+      engine?.buildScoreContext(),
     );
     // Ranks are already sequential from the engine (1-based per returned plan)
     _rescueResult = result;

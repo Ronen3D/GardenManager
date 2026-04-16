@@ -3,21 +3,26 @@
  *
  * When a slot is vacated (participant removed or marked unavailable),
  * this engine generates up to 3 "Rescue Plans" at the minimum possible
- * swap depth, scored primarily by daily workload impact.
+ * swap depth, scored by full composite score delta.
  *
  * Algorithm:
  *  1. Enumerate all single-swap (depth 1) candidates.
  *  2. If ≥ 3 single-swap candidates exist, return the top 3 (paginated).
  *  3. If < 3, backfill with 2-swap chains, then 3-swap chains.
  *  4. Plans are ranked by impactScore (lower = less disruption).
- *     impactScore emphasises daily workload std-dev change (×10)
- *     over weekly change (×3), with swap count as tiebreaker (×1).
+ *     When SchedulerConfig and ScoreContext are provided, impactScore is
+ *     the negated composite score delta from computeScheduleScore() — the
+ *     same scoring the optimizer uses (split-pool fairness, rest bonus,
+ *     daily balance, lowPriority/notWith/taskPref penalties).
+ *     Falls back to legacy workload-delta formula when scoring context
+ *     is unavailable.
  *
  * All candidates must pass hard-constraint validation.
  * No plan may touch frozen assignments.
  */
 
 import { validateHardConstraints } from '../constraints/hard-constraints';
+import { type ScoreContext, computeScheduleScore } from '../constraints/soft-constraints';
 import type {
   Assignment,
   Participant,
@@ -26,6 +31,7 @@ import type {
   RescueResult,
   RescueSwap,
   Schedule,
+  SchedulerConfig,
   Task,
 } from '../models/types';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
@@ -46,8 +52,7 @@ const PAGE_SIZE = 3;
 interface CandidatePlan {
   swaps: RescueSwap[];
   impactScore: number;
-  dailyLoadDelta: number;
-  weeklyLoadDelta: number;
+  compositeDelta?: number;
 }
 
 // ─── Internal Helpers ────────────────────────────────────────────────────────
@@ -204,10 +209,55 @@ function computeSwapImpact(
 }
 
 /**
- * Score a candidate plan.
+ * Score a candidate plan (legacy formula — used when config/scoreCtx are not available).
  */
 function scorePlan(swapCount: number, dailyDelta: number, weeklyDelta: number): number {
   return W_DAILY * dailyDelta + W_WEEKLY * weeklyDelta + W_SWAPS * swapCount;
+}
+
+/**
+ * Score a candidate plan using the full composite score from soft-constraints.
+ * Returns the negated composite delta so that lower impactScore = less disruption
+ * (consistent with the legacy formula's semantics).
+ *
+ * When composite scoring is not available (config/scoreCtx missing), falls back
+ * to the legacy workload-delta formula.
+ */
+function scoreCandidate(
+  ctx: RescueContext,
+  swaps: Array<{ assignmentId: string; newParticipantId: string }>,
+  swapCount: number,
+): { impactScore: number; compositeDelta: number | undefined } {
+  if (ctx.baselineComposite !== null && ctx.config && ctx.scoreCtx) {
+    // Build temporary assignments with swaps applied
+    const swapMap = new Map<string, string>();
+    for (const sw of swaps) swapMap.set(sw.assignmentId, sw.newParticipantId);
+    const tempAssignments = ctx.schedule.assignments.map((a) => {
+      const newPid = swapMap.get(a.id);
+      return newPid ? { ...a, participantId: newPid } : a;
+    });
+    const candidateScore = computeScheduleScore(
+      ctx.schedule.tasks,
+      ctx.schedule.participants,
+      tempAssignments,
+      ctx.config,
+      ctx.scoreCtx,
+    );
+    const delta = candidateScore.compositeScore - ctx.baselineComposite;
+    // Negate: positive delta (improvement) → negative impactScore (better plan)
+    return { impactScore: -delta, compositeDelta: delta };
+  }
+  // Legacy fallback
+  const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
+    ctx.schedule.assignments,
+    swaps,
+    ctx.taskMap,
+    ctx.schedule.participants,
+    ctx.baseDayStdDevs,
+    ctx.baseWeeklyStdDev,
+    ctx.dayStartHour,
+  );
+  return { impactScore: scorePlan(swapCount, dailyLoadDelta, weeklyLoadDelta), compositeDelta: undefined };
 }
 
 // ─── Shared context for depth-search functions ──────────────────────────────
@@ -231,6 +281,10 @@ interface RescueContext {
   disabledHC?: Set<string>;
   restRuleMap?: Map<string, number>;
   dayStartHour: number;
+  // Full composite scoring (when available)
+  config?: SchedulerConfig;
+  scoreCtx?: ScoreContext;
+  baselineComposite: number | null;
 }
 
 // ─── Depth 1: Direct replacements ───────────────────────────────────────────
@@ -254,17 +308,8 @@ function generateDepth1Plans(ctx: RescueContext): CandidatePlan[] {
     )
       continue;
 
-    const swap = { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id };
-    const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
-      ctx.schedule.assignments,
-      [swap],
-      ctx.taskMap,
-      ctx.schedule.participants,
-      ctx.baseDayStdDevs,
-      ctx.baseWeeklyStdDev,
-      ctx.dayStartHour,
-    );
-    const impactScore = scorePlan(1, dailyLoadDelta, weeklyLoadDelta);
+    const swapOp = { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id };
+    const { impactScore, compositeDelta } = scoreCandidate(ctx, [swapOp], 1);
 
     plans.push({
       swaps: [
@@ -278,8 +323,7 @@ function generateDepth1Plans(ctx: RescueContext): CandidatePlan[] {
         },
       ],
       impactScore,
-      dailyLoadDelta,
-      weeklyLoadDelta,
+      compositeDelta,
     });
   }
 
@@ -344,16 +388,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
           { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id },
           { assignmentId: donorAssignment.id, newParticipantId: q.id },
         ];
-        const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
-          ctx.schedule.assignments,
-          swapSet,
-          ctx.taskMap,
-          ctx.schedule.participants,
-          ctx.baseDayStdDevs,
-          ctx.baseWeeklyStdDev,
-          ctx.dayStartHour,
-        );
-        const impactScore = scorePlan(2, dailyLoadDelta, weeklyLoadDelta);
+        const { impactScore, compositeDelta } = scoreCandidate(ctx, swapSet, 2);
 
         plans.push({
           swaps: [
@@ -375,8 +410,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
             },
           ],
           impactScore,
-          dailyLoadDelta,
-          weeklyLoadDelta,
+          compositeDelta,
         });
       }
     }
@@ -521,16 +555,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
               { assignmentId: donorP.id, newParticipantId: q.id },
               { assignmentId: donorQ.id, newParticipantId: r.id },
             ];
-            const { dailyLoadDelta, weeklyLoadDelta } = computeSwapImpact(
-              ctx.schedule.assignments,
-              swapSet,
-              ctx.taskMap,
-              ctx.schedule.participants,
-              ctx.baseDayStdDevs,
-              ctx.baseWeeklyStdDev,
-              ctx.dayStartHour,
-            );
-            const impactScore = scorePlan(3, dailyLoadDelta, weeklyLoadDelta);
+            const { impactScore, compositeDelta } = scoreCandidate(ctx, swapSet, 3);
 
             plans.push({
               swaps: [
@@ -560,8 +585,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
                 },
               ],
               impactScore,
-              dailyLoadDelta,
-              weeklyLoadDelta,
+              compositeDelta,
             });
 
             if (plans.length >= MAX_DEPTH3) break outer;
@@ -598,6 +622,8 @@ export function generateRescuePlans(
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
   certLabelResolver?: (certId: string) => string,
+  config?: SchedulerConfig,
+  scoreCtx?: ScoreContext,
 ): RescueResult {
   // Validate page parameter
   page = Math.max(0, Math.floor(page));
@@ -653,7 +679,14 @@ export function generateRescuePlans(
     return { request, plans: [], hasMore: false, page };
   }
 
-  // Compute baseline metrics
+  // Compute baseline composite score (full soft-constraint scoring when config available)
+  const baselineComposite =
+    config && scoreCtx
+      ? computeScheduleScore(schedule.tasks, schedule.participants, schedule.assignments, config, scoreCtx)
+          .compositeScore
+      : null;
+
+  // Compute legacy baseline metrics (used as fallback when config/scoreCtx not provided)
   const affectedDayKey = operationalDateKey(vacatedTask.timeBlock.start, dayStartHour);
   const baseDayStdDevs = new Map<string, number>();
   baseDayStdDevs.set(
@@ -686,6 +719,9 @@ export function generateRescuePlans(
     disabledHC,
     restRuleMap,
     dayStartHour,
+    config,
+    scoreCtx,
+    baselineComposite,
   };
 
   // Generate plans at each depth, expanding only when needed.
@@ -734,8 +770,7 @@ export function generateRescuePlans(
     rank: i + 1,
     swaps: cp.swaps,
     impactScore: cp.impactScore,
-    dailyLoadDelta: cp.dailyLoadDelta,
-    weeklyLoadDelta: cp.weeklyLoadDelta,
+    compositeDelta: cp.compositeDelta,
     violations: cp.violations,
   }));
 

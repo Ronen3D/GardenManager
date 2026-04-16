@@ -160,6 +160,12 @@ export class SchedulingEngine {
     };
   }
 
+  /** Public ScoreContext for external consumers (e.g., rescue scoring). */
+  buildScoreContext(): ScoreContext | undefined {
+    if (!this.currentSchedule) return undefined;
+    return this._buildScoreCtx(this.currentSchedule.tasks, this.currentSchedule.participants);
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Stage 1: Data Setup
   // ═══════════════════════════════════════════════════════════════════════════

@@ -769,12 +769,13 @@ export interface RescuePlan {
   rank: number;
   /** Chain of swaps required to implement this plan */
   swaps: RescueSwap[];
-  /** Composite impact score (lower = less disruption) */
+  /** Composite impact score (lower = less disruption).
+   *  When full scoring is active this is the negated composite delta;
+   *  otherwise it is the legacy workload-delta formula. */
   impactScore: number;
-  /** Change in daily workload std-dev for the affected day */
-  dailyLoadDelta: number;
-  /** Change in weekly workload std-dev */
-  weeklyLoadDelta: number;
+  /** Composite score delta: candidateComposite - baselineComposite (positive = improvement).
+   *  Present only when full soft-constraint scoring is active. */
+  compositeDelta?: number;
   /** Constraint violations that would exist after applying this plan */
   violations: ConstraintViolation[];
 }

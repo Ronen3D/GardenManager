@@ -1649,6 +1649,29 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   5b. AVAILABILITY STRIP — MOBILE LAYOUT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  .avail-strip-inputs-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .avail-strip-range-sep {
+    display: none;
+  }
+  .avail-strip-margin-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .avail-strip-margin-fields {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    6. PHONE-PORTRAIT BREAKPOINT (≤480px)
    ═══════════════════════════════════════════════════════════════════════════ */
 

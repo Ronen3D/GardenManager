@@ -220,12 +220,26 @@ let _sidebarCollapsed = (() => {
 let _availabilityPopoverEl: HTMLElement | null = null;
 let _availabilityPopoverKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 let _availabilityInlineOpen = false;
-let _availabilityInlineTimeMs: number | null = null;
+
+// Range selection (replaces single-point _availabilityInlineTimeMs)
+let _availabilityRangeStartMs: number | null = null;
+let _availabilityRangeEndMs: number | null = null;
 
 /** Continuity feature: pasted or auto-populated JSON from previous schedule */
 let _continuityJson = '';
 let _availabilityInspectorDay: number | null = null;
-let _availabilityInspectorTime = '05:00';
+let _availabilityInspectorDayEnd: number | null = null;
+let _availabilityInspectorTimeStart = '05:00';
+let _availabilityInspectorTimeEnd = '06:00';
+
+// Margin toggle + values
+let _availabilityMarginEnabled = false;
+let _availabilityPreMarginHours = 2;
+let _availabilityPostMarginHours = 1;
+
+// Two-click cell range selection
+let _timeCellSelectionPhase: 'idle' | 'start-selected' = 'idle';
+let _timeCellSelectionStartMs: number | null = null;
 let _liveClockInterval: ReturnType<typeof setInterval> | null = null;
 
 // ─── View Router ─────────────────────────────────────────────────────────────
@@ -307,26 +321,57 @@ function clearManualSelection(): void {
 function renderAvailabilityInspectorInline(): string {
   const numDays = store.getScheduleDays();
   const baseDate = store.getScheduleDate();
-  const selectedDay =
+  const selectedDayStart =
     _availabilityInspectorDay && _availabilityInspectorDay >= 1 && _availabilityInspectorDay <= numDays
       ? _availabilityInspectorDay
       : currentDay;
-  _availabilityInspectorDay = selectedDay;
+  _availabilityInspectorDay = selectedDayStart;
+  const selectedDayEnd =
+    _availabilityInspectorDayEnd && _availabilityInspectorDayEnd >= 1 && _availabilityInspectorDayEnd <= numDays
+      ? _availabilityInspectorDayEnd
+      : selectedDayStart;
+  _availabilityInspectorDayEnd = selectedDayEnd;
 
-  const dayOptions: { value: string; label: string; selected: boolean }[] = [];
-  for (let d = 1; d <= numDays; d++) {
-    const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-    dayOptions.push({
-      value: String(d),
-      label: `יום ${d} · ${hebrewDayName(date)}`,
-      selected: d === selectedDay,
-    });
-  }
+  const makeDayOptions = (selectedDay: number) => {
+    const opts: { value: string; label: string; selected: boolean }[] = [];
+    for (let d = 1; d <= numDays; d++) {
+      const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
+      opts.push({
+        value: String(d),
+        label: `יום ${d} · ${hebrewDayName(date)}`,
+        selected: d === selectedDay,
+      });
+    }
+    return opts;
+  };
+
+  const timeTitle = store.getDayStartHour() > 0
+    ? `שעה לבדיקת זמינות (00:00–${String(store.getDayStartHour() - 1).padStart(2, '0')}:59 נספרות לסוף היום)`
+    : 'שעה לבדיקת זמינות';
+
+  const marginDisplay = _availabilityMarginEnabled ? '' : ' style="display:none"';
 
   return `
-    ${renderCustomSelect({ id: 'gm-availability-day', options: dayOptions, className: 'input-sm availability-day-select' })}
-    <input type="time" id="gm-availability-time" class="input-sm availability-time-input" value="${_availabilityInspectorTime}" step="60" title="${store.getDayStartHour() > 0 ? `שעה לבדיקת זמינות (00:00–${String(store.getDayStartHour() - 1).padStart(2, '0')}:59 נספרות לסוף היום)` : 'שעה לבדיקת זמינות'}" />
-    <button class="btn-sm btn-primary" id="btn-open-availability-inspector" title="בדיקת זמינות לפי זמן">הצג זמינות</button>
+    <div class="avail-strip-inputs-row">
+      <span class="avail-strip-range-label">מ:</span>
+      ${renderCustomSelect({ id: 'gm-availability-day-start', options: makeDayOptions(selectedDayStart), className: 'input-sm availability-day-select' })}
+      <input type="time" id="gm-availability-time-start" class="input-sm availability-time-input" value="${_availabilityInspectorTimeStart}" step="60" title="${timeTitle}" />
+      <span class="avail-strip-range-sep">—</span>
+      <span class="avail-strip-range-label">עד:</span>
+      ${renderCustomSelect({ id: 'gm-availability-day-end', options: makeDayOptions(selectedDayEnd), className: 'input-sm availability-day-select' })}
+      <input type="time" id="gm-availability-time-end" class="input-sm availability-time-input" value="${_availabilityInspectorTimeEnd}" step="60" title="${timeTitle}" />
+      <button class="btn-sm btn-primary" id="btn-open-availability-inspector" title="בדיקת זמינות לפי טווח">הצג זמינות</button>
+    </div>
+    <div class="avail-strip-margin-row">
+      <label class="avail-strip-margin-toggle">
+        <input type="checkbox" id="gm-availability-margin-toggle" ${_availabilityMarginEnabled ? 'checked' : ''} />
+        <span>פנויים במרווח</span>
+      </label>
+      <div class="avail-strip-margin-fields"${marginDisplay}>
+        <label>לפני: <input type="number" id="gm-availability-pre-margin" class="input-sm avail-margin-input" value="${_availabilityPreMarginHours}" min="0" max="24" step="0.5" /> שעות</label>
+        <label>אחרי: <input type="number" id="gm-availability-post-margin" class="input-sm avail-margin-input" value="${_availabilityPostMarginHours}" min="0" max="24" step="0.5" /> שעות</label>
+      </div>
+    </div>
   `;
 }
 
@@ -354,8 +399,10 @@ function renderAvailabilityStrip(): string {
   html += `<div class="avail-strip-body">`;
   html += `<div class="avail-strip-inputs">${renderAvailabilityInspectorInline()}</div>`;
 
-  if (_availabilityInlineTimeMs !== null) {
-    html += `<div class="avail-strip-results">${buildAvailabilityPopoverContent(_availabilityInlineTimeMs)}</div>`;
+  if (_availabilityRangeStartMs !== null && _availabilityRangeEndMs !== null) {
+    const preMs = _availabilityMarginEnabled ? _availabilityPreMarginHours * 3600000 : 0;
+    const postMs = _availabilityMarginEnabled ? _availabilityPostMarginHours * 3600000 : 0;
+    html += `<div class="avail-strip-results">${buildAvailabilityPopoverContent(_availabilityRangeStartMs, _availabilityRangeEndMs, preMs, postMs)}</div>`;
   }
 
   html += `</div></div>`;
@@ -2604,7 +2651,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.2</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3202,14 +3249,16 @@ function wireScheduleEvents(container: HTMLElement): void {
       }
       if (action?.dataset.action === 'close-avail-strip') {
         _availabilityInlineOpen = false;
-        _availabilityInlineTimeMs = null;
+        _availabilityRangeStartMs = null;
+        _availabilityRangeEndMs = null;
         renderAll();
         return;
       }
       // Close button inside results
       const closeTarget = (e.target as HTMLElement).closest('[data-action="close-availability-popover"]');
       if (closeTarget) {
-        _availabilityInlineTimeMs = null;
+        _availabilityRangeStartMs = null;
+        _availabilityRangeEndMs = null;
         renderAll();
         return;
       }
@@ -3356,59 +3405,134 @@ function wireScheduleEvents(container: HTMLElement): void {
     navigateToTaskPanel(chip.dataset.sourceName);
   });
 
+  // ── Time-cell two-click range selection ──
+  const handleTimeCellSelect = (target: HTMLElement) => {
+    const timeMs = Number(target.dataset.timeMs || target.closest('tr[data-time]')?.getAttribute('data-time'));
+    if (!Number.isFinite(timeMs)) return;
+
+    if (_timeCellSelectionPhase === 'idle') {
+      _timeCellSelectionPhase = 'start-selected';
+      _timeCellSelectionStartMs = timeMs;
+      container.querySelectorAll('.time-cell-range-start').forEach((el) => el.classList.remove('time-cell-range-start'));
+      target.classList.add('time-cell-range-start');
+      showToast('לחץ על תא נוסף לבחירת סוף הטווח', { type: 'info' });
+    } else {
+      // Second click — finalize range
+      if (timeMs === _timeCellSelectionStartMs) {
+        // Same cell → cancel
+        _timeCellSelectionPhase = 'idle';
+        _timeCellSelectionStartMs = null;
+        container.querySelectorAll('.time-cell-range-start').forEach((el) => el.classList.remove('time-cell-range-start'));
+        return;
+      }
+      let startMs = _timeCellSelectionStartMs!;
+      let endMs = timeMs;
+      if (startMs > endMs) { const tmp = startMs; startMs = endMs; endMs = tmp; }
+
+      _availabilityRangeStartMs = startMs;
+      _availabilityRangeEndMs = endMs;
+      _availabilityInlineOpen = true;
+      _timeCellSelectionPhase = 'idle';
+      _timeCellSelectionStartMs = null;
+      container.querySelectorAll('.time-cell-range-start').forEach((el) => el.classList.remove('time-cell-range-start'));
+      renderAll();
+    }
+  };
+
   container.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement).closest('.time-cell-inspectable[data-time-ms]') as HTMLElement | null;
     if (!target) return;
-    const timeMs = Number(target.dataset.timeMs || target.closest('tr[data-time]')?.getAttribute('data-time'));
-    if (!Number.isFinite(timeMs)) return;
-    _availabilityInlineOpen = true;
-    _availabilityInlineTimeMs = timeMs;
-    renderAll();
+    handleTimeCellSelect(target);
   });
 
   container.addEventListener('keydown', (e) => {
     const target = (e.target as HTMLElement).closest('.time-cell-inspectable[data-time-ms]') as HTMLElement | null;
     if (!target) return;
+    if (e.key === 'Escape' && _timeCellSelectionPhase === 'start-selected') {
+      _timeCellSelectionPhase = 'idle';
+      _timeCellSelectionStartMs = null;
+      container.querySelectorAll('.time-cell-range-start').forEach((el) => el.classList.remove('time-cell-range-start'));
+      return;
+    }
     if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
-    const timeMs = Number(target.dataset.timeMs || target.closest('tr[data-time]')?.getAttribute('data-time'));
-    if (!Number.isFinite(timeMs)) return;
-    _availabilityInlineOpen = true;
-    _availabilityInlineTimeMs = timeMs;
-    renderAll();
+    handleTimeCellSelect(target);
   });
 
-  wireCustomSelect(container, 'gm-availability-day', (value) => {
+  wireCustomSelect(container, 'gm-availability-day-start', (value) => {
     const day = parseInt(value, 10);
     if (!Number.isNaN(day)) _availabilityInspectorDay = day;
   });
+  wireCustomSelect(container, 'gm-availability-day-end', (value) => {
+    const day = parseInt(value, 10);
+    if (!Number.isNaN(day)) _availabilityInspectorDayEnd = day;
+  });
 
-  const availabilityTimeInput = container.querySelector('#gm-availability-time') as HTMLInputElement | null;
-  if (availabilityTimeInput) {
-    availabilityTimeInput.addEventListener('input', () => {
-      _availabilityInspectorTime = availabilityTimeInput.value || '05:00';
-    });
-    availabilityTimeInput.addEventListener('keydown', (e) => {
+  const availTimeStart = container.querySelector('#gm-availability-time-start') as HTMLInputElement | null;
+  const availTimeEnd = container.querySelector('#gm-availability-time-end') as HTMLInputElement | null;
+  const wireTimeInput = (input: HTMLInputElement | null, setter: (v: string) => void, fallback: string) => {
+    if (!input) return;
+    input.addEventListener('input', () => { setter(input.value || fallback); });
+    input.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
-      const triggerBtn = container.querySelector('#btn-open-availability-inspector') as HTMLElement | null;
-      triggerBtn?.click();
+      container.querySelector<HTMLElement>('#btn-open-availability-inspector')?.click();
+    });
+  };
+  wireTimeInput(availTimeStart, (v) => { _availabilityInspectorTimeStart = v; }, '05:00');
+  wireTimeInput(availTimeEnd, (v) => { _availabilityInspectorTimeEnd = v; }, '06:00');
+
+  // ── Margin toggle + fields ──
+  const marginToggle = container.querySelector('#gm-availability-margin-toggle') as HTMLInputElement | null;
+  if (marginToggle) {
+    marginToggle.addEventListener('change', () => {
+      _availabilityMarginEnabled = marginToggle.checked;
+      const fields = container.querySelector('.avail-strip-margin-fields') as HTMLElement | null;
+      if (fields) fields.style.display = _availabilityMarginEnabled ? '' : 'none';
+    });
+  }
+  const preMarginInput = container.querySelector('#gm-availability-pre-margin') as HTMLInputElement | null;
+  if (preMarginInput) {
+    preMarginInput.addEventListener('input', () => {
+      const v = parseFloat(preMarginInput.value);
+      if (Number.isFinite(v) && v >= 0) _availabilityPreMarginHours = v;
+    });
+  }
+  const postMarginInput = container.querySelector('#gm-availability-post-margin') as HTMLInputElement | null;
+  if (postMarginInput) {
+    postMarginInput.addEventListener('input', () => {
+      const v = parseFloat(postMarginInput.value);
+      if (Number.isFinite(v) && v >= 0) _availabilityPostMarginHours = v;
     });
   }
 
   const availabilityBtn = container.querySelector('#btn-open-availability-inspector') as HTMLElement | null;
   if (availabilityBtn) {
     availabilityBtn.addEventListener('click', () => {
-      const selectedDay = _availabilityInspectorDay ?? currentDay;
-      const timeValue = availabilityTimeInput?.value || _availabilityInspectorTime;
-      const timestamp = resolveLogicalDayTimestamp(selectedDay, timeValue);
-      if (!timestamp) {
-        showToast('יש להזין שעה תקינה בפורמט HH:MM', { type: 'error' });
-        availabilityTimeInput?.focus();
+      const selectedDayStart = _availabilityInspectorDay ?? currentDay;
+      const selectedDayEnd = _availabilityInspectorDayEnd ?? selectedDayStart;
+      const startValue = availTimeStart?.value || _availabilityInspectorTimeStart;
+      const endValue = availTimeEnd?.value || _availabilityInspectorTimeEnd;
+      const tsStart = resolveLogicalDayTimestamp(selectedDayStart, startValue);
+      const tsEnd = resolveLogicalDayTimestamp(selectedDayEnd, endValue);
+      if (!tsStart) {
+        showToast('יש להזין שעת התחלה תקינה בפורמט HH:MM', { type: 'error' });
+        availTimeStart?.focus();
         return;
       }
-      _availabilityInspectorTime = timeValue;
-      _availabilityInlineTimeMs = timestamp.getTime();
+      if (!tsEnd) {
+        showToast('יש להזין שעת סיום תקינה בפורמט HH:MM', { type: 'error' });
+        availTimeEnd?.focus();
+        return;
+      }
+      if (tsEnd.getTime() <= tsStart.getTime()) {
+        showToast('שעת סיום חייבת להיות אחרי שעת התחלה', { type: 'error' });
+        return;
+      }
+      _availabilityInspectorTimeStart = startValue;
+      _availabilityInspectorTimeEnd = endValue;
+      _availabilityRangeStartMs = tsStart.getTime();
+      _availabilityRangeEndMs = tsEnd.getTime();
       renderAll();
     });
   }
@@ -3823,26 +3947,40 @@ function hideAvailabilityPopover(): void {
   }
 }
 
-function getAvailableParticipantsAtTime(schedule: Schedule, timeMs: number): Participant[] {
+function getAvailableParticipantsInRange(
+  schedule: Schedule,
+  rangeStartMs: number,
+  rangeEndMs: number,
+  preMarginMs = 0,
+  postMarginMs = 0,
+): Participant[] {
   const taskMap = new Map(schedule.tasks.map((task) => [task.id, task]));
-  const occupied = new Set<string>();
+  const participantWindows = new Map<string, { startMs: number; endMs: number }[]>();
   for (const assignment of schedule.assignments) {
     const task = taskMap.get(assignment.taskId);
     if (!task) continue;
-    const startMs = task.timeBlock.start.getTime();
-    const endMs = task.timeBlock.end.getTime();
-    if (startMs <= timeMs && timeMs < endMs) {
-      occupied.add(assignment.participantId);
+    if (!participantWindows.has(assignment.participantId)) {
+      participantWindows.set(assignment.participantId, []);
     }
+    participantWindows.get(assignment.participantId)!.push({
+      startMs: task.timeBlock.start.getTime(),
+      endMs: task.timeBlock.end.getTime(),
+    });
   }
-  return schedule.participants.filter((participant) => !occupied.has(participant.id));
+  const effectiveStart = rangeStartMs - preMarginMs;
+  const effectiveEnd = rangeEndMs + postMarginMs;
+  return schedule.participants.filter((participant) => {
+    const windows = participantWindows.get(participant.id);
+    if (!windows) return true;
+    return !windows.some((w) => w.startMs < effectiveEnd && w.endMs > effectiveStart);
+  });
 }
 
-function buildAvailabilityPopoverContent(timeMs: number): string {
+function buildAvailabilityPopoverContent(startMs: number, endMs: number, preMarginMs = 0, postMarginMs = 0): string {
   if (!currentSchedule) return '';
-  const selectedTime = new Date(timeMs);
+  const isRange = startMs !== endMs;
   const definitions = store.getPakalDefinitions();
-  const available = getAvailableParticipantsAtTime(currentSchedule, timeMs);
+  const available = getAvailableParticipantsInRange(currentSchedule, startMs, endMs, preMarginMs, postMarginMs);
   const pakalimByParticipantId = new Map(
     available.map((participant) => [participant.id, getEffectivePakalDefinitions(participant, definitions)]),
   );
@@ -3925,7 +4063,8 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
     <div class="availability-popover-header">
       <div>
         <h3>פנויים לפי פק"ל</h3>
-        <div class="availability-popover-subtitle">נכון ל${fmtDate(selectedTime)}</div>
+        <div class="availability-popover-subtitle">${isRange ? `${fmtDate(new Date(startMs))} — ${fmt(new Date(endMs))}` : `נכון ל${fmtDate(new Date(startMs))}`}</div>
+        ${preMarginMs > 0 || postMarginMs > 0 ? `<div class="availability-popover-margin-note">מרווח: ${preMarginMs / 3600000} שעות לפני, ${postMarginMs / 3600000} שעות אחרי</div>` : ''}
       </div>
       <button class="btn-sm btn-outline availability-close" data-action="close-availability-popover">סגור</button>
     </div>
@@ -3935,7 +4074,7 @@ function buildAvailabilityPopoverContent(timeMs: number): string {
           <span class="availability-total-count">${available.length}</span>
           <div class="availability-total-copy">
             <strong>${available.length === 0 ? 'אין עתודה פנויה' : 'עתודה פנויה'}</strong>
-            <span>מספר המשתתפים שלא נמצאים כרגע במשימה.</span>
+            <span>${isRange ? 'מספר המשתתפים שפנויים לאורך כל הטווח.' : 'מספר המשתתפים שלא נמצאים כרגע במשימה.'}</span>
           </div>
         </div>
         <div class="availability-quick-stats">

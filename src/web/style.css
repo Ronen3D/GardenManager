@@ -4286,6 +4286,11 @@ tr.row-selected:hover {
   box-shadow: inset 0 0 0 1px rgba(0, 188, 212, 0.35);
   outline: none;
 }
+.time-cell-range-start {
+  background: rgba(0, 188, 212, 0.25) !important;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
 .pakal-badge {
   margin-inline-end: 4px;
@@ -4387,6 +4392,12 @@ tr.row-selected:hover {
   margin-top: 3px;
   color: var(--text-muted);
   font-size: 0.76rem;
+}
+.availability-popover-margin-note {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-style: italic;
 }
 .availability-popover-body {
   display: flex;
@@ -4653,9 +4664,56 @@ tr.row-selected:hover {
 }
 .avail-strip-inputs {
   display: flex;
-  flex-wrap: nowrap;
+  flex-direction: column;
+  gap: 8px;
+}
+.avail-strip-inputs-row {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+.avail-strip-range-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.avail-strip-range-sep {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin: 0 2px;
+}
+.avail-strip-margin-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+.avail-strip-margin-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+.avail-strip-margin-toggle input[type="checkbox"] {
+  margin: 0;
+}
+.avail-strip-margin-fields {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.avail-strip-margin-fields label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.avail-margin-input {
+  width: 60px;
+  text-align: center;
 }
 
 /* Harmonize the three controls inside the availability strip so they share
@@ -4664,9 +4722,10 @@ tr.row-selected:hover {
    !important defeats .btn-primary's padding/font-size and the mobile
    touch-target min-height rules in style-mobile.css, which would otherwise
    make the button/select visibly taller than the time input. */
-.avail-strip-inputs .input-sm,
-.avail-strip-inputs .gm-select-trigger,
-.avail-strip-inputs .btn-sm {
+.avail-strip-inputs-row .input-sm,
+.avail-strip-inputs-row .gm-select-trigger,
+.avail-strip-inputs-row .btn-sm,
+.avail-strip-margin-row .input-sm {
   height: 32px !important;
   min-height: 32px !important;
   box-sizing: border-box;
@@ -4675,15 +4734,15 @@ tr.row-selected:hover {
   padding: 0 10px !important;
   line-height: 1;
 }
-.avail-strip-inputs .gm-select {
+.avail-strip-inputs-row .gm-select {
   height: 32px;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
 }
-.avail-strip-inputs .availability-time-input {
+.avail-strip-inputs-row .availability-time-input {
   flex: 0 0 auto;
 }
-.avail-strip-inputs .btn-sm {
+.avail-strip-inputs-row .btn-sm {
   flex: 0 0 auto;
   white-space: nowrap;
 }
@@ -4693,13 +4752,14 @@ tr.row-selected:hover {
    alignment. Bring all three to 44px in unison so touch targets stay
    accessible AND the row reads as one coherent visual system. */
 @media (max-width: 767px) {
-  .avail-strip-inputs .input-sm,
-  .avail-strip-inputs .gm-select-trigger,
-  .avail-strip-inputs .btn-sm {
+  .avail-strip-inputs-row .input-sm,
+  .avail-strip-inputs-row .gm-select-trigger,
+  .avail-strip-inputs-row .btn-sm,
+  .avail-strip-margin-row .input-sm {
     height: 44px !important;
     min-height: 44px !important;
   }
-  .avail-strip-inputs .gm-select {
+  .avail-strip-inputs-row .gm-select {
     height: 44px;
   }
 }
@@ -4721,9 +4781,15 @@ tr.row-selected:hover {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 8px;
 }
-/* Hide the popover-style header inside results — strip header replaces it */
-.avail-strip-results .availability-popover-header {
+/* Inside strip results, hide popover close button and h3 — strip header replaces them.
+   Keep subtitle and margin note visible for range/time context. */
+.avail-strip-results .availability-popover-header h3,
+.avail-strip-results .availability-popover-header .availability-close {
   display: none;
+}
+.avail-strip-results .availability-popover-header {
+  padding: 0;
+  border: none;
 }
 
 @media (max-width: 768px) {
@@ -4734,6 +4800,12 @@ tr.row-selected:hover {
     grid-template-columns: 1fr;
   }
   .avail-strip-inputs {
+    gap: 6px;
+  }
+  .avail-strip-inputs-row {
+    gap: 6px;
+  }
+  .avail-strip-margin-row {
     gap: 6px;
   }
 }
