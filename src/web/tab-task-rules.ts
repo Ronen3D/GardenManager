@@ -672,20 +672,19 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
 
   html += `<div class="lw-add-form add-slot-form">
     <div class="lw-add-caption">הוספת חלון חדש</div>
-    <div class="lw-add-grid">
-      <div class="lw-add-field">
-        <label class="lw-add-label">התחלה</label>
-        <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-start" value="05:00" />
+    <div class="lw-row lw-row-add" role="group" aria-label="הוספת חלון חדש">
+      <div class="lw-time">
+        <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-start" value="05:00" aria-label="שעת התחלה" />
+        <span class="lw-sep" aria-hidden="true">–</span>
+        <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-end" value="06:30" aria-label="שעת סיום" />
       </div>
-      <div class="lw-add-field">
-        <label class="lw-add-label">סיום</label>
-        <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-end" value="06:30" />
+      <div class="lw-weight">
+        <input class="input-sm lw-weight-input" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" aria-label="משקל (0-1)" />
+        <button class="btn-xs btn-outline lf-open-btn" type="button" data-action="add-load-window-and-compute" data-tid="${tpl.id}" title="הוסף וחשב לפי השוואה" aria-label="הוסף וחשב לפי השוואה">🧮</button>
       </div>
-      <div class="lw-add-field">
-        <label class="lw-add-label">משקל (0-1)</label>
-        <input class="input-sm lw-weight-input" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" />
+      <div class="lw-actions">
+        <button class="lw-btn lw-save" data-action="add-load-window" data-tid="${tpl.id}" title="הוסף חלון" aria-label="הוסף חלון">+</button>
       </div>
-      <button class="btn-sm btn-primary lw-add-btn" data-action="add-load-window" data-tid="${tpl.id}">+ הוסף חלון</button>
     </div>
   </div>
   </div>`;
@@ -1300,7 +1299,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         }, 0);
         break;
       }
-      case 'add-load-window': {
+      case 'add-load-window':
+      case 'add-load-window-and-compute': {
         const tid = actionButton?.dataset.tid!;
         const tpl = store.getTaskTemplate(tid);
         if (!tpl) break;
@@ -1340,6 +1340,9 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           loadWindows: [...(tpl.loadWindows || []), newWindow],
         });
         rerender();
+        if (action === 'add-load-window-and-compute') {
+          openLoadFormulaModal({ kind: 'window', templateId: tid, windowId: newWindow.id });
+        }
         break;
       }
       case 'update-load-window': {

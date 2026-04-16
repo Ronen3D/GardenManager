@@ -2651,7 +2651,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.4</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3956,9 +3956,10 @@ function getAvailableParticipantsInRange(
 ): Participant[] {
   const taskMap = new Map(schedule.tasks.map((task) => [task.id, task]));
   const participantWindows = new Map<string, { startMs: number; endMs: number }[]>();
+  let orphanAssignments = 0;
   for (const assignment of schedule.assignments) {
     const task = taskMap.get(assignment.taskId);
-    if (!task) continue;
+    if (!task) { orphanAssignments++; continue; }
     if (!participantWindows.has(assignment.participantId)) {
       participantWindows.set(assignment.participantId, []);
     }
@@ -3969,11 +3970,31 @@ function getAvailableParticipantsInRange(
   }
   const effectiveStart = rangeStartMs - preMarginMs;
   const effectiveEnd = rangeEndMs + postMarginMs;
-  return schedule.participants.filter((participant) => {
+  const result = schedule.participants.filter((participant) => {
     const windows = participantWindows.get(participant.id);
     if (!windows) return true;
     return !windows.some((w) => w.startMs < effectiveEnd && w.endMs > effectiveStart);
   });
+  // Warn if suspiciously all participants are available despite assignments existing
+  if (result.length === schedule.participants.length && schedule.assignments.length > 0) {
+    console.warn('[עתודה] כל המשתתפים מסומנים כפנויים למרות שיש שיבוצים. מידע לאבחון:', {
+      tasks: schedule.tasks.length,
+      assignments: schedule.assignments.length,
+      participants: schedule.participants.length,
+      orphanAssignments,
+      participantWindowsCount: participantWindows.size,
+      rangeStart: new Date(rangeStartMs).toString(),
+      rangeEnd: new Date(rangeEndMs).toString(),
+      sampleTask: schedule.tasks[0] ? {
+        start: schedule.tasks[0].timeBlock.start.toString(),
+        end: schedule.tasks[0].timeBlock.end.toString(),
+      } : null,
+      sampleAssignment: schedule.assignments[0],
+      sampleParticipantId: schedule.participants[0]?.id,
+      participantIdInWindows: participantWindows.has(schedule.participants[0]?.id ?? ''),
+    });
+  }
+  return result;
 }
 
 function buildAvailabilityPopoverContent(startMs: number, endMs: number, preMarginMs = 0, postMarginMs = 0): string {

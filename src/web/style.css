@@ -1289,7 +1289,6 @@ select.input-sm {
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius);
-  overflow: hidden;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   transition:
     background var(--transition-slow),
@@ -1513,7 +1512,7 @@ select.input-sm {
 .lw-weight {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 .lw-weight-input {
   width: 3.5em;
@@ -1558,7 +1557,7 @@ select.input-sm {
 }
 
 .lw-add-form {
-  padding: 10px 12px 12px;
+  padding: 8px 10px 10px;
   background: var(--bg);
   border: 1px dashed var(--border);
   border-radius: 6px;
@@ -1568,26 +1567,18 @@ select.input-sm {
   font-weight: 600;
   color: var(--text-muted);
   letter-spacing: 0.02em;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
-.lw-add-grid {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 10px 14px;
+/* Add-row reuses the .lw-row grid so columns line up with the list above.
+   The wrapper has its own border, so strip the row's border/background. */
+.lw-row-add {
+  padding-inline: 0;
+  padding-block: 2px;
+  border-bottom: none;
+  background: transparent;
 }
-.lw-add-field {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.lw-add-label {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  letter-spacing: 0.02em;
-}
-.lw-add-btn {
-  margin-inline-start: auto;
+.lw-row-add:hover {
+  background: transparent;
 }
 
 /* ─── Preflight Panel ────────────────────────────────── */
@@ -8768,7 +8759,6 @@ tr.now-row-animate > td.time-cell {
 .lf-controls {
   display: inline-flex;
   gap: 4px;
-  margin-inline-start: 4px;
   vertical-align: middle;
 }
 .lf-open-btn,
@@ -8797,7 +8787,8 @@ tr.now-row-animate > td.time-cell {
   border-radius: 12px;
   width: min(560px, 94vw);
   max-height: 90vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
   color: var(--text, inherit);
 }
@@ -8807,6 +8798,7 @@ tr.now-row-animate > td.time-cell {
   justify-content: space-between;
   padding: 14px 18px;
   border-bottom: 1px solid var(--border, #e0e0e0);
+  flex: 0 0 auto;
 }
 .lf-header h3 {
   margin: 0;
@@ -8829,6 +8821,9 @@ tr.now-row-animate > td.time-cell {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 .lf-target-line {
   margin: 0;
@@ -8923,97 +8918,6 @@ tr.now-row-animate > td.time-cell {
   font-variant-numeric: tabular-nums;
 }
 
-/* The load bar itself. */
-.lf-bar-wrap {
-  position: relative;
-  padding: 0 4px;
-}
-.lf-bar-track {
-  position: relative;
-  height: 36px;
-  background: var(--bg-subtle, rgba(0, 0, 0, 0.05));
-  border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
-  border-radius: 8px;
-  overflow: hidden;
-}
-.lf-bar-spill {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  background: repeating-linear-gradient(
-    45deg,
-    transparent 0 6px,
-    rgba(231, 76, 60, 0.18) 6px 12px
-  );
-  pointer-events: none;
-  transition: background 0.2s ease;
-  z-index: 4;
-}
-.lf-bar-track[data-lf-clamped='1'] .lf-bar-spill {
-  background: repeating-linear-gradient(
-    45deg,
-    rgba(231, 76, 60, 0.55) 0 6px,
-    rgba(231, 76, 60, 0.15) 6px 12px
-  );
-}
-.lf-bar-cap {
-  position: absolute;
-  top: -4px;
-  bottom: -4px;
-  width: 2px;
-  background: var(--text-muted, #888);
-  border-radius: 1px;
-  opacity: 0.8;
-  pointer-events: none;
-  z-index: 5;
-}
-.lf-bar-track[data-lf-clamped='1'] .lf-bar-cap {
-  background: var(--danger, #e74c3c);
-  opacity: 1;
-  width: 3px;
-}
-.lf-bar-segments {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: stretch;
-  z-index: 2;
-}
-.lf-bar-seg {
-  background: var(--seg-color, var(--accent, #3a7cc5));
-  border: none;
-  border-inline-end: 1px solid rgba(0, 0, 0, 0.25);
-  padding: 0;
-  cursor: pointer;
-  transition:
-    filter 0.15s ease,
-    box-shadow 0.15s ease;
-  min-width: 0;
-}
-.lf-bar-seg:last-child {
-  border-inline-end: none;
-}
-.lf-bar-seg:hover {
-  filter: brightness(1.12);
-}
-.lf-bar-seg-active {
-  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6);
-  filter: brightness(1.15);
-}
-.lf-bar-ticks {
-  position: relative;
-  height: 16px;
-  margin-top: 4px;
-  font-size: 0.7rem;
-  color: var(--text-muted, #888);
-  font-variant-numeric: tabular-nums;
-}
-.lf-bar-ticks span {
-  position: absolute;
-  transform: translateX(-50%);
-}
-
 .lf-bar-summary {
   display: flex;
   flex-direction: column;
@@ -9032,6 +8936,15 @@ tr.now-row-animate > td.time-cell {
   font-size: 1.6rem;
   font-variant-numeric: tabular-nums;
   color: var(--text, inherit);
+}
+.lf-bar-number-raw {
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, #888);
+  opacity: 0.65;
+}
+.lf-bar-number-raw[hidden] {
+  display: none;
 }
 .lf-bar-breakdown {
   font-family: monospace;
@@ -9401,6 +9314,8 @@ tr.now-row-animate > td.time-cell {
   gap: 10px;
   padding: 12px 18px;
   border-top: 1px solid var(--border, #e0e0e0);
+  flex: 0 0 auto;
+  background: var(--bg-card, #fff);
 }
 .lf-footer-right {
   display: flex;

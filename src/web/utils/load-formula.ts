@@ -129,7 +129,7 @@ function validateComponent(
   editingTemplateId: string,
   templates: Map<string, TaskTemplate>,
 ): ValidateResult {
-  if (!c.refTemplateId) return { ok: false, reason: 'בחר משימת ייחוס בכל רכיב.' };
+  if (!c.refTemplateId) return { ok: false, reason: 'השמירה מושבתת — בחר משימה להשוואה.' };
   if (c.refTemplateId === editingTemplateId) return { ok: false, reason: 'לא ניתן להפנות משימה לעצמה.' };
   if (!(c.hours > 0)) return { ok: false, reason: 'מספר השעות חייב להיות חיובי.' };
   const tpl = templates.get(c.refTemplateId);

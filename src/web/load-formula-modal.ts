@@ -63,8 +63,6 @@ function listFor(side: Side): LoadFormulaComponent[] {
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-/** Bar extends 25% past 1.0 to show overflow; segments wider than this are truncated. */
-const BAR_SCALE = 1.25;
 /** Fallback colors when TaskTemplate.color is not set. */
 const FALLBACK_COLORS = ['#4A90D9', '#E8985A', '#6AB97D', '#C57CBD', '#E5C15C', '#7F9BCE'];
 
@@ -209,7 +207,6 @@ function render(): void {
   const computed = computeFormulaValue(_components, rhsSnapshot, targetHours, _lhsExtras, lhsSnapshot);
   const clampedHigh = perHourRaw > 1 + 1e-9;
   const clampedLow = perHourRaw < -1e-9;
-  const clamped = clampedHigh || clampedLow;
 
   const rhsBreakdown = buildBreakdownText(_components, rhsSnapshot);
   const lhsBreakdown = buildBreakdownText(_lhsExtras, lhsSnapshot);
@@ -219,8 +216,6 @@ function render(): void {
 
   const rhsStackHtml = _components.map((c, idx) => renderStackRow('rhs', c, idx, map, templatesSorted)).join('');
   const lhsStackHtml = _lhsExtras.map((c, idx) => renderStackRow('lhs', c, idx, map, templatesSorted)).join('');
-  const segmentsHtml = renderSegments(rhsSnapshot, targetHours, lhsRaw);
-  const capPct = (1 / BAR_SCALE) * 100;
 
   const html = `
     <div id="lf-modal-backdrop" class="lf-backdrop">
@@ -248,25 +243,11 @@ function render(): void {
 
           ${baseContextWeight !== null ? renderContextBar(baseContextWeight, tpl) : ''}
 
-          <div class="lf-bar-wrap" dir="ltr">
-            <div class="lf-bar-track" data-lf-clamped="${clamped ? '1' : '0'}">
-              <div class="lf-bar-spill" style="left:${capPct.toFixed(2)}%"></div>
-              <div class="lf-bar-segments">${segmentsHtml}</div>
-              <div class="lf-bar-cap" style="left:${capPct.toFixed(2)}%" aria-label="מקסימום 1.0"></div>
-            </div>
-            <div class="lf-bar-ticks">
-              <span style="left:0%">0</span>
-              <span style="left:${(0.25 / BAR_SCALE) * 100}%">0.25</span>
-              <span style="left:${(0.5 / BAR_SCALE) * 100}%">0.5</span>
-              <span style="left:${(0.75 / BAR_SCALE) * 100}%">0.75</span>
-              <span style="left:${capPct.toFixed(2)}%">1.0</span>
-            </div>
-          </div>
-
           <div class="lf-bar-summary">
             <div class="lf-bar-number">
               <span class="lf-bar-number-label">עומס מחושב לשעה</span>
               <strong class="lf-bar-number-value">${computed.toFixed(2)}</strong>
+              <span class="lf-bar-number-raw" title="ערך לפני חיתוך"${clampedHigh || clampedLow ? '' : ' hidden'}>(${perHourRaw.toFixed(2)})</span>
               ${
                 rhsBreakdown || lhsBreakdown
                   ? `<button type="button" class="lf-bar-breakdown-toggle" data-lf-action="toggle-breakdown" aria-expanded="${_showBreakdown}">${_showBreakdown ? 'הסתר חישוב ▴' : 'הצג חישוב ▾'}</button>`
@@ -298,7 +279,7 @@ function render(): void {
 }
 
 function renderContextBar(baseWeight: number, tpl: TaskTemplate): string {
-  const widthPct = (baseWeight / BAR_SCALE) * 100;
+  const widthPct = Math.max(0, Math.min(1, baseWeight)) * 100;
   const color = colorForTemplate(tpl, 0);
   return `
     <div class="lf-context-bar" title="בסיס ${escAttr(tpl.name)}: ${baseWeight.toFixed(2)}">
@@ -308,41 +289,6 @@ function renderContextBar(baseWeight: number, tpl: TaskTemplate): string {
       </div>
       <span class="lf-context-value">${baseWeight.toFixed(2)}</span>
     </div>`;
-}
-
-function renderSegments(snapshot: ReturnType<typeof buildSnapshot>, targetHours: number, lhsRaw: number): string {
-  const divisor = normalizeTargetHours(targetHours);
-  // Each RHS segment contributes its raw value; LHS extras subtract a flat amount from the total.
-  // We reflect LHS by shrinking the *visible* RHS segments pro-rata so the bar fill reflects (rhs−lhs)/X.
-  // If LHS ≥ RHS: all segments collapse to 0 width.
-  const rhsRaw = _components.reduce((sum, c, i) => {
-    const snap = snapshot[i];
-    return sum + (snap && !snap.missing ? c.hours * snap.rate.value : 0);
-  }, 0);
-  const scale = rhsRaw > 0 ? Math.max(0, (rhsRaw - lhsRaw) / rhsRaw) : 0;
-  return _components
-    .map((c, i) => {
-      const snap = snapshot[i];
-      if (!snap) return '';
-      const rawContribution = snap.missing ? 0 : c.hours * snap.rate.value;
-      const perHourContribution = (rawContribution * scale) / divisor;
-      if (perHourContribution <= 0) return '';
-      const widthPct = (perHourContribution / BAR_SCALE) * 100;
-      const refTpl = store.getTaskTemplate(c.refTemplateId);
-      const color = colorForTemplate(refTpl, i);
-      const rateLabel = refTpl ? rateLabelFor(c, refTpl) : '';
-      const perHourLabel =
-        divisor === 1 && lhsRaw === 0
-          ? ''
-          : ` (תרומה נטו ${perHourContribution.toFixed(2)} לשעה)`;
-      const rateParen = rateLabel ? `${rateLabel} ${snap.rate.value.toFixed(2)}` : `${snap.rate.value.toFixed(2)}`;
-      const label = refTpl
-        ? `${c.hours} × ${snap.templateName} (${rateParen}) = ${rawContribution.toFixed(2)}${perHourLabel}`
-        : `${c.hours} × ? = ${rawContribution.toFixed(2)}`;
-      const isActive = _activeRow?.side === 'rhs' && _activeRow.idx === i ? ' lf-bar-seg-active' : '';
-      return `<button type="button" class="lf-bar-seg${isActive}" style="width:${widthPct.toFixed(2)}%;--seg-color:${color}" title="${escAttr(label)}" data-lf-action="focus-row" data-lf-idx="${i}" data-lf-side="rhs" aria-label="${escAttr(label)}"></button>`;
-    })
-    .join('');
 }
 
 function renderBreakdownLine(
@@ -397,7 +343,7 @@ function renderStackRow(
         <span class="lf-ref-chip-swatch" style="background:${color}"></span>
         <span class="lf-ref-chip-name">${escAttr(refTpl.name)}</span>
         <span class="lf-ref-chip-rate">${rateDisplay}</span>`
-    : `<span class="lf-ref-chip-empty">בחר משימת ייחוס…</span>`;
+    : `<span class="lf-ref-chip-empty">בחר משימה להשוואה…</span>`;
 
   const rowClass = side === 'lhs' ? 'lf-stack-row lf-stack-row-lhs' : 'lf-stack-row';
 
@@ -660,17 +606,22 @@ function updatePreviewOnly(): void {
   const computed = computeFormulaValue(_components, rhsSnapshot, targetHours, _lhsExtras, lhsSnapshot);
   const clampedHigh = perHourRaw > 1 + 1e-9;
   const clampedLow = perHourRaw < -1e-9;
-  const clamped = clampedHigh || clampedLow;
 
   const valueEl = backdrop.querySelector('.lf-bar-number-value');
   if (valueEl) valueEl.textContent = computed.toFixed(2);
 
+  const rawEl = backdrop.querySelector<HTMLElement>('.lf-bar-number-raw');
+  if (rawEl) {
+    if (clampedHigh || clampedLow) {
+      rawEl.textContent = `(${perHourRaw.toFixed(2)})`;
+      rawEl.removeAttribute('hidden');
+    } else {
+      rawEl.setAttribute('hidden', '');
+    }
+  }
+
   const saveBtn = backdrop.querySelector<HTMLButtonElement>('[data-lf-action="save"]');
   if (saveBtn) saveBtn.disabled = !validation.ok;
-
-  // Update segment widths + the segments' title/aria labels.
-  const segmentsContainer = backdrop.querySelector('.lf-bar-segments');
-  if (segmentsContainer) segmentsContainer.innerHTML = renderSegments(rhsSnapshot, targetHours, lhsRaw);
 
   // Update each stack row's "= contribution" total (both sides).
   const updateRowContribs = (side: Side, list: LoadFormulaComponent[], snap: ReturnType<typeof buildSnapshot>) => {
@@ -686,9 +637,6 @@ function updatePreviewOnly(): void {
   };
   updateRowContribs('rhs', _components, rhsSnapshot);
   updateRowContribs('lhs', _lhsExtras, lhsSnapshot);
-
-  const track = backdrop.querySelector<HTMLElement>('.lf-bar-track');
-  if (track) track.dataset.lfClamped = clamped ? '1' : '0';
 
   const rhsBreakdown = buildBreakdownText(_components, rhsSnapshot);
   const lhsBreakdown = buildBreakdownText(_lhsExtras, lhsSnapshot);
