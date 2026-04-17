@@ -38,7 +38,19 @@ export function initLoadFormulaModal(ctx: LoadFormulaModalContext): void {
 
 export type LoadFormulaTarget =
   | { kind: 'base'; templateId: string }
-  | { kind: 'window'; templateId: string; windowId: string };
+  | { kind: 'window'; templateId: string; windowId: string }
+  | {
+      /**
+       * For tasks that do not yet exist in the store (new-task forms).
+       * The modal never touches the store on save/clear — it invokes `onSave`
+       * with the computed formula (or `undefined` to clear). Always base-rate,
+       * since new tasks cannot have hot windows yet.
+       */
+      kind: 'ephemeral';
+      name: string;
+      existingFormula?: LoadFormula;
+      onSave: (formula: LoadFormula | undefined) => void;
+    };
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -69,14 +81,19 @@ const FALLBACK_COLORS = ['#4A90D9', '#E8985A', '#6AB97D', '#C57CBD', '#E5C15C', 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 export function openLoadFormulaModal(target: LoadFormulaTarget): void {
-  const tpl = store.getTaskTemplate(target.templateId);
-  if (!tpl) return;
-  if (target.kind === 'window' && !(tpl.loadWindows ?? []).some((w) => w.id === target.windowId)) {
-    return;
+  let existing: LoadFormula | undefined;
+  if (target.kind === 'ephemeral') {
+    existing = target.existingFormula;
+  } else {
+    const tpl = store.getTaskTemplate(target.templateId);
+    if (!tpl) return;
+    if (target.kind === 'window' && !(tpl.loadWindows ?? []).some((w) => w.id === target.windowId)) {
+      return;
+    }
+    existing = getExistingFormula(tpl, target);
   }
 
   _target = target;
-  const existing = getExistingFormula(tpl, target);
   _components = existing
     ? existing.components.map((c) => ({ ...c, refRate: { ...c.refRate } }))
     : [emptyComponent()];
@@ -108,17 +125,57 @@ export function closeLoadFormulaModal(): void {
 
 function getExistingFormula(tpl: TaskTemplate, target: LoadFormulaTarget): LoadFormula | undefined {
   if (target.kind === 'base') return tpl.loadFormula;
-  const win = (tpl.loadWindows ?? []).find((w) => w.id === target.windowId);
-  return win?.loadFormula;
+  if (target.kind === 'window') {
+    const win = (tpl.loadWindows ?? []).find((w) => w.id === target.windowId);
+    return win?.loadFormula;
+  }
+  return undefined;
 }
 
-function getTargetLabel(tpl: TaskTemplate, target: LoadFormulaTarget): string {
-  if (target.kind === 'base') {
-    // Only qualify with "בסיס" if the task actually has hot windows to distinguish from.
-    return (tpl.loadWindows ?? []).length > 0 ? `${tpl.name} — בסיס` : tpl.name;
+/**
+ * Collapses the target union into the view-model the render path needs.
+ * Returns null when a saved target refers to a template/window no longer in the store.
+ */
+interface TargetView {
+  label: string;
+  /** Passed to `validateFormula` as the "self" id to prevent self-reference. Empty for ephemeral. */
+  editingId: string;
+  existingFormula: LoadFormula | undefined;
+  /** Template to exclude from the reference picker (self). Null for ephemeral (not yet in store). */
+  excludeTplId: string | null;
+  /** When target is a hot window, the owning template — rendered as a context bar. */
+  windowContextTpl: TaskTemplate | null;
+}
+
+function resolveTargetView(target: LoadFormulaTarget): TargetView | null {
+  if (target.kind === 'ephemeral') {
+    return {
+      label: target.name.trim() || 'משימה חדשה',
+      editingId: '',
+      existingFormula: target.existingFormula,
+      excludeTplId: null,
+      windowContextTpl: null,
+    };
   }
-  const win = (tpl.loadWindows ?? []).find((w) => w.id === target.windowId);
-  return win ? `${tpl.name} — חם ${formatWindowLabel(win)}` : tpl.name;
+  const tpl = store.getTaskTemplate(target.templateId);
+  if (!tpl) return null;
+  if (target.kind === 'window' && !(tpl.loadWindows ?? []).some((w) => w.id === target.windowId)) {
+    return null;
+  }
+  let label: string;
+  if (target.kind === 'base') {
+    label = (tpl.loadWindows ?? []).length > 0 ? `${tpl.name} — בסיס` : tpl.name;
+  } else {
+    const win = (tpl.loadWindows ?? []).find((w) => w.id === target.windowId);
+    label = win ? `${tpl.name} — חם ${formatWindowLabel(win)}` : tpl.name;
+  }
+  return {
+    label,
+    editingId: tpl.id,
+    existingFormula: getExistingFormula(tpl, target),
+    excludeTplId: tpl.id,
+    windowContextTpl: target.kind === 'window' ? tpl : null,
+  };
 }
 
 function emptyComponent(): LoadFormulaComponent {
@@ -185,20 +242,22 @@ function buildBreakdownText(
 
 function render(): void {
   if (!_target) return;
-  const tpl = store.getTaskTemplate(_target.templateId);
-  if (!tpl) return;
+  const view = resolveTargetView(_target);
+  if (!view) return;
 
   document.getElementById('lf-modal-backdrop')?.remove();
 
-  const targetLabel = getTargetLabel(tpl, _target);
+  const targetLabel = view.label;
   const map = templatesMap();
-  const otherTemplates = store.getAllTaskTemplates().filter((t) => t.id !== tpl.id);
+  const otherTemplates = view.excludeTplId
+    ? store.getAllTaskTemplates().filter((t) => t.id !== view.excludeTplId)
+    : store.getAllTaskTemplates();
   // Sort chips by base weight descending so the palette reads heavy → light.
   const templatesSorted = [...otherTemplates].sort((a, b) => templateBaseWeight(b) - templateBaseWeight(a));
 
   const rhsSnapshot = buildSnapshot(_components, map);
   const lhsSnapshot = buildSnapshot(_lhsExtras, map);
-  const validation = validateFormula(_components, tpl.id, map, _lhsExtras);
+  const validation = validateFormula(_components, view.editingId, map, _lhsExtras);
   const rhsRaw = rawFormulaSum(_components, rhsSnapshot);
   const lhsRaw = rawFormulaSum(_lhsExtras, lhsSnapshot);
   const netRaw = rhsRaw - lhsRaw;
@@ -211,8 +270,8 @@ function render(): void {
   const rhsBreakdown = buildBreakdownText(_components, rhsSnapshot);
   const lhsBreakdown = buildBreakdownText(_lhsExtras, lhsSnapshot);
 
-  const baseContextWeight = _target.kind === 'window' ? templateBaseWeight(tpl) : null;
-  const canShowClearBtn = !!getExistingFormula(tpl, _target);
+  const baseContextWeight = view.windowContextTpl ? templateBaseWeight(view.windowContextTpl) : null;
+  const canShowClearBtn = !!view.existingFormula;
 
   const rhsStackHtml = _components.map((c, idx) => renderStackRow('rhs', c, idx, map, templatesSorted)).join('');
   const lhsStackHtml = _lhsExtras.map((c, idx) => renderStackRow('lhs', c, idx, map, templatesSorted)).join('');
@@ -241,7 +300,7 @@ function render(): void {
             ${_lhsExtras.length ? '<div class="lf-lhs-eq-label">שוות ל:</div>' : ''}
           </div>
 
-          ${baseContextWeight !== null ? renderContextBar(baseContextWeight, tpl) : ''}
+          ${baseContextWeight !== null && view.windowContextTpl ? renderContextBar(baseContextWeight, view.windowContextTpl) : ''}
 
           <div class="lf-bar-summary">
             <div class="lf-bar-number">
@@ -592,12 +651,12 @@ function wireEvents(): void {
 function updatePreviewOnly(): void {
   const backdrop = document.getElementById('lf-modal-backdrop');
   if (!backdrop || !_target) return;
-  const tpl = store.getTaskTemplate(_target.templateId);
-  if (!tpl) return;
+  const view = resolveTargetView(_target);
+  if (!view) return;
   const map = templatesMap();
   const rhsSnapshot = buildSnapshot(_components, map);
   const lhsSnapshot = buildSnapshot(_lhsExtras, map);
-  const validation = validateFormula(_components, tpl.id, map, _lhsExtras);
+  const validation = validateFormula(_components, view.editingId, map, _lhsExtras);
   const rhsRaw = rawFormulaSum(_components, rhsSnapshot);
   const lhsRaw = rawFormulaSum(_lhsExtras, lhsSnapshot);
   const netRaw = rhsRaw - lhsRaw;
@@ -659,27 +718,48 @@ function updatePreviewOnly(): void {
 
 function clearFormula(): void {
   if (!_target) return;
-  const tpl = store.getTaskTemplate(_target.templateId);
+  const target = _target;
+  if (target.kind === 'ephemeral') {
+    target.onSave(undefined);
+    closeLoadFormulaModal();
+    _ctx?.onChanged();
+    return;
+  }
+  const tpl = store.getTaskTemplate(target.templateId);
   if (!tpl) return;
-  applyFormulaToStore(tpl, _target, undefined);
+  applyFormulaToStore(tpl, target, undefined);
   closeLoadFormulaModal();
   _ctx?.onChanged();
 }
 
 function saveFormula(): void {
   if (!_target) return;
-  const tpl = store.getTaskTemplate(_target.templateId);
-  if (!tpl) return;
+  const target = _target;
   const map = templatesMap();
+  if (target.kind === 'ephemeral') {
+    const validation = validateFormula(_components, '', map, _lhsExtras);
+    if (!validation.ok) return;
+    const formula = buildFormula(_components, map, _targetHours, _lhsExtras);
+    target.onSave(formula);
+    closeLoadFormulaModal();
+    _ctx?.onChanged();
+    return;
+  }
+  const tpl = store.getTaskTemplate(target.templateId);
+  if (!tpl) return;
   const validation = validateFormula(_components, tpl.id, map, _lhsExtras);
   if (!validation.ok) return;
   const formula = buildFormula(_components, map, _targetHours, _lhsExtras);
-  applyFormulaToStore(tpl, _target, formula);
+  applyFormulaToStore(tpl, target, formula);
   closeLoadFormulaModal();
   _ctx?.onChanged();
 }
 
-function applyFormulaToStore(tpl: TaskTemplate, target: LoadFormulaTarget, formula: LoadFormula | undefined): void {
+function applyFormulaToStore(
+  tpl: TaskTemplate,
+  target: { kind: 'base'; templateId: string } | { kind: 'window'; templateId: string; windowId: string },
+  formula: LoadFormula | undefined,
+): void {
   if (target.kind === 'base') {
     if (formula) {
       store.updateTaskTemplate(tpl.id, {

@@ -1129,6 +1129,19 @@ select.input-sm {
   margin-bottom: 12px;
 }
 
+.edit-slot-form {
+  border-color: var(--accent, #3b82f6);
+  border-left: 3px solid var(--accent, #3b82f6);
+  margin-top: 4px;
+}
+.slot-row-editing > td {
+  background: var(--bg-hover, rgba(59, 130, 246, 0.08));
+}
+.slot-edit-row > td {
+  padding: 0 8px 8px 8px !important;
+  background: transparent;
+}
+
 .form-row {
   display: flex;
   align-items: center;

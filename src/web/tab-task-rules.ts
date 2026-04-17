@@ -8,6 +8,7 @@
 import {
   type CertificationDefinition,
   Level,
+  type LoadFormula,
   type LoadWindow,
   type OneTimeTask,
   type PreflightResult,
@@ -174,8 +175,18 @@ function loadWindowsOverlap(
 let expandedTemplateId: string | null = null;
 let expandedOtId: string | null = null;
 let addingSlotTo: { templateId: string; subTeamId?: string; isOneTime?: boolean } | null = null;
+let editingSlot: { templateId: string; subTeamId?: string; slotId: string; isOneTime?: boolean } | null = null;
 let showAddTemplate = false;
 let showAddOneTime = false;
+
+/**
+ * Pending load formulas for the "new task" forms. Populated when the user opens
+ * the load-formula modal from the add form and saves a formula; cleared when
+ * the add form closes (confirm or cancel) or the load-formula modal clears it.
+ * Survives re-renders of the add form so reopening the modal shows the in-progress formula.
+ */
+let _pendingTplLoadFormula: LoadFormula | undefined;
+let _pendingOtLoadFormula: LoadFormula | undefined;
 
 // ─── Task Sets Panel State ───────────────────────────────────────────────────
 
@@ -726,6 +737,15 @@ function renderSlotTable(
     <thead><tr><th>תווית</th><th>דרגות</th><th>הסמכות נדרשות</th><th>הסמכות אסורות</th><th>סטטוס</th><th></th></tr></thead>
     <tbody>`;
 
+  const isOtMatch = opts?.isOneTime ? editingSlot?.isOneTime : !editingSlot?.isOneTime;
+  const editingHere =
+    editingSlot &&
+    editingSlot.templateId === templateId &&
+    editingSlot.subTeamId === subTeamId &&
+    isOtMatch
+      ? editingSlot
+      : null;
+
   for (const slot of slots) {
     const finding = pf.findings.find((f) => f.slotId === slot.id);
     const statusHtml = finding
@@ -733,15 +753,30 @@ function renderSlotTable(
       : '<span style="color:var(--success)">✓</span>';
 
     const forbiddenCerts = slot.forbiddenCertifications ?? [];
+    const ownerAttr = opts?.isOneTime ? `data-ot-id="${templateId}"` : `data-tid="${templateId}"`;
+    const stAttr = subTeamId ? `data-stid="${subTeamId}"` : '';
+    const isEditing = editingHere && editingHere.slotId === slot.id;
+    const rowClass = isEditing ? ' class="slot-row-editing"' : '';
 
-    html += `<tr>
+    html += `<tr${rowClass}>
       <td>${escHtml(stripLevelText(slot.label))}</td>
       <td>${slot.acceptableLevels.map((e) => levelBadge(e.level) + (e.lowPriority ? '<sup class="lp-badge" title="מוצא אחרון – הדרגה מותרת אך לא מועדפת">⚠</sup>' : '')).join(' ')}</td>
       <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map((c) => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${forbiddenCerts.length > 0 ? forbiddenCerts.map((c) => forbiddenCertBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${statusHtml}</td>
-      <td><button class="btn-sm btn-danger-outline" data-action="remove-slot" ${opts?.isOneTime ? `data-ot-id="${templateId}"` : `data-tid="${templateId}"`} ${subTeamId ? `data-stid="${subTeamId}"` : ''} data-slotid="${slot.id}">✕</button></td>
+      <td>
+        ${
+          isEditing
+            ? ''
+            : `<button class="btn-sm btn-outline" data-action="edit-slot" ${ownerAttr} ${stAttr} data-slotid="${slot.id}" title="ערוך">✎</button>`
+        }
+        <button class="btn-sm btn-danger-outline" data-action="remove-slot" ${ownerAttr} ${stAttr} data-slotid="${slot.id}" title="מחק">✕</button>
+      </td>
     </tr>`;
+
+    if (isEditing) {
+      html += `<tr class="slot-edit-row"><td colspan="6">${renderSlotForm('edit', templateId, subTeamId, opts, slot)}</td></tr>`;
+    }
   }
 
   html += '</tbody></table></div>';
@@ -749,25 +784,96 @@ function renderSlotTable(
 }
 
 function renderAddSlotForm(templateId: string, subTeamId?: string, opts?: { isOneTime?: boolean }): string {
+  return renderSlotForm('add', templateId, subTeamId, opts);
+}
+
+function readSlotFormFields(form: Element): Omit<SlotTemplate, 'id'> | null {
+  const label = (form.querySelector('[data-field="slot-label"]') as HTMLInputElement)?.value.trim() || 'משבצת';
+  const acceptableLevels: { level: Level; lowPriority?: boolean }[] = [];
+  form.querySelectorAll<HTMLElement>('[data-slot-level]').forEach((btn) => {
+    const state = btn.dataset.state;
+    if (state === 'normal') acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level });
+    else if (state === 'lowPriority')
+      acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level, lowPriority: true });
+  });
+  const certs: string[] = [];
+  form.querySelectorAll<HTMLInputElement>('[data-slot-cert]').forEach((cb) => {
+    if (cb.checked && cb.dataset.slotCert) certs.push(cb.dataset.slotCert);
+  });
+  const forbiddenCerts: string[] = [];
+  form.querySelectorAll<HTMLInputElement>('[data-slot-forbidden-cert]').forEach((cb) => {
+    if (cb.checked && cb.dataset.slotForbiddenCert) forbiddenCerts.push(cb.dataset.slotForbiddenCert);
+  });
+
+  const overlap = certs.filter((c) => forbiddenCerts.includes(c));
+  if (overlap.length > 0) {
+    showToast(
+      `הסמכה לא יכולה להיות גם נדרשת וגם אסורה: ${overlap.map((c) => store.getCertLabel(c)).join(', ')}`,
+      { type: 'error' },
+    );
+    return null;
+  }
+
+  return {
+    label,
+    acceptableLevels,
+    requiredCertifications: certs,
+    forbiddenCertifications: forbiddenCerts.length > 0 ? forbiddenCerts : undefined,
+  };
+}
+
+function renderSlotForm(
+  mode: 'add' | 'edit',
+  templateId: string,
+  subTeamId?: string,
+  opts?: { isOneTime?: boolean },
+  initial?: SlotTemplate,
+): string {
   const idAttr = opts?.isOneTime ? `data-ot-id="${templateId}"` : `data-tid="${templateId}"`;
-  return `<div class="add-slot-form">
-    <h5>הוסף משבצת</h5>
+  const stAttr = subTeamId ? `data-stid="${subTeamId}"` : '';
+  const lpSup = '<sup class="lp-badge" title="מוצא אחרון – הדרגה מותרת אך לא מועדפת">⚠</sup>';
+
+  const initLevelState = new Map<Level, 'off' | 'normal' | 'lowPriority'>();
+  if (mode === 'edit' && initial) {
+    for (const l of LEVEL_OPTIONS) initLevelState.set(l, 'off');
+    for (const e of initial.acceptableLevels) initLevelState.set(e.level, e.lowPriority ? 'lowPriority' : 'normal');
+  } else {
+    for (const l of LEVEL_OPTIONS) initLevelState.set(l, 'normal');
+  }
+
+  const requiredSet = new Set(initial?.requiredCertifications ?? []);
+  const forbiddenSet = new Set(initial?.forbiddenCertifications ?? []);
+
+  const labelVal = initial ? escHtml(initial.label) : '';
+  const title = mode === 'edit' ? 'ערוך משבצת' : 'הוסף משבצת';
+  const confirmAction = mode === 'edit' ? 'confirm-edit-slot' : 'confirm-add-slot';
+  const cancelAction = mode === 'edit' ? 'cancel-edit-slot' : 'cancel-add-slot';
+  const confirmLabel = mode === 'edit' ? 'שמור' : 'הוסף';
+  const slotIdAttr = mode === 'edit' && initial ? `data-slotid="${initial.id}"` : '';
+  const formClass = mode === 'edit' ? 'add-slot-form edit-slot-form' : 'add-slot-form';
+
+  return `<div class="${formClass}">
+    <h5>${title}</h5>
     <div class="form-row">
-      <label>תווית: <input class="input-sm" type="text" data-field="slot-label" placeholder="למשל #1" /></label>
+      <label>תווית: <input class="input-sm" type="text" data-field="slot-label" placeholder="למשל #1" value="${labelVal}" /></label>
     </div>
     <div class="form-row">
       <span>דרגות:</span>
-      ${LEVEL_OPTIONS.map(
-        (l) =>
-          `<button type="button" class="level-toggle" data-action="cycle-level" data-slot-level="${l}" data-state="normal">${levelBadge(l)}</button>`,
-      ).join('')}
+      ${LEVEL_OPTIONS.map((l) => {
+        const state = initLevelState.get(l) ?? 'normal';
+        const inner =
+          state === 'off'
+            ? `<span class="text-muted">L${l}</span>`
+            : levelBadge(l) + (state === 'lowPriority' ? lpSup : '');
+        return `<button type="button" class="level-toggle" data-action="cycle-level" data-slot-level="${l}" data-state="${state}">${inner}</button>`;
+      }).join('')}
     </div>
     <div class="form-row">
       <span>הסמכות נדרשות:</span>
       ${getCertOptions()
         .map(
           (def) =>
-            `<label class="checkbox-label"><input type="checkbox" data-slot-cert="${def.id}" /> ${escHtml(def.label)}</label>`,
+            `<label class="checkbox-label"><input type="checkbox" data-slot-cert="${def.id}" ${requiredSet.has(def.id) ? 'checked' : ''} /> ${escHtml(def.label)}</label>`,
         )
         .join('')}
     </div>
@@ -776,18 +882,21 @@ function renderAddSlotForm(templateId: string, subTeamId?: string, opts?: { isOn
       ${getCertOptions()
         .map(
           (def) =>
-            `<label class="checkbox-label"><input type="checkbox" data-slot-forbidden-cert="${def.id}" /> ${escHtml(def.label)}</label>`,
+            `<label class="checkbox-label"><input type="checkbox" data-slot-forbidden-cert="${def.id}" ${forbiddenSet.has(def.id) ? 'checked' : ''} /> ${escHtml(def.label)}</label>`,
         )
         .join('')}
     </div>
     <div class="form-row">
-      <button class="btn-sm btn-primary" data-action="confirm-add-slot" ${idAttr} ${subTeamId ? `data-stid="${subTeamId}"` : ''}>הוסף</button>
-      <button class="btn-sm btn-outline" data-action="cancel-add-slot">ביטול</button>
+      <button class="btn-sm btn-primary" data-action="${confirmAction}" ${idAttr} ${stAttr} ${slotIdAttr}>${confirmLabel}</button>
+      <button class="btn-sm btn-outline" data-action="${cancelAction}">ביטול</button>
     </div>
   </div>`;
 }
 
 function renderAddTemplateForm(): string {
+  const pendingValue = _pendingTplLoadFormula?.computedValue;
+  const baseLoadValue = pendingValue !== undefined ? pendingValue.toFixed(2) : '1';
+  const calcBtn = `<button class="btn-xs btn-outline lf-open-btn" type="button" data-action="open-load-formula-new" data-lf-target="tpl" title="הגדר לפי השוואה" aria-label="הגדר לפי השוואה">🧮</button>`;
   return `<div class="add-form" id="add-template-form">
     <h4>משימה חדשה</h4>
     <div class="form-row">
@@ -795,7 +904,7 @@ function renderAddTemplateForm(): string {
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="tpl-start" /></label>
-      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="tpl-base-load" /></label>
+      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="${baseLoadValue}" data-field="tpl-base-load" /><span class="lf-controls">${calcBtn}</span></label>
     </div>
     <div class="form-row">
       <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> נדרשת אותה קבוצה</label>
@@ -830,7 +939,7 @@ function renderAddOneTimeForm(): string {
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="ot-start-hour" /></label>
       <label>דקה: <input class="input-sm" type="number" min="0" max="59" value="0" data-field="ot-start-minute" style="width:60px;" /></label>
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="4" data-field="ot-duration" /></label>
-      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="1" data-field="ot-base-load" /></label>
+      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="${_pendingOtLoadFormula !== undefined ? _pendingOtLoadFormula.computedValue.toFixed(2) : '1'}" data-field="ot-base-load" /><span class="lf-controls"><button class="btn-xs btn-outline lf-open-btn" type="button" data-action="open-load-formula-new" data-lf-target="ot" title="הגדר לפי השוואה" aria-label="הגדר לפי השוואה">🧮</button></span></label>
     </div>
     <div class="form-row">
       <label class="checkbox-label"><input type="checkbox" data-field="ot-samegroup" /> נדרשת אותה קבוצה</label>
@@ -1254,6 +1363,27 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         }
         break;
       }
+      case 'open-load-formula-new': {
+        // Calculator for a task that doesn't exist in the store yet (add form).
+        // Reads the in-progress name from the form so the modal header is meaningful.
+        const target = actionButton?.dataset.lfTarget as 'tpl' | 'ot' | undefined;
+        if (!target) break;
+        const form = container.querySelector(target === 'tpl' ? '#add-template-form' : '#add-onetime-form');
+        if (!form) break;
+        const nameField = target === 'tpl' ? 'tpl-name' : 'ot-name';
+        const name = (form.querySelector(`[data-field="${nameField}"]`) as HTMLInputElement)?.value.trim() || 'משימה חדשה';
+        const existingFormula = target === 'tpl' ? _pendingTplLoadFormula : _pendingOtLoadFormula;
+        openLoadFormulaModal({
+          kind: 'ephemeral',
+          name,
+          existingFormula,
+          onSave: (formula) => {
+            if (target === 'tpl') _pendingTplLoadFormula = formula;
+            else _pendingOtLoadFormula = formula;
+          },
+        });
+        break;
+      }
       case 'toggle-load-formula-info': {
         const tid = actionButton?.dataset.tid;
         const kind = actionButton?.dataset.lfKind as 'base' | 'window' | undefined;
@@ -1450,6 +1580,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       }
       case 'add-slot': {
         const otIdAs = actionButton?.dataset.otId;
+        editingSlot = null;
         if (otIdAs) {
           addingSlotTo = { templateId: otIdAs, isOneTime: true };
         } else {
@@ -1462,12 +1593,33 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'add-slot-subteam': {
         const otIdAss = actionButton?.dataset.otId;
         const stid = actionButton?.dataset.stid!;
+        editingSlot = null;
         if (otIdAss) {
           addingSlotTo = { templateId: otIdAss, subTeamId: stid, isOneTime: true };
         } else {
           const tid = actionButton?.dataset.tid!;
           addingSlotTo = { templateId: tid, subTeamId: stid };
         }
+        rerender();
+        break;
+      }
+      case 'edit-slot': {
+        const otIdEs = actionButton?.dataset.otId;
+        const tidEs = otIdEs || actionButton?.dataset.tid!;
+        const stidEs = actionButton?.dataset.stid;
+        const slotIdEs = actionButton?.dataset.slotid!;
+        addingSlotTo = null;
+        editingSlot = {
+          templateId: tidEs,
+          subTeamId: stidEs,
+          slotId: slotIdEs,
+          isOneTime: !!otIdEs,
+        };
+        rerender();
+        break;
+      }
+      case 'cancel-edit-slot': {
+        editingSlot = null;
         rerender();
         break;
       }
@@ -1489,39 +1641,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const tid = otIdCas || actionButton?.dataset.tid!;
         const stid = actionButton?.dataset.stid;
         const form = actionButton?.closest('.add-slot-form')!;
-        const label = (form.querySelector('[data-field="slot-label"]') as HTMLInputElement)?.value.trim() || 'משבצת';
-        const acceptableLevels: { level: Level; lowPriority?: boolean }[] = [];
-        form.querySelectorAll<HTMLElement>('[data-slot-level]').forEach((btn) => {
-          const state = btn.dataset.state;
-          if (state === 'normal') acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level });
-          else if (state === 'lowPriority')
-            acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level, lowPriority: true });
-        });
-        const certs: string[] = [];
-        form.querySelectorAll<HTMLInputElement>('[data-slot-cert]').forEach((cb) => {
-          if (cb.checked && cb.dataset.slotCert) certs.push(cb.dataset.slotCert);
-        });
-        const forbiddenCerts: string[] = [];
-        form.querySelectorAll<HTMLInputElement>('[data-slot-forbidden-cert]').forEach((cb) => {
-          if (cb.checked && cb.dataset.slotForbiddenCert) forbiddenCerts.push(cb.dataset.slotForbiddenCert);
-        });
-
-        // Validate: same cert cannot be both required and forbidden
-        const overlap = certs.filter((c) => forbiddenCerts.includes(c));
-        if (overlap.length > 0) {
-          showToast(
-            `הסמכה לא יכולה להיות גם נדרשת וגם אסורה: ${overlap.map((c) => store.getCertLabel(c)).join(', ')}`,
-            { type: 'error' },
-          );
-          break;
-        }
-
-        const slot: Omit<SlotTemplate, 'id'> = {
-          label,
-          acceptableLevels,
-          requiredCertifications: certs,
-          forbiddenCertifications: forbiddenCerts.length > 0 ? forbiddenCerts : undefined,
-        };
+        const slot = readSlotFormFields(form);
+        if (!slot) break;
 
         if (otIdCas) {
           if (stid) {
@@ -1540,6 +1661,30 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       }
       case 'cancel-add-slot': {
         addingSlotTo = null;
+        rerender();
+        break;
+      }
+      case 'confirm-edit-slot': {
+        const otIdCes = actionButton?.dataset.otId;
+        const tidCes = otIdCes || actionButton?.dataset.tid!;
+        const stidCes = actionButton?.dataset.stid;
+        const slotIdCes = actionButton?.dataset.slotid!;
+        const form = actionButton?.closest('.add-slot-form')!;
+        const patch = readSlotFormFields(form);
+        if (!patch) break;
+
+        if (otIdCes) {
+          if (stidCes) {
+            store.updateSlotInOneTimeSubTeam(otIdCes, stidCes, slotIdCes, patch);
+          } else {
+            store.updateSlotInOneTimeTask(otIdCes, slotIdCes, patch);
+          }
+        } else if (stidCes) {
+          store.updateSlotInSubTeam(tidCes, stidCes, slotIdCes, patch);
+        } else {
+          store.updateSlotInTemplate(tidCes, slotIdCes, patch);
+        }
+        editingSlot = null;
         rerender();
         break;
       }
@@ -1581,6 +1726,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       }
       case 'toggle-add-template': {
         showAddTemplate = !showAddTemplate;
+        _pendingTplLoadFormula = undefined;
         rerender();
         break;
       }
@@ -1610,6 +1756,12 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
 
         const displayCategory = name.toLowerCase();
+        const clampedBaseLoad = isLight ? 0 : Math.max(0, Math.min(1, baseLoad));
+        // Drop pending formula if light OR if user manually edited the input away from the computed value.
+        const keepFormula =
+          !isLight &&
+          _pendingTplLoadFormula !== undefined &&
+          Math.abs(clampedBaseLoad - _pendingTplLoadFormula.computedValue) <= 1e-9;
 
         store.addTaskTemplate({
           name,
@@ -1618,7 +1770,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           startHour: sanitized.startHour,
           sameGroupRequired: sameGroup,
           isLight,
-          baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
+          baseLoadWeight: clampedBaseLoad,
+          loadFormula: keepFormula ? _pendingTplLoadFormula : undefined,
           loadWindows: [],
           blocksConsecutive: !isLight,
           togethernessRelevant: false,
@@ -1628,11 +1781,13 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           slots: [],
         });
         showAddTemplate = false;
+        _pendingTplLoadFormula = undefined;
         rerender();
         break;
       }
       case 'cancel-add-template': {
         showAddTemplate = false;
+        _pendingTplLoadFormula = undefined;
         rerender();
         break;
       }
@@ -1640,6 +1795,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       // ─── One-Time Task actions ────────────────────────────────────────
       case 'toggle-add-onetime': {
         showAddOneTime = !showAddOneTime;
+        _pendingOtLoadFormula = undefined;
         rerender();
         break;
       }
@@ -1696,11 +1852,13 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           description: desc || undefined,
         });
         showAddOneTime = false;
+        _pendingOtLoadFormula = undefined;
         rerender();
         break;
       }
       case 'cancel-add-onetime': {
         showAddOneTime = false;
+        _pendingOtLoadFormula = undefined;
         rerender();
         break;
       }

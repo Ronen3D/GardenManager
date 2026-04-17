@@ -1612,6 +1612,57 @@ export function removeSlotFromOneTimeSubTeam(otId: string, subTeamId: string, sl
   notify();
 }
 
+// ─── Slot Update helpers ─────────────────────────────────────────────────────
+
+type SlotPatch = Omit<SlotTemplate, 'id'>;
+
+function replaceSlotIfExists(slots: SlotTemplate[], slotId: string, patch: SlotPatch): boolean {
+  const idx = slots.findIndex((s) => s.id === slotId);
+  if (idx === -1) return false;
+  pushSnapshot();
+  slots[idx] = { ...patch, id: slotId };
+  notify();
+  return true;
+}
+
+export function updateSlotInTemplate(templateId: string, slotId: string, patch: SlotPatch): void {
+  const tpl = taskTemplates.get(templateId);
+  if (!tpl) return;
+  replaceSlotIfExists(tpl.slots, slotId, patch);
+}
+
+export function updateSlotInSubTeam(
+  templateId: string,
+  subTeamId: string,
+  slotId: string,
+  patch: SlotPatch,
+): void {
+  const tpl = taskTemplates.get(templateId);
+  if (!tpl) return;
+  const st = tpl.subTeams.find((s) => s.id === subTeamId);
+  if (!st) return;
+  replaceSlotIfExists(st.slots, slotId, patch);
+}
+
+export function updateSlotInOneTimeTask(otId: string, slotId: string, patch: SlotPatch): void {
+  const ot = oneTimeTasks.get(otId);
+  if (!ot) return;
+  replaceSlotIfExists(ot.slots, slotId, patch);
+}
+
+export function updateSlotInOneTimeSubTeam(
+  otId: string,
+  subTeamId: string,
+  slotId: string,
+  patch: SlotPatch,
+): void {
+  const ot = oneTimeTasks.get(otId);
+  if (!ot) return;
+  const st = ot.subTeams.find((s) => s.id === subTeamId);
+  if (!st) return;
+  replaceSlotIfExists(st.slots, slotId, patch);
+}
+
 // ─── Seed Default Data ───────────────────────────────────────────────────────
 
 const defaultNames: string[] = [
