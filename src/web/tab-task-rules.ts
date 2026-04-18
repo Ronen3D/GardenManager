@@ -439,25 +439,58 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
 
     // Template properties
     html += `<div class="template-props">
-      <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" data-tpl-field="durationHours" value="${tpl.durationHours}" data-tid="${tpl.id}" /></label>
-      <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" /></label>
-      <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" data-tpl-field="startHour" value="${tpl.startHour}" data-tid="${tpl.id}" /></label>
-      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" />${renderLoadFormulaControls({ kind: 'base', tpl, disabled: tpl.isLight })}</label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חוסם רצף משימות</label>
-      <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
-      <label>כלל מרווח: <select class="input-sm" data-tpl-field="restRuleId" data-tid="${tpl.id}">
-        <option value=""${!tpl.restRuleId ? ' selected' : ''}>ללא</option>
-        ${store
-          .getRestRules()
-          .map(
-            (r) =>
-              `<option value="${r.id}"${tpl.restRuleId === r.id ? ' selected' : ''}>${escHtml(r.label)} (${r.durationHours} שע׳)</option>`,
-          )
-          .join('')}
-      </select></label>${_restRuleOrphanNote(tpl.restRuleId)}
-      <button class="btn-sm btn-primary" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
+      <section class="tprop-section tprop-section--numeric">
+        <h5 class="tprop-section-title">מאפיינים בסיסיים</h5>
+        <div class="tprop-grid tprop-grid-numeric">
+          <label class="tprop-field">
+            <span class="tprop-field-label">משך (שעות)</span>
+            <input class="input-sm" type="number" step="0.5" min="0.5" data-tpl-field="durationHours" value="${tpl.durationHours}" data-tid="${tpl.id}" />
+          </label>
+          <label class="tprop-field">
+            <span class="tprop-field-label">משמרות/יום</span>
+            <input class="input-sm" type="number" min="1" max="12" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" />
+          </label>
+          <label class="tprop-field">
+            <span class="tprop-field-label">שעת התחלה</span>
+            <input class="input-sm" type="number" min="0" max="23" data-tpl-field="startHour" value="${tpl.startHour}" data-tid="${tpl.id}" />
+          </label>
+          <label class="tprop-field tprop-field-load">
+            <span class="tprop-field-label">רמת עומס (0-1)</span>
+            <div class="tprop-field-control">
+              <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" />
+              ${renderLoadFormulaControls({ kind: 'base', tpl, disabled: tpl.isLight })}
+            </div>
+          </label>
+        </div>
+      </section>
+
+      <section class="tprop-section tprop-section--behavior">
+        <h5 class="tprop-section-title">התנהגות</h5>
+        <div class="tprop-grid tprop-grid-2 tprop-toggles">
+          <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
+          <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
+          <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חוסם רצף משימות</label>
+          <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
+        </div>
+      </section>
+
+      <div class="tprop-footer-row">
+        <label class="tprop-field tprop-field-grow">
+          <span class="tprop-field-label">כלל מרווח</span>
+          <select class="input-sm" data-tpl-field="restRuleId" data-tid="${tpl.id}">
+            <option value=""${!tpl.restRuleId ? ' selected' : ''}>ללא</option>
+            ${store
+              .getRestRules()
+              .map(
+                (r) =>
+                  `<option value="${r.id}"${tpl.restRuleId === r.id ? ' selected' : ''}>${escHtml(r.label)} (${r.durationHours} שע׳)</option>`,
+              )
+              .join('')}
+          </select>
+        </label>
+        <button class="btn-sm btn-primary tprop-save-btn" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
+      </div>
+      ${_restRuleOrphanNote(tpl.restRuleId)}
     </div>`;
 
     html += renderLoadWindowsEditor(tpl);

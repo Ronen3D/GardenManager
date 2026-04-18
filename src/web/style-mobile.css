@@ -645,49 +645,126 @@
     position: sticky;
     top: 0;
     z-index: 30;
-    padding: 6px 10px;
-    margin-bottom: 6px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
   }
 
+  /* Layout: hero + KPI strip on one row, week strip full-width below */
   .dashboard-row {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "hero kpi"
+      "week week";
+    gap: 8px;
+    row-gap: 6px;
+  }
+
+  /* Clean mode on mobile: one row — hero + week strip inline, no extra row */
+  .dashboard-clean .dashboard-row {
+    grid-template-columns: auto 1fr;
+    grid-template-areas: "hero week";
+    align-items: center;
+    gap: 8px;
+  }
+  .dashboard-clean .kpi-hero {
+    grid-area: hero;
+    justify-self: start;
+  }
+  .dashboard-clean .week-strip {
+    grid-area: week;
+    justify-self: end;
+  }
+
+  /* Combined hero on mobile: single-line pill (icon + label + score inline) */
+  .kpi-hero-combined {
+    flex-direction: row;
+    align-items: center;
     gap: 6px;
+    padding: 4px 12px;
+    border-radius: 999px;
   }
-
-  /* KPIs: horizontal chips — value + label inline */
-  .kpi-group {
-    flex-direction: row !important;
-    flex-wrap: wrap;
-    gap: 4px 10px;
-  }
-
-  .kpi {
-    display: flex;
+  .kpi-hero-combined .kpi-hero-status,
+  .kpi-hero-combined .kpi-hero-score {
+    flex-direction: row;
     align-items: baseline;
-    gap: 3px;
-    min-width: auto;
-    text-align: start;
+    gap: 4px;
+  }
+  .kpi-hero-combined .kpi-hero-icon {
+    font-size: 0.9rem;
+  }
+  .kpi-hero-combined .kpi-hero-label {
+    font-size: 0.8rem;
+  }
+  .kpi-hero-combined .kpi-hero-divider {
+    align-self: center;
+    height: 14px;
+  }
+  .kpi-hero-combined .kpi-value {
+    font-size: 0.85rem;
+  }
+  .kpi-hero-combined .kpi-label {
+    font-size: 0.58rem;
   }
 
+  /* Hero shrinks to inline pill */
+  .kpi-hero {
+    flex-direction: row;
+    gap: 6px;
+    min-width: 0;
+    padding: 6px 12px;
+    border-radius: 999px;
+    align-self: center;
+  }
+  .kpi-hero-icon {
+    font-size: 1rem;
+  }
+  .kpi-hero-label {
+    font-size: 0.85rem;
+  }
+
+  /* KPI strip: compact row with dividers visible */
+  .kpi-strip {
+    gap: 0;
+  }
+  .kpi-cell {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 4px;
+    padding: 4px 10px;
+  }
   .kpi-value {
-    display: inline;
-    font-size: 0.78rem;
+    font-size: 0.95rem;
   }
-
   .kpi-label {
-    display: inline;
-    font-size: 0.55rem;
-    margin-top: 0;
+    font-size: 0.62rem;
+    text-transform: none;
+    letter-spacing: 0;
   }
 
-  /* Day dots: smaller */
+  /* Week strip: full-width below, compact dots + nums */
+  .week-strip {
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+    padding: 2px 0;
+  }
+  .week-strip-dots {
+    gap: 5px;
+  }
   .week-dot {
-    width: 10px;
-    height: 10px;
+    width: 11px;
+    height: 11px;
     border-radius: 2px;
   }
-
-  .week-dots-label {
-    font-size: 0.6rem;
+  .week-strip-nums {
+    gap: 5px;
+    font-size: 0.62rem;
+  }
+  .week-strip-nums .week-num {
+    width: 11px;
+  }
+  .week-strip-caption {
+    display: none;
   }
 
   /* Meta line — hidden on mobile to save space */
@@ -1924,3 +2001,32 @@
     padding-bottom: calc(8px + env(keyboard-inset-height, 0px));
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Workload popup — bottom-sheet variant (touch devices)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.workload-popup.workload-popup-sheet .wp-big {
+  font-size: 2rem;
+}
+
+.workload-popup.workload-popup-sheet .wp-sparkline {
+  height: 110px;
+  gap: 6px;
+}
+
+.workload-popup.workload-popup-sheet .wp-spark-day {
+  font-size: 0.85rem;
+  margin-top: 6px;
+}
+
+.workload-popup.workload-popup-sheet .wp-spark-value {
+  font-size: 0.72rem;
+  margin-bottom: 4px;
+}
+
+.workload-popup.workload-popup-sheet .wp-today-line {
+  font-size: 0.9rem;
+  padding: 10px 12px;
+}
+

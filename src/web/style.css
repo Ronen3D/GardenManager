@@ -1375,18 +1375,144 @@ select.input-sm {
 }
 
 .template-props {
+  padding: 12px 0 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 12px;
-  flex-wrap: wrap;
-  padding: 12px 0;
 }
-.template-props label {
+
+.tprop-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tprop-section-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin: 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tprop-grid {
+  display: grid;
+  gap: 10px 14px;
+}
+.tprop-grid-numeric {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.tprop-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tprop-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.82rem;
+  color: var(--text);
+  min-width: 0;
+}
+.tprop-field-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.tprop-field .input-sm,
+.tprop-field select.input-sm {
+  width: 100%;
+  box-sizing: border-box;
+}
+.tprop-field-grow {
+  flex: 1 1 auto;
+}
+
+.tprop-field-control {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.82rem;
-  color: var(--text-muted);
+}
+.tprop-field-control .input-sm {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tprop-field-control .lf-controls {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.tprop-toggles .checkbox-label {
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition:
+    background var(--transition-normal),
+    border-color var(--transition-normal);
+}
+.tprop-toggles .checkbox-label:hover {
+  background: var(--bg-hover);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.tprop-toggles .checkbox-label:has(input:checked) {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.tprop-footer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+.tprop-save-btn {
+  flex: 0 0 auto;
+}
+
+/* Two-column outer layout on tablet+ — places the numeric and behavior
+   sections side-by-side so the form fits a typical viewport without scrolling */
+@media (min-width: 720px) {
+  .template-props {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "numeric behavior"
+      "footer  footer";
+    column-gap: 20px;
+    row-gap: 14px;
+  }
+  .tprop-section--numeric  { grid-area: numeric; }
+  .tprop-section--behavior { grid-area: behavior; }
+  .tprop-footer-row        { grid-area: footer; }
+
+  /* In the half-width column, 4-up numeric is too cramped for the labels.
+     Drop to 2x2 for breathing room. */
+  .tprop-grid-numeric {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 479px) {
+  .tprop-grid-numeric,
+  .tprop-grid-2 {
+    grid-template-columns: 1fr;
+  }
+  .tprop-footer-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .tprop-save-btn {
+    width: 100%;
+  }
 }
 
 .template-actions {
@@ -1860,7 +1986,7 @@ select.input-sm {
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius);
-  padding: 16px 20px;
+  padding: 14px 18px;
   position: relative;
   overflow: hidden;
   margin-bottom: 16px;
@@ -1876,49 +2002,205 @@ select.input-sm {
 }
 
 .dashboard-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: stretch;
+  gap: 16px;
+}
+
+/* ── Hero: feasibility ─────────────────────────────── */
+.kpi-hero {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px;
+  min-width: 96px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  line-height: 1.1;
 }
-
-.kpi-group {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.kpi {
-  text-align: center;
-  min-width: 70px;
-}
-
-.kpi-value {
-  display: block;
-  font-size: 1.1rem;
+.kpi-hero-icon {
+  font-size: 1.6rem;
   font-weight: 700;
-  color: var(--text);
-  direction: ltr;
-  unicode-bidi: isolate;
 }
-
-.kpi-label {
-  display: block;
-  font-size: 0.65rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-top: 2px;
+.kpi-hero-label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
 }
-
-.kpi-ok .kpi-value {
+.kpi-hero.kpi-ok {
+  background: rgba(39, 174, 96, 0.16);
+  border-color: rgba(39, 174, 96, 0.35);
   color: var(--success);
 }
-.kpi-error .kpi-value {
+.kpi-hero.kpi-error {
+  background: rgba(231, 76, 60, 0.16);
+  border-color: rgba(231, 76, 60, 0.35);
   color: var(--danger);
 }
 
+/* ── Hero: combined status + score (clean mode) ──── */
+.kpi-hero-combined {
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 20px;
+  min-width: 0;
+}
+.kpi-hero-combined .kpi-hero-status,
+.kpi-hero-combined .kpi-hero-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  line-height: 1.1;
+}
+.kpi-hero-combined .kpi-hero-divider {
+  width: 1px;
+  align-self: stretch;
+  background: currentColor;
+  opacity: 0.25;
+  margin-block: 2px;
+}
+.kpi-hero-combined .kpi-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  unicode-bidi: isolate;
+  line-height: 1.1;
+}
+.kpi-hero-combined .kpi-label {
+  font-size: 0.68rem;
+  color: inherit;
+  opacity: 0.78;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* ── Clean-mode grid: hero on one side, week strip on the other ── */
+.dashboard-clean .dashboard-row {
+  grid-template-columns: auto 1fr;
+}
+.dashboard-clean .week-strip {
+  justify-self: end;
+}
+
+/* ── KPI strip: score / violations / warnings ──────── */
+.kpi-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+.kpi-cell {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 14px;
+  position: relative;
+  min-width: 0;
+}
+.kpi-cell + .kpi-cell::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block: 18%;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.kpi-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  direction: ltr;
+  unicode-bidi: isolate;
+  line-height: 1.1;
+}
+.kpi-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.kpi-cell.kpi-error .kpi-value {
+  color: var(--danger);
+}
+.kpi-cell.kpi-warn .kpi-value {
+  color: var(--warn, #e0a000);
+}
+
+/* ── Week strip ─────────────────────────────────── */
+.week-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  min-width: 0;
+}
+.week-strip-dots {
+  display: flex;
+  gap: 6px;
+}
+.week-strip-nums {
+  display: flex;
+  gap: 6px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.week-strip-nums .week-num {
+  width: 14px;
+  text-align: center;
+  line-height: 1;
+}
+.week-strip-nums .num-error {
+  color: var(--danger);
+  font-weight: 700;
+}
+.week-strip-caption {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.week-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.dot-ok {
+  background: var(--success);
+}
+.dot-error {
+  background: var(--danger);
+}
+.dot-empty {
+  background: var(--border);
+}
+
+/* ── Meta row ──────────────────────────────────── */
+.dashboard-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Animations (preserved) ───────────────────── */
 .kpi-improved {
   animation: kpiFlashGreen 0.8s ease;
 }
@@ -1944,50 +2226,34 @@ select.input-sm {
   }
 }
 
-.kpi-value {
-  font-variant-numeric: tabular-nums;
-}
-
-.week-dots-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.week-dots-label {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-}
-
-.week-dots {
-  display: flex;
-  gap: 4px;
-}
-
-.week-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-  display: inline-block;
-}
-
-.dot-ok {
-  background: var(--success);
-}
-.dot-error {
-  background: var(--danger);
-}
-.dot-empty {
-  background: var(--border);
-}
-
-.dashboard-meta {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+/* ── Tablet / narrow viewport: stack KPI strip + week strip ── */
+@media (max-width: 767px) {
+  .dashboard-row {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "hero kpi"
+      "hero week";
+    row-gap: 10px;
+  }
+  .kpi-hero {
+    grid-area: hero;
+  }
+  .kpi-strip {
+    grid-area: kpi;
+  }
+  .week-strip {
+    grid-area: week;
+    flex-direction: row;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-start;
+  }
+  .week-strip-nums {
+    font-size: 0.65rem;
+  }
+  .week-strip-caption {
+    display: none;
+  }
 }
 
 /* ─── Day Navigator (Tab Style) ──────────────────────── */
@@ -5280,6 +5546,10 @@ tr.now-row-animate > td.time-cell {
 .cert-def-item .badge {
   min-width: 50px;
   text-align: center;
+}
+.cert-edit-input {
+  flex: 1;
+  min-width: 0;
 }
 .cert-usage-count {
   flex: 1;
@@ -11467,4 +11737,232 @@ tr.now-row-animate > td.time-cell {
 }
 [data-theme="light"] .storage-tier-danger {
   background: linear-gradient(90deg, #b42d29, #d44440);
+}
+
+/* ─── Workload Popup ─────────────────────────────────────────────────────── */
+
+.workload-popup {
+  position: fixed;
+  z-index: 99999;
+  width: 320px;
+  background: var(--tooltip-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px var(--tooltip-shadow);
+  padding: 14px 16px 16px;
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+/* Bottom-sheet variant: clear fixed-positioning + width overrides. */
+.workload-popup.workload-popup-sheet {
+  position: static;
+  width: auto;
+  border: none;
+  box-shadow: none;
+  padding: 4px 2px 8px;
+  background: transparent;
+}
+
+.wp-header {
+  margin-bottom: 12px;
+}
+
+.wp-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.wp-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.workload-popup-sheet .wp-name {
+  display: none; /* Bottom-sheet header already shows the name. */
+}
+
+.wp-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background var(--transition-fast);
+}
+
+.wp-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+[data-theme="light"] .wp-close:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.wp-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.wp-primary {
+  background: var(--accent-glow);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.wp-primary-num {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.wp-big {
+  font-size: 1.7rem;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1.1;
+}
+
+.wp-unit {
+  font-size: 0.85rem;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.wp-primary-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.wp-section-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+}
+
+.wp-sparkline {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  height: 84px;
+  margin-bottom: 12px;
+}
+
+.wp-spark-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  position: relative;
+}
+
+.wp-spark-value {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  line-height: 1;
+  margin-bottom: 3px;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.wp-spark-col.today .wp-spark-value {
+  color: var(--accent);
+  font-weight: 600;
+  opacity: 1;
+}
+
+.wp-spark-bar-wrap {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
+  overflow: hidden;
+  min-height: 2px;
+}
+
+[data-theme="light"] .wp-spark-bar-wrap {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.wp-spark-bar {
+  width: 100%;
+  background: linear-gradient(180deg, #e67e22, var(--danger));
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+  transition: height var(--transition-slow) ease;
+}
+
+.wp-spark-col.peak .wp-spark-bar {
+  background: linear-gradient(180deg, #f39c12, #d35400);
+}
+
+/* `today` wins over `peak` — the current day cue is more important than the peak hint. */
+.wp-spark-col.today .wp-spark-bar {
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+
+.wp-spark-col.zero .wp-spark-bar-wrap::after {
+  /* A baseline tick for zero-load days so they aren't invisible. */
+  content: "";
+  display: block;
+  width: 60%;
+  height: 2px;
+  background: var(--text-muted);
+  opacity: 0.35;
+  border-radius: 1px;
+  margin-bottom: 1px;
+}
+
+.wp-spark-day {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1;
+}
+
+.wp-spark-col.today .wp-spark-day {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.wp-today-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+[data-theme="light"] .wp-today-line {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.wp-today-label {
+  color: var(--text-muted);
+}
+
+.wp-today-value {
+  color: var(--accent);
+  font-weight: 600;
 }

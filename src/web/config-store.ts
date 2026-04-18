@@ -529,6 +529,23 @@ export function addCertification(label: string, color: string): CertificationDef
   return { ...def };
 }
 
+export function renameCertification(id: string, label: string): string | null {
+  const trimmed = label.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return 'שם הסמכה לא יכול להיות ריק';
+  if (trimmed.length > 100) return 'שם הסמכה ארוך מדי (מקסימום 100 תווים)';
+  const def = certificationDefinitions.find((d) => d.id === id && !d.deleted);
+  if (!def) return 'הסמכה לא נמצאה';
+  if (def.label === trimmed) return null;
+  const duplicate = certificationDefinitions.find(
+    (d) => d.id !== id && !d.deleted && d.label.toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (duplicate) return 'הסמכה כזאת כבר קיימת';
+  pushSnapshot();
+  def.label = trimmed;
+  notify();
+  return null;
+}
+
 export function updateCertificationColor(id: string, color: string): void {
   if (!color || !/^#[0-9a-fA-F]{6}$/.test(color)) throw new Error('Invalid hex color');
   const def = certificationDefinitions.find((d) => d.id === id && !d.deleted);

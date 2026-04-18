@@ -43,11 +43,11 @@ import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
 import { wireDataTransferEvents } from './data-transfer-ui';
 import { exportDailyExcel, exportWeeklyExcel } from './excel-export';
+import { openBatchPlansModal, openConfirmModal } from './future-sos-modal';
 import { getEffectivePakalDefinitions } from './pakal-utils';
 import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
 import { runPreflight } from './preflight';
-import { openBatchPlansModal, openConfirmModal } from './future-sos-modal';
 import { showRangePicker } from './range-picker-modal';
 import { closeRescueModal, initRescue, openRescueModal, type RescueSwapLabel } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice } from './responsive';
@@ -101,6 +101,7 @@ import {
   wireCustomSelect,
 } from './ui-modal';
 import { generateShiftBlocks } from './utils/time-utils';
+import { openWorkloadPopup } from './workload-popup';
 import { computeWeeklyWorkloads } from './workload-utils';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
@@ -661,10 +662,10 @@ function renderWeeklyDashboard(schedule: Schedule): string {
   const totalViolations = visibleViolations.filter((v) => v.severity === ViolationSeverity.Error).length;
   const warnings = visibleViolations.filter((v) => v.severity === ViolationSeverity.Warning).length;
   const feasibleClass = schedule.feasible ? 'kpi-ok' : 'kpi-error';
-  const feasibleText = schedule.feasible ? '✓ ישים' : '✗ לא ישים';
 
-  // Per-day task counts
+  // Per-day task counts — parallel dot + numeric-label rows
   let dayDots = '';
+  let dayNums = '';
   for (let d = 1; d <= numDays; d++) {
     const count = schedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh)).length;
     const dayViolations = visibleViolations.filter((v) => {
@@ -673,32 +674,69 @@ function renderWeeklyDashboard(schedule: Schedule): string {
       return task ? taskIntersectsDay(task, d, dsh) : false;
     }).length;
     const dotClass = dayViolations > 0 ? 'dot-error' : count > 0 ? 'dot-ok' : 'dot-empty';
-    dayDots += `<span class="week-dot ${dotClass}" title="יום ${d}: ${count} משימות, ${dayViolations} הפרות"></span>`;
+    const title = `יום ${d}: ${count} משימות, ${dayViolations} הפרות`;
+    dayDots += `<span class="week-dot ${dotClass}" title="${title}"></span>`;
+    dayNums += `<span class="week-num ${dayViolations > 0 ? 'num-error' : ''}" title="${title}">${d}</span>`;
   }
 
-  return `<div class="weekly-dashboard">
-    <div class="dashboard-row">
-      <div class="kpi-group">
-        <div class="kpi ${feasibleClass}">
-          <span class="kpi-value" id="kpi-feasible">${feasibleText}</span>
-          <span class="kpi-label">סטטוס ${numDays} ימים</span>
-        </div>
-        <div class="kpi">
-          <span class="kpi-value" id="kpi-score" data-target="${score.compositeScore.toFixed(1)}">${score.compositeScore.toFixed(1)}</span>
-          <span class="kpi-label">ציון שבצ"ק</span>
-        </div>
-        <div class="kpi ${totalViolations > 0 ? 'kpi-error' : 'kpi-ok'}">
+  const heroIcon = schedule.feasible ? '✓' : '✗';
+  const heroLabel = schedule.feasible ? 'ישים' : 'לא ישים';
+  const scoreText = score.compositeScore.toFixed(1);
+  const isClean = schedule.feasible && totalViolations === 0 && warnings === 0;
+
+  const violationsCell =
+    totalViolations > 0
+      ? `<div class="kpi-cell kpi-error">
           <span class="kpi-value" id="kpi-violations" data-target="${totalViolations}">${totalViolations}</span>
           <span class="kpi-label">הפרות</span>
-        </div>
-        <div class="kpi">
+        </div>`
+      : '';
+  const warningsCell =
+    warnings > 0
+      ? `<div class="kpi-cell kpi-warn">
           <span class="kpi-value" id="kpi-warnings" data-target="${warnings}">${warnings}</span>
           <span class="kpi-label">אזהרות</span>
+        </div>`
+      : '';
+
+  const heroBlock = isClean
+    ? `<div class="kpi-hero kpi-ok kpi-hero-combined">
+        <div class="kpi-hero-status">
+          <span class="kpi-hero-icon" aria-hidden="true">${heroIcon}</span>
+          <span class="kpi-hero-label" id="kpi-feasible">${heroLabel}</span>
         </div>
-      </div>
-      <div class="week-dots-strip">
-        <span class="week-dots-label">ימים</span>
-        <div class="week-dots">${dayDots}</div>
+        <span class="kpi-hero-divider" aria-hidden="true"></span>
+        <div class="kpi-hero-score">
+          <span class="kpi-value" id="kpi-score" data-target="${scoreText}">${scoreText}</span>
+          <span class="kpi-label">ציון</span>
+        </div>
+      </div>`
+    : `<div class="kpi-hero ${feasibleClass}">
+        <span class="kpi-hero-icon" aria-hidden="true">${heroIcon}</span>
+        <span class="kpi-hero-label" id="kpi-feasible">${heroLabel}</span>
+      </div>`;
+
+  const kpiStrip = isClean
+    ? ''
+    : `<div class="kpi-strip" role="group" aria-label="ציונים">
+        <div class="kpi-cell">
+          <span class="kpi-value" id="kpi-score" data-target="${scoreText}">${scoreText}</span>
+          <span class="kpi-label">ציון</span>
+        </div>
+        ${violationsCell}
+        ${warningsCell}
+      </div>`;
+
+  return `<div class="weekly-dashboard${isClean ? ' dashboard-clean' : ''}">
+    <div class="dashboard-row">
+      ${heroBlock}
+
+      ${kpiStrip}
+
+      <div class="week-strip" aria-label="ימי השבוע">
+        <div class="week-strip-dots">${dayDots}</div>
+        <div class="week-strip-nums">${dayNums}</div>
+        <span class="week-strip-caption">ימי השבוע</span>
       </div>
     </div>
     <div class="dashboard-meta">
@@ -727,21 +765,11 @@ function renderSidebarEntry(
   const barPct = Math.min(entry.pctOfPeriod * (100 / 30), 100);
   const barWidth = barPct;
 
-  const tooltipParts: string[] = [];
-  for (let d = 1; d <= store.getScheduleDays(); d++) {
-    const dayHrs = entry.perDay.get(d) || 0;
-    const ttBase = store.getScheduleDate();
-    const ttDate = new Date(ttBase.getFullYear(), ttBase.getMonth(), ttBase.getDate() + d - 1);
-    tooltipParts.push(`${hebrewDayName(ttDate)}: ${dayHrs.toFixed(1)} שע'`);
-  }
   const todayHrs = entry.perDay.get(currentDay) || 0;
   const todayRatio = totalPeriodHours > 0 ? todayHrs / totalPeriodHours : 0;
   const todayBarWidth = Math.min(todayRatio * 100 * (100 / 30), barWidth);
 
-  const diagTooltip =
-    `שעות עומס: ${entry.w.effectiveHours.toFixed(1)} (${entry.pctOfPeriod.toFixed(1)}%)\n` +
-    `משימות כבדות: ${entry.w.nonLightCount}\n` +
-    tooltipParts.join('\n');
+  const hoverTitle = `${p.name} — ${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfPeriod.toFixed(1)}%)`;
 
   return `<div class="sidebar-entry">
     <div class="sidebar-name">
@@ -749,7 +777,7 @@ function renderSidebarEntry(
       <span class="sidebar-meta">${groupBadge(p.group)} ${levelBadge(p.level)}</span>
     </div>
     <div class="sidebar-bar-row">
-      <div class="sidebar-bar-bg" title="${diagTooltip}">
+      <div class="sidebar-bar-bg" title="${hoverTitle}" data-pid="${p.id}">
         <div class="sidebar-bar-fill" style="width:${barWidth}%"></div>
         <div class="sidebar-bar-today" style="width:${todayBarWidth}%"></div>
         <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfPeriod.toFixed(1)}%)</span>
@@ -949,7 +977,7 @@ function renderScheduleTab(): string {
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
         <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾 שמירת שבצקים${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
         ${renderContinuityChip()}
-        ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="חיבור לשבצ\"ק קודם — ייבוא נתוני המשכיות">📋 חיבור לשבצ"ק קודם</button>` : ''}
+        ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="חיבור לשבצ"ק קודם — ייבוא נתוני המשכיות">📋 חיבור לשבצ"ק קודם</button>` : ''}
       </span>
       <span class="toolbar-group toolbar-group--day-actions">
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
@@ -1040,12 +1068,12 @@ function renderScheduleTab(): string {
   if (_manualBuildActive) {
     html += `<section class="violations-section violations-collapsed">
       <button class="violations-toggle" data-action="toggle-violations" aria-expanded="false">
-        <h2>הפרות אילוצים <span class="count">${violationCount}</span></h2>
+        <h2>אזהרות והפרות <span class="count">${violationCount}</span></h2>
         <span class="violations-toggle-icon">▸</span>
       </button>
     </section>`;
   } else {
-    html += `<section><h2>הפרות אילוצים <span class="count">${violationCount}</span></h2>${renderViolations(s)}</section>`;
+    html += `<section><h2>אזהרות והפרות <span class="count">${violationCount}</span></h2>${renderViolations(s)}</section>`;
   }
   html += `</div>`;
   html += renderParticipantSidebar(s);
@@ -1649,7 +1677,7 @@ function renderViolations(schedule: Schedule): string {
   const warn = visible.filter((v) => v.severity === ViolationSeverity.Warning);
 
   if (hard.length === 0 && warn.length === 0) {
-    return `<div class="alert alert-ok">✓ אין הפרות אילוצים בכל ${store.getScheduleDays()} הימים.</div>`;
+    return `<div class="alert alert-ok">✓ אין אזהרות או הפרות בכל ${store.getScheduleDays()} הימים.</div>`;
   }
 
   // Separate into current-day and other-day violations
@@ -3157,7 +3185,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.1</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4119,15 +4147,16 @@ function wireScheduleEvents(container: HTMLElement): void {
         }
       });
     }
-
-    // ── Workload bar tap → toast on mobile ──
-    container.addEventListener('click', (e) => {
-      const bar = (e.target as HTMLElement).closest('.sidebar-bar-bg[title]') as HTMLElement | null;
-      if (!bar) return;
-      const details = bar.getAttribute('title');
-      if (details) showToast(details, { type: 'info', duration: 5000 });
-    });
   }
+
+  // ── Workload bar click/tap → structured popup (desktop + mobile) ──
+  container.addEventListener('click', (e) => {
+    const bar = (e.target as HTMLElement).closest('.sidebar-bar-bg[data-pid]') as HTMLElement | null;
+    if (!bar) return;
+    const pid = bar.dataset.pid;
+    if (!pid || !currentSchedule) return;
+    openWorkloadPopup(bar, pid, currentSchedule, currentDay);
+  });
 
   // ── Live Mode toggle ──
   const liveModeChk = container.querySelector('#chk-live-mode') as HTMLInputElement | null;

@@ -270,6 +270,8 @@ let _selectedCertColor = '';
 let _certColorEditId: string | null = null;
 let _customColorWarning = '';
 let _pendingCertName = '';
+let _certEditingId: string | null = null;
+let _certError = '';
 
 // Old renderCertificationSection / renderPakalSection removed —
 // replaced by renderCertificationContent() / renderPakalContent() above.
@@ -477,13 +479,21 @@ function renderCertificationContent(): string {
     const usage = store.getCertificationUsage(def.id);
     const usageText = `${usage.participantCount} משתתפים, ${usage.slotCount} משבצות`;
     const isEditingColor = _certColorEditId === def.id;
+    const editing = _certEditingId === def.id;
     html += `
       <div class="cert-def-item-wrapper">
         <div class="cert-def-item">
           <button class="cert-color-indicator" data-action="cert-change-color" data-cert-id="${def.id}" style="background:${def.color}" title="שנה צבע"></button>
-          <span class="badge" style="background:${def.color}">${escHtml(def.label)}</span>
+          ${
+            editing
+              ? `<input type="text" class="input-sm cert-edit-input" data-field="cert-edit-label" data-cert-id="${def.id}" value="${escHtml(def.label)}" maxlength="100" />`
+              : `<span class="badge" style="background:${def.color}">${escHtml(def.label)}</span>`
+          }
           <span class="cert-usage-count">${usageText}</span>
-          <button class="btn-icon btn-sm" data-action="cert-remove" data-cert-id="${def.id}" title="הסר הסמכה">✕</button>
+          ${!editing ? `<button class="btn-icon btn-sm" data-action="cert-edit" data-cert-id="${def.id}" title="ערוך">✎</button>` : ''}
+          ${editing ? `<button class="btn-icon btn-sm" data-action="cert-save" data-cert-id="${def.id}" title="שמור">✓</button>` : ''}
+          ${editing ? `<button class="btn-icon btn-sm" data-action="cert-cancel" title="ביטול">✕</button>` : ''}
+          ${!editing ? `<button class="btn-icon btn-sm" data-action="cert-remove" data-cert-id="${def.id}" title="הסר הסמכה">✕</button>` : ''}
         </div>`;
     if (isEditingColor) {
       const editSelectedIsCustom = !CERT_COLOR_PALETTE.includes(def.color);
@@ -514,6 +524,7 @@ function renderCertificationContent(): string {
   const duplicateOwner = usedColors.has(_selectedCertColor) ? colorOwner.get(_selectedCertColor) : null;
   html += `
     </div>
+    ${_certError ? `<div class="preset-validation-error">${escHtml(_certError)}</div>` : ''}
     <div class="cert-add-form">
       <div class="cert-add-row">
         <input type="text" class="input-sm" data-field="cert-name" placeholder="שם הסמכה חדשה" value="${escHtml(_pendingCertName)}" />
@@ -1078,6 +1089,35 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         } catch (err: any) {
           showToast(err.message || 'שגיאה', { type: 'error' });
         }
+        rerender();
+        break;
+      }
+      case 'cert-edit': {
+        _certEditingId = btn.dataset.certId || null;
+        _certError = '';
+        rerender();
+        break;
+      }
+      case 'cert-cancel': {
+        _certEditingId = null;
+        _certError = '';
+        rerender();
+        break;
+      }
+      case 'cert-save': {
+        const certId = btn.dataset.certId || '';
+        const input = container.querySelector<HTMLInputElement>(
+          `[data-field="cert-edit-label"][data-cert-id="${certId}"]`,
+        );
+        const error = store.renameCertification(certId, input?.value || '');
+        if (error) {
+          _certError = error;
+          rerender();
+          break;
+        }
+        _certEditingId = null;
+        _certError = '';
+        showToast('הסמכה עודכנה', { type: 'success' });
         rerender();
         break;
       }
