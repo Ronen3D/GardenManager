@@ -8301,6 +8301,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     });
 
     assert(result.affected.length === 2, 'fsos-batch: two affected slots identified');
+    assert(result.excludedInWindow.length === 0, 'fsos-batch: no excluded slots when opt-out unused');
     assert(result.infeasibleAssignmentIds.length === 0, 'fsos-batch: both slots solvable with available candidates');
     assert(result.plans.length > 0, 'fsos-batch: at least one batch plan returned');
 
@@ -8317,6 +8318,43 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       !replacementIds.has('fb-p1'),
       'fsos-batch: the unavailable participant is never used as a replacement in-window',
     );
+
+    // Partial opt-out: user excludes one slot from replacement; only the
+    // non-excluded slot should be filled, and the excluded entry should
+    // surface in `excludedInWindow`.
+    const partialResult = generateBatchRescuePlans(sched, { participantId: 'fb-p1', window }, fsosAnchor, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx,
+      maxPlans: 3,
+      excludedAssignmentIds: new Set(['fb-a1']),
+    });
+    assert(partialResult.affected.length === 1, 'fsos-batch: partial-opt-out reduces affected set');
+    assert(
+      partialResult.affected[0].assignment.id === 'fb-a2',
+      'fsos-batch: only the non-excluded slot is planned',
+    );
+    assert(
+      partialResult.excludedInWindow.length === 1 &&
+        partialResult.excludedInWindow[0].assignment.id === 'fb-a1',
+      'fsos-batch: excluded slot is reported in excludedInWindow',
+    );
+    assert(partialResult.plans.length > 0, 'fsos-batch: partial-opt-out still yields a plan');
+    assert(
+      partialResult.plans[0].swaps.every((s) => s.assignmentId !== 'fb-a1'),
+      'fsos-batch: excluded slot is never touched by the plan',
+    );
+
+    // Full opt-out: excluding all affected IDs yields an empty plan set but
+    // still returns the original affected metadata through excludedInWindow.
+    const allOut = generateBatchRescuePlans(sched, { participantId: 'fb-p1', window }, fsosAnchor, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx,
+      maxPlans: 3,
+      excludedAssignmentIds: new Set(['fb-a1', 'fb-a2']),
+    });
+    assert(allOut.affected.length === 0, 'fsos-batch: all-opt-out yields empty affected list');
+    assert(allOut.excludedInWindow.length === 2, 'fsos-batch: all-opt-out reports both in excludedInWindow');
+    assert(allOut.plans.length === 0, 'fsos-batch: all-opt-out yields no plans');
   }
 
   // ── Test 4: infeasible slot → infeasibleAssignmentIds populated ──
@@ -8434,6 +8472,307 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       anchorAtCreation: new Date(),
     });
     assert(sepP.length === 2, 'fsos-upsert: different participant does not merge');
+  }
+
+  // ── Test 6: focal CAN be Q (depth-2 donor replacement) for OUTSIDE-window tasks ──
+  // Regression for issue #2 — Future SOS must allow reassigning the focal
+  // participant to tasks outside their unavailability window.
+  {
+    // Day 1 (in window): V1 held by focal — needs rescue.
+    // Day 2 (outside window): P1 holds task T_OUT_P, focal has no assignment here.
+    // The only way to replace focal in V1 at depth 2 is: P1 → V1, and someone
+    // takes P1's T_OUT_P slot. Focal has no assignments outside the window so
+    // they don't naturally end up in a slot — but they should be ELIGIBLE as Q
+    // for T_OUT_P since it's outside their unavailability window.
+    const base1 = new Date(2026, 5, 1); // Day 1 — IN window
+    const base2 = new Date(2026, 5, 2); // Day 2 — OUT of window
+    const blockIn = createTimeBlockFromHours(base1, 8, 14);
+    const blockOut = createTimeBlockFromHours(base2, 8, 14);
+    const avail = [{ start: new Date(2026, 4, 29), end: new Date(2026, 5, 5) }];
+
+    const focal: Participant = {
+      id: 'f2-focal',
+      name: 'Focal',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: avail,
+      dateUnavailability: [],
+    };
+    const p1: Participant = {
+      id: 'f2-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: avail,
+      dateUnavailability: [],
+    };
+    const filler: Participant = {
+      // A third person so depth-2's Q loop has a choice besides focal.
+      id: 'f2-filler',
+      name: 'Filler',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: avail,
+      dateUnavailability: [],
+    };
+
+    const tIn: Task = {
+      id: 'f2-tIn',
+      name: 'InWindowTask',
+      timeBlock: blockIn,
+      requiredCount: 1,
+      slots: [{ slotId: 'f2-sIn', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    const tOut: Task = {
+      id: 'f2-tOut',
+      name: 'OutOfWindowTask',
+      timeBlock: blockOut,
+      requiredCount: 1,
+      slots: [{ slotId: 'f2-sOut', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+
+    const assigns: Assignment[] = [
+      // Focal is in the in-window task V.
+      {
+        id: 'f2-a1',
+        taskId: 'f2-tIn',
+        slotId: 'f2-sIn',
+        participantId: 'f2-focal',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      // P1 is in the out-of-window task (P1's donor for any depth-2 chain).
+      {
+        id: 'f2-a2',
+        taskId: 'f2-tOut',
+        slotId: 'f2-sOut',
+        participantId: 'f2-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
+    const sched: Schedule = {
+      id: 'f2-sched',
+      tasks: [tIn, tOut],
+      participants: [focal, p1, filler],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
+    };
+
+    const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
+    // Window covers day 1 only → tIn is IN window, tOut is OUT.
+    const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23, 59) };
+    const anchor = new Date(2026, 4, 30);
+
+    const result = generateBatchRescuePlans(
+      sched,
+      { participantId: 'f2-focal', window },
+      anchor,
+      { config: { ...DEFAULT_CONFIG }, scoreCtx, maxPlans: 10, caps: { depth1: 6, depth2: 8, depth3: 4 } },
+    );
+
+    assert(result.affected.length === 1, 'fsos-focal-reassign: one affected in-window slot');
+
+    // At least one plan must exist that reassigns the focal to tOut via a
+    // depth-2 chain (P1 → V1; Focal → P1's old slot tOut).
+    const plansWithFocalAsQ = result.plans.filter((plan) =>
+      plan.swaps.some((sw) => sw.toParticipantId === 'f2-focal' && sw.taskId === 'f2-tOut'),
+    );
+    assert(plansWithFocalAsQ.length > 0, 'fsos-focal-reassign: depth-2 plan reassigns focal to outside-window task');
+
+    // And no plan should place focal on the in-window task.
+    const plansWithFocalInWindow = result.plans.filter((plan) =>
+      plan.swaps.some((sw) => sw.toParticipantId === 'f2-focal' && sw.taskId === 'f2-tIn'),
+    );
+    assert(plansWithFocalInWindow.length === 0, 'fsos-focal-reassign: HC-3 still blocks focal from in-window tasks');
+  }
+
+  // ── Test 7: timedOut flag is surfaced when the DFS budget is exhausted ──
+  {
+    const p1: Participant = {
+      id: 'to-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'to-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const t1: Task = {
+      id: 'to-t1',
+      name: 'T1',
+      timeBlock: fsosBlock,
+      requiredCount: 1,
+      slots: [{ slotId: 'to-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    const assigns: Assignment[] = [
+      {
+        id: 'to-a1',
+        taskId: 'to-t1',
+        slotId: 'to-s1',
+        participantId: 'to-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
+    const sched: Schedule = {
+      id: 'to-sched',
+      tasks: [t1],
+      participants: [p1, p2],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
+    };
+    const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
+    const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23) };
+
+    // Normal budget → not timed out.
+    const normal = generateBatchRescuePlans(
+      sched,
+      { participantId: 'to-p1', window },
+      fsosAnchor,
+      { config: { ...DEFAULT_CONFIG }, scoreCtx, maxPlans: 3 },
+    );
+    assert(normal.timedOut === false, 'fsos-timeout: normal budget → timedOut is false');
+
+    // Zero budget → DFS cannot finish, best-so-far flag set.
+    const timed = generateBatchRescuePlans(
+      sched,
+      { participantId: 'to-p1', window },
+      fsosAnchor,
+      { config: { ...DEFAULT_CONFIG }, scoreCtx, maxPlans: 3, timeBudgetMs: -1 },
+    );
+    assert(timed.timedOut === true, 'fsos-timeout: exhausted budget → timedOut is true');
+  }
+
+  // ── Test 8: getEligibleParticipantsForSlot / getCandidatesWithEligibility
+  //         honor extraUnavailability (issue #5 regression) ──
+  {
+    // Regression for issue #5 — without this hook the manual swap picker would
+    // surface the focal participant as a valid candidate for an in-window
+    // slot; the scheduler's validate() would only reject after the user clicks.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const {
+      getEligibleParticipantsForSlot: getEligibleWithExtra,
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      getCandidatesWithEligibility: getCandidatesWithExtra,
+    } = require('./engine/validator');
+
+    const focal: Participant = {
+      id: 'f5-focal',
+      name: 'Focal',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const other: Participant = {
+      id: 'f5-other',
+      name: 'Other',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const task: Task = {
+      id: 'f5-t1',
+      name: 'T1',
+      timeBlock: fsosBlock, // June 1, 06:00-14:00 (in window below)
+      requiredCount: 1,
+      slots: [{ slotId: 'f5-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    const extra = [
+      { participantId: 'f5-focal', start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23, 59) },
+    ];
+
+    // Without extraUnavailability: focal should be eligible (master availability is wide-open).
+    const without = getEligibleWithExtra(task, 'f5-s1', [focal, other], [], [task]);
+    assert(
+      without.some((p: Participant) => p.id === 'f5-focal'),
+      'fsos-swap-picker: focal is eligible without extraUnavailability',
+    );
+
+    // With extraUnavailability: focal is filtered out by the HC-3 hook.
+    const withExtra = getEligibleWithExtra(task, 'f5-s1', [focal, other], [], [task], undefined, undefined, extra);
+    assert(
+      !withExtra.some((p: Participant) => p.id === 'f5-focal'),
+      'fsos-swap-picker: focal is filtered by extraUnavailability (getEligibleParticipantsForSlot)',
+    );
+    assert(
+      withExtra.some((p: Participant) => p.id === 'f5-other'),
+      'fsos-swap-picker: non-focal participants remain eligible',
+    );
+
+    // getCandidatesWithEligibility surfaces the HC-3 rejection reason.
+    const candidates = getCandidatesWithExtra(task, 'f5-s1', [focal, other], [], [task], undefined, undefined, extra);
+    const focalEntry = candidates.find((c: { participant: Participant }) => c.participant.id === 'f5-focal');
+    assert(
+      focalEntry !== undefined && focalEntry.eligible === false && focalEntry.rejectionCode === 'HC-3',
+      'fsos-swap-picker: getCandidatesWithEligibility reports HC-3 for focal under extraUnavailability',
+    );
   }
 }
 

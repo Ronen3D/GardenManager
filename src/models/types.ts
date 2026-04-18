@@ -229,6 +229,13 @@ export interface ScheduleUnavailability {
   createdAt: Date;
   /** Live-mode anchor at creation time (audit). */
   anchorAtCreation: Date;
+  /**
+   * Swap count from the Future-SOS plan applied alongside this entry.
+   * Zero when the entry was recorded without a replacement plan
+   * (e.g., no overlapping assignments or user opted out of all). Undefined
+   * on entries created before the field was introduced.
+   */
+  appliedSwapCount?: number;
 }
 
 export interface Schedule {

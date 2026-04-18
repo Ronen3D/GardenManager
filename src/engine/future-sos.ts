@@ -80,12 +80,21 @@ export interface BatchRescueResult {
   request: FutureSosRequest;
   /** Assignments in the window that require a replacement. */
   affected: AffectedAssignment[];
+  /** Assignments in the window that the user opted out of replacing. */
+  excludedInWindow: AffectedAssignment[];
   /** Assignments in the window that are frozen (past) — shown for info only. */
   lockedInPast: AffectedAssignment[];
   /** Top-N plans, ranked by compositeDelta desc. */
   plans: BatchRescuePlan[];
   /** Assignment IDs for which no valid chain could be found. */
   infeasibleAssignmentIds: string[];
+  /**
+   * True when the DFS composition hit its wall-clock budget and returned
+   * best-so-far. When true, `plans` may be empty or sub-optimal even if
+   * there is no infeasibility — the caller should surface this to the user
+   * so they can retry with a narrower window.
+   */
+  timedOut: boolean;
 }
 
 export interface GenerateBatchOpts {
@@ -96,6 +105,12 @@ export interface GenerateBatchOpts {
   certLabelResolver?: (certId: string) => string;
   /** Budget in ms for the DFS composition stage. Default 500. */
   timeBudgetMs?: number;
+  /**
+   * Assignment IDs the user opted out of replacing. Still returned in
+   * `excludedInWindow` for display, but the planner does not try to fill
+   * them — the participant keeps the slot despite the window.
+   */
+  excludedAssignmentIds?: ReadonlySet<string>;
   config: SchedulerConfig;
   scoreCtx: ScoreContext;
 }
@@ -216,7 +231,12 @@ function pairKey(participantId: string, taskId: string): string {
   return `${participantId}|${taskId}`;
 }
 
-function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, deadline: number): Composition[] {
+interface DfsOutcome {
+  compositions: Composition[];
+  timedOut: boolean;
+}
+
+function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, deadline: number): DfsOutcome {
   // Suffix "best remaining" sums, for admissible upper-bound pruning.
   const suffixBest: number[] = new Array(candidatesPerSlot.length + 1).fill(0);
   for (let i = candidatesPerSlot.length - 1; i >= 0; i--) {
@@ -225,6 +245,7 @@ function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, deadlin
   }
 
   const best: Composition[] = [];
+  let timedOut = false;
   const state: DfsState = {
     chosen: new Array(candidatesPerSlot.length).fill(null),
     usedAssignmentIds: new Set(),
@@ -249,7 +270,10 @@ function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, deadlin
   }
 
   function recurse(i: number) {
-    if (Date.now() > deadline) return;
+    if (Date.now() > deadline) {
+      timedOut = true;
+      return;
+    }
 
     if (i === candidatesPerSlot.length) {
       const chains = state.chosen.filter((c): c is CandidateChain => c !== null);
@@ -264,7 +288,10 @@ function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, deadlin
 
     const cands = candidatesPerSlot[i];
     for (const cand of cands) {
-      if (Date.now() > deadline) return;
+      if (Date.now() > deadline) {
+        timedOut = true;
+        return;
+      }
 
       // Conflict checks.
       let conflict = false;
@@ -309,7 +336,7 @@ function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, deadlin
   }
 
   recurse(0);
-  return best;
+  return { compositions: best, timedOut };
 }
 
 // ─── Public entry point ─────────────────────────────────────────────────────
@@ -320,19 +347,34 @@ export function generateBatchRescuePlans(
   anchor: Date,
   opts: GenerateBatchOpts,
 ): BatchRescueResult {
-  const { affected, lockedInPast } = findAffectedAssignments(schedule, request.participantId, request.window, anchor);
+  const { affected: allAffected, lockedInPast } = findAffectedAssignments(
+    schedule,
+    request.participantId,
+    request.window,
+    anchor,
+  );
 
   const maxPlans = opts.maxPlans ?? 3;
   const caps = opts.caps ?? DEFAULT_CAPS;
   const timeBudgetMs = opts.timeBudgetMs ?? 500;
 
+  const excludedIds = opts.excludedAssignmentIds;
+  const excludedInWindow: AffectedAssignment[] = [];
+  const affected: AffectedAssignment[] = [];
+  for (const a of allAffected) {
+    if (excludedIds?.has(a.assignment.id)) excludedInWindow.push(a);
+    else affected.push(a);
+  }
+
   if (affected.length === 0) {
     return {
       request,
       affected,
+      excludedInWindow,
       lockedInPast,
       plans: [],
       infeasibleAssignmentIds: [],
+      timedOut: false,
     };
   }
 
@@ -423,9 +465,11 @@ export function generateBatchRescuePlans(
     return {
       request,
       affected,
+      excludedInWindow,
       lockedInPast,
       plans: [],
       infeasibleAssignmentIds,
+      timedOut: false,
     };
   }
 
@@ -435,15 +479,17 @@ export function generateBatchRescuePlans(
 
   const deadline = Date.now() + timeBudgetMs;
   // Compose up to 4× the requested plans to give the full-scorer room to rerank.
-  const compositions = dfsCompose(orderedCandidates, Math.max(maxPlans * 4, 8), deadline);
+  const { compositions, timedOut } = dfsCompose(orderedCandidates, Math.max(maxPlans * 4, 8), deadline);
 
   if (compositions.length === 0) {
     return {
       request,
       affected,
+      excludedInWindow,
       lockedInPast,
       plans: [],
       infeasibleAssignmentIds,
+      timedOut,
     };
   }
 
@@ -525,9 +571,11 @@ export function generateBatchRescuePlans(
   return {
     request,
     affected,
+    excludedInWindow,
     lockedInPast,
     plans: top,
     infeasibleAssignmentIds,
+    timedOut,
   };
 }
 
@@ -549,6 +597,7 @@ export function upsertScheduleUnavailability(
     reason?: string;
     createdAt: Date;
     anchorAtCreation: Date;
+    appliedSwapCount?: number;
   },
 ): NonNullable<Schedule['scheduleUnavailability']> {
   const result = (existing ?? []).map((e) => ({ ...e }));
@@ -574,6 +623,7 @@ export function upsertScheduleUnavailability(
     reason: entry.reason,
     createdAt: entry.createdAt,
     anchorAtCreation: entry.anchorAtCreation,
+    appliedSwapCount: entry.appliedSwapCount,
   });
   return result;
 }

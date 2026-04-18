@@ -136,6 +136,11 @@ function resolveContext(state: PickerState, deps: SwapPickerDeps): ResolvedConte
   const sourceParticipant = schedule.participants.find((p) => p.id === sourceAssignment.participantId);
   if (!sourceParticipant) return null;
 
+  // Schedule-scoped Future-SOS unavailability windows — layer on top of
+  // participant master availability so focal participants don't surface as
+  // candidates for slots that fall within their unavailability window.
+  const extraUnavailability = schedule.scheduleUnavailability;
+
   // Candidates: every participant with eligibility + rejection reason
   const candidates = getCandidatesWithEligibility(
     sourceTask,
@@ -145,6 +150,7 @@ function resolveContext(state: PickerState, deps: SwapPickerDeps): ResolvedConte
     schedule.tasks,
     disabledHC,
     restRuleMap,
+    extraUnavailability,
   ).filter((c) => c.participant.id !== sourceParticipant.id);
 
   // Trade candidates: for each OTHER assignment, check if the outgoing
@@ -157,6 +163,7 @@ function resolveContext(state: PickerState, deps: SwapPickerDeps): ResolvedConte
     sourceParticipant,
     disabledHC,
     restRuleMap,
+    extraUnavailability,
   );
 
   // Capacities + workloads (baseline — used for "before" numbers in preview)
@@ -189,6 +196,7 @@ function computeTradeCandidates(
   sourceParticipant: Participant,
   disabledHC: Set<string>,
   restRuleMap: Map<string, number>,
+  extraUnavailability: Array<{ participantId: string; start: Date; end: Date }> | undefined,
 ): TradeCandidate[] {
   // Eligible participants for the source slot (used as filter A).
   const eligibleForSource = new Set(
@@ -200,6 +208,7 @@ function computeTradeCandidates(
       schedule.tasks,
       disabledHC,
       restRuleMap,
+      extraUnavailability,
     ).map((p) => p.id),
   );
 
@@ -222,6 +231,7 @@ function computeTradeCandidates(
         schedule.tasks,
         disabledHC,
         restRuleMap,
+        extraUnavailability,
       ).map((p) => p.id),
     );
     if (!eligibleForCandidateSlot.has(sourceParticipant.id)) continue;

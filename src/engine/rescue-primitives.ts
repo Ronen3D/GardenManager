@@ -216,7 +216,11 @@ function depth2(
         continue;
 
       for (const q of ctx.schedule.participants) {
-        if (q.id === p.id || q.id === vacatedAssignment.participantId) continue;
+        // q may be the focal (vacated) participant — HC-3 via extraUnavailability
+        // will reject them for in-window donor tasks while allowing reassignment
+        // to outside-window donor tasks. This is the Future-SOS "reassign focal
+        // elsewhere" path; do not filter focal out structurally here.
+        if (q.id === p.id) continue;
 
         const qAssignments = participantAssignmentsExcluding(ctx, q.id, new Set([donor.id]));
         const donorExcl = new Set([donor.id, vacatedAssignment.id]);
@@ -319,7 +323,10 @@ function depth3(
         continue;
 
       for (const q of ctx.schedule.participants) {
-        if (q.id === p.id || q.id === vacatedAssignment.participantId) continue;
+        // q may be focal — HC-3 via extraUnavailability rejects them for
+        // in-window donor tasks; outside-window donor tasks are a valid
+        // reassignment of the focal participant (Future-SOS product intent).
+        if (q.id === p.id) continue;
 
         const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
         const qDonors = qAssignments
@@ -360,7 +367,10 @@ function depth3(
             continue;
 
           for (const r of ctx.schedule.participants) {
-            if (r.id === p.id || r.id === q.id || r.id === vacatedAssignment.participantId) continue;
+            // r may be focal — HC-3 via extraUnavailability rejects focal
+            // for in-window donor tasks; outside-window donor tasks are a
+            // valid focal reassignment under Future-SOS intent.
+            if (r.id === p.id || r.id === q.id) continue;
 
             const rAssignments = participantAssignmentsExcluding(ctx, r.id, new Set([donorQ.id]));
             const donorQExcl = new Set([donorQ.id, donorP.id, vacatedAssignment.id]);

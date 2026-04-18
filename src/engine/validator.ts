@@ -284,6 +284,7 @@ export function getEligibleParticipantsForSlot(
   tasks: Task[],
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
+  extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
 ): Participant[] {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) return [];
@@ -310,6 +311,7 @@ export function getEligibleParticipantsForSlot(
       participantMap: pMap,
       disabledHC,
       restRuleMap,
+      extraUnavailability,
     });
   });
 }
@@ -355,6 +357,7 @@ export function getCandidatesWithEligibility(
   tasks: Task[],
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
+  extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
 ): CandidateEligibility[] {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) return [];
@@ -380,6 +383,7 @@ export function getCandidatesWithEligibility(
       participantMap: pMap,
       disabledHC,
       restRuleMap,
+      extraUnavailability,
     });
     return {
       participant: p,

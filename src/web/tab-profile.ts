@@ -72,7 +72,7 @@ export function renderProfileView(ctx: ProfileContext): string {
   // Right column: Unavailability + Metrics
   html += '<div class="profile-right">';
   html += renderMetrics(p, myTasks, numDays);
-  html += renderUnavailabilitySection(p, schedule);
+  html += renderUnavailabilitySection(p, schedule, ctx.showSosButtons ?? false);
   html += '</div>';
 
   html += '</div>';
@@ -103,10 +103,6 @@ function renderTopBar(
       : '<span class="text-muted">אין</span>';
   const pakalHtml = renderPakalBadges(p, store.getAllPakalDefinitionsIncludeDeleted(), 'אין');
 
-  const futureSosBtn = ctx.showSosButtons
-    ? `<button class="btn-future-sos" data-action="future-sos" data-pid="${p.id}" title="SOS עתידי">🆘 SOS עתידי</button>`
-    : '';
-
   return `
   <div class="profile-topbar">
     <button class="btn-back" data-action="back-to-schedule" title="חזור לשבצ&quot;ק">
@@ -136,7 +132,6 @@ function renderTopBar(
         <span class="profile-kpi-value">${computeHeavyHours(myTasks).toFixed(1)}h</span>
         <span class="profile-kpi-label">עומס אפקטיבי</span>
       </div>
-      ${futureSosBtn}
     </div>
   </div>`;
 }
@@ -232,12 +227,19 @@ function renderPersonalAgenda(
 
 // ─── Unavailability Section ──────────────────────────────────────────────────
 
-function renderUnavailabilitySection(p: Participant, schedule: Schedule): string {
+function renderUnavailabilitySection(p: Participant, schedule: Schedule, showSosButtons: boolean): string {
   const dateRules = store.getDateUnavailabilities(p.id);
   const fsos = (schedule.scheduleUnavailability ?? []).filter((u) => u.participantId === p.id);
 
+  const sosBtn = showSosButtons
+    ? `<button class="btn-future-sos profile-availability-action" data-action="future-sos" data-pid="${p.id}" title="סמן חלון אי־זמינות וחשב תוכנית החלפה">🆘 סמן אי־זמינות</button>`
+    : '';
+
   let html = `<div class="profile-card">
-    <h3 class="profile-card-title">🚫 אי זמינות</h3>`;
+    <div class="profile-card-header-row">
+      <h3 class="profile-card-title">🚫 אי זמינות</h3>
+      ${sosBtn}
+    </div>`;
 
   if (fsos.length > 0) {
     html += '<h4 class="profile-sub-title">SOS עתידי (על השבצ"ק הזה בלבד)</h4><ul class="profile-fsos-list">';
@@ -246,8 +248,12 @@ function renderUnavailabilitySection(p: Participant, schedule: Schedule): string
       const endLabel = `יום ${hebrewDayName(entry.end)}`;
       const timeLabel = `<span dir="ltr">${fmt(entry.start)} (${startLabel}) – ${fmt(entry.end)} (${endLabel})</span>`;
       const reason = entry.reason ? `<span class="text-muted"> · ${escHtml(entry.reason)}</span>` : '';
+      const swapBadge =
+        typeof entry.appliedSwapCount === 'number' && entry.appliedSwapCount > 0
+          ? `<span class="profile-fsos-swap-badge" title="החלפות שנעשו עבור חלון זה">הוחלפו ${entry.appliedSwapCount}</span>`
+          : '';
       html += `<li>
-        <span>${timeLabel}${reason}</span>
+        <span>${timeLabel}${reason}${swapBadge}</span>
         <button class="profile-fsos-remove" data-action="remove-fsos" data-entry-id="${entry.id}" title="הסר">הסר</button>
       </li>`;
     }

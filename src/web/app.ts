@@ -1230,6 +1230,7 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
     allTasks,
     disabledHC,
     restRuleMap,
+    currentSchedule.scheduleUnavailability,
   );
   _eligibleForSelectedSlot = new Set(eligible.map((p) => p.id));
 
@@ -1274,6 +1275,7 @@ async function handleManualParticipantClick(participantId: string): Promise<bool
     participantMap: pMap,
     disabledHC,
     restRuleMap: engine.getRestRuleMap(),
+    extraUnavailability: currentSchedule.scheduleUnavailability,
   });
 
   if (reason) {
@@ -2506,17 +2508,22 @@ async function handleProfileSos(assignmentId: string): Promise<void> {
   openRescueModal(assignmentId);
 }
 
-async function handleProfileFutureSos(participantId: string): Promise<void> {
+interface FutureSosEntryOpts {
+  defaultStartDay?: string;
+  defaultStartHour?: string;
+  defaultEndDay?: string;
+  defaultEndHour?: string;
+}
+
+async function handleProfileFutureSos(participantId: string, entryOpts: FutureSosEntryOpts = {}): Promise<void> {
   if (!currentSchedule || !engine) return;
   const participant = currentSchedule.participants.find((p) => p.id === participantId);
   if (!participant) return;
 
-  const anchor = await ensureLiveModeAnchor(null);
-  if (!anchor) return;
-
   const numDays = store.getScheduleDays();
   const baseDate = store.getScheduleDate();
   const dayStartHour = currentSchedule.algorithmSettings.dayStartHour;
+
   const days: Array<{ value: string; label: string }> = [];
   for (let d = 1; d <= numDays + 1; d++) {
     const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
@@ -2533,20 +2540,71 @@ async function handleProfileFutureSos(participantId: string): Promise<void> {
     return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dIdx - 1, hr, 0);
   };
 
+  // Anchor: live-mode timestamp if on, else a deferred candidate the user
+  // can tweak in the range-picker banner. Live mode is only activated on
+  // apply, so a cancel leaves the schedule untouched.
+  const lm = store.getLiveModeState();
+  let anchor: Date = lm.enabled
+    ? lm.currentTimestamp
+    : new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0);
+  const liveModeInitiallyOn = lm.enabled;
+
+  // Smart default: use next modifiable upcoming assignment if no override provided.
+  const smartDefault = computeSmartDefaultWindow(currentSchedule, participantId, anchor, dayStartHour);
+  const initial: RangePickerDefaults = {
+    startDay: entryOpts.defaultStartDay ?? smartDefault.startDay,
+    startHour: entryOpts.defaultStartHour ?? smartDefault.startHour,
+    endDay: entryOpts.defaultEndDay ?? smartDefault.endDay,
+    endHour: entryOpts.defaultEndHour ?? smartDefault.endHour,
+  };
+
+  const presets = buildFutureSosPresets(numDays, dayStartHour);
+  const anchorLabel = (a: Date) => `יום ${hebrewDayName(a)} ${fmt(a)}`;
+
   const range = await showRangePicker(`בחר את החלון שבו ${participant.name} לא זמין.`, {
-    title: 'SOS עתידי',
+    title: 'SOS עתידי — שלב 1: חלון',
     days,
     hours,
-    defaultStartDay: '1',
-    defaultStartHour: String(dayStartHour),
-    defaultEndDay: '1',
-    defaultEndHour: String((dayStartHour + 1) % 24),
+    defaultStartDay: initial.startDay,
+    defaultStartHour: initial.startHour,
+    defaultEndDay: initial.endDay,
+    defaultEndHour: initial.endHour,
+    presets,
+    anchor: liveModeInitiallyOn
+      ? undefined
+      : {
+          currentLabel: anchorLabel(anchor),
+          changeButtonLabel: 'שנה',
+          onChange: async () => {
+            const result = await showTimePicker('בחר את נקודת ההקפאה. שיבוצים לפני נקודה זו ייחשבו כעבר.', {
+              title: 'נקודת הקפאה',
+              days,
+              hours,
+              defaultDay: '1',
+              defaultHour: String(dayStartHour),
+            });
+            if (!result) return null;
+            const ts = toDate(result.day, result.hour);
+            anchor = ts;
+            return { label: anchorLabel(ts) };
+          },
+        },
     validate: (v) => {
       const s = toDate(v.startDay, v.startHour);
       const e = toDate(v.endDay, v.endHour);
       if (e.getTime() <= s.getTime()) return 'זמן הסיום חייב להיות אחרי זמן ההתחלה.';
       if (s.getTime() < anchor.getTime()) return 'ההתחלה חייבת להיות אחרי נקודת ההקפאה.';
       return null;
+    },
+    onPreview: (v) => {
+      if (!currentSchedule) return '';
+      const s = toDate(v.startDay, v.startHour);
+      const e = toDate(v.endDay, v.endHour);
+      if (e.getTime() <= s.getTime() || s.getTime() < anchor.getTime()) return '';
+      const { affected } = findAffectedAssignments(currentSchedule, participantId, { start: s, end: e }, anchor);
+      if (affected.length === 0) return 'אין שיבוצים בחלון זה.';
+      const dayKeys = new Set(affected.map((a) => a.task.timeBlock.start.toDateString()));
+      return `יעודכנו ${affected.length} שיבוצים ב־${dayKeys.size} ימים.`;
     },
   });
   if (!range) return;
@@ -2561,17 +2619,23 @@ async function handleProfileFutureSos(participantId: string): Promise<void> {
     anchor,
   );
 
-  const confirmed = await openConfirmModal({
+  const confirmResult = await openConfirmModal({
     participantName: participant.name,
     window: { start: windowStart, end: windowEnd },
     affected,
     lockedInPast,
     dayStartHour,
   });
-  if (!confirmed) return;
+  if (!confirmResult.confirmed) return;
 
-  // If nothing to rescue, just record the unavailability entry and return.
-  if (affected.length === 0) {
+  const excludedIds = new Set(confirmResult.excludedIds);
+  const effectiveAffected = affected.filter((a) => !excludedIds.has(a.assignment.id));
+
+  // If nothing to rescue (either no overlap or user opted out of everything),
+  // just record the unavailability entry and return. Activate live mode now
+  // so the anchor is persisted with the entry.
+  if (effectiveAffected.length === 0) {
+    if (!liveModeInitiallyOn) activateLiveModeWithAnchor(anchor);
     const updated = upsertScheduleUnavailability(currentSchedule.scheduleUnavailability, {
       id: `fsos-${Date.now()}`,
       participantId,
@@ -2579,6 +2643,7 @@ async function handleProfileFutureSos(participantId: string): Promise<void> {
       end: windowEnd,
       createdAt: new Date(),
       anchorAtCreation: anchor,
+      appliedSwapCount: 0,
     });
     currentSchedule.scheduleUnavailability = updated;
     store.saveSchedule(currentSchedule);
@@ -2601,6 +2666,7 @@ async function handleProfileFutureSos(participantId: string): Promise<void> {
       restRuleMap: engine.getRestRuleMap(),
       certLabelResolver: engine.getCertLabelResolver(),
       maxPlans: 3,
+      excludedAssignmentIds: excludedIds,
     },
   );
 
@@ -2608,19 +2674,39 @@ async function handleProfileFutureSos(participantId: string): Promise<void> {
     result,
     schedule: currentSchedule,
     participantName: participant.name,
+    onNarrowWindow: () => {
+      // Re-enter the flow preserving the current window values as defaults.
+      void handleProfileFutureSos(participantId, {
+        defaultStartDay: range.startDay,
+        defaultStartHour: range.startHour,
+        defaultEndDay: range.endDay,
+        defaultEndHour: range.endHour,
+      });
+    },
     onApply: (plan) => {
       if (!currentSchedule || !engine) return;
 
-      // Persist the unavailability entry BEFORE applying swaps so the
-      // scheduler validates the final state with extraUnavailability active.
+      if (!liveModeInitiallyOn) activateLiveModeWithAnchor(anchor);
+
+      // Capture the reverse swap map BEFORE mutating, to support undo.
+      const reverseSwaps = plan.swaps.map((sw) => {
+        const assn = currentSchedule!.assignments.find((a) => a.id === sw.assignmentId);
+        return {
+          assignmentId: sw.assignmentId,
+          prevParticipantId: assn?.participantId ?? sw.fromParticipantId ?? '',
+        };
+      });
+
       const prevUnavailability = currentSchedule.scheduleUnavailability;
+      const fsosEntryId = `fsos-${Date.now()}`;
       currentSchedule.scheduleUnavailability = upsertScheduleUnavailability(prevUnavailability, {
-        id: `fsos-${Date.now()}`,
+        id: fsosEntryId,
         participantId,
         start: windowStart,
         end: windowEnd,
         createdAt: new Date(),
         anchorAtCreation: anchor,
+        appliedSwapCount: plan.swaps.length,
       });
 
       const requests = plan.swaps.map((sw) => ({
@@ -2629,7 +2715,6 @@ async function handleProfileFutureSos(participantId: string): Promise<void> {
       }));
       const applyResult = engine.swapParticipantChain(requests);
       if (!applyResult.valid) {
-        // Roll back the unavailability entry too.
         currentSchedule.scheduleUnavailability = prevUnavailability;
         showToast('החלת התוכנית נכשלה — בוצע שחזור למצב הקודם.', { type: 'error', duration: 5000 });
         return;
@@ -2639,12 +2724,162 @@ async function handleProfileFutureSos(participantId: string): Promise<void> {
       currentSchedule = updated;
       store.saveSchedule(updated);
       renderAll();
-      showToast(`הוחלה תוכנית עם ${plan.swaps.length} החלפות. ${participant.name} סומן כלא־זמין בחלון.`, {
-        type: 'success',
-        duration: 5000,
+      showFutureSosAppliedStrip(participantId, plan.swaps.length, {
+        reverseSwaps,
+        prevUnavailability,
+        fsosEntryId,
       });
     },
   });
+}
+
+interface RangePickerDefaults {
+  startDay: string;
+  startHour: string;
+  endDay: string;
+  endHour: string;
+}
+
+function computeSmartDefaultWindow(
+  schedule: Schedule,
+  participantId: string,
+  anchor: Date,
+  dayStartHour: number,
+): RangePickerDefaults {
+  const baseDate = store.getScheduleDate();
+  const dayIndexOf = (d: Date): number => {
+    const ms = d.getTime() - new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate()).getTime();
+    return Math.floor(ms / 86400000) + 1;
+  };
+
+  const taskMap = new Map<string, Task>();
+  for (const t of schedule.tasks) taskMap.set(t.id, t);
+
+  const upcoming = schedule.assignments
+    .filter((a) => a.participantId === participantId)
+    .map((a) => ({ a, task: taskMap.get(a.taskId) }))
+    .filter((x): x is { a: Assignment; task: Task } => !!x.task && x.task.timeBlock.start.getTime() >= anchor.getTime())
+    .sort((x, y) => x.task.timeBlock.start.getTime() - y.task.timeBlock.start.getTime());
+
+  if (upcoming.length > 0) {
+    const { task } = upcoming[0];
+    return {
+      startDay: String(Math.max(1, dayIndexOf(task.timeBlock.start))),
+      startHour: String(task.timeBlock.start.getHours()),
+      endDay: String(Math.max(1, dayIndexOf(task.timeBlock.end))),
+      endHour: String(task.timeBlock.end.getHours()),
+    };
+  }
+  return {
+    startDay: '1',
+    startHour: String(dayStartHour),
+    endDay: '1',
+    endHour: String((dayStartHour + 1) % 24),
+  };
+}
+
+function buildFutureSosPresets(
+  numDays: number,
+  dayStartHour: number,
+): import('./range-picker-modal').RangePickerPreset[] {
+  void numDays;
+  return [
+    {
+      id: 'full-day',
+      label: 'כל היום',
+      apply: (current) => {
+        const nextDay = String(Math.min(7, parseInt(current.startDay, 10) + 1));
+        return {
+          startDay: current.startDay,
+          startHour: String(dayStartHour),
+          endDay: nextDay,
+          endHour: String(dayStartHour),
+        };
+      },
+    },
+    {
+      id: 'morning',
+      label: 'בוקר',
+      apply: (current) => ({ ...current, startHour: '6', endDay: current.startDay, endHour: '14' }),
+    },
+    {
+      id: 'evening',
+      label: 'ערב',
+      apply: (current) => ({ ...current, startHour: '14', endDay: current.startDay, endHour: '22' }),
+    },
+    {
+      id: 'night',
+      label: 'לילה',
+      apply: (current) => {
+        const nextDay = String(Math.min(7, parseInt(current.startDay, 10) + 1));
+        return { ...current, startHour: '22', endDay: nextDay, endHour: '6' };
+      },
+    },
+  ];
+}
+
+function activateLiveModeWithAnchor(anchor: Date): void {
+  if (!currentSchedule) return;
+  store.setLiveModeEnabled(true);
+  store.setLiveModeTimestamp(anchor);
+  freezeAssignments(currentSchedule, anchor);
+}
+
+interface UndoContext {
+  reverseSwaps: Array<{ assignmentId: string; prevParticipantId: string }>;
+  prevUnavailability: Schedule['scheduleUnavailability'];
+  fsosEntryId: string;
+}
+
+function showFutureSosAppliedStrip(participantId: string, swapCount: number, undoCtx: UndoContext): void {
+  const strip = document.createElement('div');
+  strip.className = 'fsos-applied-strip';
+  const participant = currentSchedule?.participants.find((p) => p.id === participantId);
+  const name = participant?.name ?? '';
+  strip.innerHTML = `<span class="fsos-applied-strip-icon">✅</span>
+    <span class="fsos-applied-strip-text">הוחלה תוכנית עם <strong>${swapCount}</strong> החלפות. ${escHtml(name)} סומן כלא־זמין.</span>
+    <button class="fsos-applied-strip-undo">בטל</button>
+    <button class="fsos-applied-strip-close" aria-label="סגור">✕</button>`;
+
+  document.body.appendChild(strip);
+  const remove = () => {
+    strip.classList.add('fsos-applied-strip--leaving');
+    setTimeout(() => strip.remove(), 250);
+  };
+  const timer = window.setTimeout(remove, 10000);
+  strip.querySelector('.fsos-applied-strip-close')?.addEventListener('click', () => {
+    window.clearTimeout(timer);
+    remove();
+  });
+  strip.querySelector('.fsos-applied-strip-undo')?.addEventListener('click', () => {
+    window.clearTimeout(timer);
+    remove();
+    undoFutureSos(undoCtx);
+  });
+}
+
+function undoFutureSos(undoCtx: UndoContext): void {
+  if (!currentSchedule || !engine) return;
+  // Remove the FSOS entry first so HC-5 doesn't block the reverse swap.
+  const before = currentSchedule.scheduleUnavailability ?? [];
+  currentSchedule.scheduleUnavailability = before.filter((e) => e.id !== undoCtx.fsosEntryId);
+
+  const requests = undoCtx.reverseSwaps.map((s) => ({
+    assignmentId: s.assignmentId,
+    newParticipantId: s.prevParticipantId,
+  }));
+  const res = engine.swapParticipantChain(requests);
+  if (!res.valid) {
+    // Restore the FSOS entry on failure.
+    currentSchedule.scheduleUnavailability = undoCtx.prevUnavailability;
+    showToast('ביטול התוכנית נכשל — המצב נשמר כפי שהיה.', { type: 'error', duration: 5000 });
+    return;
+  }
+  const updated = engine.getSchedule()!;
+  currentSchedule = updated;
+  store.saveSchedule(updated);
+  renderAll();
+  showToast('התוכנית בוטלה. השיבוצים וחלון אי־הזמינות שוחזרו.', { type: 'info', duration: 4000 });
 }
 
 function handleRemoveFutureSosEntry(entryId: string): void {
@@ -2652,8 +2887,9 @@ function handleRemoveFutureSosEntry(entryId: string): void {
   const before = currentSchedule.scheduleUnavailability ?? [];
   const after = before.filter((e) => e.id !== entryId);
   if (after.length === before.length) return;
+  // scheduleUnavailability is schedule-scoped state; mutating it does NOT
+  // diverge from master-data, so _scheduleDirty must remain unchanged.
   currentSchedule.scheduleUnavailability = after;
-  _scheduleDirty = true;
   store.saveSchedule(currentSchedule);
   renderAll();
   showToast('חלון SOS עתידי הוסר.', { type: 'info', duration: 3000 });
@@ -2822,7 +3058,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.7</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
