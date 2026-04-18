@@ -3526,11 +3526,6 @@ tr.row-rest td {
   font-weight: 600;
   color: var(--text);
 }
-.agenda-task-dur {
-  color: var(--text-muted);
-  font-size: 0.78rem;
-}
-
 /* ── Metrics ── */
 .metrics-summary {
   display: flex;
@@ -7198,27 +7193,6 @@ tr.now-row-animate > td.time-cell {
   white-space: nowrap;
 }
 
-.fsos-step-indicator {
-  display: flex;
-  gap: 6px;
-  padding: 6px 20px 4px;
-  font-size: 0.75rem;
-  color: var(--text-muted, #888);
-  flex-wrap: wrap;
-}
-.fsos-step {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid transparent;
-}
-.fsos-step--active {
-  background: rgba(58, 124, 197, 0.18);
-  border-color: rgba(58, 124, 197, 0.45);
-  color: var(--accent, #3a7cc5);
-  font-weight: 600;
-}
-
 .fsos-sticky-actions {
   position: sticky;
   bottom: 0;
@@ -7269,29 +7243,6 @@ tr.now-row-animate > td.time-cell {
   background: var(--bg-hover, rgba(255, 255, 255, 0.06));
 }
 
-.gm-range-picker-presets {
-  display: flex;
-  gap: 6px;
-  margin: 0 20px 12px;
-  flex-wrap: wrap;
-}
-.gm-range-picker-preset {
-  padding: 4px 12px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text);
-  font-size: 0.8rem;
-  cursor: pointer;
-  transition:
-    background var(--transition-fast, 0.15s ease),
-    border-color var(--transition-fast, 0.15s ease);
-}
-.gm-range-picker-preset:hover {
-  background: rgba(58, 124, 197, 0.12);
-  border-color: var(--accent, #3a7cc5);
-}
-
 .gm-range-picker-v2-section {
   padding: 0 20px 10px;
 }
@@ -7327,7 +7278,14 @@ tr.now-row-animate > td.time-cell {
 .gm-range-picker-chip:hover {
   background: rgba(255, 255, 255, 0.04);
 }
-.gm-range-picker-chip--active {
+.gm-range-picker-chip:focus-visible {
+  outline: 2px solid var(--accent, #3a7cc5);
+  outline-offset: 2px;
+}
+.gm-range-picker-chip--active,
+.gm-range-picker-chip--active:hover,
+.gm-range-picker-chip--active:focus,
+.gm-range-picker-chip--active:active {
   background: var(--accent, #3a7cc5);
   border-color: var(--accent, #3a7cc5);
   color: #fff;
@@ -7474,8 +7432,43 @@ tr.now-row-animate > td.time-cell {
 
 .fsos-plans-v2 {
   max-width: 720px;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
+}
+.fsos-plans-v2 > .gm-modal-header,
+.fsos-plans-v2 > .fsos-warning-banner,
+.fsos-plans-v2 > .fsos-carousel-pager,
+.fsos-plans-v2 > .fsos-sticky-actions {
+  flex-shrink: 0;
+}
+.fsos-plans-v2 > .fsos-carousel,
+.fsos-plans-v2 > .fsos-plans-stack {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.fsos-plans-stack {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.fsos-carousel {
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+}
+.fsos-plans--touch .fsos-carousel .fsos-plan-card {
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.fsos-plans--touch .fsos-carousel .fsos-plan-card .fsos-plan-collapsed {
+  flex-shrink: 0;
+}
+.fsos-plans--touch .fsos-carousel .fsos-plan-card .fsos-plan-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .fsos-warning-banner {
@@ -7531,25 +7524,6 @@ tr.now-row-animate > td.time-cell {
 .fsos-carousel-dot--active {
   background: var(--accent, #3a7cc5);
 }
-.fsos-carousel-chips {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-.fsos-carousel-jump {
-  padding: 2px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-.fsos-carousel-jump:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
 .fsos-carousel {
   display: flex;
   overflow-x: auto;
@@ -7681,9 +7655,7 @@ tr.now-row-animate > td.time-cell {
 }
 
 .fsos-plan-toggle {
-  position: absolute;
-  top: 12px;
-  inset-inline-start: 14px;
+  margin-inline-start: auto;
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -7752,9 +7724,12 @@ tr.now-row-animate > td.time-cell {
   justify-content: space-between;
   gap: 8px;
   font-size: 0.85rem;
-  color: var(--text-muted, #aaa);
+  color: var(--text);
   align-items: center;
   flex-wrap: wrap;
+}
+.fsos-plan-swap-meta .fsos-ltr {
+  color: var(--text-muted, #888);
 }
 .fsos-plan-swap-names {
   direction: rtl;
@@ -7762,90 +7737,103 @@ tr.now-row-animate > td.time-cell {
 .fsos-plan-swap-arrow {
   color: var(--accent, #3a7cc5);
   margin: 0 4px;
+  font-weight: 700;
 }
 
-.fsos-plan-details {
-  margin-top: 10px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
-}
-.fsos-plan-details > summary {
-  cursor: pointer;
-  font-size: 0.85rem;
-  color: var(--text-muted, #888);
-  font-weight: 500;
-}
-.fsos-plan-details-title {
+.fsos-plan-section-title {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-muted, #888);
-  margin: 8px 0 4px;
+  margin: 12px 0 6px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.fsos-plan-details-title--warn {
+.fsos-plan-section-title--warn {
   color: #e74c3c;
 }
-.fsos-plan-fairness-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
+.fsos-plan-balance-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.88rem;
 }
-.fsos-plan-fairness-table td {
-  padding: 3px 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+.fsos-plan-balance-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
 }
-.fsos-plan-fairness-label {
+.fsos-plan-balance-label {
   color: var(--text);
 }
-.fsos-plan-fairness-label span[title] {
-  text-decoration: underline dotted;
-  text-underline-offset: 3px;
+.fsos-plan-balance-label[title] {
   cursor: help;
 }
-.fsos-plan-fairness-value {
-  text-align: end;
-  font-variant-numeric: tabular-nums;
+.fsos-plan-balance-badge {
+  font-size: 0.82rem;
   font-weight: 600;
-  unicode-bidi: isolate;
-  direction: ltr;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
 }
-.fsos-fair-pos {
+.fsos-plan-balance-badge--pos {
+  background: rgba(46, 204, 113, 0.15);
   color: #2ecc71;
 }
-.fsos-fair-neg {
+.fsos-plan-balance-badge--neg {
+  background: rgba(231, 76, 60, 0.15);
   color: #e74c3c;
 }
-.fsos-fair-neutral {
+.fsos-plan-balance-badge--neutral {
+  background: rgba(255, 255, 255, 0.05);
   color: var(--text-muted, #888);
 }
 .fsos-plan-changes {
   list-style: none;
   padding: 0;
-  margin: 4px 0 0;
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 0.85rem;
+  font-size: 0.88rem;
 }
 .fsos-plan-changes li {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.fsos-plan-change-name {
+  color: var(--text);
+  font-weight: 500;
 }
 .fsos-plan-change-delta {
-  font-family: inherit;
-  font-variant-numeric: tabular-nums;
   color: var(--text-muted, #aaa);
+  font-size: 0.82rem;
+}
+.fsos-plan-change-added {
+  color: #2ecc71;
+}
+.fsos-plan-change-removed {
+  color: #e74c3c;
 }
 .fsos-plan-violations {
   list-style: disc;
   padding-inline-start: 20px;
-  margin: 4px 0 0;
-  font-size: 0.85rem;
+  margin: 0;
+  font-size: 0.88rem;
   color: #e74c3c;
+}
+.fsos-plan-violations li {
+  padding: 2px 0;
 }
 
 .fsos-apply-infeasible {
@@ -7992,7 +7980,6 @@ tr.now-row-animate > td.time-cell {
   .gm-range-picker-v2-section {
     padding: 0 12px 8px;
   }
-  .gm-range-picker-presets,
   .gm-range-picker-anchor,
   .fsos-locked-section,
   .fsos-confirm-groups {
@@ -8034,6 +8021,80 @@ tr.now-row-animate > td.time-cell {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.8),
     0 20px 60px rgba(0, 0, 0, 0.12);
+}
+
+/* ─── Future SOS v2: light-mode overrides ───────────────────────────── */
+/* The v2 surfaces use rgba-on-white backgrounds that collapse into the
+   modal in light mode — give them explicit subtle contrast and darker
+   text where readability matters. */
+[data-theme="light"] .fsos-plan-card,
+[data-theme="light"] .fsos-headline,
+[data-theme="light"] .fsos-plan-balance-row,
+[data-theme="light"] .fsos-plan-changes li {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .fsos-plan-balance-badge--pos {
+  background: rgba(39, 174, 96, 0.18);
+  color: #1f7a43;
+}
+[data-theme="light"] .fsos-plan-balance-badge--neg {
+  background: rgba(192, 57, 43, 0.18);
+  color: #a93226;
+}
+[data-theme="light"] .fsos-plan-balance-badge--neutral {
+  background: rgba(0, 0, 0, 0.06);
+  color: #666;
+}
+[data-theme="light"] .fsos-plan-change-added {
+  color: #1f7a43;
+}
+[data-theme="light"] .fsos-plan-change-removed {
+  color: #a93226;
+}
+[data-theme="light"] .fsos-plan-card--recommended {
+  background: rgba(39, 174, 96, 0.05);
+}
+[data-theme="light"] .fsos-plan-swap-list li {
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+[data-theme="light"] .fsos-plan-swap-day-header {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .fsos-chain-pic {
+  background: rgba(0, 0, 0, 0.05);
+}
+[data-theme="light"] .fsos-affected-day-group {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .fsos-confirm-v2 .fsos-confirm-list li,
+[data-theme="light"] .fsos-locked-list li {
+  background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .gm-range-picker-chip:hover,
+[data-theme="light"] .gm-range-picker-anchor-btn:hover,
+[data-theme="light"] .fsos-locked-toggle:hover,
+[data-theme="light"] .fsos-plan-toggle:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .gm-range-picker-chip--active,
+[data-theme="light"] .gm-range-picker-chip--active:hover,
+[data-theme="light"] .gm-range-picker-chip--active:focus,
+[data-theme="light"] .gm-range-picker-chip--active:active {
+  background: var(--accent, #3a7cc5);
+  border-color: var(--accent, #3a7cc5);
+  color: #fff;
+}
+[data-theme="light"] .fsos-sticky-actions {
+  background: linear-gradient(to top, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
+}
+[data-theme="light"] .fsos-plan-swap-arrow {
+  color: #2c6aa8;
+}
+[data-theme="light"] .fsos-plan-swap-meta .fsos-ltr {
+  color: #5f6577;
 }
 
 /* ─── Toast Notifications ────────────────────────────── */

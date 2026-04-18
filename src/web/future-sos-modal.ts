@@ -54,12 +54,7 @@ export function openConfirmModal(ctx: ConfirmContext): Promise<ConfirmResult> {
       <div class="gm-modal-dialog fsos-modal fsos-confirm-v2" role="dialog" aria-modal="true">
         <div class="gm-modal-header">
           <span class="gm-modal-icon">🆘</span>
-          <span class="gm-modal-title">SOS עתידי — ${escHtml(ctx.participantName)}</span>
-        </div>
-        <div class="fsos-step-indicator" aria-hidden="true">
-          <span class="fsos-step">1 · חלון</span>
-          <span class="fsos-step fsos-step--active">2 · השפעה</span>
-          <span class="fsos-step">3 · תוכנית</span>
+          <span class="gm-modal-title">אי זמינות עתידית — שלב 2: השפעה · ${escHtml(ctx.participantName)}</span>
         </div>
         <div class="fsos-window-sentence">${windowSentence}</div>
         ${
@@ -70,7 +65,7 @@ export function openConfirmModal(ctx: ConfirmContext): Promise<ConfirmResult> {
         ${lockedHtml}
         <div class="fsos-confirm-summary" id="fsos-confirm-summary"></div>
         <div class="gm-modal-actions fsos-sticky-actions">
-          <button class="btn-primary fsos-confirm-btn" ${ctx.affected.length === 0 && ctx.lockedInPast.length === 0 ? 'disabled' : ''}>
+          <button class="btn-primary fsos-confirm-btn">
             ${ctx.affected.length === 0 ? 'רשום חלון בלבד' : 'מצא תוכניות'}
           </button>
           <button class="btn-sm btn-outline fsos-cancel-btn">חזור</button>
@@ -165,7 +160,8 @@ function renderAffectedChecklist(items: AffectedAssignment[], dayStartHour: numb
     html += `<div class="fsos-affected-day-group"><div class="fsos-affected-day-header">${escHtml(fmtDayLabel(anchor))}</div><ul class="fsos-confirm-list">`;
     for (const it of dayItems) {
       const time = `<span dir="ltr" class="fsos-ltr">${fmt(it.task.timeBlock.start)}–${fmt(it.task.timeBlock.end)}</span>`;
-      const slotLabel = it.slot.label ? ` · ${escHtml(it.slot.label)}` : '';
+      const cleaned = it.slot.label ? cleanSlotLabel(it.slot.label) : '';
+      const slotLabel = cleaned ? ` · ${escHtml(cleaned)}` : '';
       html += `<li>
         <label class="fsos-affected-check">
           <input type="checkbox" class="fsos-affected-checkbox" data-assignment-id="${escAttr(it.assignment.id)}" checked>
@@ -189,7 +185,8 @@ function renderLockedChip(items: AffectedAssignment[], dayStartHour: number): st
     panelHtml += `<div class="fsos-affected-day-header">${escHtml(fmtDayLabel(anchor))}</div><ul class="fsos-locked-list">`;
     for (const it of dayItems) {
       const time = `<span dir="ltr" class="fsos-ltr">${fmt(it.task.timeBlock.start)}–${fmt(it.task.timeBlock.end)}</span>`;
-      const slotLabel = it.slot.label ? ` · ${escHtml(it.slot.label)}` : '';
+      const cleaned = it.slot.label ? cleanSlotLabel(it.slot.label) : '';
+      const slotLabel = cleaned ? ` · ${escHtml(cleaned)}` : '';
       panelHtml += `<li><span>${escHtml(stripDayPrefix(it.task.name))}${slotLabel}</span>${time}</li>`;
     }
     panelHtml += '</ul>';
@@ -222,7 +219,21 @@ function groupByOperationalDay<T extends AffectedAssignment>(items: T[], dayStar
 }
 
 function stripDayPrefix(name: string): string {
-  return name.replace(/^D\d+\s+/, '');
+  // Strip the generated `D{N} ` day-index prefix (engine-internal naming)
+  // and the trailing `משמרת {N}` numeric shift suffix. Times are always
+  // rendered alongside the name, so the shift number adds noise without
+  // information. Descriptive shift labels (e.g. "משמרת בוקר") are left
+  // intact because the trailing token isn't numeric.
+  return name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+\s*$/, '');
+}
+
+function cleanSlotLabel(label: string): string {
+  // Strip a trailing HH:MM–HH:MM (hyphen, en-dash, or minus sign) range —
+  // the Future SOS UI always renders the time separately as an aligned
+  // LTR tag, so including it inside the user-defined slot label is pure
+  // duplication. The regex is anchored to the end of the string, so
+  // mid-label time references (rare) are preserved.
+  return label.replace(/\s+\d{1,2}:\d{2}\s*[-–−]\s*\d{1,2}:\d{2}\s*$/, '').trim();
 }
 
 // ─── Batch Plans ─────────────────────────────────────────────────────────────
@@ -239,40 +250,14 @@ export interface BatchPlansContext {
 interface PlanVerdict {
   level: 'excellent' | 'good' | 'fair' | 'poor';
   label: string;
-  reason: string;
 }
 
 function computeVerdict(plan: BatchRescuePlan): PlanVerdict {
-  if (plan.violations.length > 0) {
-    return {
-      level: 'poor',
-      label: 'בעייתי',
-      reason: `${plan.violations.length} הפרות — יש לעיין לפני החלה`,
-    };
-  }
+  if (plan.violations.length > 0) return { level: 'poor', label: 'בעייתי' };
   const cd = plan.compositeDelta;
-  const reasonParts: string[] = [];
-  const { l0StdDev, seniorStdDev, dailyGlobalStdDev } = plan.fairnessDelta;
-  if (l0StdDev > 0.1) reasonParts.push('איזון ג׳וניורים משתפר');
-  else if (l0StdDev < -0.1) reasonParts.push('איזון ג׳וניורים מורע');
-  if (seniorStdDev > 0.1) reasonParts.push('איזון סגל משתפר');
-  else if (seniorStdDev < -0.1) reasonParts.push('איזון סגל מורע');
-  if (dailyGlobalStdDev > 0.1) reasonParts.push('פיזור יומי משתפר');
-  if (reasonParts.length === 0) reasonParts.push('ללא השפעה משמעותית על איזון');
-
-  let level: PlanVerdict['level'];
-  let label: string;
-  if (cd >= 5) {
-    level = 'excellent';
-    label = 'מצוין';
-  } else if (cd >= 0) {
-    level = 'good';
-    label = 'טוב';
-  } else {
-    level = 'fair';
-    label = 'סביר';
-  }
-  return { level, label, reason: reasonParts.slice(0, 2).join(' · ') };
+  if (cd >= 5) return { level: 'excellent', label: 'מצוין' };
+  if (cd >= 0) return { level: 'good', label: 'טוב' };
+  return { level: 'fair', label: 'סביר' };
 }
 
 export function openBatchPlansModal(ctx: BatchPlansContext): void {
@@ -307,21 +292,17 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
     pagerHtml = renderCarouselPager(ctx.result.plans);
   } else {
     // Stacked layout: rank #1 expanded, others collapsed to a verdict summary.
-    plansHtml = ctx.result.plans
+    const cards = ctx.result.plans
       .map((p) => renderBatchPlanCard(p, pMap, taskMap, dayStartHour, hasInfeasible, { expanded: p.rank === 1 }))
       .join('');
+    plansHtml = `<div class="fsos-plans-stack">${cards}</div>`;
   }
 
   backdrop.innerHTML = `
     <div class="gm-modal-dialog fsos-modal fsos-plans-v2 ${isTouch ? 'fsos-plans--touch' : ''}" role="dialog" aria-modal="true">
       <div class="gm-modal-header">
         <span class="gm-modal-icon">🆘</span>
-        <span class="gm-modal-title">תוכניות החלפה — ${escHtml(ctx.participantName)}</span>
-      </div>
-      <div class="fsos-step-indicator" aria-hidden="true">
-        <span class="fsos-step">1 · חלון</span>
-        <span class="fsos-step">2 · השפעה</span>
-        <span class="fsos-step fsos-step--active">3 · תוכנית</span>
+        <span class="gm-modal-title">אי זמינות עתידית — שלב 3: תוכנית · ${escHtml(ctx.participantName)}</span>
       </div>
       ${timeoutHtml}
       ${warningHtml}
@@ -382,16 +363,6 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
     });
   });
 
-  backdrop.querySelectorAll<HTMLButtonElement>('.fsos-carousel-jump').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      const idx = parseInt(chip.dataset.planIdx ?? '0', 10);
-      const carousel = backdrop.querySelector('.fsos-carousel') as HTMLElement | null;
-      if (!carousel) return;
-      const card = carousel.children.item(idx) as HTMLElement | null;
-      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
-    });
-  });
-
   document.addEventListener('keydown', onKey);
   document.body.appendChild(backdrop);
 }
@@ -423,7 +394,8 @@ function renderInfeasibleWarning(result: BatchRescueResult): string {
     const aff = result.affected.find((a) => a.assignment.id === aId);
     if (!aff) continue;
     const time = `<span dir="ltr" class="fsos-ltr">${fmt(aff.task.timeBlock.start)}–${fmt(aff.task.timeBlock.end)}</span>`;
-    const slotLabel = aff.slot.label ? ` · ${escHtml(aff.slot.label)}` : '';
+    const cleaned = aff.slot.label ? cleanSlotLabel(aff.slot.label) : '';
+    const slotLabel = cleaned ? ` · ${escHtml(cleaned)}` : '';
     lines.push(`<li>${escHtml(stripDayPrefix(aff.task.name))}${slotLabel} — ${time}</li>`);
   }
   return `<div class="fsos-warning-banner fsos-warning-banner--infeasible">
@@ -446,13 +418,7 @@ function renderNoPlans(): string {
 
 function renderCarouselPager(plans: BatchRescuePlan[]): string {
   const dots = plans.map((_, i) => `<span class="fsos-carousel-dot${i === 0 ? ' fsos-carousel-dot--active' : ''}"></span>`).join('');
-  const chips = plans
-    .map(
-      (p, i) =>
-        `<button type="button" class="fsos-carousel-jump" data-plan-idx="${i}">#${p.rank}${p.rank === 1 ? ' · מומלץ' : ''}</button>`,
-    )
-    .join('');
-  return `<div class="fsos-carousel-pager"><div class="fsos-carousel-dots" aria-hidden="true">${dots}</div><div class="fsos-carousel-chips" role="tablist">${chips}</div></div>`;
+  return `<div class="fsos-carousel-pager"><div class="fsos-carousel-dots" aria-hidden="true">${dots}</div></div>`;
 }
 
 function renderBatchPlanCard(
@@ -494,8 +460,11 @@ function renderBatchPlanCard(
       <div class="fsos-plan-header-main">
         <span class="fsos-plan-rank">${escHtml(rankLine)}</span>
         <span class="fsos-verdict fsos-verdict--${verdict.level}">${escHtml(verdict.label)}</span>
+        <button type="button" class="fsos-plan-toggle" aria-expanded="${opts.expanded ? 'true' : 'false'}" aria-label="הרחב/הסתר פרטים">
+          <span class="fsos-plan-toggle-label">פרטים</span>
+          <span class="fsos-plan-toggle-arrow">▾</span>
+        </button>
       </div>
-      <div class="fsos-plan-reason">${escHtml(verdict.reason)}</div>
       <div class="fsos-plan-headlines">
         <div class="fsos-headline">
           <div class="fsos-headline-label">השפעה כוללת</div>
@@ -506,17 +475,10 @@ function renderBatchPlanCard(
           <div class="fsos-headline-value">${chainPictogram}</div>
         </div>
       </div>
-      <button type="button" class="fsos-plan-toggle" aria-expanded="${opts.expanded ? 'true' : 'false'}" aria-label="הרחב/הסתר פרטים">
-        <span class="fsos-plan-toggle-label">פרטים</span>
-        <span class="fsos-plan-toggle-arrow">▾</span>
-      </button>
     </header>
     <div class="fsos-plan-body">
       ${swapsGrouped}
-      <details class="fsos-plan-details">
-        <summary>פרטים מתקדמים</summary>
-        ${detailsHtml}
-      </details>
+      ${detailsHtml}
       ${applyHtml}
     </div>
   </div>`;
@@ -577,7 +539,7 @@ function renderSwapsGroupedByDay(
       timeEnd: taskEnd ? fmt(taskEnd) : '',
       sortKey: taskStart ? taskStart.getTime() : 0,
       taskName: stripDayPrefix(sw.taskName),
-      slotLabel: sw.slotLabel,
+      slotLabel: cleanSlotLabel(sw.slotLabel),
       fromName,
       toName,
       dayLabel,
@@ -598,7 +560,7 @@ function renderSwapsGroupedByDay(
         : '';
       html += `<li>
         <span class="fsos-plan-swap-task">${escHtml(it.taskName)}${it.slotLabel ? ` (${escHtml(it.slotLabel)})` : ''}</span>
-        <span class="fsos-plan-swap-meta"><span class="fsos-plan-swap-names">${escHtml(it.fromName)} <span class="fsos-plan-swap-arrow">→</span> <strong>${escHtml(it.toName)}</strong></span> ${timeTag}</span>
+        <span class="fsos-plan-swap-meta"><span class="fsos-plan-swap-names"><strong>${escHtml(it.toName)}</strong> <span class="fsos-plan-swap-arrow" dir="ltr">←</span> ${escHtml(it.fromName)}</span> ${timeTag}</span>
       </li>`;
     }
     html += '</ul></div>';
@@ -608,62 +570,74 @@ function renderSwapsGroupedByDay(
 }
 
 function renderPlanDetails(plan: BatchRescuePlan, pMap: Map<string, Participant>): string {
-  const rows: Array<{ label: string; hint: string; value: number }> = [
+  const balanceRows: Array<{ label: string; hint: string; value: number }> = [
     {
-      label: 'איזון עול ג׳וניורים (L0)',
-      hint: 'שינוי בסטיית תקן של עומס ג׳וניורים — חיובי: איזון משתפר',
+      label: 'הוגנות ג׳וניורים',
+      hint: 'האם עומס המשמרות מתחלק בצורה שווה בין הג׳וניורים',
       value: plan.fairnessDelta.l0StdDev,
     },
     {
-      label: 'איזון עול סגל',
-      hint: 'שינוי בסטיית תקן של עומס סגל — חיובי: איזון משתפר',
+      label: 'הוגנות סגל',
+      hint: 'האם עומס המשמרות מתחלק בצורה שווה בין אנשי הסגל',
       value: plan.fairnessDelta.seniorStdDev,
     },
     {
-      label: 'פיזור ימי גלובלי',
-      hint: 'האם העומס מתחלק באופן אחיד על פני ימי השבוע',
-      value: plan.fairnessDelta.dailyGlobalStdDev,
-    },
-    {
-      label: 'פיזור ימי למשתתף',
-      hint: 'האם כל משתתף זוכה לחלוקה אחידה על פני ימי השבוע',
-      value: plan.fairnessDelta.dailyPerParticipantStdDev,
+      label: 'אחידות לאורך השבוע',
+      hint: 'האם העומס מתחלק בצורה אחידה על פני כל ימי השבוע (עבור כל הצוות וכל משתתף)',
+      value: plan.fairnessDelta.dailyGlobalStdDev + plan.fairnessDelta.dailyPerParticipantStdDev,
     },
   ];
 
-  let fairnessHtml =
-    '<h5 class="fsos-plan-details-title">איזון הוגנות</h5><table class="fsos-plan-fairness-table">';
-  for (const r of rows) {
-    const cls = Math.abs(r.value) < 0.01 ? 'fsos-fair-neutral' : r.value > 0 ? 'fsos-fair-pos' : 'fsos-fair-neg';
-    fairnessHtml += `<tr>
-      <td class="fsos-plan-fairness-label"><span title="${escAttr(r.hint)}">${escHtml(r.label)}</span></td>
-      <td class="fsos-plan-fairness-value ${cls}" dir="ltr">${escHtml(formatSignedNumber(r.value, 2))}</td>
-    </tr>`;
+  let balanceHtml = '<h5 class="fsos-plan-section-title">איזון עומסים</h5><ul class="fsos-plan-balance-list">';
+  for (const r of balanceRows) {
+    const badge = renderBalanceBadge(r.value);
+    balanceHtml += `<li class="fsos-plan-balance-row">
+      <span class="fsos-plan-balance-label" title="${escAttr(r.hint)}">${escHtml(r.label)}</span>
+      ${badge}
+    </li>`;
   }
-  fairnessHtml += '</table>';
+  balanceHtml += '</ul>';
 
   let changesHtml = '';
   if (plan.perParticipantChanges.length > 0) {
-    changesHtml = '<h5 class="fsos-plan-details-title">השפעה על משתתפים</h5><ul class="fsos-plan-changes">';
+    const nAffected = plan.perParticipantChanges.length;
+    const affectedSuffix = nAffected === 1 ? 'משתתף אחד' : `${nAffected} משתתפים`;
+    changesHtml = `<h5 class="fsos-plan-section-title">שינויי שיבוץ (${escHtml(affectedSuffix)})</h5><ul class="fsos-plan-changes">`;
     for (const change of plan.perParticipantChanges) {
       const name = pMap.get(change.participantId)?.name ?? '???';
       const added = change.added.length;
       const removed = change.removed.length;
-      changesHtml += `<li><span class="fsos-plan-change-name">${escHtml(name)}</span><span class="fsos-plan-change-delta" dir="ltr">${added > 0 ? `+${added}` : ''}${added > 0 && removed > 0 ? ' ' : ''}${removed > 0 ? `\u2212${removed}` : ''}</span></li>`;
+      const parts: string[] = [];
+      if (added > 0) parts.push(`<span class="fsos-plan-change-added">${added === 1 ? 'שיבוץ חדש' : `${added} שיבוצים חדשים`}</span>`);
+      if (removed > 0) parts.push(`<span class="fsos-plan-change-removed">${removed === 1 ? 'שיבוץ הוסר' : `${removed} שיבוצים הוסרו`}</span>`);
+      changesHtml += `<li><span class="fsos-plan-change-name">${escHtml(name)}</span><span class="fsos-plan-change-delta">${parts.join(' · ')}</span></li>`;
     }
     changesHtml += '</ul>';
   }
 
   let violationsHtml = '';
   if (plan.violations.length > 0) {
-    violationsHtml = '<h5 class="fsos-plan-details-title fsos-plan-details-title--warn">הפרות</h5><ul class="fsos-plan-violations">';
+    violationsHtml = '<h5 class="fsos-plan-section-title fsos-plan-section-title--warn">הפרות אילוצים</h5><ul class="fsos-plan-violations">';
     for (const v of plan.violations) {
-      violationsHtml += `<li><code>${escHtml(v.code)}</code> · ${escHtml(v.message)}</li>`;
+      violationsHtml += `<li>${escHtml(v.message)}</li>`;
     }
     violationsHtml += '</ul>';
   }
 
-  return fairnessHtml + changesHtml + violationsHtml;
+  return balanceHtml + changesHtml + violationsHtml;
+}
+
+function renderBalanceBadge(delta: number): string {
+  // Positive delta = stdDev dropped = balance improved. Threshold chosen so
+  // sub-6-minute swings don't claim "improved"/"worsened" — they're noise.
+  if (Math.abs(delta) < 0.1) {
+    return '<span class="fsos-plan-balance-badge fsos-plan-balance-badge--neutral">ללא שינוי משמעותי</span>';
+  }
+  const magnitude = Math.abs(delta).toFixed(1);
+  if (delta > 0) {
+    return `<span class="fsos-plan-balance-badge fsos-plan-balance-badge--pos">משתפר <span dir="ltr" class="fsos-ltr">(${magnitude}h)</span></span>`;
+  }
+  return `<span class="fsos-plan-balance-badge fsos-plan-balance-badge--neg">מחמיר <span dir="ltr" class="fsos-ltr">(${magnitude}h)</span></span>`;
 }
 
 function showSoftViolationsSubConfirm(plan: BatchRescuePlan): Promise<boolean> {

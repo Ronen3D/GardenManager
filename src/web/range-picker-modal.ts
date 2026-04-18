@@ -20,13 +20,6 @@ export interface RangePickerOption {
   label: string;
 }
 
-export interface RangePickerPreset {
-  id: string;
-  label: string;
-  /** Returns the new values to apply, or null if this preset is not available (button shown disabled). */
-  apply: (current: RangePickerResult) => RangePickerResult | null;
-}
-
 export interface RangePickerAnchor {
   /** Current anchor label, e.g. "יום ראשון 05:00". Shown read-only in the banner. */
   currentLabel: string;
@@ -49,8 +42,6 @@ export interface RangePickerOptions {
    * null to accept. Called on every change and on submit.
    */
   validate?: (values: RangePickerResult) => string | null;
-  /** Optional quick-preset chips shown above the day/hour controls. */
-  presets?: RangePickerPreset[];
   /** Called on every change. Return a Hebrew string to show as a live preview. */
   onPreview?: (values: RangePickerResult) => string;
   /** Optional anchor banner, shown when live mode needs to be activated inline. */
@@ -64,7 +55,7 @@ export interface RangePickerResult {
   endHour: string;
 }
 
-export function showRangePicker(message: string, opts: RangePickerOptions): Promise<RangePickerResult | null> {
+export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerResult | null> {
   return new Promise((resolve) => {
     const title = opts.title || 'בחר טווח זמן';
 
@@ -75,10 +66,9 @@ export function showRangePicker(message: string, opts: RangePickerOptions): Prom
       endHour: opts.defaultEndHour ?? opts.defaultStartHour ?? opts.hours[0]?.value ?? '',
     };
 
-    const presetsHtml = renderPresets(opts.presets);
     const anchorHtml = renderAnchor(opts.anchor);
-    const dayChipsStart = renderDayChips(opts.days, defaultStart.startDay, 'start');
-    const dayChipsEnd = renderDayChips(opts.days, defaultStart.endDay, 'end');
+    const dayChipsStart = renderDayChips(opts.days, defaultStart.startDay);
+    const dayChipsEnd = renderDayChips(opts.days, defaultStart.endDay);
     const hoursStart = renderHourOptions(opts.hours, defaultStart.startHour);
     const hoursEnd = renderHourOptions(opts.hours, defaultStart.endHour);
 
@@ -90,9 +80,7 @@ export function showRangePicker(message: string, opts: RangePickerOptions): Prom
           <span class="gm-modal-icon">🆘</span>
           <span class="gm-modal-title">${escHtml(title)}</span>
         </div>
-        <div class="gm-modal-body">${escHtml(message)}</div>
         ${anchorHtml}
-        ${presetsHtml}
         <div class="gm-range-picker-v2-section">
           <div class="gm-range-picker-v2-label">מתחיל ב־</div>
           <div class="gm-range-picker-day-chips" data-side="start">${dayChipsStart}</div>
@@ -186,25 +174,6 @@ export function showRangePicker(message: string, opts: RangePickerOptions): Prom
       runValidate();
     });
 
-    backdrop.querySelectorAll<HTMLButtonElement>('.gm-range-picker-preset').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = btn.dataset.presetId;
-        const preset = (opts.presets ?? []).find((p) => p.id === id);
-        if (!preset) return;
-        const next = preset.apply({ ...state });
-        if (!next) return;
-        state.startDay = next.startDay;
-        state.startHour = next.startHour;
-        state.endDay = next.endDay;
-        state.endHour = next.endHour;
-        sh.value = state.startHour;
-        eh.value = state.endHour;
-        refreshChipClasses('start');
-        refreshChipClasses('end');
-        runValidate();
-      });
-    });
-
     const anchorBtn = backdrop.querySelector('.gm-range-picker-anchor-btn') as HTMLButtonElement | null;
     if (anchorBtn && opts.anchor) {
       anchorBtn.addEventListener('click', async () => {
@@ -250,25 +219,13 @@ function renderHourOptions(hours: RangePickerOption[], selected: string): string
     .join('');
 }
 
-function renderDayChips(days: RangePickerOption[], selected: string, side: 'start' | 'end'): string {
-  void side;
+function renderDayChips(days: RangePickerOption[], selected: string): string {
   return days
     .map(
       (d) =>
         `<button type="button" class="gm-range-picker-chip${d.value === selected ? ' gm-range-picker-chip--active' : ''}" data-value="${escAttr(d.value)}" aria-pressed="${d.value === selected ? 'true' : 'false'}">${escHtml(d.label)}</button>`,
     )
     .join('');
-}
-
-function renderPresets(presets?: RangePickerPreset[]): string {
-  if (!presets || presets.length === 0) return '';
-  const chips = presets
-    .map(
-      (p) =>
-        `<button type="button" class="gm-range-picker-preset" data-preset-id="${escAttr(p.id)}">${escHtml(p.label)}</button>`,
-    )
-    .join('');
-  return `<div class="gm-range-picker-presets" role="group" aria-label="קיצורים">${chips}</div>`;
 }
 
 function renderAnchor(anchor?: RangePickerAnchor): string {

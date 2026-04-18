@@ -16,7 +16,7 @@ test.describe('Future SOS — profile button', () => {
     await page.waitForSelector('.tab-nav');
   });
 
-  test('SOS עתידי button appears in participant profile after generation', async ({ page }) => {
+  test('אי זמינות עתידית button appears in participant profile after generation', async ({ page }) => {
     // Navigate to schedule tab and generate a schedule.
     await page.click('.tab-btn[data-tab="schedule"]');
 
@@ -51,7 +51,7 @@ test.describe('Future SOS — profile button', () => {
     await expect(page.locator('.btn-future-sos')).toBeVisible();
   });
 
-  test('clicking SOS עתידי with live mode OFF opens the anchor time picker', async ({ page }) => {
+  test('clicking אי זמינות עתידית with live mode OFF opens the anchor time picker', async ({ page }) => {
     await page.click('.tab-btn[data-tab="schedule"]');
 
     // Try to enter profile view. If no schedule exists, the profile view

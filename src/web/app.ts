@@ -2515,6 +2515,130 @@ interface FutureSosEntryOpts {
   defaultEndHour?: string;
 }
 
+interface PreExistingUnavailabilityOverlap {
+  kind: 'availability-gap' | 'date-unavailability' | 'schedule-unavailability';
+  label: string;
+  start: Date;
+  end: Date;
+}
+
+/**
+ * Detect portions of a future-SOS window that are already marked unavailable
+ * for the participant via any of three sources:
+ *   1. Gaps in `participant.availability` (participants screen)
+ *   2. `participant.dateUnavailability` recurring rules (participants screen)
+ *   3. Existing `schedule.scheduleUnavailability` entries (prior Future-SOS)
+ *
+ * Used to warn the user before a redundant window is recorded.
+ */
+function findPreExistingUnavailabilityOverlaps(
+  participant: Participant,
+  schedule: Schedule,
+  window: { start: Date; end: Date },
+): PreExistingUnavailabilityOverlap[] {
+  const overlaps: PreExistingUnavailabilityOverlap[] = [];
+  const wStart = window.start.getTime();
+  const wEnd = window.end.getTime();
+
+  if (participant.availability && participant.availability.length > 0) {
+    const clipped = participant.availability
+      .map((av) => ({
+        start: Math.max(av.start.getTime(), wStart),
+        end: Math.min(av.end.getTime(), wEnd),
+      }))
+      .filter((c) => c.start < c.end)
+      .sort((a, b) => a.start - b.start);
+    let cursor = wStart;
+    for (const c of clipped) {
+      if (c.start > cursor) {
+        overlaps.push({
+          kind: 'availability-gap',
+          label: 'מחוץ לחלון הזמינות הקבוע של המשתתף',
+          start: new Date(cursor),
+          end: new Date(c.start),
+        });
+      }
+      if (c.end > cursor) cursor = c.end;
+    }
+    if (cursor < wEnd) {
+      overlaps.push({
+        kind: 'availability-gap',
+        label: 'מחוץ לחלון הזמינות הקבוע של המשתתף',
+        start: new Date(cursor),
+        end: new Date(wEnd),
+      });
+    }
+  }
+
+  const rules = participant.dateUnavailability ?? [];
+  if (rules.length > 0) {
+    const ws = window.start;
+    let cursor = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate());
+    while (cursor.getTime() < wEnd) {
+      const dow = cursor.getDay();
+      for (const rule of rules) {
+        if (rule.dayOfWeek !== dow) continue;
+        let rStart: number;
+        let rEnd: number;
+        const y = cursor.getFullYear();
+        const m = cursor.getMonth();
+        const d = cursor.getDate();
+        if (rule.allDay) {
+          rStart = cursor.getTime();
+          rEnd = new Date(y, m, d + 1).getTime();
+        } else {
+          rStart = new Date(y, m, d, rule.startHour, 0).getTime();
+          rEnd =
+            rule.endHour <= rule.startHour
+              ? new Date(y, m, d + 1, rule.endHour, 0).getTime()
+              : new Date(y, m, d, rule.endHour, 0).getTime();
+        }
+        const oStart = Math.max(rStart, wStart);
+        const oEnd = Math.min(rEnd, wEnd);
+        if (oStart < oEnd) {
+          const dayName = hebrewDayName(new Date(rStart));
+          const timeLabel = rule.allDay
+            ? 'כל היום'
+            : `${String(rule.startHour).padStart(2, '0')}:00–${String(rule.endHour).padStart(2, '0')}:00`;
+          const reasonTail = rule.reason ? ` · ${rule.reason}` : '';
+          overlaps.push({
+            kind: 'date-unavailability',
+            label: `כלל שבועי: יום ${dayName} ${timeLabel}${reasonTail}`,
+            start: new Date(oStart),
+            end: new Date(oEnd),
+          });
+        }
+      }
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1);
+    }
+  }
+
+  const fsos = schedule.scheduleUnavailability ?? [];
+  for (const entry of fsos) {
+    if (entry.participantId !== participant.id) continue;
+    const oStart = Math.max(entry.start.getTime(), wStart);
+    const oEnd = Math.min(entry.end.getTime(), wEnd);
+    if (oStart < oEnd) {
+      const reasonTail = entry.reason ? ` · ${entry.reason}` : '';
+      overlaps.push({
+        kind: 'schedule-unavailability',
+        label: `חלון אי זמינות עתידית שכבר נרשם${reasonTail}`,
+        start: new Date(oStart),
+        end: new Date(oEnd),
+      });
+    }
+  }
+
+  return overlaps;
+}
+
+function formatOverlapRange(o: PreExistingUnavailabilityOverlap): string {
+  const startDay = hebrewDayName(o.start);
+  const endDay = hebrewDayName(o.end);
+  if (startDay === endDay) return `יום ${startDay} ${fmt(o.start)}–${fmt(o.end)}`;
+  return `יום ${startDay} ${fmt(o.start)} → יום ${endDay} ${fmt(o.end)}`;
+}
+
 async function handleProfileFutureSos(participantId: string, entryOpts: FutureSosEntryOpts = {}): Promise<void> {
   if (!currentSchedule || !engine) return;
   const participant = currentSchedule.participants.find((p) => p.id === participantId);
@@ -2558,18 +2682,16 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
     endHour: entryOpts.defaultEndHour ?? smartDefault.endHour,
   };
 
-  const presets = buildFutureSosPresets(numDays, dayStartHour);
   const anchorLabel = (a: Date) => `יום ${hebrewDayName(a)} ${fmt(a)}`;
 
-  const range = await showRangePicker(`בחר את החלון שבו ${participant.name} לא זמין.`, {
-    title: 'SOS עתידי — שלב 1: חלון',
+  const range = await showRangePicker({
+    title: `אי זמינות עתידית — שלב 1: חלון · ${participant.name}`,
     days,
     hours,
     defaultStartDay: initial.startDay,
     defaultStartHour: initial.startHour,
     defaultEndDay: initial.endDay,
     defaultEndHour: initial.endHour,
-    presets,
     anchor: liveModeInitiallyOn
       ? undefined
       : {
@@ -2611,6 +2733,23 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
 
   const windowStart = toDate(range.startDay, range.startHour);
   const windowEnd = toDate(range.endDay, range.endHour);
+
+  // Warn when the window overlaps an existing unavailability source
+  // (participant availability gap, recurring date-unavailability rule, or a
+  // prior Future-SOS entry). Recording is still allowed — overlapping
+  // scheduleUnavailability entries are merged by upsertScheduleUnavailability.
+  const preOverlaps = findPreExistingUnavailabilityOverlaps(participant, currentSchedule, {
+    start: windowStart,
+    end: windowEnd,
+  });
+  if (preOverlaps.length > 0) {
+    const lines = preOverlaps.map((o) => `• ${o.label}: ${formatOverlapRange(o)}`);
+    const proceed = await showConfirm(
+      `החלון שבחרת חופף לזמן שכבר סומן כלא־זמין עבור ${participant.name}:\n\n${lines.join('\n')}\n\nניתן להמשיך — חלון אי זמינות עתידית חדש יאוחד עם חלונות קיימים, וכללי אי־זמינות אחרים יישארו כפי שהם. להמשיך בכל זאת?`,
+      { title: 'חפיפה עם אי־זמינות קיימת', confirmLabel: 'המשך', cancelLabel: 'ביטול' },
+    );
+    if (!proceed) return;
+  }
 
   const { affected, lockedInPast } = findAffectedAssignments(
     currentSchedule,
@@ -2778,46 +2917,6 @@ function computeSmartDefaultWindow(
   };
 }
 
-function buildFutureSosPresets(
-  numDays: number,
-  dayStartHour: number,
-): import('./range-picker-modal').RangePickerPreset[] {
-  void numDays;
-  return [
-    {
-      id: 'full-day',
-      label: 'כל היום',
-      apply: (current) => {
-        const nextDay = String(Math.min(7, parseInt(current.startDay, 10) + 1));
-        return {
-          startDay: current.startDay,
-          startHour: String(dayStartHour),
-          endDay: nextDay,
-          endHour: String(dayStartHour),
-        };
-      },
-    },
-    {
-      id: 'morning',
-      label: 'בוקר',
-      apply: (current) => ({ ...current, startHour: '6', endDay: current.startDay, endHour: '14' }),
-    },
-    {
-      id: 'evening',
-      label: 'ערב',
-      apply: (current) => ({ ...current, startHour: '14', endDay: current.startDay, endHour: '22' }),
-    },
-    {
-      id: 'night',
-      label: 'לילה',
-      apply: (current) => {
-        const nextDay = String(Math.min(7, parseInt(current.startDay, 10) + 1));
-        return { ...current, startHour: '22', endDay: nextDay, endHour: '6' };
-      },
-    },
-  ];
-}
-
 function activateLiveModeWithAnchor(anchor: Date): void {
   if (!currentSchedule) return;
   store.setLiveModeEnabled(true);
@@ -2892,7 +2991,7 @@ function handleRemoveFutureSosEntry(entryId: string): void {
   currentSchedule.scheduleUnavailability = after;
   store.saveSchedule(currentSchedule);
   renderAll();
-  showToast('חלון SOS עתידי הוסר.', { type: 'info', duration: 3000 });
+  showToast('חלון אי זמינות עתידית הוסר.', { type: 'info', duration: 3000 });
 }
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -3058,7 +3157,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.8</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

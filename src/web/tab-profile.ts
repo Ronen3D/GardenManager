@@ -184,7 +184,6 @@ function renderPersonalAgenda(
       html += '<div class="agenda-tasks">';
       for (const { assignment, task } of dayTasks) {
         const color = task.color || '#7f8c8d';
-        const hrs = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
         // Detect cross-day tasks (end time extends past this day's boundary)
         const crossDay = task.timeBlock.end.getTime() > dayEnd.getTime();
         const endDayIdx = crossDay
@@ -209,7 +208,6 @@ function renderPersonalAgenda(
           <div class="agenda-task-info">
             <span class="agenda-task-name">${task.name}</span>
             ${taskBadge(task)}
-            <span class="agenda-task-dur">${hrs.toFixed(1)}h</span>
             ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
             ${crossDayBadge}
             ${sosHtml}
@@ -242,7 +240,7 @@ function renderUnavailabilitySection(p: Participant, schedule: Schedule, showSos
     </div>`;
 
   if (fsos.length > 0) {
-    html += '<h4 class="profile-sub-title">SOS עתידי (על השבצ"ק הזה בלבד)</h4><ul class="profile-fsos-list">';
+    html += '<h4 class="profile-sub-title">אי זמינות עתידית (על השבצ"ק הזה בלבד)</h4><ul class="profile-fsos-list">';
     for (const entry of fsos) {
       const startLabel = `יום ${hebrewDayName(entry.start)}`;
       const endLabel = `יום ${hebrewDayName(entry.end)}`;
