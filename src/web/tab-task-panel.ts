@@ -10,14 +10,7 @@
  * never from the live config store.
  */
 
-import type {
-  Assignment,
-  LoadWindow,
-  Participant,
-  Schedule,
-  SlotRequirement,
-  Task,
-} from '../models/types';
+import type { Assignment, LoadWindow, Participant, Schedule, SlotRequirement, Task } from '../models/types';
 import { hebrewDayName } from '../utils/date-utils';
 import { certBadge, escHtml, fmt, groupColor, LEVEL_COLORS, levelBadge, taskBadge } from './ui-helpers';
 
@@ -426,9 +419,7 @@ function renderGroupedSlots(
   }
   const hasSubTeam = groups.some((g) => g.key !== '__none__');
   if (!hasSubTeam) {
-    return task.slots
-      .map((slot) => renderSlotCell(slot, assignMap.get(slot.slotId), pMap, task, ctx))
-      .join('');
+    return task.slots.map((slot) => renderSlotCell(slot, assignMap.get(slot.slotId), pMap, task, ctx)).join('');
   }
   return groups
     .map((g) => {
@@ -453,7 +444,7 @@ function renderSlotCell(
   ctx: TaskPanelContext,
   hideSubTeamLabel = false,
 ): string {
-  const slotLabel = hideSubTeamLabel ? (slot.label || '') : (slot.subTeamLabel || slot.label || '');
+  const slotLabel = hideSubTeamLabel ? slot.label || '' : slot.subTeamLabel || slot.label || '';
   if (!assignment) {
     return `<div class="tp-slot-cell tp-slot-unfilled"
       data-task-id="${escHtml(task.id)}"
@@ -588,9 +579,7 @@ function renderRequirementsCard(firstTask: Task): string {
     const fbdHtml = (sig.forbiddenCertifications || [])
       .map((c) => certBadge(c).replace('<span class="', '<span class="tp-cert-forbidden '))
       .join('');
-    const subTeamHtml = sig.subTeamLabel
-      ? `<span class="tp-req-team">${escHtml(sig.subTeamLabel)}</span>`
-      : '';
+    const subTeamHtml = sig.subTeamLabel ? `<span class="tp-req-team">${escHtml(sig.subTeamLabel)}</span>` : '';
 
     rows.push(`<li class="tp-req-row">
       <span class="tp-req-count">${slots.length}×</span>

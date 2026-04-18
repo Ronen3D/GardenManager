@@ -12,6 +12,7 @@
 
 import './style.css';
 import './style-mobile.css';
+import { findAffectedAssignments, generateBatchRescuePlans, upsertScheduleUnavailability } from '../engine/future-sos';
 import { buildPhantomContext } from '../engine/phantom';
 import {
   freezeAssignments,
@@ -46,6 +47,8 @@ import { getEffectivePakalDefinitions } from './pakal-utils';
 import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
 import { runPreflight } from './preflight';
+import { openBatchPlansModal, openConfirmModal } from './future-sos-modal';
+import { showRangePicker } from './range-picker-modal';
 import { closeRescueModal, initRescue, openRescueModal, type RescueSwapLabel } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice } from './responsive';
 import { renderScheduleGrid } from './schedule-grid-view';
@@ -345,9 +348,10 @@ function renderAvailabilityInspectorInline(): string {
     return opts;
   };
 
-  const timeTitle = store.getDayStartHour() > 0
-    ? `שעה לבדיקת זמינות (00:00–${String(store.getDayStartHour() - 1).padStart(2, '0')}:59 נספרות לסוף היום)`
-    : 'שעה לבדיקת זמינות';
+  const timeTitle =
+    store.getDayStartHour() > 0
+      ? `שעה לבדיקת זמינות (00:00–${String(store.getDayStartHour() - 1).padStart(2, '0')}:59 נספרות לסוף היום)`
+      : 'שעה לבדיקת זמינות';
 
   const marginDisplay = _availabilityMarginEnabled ? '' : ' style="display:none"';
 
@@ -2144,6 +2148,7 @@ function doCreateManualSchedule(): void {
     },
     restRuleSnapshot: Object.fromEntries(store.buildRestRuleMap()),
     certLabelSnapshot: buildCertLabelSnapshot(),
+    scheduleUnavailability: [],
   };
 
   engine.importSchedule(emptySchedule);
@@ -2435,20 +2440,21 @@ async function handleSwap(assignmentId: string): Promise<void> {
 
 // ─── Rescue Modal ────────────────────────────────────────────────────────────
 
-async function handleProfileSos(assignmentId: string): Promise<void> {
-  if (!currentSchedule) return;
-  const assignment = currentSchedule.assignments.find((a) => a.id === assignmentId);
-  if (!assignment) return;
-  const task = currentSchedule.tasks.find((t) => t.id === assignment.taskId);
-  if (!task) return;
-
+/**
+ * Ensure live mode is enabled with a valid anchor. If off, prompt the user to
+ * pick one via the existing day+hour picker. Returns the anchor timestamp or
+ * null if the user cancelled.
+ *
+ * `taskGate`, when provided, enforces that the picked anchor leaves the task
+ * modifiable (used by single-slot SOS). Future-SOS callers omit it because
+ * the range picker validates the anchor against the chosen window instead.
+ */
+async function ensureLiveModeAnchor(taskGate?: Task | null): Promise<Date | null> {
   const lm = store.getLiveModeState();
-  if (lm.enabled) {
-    openRescueModal(assignmentId);
-    return;
-  }
+  if (lm.enabled) return lm.currentTimestamp;
 
-  // Live mode is OFF — prompt for day + time
+  if (!currentSchedule) return null;
+
   const numDays = store.getScheduleDays();
   const baseDate = store.getScheduleDate();
   const days: Array<{ value: string; label: string }> = [];
@@ -2461,32 +2467,196 @@ async function handleProfileSos(assignmentId: string): Promise<void> {
     hours.push({ value: String(h), label: `${String(h).padStart(2, '0')}:00` });
   }
 
-  const result = await showTimePicker('כדי להפעיל חילוץ, יש להגדיר את הזמן הנוכחי במצב חי.', {
+  const result = await showTimePicker('כדי להמשיך, יש להגדיר את הזמן הנוכחי במצב חי.', {
     title: 'הפעלת מצב חי',
     days,
     hours,
     defaultDay: '1',
     defaultHour: '5',
   });
-  if (!result) return;
+  if (!result) return null;
 
   const dayIdx = parseInt(result.day, 10);
   const hour = parseInt(result.hour, 10);
   const ts = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dayIdx - 1, hour, 0);
 
-  if (!isFutureTask(task, ts)) {
+  if (taskGate && !isFutureTask(taskGate, ts)) {
     await showAlert('הזמן שנבחר הופך את המשימה למוקפאת (בעבר). לא ניתן להפעיל חילוץ על משימה שכבר חלפה.', {
       title: 'לא ניתן להמשיך',
       icon: '⚠️',
     });
-    return;
+    return null;
   }
 
   store.setLiveModeEnabled(true);
   store.setLiveModeTimestamp(ts);
   freezeAssignments(currentSchedule, ts);
+  return ts;
+}
 
+async function handleProfileSos(assignmentId: string): Promise<void> {
+  if (!currentSchedule) return;
+  const assignment = currentSchedule.assignments.find((a) => a.id === assignmentId);
+  if (!assignment) return;
+  const task = currentSchedule.tasks.find((t) => t.id === assignment.taskId);
+  if (!task) return;
+
+  const anchor = await ensureLiveModeAnchor(task);
+  if (!anchor) return;
   openRescueModal(assignmentId);
+}
+
+async function handleProfileFutureSos(participantId: string): Promise<void> {
+  if (!currentSchedule || !engine) return;
+  const participant = currentSchedule.participants.find((p) => p.id === participantId);
+  if (!participant) return;
+
+  const anchor = await ensureLiveModeAnchor(null);
+  if (!anchor) return;
+
+  const numDays = store.getScheduleDays();
+  const baseDate = store.getScheduleDate();
+  const dayStartHour = currentSchedule.algorithmSettings.dayStartHour;
+  const days: Array<{ value: string; label: string }> = [];
+  for (let d = 1; d <= numDays + 1; d++) {
+    const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
+    days.push({ value: String(d), label: `יום ${hebrewDayName(date)}` });
+  }
+  const hours: Array<{ value: string; label: string }> = [];
+  for (let h = 0; h < 24; h++) {
+    hours.push({ value: String(h), label: `${String(h).padStart(2, '0')}:00` });
+  }
+
+  const toDate = (day: string, hour: string): Date => {
+    const dIdx = parseInt(day, 10);
+    const hr = parseInt(hour, 10);
+    return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dIdx - 1, hr, 0);
+  };
+
+  const range = await showRangePicker(`בחר את החלון שבו ${participant.name} לא זמין.`, {
+    title: 'SOS עתידי',
+    days,
+    hours,
+    defaultStartDay: '1',
+    defaultStartHour: String(dayStartHour),
+    defaultEndDay: '1',
+    defaultEndHour: String((dayStartHour + 1) % 24),
+    validate: (v) => {
+      const s = toDate(v.startDay, v.startHour);
+      const e = toDate(v.endDay, v.endHour);
+      if (e.getTime() <= s.getTime()) return 'זמן הסיום חייב להיות אחרי זמן ההתחלה.';
+      if (s.getTime() < anchor.getTime()) return 'ההתחלה חייבת להיות אחרי נקודת ההקפאה.';
+      return null;
+    },
+  });
+  if (!range) return;
+
+  const windowStart = toDate(range.startDay, range.startHour);
+  const windowEnd = toDate(range.endDay, range.endHour);
+
+  const { affected, lockedInPast } = findAffectedAssignments(
+    currentSchedule,
+    participantId,
+    { start: windowStart, end: windowEnd },
+    anchor,
+  );
+
+  const confirmed = await openConfirmModal({
+    participantName: participant.name,
+    window: { start: windowStart, end: windowEnd },
+    affected,
+    lockedInPast,
+    dayStartHour,
+  });
+  if (!confirmed) return;
+
+  // If nothing to rescue, just record the unavailability entry and return.
+  if (affected.length === 0) {
+    const updated = upsertScheduleUnavailability(currentSchedule.scheduleUnavailability, {
+      id: `fsos-${Date.now()}`,
+      participantId,
+      start: windowStart,
+      end: windowEnd,
+      createdAt: new Date(),
+      anchorAtCreation: anchor,
+    });
+    currentSchedule.scheduleUnavailability = updated;
+    store.saveSchedule(currentSchedule);
+    renderAll();
+    showToast('חלון אי־זמינות נרשם (אין שיבוצים להחלפה).', { type: 'info', duration: 4000 });
+    return;
+  }
+
+  const config = engine.getConfig();
+  const scoreCtx = engine.buildScoreContext();
+  if (!scoreCtx) return;
+  const result = generateBatchRescuePlans(
+    currentSchedule,
+    { participantId, window: { start: windowStart, end: windowEnd } },
+    anchor,
+    {
+      config,
+      scoreCtx,
+      disabledHC: engine.getDisabledHC(),
+      restRuleMap: engine.getRestRuleMap(),
+      certLabelResolver: engine.getCertLabelResolver(),
+      maxPlans: 3,
+    },
+  );
+
+  openBatchPlansModal({
+    result,
+    schedule: currentSchedule,
+    participantName: participant.name,
+    onApply: (plan) => {
+      if (!currentSchedule || !engine) return;
+
+      // Persist the unavailability entry BEFORE applying swaps so the
+      // scheduler validates the final state with extraUnavailability active.
+      const prevUnavailability = currentSchedule.scheduleUnavailability;
+      currentSchedule.scheduleUnavailability = upsertScheduleUnavailability(prevUnavailability, {
+        id: `fsos-${Date.now()}`,
+        participantId,
+        start: windowStart,
+        end: windowEnd,
+        createdAt: new Date(),
+        anchorAtCreation: anchor,
+      });
+
+      const requests = plan.swaps.map((sw) => ({
+        assignmentId: sw.assignmentId,
+        newParticipantId: sw.toParticipantId,
+      }));
+      const applyResult = engine.swapParticipantChain(requests);
+      if (!applyResult.valid) {
+        // Roll back the unavailability entry too.
+        currentSchedule.scheduleUnavailability = prevUnavailability;
+        showToast('החלת התוכנית נכשלה — בוצע שחזור למצב הקודם.', { type: 'error', duration: 5000 });
+        return;
+      }
+
+      const updated = engine.getSchedule()!;
+      currentSchedule = updated;
+      store.saveSchedule(updated);
+      renderAll();
+      showToast(`הוחלה תוכנית עם ${plan.swaps.length} החלפות. ${participant.name} סומן כלא־זמין בחלון.`, {
+        type: 'success',
+        duration: 5000,
+      });
+    },
+  });
+}
+
+function handleRemoveFutureSosEntry(entryId: string): void {
+  if (!currentSchedule) return;
+  const before = currentSchedule.scheduleUnavailability ?? [];
+  const after = before.filter((e) => e.id !== entryId);
+  if (after.length === before.length) return;
+  currentSchedule.scheduleUnavailability = after;
+  _scheduleDirty = true;
+  store.saveSchedule(currentSchedule);
+  renderAll();
+  showToast('חלון SOS עתידי הוסר.', { type: 'info', duration: 3000 });
 }
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -2571,17 +2741,18 @@ function renderAll(): void {
 
       app.innerHTML = `<div class="profile-view-root">${renderProfileView(ctx)}</div>`;
       const root = app.querySelector('.profile-view-root') as HTMLElement;
-      wireProfileEvents(
-        root,
-        () => {
+      wireProfileEvents(root, {
+        onBackToSchedule: () => {
           // Back to schedule: restore scroll position
           _viewMode = 'SCHEDULE_VIEW';
           _profileParticipantId = null;
           _restoreScheduleScroll = true;
           renderAll();
         },
-        handleProfileSos,
-      );
+        onSosClick: handleProfileSos,
+        onFutureSosClick: handleProfileFutureSos,
+        onRemoveFutureSosEntry: handleRemoveFutureSosEntry,
+      });
       // Wire task tooltip in profile view too
       wireTaskTooltip(root, () => currentSchedule);
       return;
@@ -2651,7 +2822,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.6</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.3.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3413,7 +3584,9 @@ function wireScheduleEvents(container: HTMLElement): void {
     if (_timeCellSelectionPhase === 'idle') {
       _timeCellSelectionPhase = 'start-selected';
       _timeCellSelectionStartMs = timeMs;
-      container.querySelectorAll('.time-cell-range-start').forEach((el) => el.classList.remove('time-cell-range-start'));
+      container
+        .querySelectorAll('.time-cell-range-start')
+        .forEach((el) => el.classList.remove('time-cell-range-start'));
       target.classList.add('time-cell-range-start');
       showToast('לחץ על תא נוסף לבחירת סוף הטווח', { type: 'info' });
     } else {
@@ -3422,19 +3595,27 @@ function wireScheduleEvents(container: HTMLElement): void {
         // Same cell → cancel
         _timeCellSelectionPhase = 'idle';
         _timeCellSelectionStartMs = null;
-        container.querySelectorAll('.time-cell-range-start').forEach((el) => el.classList.remove('time-cell-range-start'));
+        container
+          .querySelectorAll('.time-cell-range-start')
+          .forEach((el) => el.classList.remove('time-cell-range-start'));
         return;
       }
       let startMs = _timeCellSelectionStartMs!;
       let endMs = timeMs;
-      if (startMs > endMs) { const tmp = startMs; startMs = endMs; endMs = tmp; }
+      if (startMs > endMs) {
+        const tmp = startMs;
+        startMs = endMs;
+        endMs = tmp;
+      }
 
       _availabilityRangeStartMs = startMs;
       _availabilityRangeEndMs = endMs;
       _availabilityInlineOpen = true;
       _timeCellSelectionPhase = 'idle';
       _timeCellSelectionStartMs = null;
-      container.querySelectorAll('.time-cell-range-start').forEach((el) => el.classList.remove('time-cell-range-start'));
+      container
+        .querySelectorAll('.time-cell-range-start')
+        .forEach((el) => el.classList.remove('time-cell-range-start'));
       renderAll();
     }
   };
@@ -3451,7 +3632,9 @@ function wireScheduleEvents(container: HTMLElement): void {
     if (e.key === 'Escape' && _timeCellSelectionPhase === 'start-selected') {
       _timeCellSelectionPhase = 'idle';
       _timeCellSelectionStartMs = null;
-      container.querySelectorAll('.time-cell-range-start').forEach((el) => el.classList.remove('time-cell-range-start'));
+      container
+        .querySelectorAll('.time-cell-range-start')
+        .forEach((el) => el.classList.remove('time-cell-range-start'));
       return;
     }
     if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -3472,15 +3655,29 @@ function wireScheduleEvents(container: HTMLElement): void {
   const availTimeEnd = container.querySelector('#gm-availability-time-end') as HTMLInputElement | null;
   const wireTimeInput = (input: HTMLInputElement | null, setter: (v: string) => void, fallback: string) => {
     if (!input) return;
-    input.addEventListener('input', () => { setter(input.value || fallback); });
+    input.addEventListener('input', () => {
+      setter(input.value || fallback);
+    });
     input.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
       container.querySelector<HTMLElement>('#btn-open-availability-inspector')?.click();
     });
   };
-  wireTimeInput(availTimeStart, (v) => { _availabilityInspectorTimeStart = v; }, '05:00');
-  wireTimeInput(availTimeEnd, (v) => { _availabilityInspectorTimeEnd = v; }, '06:00');
+  wireTimeInput(
+    availTimeStart,
+    (v) => {
+      _availabilityInspectorTimeStart = v;
+    },
+    '05:00',
+  );
+  wireTimeInput(
+    availTimeEnd,
+    (v) => {
+      _availabilityInspectorTimeEnd = v;
+    },
+    '06:00',
+  );
 
   // ── Margin toggle + fields ──
   const marginToggle = container.querySelector('#gm-availability-margin-toggle') as HTMLInputElement | null;
@@ -3959,7 +4156,10 @@ function getAvailableParticipantsInRange(
   let orphanAssignments = 0;
   for (const assignment of schedule.assignments) {
     const task = taskMap.get(assignment.taskId);
-    if (!task) { orphanAssignments++; continue; }
+    if (!task) {
+      orphanAssignments++;
+      continue;
+    }
     if (!participantWindows.has(assignment.participantId)) {
       participantWindows.set(assignment.participantId, []);
     }
@@ -3985,10 +4185,12 @@ function getAvailableParticipantsInRange(
       participantWindowsCount: participantWindows.size,
       rangeStart: new Date(rangeStartMs).toString(),
       rangeEnd: new Date(rangeEndMs).toString(),
-      sampleTask: schedule.tasks[0] ? {
-        start: schedule.tasks[0].timeBlock.start.toString(),
-        end: schedule.tasks[0].timeBlock.end.toString(),
-      } : null,
+      sampleTask: schedule.tasks[0]
+        ? {
+            start: schedule.tasks[0].timeBlock.start.toString(),
+            end: schedule.tasks[0].timeBlock.end.toString(),
+          }
+        : null,
       sampleAssignment: schedule.assignments[0],
       sampleParticipantId: schedule.participants[0]?.id,
       participantIdInWindows: participantWindows.has(schedule.participants[0]?.id ?? ''),

@@ -2495,7 +2495,10 @@ tr.row-rest td {
   color: var(--text-muted);
   font-size: 0.9rem;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
 }
 .btn-cancel-optim:hover {
   background: rgba(255, 255, 255, 0.12);
@@ -2524,7 +2527,8 @@ tr.row-rest td {
 }
 
 @keyframes tune-breathe {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.06),
       0 25px 50px rgba(0, 0, 0, 0.4),
@@ -2561,18 +2565,76 @@ tr.row-rest td {
   animation: tune-float linear infinite;
 }
 
-.tune-bubble:nth-child(1) { width: 10px; height: 10px; left: 12%; bottom: -12px; animation-duration: 9s;  animation-delay: 0s;   opacity: 0.5; }
-.tune-bubble:nth-child(2) { width: 14px; height: 14px; left: 35%; bottom: -16px; animation-duration: 11s; animation-delay: 2s;   opacity: 0.4; }
-.tune-bubble:nth-child(3) { width:  8px; height:  8px; left: 58%; bottom: -10px; animation-duration: 8s;  animation-delay: 4s;   opacity: 0.6; }
-.tune-bubble:nth-child(4) { width: 12px; height: 12px; left: 78%; bottom: -14px; animation-duration: 10s; animation-delay: 1s;   opacity: 0.35; }
-.tune-bubble:nth-child(5) { width:  6px; height:  6px; left: 25%; bottom: -8px;  animation-duration: 7s;  animation-delay: 3.5s; opacity: 0.55; }
-.tune-bubble:nth-child(6) { width: 10px; height: 10px; left: 68%; bottom: -12px; animation-duration: 12s; animation-delay: 5s;   opacity: 0.3; }
+.tune-bubble:nth-child(1) {
+  width: 10px;
+  height: 10px;
+  left: 12%;
+  bottom: -12px;
+  animation-duration: 9s;
+  animation-delay: 0s;
+  opacity: 0.5;
+}
+.tune-bubble:nth-child(2) {
+  width: 14px;
+  height: 14px;
+  left: 35%;
+  bottom: -16px;
+  animation-duration: 11s;
+  animation-delay: 2s;
+  opacity: 0.4;
+}
+.tune-bubble:nth-child(3) {
+  width: 8px;
+  height: 8px;
+  left: 58%;
+  bottom: -10px;
+  animation-duration: 8s;
+  animation-delay: 4s;
+  opacity: 0.6;
+}
+.tune-bubble:nth-child(4) {
+  width: 12px;
+  height: 12px;
+  left: 78%;
+  bottom: -14px;
+  animation-duration: 10s;
+  animation-delay: 1s;
+  opacity: 0.35;
+}
+.tune-bubble:nth-child(5) {
+  width: 6px;
+  height: 6px;
+  left: 25%;
+  bottom: -8px;
+  animation-duration: 7s;
+  animation-delay: 3.5s;
+  opacity: 0.55;
+}
+.tune-bubble:nth-child(6) {
+  width: 10px;
+  height: 10px;
+  left: 68%;
+  bottom: -12px;
+  animation-duration: 12s;
+  animation-delay: 5s;
+  opacity: 0.3;
+}
 
 @keyframes tune-float {
-  0%   { transform: translateY(0)    scale(1);   opacity: 0; }
-  10%  { opacity: 1; }
-  90%  { opacity: 1; }
-  100% { transform: translateY(-420px) scale(0.6); opacity: 0; }
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-420px) scale(0.6);
+    opacity: 0;
+  }
 }
 
 .tune-card h3 {
@@ -4838,11 +4900,28 @@ tr.now-row-animate > td.time-cell {
 
 /* ── Swap slot animation (crossfade-slide with yellow highlight) ──── */
 @keyframes swapSlotIn {
-  0%   { opacity: 0; transform: translateY(-10px); background-color: rgba(255, 210, 70, 0.45); box-shadow: 0 0 6px rgba(255, 210, 70, 0.3); }
-  30%  { opacity: 1; transform: translateY(0);     background-color: rgba(255, 210, 70, 0.45); box-shadow: 0 0 6px rgba(255, 210, 70, 0.3); }
-  100% { opacity: 1; transform: translateY(0);     background-color: transparent;               box-shadow: none; }
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+    background-color: rgba(255, 210, 70, 0.45);
+    box-shadow: 0 0 6px rgba(255, 210, 70, 0.3);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(0);
+    background-color: rgba(255, 210, 70, 0.45);
+    box-shadow: 0 0 6px rgba(255, 210, 70, 0.3);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    background-color: transparent;
+    box-shadow: none;
+  }
 }
-.swap-anim-in { animation: swapSlotIn 1.2s ease-out both; }
+.swap-anim-in {
+  animation: swapSlotIn 1.2s ease-out both;
+}
 
 /* ─── Assignment Cards ─── */
 .assignment-card {
@@ -5011,7 +5090,8 @@ tr.now-row-animate > td.time-cell {
 }
 
 @keyframes tune-breathe-light {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.8),
       0 25px 50px rgba(0, 0, 0, 0.12),
@@ -6917,6 +6997,197 @@ tr.now-row-animate > td.time-cell {
   background: var(--bg);
   color: var(--text);
   font-size: 0.9rem;
+}
+
+/* ─── Range Picker (Future SOS) ─────────────────────────────────────── */
+
+.gm-range-picker-dialog {
+  min-width: 420px;
+}
+.gm-range-picker-row {
+  display: flex;
+  gap: 12px;
+  padding: 8px 20px 4px;
+  flex-wrap: wrap;
+}
+.gm-range-picker-side {
+  flex: 1 1 180px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+.gm-range-picker-side legend {
+  padding: 0 6px;
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+  font-weight: 600;
+}
+.gm-range-picker-error {
+  min-height: 1.2em;
+  padding: 0 20px 4px;
+  color: #e74c3c;
+  font-size: 0.85rem;
+  display: none;
+}
+
+/* ─── Future SOS Modal ──────────────────────────────────────────────── */
+
+.fsos-modal {
+  max-width: 720px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.fsos-confirm-list,
+.fsos-locked-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fsos-confirm-list li,
+.fsos-locked-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.9rem;
+}
+.fsos-locked-list li {
+  opacity: 0.55;
+}
+.fsos-affected-day-header {
+  padding: 6px 20px 2px;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  font-size: 0.8rem;
+}
+.fsos-warning-banner {
+  margin: 8px 20px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(231, 76, 60, 0.12);
+  border: 1px solid rgba(231, 76, 60, 0.35);
+  color: #e74c3c;
+  font-size: 0.9rem;
+}
+.fsos-plan {
+  margin: 8px 20px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.fsos-plan--recommended {
+  border-color: #27ae60;
+  box-shadow: 0 0 0 1px rgba(39, 174, 96, 0.3);
+}
+.fsos-plan-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.fsos-plan-rank {
+  font-weight: 700;
+}
+.fsos-plan-metrics {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+.fsos-metric {
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.fsos-metric--pos {
+  background: rgba(39, 174, 96, 0.18);
+  color: #2ecc71;
+}
+.fsos-metric--neg {
+  background: rgba(231, 76, 60, 0.18);
+  color: #e74c3c;
+}
+.fsos-swaps {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fsos-swaps li {
+  font-size: 0.9rem;
+  padding: 4px 0;
+}
+.fsos-participant-changes {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted, #aaa);
+}
+.fsos-participant-changes li {
+  padding: 2px 0;
+}
+.fsos-apply-btn {
+  margin-top: 8px;
+}
+.fsos-apply-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Profile: Future-SOS section */
+.profile-fsos-list {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.profile-fsos-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(231, 76, 60, 0.08);
+  font-size: 0.85rem;
+}
+.profile-fsos-remove {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.profile-fsos-remove:hover {
+  background: rgba(231, 76, 60, 0.15);
+}
+.btn-future-sos {
+  background: #c0392b;
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.btn-future-sos:hover {
+  background: #e74c3c;
 }
 
 /* Light mode overrides */
@@ -9452,7 +9723,7 @@ tr.now-row-animate > td.time-cell {
     color var(--transition-fast);
 }
 .task-panel-hover::before {
-  content: '📋';
+  content: "📋";
   font-size: 0.78rem;
   line-height: 1;
 }
@@ -9645,7 +9916,7 @@ tr.now-row-animate > td.time-cell {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-[dir='rtl'] .tp-ruler-tick {
+[dir="rtl"] .tp-ruler-tick {
   transform: translateX(-50%);
 }
 .tp-lane {
@@ -9671,8 +9942,11 @@ tr.now-row-animate > td.time-cell {
 }
 .tp-lane-body {
   position: relative;
-  background:
-    linear-gradient(to right, transparent 0 calc(100% / 6 - 1px), var(--border) calc(100% / 6 - 1px) calc(100% / 6))
+  background: linear-gradient(
+      to right,
+      transparent 0 calc(100% / 6 - 1px),
+      var(--border) calc(100% / 6 - 1px) calc(100% / 6)
+    )
     repeat-x;
   background-size: calc(100% / 6) 100%;
   min-height: 48px;
@@ -9796,11 +10070,7 @@ tr.now-row-animate > td.time-cell {
 }
 .tp-slot-unfilled {
   border: 2px solid var(--danger);
-  background: repeating-linear-gradient(
-    45deg,
-    rgba(231, 76, 60, 0.08) 0 6px,
-    rgba(231, 76, 60, 0.2) 6px 12px
-  );
+  background: repeating-linear-gradient(45deg, rgba(231, 76, 60, 0.08) 0 6px, rgba(231, 76, 60, 0.2) 6px 12px);
   color: var(--danger);
   font-weight: 700;
   animation: tp-unfilled-pulse 2s ease-in-out infinite;
@@ -9999,7 +10269,7 @@ tr.now-row-animate > td.time-cell {
   text-decoration: line-through;
 }
 .tp-cert-forbidden::before {
-  content: '🚫';
+  content: "🚫";
   font-size: 0.7em;
   margin-inline-end: 2px;
   text-decoration: none;
@@ -10115,7 +10385,9 @@ tr.now-row-animate > td.time-cell {
   font-size: 1.1rem;
   line-height: 1;
   opacity: 0.6;
-  transition: opacity var(--transition-fast), transform var(--transition-normal);
+  transition:
+    opacity var(--transition-fast),
+    transform var(--transition-normal);
 }
 .storage-refresh-btn:hover {
   opacity: 1;

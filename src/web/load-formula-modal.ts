@@ -94,12 +94,8 @@ export function openLoadFormulaModal(target: LoadFormulaTarget): void {
   }
 
   _target = target;
-  _components = existing
-    ? existing.components.map((c) => ({ ...c, refRate: { ...c.refRate } }))
-    : [emptyComponent()];
-  _lhsExtras = existing?.lhsExtras
-    ? existing.lhsExtras.map((c) => ({ ...c, refRate: { ...c.refRate } }))
-    : [];
+  _components = existing ? existing.components.map((c) => ({ ...c, refRate: { ...c.refRate } })) : [emptyComponent()];
+  _lhsExtras = existing?.lhsExtras ? existing.lhsExtras.map((c) => ({ ...c, refRate: { ...c.refRate } })) : [];
   _targetHours = normalizeTargetHours(existing?.targetHours);
   // Start with first RHS row's picker open if the formula is new or the first row is unset.
   _activeRow = !existing || !_components[0]?.refTemplateId ? { side: 'rhs', idx: 0 } : null;
@@ -223,10 +219,7 @@ function rateLabelFor(c: LoadFormulaComponent, tpl: TaskTemplate): string {
   return win ? `חם ${formatWindowLabel(win)}` : '?';
 }
 
-function buildBreakdownText(
-  components: LoadFormulaComponent[],
-  snapshot: ReturnType<typeof buildSnapshot>,
-): string {
+function buildBreakdownText(components: LoadFormulaComponent[], snapshot: ReturnType<typeof buildSnapshot>): string {
   return components
     .map((c, i) => {
       const snap = snapshot[i];
@@ -396,7 +389,9 @@ function renderStackRow(
   const hoursVal = Number.isFinite(c.hours) ? c.hours : 0;
 
   const rateLbl = refTpl ? rateLabelFor(c, refTpl) : '';
-  const rateDisplay = rateLbl ? `${escAttr(rateLbl)} · ${rateInfo ? rateInfo.value.toFixed(2) : '?'}` : `${rateInfo ? rateInfo.value.toFixed(2) : '?'}`;
+  const rateDisplay = rateLbl
+    ? `${escAttr(rateLbl)} · ${rateInfo ? rateInfo.value.toFixed(2) : '?'}`
+    : `${rateInfo ? rateInfo.value.toFixed(2) : '?'}`;
   const chipLabel = refTpl
     ? `
         <span class="lf-ref-chip-swatch" style="background:${color}"></span>

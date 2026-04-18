@@ -152,7 +152,12 @@ function parseHm(value: string): { h: number; m: number } | null {
  *  minutes (mod 1440) it covers. End-touching windows (e.g. 05:00–06:30 and
  *  06:30–07:00) do not share any minute, so they don't overlap. Windows where
  *  end ≤ start are interpreted as crossing midnight. */
-function loadWindowMinuteSet(w: { startHour: number; startMinute: number; endHour: number; endMinute: number }): Set<number> {
+function loadWindowMinuteSet(w: {
+  startHour: number;
+  startMinute: number;
+  endHour: number;
+  endMinute: number;
+}): Set<number> {
   const start = w.startHour * 60 + w.startMinute;
   let end = w.endHour * 60 + w.endMinute;
   if (end <= start) end += 1440;
@@ -703,7 +708,12 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
   return html;
 }
 
-function renderSubTeam(templateId: string, st: SubTeamTemplate, pf: PreflightResult, opts?: { isOneTime?: boolean }): string {
+function renderSubTeam(
+  templateId: string,
+  st: SubTeamTemplate,
+  pf: PreflightResult,
+  opts?: { isOneTime?: boolean },
+): string {
   const idAttr = opts?.isOneTime ? `data-ot-id="${templateId}"` : `data-tid="${templateId}"`;
   let html = `<div class="subteam-card">
     <div class="subteam-header">
@@ -739,10 +749,7 @@ function renderSlotTable(
 
   const isOtMatch = opts?.isOneTime ? editingSlot?.isOneTime : !editingSlot?.isOneTime;
   const editingHere =
-    editingSlot &&
-    editingSlot.templateId === templateId &&
-    editingSlot.subTeamId === subTeamId &&
-    isOtMatch
+    editingSlot && editingSlot.templateId === templateId && editingSlot.subTeamId === subTeamId && isOtMatch
       ? editingSlot
       : null;
 
@@ -807,10 +814,9 @@ function readSlotFormFields(form: Element): Omit<SlotTemplate, 'id'> | null {
 
   const overlap = certs.filter((c) => forbiddenCerts.includes(c));
   if (overlap.length > 0) {
-    showToast(
-      `הסמכה לא יכולה להיות גם נדרשת וגם אסורה: ${overlap.map((c) => store.getCertLabel(c)).join(', ')}`,
-      { type: 'error' },
-    );
+    showToast(`הסמכה לא יכולה להיות גם נדרשת וגם אסורה: ${overlap.map((c) => store.getCertLabel(c)).join(', ')}`, {
+      type: 'error',
+    });
     return null;
   }
 
@@ -1265,18 +1271,36 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const otId = actionButton?.dataset.otId!;
         const body = actionButton?.closest('.template-body')!;
         const name = (body.querySelector('[data-ot-field="name"]') as HTMLInputElement)?.value.trim();
-        if (!name) { showToast('שם משימה נדרש', { type: 'error' }); break; }
+        if (!name) {
+          showToast('שם משימה נדרש', { type: 'error' });
+          break;
+        }
         const dayNumVal = parseInt((body.querySelector('[data-ot-field="dayNum"]') as HTMLSelectElement)?.value || '1');
         const schedDate = store.getScheduleDate();
-        const scheduledDate = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate() + dayNumVal - 1);
-        const rawStartHour = parseInt((body.querySelector('[data-ot-field="startHour"]') as HTMLInputElement)?.value || '6');
-        const rawStartMinute = parseInt((body.querySelector('[data-ot-field="startMinute"]') as HTMLInputElement)?.value || '0');
-        const rawDur = parseFloat((body.querySelector('[data-ot-field="durationHours"]') as HTMLInputElement)?.value || '4');
-        const baseLoad = parseFloat((body.querySelector('[data-ot-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1');
-        const sameGroup = (body.querySelector('[data-ot-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
+        const scheduledDate = new Date(
+          schedDate.getFullYear(),
+          schedDate.getMonth(),
+          schedDate.getDate() + dayNumVal - 1,
+        );
+        const rawStartHour = parseInt(
+          (body.querySelector('[data-ot-field="startHour"]') as HTMLInputElement)?.value || '6',
+        );
+        const rawStartMinute = parseInt(
+          (body.querySelector('[data-ot-field="startMinute"]') as HTMLInputElement)?.value || '0',
+        );
+        const rawDur = parseFloat(
+          (body.querySelector('[data-ot-field="durationHours"]') as HTMLInputElement)?.value || '4',
+        );
+        const baseLoad = parseFloat(
+          (body.querySelector('[data-ot-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1',
+        );
+        const sameGroup =
+          (body.querySelector('[data-ot-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
         const isLight = (body.querySelector('[data-ot-field="isLight"]') as HTMLInputElement)?.checked || false;
-        const blocksConsecutive = (body.querySelector('[data-ot-field="blocksConsecutive"]') as HTMLInputElement)?.checked ?? true;
-        const otRestRuleId = (body.querySelector('[data-ot-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
+        const blocksConsecutive =
+          (body.querySelector('[data-ot-field="blocksConsecutive"]') as HTMLInputElement)?.checked ?? true;
+        const otRestRuleId =
+          (body.querySelector('[data-ot-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
         const desc = (body.querySelector('[data-ot-field="description"]') as HTMLInputElement)?.value.trim();
 
         const otSanitized = store.sanitizeTemplateNumericFields({ durationHours: rawDur, startHour: rawStartHour });
@@ -1371,7 +1395,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const form = container.querySelector(target === 'tpl' ? '#add-template-form' : '#add-onetime-form');
         if (!form) break;
         const nameField = target === 'tpl' ? 'tpl-name' : 'ot-name';
-        const name = (form.querySelector(`[data-field="${nameField}"]`) as HTMLInputElement)?.value.trim() || 'משימה חדשה';
+        const name =
+          (form.querySelector(`[data-field="${nameField}"]`) as HTMLInputElement)?.value.trim() || 'משימה חדשה';
         const existingFormula = target === 'tpl' ? _pendingTplLoadFormula : _pendingOtLoadFormula;
         openLoadFormulaModal({
           kind: 'ephemeral',

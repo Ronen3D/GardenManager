@@ -207,6 +207,30 @@ export interface Assignment {
 
 // ─── Schedule ────────────────────────────────────────────────────────────────
 
+/**
+ * Schedule-scoped temporary unavailability window for a participant.
+ *
+ * Unlike Participant.availability / Participant.dateUnavailability (master
+ * data that belongs on the participant record), this is stored on the Schedule
+ * snapshot: it applies only to the loaded schedule and is used by the Future
+ * SOS flow to plan a multi-slot rescue when a participant becomes unavailable
+ * for a future window.
+ */
+export interface ScheduleUnavailability {
+  id: string;
+  participantId: string;
+  /** Absolute start — not recurring. */
+  start: Date;
+  /** Absolute end — not recurring. */
+  end: Date;
+  /** Optional note surfaced in UI (e.g. "מילואים"). */
+  reason?: string;
+  /** When the entry was created. */
+  createdAt: Date;
+  /** Live-mode anchor at creation time (audit). */
+  anchorAtCreation: Date;
+}
+
 export interface Schedule {
   id: string;
   /** All tasks in this scheduling window */
@@ -231,6 +255,14 @@ export interface Schedule {
   restRuleSnapshot: Record<string, number>;
   /** Certification id → label map, frozen at generation. Drives cert badges/tooltips. */
   certLabelSnapshot: Record<string, string>;
+  /**
+   * Future-SOS unavailability windows scoped to this snapshot.
+   * HC-3 checks layer these on top of participant master-data availability
+   * during validation and rescue planning. Treat `undefined` as `[]`.
+   * Required in engine-produced schedules; optional on the type so test
+   * fixtures and manually-authored literals can omit it.
+   */
+  scheduleUnavailability?: ScheduleUnavailability[];
 }
 
 export interface ScheduleScore {

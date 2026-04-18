@@ -115,8 +115,16 @@ export function checkCertificationRequirement(
 
 /**
  * HC-3: Availability — participant must be available for entire task duration.
+ *
+ * @param extraUnavailability Optional schedule-scoped windows (Future SOS).
+ *        When any entry belongs to the participant and overlaps the task,
+ *        HC-3 fires just as it would for master-data unavailability.
  */
-export function checkAvailability(participant: Participant, task: Task): ConstraintViolation | null {
+export function checkAvailability(
+  participant: Participant,
+  task: Task,
+  extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
+): ConstraintViolation | null {
   if (!isFullyCovered(task.timeBlock, participant.availability)) {
     return violation(
       'AVAILABILITY_VIOLATION',
@@ -134,6 +142,20 @@ export function checkAvailability(participant: Participant, task: Task): Constra
       undefined,
       participant.id,
     );
+  }
+  if (extraUnavailability) {
+    for (const u of extraUnavailability) {
+      if (u.participantId !== participant.id) continue;
+      if (blocksOverlap(task.timeBlock, { start: u.start, end: u.end })) {
+        return violation(
+          'AVAILABILITY_VIOLATION',
+          `${participant.name} \u200F— ${task.name} (${bidiTimeRange(task.timeBlock)})`,
+          task.id,
+          undefined,
+          participant.id,
+        );
+      }
+    }
   }
   return null;
 }
@@ -536,6 +558,7 @@ export function validateHardConstraints(
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
   certLabelResolver: (certId: string) => string = (id) => id,
+  extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
 ): ValidationResult {
   const allViolations: ConstraintViolation[] = [];
   const pMap = buildParticipantMap(participants);
@@ -634,7 +657,7 @@ export function validateHardConstraints(
 
       // HC-3: Availability
       if (!disabledHC?.has('HC-3')) {
-        const availV = checkAvailability(participant, task);
+        const availV = checkAvailability(participant, task, extraUnavailability);
         if (availV) allViolations.push(availV);
       }
     }

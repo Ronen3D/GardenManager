@@ -13,7 +13,7 @@ import { type Assignment, Level, type Participant, type Schedule, type Task } fr
 import { hebrewDayName } from '../utils/date-utils';
 import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
-import { certBadge, fmt, groupBadge, LEVEL_COLORS, levelBadge, taskBadge } from './ui-helpers';
+import { certBadge, escHtml, fmt, groupBadge, LEVEL_COLORS, levelBadge, taskBadge } from './ui-helpers';
 import { computeTaskBreakdown } from './workload-utils';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ export function renderProfileView(ctx: ProfileContext): string {
   // Right column: Unavailability + Metrics
   html += '<div class="profile-right">';
   html += renderMetrics(p, myTasks, numDays);
-  html += renderUnavailabilitySection(p);
+  html += renderUnavailabilitySection(p, schedule);
   html += '</div>';
 
   html += '</div>';
@@ -85,7 +85,7 @@ export function renderProfileView(ctx: ProfileContext): string {
 function renderTopBar(
   p: Participant,
   myTasks: Array<{ assignment: Assignment; task: Task }>,
-  _ctx: ProfileContext,
+  ctx: ProfileContext,
 ): string {
   // Determine status
   let statusText = 'זמין';
@@ -102,6 +102,10 @@ function renderTopBar(
       ? p.certifications.map((c) => certBadge(c)).join(' ')
       : '<span class="text-muted">אין</span>';
   const pakalHtml = renderPakalBadges(p, store.getAllPakalDefinitionsIncludeDeleted(), 'אין');
+
+  const futureSosBtn = ctx.showSosButtons
+    ? `<button class="btn-future-sos" data-action="future-sos" data-pid="${p.id}" title="SOS עתידי">🆘 SOS עתידי</button>`
+    : '';
 
   return `
   <div class="profile-topbar">
@@ -132,6 +136,7 @@ function renderTopBar(
         <span class="profile-kpi-value">${computeHeavyHours(myTasks).toFixed(1)}h</span>
         <span class="profile-kpi-label">עומס אפקטיבי</span>
       </div>
+      ${futureSosBtn}
     </div>
   </div>`;
 }
@@ -227,11 +232,27 @@ function renderPersonalAgenda(
 
 // ─── Unavailability Section ──────────────────────────────────────────────────
 
-function renderUnavailabilitySection(p: Participant): string {
+function renderUnavailabilitySection(p: Participant, schedule: Schedule): string {
   const dateRules = store.getDateUnavailabilities(p.id);
+  const fsos = (schedule.scheduleUnavailability ?? []).filter((u) => u.participantId === p.id);
 
   let html = `<div class="profile-card">
     <h3 class="profile-card-title">🚫 אי זמינות</h3>`;
+
+  if (fsos.length > 0) {
+    html += '<h4 class="profile-sub-title">SOS עתידי (על השבצ"ק הזה בלבד)</h4><ul class="profile-fsos-list">';
+    for (const entry of fsos) {
+      const startLabel = `יום ${hebrewDayName(entry.start)}`;
+      const endLabel = `יום ${hebrewDayName(entry.end)}`;
+      const timeLabel = `<span dir="ltr">${fmt(entry.start)} (${startLabel}) – ${fmt(entry.end)} (${endLabel})</span>`;
+      const reason = entry.reason ? `<span class="text-muted"> · ${escHtml(entry.reason)}</span>` : '';
+      html += `<li>
+        <span>${timeLabel}${reason}</span>
+        <button class="profile-fsos-remove" data-action="remove-fsos" data-entry-id="${entry.id}" title="הסר">הסר</button>
+      </li>`;
+    }
+    html += '</ul>';
+  }
 
   if (dateRules.length > 0) {
     html += '<h4 class="profile-sub-title">כללים לפי יום בשבוע</h4><ul class="profile-list">';
@@ -249,7 +270,7 @@ function renderUnavailabilitySection(p: Participant): string {
     html += '</ul>';
   }
 
-  if (dateRules.length === 0) {
+  if (dateRules.length === 0 && fsos.length === 0) {
     html += '<p class="text-muted profile-empty-note">לא הוגדרו מגבלות זמינות. המשתתף זמין בכל שעות היממה.</p>';
   }
 
@@ -335,21 +356,44 @@ function renderMetrics(
 
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
+export interface ProfileEventHandlers {
+  onBackToSchedule: () => void;
+  onSosClick?: (assignmentId: string) => void;
+  onFutureSosClick?: (participantId: string) => void;
+  onRemoveFutureSosEntry?: (entryId: string) => void;
+}
+
 export function wireProfileEvents(
   container: HTMLElement,
-  onBackToSchedule: () => void,
+  onBackToScheduleOrHandlers: (() => void) | ProfileEventHandlers,
   onSosClick?: (assignmentId: string) => void,
 ): void {
+  // Back-compat: first form is (container, onBack, onSosClick).
+  const handlers: ProfileEventHandlers =
+    typeof onBackToScheduleOrHandlers === 'function'
+      ? { onBackToSchedule: onBackToScheduleOrHandlers, onSosClick }
+      : onBackToScheduleOrHandlers;
+
   container.addEventListener('click', (e) => {
     const rescueBtn = (e.target as HTMLElement).closest('.btn-rescue') as HTMLElement | null;
-    if (rescueBtn?.dataset.assignmentId && onSosClick) {
-      onSosClick(rescueBtn.dataset.assignmentId);
+    if (rescueBtn?.dataset.assignmentId && handlers.onSosClick) {
+      handlers.onSosClick(rescueBtn.dataset.assignmentId);
       return;
     }
     const target = (e.target as HTMLElement).closest('[data-action]') as HTMLElement | null;
     if (!target) return;
-    if (target.dataset.action === 'back-to-schedule') {
-      onBackToSchedule();
+    const action = target.dataset.action;
+    if (action === 'back-to-schedule') {
+      handlers.onBackToSchedule();
+      return;
+    }
+    if (action === 'future-sos' && target.dataset.pid && handlers.onFutureSosClick) {
+      handlers.onFutureSosClick(target.dataset.pid);
+      return;
+    }
+    if (action === 'remove-fsos' && target.dataset.entryId && handlers.onRemoveFutureSosEntry) {
+      handlers.onRemoveFutureSosEntry(target.dataset.entryId);
+      return;
     }
   });
 }

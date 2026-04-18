@@ -158,10 +158,11 @@ function showRescueModal(): void {
   // Reference scale = smallest active major penalty (lowPriority / notWith).
   // If both are disabled, fall back to the largest minor weight.
   const cfg = _ctx?.getEngine()?.getConfig();
-  const activeMajors = [cfg?.lowPriorityLevelPenalty ?? 1166, cfg?.notWithPenalty ?? 1929].filter(v => v > 0);
-  const refPenalty = activeMajors.length > 0
-    ? Math.min(...activeMajors)
-    : Math.max(cfg?.taskNamePreferencePenalty ?? 140, cfg?.dailyBalanceWeight ?? 144, 100);
+  const activeMajors = [cfg?.lowPriorityLevelPenalty ?? 1166, cfg?.notWithPenalty ?? 1929].filter((v) => v > 0);
+  const refPenalty =
+    activeMajors.length > 0
+      ? Math.min(...activeMajors)
+      : Math.max(cfg?.taskNamePreferencePenalty ?? 140, cfg?.dailyBalanceWeight ?? 144, 100);
   const excellentCap = Math.round(refPenalty * 0.04);
   const fairCap = Math.round(refPenalty * 0.43);
 
@@ -169,7 +170,8 @@ function showRescueModal(): void {
     const isRecommended = plan.rank === 1;
     const hasViolations = plan.violations && plan.violations.length > 0;
 
-    const qualityTier = plan.impactScore < excellentCap ? 'excellent' : plan.impactScore < fairCap ? 'fair' : 'significant';
+    const qualityTier =
+      plan.impactScore < excellentCap ? 'excellent' : plan.impactScore < fairCap ? 'fair' : 'significant';
     const qualityLabel = qualityTier === 'excellent' ? 'מצוין' : qualityTier === 'fair' ? 'סביר' : 'משמעותי';
 
     // Swap count label — friendly wording

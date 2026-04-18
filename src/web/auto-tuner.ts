@@ -25,14 +25,7 @@
 import { computeScheduleScore } from '../constraints/soft-constraints';
 import { SchedulingEngine } from '../engine/scheduler';
 import { DEFAULT_CONFIG, type Participant, type Schedule, type SchedulerConfig, type Task } from '../models/types';
-import {
-  computeRankScore,
-  iqr,
-  latinHypercubeSample,
-  maxUnfilledIn,
-  median,
-  mulberry32,
-} from '../utils/tuner-math';
+import { computeRankScore, iqr, latinHypercubeSample, maxUnfilledIn, median, mulberry32 } from '../utils/tuner-math';
 import * as store from './config-store';
 import { escHtml, getStoredDefaultAttempts } from './ui-helpers';
 
@@ -525,7 +518,6 @@ function formatElapsed(ms: number): string {
   if (seconds === 0) return `חלפו ${minutes} דק'`;
   return `חלפו ${minutes}:${String(seconds).padStart(2, '0')} דק'`;
 }
-
 
 function renderBracketHtml(s: TuneState): string {
   const labels = ['סקירה', 'דגימה', 'ניפוי', 'סינון', 'יציבות', 'אימות'];

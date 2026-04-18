@@ -1631,12 +1631,7 @@ export function updateSlotInTemplate(templateId: string, slotId: string, patch: 
   replaceSlotIfExists(tpl.slots, slotId, patch);
 }
 
-export function updateSlotInSubTeam(
-  templateId: string,
-  subTeamId: string,
-  slotId: string,
-  patch: SlotPatch,
-): void {
+export function updateSlotInSubTeam(templateId: string, subTeamId: string, slotId: string, patch: SlotPatch): void {
   const tpl = taskTemplates.get(templateId);
   if (!tpl) return;
   const st = tpl.subTeams.find((s) => s.id === subTeamId);
@@ -1650,12 +1645,7 @@ export function updateSlotInOneTimeTask(otId: string, slotId: string, patch: Slo
   replaceSlotIfExists(ot.slots, slotId, patch);
 }
 
-export function updateSlotInOneTimeSubTeam(
-  otId: string,
-  subTeamId: string,
-  slotId: string,
-  patch: SlotPatch,
-): void {
+export function updateSlotInOneTimeSubTeam(otId: string, subTeamId: string, slotId: string, patch: SlotPatch): void {
   const ot = oneTimeTasks.get(otId);
   if (!ot) return;
   const st = ot.subTeams.find((s) => s.id === subTeamId);

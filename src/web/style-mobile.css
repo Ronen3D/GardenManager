@@ -1519,7 +1519,7 @@
   .warehouse-card-sheet {
     min-height: 44px;
     padding: 8px;
-    min-width: 0;       /* let grid cell shrink below content width */
+    min-width: 0; /* let grid cell shrink below content width */
     overflow: hidden;
   }
 

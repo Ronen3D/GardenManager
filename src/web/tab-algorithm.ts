@@ -635,9 +635,7 @@ function renderStorageUsageContent(): string {
   };
 
   // Sort by size descending, filter out empty
-  const rows = usage
-    .filter((r) => r.bytes > 0)
-    .sort((a, b) => b.bytes - a.bytes);
+  const rows = usage.filter((r) => r.bytes > 0).sort((a, b) => b.bytes - a.bytes);
 
   const maxBytes = rows.length > 0 ? rows[0].bytes : 1;
 

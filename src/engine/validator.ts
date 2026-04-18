@@ -110,6 +110,13 @@ export interface EligibilityOpts {
   disabledHC?: Set<string>;
   /** HC-14 rest rule map: ruleId → durationMs */
   restRuleMap?: Map<string, number>;
+  /**
+   * Extra schedule-scoped unavailability windows, layered on top of
+   * participant master availability. Drives the Future SOS flow: the
+   * affected participant is rejected from any task whose timeBlock
+   * overlaps one of their entries. Checked alongside HC-3.
+   */
+  extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>;
 }
 
 /**
@@ -151,13 +158,21 @@ function checkEligibility(
     }
   }
 
-  // HC-3: Availability check (windows + recurring dateUnavailability rules)
-  if (
-    !disabled?.has('HC-3') &&
-    (!isFullyCovered(task.timeBlock, participant.availability) ||
-      isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability))
-  )
-    return 'HC-3';
+  // HC-3: Availability check (windows + recurring dateUnavailability rules
+  //       + schedule-scoped Future SOS windows).
+  if (!disabled?.has('HC-3')) {
+    if (
+      !isFullyCovered(task.timeBlock, participant.availability) ||
+      isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability)
+    )
+      return 'HC-3';
+    if (opts?.extraUnavailability) {
+      for (const u of opts.extraUnavailability) {
+        if (u.participantId !== participant.id) continue;
+        if (blocksOverlap(task.timeBlock, { start: u.start, end: u.end })) return 'HC-3';
+      }
+    }
+  }
 
   // HC-4: Same-group check (optional — only validator uses this inline)
   if (

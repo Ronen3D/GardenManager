@@ -328,6 +328,7 @@ export class SchedulingEngine {
       },
       restRuleSnapshot: Object.fromEntries(this.restRuleMap ?? new Map()),
       certLabelSnapshot: { ...this._certLabelSnapshot },
+      scheduleUnavailability: [],
     };
 
     this.currentSchedule = schedule;
@@ -379,7 +380,11 @@ export class SchedulingEngine {
    * @param attempts Number of optimization attempts (default: 2000)
    * @param onProgress Callback fired after each attempt for progress UI
    */
-  async generateScheduleAsync(attempts: number = 2000, onProgress?: MultiAttemptProgressCallback, abortSignal?: AbortSignal): Promise<Schedule> {
+  async generateScheduleAsync(
+    attempts: number = 2000,
+    onProgress?: MultiAttemptProgressCallback,
+    abortSignal?: AbortSignal,
+  ): Promise<Schedule> {
     const tasks = this.getAllTasks();
     const participants = this.getAllParticipants();
     this._validateInputs(tasks, participants);
@@ -451,6 +456,7 @@ export class SchedulingEngine {
       this.disabledHC,
       this.restRuleMap,
       this.certLabelResolver,
+      this.currentSchedule.scheduleUnavailability ?? [],
     );
   }
 
@@ -472,6 +478,7 @@ export class SchedulingEngine {
       this.disabledHC,
       this.restRuleMap,
       this.certLabelResolver,
+      this.currentSchedule.scheduleUnavailability ?? [],
     );
     const soft = collectSoftWarnings(tasks, participants, assignments, this.config);
     const score = computeScheduleScore(
@@ -969,6 +976,7 @@ export class SchedulingEngine {
       },
       restRuleSnapshot: Object.fromEntries(this.restRuleMap ?? new Map()),
       certLabelSnapshot: { ...this._certLabelSnapshot },
+      scheduleUnavailability: this.currentSchedule.scheduleUnavailability ?? [],
     };
 
     this.currentSchedule = schedule;

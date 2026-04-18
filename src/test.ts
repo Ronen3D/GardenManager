@@ -5455,6 +5455,7 @@ console.log('\n── Phantom Context ──────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { generateRescuePlans } from './engine/rescue';
+import { findAffectedAssignments, generateBatchRescuePlans, upsertScheduleUnavailability } from './engine/future-sos';
 import type { RescueRequest, ScheduleScore } from './models/types';
 
 console.log('\n── Rescue Plans ────────────────────────');
@@ -6741,10 +6742,7 @@ assert(tunerIqr([10, 10, 10, 10]) === 0, 'iqr: no spread → 0');
 
 // computeRankScore: edge cases
 {
-  assert(
-    computeRankScore([], 0.5, 10000) === -Infinity,
-    'rankScore: empty results → -Infinity (never chosen as best)',
-  );
+  assert(computeRankScore([], 0.5, 10000) === -Infinity, 'rankScore: empty results → -Infinity (never chosen as best)');
   // Same stability, same unfilled, higher median wins.
   const a = [{ refScore: 200, unfilled: 0 }];
   const b = [{ refScore: 100, unfilled: 0 }];
@@ -6892,9 +6890,7 @@ console.log('\n── Auto-Tuner: reference-scoring invariance ──');
 //      what candidate produced the schedule (confirming the fix's invariant).
 {
   const day = new Date(2026, 1, 15);
-  const windowAvail = [
-    { start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 16, 12, 0) },
-  ];
+  const windowAvail = [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 16, 12, 0) }];
 
   const pA: Participant = {
     id: 'pA',
@@ -7084,72 +7080,208 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
   // ── Test 1: Composite scoring produces compositeDelta on plans ──
   {
     const t1: Task = {
-      id: 'crs-t1', name: 'Task1', timeBlock: rescBlock1, requiredCount: 2,
+      id: 'crs-t1',
+      name: 'Task1',
+      timeBlock: rescBlock1,
+      requiredCount: 2,
       slots: [
         { slotId: 'crs-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
         { slotId: 'crs-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
       ],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
-    const p1: Participant = { id: 'crs-p1', name: 'P1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const p2: Participant = { id: 'crs-p2', name: 'P2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const p3: Participant = { id: 'crs-p3', name: 'P3', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescAvail, dateUnavailability: [] };
+    const p1: Participant = {
+      id: 'crs-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'crs-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const p3: Participant = {
+      id: 'crs-p3',
+      name: 'P3',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
 
     const assigns: Assignment[] = [
-      { id: 'crs-a1', taskId: 'crs-t1', slotId: 'crs-s1', participantId: 'crs-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'crs-a2', taskId: 'crs-t1', slotId: 'crs-s2', participantId: 'crs-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'crs-a1',
+        taskId: 'crs-t1',
+        slotId: 'crs-s1',
+        participantId: 'crs-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'crs-a2',
+        taskId: 'crs-t1',
+        slotId: 'crs-s2',
+        participantId: 'crs-p2',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
-    const dScore: ScheduleScore = { minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0, l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 };
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
     const sched: Schedule = {
-      id: 'crs-sched', tasks: [t1], participants: [p1, p2, p3], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'crs-sched',
+      tasks: [t1],
+      participants: [p1, p2, p3],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      restRuleSnapshot: {}, certLabelSnapshot: {},
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
     };
 
     const config = { ...DEFAULT_CONFIG };
     const scoreCtx = buildTestScoreCtx(sched.tasks, sched.participants);
 
     const result = generateRescuePlans(
-      sched, { vacatedAssignmentId: 'crs-a1', taskId: 'crs-t1', slotId: 'crs-s1', vacatedBy: 'crs-p1' },
-      rescAnchor, 0, undefined, undefined, undefined, 5, undefined,
-      config, scoreCtx,
+      sched,
+      { vacatedAssignmentId: 'crs-a1', taskId: 'crs-t1', slotId: 'crs-s1', vacatedBy: 'crs-p1' },
+      rescAnchor,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      undefined,
+      config,
+      scoreCtx,
     );
 
     assert(result.plans.length > 0, 'rescue-composite: generates plans with config+scoreCtx');
-    assert(result.plans[0].compositeDelta !== undefined, 'rescue-composite: plans have compositeDelta when scoring active');
+    assert(
+      result.plans[0].compositeDelta !== undefined,
+      'rescue-composite: plans have compositeDelta when scoring active',
+    );
     assert(typeof result.plans[0].compositeDelta === 'number', 'rescue-composite: compositeDelta is a number');
   }
 
   // ── Test 2: Legacy fallback — no compositeDelta when config/scoreCtx omitted ──
   {
     const t1: Task = {
-      id: 'clf-t1', name: 'Task1', timeBlock: rescBlock1, requiredCount: 2,
+      id: 'clf-t1',
+      name: 'Task1',
+      timeBlock: rescBlock1,
+      requiredCount: 2,
       slots: [
         { slotId: 'clf-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
         { slotId: 'clf-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
       ],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
-    const p1: Participant = { id: 'clf-p1', name: 'P1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const p2: Participant = { id: 'clf-p2', name: 'P2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const p3: Participant = { id: 'clf-p3', name: 'P3', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescAvail, dateUnavailability: [] };
+    const p1: Participant = {
+      id: 'clf-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'clf-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const p3: Participant = {
+      id: 'clf-p3',
+      name: 'P3',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
 
     const assigns: Assignment[] = [
-      { id: 'clf-a1', taskId: 'clf-t1', slotId: 'clf-s1', participantId: 'clf-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'clf-a2', taskId: 'clf-t1', slotId: 'clf-s2', participantId: 'clf-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'clf-a1',
+        taskId: 'clf-t1',
+        slotId: 'clf-s1',
+        participantId: 'clf-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'clf-a2',
+        taskId: 'clf-t1',
+        slotId: 'clf-s2',
+        participantId: 'clf-p2',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
-    const dScore: ScheduleScore = { minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0, l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 };
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
     const sched: Schedule = {
-      id: 'clf-sched', tasks: [t1], participants: [p1, p2, p3], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'clf-sched',
+      tasks: [t1],
+      participants: [p1, p2, p3],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      restRuleSnapshot: {}, certLabelSnapshot: {},
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
     };
 
     // No config/scoreCtx → legacy path
     const result = generateRescuePlans(
-      sched, { vacatedAssignmentId: 'clf-a1', taskId: 'clf-t1', slotId: 'clf-s1', vacatedBy: 'clf-p1' },
+      sched,
+      { vacatedAssignmentId: 'clf-a1', taskId: 'clf-t1', slotId: 'clf-s1', vacatedBy: 'clf-p1' },
       rescAnchor,
     );
 
@@ -7162,34 +7294,102 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
     // Slot accepts L0 (normal) and L4 (lowPriority). Two candidates: one L0, one L4.
     // The L4 candidate should get a worse (higher) impactScore due to lowPriority penalty.
     const t1: Task = {
-      id: 'clp-t1', name: 'Task1', timeBlock: rescBlock1, requiredCount: 1,
+      id: 'clp-t1',
+      name: 'Task1',
+      timeBlock: rescBlock1,
+      requiredCount: 1,
       slots: [
-        { slotId: 'clp-s1', acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }], requiredCertifications: [], label: 'A' },
+        {
+          slotId: 'clp-s1',
+          acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
+          requiredCertifications: [],
+          label: 'A',
+        },
       ],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
-    const pVacated: Participant = { id: 'clp-pv', name: 'Vacated', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const pL0: Participant = { id: 'clp-l0', name: 'NormalL0', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const pL4: Participant = { id: 'clp-l4', name: 'SeniorL4', level: Level.L4, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
+    const pVacated: Participant = {
+      id: 'clp-pv',
+      name: 'Vacated',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const pL0: Participant = {
+      id: 'clp-l0',
+      name: 'NormalL0',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const pL4: Participant = {
+      id: 'clp-l4',
+      name: 'SeniorL4',
+      level: Level.L4,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
 
     const assigns: Assignment[] = [
-      { id: 'clp-a1', taskId: 'clp-t1', slotId: 'clp-s1', participantId: 'clp-pv', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'clp-a1',
+        taskId: 'clp-t1',
+        slotId: 'clp-s1',
+        participantId: 'clp-pv',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
-    const dScore: ScheduleScore = { minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0, l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 };
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
     const sched: Schedule = {
-      id: 'clp-sched', tasks: [t1], participants: [pVacated, pL0, pL4], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'clp-sched',
+      tasks: [t1],
+      participants: [pVacated, pL0, pL4],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      restRuleSnapshot: {}, certLabelSnapshot: {},
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
     };
 
     const config = { ...DEFAULT_CONFIG };
     const scoreCtx = buildTestScoreCtx(sched.tasks, sched.participants);
 
     const result = generateRescuePlans(
-      sched, { vacatedAssignmentId: 'clp-a1', taskId: 'clp-t1', slotId: 'clp-s1', vacatedBy: 'clp-pv' },
-      rescAnchor, 0, undefined, undefined, undefined, 5, undefined,
-      config, scoreCtx,
+      sched,
+      { vacatedAssignmentId: 'clp-a1', taskId: 'clp-t1', slotId: 'clp-s1', vacatedBy: 'clp-pv' },
+      rescAnchor,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      undefined,
+      config,
+      scoreCtx,
     );
 
     assert(result.plans.length === 2, 'rescue-lowPriority: both L0 and L4 candidates produce plans');
@@ -7213,40 +7413,120 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
   // ── Test 4: notWith penalty — conflicting pair gets worse score ──
   {
     const t1: Task = {
-      id: 'cnw-t1', name: 'Task1', timeBlock: rescBlock1, requiredCount: 2,
+      id: 'cnw-t1',
+      name: 'Task1',
+      timeBlock: rescBlock1,
+      requiredCount: 2,
       slots: [
         { slotId: 'cnw-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' },
         { slotId: 'cnw-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'B' },
       ],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
       togethernessRelevant: true,
     };
-    const pVacated: Participant = { id: 'cnw-pv', name: 'Vacated', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const pStay: Participant = { id: 'cnw-stay', name: 'Stay', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [], notWithIds: ['cnw-enemy'] };
+    const pVacated: Participant = {
+      id: 'cnw-pv',
+      name: 'Vacated',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const pStay: Participant = {
+      id: 'cnw-stay',
+      name: 'Stay',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+      notWithIds: ['cnw-enemy'],
+    };
     // Enemy: bidirectional notWith (as the real UI creates)
-    const pEnemy: Participant = { id: 'cnw-enemy', name: 'Enemy', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [], notWithIds: ['cnw-stay'] };
+    const pEnemy: Participant = {
+      id: 'cnw-enemy',
+      name: 'Enemy',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+      notWithIds: ['cnw-stay'],
+    };
     // Friend: no conflict
-    const pFriend: Participant = { id: 'cnw-friend', name: 'Friend', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
+    const pFriend: Participant = {
+      id: 'cnw-friend',
+      name: 'Friend',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
 
     const assigns: Assignment[] = [
-      { id: 'cnw-a1', taskId: 'cnw-t1', slotId: 'cnw-s1', participantId: 'cnw-pv', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'cnw-a2', taskId: 'cnw-t1', slotId: 'cnw-s2', participantId: 'cnw-stay', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'cnw-a1',
+        taskId: 'cnw-t1',
+        slotId: 'cnw-s1',
+        participantId: 'cnw-pv',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'cnw-a2',
+        taskId: 'cnw-t1',
+        slotId: 'cnw-s2',
+        participantId: 'cnw-stay',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
-    const dScore: ScheduleScore = { minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0, l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 };
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
     const sched: Schedule = {
-      id: 'cnw-sched', tasks: [t1], participants: [pVacated, pStay, pEnemy, pFriend], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'cnw-sched',
+      tasks: [t1],
+      participants: [pVacated, pStay, pEnemy, pFriend],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      restRuleSnapshot: {}, certLabelSnapshot: {},
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
     };
 
     const config = { ...DEFAULT_CONFIG };
     const scoreCtx = buildTestScoreCtx(sched.tasks, sched.participants);
 
     const result = generateRescuePlans(
-      sched, { vacatedAssignmentId: 'cnw-a1', taskId: 'cnw-t1', slotId: 'cnw-s1', vacatedBy: 'cnw-pv' },
-      rescAnchor, 0, undefined, undefined, undefined, 5, undefined,
-      config, scoreCtx,
+      sched,
+      { vacatedAssignmentId: 'cnw-a1', taskId: 'cnw-t1', slotId: 'cnw-s1', vacatedBy: 'cnw-pv' },
+      rescAnchor,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      undefined,
+      config,
+      scoreCtx,
     );
 
     assert(result.plans.length >= 2, 'rescue-notWith: at least enemy and friend produce plans');
@@ -7266,45 +7546,133 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
     // p1 vacated from t1. p2 is in t1 already (HC-7 blocks direct). p3 is in t2.
     // Depth-2 chain: move p3 → t1, then find someone for p3's old slot in t2.
     const t1: Task = {
-      id: 'cd2-t1', name: 'Task1', timeBlock: rescBlock1, requiredCount: 2,
+      id: 'cd2-t1',
+      name: 'Task1',
+      timeBlock: rescBlock1,
+      requiredCount: 2,
       slots: [
         { slotId: 'cd2-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
         { slotId: 'cd2-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
       ],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     const t2: Task = {
-      id: 'cd2-t2', name: 'Task2', timeBlock: rescBlock2, requiredCount: 1,
-      slots: [
-        { slotId: 'cd2-s3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'C' },
-      ],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      id: 'cd2-t2',
+      name: 'Task2',
+      timeBlock: rescBlock2,
+      requiredCount: 1,
+      slots: [{ slotId: 'cd2-s3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'C' }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
-    const p1: Participant = { id: 'cd2-p1', name: 'P1', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const p2: Participant = { id: 'cd2-p2', name: 'P2', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const p3: Participant = { id: 'cd2-p3', name: 'P3', level: Level.L0, certifications: ['Nitzan'], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const p4: Participant = { id: 'cd2-p4', name: 'P4', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
+    const p1: Participant = {
+      id: 'cd2-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'cd2-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const p3: Participant = {
+      id: 'cd2-p3',
+      name: 'P3',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const p4: Participant = {
+      id: 'cd2-p4',
+      name: 'P4',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
 
     const assigns: Assignment[] = [
-      { id: 'cd2-a1', taskId: 'cd2-t1', slotId: 'cd2-s1', participantId: 'cd2-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'cd2-a2', taskId: 'cd2-t1', slotId: 'cd2-s2', participantId: 'cd2-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'cd2-a3', taskId: 'cd2-t2', slotId: 'cd2-s3', participantId: 'cd2-p3', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'cd2-a1',
+        taskId: 'cd2-t1',
+        slotId: 'cd2-s1',
+        participantId: 'cd2-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'cd2-a2',
+        taskId: 'cd2-t1',
+        slotId: 'cd2-s2',
+        participantId: 'cd2-p2',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'cd2-a3',
+        taskId: 'cd2-t2',
+        slotId: 'cd2-s3',
+        participantId: 'cd2-p3',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
-    const dScore: ScheduleScore = { minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0, l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 };
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
     const sched: Schedule = {
-      id: 'cd2-sched', tasks: [t1, t2], participants: [p1, p2, p3, p4], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'cd2-sched',
+      tasks: [t1, t2],
+      participants: [p1, p2, p3, p4],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      restRuleSnapshot: {}, certLabelSnapshot: {},
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
     };
 
     const config = { ...DEFAULT_CONFIG };
     const scoreCtx = buildTestScoreCtx(sched.tasks, sched.participants);
 
     const result = generateRescuePlans(
-      sched, { vacatedAssignmentId: 'cd2-a1', taskId: 'cd2-t1', slotId: 'cd2-s1', vacatedBy: 'cd2-p1' },
-      rescAnchor, 0, undefined, undefined, undefined, 5, undefined,
-      config, scoreCtx,
+      sched,
+      { vacatedAssignmentId: 'cd2-a1', taskId: 'cd2-t1', slotId: 'cd2-s1', vacatedBy: 'cd2-p1' },
+      rescAnchor,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      undefined,
+      config,
+      scoreCtx,
     );
 
     // p3 is the only eligible depth-1 replacement (Nitzan cert, not already in t1)
@@ -7323,44 +7691,122 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
   {
     // Two candidates with different workload profiles. Verify sort order.
     const t1: Task = {
-      id: 'cso-t1', name: 'Task1', timeBlock: rescBlock1, requiredCount: 1,
+      id: 'cso-t1',
+      name: 'Task1',
+      timeBlock: rescBlock1,
+      requiredCount: 1,
       slots: [
-        { slotId: 'cso-s1', acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }], requiredCertifications: [], label: 'A' },
+        {
+          slotId: 'cso-s1',
+          acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
+          requiredCertifications: [],
+          label: 'A',
+        },
       ],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     // A second task to give p2 more load
     const t2: Task = {
-      id: 'cso-t2', name: 'Task2', timeBlock: rescBlock2, requiredCount: 1,
-      slots: [
-        { slotId: 'cso-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'B' },
-      ],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      id: 'cso-t2',
+      name: 'Task2',
+      timeBlock: rescBlock2,
+      requiredCount: 1,
+      slots: [{ slotId: 'cso-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'B' }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
-    const pVacated: Participant = { id: 'cso-pv', name: 'Vacated', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const pLight: Participant = { id: 'cso-light', name: 'Light', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const pHeavy: Participant = { id: 'cso-heavy', name: 'Heavy', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
+    const pVacated: Participant = {
+      id: 'cso-pv',
+      name: 'Vacated',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const pLight: Participant = {
+      id: 'cso-light',
+      name: 'Light',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const pHeavy: Participant = {
+      id: 'cso-heavy',
+      name: 'Heavy',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
 
     const assigns: Assignment[] = [
-      { id: 'cso-a1', taskId: 'cso-t1', slotId: 'cso-s1', participantId: 'cso-pv', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'cso-a1',
+        taskId: 'cso-t1',
+        slotId: 'cso-s1',
+        participantId: 'cso-pv',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
       // pHeavy already has another assignment → higher workload
-      { id: 'cso-a2', taskId: 'cso-t2', slotId: 'cso-s2', participantId: 'cso-heavy', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'cso-a2',
+        taskId: 'cso-t2',
+        slotId: 'cso-s2',
+        participantId: 'cso-heavy',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
-    const dScore: ScheduleScore = { minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0, l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 };
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
     const sched: Schedule = {
-      id: 'cso-sched', tasks: [t1, t2], participants: [pVacated, pLight, pHeavy], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'cso-sched',
+      tasks: [t1, t2],
+      participants: [pVacated, pLight, pHeavy],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      restRuleSnapshot: {}, certLabelSnapshot: {},
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
     };
 
     const config = { ...DEFAULT_CONFIG };
     const scoreCtx = buildTestScoreCtx(sched.tasks, sched.participants);
 
     const result = generateRescuePlans(
-      sched, { vacatedAssignmentId: 'cso-a1', taskId: 'cso-t1', slotId: 'cso-s1', vacatedBy: 'cso-pv' },
-      rescAnchor, 0, undefined, undefined, undefined, 5, undefined,
-      config, scoreCtx,
+      sched,
+      { vacatedAssignmentId: 'cso-a1', taskId: 'cso-t1', slotId: 'cso-s1', vacatedBy: 'cso-pv' },
+      rescAnchor,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      undefined,
+      config,
+      scoreCtx,
     );
 
     // Plans are assembled by depth tier (depth-1 first, then depth-2), with
@@ -7378,73 +7824,616 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
   // ── Test 7: config provided but scoreCtx missing → falls back to legacy ──
   {
     const t1: Task = {
-      id: 'cpm-t1', name: 'Task1', timeBlock: rescBlock1, requiredCount: 1,
-      slots: [
-        { slotId: 'cpm-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' },
-      ],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      id: 'cpm-t1',
+      name: 'Task1',
+      timeBlock: rescBlock1,
+      requiredCount: 1,
+      slots: [{ slotId: 'cpm-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
-    const p1: Participant = { id: 'cpm-p1', name: 'P1', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const p2: Participant = { id: 'cpm-p2', name: 'P2', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
+    const p1: Participant = {
+      id: 'cpm-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'cpm-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
 
     const assigns: Assignment[] = [
-      { id: 'cpm-a1', taskId: 'cpm-t1', slotId: 'cpm-s1', participantId: 'cpm-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'cpm-a1',
+        taskId: 'cpm-t1',
+        slotId: 'cpm-s1',
+        participantId: 'cpm-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
-    const dScore: ScheduleScore = { minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0, l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 };
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
     const sched: Schedule = {
-      id: 'cpm-sched', tasks: [t1], participants: [p1, p2], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'cpm-sched',
+      tasks: [t1],
+      participants: [p1, p2],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      restRuleSnapshot: {}, certLabelSnapshot: {},
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
     };
 
     // config provided but NO scoreCtx → should fall back to legacy
     const result = generateRescuePlans(
-      sched, { vacatedAssignmentId: 'cpm-a1', taskId: 'cpm-t1', slotId: 'cpm-s1', vacatedBy: 'cpm-p1' },
-      rescAnchor, 0, undefined, undefined, undefined, 5, undefined,
+      sched,
+      { vacatedAssignmentId: 'cpm-a1', taskId: 'cpm-t1', slotId: 'cpm-s1', vacatedBy: 'cpm-p1' },
+      rescAnchor,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      undefined,
       { ...DEFAULT_CONFIG }, // config
-      undefined,             // no scoreCtx
+      undefined, // no scoreCtx
     );
 
     assert(result.plans.length > 0, 'rescue-partial-ctx: generates plans with config but no scoreCtx');
-    assert(result.plans[0].compositeDelta === undefined, 'rescue-partial-ctx: falls back to legacy (no compositeDelta)');
+    assert(
+      result.plans[0].compositeDelta === undefined,
+      'rescue-partial-ctx: falls back to legacy (no compositeDelta)',
+    );
   }
 
   // ── Test 8: scoreCtx provided but config missing → falls back to legacy ──
   {
     const t1: Task = {
-      id: 'csm-t1', name: 'Task1', timeBlock: rescBlock1, requiredCount: 1,
-      slots: [
-        { slotId: 'csm-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' },
-      ],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      id: 'csm-t1',
+      name: 'Task1',
+      timeBlock: rescBlock1,
+      requiredCount: 1,
+      slots: [{ slotId: 'csm-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
-    const p1: Participant = { id: 'csm-p1', name: 'P1', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
-    const p2: Participant = { id: 'csm-p2', name: 'P2', level: Level.L0, certifications: [], group: 'A', availability: rescAvail, dateUnavailability: [] };
+    const p1: Participant = {
+      id: 'csm-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'csm-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: rescAvail,
+      dateUnavailability: [],
+    };
 
     const assigns: Assignment[] = [
-      { id: 'csm-a1', taskId: 'csm-t1', slotId: 'csm-s1', participantId: 'csm-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'csm-a1',
+        taskId: 'csm-t1',
+        slotId: 'csm-s1',
+        participantId: 'csm-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
-    const dScore: ScheduleScore = { minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0, l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 };
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
     const sched: Schedule = {
-      id: 'csm-sched', tasks: [t1], participants: [p1, p2], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'csm-sched',
+      tasks: [t1],
+      participants: [p1, p2],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      restRuleSnapshot: {}, certLabelSnapshot: {},
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
     };
 
     const scoreCtx = buildTestScoreCtx(sched.tasks, sched.participants);
 
     // scoreCtx provided but NO config → should fall back to legacy
     const result = generateRescuePlans(
-      sched, { vacatedAssignmentId: 'csm-a1', taskId: 'csm-t1', slotId: 'csm-s1', vacatedBy: 'csm-p1' },
-      rescAnchor, 0, undefined, undefined, undefined, 5, undefined,
-      undefined,  // no config
+      sched,
+      { vacatedAssignmentId: 'csm-a1', taskId: 'csm-t1', slotId: 'csm-s1', vacatedBy: 'csm-p1' },
+      rescAnchor,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      undefined,
+      undefined, // no config
       scoreCtx,
     );
 
     assert(result.plans.length > 0, 'rescue-partial-scoreCtx: generates plans with scoreCtx but no config');
-    assert(result.plans[0].compositeDelta === undefined, 'rescue-partial-scoreCtx: falls back to legacy (no compositeDelta)');
+    assert(
+      result.plans[0].compositeDelta === undefined,
+      'rescue-partial-scoreCtx: falls back to legacy (no compositeDelta)',
+    );
+  }
+}
+
+// ─── Future SOS (multi-slot batch rescue) ────────────────────────────────────
+
+console.log('\n── Future SOS (batch rescue) ───────────');
+
+{
+  const fsosBase = new Date(2026, 5, 1); // June 1, 2026
+  const fsosAnchor = new Date(2026, 4, 30);
+  const fsosAvail = [{ start: new Date(2026, 4, 29), end: new Date(2026, 5, 5) }];
+  const fsosBlock = createTimeBlockFromHours(fsosBase, 6, 14);
+  const fsosBlock2 = createTimeBlockFromHours(new Date(2026, 5, 2), 6, 14);
+
+  function buildFsosScoreCtx(tasks: Task[], participants: Participant[]): ScoreContext {
+    let schedStart = tasks[0]?.timeBlock.start ?? new Date();
+    let schedEnd = tasks[0]?.timeBlock.end ?? new Date();
+    for (const t of tasks) {
+      if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+      if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+    }
+    return {
+      taskMap: new Map(tasks.map((t) => [t.id, t])),
+      pMap: new Map(participants.map((p) => [p.id, p])),
+      capacities: computeAllCapacities(participants, schedStart, schedEnd, 5),
+      notWithPairs: new Map(),
+      dayStartHour: 5,
+    };
+  }
+
+  // ── Test 1: checkAvailability respects extraUnavailability ──
+  {
+    const p: Participant = {
+      id: 'fx-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const task: Task = {
+      id: 'fx-t1',
+      name: 'T1',
+      timeBlock: fsosBlock,
+      requiredCount: 1,
+      slots: [{ slotId: 'fx-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    assert(checkAvailability(p, task) === null, 'fsos-hc3: no extra unavailability → HC-3 passes');
+    const extra = [{ participantId: 'fx-p1', start: new Date(2026, 5, 1, 5), end: new Date(2026, 5, 1, 15) }];
+    assert(checkAvailability(p, task, extra) !== null, 'fsos-hc3: extra window covering task → HC-3 fires');
+    const extraOther = [{ participantId: 'fx-pOther', start: new Date(2026, 5, 1, 5), end: new Date(2026, 5, 1, 15) }];
+    assert(
+      checkAvailability(p, task, extraOther) === null,
+      'fsos-hc3: extra window for OTHER participant → HC-3 passes',
+    );
+    const extraOutside = [{ participantId: 'fx-p1', start: new Date(2026, 5, 1, 20), end: new Date(2026, 5, 1, 23) }];
+    assert(checkAvailability(p, task, extraOutside) === null, 'fsos-hc3: extra window outside task → HC-3 passes');
+  }
+
+  // ── Test 2: findAffectedAssignments — overlap, boundary, wrong participant ──
+  {
+    const p1: Participant = {
+      id: 'fa-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'fa-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const task1: Task = {
+      id: 'fa-t1',
+      name: 'T1',
+      timeBlock: fsosBlock,
+      requiredCount: 1,
+      slots: [{ slotId: 'fa-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    const task2: Task = {
+      id: 'fa-t2',
+      name: 'T2',
+      timeBlock: fsosBlock2,
+      requiredCount: 1,
+      slots: [{ slotId: 'fa-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    const assigns: Assignment[] = [
+      {
+        id: 'fa-a1',
+        taskId: 'fa-t1',
+        slotId: 'fa-s1',
+        participantId: 'fa-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'fa-a2',
+        taskId: 'fa-t2',
+        slotId: 'fa-s2',
+        participantId: 'fa-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'fa-a3',
+        taskId: 'fa-t1',
+        slotId: 'fa-s1',
+        participantId: 'fa-p2',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
+    const sched: Schedule = {
+      id: 'fa-sched',
+      tasks: [task1, task2],
+      participants: [p1, p2],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
+    };
+
+    // Window that covers ONLY task1
+    const window1 = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23) };
+    const r1 = findAffectedAssignments(sched, 'fa-p1', window1, fsosAnchor);
+    assert(r1.affected.length === 1, 'fsos-affected: one task intersecting window');
+    assert(r1.affected[0].assignment.id === 'fa-a1', 'fsos-affected: correct assignment returned');
+    assert(r1.lockedInPast.length === 0, 'fsos-affected: no past-locked when anchor is before all tasks');
+
+    // Window covering both tasks
+    const window2 = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 3, 0) };
+    const r2 = findAffectedAssignments(sched, 'fa-p1', window2, fsosAnchor);
+    assert(r2.affected.length === 2, 'fsos-affected: two tasks in wider window');
+
+    // Wrong participant → empty
+    const r3 = findAffectedAssignments(sched, 'fa-pX', window2, fsosAnchor);
+    assert(r3.affected.length === 0, 'fsos-affected: unknown participant → empty');
+
+    // Past anchor freezes tasks → lockedInPast
+    const pastAnchor = new Date(2026, 5, 1, 23); // after task1 ends → task1 is past
+    const r4 = findAffectedAssignments(sched, 'fa-p1', window2, pastAnchor);
+    assert(
+      r4.lockedInPast.some((x) => x.assignment.id === 'fa-a1'),
+      'fsos-affected: past task goes to lockedInPast',
+    );
+    assert(
+      r4.affected.some((x) => x.assignment.id === 'fa-a2'),
+      'fsos-affected: future task still affected',
+    );
+  }
+
+  // ── Test 3: batch generation — two simultaneous vacated slots ──
+  {
+    const p1: Participant = {
+      id: 'fb-p1',
+      name: 'P1 (vacated)',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'fb-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const p3: Participant = {
+      id: 'fb-p3',
+      name: 'P3',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const p4: Participant = {
+      id: 'fb-p4',
+      name: 'P4',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+
+    const t1: Task = {
+      id: 'fb-t1',
+      name: 'T1',
+      timeBlock: fsosBlock,
+      requiredCount: 1,
+      slots: [{ slotId: 'fb-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    const t2: Task = {
+      id: 'fb-t2',
+      name: 'T2',
+      timeBlock: fsosBlock2,
+      requiredCount: 1,
+      slots: [{ slotId: 'fb-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+
+    const assigns: Assignment[] = [
+      {
+        id: 'fb-a1',
+        taskId: 'fb-t1',
+        slotId: 'fb-s1',
+        participantId: 'fb-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'fb-a2',
+        taskId: 'fb-t2',
+        slotId: 'fb-s2',
+        participantId: 'fb-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
+    const sched: Schedule = {
+      id: 'fb-sched',
+      tasks: [t1, t2],
+      participants: [p1, p2, p3, p4],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
+    };
+
+    const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
+    const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 3, 0) };
+
+    const result = generateBatchRescuePlans(sched, { participantId: 'fb-p1', window }, fsosAnchor, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx,
+      maxPlans: 3,
+    });
+
+    assert(result.affected.length === 2, 'fsos-batch: two affected slots identified');
+    assert(result.infeasibleAssignmentIds.length === 0, 'fsos-batch: both slots solvable with available candidates');
+    assert(result.plans.length > 0, 'fsos-batch: at least one batch plan returned');
+
+    const top = result.plans[0];
+    assert(top.swaps.length === 2, 'fsos-batch: top plan fills both vacated slots');
+    const coveredAssignmentIds = new Set(top.swaps.map((s) => s.assignmentId));
+    assert(
+      coveredAssignmentIds.has('fb-a1') && coveredAssignmentIds.has('fb-a2'),
+      'fsos-batch: top plan covers both vacated assignments',
+    );
+    // The focal (unavailable) participant must not be a replacement for their own in-window slots.
+    const replacementIds = new Set(top.swaps.map((s) => s.toParticipantId));
+    assert(
+      !replacementIds.has('fb-p1'),
+      'fsos-batch: the unavailable participant is never used as a replacement in-window',
+    );
+  }
+
+  // ── Test 4: infeasible slot → infeasibleAssignmentIds populated ──
+  {
+    // Only participant who could fill the slot is the one being marked unavailable.
+    const p1: Participant = {
+      id: 'fi-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const t1: Task = {
+      id: 'fi-t1',
+      name: 'T1',
+      timeBlock: fsosBlock,
+      requiredCount: 1,
+      slots: [{ slotId: 'fi-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] }],
+      isLight: false,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    const assigns: Assignment[] = [
+      {
+        id: 'fi-a1',
+        taskId: 'fi-t1',
+        slotId: 'fi-s1',
+        participantId: 'fi-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const dScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+    };
+    const sched: Schedule = {
+      id: 'fi-sched',
+      tasks: [t1],
+      participants: [p1],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
+    };
+    const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
+    const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23) };
+    const result = generateBatchRescuePlans(sched, { participantId: 'fi-p1', window }, fsosAnchor, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx,
+      maxPlans: 3,
+    });
+    assert(result.infeasibleAssignmentIds.length === 1, 'fsos-infeasible: one slot flagged infeasible');
+    assert(result.infeasibleAssignmentIds[0] === 'fi-a1', 'fsos-infeasible: correct assignment id flagged');
+    assert(result.plans.length === 0, 'fsos-infeasible: no full batch plans when some slots are infeasible');
+  }
+
+  // ── Test 5: upsertScheduleUnavailability merges overlapping windows ──
+  {
+    const existing = [
+      {
+        id: 'u1',
+        participantId: 'p1',
+        start: new Date(2026, 5, 1, 0),
+        end: new Date(2026, 5, 1, 12),
+        createdAt: new Date(),
+        anchorAtCreation: new Date(),
+      },
+    ];
+    const merged = upsertScheduleUnavailability(existing, {
+      id: 'u2',
+      participantId: 'p1',
+      start: new Date(2026, 5, 1, 10),
+      end: new Date(2026, 5, 1, 20),
+      createdAt: new Date(),
+      anchorAtCreation: new Date(),
+    });
+    assert(merged.length === 1, 'fsos-upsert: overlapping windows are merged into one entry');
+    assert(merged[0].start.getTime() === new Date(2026, 5, 1, 0).getTime(), 'fsos-upsert: earliest start is preserved');
+    assert(merged[0].end.getTime() === new Date(2026, 5, 1, 20).getTime(), 'fsos-upsert: latest end is preserved');
+
+    // Non-overlapping window stays separate
+    const separate = upsertScheduleUnavailability(existing, {
+      id: 'u3',
+      participantId: 'p1',
+      start: new Date(2026, 5, 5, 0),
+      end: new Date(2026, 5, 5, 12),
+      createdAt: new Date(),
+      anchorAtCreation: new Date(),
+    });
+    assert(separate.length === 2, 'fsos-upsert: non-overlapping window stays separate');
+
+    // Different participant → separate
+    const sepP = upsertScheduleUnavailability(existing, {
+      id: 'u4',
+      participantId: 'p2',
+      start: new Date(2026, 5, 1, 5),
+      end: new Date(2026, 5, 1, 8),
+      createdAt: new Date(),
+      anchorAtCreation: new Date(),
+    });
+    assert(sepP.length === 2, 'fsos-upsert: different participant does not merge');
   }
 }
 
