@@ -103,26 +103,41 @@ function renderTopBar(
       : '<span class="text-muted">אין</span>';
   const pakalHtml = renderPakalBadges(p, store.getAllPakalDefinitionsIncludeDeleted(), 'אין');
 
+  const hours = computeHeavyHours(myTasks).toFixed(1);
+  const safeName = escHtml(p.name);
+  const safeStatus = escHtml(statusText);
+
+  const iconPin = `<svg class="icon-pin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-12a7 7 0 1 1 14 0c0 5.8-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>`;
+  const iconMedal = `<svg class="icon-medal" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3l4 7 4-7"/><path d="M8 3h8"/><circle cx="12" cy="15" r="6"/><path d="M10 14l2 2 2-2"/></svg>`;
+  const iconTag = `<svg class="icon-tag" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5"/></svg>`;
+
   return `
   <div class="profile-topbar">
-    <button class="btn-back" data-action="back-to-schedule" title="חזור לשבצ&quot;ק">
+    <button class="btn-back" data-action="back-to-schedule" title="חזור לשבצ&quot;ק" aria-label="חזור לשבצ&quot;ק">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M7.5 15L12.5 10L7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <span>חזור לשבצ"ק</span>
+      <span class="btn-back-label">חזור לשבצ"ק</span>
     </button>
+    <div class="profile-kpi-hero" title="עומס אפקטיבי">
+      <span class="profile-kpi-value">${hours}h</span>
+      <span class="profile-kpi-label">עומס אפקטיבי</span>
+    </div>
     <div class="profile-identity">
-      <h2 class="profile-name">${p.name}</h2>
+      <h2 class="profile-name" title="${safeName}">${safeName}</h2>
       <div class="profile-badges">
         ${levelBadge(p.level)}
         ${groupBadge(p.group)}
-        <span class="profile-status ${statusClass}">${statusText}</span>
       </div>
-      <div class="profile-certs">הסמכות: ${certHtml}</div>
-      <div class="profile-certs profile-pakalim">פק"לים: ${pakalHtml}</div>
-    </div>
-    <div class="profile-summary-kpis">
-      <div class="profile-kpi">
-        <span class="profile-kpi-value">${computeHeavyHours(myTasks).toFixed(1)}h</span>
-        <span class="profile-kpi-label">עומס אפקטיבי</span>
+      <div class="profile-assignment ${statusClass}" title="${safeStatus}">
+        ${iconPin}
+        <span>${safeStatus}</span>
+      </div>
+      <div class="profile-meta-row" aria-label="הסמכות">
+        ${iconMedal}
+        ${certHtml}
+      </div>
+      <div class="profile-meta-row profile-meta-pakalim" aria-label="פק&quot;לים">
+        ${iconTag}
+        ${pakalHtml}
       </div>
     </div>
   </div>`;
