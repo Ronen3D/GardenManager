@@ -113,6 +113,10 @@ body {
   color: var(--text);
   line-height: 1.6;
   min-height: 100vh;
+  overscroll-behavior-x: contain;
+}
+html {
+  overscroll-behavior-x: contain;
 }
 
 /* ─── Premium theme crossfade ─────────────────────────── */
@@ -3514,17 +3518,18 @@ tr.row-rest td {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.agenda-task > .btn-rescue-profile,
+.agenda-task > .frozen-action-icon {
+  margin-inline-start: auto;
+  flex-shrink: 0;
 }
 .btn-rescue-profile {
-  margin-inline-start: auto;
   font-size: 0.85rem;
   line-height: 1;
   padding: 2px 6px;
-}
-.agenda-task-name {
-  font-weight: 600;
-  color: var(--text);
 }
 /* ── Metrics ── */
 .metrics-summary {
@@ -7453,7 +7458,6 @@ tr.now-row-animate > td.time-cell {
 }
 .fsos-carousel {
   overscroll-behavior-x: contain;
-  touch-action: pan-x;
 }
 .fsos-plans--touch .fsos-carousel .fsos-plan-card {
   max-height: 100%;
@@ -7468,7 +7472,6 @@ tr.now-row-animate > td.time-cell {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  touch-action: pan-y;
 }
 
 .fsos-warning-banner {

@@ -1809,10 +1809,10 @@ export function seedDefaultParticipants(): void {
   //   1× L4 (Nitzan)
   //   1× L3 (Nitzan)
   //   3× L2 (Nitzan)
-  //   1× L0 + Salsala (Nitzan)
+  //   1× L0 (Nitzan)
   //   2× L0 + Hamama (Nitzan)
   //   4× L0 standard (Nitzan)
-  // All have Nitzan. 2 Hamama-certified L0, 1 Salsala-certified L0.
+  // All have Nitzan. 2 Hamama-certified L0.
   //
   // Horesh certification defaults:
   //   Dept A: 2 standard L0 participants (indices 8,9)
@@ -1833,7 +1833,7 @@ export function seedDefaultParticipants(): void {
     { level: Level.L2, certs: ['Nitzan', 'Hamama'], tag: 'L2' },
     { level: Level.L2, certs: ['Nitzan', 'Hamama'], tag: 'L2' },
     { level: Level.L2, certs: ['Nitzan', 'Hamama'], tag: 'L2' },
-    { level: Level.L0, certs: ['Nitzan', 'Salsala'], tag: 'L0-Salsala' },
+    { level: Level.L0, certs: ['Nitzan'], tag: 'L0' },
     { level: Level.L0, certs: ['Nitzan', 'Hamama'], tag: 'L0-Hamama' },
     { level: Level.L0, certs: ['Nitzan', 'Hamama'], tag: 'L0-Hamama' },
     { level: Level.L0, certs: ['Nitzan'], tag: 'L0' },
@@ -2084,12 +2084,6 @@ export function seedDefaultTaskTemplates(): void {
         label: 'מפקד כרוב (דרגה 2/3/4)',
         acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
         requiredCertifications: ['Nitzan'],
-      },
-      {
-        id: uid('slot'),
-        label: 'נהג כרוב',
-        acceptableLevels: [{ level: Level.L0 }],
-        requiredCertifications: ['Salsala', 'Nitzan'],
       },
       {
         id: uid('slot'),

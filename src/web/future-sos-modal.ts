@@ -19,7 +19,7 @@
 import type { AffectedAssignment, BatchRescuePlan, BatchRescueResult } from '../engine/future-sos';
 import type { Participant, Schedule, Task } from '../models/types';
 import { hebrewDayName, operationalDateKey } from '../utils/date-utils';
-import { escAttr, escHtml, fmt } from './ui-helpers';
+import { cleanSlotLabel, escAttr, escHtml, fmt, stripDayPrefix } from './ui-helpers';
 import { lockBodyScroll, unlockBodyScroll } from './ui-modal';
 
 // ─── Confirmation ────────────────────────────────────────────────────────────
@@ -218,24 +218,6 @@ function groupByOperationalDay<T extends AffectedAssignment>(items: T[], dayStar
   return ordered;
 }
 
-function stripDayPrefix(name: string): string {
-  // Strip the generated `D{N} ` day-index prefix (engine-internal naming)
-  // and the trailing `משמרת {N}` numeric shift suffix. Times are always
-  // rendered alongside the name, so the shift number adds noise without
-  // information. Descriptive shift labels (e.g. "משמרת בוקר") are left
-  // intact because the trailing token isn't numeric.
-  return name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+\s*$/, '');
-}
-
-function cleanSlotLabel(label: string): string {
-  // Strip a trailing HH:MM–HH:MM (hyphen, en-dash, or minus sign) range —
-  // the Future SOS UI always renders the time separately as an aligned
-  // LTR tag, so including it inside the user-defined slot label is pure
-  // duplication. The regex is anchored to the end of the string, so
-  // mid-label time references (rare) are preserved.
-  return label.replace(/\s+\d{1,2}:\d{2}\s*[-–−]\s*\d{1,2}:\d{2}\s*$/, '').trim();
-}
-
 // ─── Batch Plans ─────────────────────────────────────────────────────────────
 
 export interface BatchPlansContext {
@@ -363,8 +345,103 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
     });
   });
 
+  if (isTouch) {
+    const carousel = backdrop.querySelector<HTMLElement>('.fsos-carousel');
+    if (carousel) wireCarouselGestureForwarding(carousel);
+  }
+
   document.addEventListener('keydown', onKey);
   document.body.appendChild(backdrop);
+}
+
+// Mobile browsers don't reliably chain horizontal swipes from a vertically-
+// scrolling child (card body) to a horizontally-scrolling parent (carousel).
+// Take over touch handling at the carousel level: lock to an axis after the
+// first 8px of movement, then drive carousel.scrollLeft (horizontal) or the
+// hit body's scrollTop (vertical) manually. Scroll-snap is disabled during
+// the gesture to avoid fighting programmatic scroll, then re-engaged via a
+// JS snap on touchend.
+function wireCarouselGestureForwarding(carousel: HTMLElement): void {
+  let startX = 0;
+  let startY = 0;
+  let lastX = 0;
+  let lastY = 0;
+  let axis: 'x' | 'y' | null = null;
+  let activeBody: HTMLElement | null = null;
+  const isRtl = getComputedStyle(carousel).direction === 'rtl';
+
+  carousel.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      startX = lastX = t.clientX;
+      startY = lastY = t.clientY;
+      axis = null;
+      activeBody = (t.target as HTMLElement | null)?.closest<HTMLElement>('.fsos-plan-body') ?? null;
+    },
+    { passive: true, capture: true },
+  );
+
+  carousel.addEventListener(
+    'touchmove',
+    (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const x = t.clientX;
+      const y = t.clientY;
+
+      if (axis === null) {
+        const dx = Math.abs(x - startX);
+        const dy = Math.abs(y - startY);
+        if (dx < 8 && dy < 8) return;
+        axis = dx > dy ? 'x' : 'y';
+        if (axis === 'x') carousel.style.scrollSnapType = 'none';
+      }
+
+      if (axis === 'x') {
+        // In RTL Chrome/Firefox, scrollLeft is 0 at the rightmost position
+        // and becomes negative when scrolled left. In LTR it's the reverse.
+        const delta = x - lastX;
+        carousel.scrollLeft += isRtl ? delta : -delta;
+        e.preventDefault();
+      } else if (axis === 'y' && activeBody) {
+        const delta = y - lastY;
+        activeBody.scrollTop -= delta;
+        e.preventDefault();
+      }
+      lastX = x;
+      lastY = y;
+    },
+    { passive: false, capture: true },
+  );
+
+  const endGesture = () => {
+    if (axis === 'x') {
+      carousel.style.scrollSnapType = '';
+      // JS snap: scroll the nearest card's start edge into view.
+      const cards = Array.from(carousel.querySelectorAll<HTMLElement>('.fsos-plan-card'));
+      if (cards.length > 0) {
+        const rect = carousel.getBoundingClientRect();
+        const center = rect.left + rect.width / 2;
+        let closest = cards[0];
+        let minDist = Infinity;
+        for (const c of cards) {
+          const r = c.getBoundingClientRect();
+          const d = Math.abs(r.left + r.width / 2 - center);
+          if (d < minDist) {
+            minDist = d;
+            closest = c;
+          }
+        }
+        closest.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }
+    axis = null;
+    activeBody = null;
+  };
+  carousel.addEventListener('touchend', endGesture, { capture: true });
+  carousel.addEventListener('touchcancel', endGesture, { capture: true });
 }
 
 function togglePlanCard(cardOrHeader: HTMLElement) {

@@ -30,7 +30,6 @@ export interface CertificationDefinition {
 /** Default certification definitions — the single source of initial config. */
 export const DEFAULT_CERTIFICATION_DEFINITIONS: CertificationDefinition[] = [
   { id: 'Nitzan', label: 'ניצן', color: '#16a085' },
-  { id: 'Salsala', label: 'סלסלה', color: '#8e44ad' },
   { id: 'Hamama', label: 'חממה', color: '#c0392b' },
   { id: 'Horesh', label: 'חורש', color: '#27ae60' },
 ];

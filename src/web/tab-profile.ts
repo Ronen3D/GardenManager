@@ -121,14 +121,6 @@ function renderTopBar(
     </div>
     <div class="profile-summary-kpis">
       <div class="profile-kpi">
-        <span class="profile-kpi-value">${myTasks.filter((x) => !x.task.isLight).length}</span>
-        <span class="profile-kpi-label">משימות כבדות</span>
-      </div>
-      <div class="profile-kpi">
-        <span class="profile-kpi-value">${myTasks.filter((x) => x.task.isLight).length}</span>
-        <span class="profile-kpi-label">משימות קלות</span>
-      </div>
-      <div class="profile-kpi">
         <span class="profile-kpi-value">${computeHeavyHours(myTasks).toFixed(1)}h</span>
         <span class="profile-kpi-label">עומס אפקטיבי</span>
       </div>
@@ -206,12 +198,11 @@ function renderPersonalAgenda(
         html += `<div class="agenda-task task-tooltip-hover${crossDay ? ' agenda-task-crossday' : ''}" data-task-id="${task.id}" data-assignment-id="${assignment.id}" style="border-inline-start:3px solid ${color}">
           <div class="agenda-task-time" dir="ltr">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</div>
           <div class="agenda-task-info">
-            <span class="agenda-task-name">${task.name}</span>
             ${taskBadge(task)}
             ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
             ${crossDayBadge}
-            ${sosHtml}
           </div>
+          ${sosHtml}
         </div>`;
       }
       html += '</div>';
@@ -292,17 +283,8 @@ function renderMetrics(
   const totalPeriodHours = numDays * 24;
 
   // Shared breakdown utility (R1)
-  const {
-    heavyHours,
-    effectiveHeavyHours,
-    hotHours,
-    coldHours,
-    lightHours,
-    sourceHours,
-    sourceEffectiveHours,
-    sourceCounts,
-    sourceColors,
-  } = computeTaskBreakdown(myTasks);
+  const { effectiveHeavyHours, lightHours, sourceHours, sourceEffectiveHours, sourceCounts, sourceColors } =
+    computeTaskBreakdown(myTasks);
 
   const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
   const workloadClass = pctOfPeriod > 25 ? 'metric-danger' : pctOfPeriod > 18 ? 'metric-warning' : 'metric-ok';
@@ -311,24 +293,12 @@ function renderMetrics(
     <h3 class="profile-card-title">📊 מדדי עומס</h3>
     <div class="metrics-summary">
       <div class="metric-row">
-        <span class="metric-label">שעות חמות (100% עומס)</span>
-        <span class="metric-value">${hotHours.toFixed(1)}h</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">שעות קרות (עומס מופחת)</span>
-        <span class="metric-value">${coldHours.toFixed(1)}h</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">משימות קלות (כרובית)</span>
-        <span class="metric-value">${lightHours.toFixed(1)}h</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">עומס אפקטיבי</span>
+        <span class="metric-label">עומס (בשעות משוכללות)</span>
         <span class="metric-value">${effectiveHeavyHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">שעות כבדות גולמיות</span>
-        <span class="metric-value">${heavyHours.toFixed(1)}h</span>
+        <span class="metric-label">משימות קלות (משימות חסרות עומס)</span>
+        <span class="metric-value">${lightHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
         <span class="metric-label">% עומס אפקטיבי מתוך ${totalPeriodHours} שעות</span>

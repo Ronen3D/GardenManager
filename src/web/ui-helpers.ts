@@ -110,8 +110,29 @@ export function groupBadge(group: string, clickable = false): string {
 /** Task badge HTML from a task-like object with direct visual properties. */
 export function taskBadge(task: { color?: string; sourceName?: string; name?: string }): string {
   const color = task.color || '#7f8c8d';
-  const label = task.sourceName || task.name || '';
+  const label = task.sourceName || (task.name ? stripDayPrefix(task.name) : '');
   return `<span class="badge" style="background:${color}">${label}</span>`;
+}
+
+/**
+ * Strip the engine-internal `D{N} ` day-index prefix and any trailing numeric
+ * `משמרת {N}` suffix from a task name. Times are always rendered separately,
+ * so the numeric shift adds noise without information. Descriptive shift
+ * labels (e.g. `משמרת בוקר`) are preserved because the trailing token isn't
+ * numeric.
+ */
+export function stripDayPrefix(name: string): string {
+  return name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+\s*$/, '');
+}
+
+/**
+ * Strip a trailing `HH:MM–HH:MM` range (hyphen, en-dash, or minus sign) from
+ * a user-defined slot label. The UI renders time separately as an aligned
+ * LTR tag, so including it inside the label is pure duplication. Anchored to
+ * the end of the string, so mid-label time references are preserved.
+ */
+export function cleanSlotLabel(label: string): string {
+  return label.replace(/\s+\d{1,2}:\d{2}\s*[-–−]\s*\d{1,2}:\d{2}\s*$/, '').trim();
 }
 
 /** Escape a string for safe HTML interpolation. */
