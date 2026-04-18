@@ -257,6 +257,10 @@ export interface Schedule {
   actualAttempts?: number;
   /** Algorithm settings frozen at generation time (config, disabled HCs, dayStartHour). */
   algorithmSettings: AlgorithmSettings;
+  /** Absolute calendar start of operational day 1. Frozen at generation. */
+  periodStart: Date;
+  /** Number of operational days (1..7) this schedule covers. Frozen at generation. */
+  periodDays: number;
   /** Serialized rest-rule map (derived from templates at generation; frozen thereafter). */
   restRuleSnapshot: Record<string, number>;
   /** Certification id → label map, frozen at generation. Drives cert badges/tooltips. */

@@ -191,7 +191,9 @@ function hasFrozenFields(sched: Schedule | null | undefined): boolean {
     !!s.algorithmSettings &&
     !!s.algorithmSettings.config &&
     s.restRuleSnapshot !== undefined &&
-    s.certLabelSnapshot !== undefined
+    s.certLabelSnapshot !== undefined &&
+    s.periodStart instanceof Date &&
+    typeof s.periodDays === 'number'
   );
 }
 
@@ -587,10 +589,11 @@ function generateTasksFromTemplates(): Task[] {
 
 // ─── Day Filtering ───────────────────────────────────────────────────────────
 
-/** Get tasks that intersect the current day's window (uses schedule's frozen dayStartHour). */
+/** Get tasks that intersect the current day's window (uses schedule's frozen period). */
 function getFilteredTasks(schedule: Schedule): Task[] {
   const dsh = schedule.algorithmSettings.dayStartHour;
-  return schedule.tasks.filter((t) => taskIntersectsDay(t, currentDay, dsh));
+  const base = schedule.periodStart;
+  return schedule.tasks.filter((t) => taskIntersectsDay(t, currentDay, dsh, base));
 }
 
 /** Get assignments for tasks visible in the current day */
@@ -603,8 +606,10 @@ function getFilteredAssignments(schedule: Schedule): Assignment[] {
 
 /** Render the day navigation tabs (Day 1 – Day 7) */
 function renderDayNavigator(): string {
-  const numDays = store.getScheduleDays();
-  const baseDate = store.getScheduleDate();
+  // Display path: prefer the frozen schedule's period so the navigator stays
+  // consistent with the rendered schedule even if the live store drifts.
+  const numDays = currentSchedule?.periodDays ?? store.getScheduleDays();
+  const baseDate = currentSchedule?.periodStart ?? store.getScheduleDate();
   const liveMode = store.getLiveModeState();
 
   let html = `<div class="day-navigator">`;
@@ -617,7 +622,9 @@ function renderDayNavigator(): string {
     if (currentSchedule) {
       const dsh = currentSchedule.algorithmSettings.dayStartHour;
       const frozenDisabled = new Set(currentSchedule.algorithmSettings.disabledHardConstraints);
-      const dayTaskIds = new Set(currentSchedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh)).map((t) => t.id));
+      const dayTaskIds = new Set(
+        currentSchedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh, baseDate)).map((t) => t.id),
+      );
       violationCount = filterVisibleViolations(currentSchedule.violations, frozenDisabled).filter(
         (v) => v.severity === ViolationSeverity.Error && v.taskId && dayTaskIds.has(v.taskId),
       ).length;
@@ -655,8 +662,9 @@ function renderDayNavigator(): string {
 /** Render the sticky weekly performance dashboard that stays visible across day tabs */
 function renderWeeklyDashboard(schedule: Schedule): string {
   const score = schedule.score;
-  const numDays = store.getScheduleDays();
+  const numDays = schedule.periodDays;
   const dsh = schedule.algorithmSettings.dayStartHour;
+  const base = schedule.periodStart;
   const frozenDisabled = new Set(schedule.algorithmSettings.disabledHardConstraints);
   const visibleViolations = filterVisibleViolations(schedule.violations, frozenDisabled);
   const totalViolations = visibleViolations.filter((v) => v.severity === ViolationSeverity.Error).length;
@@ -667,11 +675,11 @@ function renderWeeklyDashboard(schedule: Schedule): string {
   let dayDots = '';
   let dayNums = '';
   for (let d = 1; d <= numDays; d++) {
-    const count = schedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh)).length;
+    const count = schedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh, base)).length;
     const dayViolations = visibleViolations.filter((v) => {
       if (v.severity !== ViolationSeverity.Error || !v.taskId) return false;
       const task = schedule.tasks.find((t) => t.id === v.taskId);
-      return task ? taskIntersectsDay(task, d, dsh) : false;
+      return task ? taskIntersectsDay(task, d, dsh, base) : false;
     }).length;
     const dotClass = dayViolations > 0 ? 'dot-error' : count > 0 ? 'dot-ok' : 'dot-empty';
     const title = `יום ${d}: ${count} משימות, ${dayViolations} הפרות`;
@@ -796,7 +804,7 @@ function renderSidebarEntry(
  */
 function renderParticipantSidebar(schedule: Schedule): string {
   const workloads = computeWeeklyWorkloads(schedule.participants, schedule.assignments, schedule.tasks);
-  const numDays = store.getScheduleDays();
+  const numDays = schedule.periodDays;
   const totalPeriodHours = numDays * 24;
 
   const sidebarTaskMap = new Map<string, Task>(schedule.tasks.map((t) => [t.id, t]));
@@ -891,14 +899,18 @@ function renderParticipantSidebar(schedule: Schedule): string {
 function renderScheduleTab(): string {
   const preflight = runPreflight();
   const liveMode = store.getLiveModeState();
-  const numDays = store.getScheduleDays();
+  // Display count follows the frozen schedule when one exists so the header
+  // label and Live Mode options match what's rendered. The `input-days`
+  // control below separately reflects the live default for the *next* run.
+  const displayNumDays = currentSchedule?.periodDays ?? store.getScheduleDays();
+  const inputNumDays = store.getScheduleDays();
 
   // Build Live Mode day/hour options
   let liveModeControls = '';
   if (currentSchedule) {
-    const baseDate = store.getScheduleDate();
+    const baseDate = currentSchedule.periodStart;
     const daySelectOpts: { value: string; label: string; selected: boolean }[] = [];
-    for (let d = 1; d <= numDays; d++) {
+    for (let d = 1; d <= displayNumDays; d++) {
       const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
       const label = `יום ${hebrewDayName(date)}`;
       let selected = false;
@@ -955,13 +967,13 @@ function renderScheduleTab(): string {
 
   let html = `<div class="tab-toolbar schedule-toolbar${_manualBuildActive ? ' schedule-toolbar-manual' : ''}">
     <div class="toolbar-left"><h2>תצוגת שבצ"ק</h2>
-      <span class="text-muted" style="margin-inline-start:12px">שבצ"ק ל-${numDays} ימים</span>
+      <span class="text-muted" style="margin-inline-start:12px">שבצ"ק ל-${displayNumDays} ימים</span>
     </div>
     <div class="toolbar-right">
       ${liveModeControls}
       <span class="toolbar-group toolbar-group--generate">
         <label class="scenarios-label" for="input-days" title="מספר ימים בשבצ"ק">ימים
-          <input type="number" id="input-days" class="input-scenarios" min="1" max="7" step="1" value="${numDays}" ${_isOptimizing ? 'disabled' : ''} />
+          <input type="number" id="input-days" class="input-scenarios" min="1" max="7" step="1" value="${inputNumDays}" ${_isOptimizing ? 'disabled' : ''} />
         </label>
         <label class="scenarios-label" for="input-scenarios" title="מספר ניסיונות אופטימיזציה לבדיקה">ניסיונות
           <input type="number" id="input-scenarios" class="input-scenarios" min="1" step="1" value="${OPTIM_ATTEMPTS}" ${_isOptimizing ? 'disabled' : ''} />
@@ -1094,8 +1106,12 @@ function renderParticipantWarehouse(schedule: Schedule): string {
   const l0Pool = participants.filter((p) => p.level === Level.L0);
   const seniorPool = participants.filter((p) => p.level !== Level.L0);
 
-  // Count current-day assignments per participant (schedule's frozen dayStartHour)
-  const { start: dayStart, end: dayEnd } = getDayWindow(currentDay, schedule.algorithmSettings.dayStartHour);
+  // Count current-day assignments per participant (schedule's frozen period)
+  const { start: dayStart, end: dayEnd } = getDayWindow(
+    currentDay,
+    schedule.algorithmSettings.dayStartHour,
+    schedule.periodStart,
+  );
   const dayTaskIds = new Set(
     schedule.tasks
       .filter((t) => {
@@ -1633,6 +1649,7 @@ function loadScheduleSnapshot(snapshotId: string): void {
     frozen.dayStartHour,
   );
   engine.setCertLabelSnapshot(loadedSchedule.certLabelSnapshot);
+  engine.setPeriod(loadedSchedule.periodStart, loadedSchedule.periodDays);
 
   // 4. Load the schedule's own data into the engine (including any
   //    participants/tasks no longer present in the live store).
@@ -1677,7 +1694,7 @@ function renderViolations(schedule: Schedule): string {
   const warn = visible.filter((v) => v.severity === ViolationSeverity.Warning);
 
   if (hard.length === 0 && warn.length === 0) {
-    return `<div class="alert alert-ok">✓ אין אזהרות או הפרות בכל ${store.getScheduleDays()} הימים.</div>`;
+    return `<div class="alert alert-ok">✓ אין אזהרות או הפרות בכל ${schedule.periodDays} הימים.</div>`;
   }
 
   // Separate into current-day and other-day violations
@@ -1994,6 +2011,7 @@ async function doGenerate(): Promise<void> {
     store.getDayStartHour(),
   );
   engine.setCertLabelSnapshot(buildCertLabelSnapshot());
+  engine.setPeriod(store.getScheduleDate(), store.getScheduleDays());
   engine.addParticipants(participants);
   engine.addTasks(tasks);
 
@@ -2146,6 +2164,7 @@ function doCreateManualSchedule(): void {
     store.getDayStartHour(),
   );
   engine.setCertLabelSnapshot(buildCertLabelSnapshot());
+  engine.setPeriod(store.getScheduleDate(), store.getScheduleDays());
   engine.addParticipants(participants);
   engine.addTasks(tasks);
 
@@ -2176,6 +2195,8 @@ function doCreateManualSchedule(): void {
       disabledHardConstraints: [...algoSettings.disabledHardConstraints],
       dayStartHour: algoSettings.dayStartHour,
     },
+    periodStart: store.getScheduleDate(),
+    periodDays: store.getScheduleDays(),
     restRuleSnapshot: Object.fromEntries(store.buildRestRuleMap()),
     certLabelSnapshot: buildCertLabelSnapshot(),
     scheduleUnavailability: [],
@@ -3185,7 +3206,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.2</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3195,7 +3216,7 @@ function renderAll(): void {
     </div>
     <p class="subtitle">
       <span id="live-clock">${formatLiveClock()}</span>
-      · שבצ"ק ל-${store.getScheduleDays()} ימים
+      · שבצ"ק ל-${currentSchedule?.periodDays ?? store.getScheduleDays()} ימים
       · ${participants.length} משתתפים
       · ${templates.length} משימות
     </p>
@@ -3837,21 +3858,25 @@ function wireScheduleEvents(container: HTMLElement): void {
   if (genFromDayBtn && currentSchedule) {
     genFromDayBtn.addEventListener('click', async () => {
       if (!currentSchedule) return;
-      const numDaysNow = store.getScheduleDays();
+      const numDaysNow = currentSchedule.periodDays;
       const remainingDays = numDaysNow - currentDay;
 
-      // 1. Export snapshot for the current day
+      // 1. Export snapshot for the current day (read the schedule's own frozen period)
       const snapshot = exportDaySnapshot(
         currentSchedule,
         currentDay,
-        store.getScheduleDate(),
+        currentSchedule.periodStart,
         currentSchedule.algorithmSettings.dayStartHour,
         new Map(Object.entries(currentSchedule.restRuleSnapshot)),
       );
       _continuityJson = JSON.stringify(snapshot, null, 2);
 
-      // 2. Update schedule start date to end of current day (frozen dayStartHour)
-      const dayWindow = getDayWindow(currentDay, currentSchedule.algorithmSettings.dayStartHour);
+      // 2. Update schedule start date to end of current day (frozen period)
+      const dayWindow = getDayWindow(
+        currentDay,
+        currentSchedule.algorithmSettings.dayStartHour,
+        currentSchedule.periodStart,
+      );
       store.setScheduleDate(dayWindow.end);
       // Last day: start a fresh full-cycle schedule; otherwise only remaining days
       store.setScheduleDays(remainingDays > 0 ? remainingDays : numDaysNow);
@@ -4834,6 +4859,7 @@ function init(): void {
         frozen.dayStartHour,
       );
       engine.setCertLabelSnapshot(savedSchedule.certLabelSnapshot);
+      engine.setPeriod(savedSchedule.periodStart, savedSchedule.periodDays);
       engine.addParticipants(savedSchedule.participants);
       engine.addTasks(savedSchedule.tasks);
       engine.importSchedule(savedSchedule);

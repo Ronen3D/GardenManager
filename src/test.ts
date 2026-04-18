@@ -4916,6 +4916,8 @@ console.log('\n── Temporal Engine (Live Mode) ──────────
     feasible: true,
     generatedAt: new Date(),
     algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+    periodStart: new Date(2025, 0, 1),
+    periodDays: 7,
     restRuleSnapshot: {},
     certLabelSnapshot: {},
   };
@@ -5577,6 +5579,8 @@ console.log('\n── Rescue Plans ───────────────
     violations: [],
     generatedAt: new Date(),
     algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+    periodStart: new Date(2025, 0, 1),
+    periodDays: 7,
     restRuleSnapshot: {},
     certLabelSnapshot: {},
   };
@@ -7161,6 +7165,8 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -7274,6 +7280,8 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -7371,6 +7379,8 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -7508,6 +7518,8 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -7654,6 +7666,8 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -7788,6 +7802,8 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -7885,6 +7901,8 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -7975,6 +7993,8 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -8153,6 +8173,8 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -8287,6 +8309,8 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -8412,6 +8436,8 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -8583,6 +8609,8 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };
@@ -8678,6 +8706,8 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       violations: [],
       generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
       restRuleSnapshot: {},
       certLabelSnapshot: {},
     };

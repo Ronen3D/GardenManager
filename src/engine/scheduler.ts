@@ -70,6 +70,8 @@ export class SchedulingEngine {
   private phantomContext: PhantomContext | null = null;
   private restRuleMap?: Map<string, number>;
   private dayStartHour: number;
+  private _periodStart?: Date;
+  private _periodDays?: number;
   private _certLabelSnapshot: Record<string, string> = {};
   certLabelResolver: (certId: string) => string = (id) => this._certLabelSnapshot[id] ?? id;
 
@@ -135,6 +137,46 @@ export class SchedulingEngine {
    */
   setDayStartHour(hour: number): void {
     this.dayStartHour = hour;
+  }
+
+  /**
+   * Record the schedule period (absolute start of operational day 1 and
+   * number of days) so the finalized Schedule embeds a frozen period.
+   * Callers must invoke this before `solve()` / async equivalents.
+   * When unset (e.g. legacy tests), the period is derived from task time
+   * blocks at finalization time.
+   */
+  setPeriod(periodStart: Date, periodDays: number): void {
+    this._periodStart = new Date(periodStart.getTime());
+    this._periodDays = periodDays;
+  }
+
+  /**
+   * Resolve the frozen period fields to embed in the Schedule. Falls back
+   * to task-time-block derivation when `setPeriod` was not called — this
+   * keeps the back-compat path alive for test fixtures and CLI demos.
+   */
+  private _resolvePeriod(tasks: Task[]): { periodStart: Date; periodDays: number } {
+    if (this._periodStart && this._periodDays !== undefined) {
+      return { periodStart: new Date(this._periodStart.getTime()), periodDays: this._periodDays };
+    }
+    if (tasks.length === 0) {
+      return { periodStart: new Date(), periodDays: 1 };
+    }
+    let minStart = tasks[0].timeBlock.start;
+    let maxEnd = tasks[0].timeBlock.end;
+    for (const t of tasks) {
+      if (t.timeBlock.start < minStart) minStart = t.timeBlock.start;
+      if (t.timeBlock.end > maxEnd) maxEnd = t.timeBlock.end;
+    }
+    const periodStart = new Date(
+      minStart.getFullYear(),
+      minStart.getMonth(),
+      minStart.getDate() - (minStart.getHours() < this.dayStartHour ? 1 : 0),
+    );
+    const spanMs = maxEnd.getTime() - periodStart.getTime();
+    const periodDays = Math.max(1, Math.ceil(spanMs / (24 * 3600 * 1000)));
+    return { periodStart, periodDays };
   }
 
   /** Build a ScoreContext with pre-computed capacities for proportional scoring */
@@ -311,6 +353,7 @@ export class SchedulingEngine {
       });
     }
 
+    const { periodStart, periodDays } = this._resolvePeriod(tasks);
     const schedule: Schedule = {
       id: `schedule-${Date.now()}`,
       tasks,
@@ -326,6 +369,8 @@ export class SchedulingEngine {
         disabledHardConstraints: [...((this.disabledHC ?? new Set()) as Set<HardConstraintCode>)],
         dayStartHour: this.dayStartHour,
       },
+      periodStart,
+      periodDays,
       restRuleSnapshot: Object.fromEntries(this.restRuleMap ?? new Map()),
       certLabelSnapshot: { ...this._certLabelSnapshot },
       scheduleUnavailability: [],
@@ -960,6 +1005,12 @@ export class SchedulingEngine {
       this.config,
     );
 
+    const prev = this.currentSchedule;
+    const fallback = this._resolvePeriod(prev.tasks);
+    const periodStart = prev.periodStart
+      ? new Date(prev.periodStart.getTime())
+      : fallback.periodStart;
+    const periodDays = prev.periodDays ?? fallback.periodDays;
     const schedule: Schedule = {
       id: `schedule-${Date.now()}`,
       tasks: this.currentSchedule.tasks,
@@ -974,6 +1025,8 @@ export class SchedulingEngine {
         disabledHardConstraints: [...((this.disabledHC ?? new Set()) as Set<HardConstraintCode>)],
         dayStartHour: this.dayStartHour,
       },
+      periodStart,
+      periodDays,
       restRuleSnapshot: Object.fromEntries(this.restRuleMap ?? new Map()),
       certLabelSnapshot: { ...this._certLabelSnapshot },
       scheduleUnavailability: this.currentSchedule.scheduleUnavailability ?? [],

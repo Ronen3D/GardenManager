@@ -157,6 +157,8 @@ function printTable(rows: BenchRow[]): void {
     violations: [],
     generatedAt: new Date(),
     algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+    periodStart: new Date(2025, 0, 1),
+    periodDays: 7,
     restRuleSnapshot: {},
     certLabelSnapshot: {},
   };
@@ -299,6 +301,8 @@ function printTable(rows: BenchRow[]): void {
     violations: [],
     generatedAt: new Date(),
     algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+    periodStart: new Date(2025, 0, 1),
+    periodDays: 7,
     restRuleSnapshot: {},
     certLabelSnapshot: {},
   };

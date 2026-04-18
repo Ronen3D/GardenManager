@@ -268,6 +268,8 @@ function makeSchedule(overrides?: Partial<Schedule>): Schedule {
     violations: [],
     generatedAt: now,
     algorithmSettings: { ...DEFAULT_ALGORITHM_SETTINGS, config: { ...DEFAULT_CONFIG } },
+    periodStart: new Date(2025, 0, 1),
+    periodDays: 7,
     restRuleSnapshot: { 'rule-x': 12 },
     certLabelSnapshot: { Nitzan: 'ניצן' },
     ...overrides,

@@ -8,7 +8,6 @@
 
 import type { Participant, Schedule, Task } from '../index';
 import { hebrewDayName } from '../utils/date-utils';
-import * as store from './config-store';
 import { isTouchDevice } from './responsive';
 import { computePerDayHours } from './schedule-utils';
 import { escHtml, groupBadge, levelBadge } from './ui-helpers';
@@ -162,7 +161,7 @@ export function openWorkloadPopup(
   };
   const taskMap = new Map<string, Task>(schedule.tasks.map((t) => [t.id, t]));
   const perDay = computePerDayHours(participantId, schedule, taskMap);
-  const numDays = store.getScheduleDays();
+  const numDays = schedule.periodDays;
   const totalPeriodHours = numDays * 24;
   const pctOfPeriod = totalPeriodHours > 0 ? (w.effectiveHours / totalPeriodHours) * 100 : 0;
 
@@ -173,7 +172,7 @@ export function openWorkloadPopup(
     nonLightCount: w.nonLightCount,
     perDay,
     numDays,
-    scheduleStart: store.getScheduleDate(),
+    scheduleStart: schedule.periodStart,
     currentDayIdx,
     showClose: true,
   };

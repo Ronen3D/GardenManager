@@ -46,13 +46,17 @@ export function resolveLogicalDayTimestamp(dayIndex: number, timeValue: string):
 /**
  * Returns {start, end} for the 24h window of a given day index (1-based).
  * Window runs from `dayStartHour` on day d to `dayStartHour` on day d+1.
- * When omitted, `dayStartHour` falls back to the live store — callers in
- * the schedule-display path MUST pass the schedule's frozen dayStartHour
- * (`schedule.algorithmSettings.dayStartHour`) so day grouping stays stable
- * across external edits.
+ * When omitted, `dayStartHour` and `baseDate` fall back to the live store —
+ * callers in the schedule-display path MUST pass the schedule's frozen
+ * values (`schedule.algorithmSettings.dayStartHour`, `schedule.periodStart`)
+ * so day grouping stays stable across external edits.
  */
-export function getDayWindow(dayIndex: number, dayStartHour?: number): { start: Date; end: Date } {
-  const base = store.getScheduleDate();
+export function getDayWindow(
+  dayIndex: number,
+  dayStartHour?: number,
+  baseDate?: Date,
+): { start: Date; end: Date } {
+  const base = baseDate ?? store.getScheduleDate();
   const dsh = dayStartHour ?? store.getDayStartHour();
   const start = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex - 1, dsh, 0);
   const end = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex, dsh, 0);
@@ -62,8 +66,13 @@ export function getDayWindow(dayIndex: number, dayStartHour?: number): { start: 
 /**
  * Does a task intersect (partially or fully) with a given day window?
  */
-export function taskIntersectsDay(task: Task, dayIndex: number, dayStartHour?: number): boolean {
-  const { start, end } = getDayWindow(dayIndex, dayStartHour);
+export function taskIntersectsDay(
+  task: Task,
+  dayIndex: number,
+  dayStartHour?: number,
+  baseDate?: Date,
+): boolean {
+  const { start, end } = getDayWindow(dayIndex, dayStartHour, baseDate);
   return task.timeBlock.start.getTime() < end.getTime() && task.timeBlock.end.getTime() > start.getTime();
 }
 
@@ -71,16 +80,26 @@ export function taskIntersectsDay(task: Task, dayIndex: number, dayStartHour?: n
  * Does a task start before this day window (i.e. it's a continuation from
  * the previous day)?
  */
-export function taskStartsBefore(task: Task, dayIndex: number, dayStartHour?: number): boolean {
-  const { start } = getDayWindow(dayIndex, dayStartHour);
+export function taskStartsBefore(
+  task: Task,
+  dayIndex: number,
+  dayStartHour?: number,
+  baseDate?: Date,
+): boolean {
+  const { start } = getDayWindow(dayIndex, dayStartHour, baseDate);
   return task.timeBlock.start.getTime() < start.getTime();
 }
 
 /**
  * Does a task end after this day window (i.e. continues into the next day)?
  */
-export function taskEndsAfter(task: Task, dayIndex: number, dayStartHour?: number): boolean {
-  const { end } = getDayWindow(dayIndex, dayStartHour);
+export function taskEndsAfter(
+  task: Task,
+  dayIndex: number,
+  dayStartHour?: number,
+  baseDate?: Date,
+): boolean {
+  const { end } = getDayWindow(dayIndex, dayStartHour, baseDate);
   return task.timeBlock.end.getTime() > end.getTime();
 }
 
@@ -178,13 +197,14 @@ export function computePerDayHours(
   schedule: Schedule,
   taskMap?: Map<string, Task>,
 ): Map<number, number> {
-  const numDays = store.getScheduleDays();
+  const numDays = schedule.periodDays;
   const result = new Map<number, number>();
   for (let d = 1; d <= numDays; d++) result.set(d, 0);
 
   const tMap = taskMap ?? new Map<string, Task>(schedule.tasks.map((t) => [t.id, t]));
-  // Use the schedule's own frozen dayStartHour so day attribution stays stable.
+  // Use the schedule's own frozen period so day attribution stays stable.
   const dsh = schedule.algorithmSettings.dayStartHour;
+  const base = schedule.periodStart;
 
   for (const a of schedule.assignments) {
     if (a.participantId !== participantId) continue;
@@ -194,11 +214,10 @@ export function computePerDayHours(
     // Light tasks (Karovit) contribute 0 hours — only heavy tasks count
     if (task.isLight) continue;
 
-    // Attribute hours to the day the task starts in
     for (let d = 1; d <= numDays; d++) {
-      if (taskIntersectsDay(task, d, dsh)) {
-        // For cross-day tasks, split proportionally
-        const { start: winStart, end: winEnd } = getDayWindow(d, dsh);
+      if (taskIntersectsDay(task, d, dsh, base)) {
+        // Cross-day tasks: split proportionally between both day windows.
+        const { start: winStart, end: winEnd } = getDayWindow(d, dsh, base);
         const overlapStart = Math.max(task.timeBlock.start.getTime(), winStart.getTime());
         const overlapEnd = Math.min(task.timeBlock.end.getTime(), winEnd.getTime());
         const overlapHrs = Math.max(0, (overlapEnd - overlapStart) / 3600000);
