@@ -74,6 +74,12 @@ export interface BatchRescuePlan {
   depthHistogram: Record<1 | 2 | 3, number>;
   perParticipantChanges: PerParticipantChange[];
   violations: ConstraintViolation[];
+  /**
+   * True when at least one affected slot had no candidate chain (so this plan
+   * only fills the solvable subset). The UI must not let users apply a partial
+   * plan and should clearly mark it as an illustrative preview.
+   */
+  isPartial: boolean;
 }
 
 export interface BatchRescueResult {
@@ -167,6 +173,67 @@ function applyCompositionToAssignments(schedule: Schedule, chains: CandidateChai
     const pid = swapMap.get(a.id);
     return pid ? { ...a, participantId: pid } : a;
   });
+}
+
+/**
+ * 32-bit non-cryptographic hash over a plan's swap list — enough uniqueness
+ * for plan ID stability (UI state, test equivalence) without pulling in a
+ * real hash dep. Independent of time → identical inputs produce identical IDs.
+ */
+function hashSwaps(swaps: RescueSwap[]): string {
+  let h = 2166136261; // FNV-1a offset basis
+  const key = swaps
+    .map((s) => `${s.assignmentId}>${s.toParticipantId}`)
+    .sort()
+    .join('|');
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/**
+ * Maximal Marginal Relevance selection over a composite-ranked plan list.
+ *
+ * Without this the top-K often collapses to near-duplicates (slot-0's best
+ * candidate reused across the first several compositions, varying only in
+ * slot-1). MMR picks the highest-scoring plan first, then each subsequent
+ * pick maximizes compositeDelta − λ · max-similarity-to-already-picked.
+ * Similarity is Jaccard overlap of the (toParticipantId, taskId) pairs —
+ * two plans putting the same people on the same tasks score ~1.0 and get
+ * demoted. λ = 0.3 keeps quality primary but breaks tie-cluster dominance.
+ */
+function selectDiversePlans(ranked: BatchRescuePlan[], k: number, lambda = 0.3): BatchRescuePlan[] {
+  if (ranked.length <= k) return ranked;
+  const keys = ranked.map((p) => new Set(p.swaps.map((s) => `${s.toParticipantId}|${s.taskId}`)));
+  const picked: number[] = [0];
+  while (picked.length < k && picked.length < ranked.length) {
+    let bestIdx = -1;
+    let bestScore = -Infinity;
+    for (let i = 0; i < ranked.length; i++) {
+      if (picked.includes(i)) continue;
+      let maxSim = 0;
+      for (const j of picked) {
+        const a = keys[i];
+        const b = keys[j];
+        if (a.size === 0 && b.size === 0) continue;
+        let inter = 0;
+        for (const x of a) if (b.has(x)) inter++;
+        const union = a.size + b.size - inter;
+        const sim = union === 0 ? 0 : inter / union;
+        if (sim > maxSim) maxSim = sim;
+      }
+      const s = ranked[i].compositeDelta - lambda * maxSim * Math.max(1, Math.abs(ranked[0].compositeDelta));
+      if (s > bestScore) {
+        bestScore = s;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx === -1) break;
+    picked.push(bestIdx);
+  }
+  return picked.map((i) => ranked[i]);
 }
 
 function mergeSwaps(chains: CandidateChain[]): RescueSwap[] {
@@ -339,6 +406,44 @@ function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, deadlin
   return { compositions: best, timedOut };
 }
 
+// ─── Effective-window helper ────────────────────────────────────────────────
+
+/**
+ * Subtract a set of kept-task intervals from a requested window, returning
+ * the (possibly-split, possibly-empty) remaining windows.
+ *
+ * Used to punch holes in focal's Future-SOS unavailability around assignments
+ * the user chose to keep (opt-out). Without this, the final validator fires
+ * HC-3 on every kept in-window assignment even though the user explicitly
+ * said "leave this one with focal."
+ */
+export function computeEffectiveUnavailabilityWindows(
+  window: { start: Date; end: Date },
+  keptBlocks: Array<{ start: Date; end: Date }>,
+): Array<{ start: Date; end: Date }> {
+  let current: Array<{ start: Date; end: Date }> = [{ start: window.start, end: window.end }];
+  for (const kept of keptBlocks) {
+    const next: Array<{ start: Date; end: Date }> = [];
+    for (const w of current) {
+      // No overlap → keep whole.
+      if (kept.end.getTime() <= w.start.getTime() || kept.start.getTime() >= w.end.getTime()) {
+        next.push(w);
+        continue;
+      }
+      // Left slice before the kept block, if any.
+      if (kept.start.getTime() > w.start.getTime()) {
+        next.push({ start: w.start, end: kept.start });
+      }
+      // Right slice after the kept block, if any.
+      if (kept.end.getTime() < w.end.getTime()) {
+        next.push({ start: kept.end, end: w.end });
+      }
+    }
+    current = next;
+  }
+  return current;
+}
+
 // ─── Public entry point ─────────────────────────────────────────────────────
 
 export function generateBatchRescuePlans(
@@ -356,7 +461,15 @@ export function generateBatchRescuePlans(
 
   const maxPlans = opts.maxPlans ?? 3;
   const caps = opts.caps ?? DEFAULT_CAPS;
-  const timeBudgetMs = opts.timeBudgetMs ?? 500;
+  // K-aware budget default: 12^K grows fast. 500ms is adequate for K ≤ 4, but
+  // realistic week-long windows routinely hit K=5+ where the DFS would time
+  // out mid-composition. Scale the default up for larger batches; callers can
+  // still override explicitly.
+  const affectedCount = allAffected.filter(
+    (a) => !opts.excludedAssignmentIds?.has(a.assignment.id),
+  ).length;
+  const defaultBudget = affectedCount >= 5 ? 1500 : 500;
+  const timeBudgetMs = opts.timeBudgetMs ?? defaultBudget;
 
   const excludedIds = opts.excludedAssignmentIds;
   const excludedInWindow: AffectedAssignment[] = [];
@@ -400,15 +513,28 @@ export function generateBatchRescuePlans(
     tl.push(a);
   }
 
-  // The Future-SOS entry lives on the schedule already OR we layer it via
-  // extraUnavailability. The planner is called before the entry is persisted,
-  // so we synthesise the entry here.
-  const extraUnavailability = [
-    {
+  // Build extraUnavailability for eligibility checks + final validation:
+  //   1. Start from the requested window.
+  //   2. Subtract kept-task timeBlocks (opt-out) so focal keeps HC-3 coverage
+  //      for assignments the user chose to leave in place — otherwise every
+  //      returned plan would carry phantom HC-3 violations on those kept slots.
+  //   3. Layer in any existing persisted scheduleUnavailability — without this,
+  //      candidate eligibility ignores prior FSOS windows for any participant
+  //      and the planner can place a candidate (or reassign focal) onto a task
+  //      that's already inside a previously-recorded unavailability.
+  const keptTaskBlocks = excludedInWindow.map((e) => e.task.timeBlock);
+  const effectiveFocalWindows = computeEffectiveUnavailabilityWindows(request.window, keptTaskBlocks);
+  const extraUnavailability: Array<{ participantId: string; start: Date; end: Date }> = [
+    ...(schedule.scheduleUnavailability ?? []).map((u) => ({
+      participantId: u.participantId,
+      start: u.start,
+      end: u.end,
+    })),
+    ...effectiveFocalWindows.map((w) => ({
       participantId: request.participantId,
-      start: request.window.start,
-      end: request.window.end,
-    },
+      start: w.start,
+      end: w.end,
+    })),
   ];
 
   const baselineScore = computeScheduleScore(
@@ -493,16 +619,59 @@ export function generateBatchRescuePlans(
     };
   }
 
-  // Re-score each composition with full composite (already matches the solo
-  // deltas — but recompute to capture cross-chain fairness interactions that
-  // aren't separable) and attach fairness deltas.
+  // Partial-plan flag: any composition built over a strict subset of affected
+  // slots is a preview, not something the user can apply.
+  const isPartial = infeasibleAssignmentIds.length > 0;
+
+  // Score compositions in two buckets:
+  //   scored     — passed validateHardConstraints (combined HC-5/12/14 + extraUnavailability).
+  //   scoredInvalid — failed; retained only as fallback when no valid plan exists.
+  // Validation runs BEFORE the full scoring so invalid compositions skip the
+  // expensive computeScheduleScore call. DFS ranks by summed solo-delta, which
+  // does not see cross-chain combined constraints — hoisting validation here
+  // catches compositions where two individually-valid chains together create
+  // HC-5 (time overlap), HC-12 (consecutive blocking), or HC-14 (rest-gap)
+  // violations on a shared participant.
   const scored: BatchRescuePlan[] = [];
+  const scoredInvalid: BatchRescuePlan[] = [];
   for (let i = 0; i < compositions.length; i++) {
     const comp = compositions[i];
     const touched = new Set<string>();
     for (const c of comp.chains) for (const id of c.touchedAssignmentIds) touched.add(id);
 
     const tempAssignments = applyCompositionToAssignments(schedule, comp.chains);
+
+    const validation = validateHardConstraints(
+      schedule.tasks,
+      schedule.participants,
+      tempAssignments,
+      opts.disabledHC,
+      opts.restRuleMap,
+      opts.certLabelResolver,
+      extraUnavailability,
+    );
+
+    const depthHistogram: Record<1 | 2 | 3, number> = { 1: 0, 2: 0, 3: 0 };
+    for (const c of comp.chains) depthHistogram[c.depth]++;
+
+    if (validation.violations.length > 0) {
+      // Fallback bucket — skip expensive scoring; use solo-delta sum as a
+      // best-available rough ordering. The UI already surfaces violation count
+      // and gates the Apply button behind a confirm dialog, so users aren't
+      // silently handed an invalid plan.
+      scoredInvalid.push({
+        id: `fsos-${hashSwaps(mergeSwaps(comp.chains))}-${i}`,
+        rank: 0,
+        swaps: mergeSwaps(comp.chains),
+        compositeDelta: comp.deltaSum,
+        fairnessDelta: { l0StdDev: 0, seniorStdDev: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 },
+        depthHistogram,
+        perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
+        violations: validation.violations,
+        isPartial,
+      });
+      continue;
+    }
 
     const candScore = computeScheduleScore(
       schedule.tasks,
@@ -530,23 +699,8 @@ export function generateBatchRescuePlans(
       dailyGlobalStdDev: baselineDaily.dailyGlobalStdDev - candDaily.dailyGlobalStdDev,
     };
 
-    const depthHistogram: Record<1 | 2 | 3, number> = { 1: 0, 2: 0, 3: 0 };
-    for (const c of comp.chains) depthHistogram[c.depth]++;
-
-    // Validate the candidate — it must layer extraUnavailability so the focal
-    // participant cannot re-appear in any in-window task accidentally.
-    const validation = validateHardConstraints(
-      schedule.tasks,
-      schedule.participants,
-      tempAssignments,
-      opts.disabledHC,
-      opts.restRuleMap,
-      opts.certLabelResolver,
-      extraUnavailability,
-    );
-
     scored.push({
-      id: `fsos-${Date.now()}-${i}`,
+      id: `fsos-${hashSwaps(mergeSwaps(comp.chains))}-${i}`,
       rank: 0,
       swaps: mergeSwaps(comp.chains),
       compositeDelta,
@@ -554,18 +708,29 @@ export function generateBatchRescuePlans(
       depthHistogram,
       perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
       violations: validation.violations,
+      isPartial,
     });
   }
 
-  // Keep valid plans first, then higher compositeDelta.
-  scored.sort((a, b) => {
-    const aValid = a.violations.length === 0 ? 1 : 0;
-    const bValid = b.violations.length === 0 ? 1 : 0;
-    if (aValid !== bValid) return bValid - aValid;
-    return b.compositeDelta - a.compositeDelta;
+  // Prefer valid plans; fall back to invalid only when no valid composition survived.
+  // Ranking: composite delta primary; disruption tiebreakers secondary. Two plans
+  // with near-identical composite improvement are preferred by (1) fewer distinct
+  // participants touched, then (2) fewer total swaps. Aligns with the "minimum
+  // disruption" goal without overriding clear composite wins.
+  const ranked = scored.length > 0 ? scored : scoredInvalid;
+  ranked.sort((a, b) => {
+    const delta = b.compositeDelta - a.compositeDelta;
+    if (Math.abs(delta) > 0.1) return delta;
+    const aDisturbed = a.perParticipantChanges.length;
+    const bDisturbed = b.perParticipantChanges.length;
+    if (aDisturbed !== bDisturbed) return aDisturbed - bDisturbed;
+    return a.swaps.length - b.swaps.length;
   });
 
-  const top = scored.slice(0, maxPlans);
+  // Diversity-preserving top-K. Without this, top-K often collapses to
+  // near-duplicate plans sharing slot-0's best candidate — user sees 3 nearly
+  // identical plans instead of 3 real alternatives.
+  const top = selectDiversePlans(ranked, maxPlans);
   for (let i = 0; i < top.length; i++) top[i].rank = i + 1;
 
   return {

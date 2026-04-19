@@ -12,7 +12,12 @@
 
 import './style.css';
 import './style-mobile.css';
-import { findAffectedAssignments, generateBatchRescuePlans, upsertScheduleUnavailability } from '../engine/future-sos';
+import {
+  computeEffectiveUnavailabilityWindows,
+  findAffectedAssignments,
+  generateBatchRescuePlans,
+  upsertScheduleUnavailability,
+} from '../engine/future-sos';
 import { buildPhantomContext } from '../engine/phantom';
 import {
   freezeAssignments,
@@ -2831,15 +2836,31 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
   // so the anchor is persisted with the entry.
   if (effectiveAffected.length === 0) {
     if (!liveModeInitiallyOn) activateLiveModeWithAnchor(anchor);
-    const updated = upsertScheduleUnavailability(currentSchedule.scheduleUnavailability, {
-      id: `fsos-${Date.now()}`,
-      participantId,
-      start: windowStart,
-      end: windowEnd,
-      createdAt: new Date(),
-      anchorAtCreation: anchor,
-      appliedSwapCount: 0,
-    });
+    // Punch holes around any kept in-window assignments — those remain "available"
+    // so HC-3 doesn't fire on them. If the user opted out of literally everything
+    // and the kept tasks cover the whole window, effective is [] and no entry is
+    // persisted (the window is effectively a no-op, matching opt-out intent).
+    const keptBlocks = affected
+      .filter((a) => excludedIds.has(a.assignment.id))
+      .map((a) => a.task.timeBlock);
+    const effectiveWindows = computeEffectiveUnavailabilityWindows(
+      { start: windowStart, end: windowEnd },
+      keptBlocks,
+    );
+    let updated = currentSchedule.scheduleUnavailability;
+    const baseId = `fsos-${Date.now()}`;
+    for (let i = 0; i < effectiveWindows.length; i++) {
+      const w = effectiveWindows[i];
+      updated = upsertScheduleUnavailability(updated, {
+        id: effectiveWindows.length === 1 ? baseId : `${baseId}-${i}`,
+        participantId,
+        start: w.start,
+        end: w.end,
+        createdAt: new Date(),
+        anchorAtCreation: anchor,
+        appliedSwapCount: 0,
+      });
+    }
     currentSchedule.scheduleUnavailability = updated;
     store.saveSchedule(currentSchedule);
     renderAll();
@@ -2894,15 +2915,30 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
 
       const prevUnavailability = currentSchedule.scheduleUnavailability;
       const fsosEntryId = `fsos-${Date.now()}`;
-      currentSchedule.scheduleUnavailability = upsertScheduleUnavailability(prevUnavailability, {
-        id: fsosEntryId,
-        participantId,
-        start: windowStart,
-        end: windowEnd,
-        createdAt: new Date(),
-        anchorAtCreation: anchor,
-        appliedSwapCount: plan.swaps.length,
-      });
+      // Punch holes around kept (excluded) in-window assignments so the persisted
+      // entry matches the planner's effective windows — otherwise downstream
+      // revalidation fires HC-3 on assignments the user chose to keep.
+      const keptBlocks = affected
+        .filter((a) => excludedIds.has(a.assignment.id))
+        .map((a) => a.task.timeBlock);
+      const effectiveWindows = computeEffectiveUnavailabilityWindows(
+        { start: windowStart, end: windowEnd },
+        keptBlocks,
+      );
+      let nextUnavail = prevUnavailability;
+      for (let i = 0; i < effectiveWindows.length; i++) {
+        const w = effectiveWindows[i];
+        nextUnavail = upsertScheduleUnavailability(nextUnavail, {
+          id: effectiveWindows.length === 1 ? fsosEntryId : `${fsosEntryId}-${i}`,
+          participantId,
+          start: w.start,
+          end: w.end,
+          createdAt: new Date(),
+          anchorAtCreation: anchor,
+          appliedSwapCount: plan.swaps.length,
+        });
+      }
+      currentSchedule.scheduleUnavailability = nextUnavail;
 
       const requests = plan.swaps.map((sw) => ({
         assignmentId: sw.assignmentId,
@@ -3213,7 +3249,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.5</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

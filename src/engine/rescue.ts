@@ -36,6 +36,7 @@ import type {
 } from '../models/types';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
 import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
+import { sortDonorsByProximity, sortParticipantsByLoadProximity } from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { isEligible } from './validator';
 
@@ -428,40 +429,30 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
   const MAX_Q_DONORS = 3;
   const MAX_DEPTH3 = 200;
 
-  // Pre-sort participants by daily load proximity to average on the affected day.
-  // Participants closest to average workload produce lower-impact swaps, so
-  // exploring them first makes the MAX_DEPTH3 cap more likely to include the best plans.
-  const affectedDay = operationalDateKey(ctx.vacatedTask.timeBlock.start, ctx.dayStartHour);
-  const participantLoads = new Map<string, number>();
-  let totalLoad = 0;
-  for (const p of ctx.schedule.participants) {
-    let hours = 0;
-    const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
-    for (const a of pAssignments) {
-      const task = ctx.taskMap.get(a.taskId);
-      if (task && operationalDateKey(task.timeBlock.start, ctx.dayStartHour) === affectedDay) {
-        hours += computeTaskEffectiveHours(task);
-      }
-    }
-    participantLoads.set(p.id, hours);
-    totalLoad += hours;
-  }
-  const avgLoad = ctx.schedule.participants.length > 0 ? totalLoad / ctx.schedule.participants.length : 0;
-  const sortedParticipants = [...ctx.schedule.participants].sort(
-    (a, b) =>
-      Math.abs((participantLoads.get(a.id) || 0) - avgLoad) - Math.abs((participantLoads.get(b.id) || 0) - avgLoad),
+  // Shared helpers with rescue-primitives — identical participant/donor sort
+  // so batch rescue (Future SOS) and single-slot rescue produce consistent
+  // plan quality under the same schedule.
+  const sortedParticipants = sortParticipantsByLoadProximity(
+    ctx.schedule.participants,
+    ctx.vacatedTask,
+    ctx.dayStartHour,
+    ctx.taskMap,
+    ctx.assignmentsByParticipant,
   );
+  const vacatedStart = ctx.vacatedTask.timeBlock.start.getTime();
 
   outer: for (const p of sortedParticipants) {
     if (p.id === ctx.vacatedAssignment.participantId) continue;
     const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
 
-    const pDonors = pAssignments
-      .filter((a) => {
+    const pDonors = sortDonorsByProximity(
+      pAssignments.filter((a) => {
         const t = ctx.taskMap.get(a.taskId);
         return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
-      })
-      .slice(0, MAX_P_DONORS);
+      }),
+      vacatedStart,
+      ctx.taskMap,
+    ).slice(0, MAX_P_DONORS);
 
     for (const donorP of pDonors) {
       const donorPTask = ctx.taskMap.get(donorP.taskId);
@@ -486,12 +477,14 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
         if (q.id === p.id || q.id === ctx.vacatedAssignment.participantId) continue;
         const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
 
-        const qDonors = qAssignments
-          .filter((a) => {
+        const qDonors = sortDonorsByProximity(
+          qAssignments.filter((a) => {
             const t = ctx.taskMap.get(a.taskId);
             return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
-          })
-          .slice(0, MAX_Q_DONORS);
+          }),
+          vacatedStart,
+          ctx.taskMap,
+        ).slice(0, MAX_Q_DONORS);
 
         for (const donorQ of qDonors) {
           const donorQTask = ctx.taskMap.get(donorQ.taskId);

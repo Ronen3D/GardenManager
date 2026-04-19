@@ -5457,7 +5457,12 @@ console.log('\n── Phantom Context ──────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { generateRescuePlans } from './engine/rescue';
-import { findAffectedAssignments, generateBatchRescuePlans, upsertScheduleUnavailability } from './engine/future-sos';
+import {
+  computeEffectiveUnavailabilityWindows,
+  findAffectedAssignments,
+  generateBatchRescuePlans,
+  upsertScheduleUnavailability,
+} from './engine/future-sos';
 import type { RescueRequest, ScheduleScore } from './models/types';
 
 console.log('\n── Rescue Plans ────────────────────────');
@@ -8802,6 +8807,310 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     assert(
       focalEntry !== undefined && focalEntry.eligible === false && focalEntry.rejectionCode === 'HC-3',
       'fsos-swap-picker: getCandidatesWithEligibility reports HC-3 for focal under extraUnavailability',
+    );
+  }
+
+  // ── Test 9: computeEffectiveUnavailabilityWindows — pure helper ──
+  {
+    const w = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 3, 0) };
+
+    // No kept blocks → original window preserved.
+    const noKept = computeEffectiveUnavailabilityWindows(w, []);
+    assert(noKept.length === 1, 'fsos-effective: no kept blocks returns single window');
+    assert(
+      noKept[0].start.getTime() === w.start.getTime() && noKept[0].end.getTime() === w.end.getTime(),
+      'fsos-effective: no kept blocks preserves boundaries',
+    );
+
+    // One kept block fully inside → splits into two sub-windows.
+    const kept1 = { start: new Date(2026, 5, 1, 10), end: new Date(2026, 5, 1, 14) };
+    const split = computeEffectiveUnavailabilityWindows(w, [kept1]);
+    assert(split.length === 2, 'fsos-effective: interior kept block splits window in two');
+    assert(
+      split[0].end.getTime() === kept1.start.getTime() && split[1].start.getTime() === kept1.end.getTime(),
+      'fsos-effective: split boundaries match kept block',
+    );
+
+    // Kept block covering whole window → empty result.
+    const coverAll = { start: new Date(2026, 4, 31), end: new Date(2026, 5, 4) };
+    const empty = computeEffectiveUnavailabilityWindows(w, [coverAll]);
+    assert(empty.length === 0, 'fsos-effective: full coverage yields empty effective windows');
+
+    // Kept block entirely outside the window → window unchanged.
+    const outside = { start: new Date(2026, 5, 5, 0), end: new Date(2026, 5, 6, 0) };
+    const unchanged = computeEffectiveUnavailabilityWindows(w, [outside]);
+    assert(unchanged.length === 1, 'fsos-effective: outside kept block leaves window intact');
+
+    // Kept block overlapping the start edge → left-trim.
+    const leftOverlap = { start: new Date(2026, 4, 30), end: new Date(2026, 5, 1, 8) };
+    const leftTrimmed = computeEffectiveUnavailabilityWindows(w, [leftOverlap]);
+    assert(
+      leftTrimmed.length === 1 && leftTrimmed[0].start.getTime() === leftOverlap.end.getTime(),
+      'fsos-effective: left-edge overlap trims start',
+    );
+  }
+
+  // ── Test 10: partial opt-out produces ZERO HC-3 violations (B2 regression) ──
+  {
+    // Two affected slots; user opts to keep fb-a1 and replace fb-a2. The kept
+    // assignment is still held by focal — without the punched-hole fix, the
+    // final validator fires HC-3 on it.
+    const p1: Participant = {
+      id: 'b2-p1', name: 'P1', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'b2-p2', name: 'P2', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const p3: Participant = {
+      id: 'b2-p3', name: 'P3', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const t1: Task = {
+      id: 'b2-t1', name: 'T1', timeBlock: fsosBlock, requiredCount: 1,
+      slots: [{ slotId: 'b2-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    const t2: Task = {
+      id: 'b2-t2', name: 'T2', timeBlock: fsosBlock2, requiredCount: 1,
+      slots: [{ slotId: 'b2-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    const assigns: Assignment[] = [
+      { id: 'b2-a1', taskId: 'b2-t1', slotId: 'b2-s1', participantId: 'b2-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'b2-a2', taskId: 'b2-t2', slotId: 'b2-s2', participantId: 'b2-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    ];
+    const dScore: ScheduleScore = {
+      minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0,
+      l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0,
+    };
+    const sched: Schedule = {
+      id: 'b2-sched', tasks: [t1, t2], participants: [p1, p2, p3], assignments: assigns,
+      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1), periodDays: 7, restRuleSnapshot: {}, certLabelSnapshot: {},
+    };
+    const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
+    const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 3, 0) };
+
+    const result = generateBatchRescuePlans(sched, { participantId: 'b2-p1', window }, fsosAnchor, {
+      config: { ...DEFAULT_CONFIG }, scoreCtx, maxPlans: 3,
+      excludedAssignmentIds: new Set(['b2-a1']),
+    });
+    assert(result.plans.length > 0, 'fsos-B2: partial opt-out yields plans');
+    // Every plan must be violation-free — focal keeps b2-a1, and the punched-hole
+    // extraUnavailability must not fire HC-3 on the kept assignment.
+    for (const plan of result.plans) {
+      assert(
+        plan.violations.length === 0,
+        `fsos-B2: partial-opt-out plan rank ${plan.rank} has zero HC-3 violations on kept assignment`,
+      );
+    }
+  }
+
+  // ── Test 11: existing scheduleUnavailability blocks candidates (B1 regression) ──
+  {
+    // P2 already has a persisted FSOS window covering day 1. Without B1, the
+    // planner would still return P2 as a depth-1 candidate for a day-1 slot.
+    const p1: Participant = {
+      id: 'b1-p1', name: 'P1', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'b1-p2', name: 'P2', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const p3: Participant = {
+      id: 'b1-p3', name: 'P3', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const t1: Task = {
+      id: 'b1-t1', name: 'T1', timeBlock: fsosBlock, requiredCount: 1,
+      slots: [{ slotId: 'b1-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    const assigns: Assignment[] = [
+      { id: 'b1-a1', taskId: 'b1-t1', slotId: 'b1-s1', participantId: 'b1-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    ];
+    const dScore: ScheduleScore = {
+      minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0,
+      l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0,
+    };
+    const sched: Schedule = {
+      id: 'b1-sched', tasks: [t1], participants: [p1, p2, p3], assignments: assigns,
+      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1), periodDays: 7, restRuleSnapshot: {}, certLabelSnapshot: {},
+      scheduleUnavailability: [
+        {
+          id: 'u-pre-p2',
+          participantId: 'b1-p2',
+          start: new Date(2026, 5, 1, 0),
+          end: new Date(2026, 5, 2, 0),
+          createdAt: new Date(),
+          anchorAtCreation: fsosAnchor,
+        },
+      ],
+    };
+    const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
+    const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23) };
+
+    const result = generateBatchRescuePlans(sched, { participantId: 'b1-p1', window }, fsosAnchor, {
+      config: { ...DEFAULT_CONFIG }, scoreCtx, maxPlans: 5,
+    });
+
+    // At least one plan must exist (p3 is unblocked).
+    assert(result.plans.length > 0, 'fsos-B1: returns plans when a non-blocked candidate exists');
+    // No plan may place p2 on the day-1 task (p2 has a prior FSOS window).
+    for (const plan of result.plans) {
+      const placesP2 = plan.swaps.some((sw) => sw.toParticipantId === 'b1-p2' && sw.taskId === 'b1-t1');
+      assert(!placesP2, `fsos-B1: plan rank ${plan.rank} must not place p2 (blocked by prior FSOS window)`);
+    }
+  }
+
+  // ── Test 12: donor-order stability under assignment permutation (B5 regression) ──
+  {
+    // Permuting schedule.assignments order (same set, different order) must
+    // not change the returned top plan. Before B5, .slice(0, MAX_P_DONORS) on
+    // an unsorted list produced different "first 5 donors" depending on input
+    // order → different top plan. After B5, donors are sorted by proximity.
+    const parts: Participant[] = [];
+    for (let i = 1; i <= 4; i++) {
+      parts.push({
+        id: `b5-p${i}`, name: `P${i}`, level: Level.L0, certifications: [],
+        group: 'A', availability: fsosAvail, dateUnavailability: [],
+      });
+    }
+    // Vacated task on day 1 + three donor-candidate tasks spread over days.
+    const tV: Task = {
+      id: 'b5-tV', name: 'V', timeBlock: fsosBlock, requiredCount: 1,
+      slots: [{ slotId: 'b5-sV', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    const tDay2: Task = {
+      id: 'b5-tD2', name: 'D2', timeBlock: fsosBlock2, requiredCount: 1,
+      slots: [{ slotId: 'b5-sD2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    const tDay3: Task = {
+      id: 'b5-tD3', name: 'D3',
+      timeBlock: createTimeBlockFromHours(new Date(2026, 5, 3), 6, 14), requiredCount: 1,
+      slots: [{ slotId: 'b5-sD3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    const tDay4: Task = {
+      id: 'b5-tD4', name: 'D4',
+      timeBlock: createTimeBlockFromHours(new Date(2026, 5, 4), 6, 14), requiredCount: 1,
+      slots: [{ slotId: 'b5-sD4', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    // p1 is focal (on vacated tV), p2 holds all three donor-candidate tasks.
+    const baseAssigns: Assignment[] = [
+      { id: 'b5-aV', taskId: 'b5-tV', slotId: 'b5-sV', participantId: 'b5-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'b5-aD2', taskId: 'b5-tD2', slotId: 'b5-sD2', participantId: 'b5-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'b5-aD3', taskId: 'b5-tD3', slotId: 'b5-sD3', participantId: 'b5-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'b5-aD4', taskId: 'b5-tD4', slotId: 'b5-sD4', participantId: 'b5-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    ];
+    const dScore: ScheduleScore = {
+      minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0,
+      l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0,
+    };
+    const buildSched = (assigns: Assignment[]): Schedule => ({
+      id: 'b5', tasks: [tV, tDay2, tDay3, tDay4], participants: parts, assignments: assigns,
+      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1), periodDays: 7, restRuleSnapshot: {}, certLabelSnapshot: {},
+    });
+    const forwardSched = buildSched(baseAssigns);
+    const reverseSched = buildSched([...baseAssigns].reverse());
+    // Wide caps so the slice cap doesn't force us to drop donors — this test
+    // targets donor ORDER specifically, not cap-truncation behaviour.
+    const caps = { depth1: 6, depth2: 10, depth3: 6 };
+    const win = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23) };
+    const req = { participantId: 'b5-p1', window: win };
+    const baseOpts = {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildFsosScoreCtx(forwardSched.tasks, forwardSched.participants),
+      maxPlans: 3,
+      caps,
+    };
+    const rFwd = generateBatchRescuePlans(forwardSched, req, fsosAnchor, baseOpts);
+    const rRev = generateBatchRescuePlans(reverseSched, req, fsosAnchor, baseOpts);
+    assert(rFwd.plans.length > 0 && rRev.plans.length > 0, 'fsos-B5: both orderings yield plans');
+    // The top-plan composite delta must be identical (donors now sorted by
+    // chronological proximity, deterministic across input order).
+    assert(
+      Math.abs(rFwd.plans[0].compositeDelta - rRev.plans[0].compositeDelta) < 1e-6,
+      'fsos-B5: top-plan compositeDelta is stable under assignment permutation',
+    );
+  }
+
+  // ── Test 13: combined HC-5 across chains is pre-validated (B3 regression) ──
+  {
+    // Two affected in-window tasks tA (08-12) and tB (11-15) overlap. A
+    // "greedy" candidate cGreedy is the best single-slot fill for both, but
+    // placing cGreedy on both produces an HC-5 double-booking. Two alternate
+    // candidates (altA, altB) exist — composing with them yields a valid plan.
+    // Pre-B3, the greedy composition could rank #1 and carry violations.
+    const blkA = createTimeBlockFromHours(new Date(2026, 5, 1), 8, 12);
+    const blkB = createTimeBlockFromHours(new Date(2026, 5, 1), 11, 15);
+    const focal: Participant = {
+      id: 'b3-focal', name: 'Focal', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const cGreedy: Participant = {
+      id: 'b3-cGreedy', name: 'CGreedy', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const altA: Participant = {
+      id: 'b3-altA', name: 'AltA', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const altB: Participant = {
+      id: 'b3-altB', name: 'AltB', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const tA: Task = {
+      id: 'b3-tA', name: 'TA', timeBlock: blkA, requiredCount: 1,
+      slots: [{ slotId: 'b3-sA', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    const tB: Task = {
+      id: 'b3-tB', name: 'TB', timeBlock: blkB, requiredCount: 1,
+      slots: [{ slotId: 'b3-sB', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    const assigns: Assignment[] = [
+      { id: 'b3-aA', taskId: 'b3-tA', slotId: 'b3-sA', participantId: 'b3-focal', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'b3-aB', taskId: 'b3-tB', slotId: 'b3-sB', participantId: 'b3-focal', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    ];
+    const dScore: ScheduleScore = {
+      minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0,
+      l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0,
+    };
+    const sched: Schedule = {
+      id: 'b3-sched', tasks: [tA, tB], participants: [focal, cGreedy, altA, altB], assignments: assigns,
+      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1), periodDays: 7, restRuleSnapshot: {}, certLabelSnapshot: {},
+    };
+    const r = generateBatchRescuePlans(
+      sched,
+      { participantId: 'b3-focal', window: { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23) } },
+      fsosAnchor,
+      { config: { ...DEFAULT_CONFIG }, scoreCtx: buildFsosScoreCtx(sched.tasks, sched.participants), maxPlans: 3 },
+    );
+    assert(r.plans.length > 0, 'fsos-B3: plans returned');
+    // Top plan must be valid — valid compositions are now preferred over
+    // invalid greedy ones, even if the greedy one has better solo-delta sum.
+    assert(
+      r.plans[0].violations.length === 0,
+      'fsos-B3: top plan is HC-valid (greedy cross-chain HC-5 not silently preferred)',
     );
   }
 }

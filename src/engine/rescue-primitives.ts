@@ -21,7 +21,8 @@ import type {
   SlotRequirement,
   Task,
 } from '../models/types';
-import { describeSlot } from '../utils/date-utils';
+import { describeSlot, operationalDateKey } from '../utils/date-utils';
+import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { isEligible } from './validator';
 
@@ -74,9 +75,76 @@ export interface SlotEnumerationContext {
    * They can still appear as the donor's displaced participant.
    */
   excludeParticipantIds: Set<string>;
+  /**
+   * Mutable scratch state used by scoreSwapSet. Lazily initialized on first
+   * score call; reused across every depth-1/2/3 candidate and every slot in
+   * the batch to avoid O(assignments) allocation per candidate. Callers
+   * should leave both undefined at construction — the planner owns lifetime.
+   */
+  _scoreWorkArr?: Assignment[];
+  _scoreIdxById?: Map<string, number>;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Sort participants by daily-load proximity to the affected-day average.
+ *
+ * Exported so rescue.ts (single-slot) and future-sos.ts (batch) share one
+ * implementation. The depth-2/3 enumeration is capped (MAX_DEPTH3) and
+ * iterates participants in outer-loop order — caps terminate on schedule-
+ * order participants without this, which is effectively random w.r.t.
+ * plan quality.
+ */
+export function sortParticipantsByLoadProximity(
+  participants: Participant[],
+  vacatedTask: Task,
+  dayStartHour: number,
+  taskMap: Map<string, Task>,
+  assignmentsByParticipant: Map<string, Assignment[]>,
+): Participant[] {
+  const affectedDay = operationalDateKey(vacatedTask.timeBlock.start, dayStartHour);
+  const loads = new Map<string, number>();
+  let total = 0;
+  for (const p of participants) {
+    let hours = 0;
+    const pAssignments = assignmentsByParticipant.get(p.id) || [];
+    for (const a of pAssignments) {
+      const task = taskMap.get(a.taskId);
+      if (task && operationalDateKey(task.timeBlock.start, dayStartHour) === affectedDay) {
+        hours += computeTaskEffectiveHours(task);
+      }
+    }
+    loads.set(p.id, hours);
+    total += hours;
+  }
+  const avg = participants.length > 0 ? total / participants.length : 0;
+  return [...participants].sort(
+    (a, b) => Math.abs((loads.get(a.id) || 0) - avg) - Math.abs((loads.get(b.id) || 0) - avg),
+  );
+}
+
+/**
+ * Sort donor assignments by chronological proximity to the vacated task.
+ *
+ * Exported so both rescue.ts and rescue-primitives.ts get deterministic,
+ * quality-ranked donor slicing. Same input (regardless of schedule order)
+ * produces the same top-N donors.
+ */
+export function sortDonorsByProximity(
+  donors: Assignment[],
+  vacatedStart: number,
+  taskMap: Map<string, Task>,
+): Assignment[] {
+  return [...donors].sort((a, b) => {
+    const ta = taskMap.get(a.taskId)?.timeBlock.start.getTime();
+    const tb = taskMap.get(b.taskId)?.timeBlock.start.getTime();
+    if (ta === undefined && tb === undefined) return 0;
+    if (ta === undefined) return 1;
+    if (tb === undefined) return -1;
+    return Math.abs(ta - vacatedStart) - Math.abs(tb - vacatedStart);
+  });
+}
 
 function taskAssignmentsFor(
   ctx: SlotEnumerationContext,
@@ -87,7 +155,15 @@ function taskAssignmentsFor(
   const base = (ctx.assignmentsByTask.get(taskId) || []).filter((a) => !excludeIds.has(a.id));
   if (extraAssignments) {
     for (const ea of extraAssignments) {
-      base.push({ id: '__virtual__', taskId, slotId: ea.slotId, participantId: ea.participantId } as Assignment);
+      // Unique per-virtual ID — same-task depth-3 chains can inject two
+      // virtuals into the same task list. Collisions were harmless today but
+      // a tripwire for any future ID-keyed dedup in the HC pipeline.
+      base.push({
+        id: `__virtual__-${taskId}-${ea.slotId}-${ea.participantId}`,
+        taskId,
+        slotId: ea.slotId,
+        participantId: ea.participantId,
+      } as Assignment);
     }
   }
   return base;
@@ -97,19 +173,34 @@ function scoreSwapSet(
   ctx: SlotEnumerationContext,
   swaps: Array<{ assignmentId: string; newParticipantId: string }>,
 ): number {
-  const swapMap = new Map<string, string>();
-  for (const s of swaps) swapMap.set(s.assignmentId, s.newParticipantId);
-  const tempAssignments = ctx.schedule.assignments.map((a) => {
-    const pid = swapMap.get(a.id);
-    return pid ? { ...a, participantId: pid } : a;
-  });
+  // Lazy-init a single scratch array + index reused across every scoring call
+  // for the whole FSOS batch. Depth-3 alone can produce hundreds of candidates
+  // per slot; cloning `schedule.assignments` each time was the dominant
+  // allocator pressure and a significant slice of wall time.
+  let workArr = ctx._scoreWorkArr;
+  let idxById = ctx._scoreIdxById;
+  if (!workArr || !idxById) {
+    workArr = ctx.schedule.assignments.map((a) => ({ ...a }));
+    idxById = new Map<string, number>();
+    for (let i = 0; i < workArr.length; i++) idxById.set(workArr[i].id, i);
+    ctx._scoreWorkArr = workArr;
+    ctx._scoreIdxById = idxById;
+  }
+  const reverts: Array<{ idx: number; prev: string }> = [];
+  for (const s of swaps) {
+    const idx = idxById.get(s.assignmentId);
+    if (idx === undefined) continue;
+    reverts.push({ idx, prev: workArr[idx].participantId });
+    workArr[idx].participantId = s.newParticipantId;
+  }
   const score = computeScheduleScore(
     ctx.schedule.tasks,
     ctx.schedule.participants,
-    tempAssignments,
+    workArr,
     ctx.config,
     ctx.scoreCtx,
   );
+  for (const r of reverts) workArr[r.idx].participantId = r.prev;
   return score.compositeScore - ctx.baselineComposite;
 }
 
@@ -185,14 +276,26 @@ function depth2(
   vacatedSlot: SlotRequirement,
 ): CandidateChain[] {
   const plans: CandidateChain[] = [];
+  const sortedParticipants = sortParticipantsByLoadProximity(
+    ctx.schedule.participants,
+    vacatedTask,
+    ctx.schedule.algorithmSettings.dayStartHour,
+    ctx.taskMap,
+    ctx.assignmentsByParticipant,
+  );
+  const vacatedStart = vacatedTask.timeBlock.start.getTime();
 
-  for (const p of ctx.schedule.participants) {
+  for (const p of sortedParticipants) {
     if (p.id === vacatedAssignment.participantId) continue;
     if (ctx.excludeParticipantIds.has(p.id)) continue;
 
     const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
-    const pFutureAssignments = pAssignments.filter(
-      (a) => a.id !== vacatedAssignment.id && isModifiableAssignment(a, ctx.taskMap, ctx.anchor),
+    const pFutureAssignments = sortDonorsByProximity(
+      pAssignments.filter(
+        (a) => a.id !== vacatedAssignment.id && isModifiableAssignment(a, ctx.taskMap, ctx.anchor),
+      ),
+      vacatedStart,
+      ctx.taskMap,
     );
 
     for (const donor of pFutureAssignments) {
@@ -292,15 +395,25 @@ function depth3(
   const plans: CandidateChain[] = [];
   const MAX_P_DONORS = 5;
   const MAX_Q_DONORS = 3;
+  const sortedParticipants = sortParticipantsByLoadProximity(
+    ctx.schedule.participants,
+    vacatedTask,
+    ctx.schedule.algorithmSettings.dayStartHour,
+    ctx.taskMap,
+    ctx.assignmentsByParticipant,
+  );
+  const vacatedStart = vacatedTask.timeBlock.start.getTime();
 
-  outer: for (const p of ctx.schedule.participants) {
+  outer: for (const p of sortedParticipants) {
     if (p.id === vacatedAssignment.participantId) continue;
     if (ctx.excludeParticipantIds.has(p.id)) continue;
 
     const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
-    const pDonors = pAssignments
-      .filter((a) => a.id !== vacatedAssignment.id && isModifiableAssignment(a, ctx.taskMap, ctx.anchor))
-      .slice(0, MAX_P_DONORS);
+    const pDonors = sortDonorsByProximity(
+      pAssignments.filter((a) => a.id !== vacatedAssignment.id && isModifiableAssignment(a, ctx.taskMap, ctx.anchor)),
+      vacatedStart,
+      ctx.taskMap,
+    ).slice(0, MAX_P_DONORS);
 
     for (const donorP of pDonors) {
       const donorPTask = ctx.taskMap.get(donorP.taskId);
@@ -322,19 +435,21 @@ function depth3(
       )
         continue;
 
-      for (const q of ctx.schedule.participants) {
+      for (const q of sortedParticipants) {
         // q may be focal — HC-3 via extraUnavailability rejects them for
         // in-window donor tasks; outside-window donor tasks are a valid
         // reassignment of the focal participant (Future-SOS product intent).
         if (q.id === p.id) continue;
 
         const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
-        const qDonors = qAssignments
-          .filter(
+        const qDonors = sortDonorsByProximity(
+          qAssignments.filter(
             (a) =>
               a.id !== vacatedAssignment.id && a.id !== donorP.id && isModifiableAssignment(a, ctx.taskMap, ctx.anchor),
-          )
-          .slice(0, MAX_Q_DONORS);
+          ),
+          vacatedStart,
+          ctx.taskMap,
+        ).slice(0, MAX_Q_DONORS);
 
         for (const donorQ of qDonors) {
           const donorQTask = ctx.taskMap.get(donorQ.taskId);
@@ -366,7 +481,7 @@ function depth3(
           )
             continue;
 
-          for (const r of ctx.schedule.participants) {
+          for (const r of sortedParticipants) {
             // r may be focal — HC-3 via extraUnavailability rejects focal
             // for in-window donor tasks; outside-window donor tasks are a
             // valid focal reassignment under Future-SOS intent.
