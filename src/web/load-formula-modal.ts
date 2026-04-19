@@ -96,7 +96,9 @@ export function openLoadFormulaModal(target: LoadFormulaTarget): void {
   _target = target;
   _components = existing ? existing.components.map((c) => ({ ...c, refRate: { ...c.refRate } })) : [emptyComponent()];
   _lhsExtras = existing?.lhsExtras ? existing.lhsExtras.map((c) => ({ ...c, refRate: { ...c.refRate } })) : [];
-  _targetHours = normalizeTargetHours(existing?.targetHours);
+  _targetHours = existing
+    ? normalizeTargetHours(existing.targetHours)
+    : normalizeTargetHours(defaultTargetHoursFor(target));
   // Start with first RHS row's picker open if the formula is new or the first row is unset.
   _activeRow = !existing || !_components[0]?.refTemplateId ? { side: 'rhs', idx: 0 } : null;
 
@@ -176,6 +178,12 @@ function resolveTargetView(target: LoadFormulaTarget): TargetView | null {
 
 function emptyComponent(): LoadFormulaComponent {
   return { refTemplateId: '', refRate: { kind: 'base' }, hours: 1 };
+}
+
+function defaultTargetHoursFor(target: LoadFormulaTarget): number {
+  if (target.kind === 'ephemeral') return 1;
+  const tpl = store.getTaskTemplate(target.templateId);
+  return tpl?.durationHours && tpl.durationHours > 0 ? tpl.durationHours : 1;
 }
 
 function escAttr(s: string): string {
@@ -539,13 +547,16 @@ function wireEvents(): void {
         const list = listFor(side);
         if (!Number.isFinite(idx) || idx < 0 || idx >= list.length) break;
         const comp = list[idx];
+        const pickedTpl = store.getTaskTemplate(tplId);
         if (comp.refTemplateId !== tplId) {
           comp.refTemplateId = tplId;
           // New ref template may not have the previously selected window; reset to base.
           comp.refRate = { kind: 'base' };
+          if (pickedTpl && pickedTpl.durationHours > 0) {
+            comp.hours = pickedTpl.durationHours;
+          }
         }
         // Keep picker open so user can choose a hot window; auto-close if no windows exist.
-        const pickedTpl = store.getTaskTemplate(tplId);
         if (!pickedTpl || (pickedTpl.loadWindows?.length ?? 0) === 0) {
           _activeRow = null;
         }

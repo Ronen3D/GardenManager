@@ -5463,6 +5463,7 @@ import {
   generateBatchRescuePlans,
   upsertScheduleUnavailability,
 } from './engine/future-sos';
+import { sortDonorsByProximity, sortParticipantsByLoadProximity } from './engine/rescue-primitives';
 import type { RescueRequest, ScheduleScore } from './models/types';
 
 console.log('\n── Rescue Plans ────────────────────────');
@@ -8971,81 +8972,122 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     }
   }
 
-  // ── Test 12: donor-order stability under assignment permutation (B5 regression) ──
+  // ── Test 12: donor slicing actually drops cap-excluded donors, sorted stays
+  //         deterministic under assignment permutation (B5 regression) ──
   {
-    // Permuting schedule.assignments order (same set, different order) must
-    // not change the returned top plan. Before B5, .slice(0, MAX_P_DONORS) on
-    // an unsorted list produced different "first 5 donors" depending on input
-    // order → different top plan. After B5, donors are sorted by proximity.
-    const parts: Participant[] = [];
-    for (let i = 1; i <= 4; i++) {
-      parts.push({
-        id: `b5-p${i}`, name: `P${i}`, level: Level.L0, certifications: [],
-        group: 'A', availability: fsosAvail, dateUnavailability: [],
-      });
-    }
-    // Vacated task on day 1 + three donor-candidate tasks spread over days.
+    // To exercise B5 we need a scenario where:
+    //   (1) depth-1 is NOT viable (so depth-2 must fire).
+    //   (2) depth-2 candidate p2 has MORE THAN 5 donor tasks (exceeds cap).
+    //   (3) Exactly ONE donor is "critical" — removing it is the only way to
+    //       unblock p2 for the vacated slot. Other donors don't make the chain
+    //       feasible on their own.
+    //   (4) Under chronological-proximity sort the critical donor is always in
+    //       the top-5; under raw schedule-order it can be either included or
+    //       excluded depending on array order → permutation flips the result.
+    //
+    // Setup:
+    //   tV day-1 06-14: requires Hamama. Only focal + p2 have Hamama.
+    //   p2 is ALREADY booked at tCONF day-1 06-14 (same time as tV) — HC-5
+    //     blocks p2 at depth-1. p2 can only fill tV at depth-2 via releasing
+    //     tCONF.
+    //   p2 also has 7 unrelated donor tasks on days 2..8 (no cert required).
+    //     After sort by proximity, tCONF (day 1) is ALWAYS first → survives
+    //     the .slice(0, 5). Without sort, reverse-order input puts tCONF LAST
+    //     in p2's donor list → sliced out → depth-2 chain infeasible.
+    //   p3 is free at day 1 so can fill tCONF when p2 vacates it.
+    const focal: Participant = {
+      id: 'b5-focal', name: 'Focal', level: Level.L0, certifications: ['Hamama'],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'b5-p2', name: 'P2', level: Level.L0, certifications: ['Hamama'],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+    const p3: Participant = {
+      id: 'b5-p3', name: 'P3', level: Level.L0, certifications: [],
+      group: 'A', availability: fsosAvail, dateUnavailability: [],
+    };
+
+    // Vacated task — requires Hamama cert.
     const tV: Task = {
       id: 'b5-tV', name: 'V', timeBlock: fsosBlock, requiredCount: 1,
-      slots: [{ slotId: 'b5-sV', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      slots: [{ slotId: 'b5-sV', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Hamama'] }],
       isLight: false, sameGroupRequired: false, blocksConsecutive: true,
     };
-    const tDay2: Task = {
-      id: 'b5-tD2', name: 'D2', timeBlock: fsosBlock2, requiredCount: 1,
-      slots: [{ slotId: 'b5-sD2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    // Critical blocker — same time as tV, no cert required.
+    const tCONF: Task = {
+      id: 'b5-tCONF', name: 'CONF', timeBlock: fsosBlock, requiredCount: 1,
+      slots: [{ slotId: 'b5-sCONF', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
       isLight: false, sameGroupRequired: false, blocksConsecutive: true,
     };
-    const tDay3: Task = {
-      id: 'b5-tD3', name: 'D3',
-      timeBlock: createTimeBlockFromHours(new Date(2026, 5, 3), 6, 14), requiredCount: 1,
-      slots: [{ slotId: 'b5-sD3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
-    };
-    const tDay4: Task = {
-      id: 'b5-tD4', name: 'D4',
-      timeBlock: createTimeBlockFromHours(new Date(2026, 5, 4), 6, 14), requiredCount: 1,
-      slots: [{ slotId: 'b5-sD4', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
-    };
-    // p1 is focal (on vacated tV), p2 holds all three donor-candidate tasks.
+    // 7 additional donor tasks on days 2..8 — bulks p2's donor list past cap.
+    const padTasks: Task[] = [];
+    for (let d = 2; d <= 8; d++) {
+      padTasks.push({
+        id: `b5-tD${d}`, name: `D${d}`,
+        timeBlock: createTimeBlockFromHours(new Date(2026, 5, d), 6, 14),
+        requiredCount: 1,
+        slots: [{ slotId: `b5-sD${d}`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      });
+    }
+
     const baseAssigns: Assignment[] = [
-      { id: 'b5-aV', taskId: 'b5-tV', slotId: 'b5-sV', participantId: 'b5-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'b5-aD2', taskId: 'b5-tD2', slotId: 'b5-sD2', participantId: 'b5-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'b5-aD3', taskId: 'b5-tD3', slotId: 'b5-sD3', participantId: 'b5-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'b5-aD4', taskId: 'b5-tD4', slotId: 'b5-sD4', participantId: 'b5-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      // Focal holds tV (the one being rescued).
+      { id: 'b5-aV', taskId: 'b5-tV', slotId: 'b5-sV', participantId: 'b5-focal', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      // p2 holds tCONF — the critical donor.
+      { id: 'b5-aCONF', taskId: 'b5-tCONF', slotId: 'b5-sCONF', participantId: 'b5-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
     ];
+    for (let d = 2; d <= 8; d++) {
+      baseAssigns.push({
+        id: `b5-aD${d}`, taskId: `b5-tD${d}`, slotId: `b5-sD${d}`, participantId: 'b5-p2',
+        status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+      });
+    }
     const dScore: ScheduleScore = {
       minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0,
       l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0,
     };
     const buildSched = (assigns: Assignment[]): Schedule => ({
-      id: 'b5', tasks: [tV, tDay2, tDay3, tDay4], participants: parts, assignments: assigns,
+      id: 'b5', tasks: [tV, tCONF, ...padTasks], participants: [focal, p2, p3], assignments: assigns,
       feasible: true, score: dScore, violations: [], generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
       periodStart: new Date(2025, 0, 1), periodDays: 7, restRuleSnapshot: {}, certLabelSnapshot: {},
     });
+    // Put tCONF LAST in the reverse ordering → without B5, the slice would
+    // see [tD8, tD7, tD6, tD5, tD4] first and drop tCONF on the floor.
     const forwardSched = buildSched(baseAssigns);
     const reverseSched = buildSched([...baseAssigns].reverse());
-    // Wide caps so the slice cap doesn't force us to drop donors — this test
-    // targets donor ORDER specifically, not cap-truncation behaviour.
-    const caps = { depth1: 6, depth2: 10, depth3: 6 };
     const win = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23) };
-    const req = { participantId: 'b5-p1', window: win };
+    const req = { participantId: 'b5-focal', window: win };
     const baseOpts = {
       config: { ...DEFAULT_CONFIG },
       scoreCtx: buildFsosScoreCtx(forwardSched.tasks, forwardSched.participants),
       maxPlans: 3,
-      caps,
+      // Default caps — test the real MAX_P_DONORS=5 behaviour.
     };
     const rFwd = generateBatchRescuePlans(forwardSched, req, fsosAnchor, baseOpts);
     const rRev = generateBatchRescuePlans(reverseSched, req, fsosAnchor, baseOpts);
-    assert(rFwd.plans.length > 0 && rRev.plans.length > 0, 'fsos-B5: both orderings yield plans');
-    // The top-plan composite delta must be identical (donors now sorted by
-    // chronological proximity, deterministic across input order).
+
+    // With B5 both orderings must yield the same concrete chain — p2 takes tV,
+    // p3 takes tCONF. Without B5 the reverse ordering's slice excludes tCONF
+    // and the planner returns no viable depth-2 chain.
+    assert(rFwd.plans.length > 0, 'fsos-B5: forward ordering finds the rescue chain');
+    assert(rRev.plans.length > 0, 'fsos-B5: reverse ordering finds the SAME rescue chain (sort made it deterministic)');
+    const extractSwapKeys = (r: typeof rFwd) =>
+      (r.plans[0]?.swaps ?? [])
+        .map((sw) => `${sw.assignmentId}→${sw.toParticipantId}`)
+        .sort()
+        .join(',');
     assert(
-      Math.abs(rFwd.plans[0].compositeDelta - rRev.plans[0].compositeDelta) < 1e-6,
-      'fsos-B5: top-plan compositeDelta is stable under assignment permutation',
+      extractSwapKeys(rFwd) === extractSwapKeys(rRev),
+      `fsos-B5: top plan swap-set identical under permutation (fwd=${extractSwapKeys(rFwd)}, rev=${extractSwapKeys(rRev)})`,
+    );
+    // Structural: top plan must route through tCONF and place p3 on it.
+    assert(
+      rFwd.plans[0].swaps.some((sw) => sw.assignmentId === 'b5-aCONF' && sw.toParticipantId === 'b5-p3'),
+      'fsos-B5: top plan uses the critical tCONF donor (the sort actually kept it in slice)',
     );
   }
 
@@ -9111,6 +9153,93 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     assert(
       r.plans[0].violations.length === 0,
       'fsos-B3: top plan is HC-valid (greedy cross-chain HC-5 not silently preferred)',
+    );
+  }
+
+  // ── Test 14: sortParticipantsByLoadProximity is order-correct (B4 unit test) ──
+  {
+    // Three participants with known loads on the affected day.
+    // Hours on day 1: p1=8 (one 6-14 task), p2=4 (one 6-10 task), p3=0.
+    // Mean = (8+4+0)/3 = 4. Distances: p1=|8-4|=4, p2=|4-4|=0, p3=|0-4|=4.
+    // Expected leading element: p2 (smallest distance). p1/p3 tie.
+    const p1: Participant = { id: 'b4-p1', name: 'P1', level: Level.L0, certifications: [], group: 'A', availability: fsosAvail, dateUnavailability: [] };
+    const p2: Participant = { id: 'b4-p2', name: 'P2', level: Level.L0, certifications: [], group: 'A', availability: fsosAvail, dateUnavailability: [] };
+    const p3: Participant = { id: 'b4-p3', name: 'P3', level: Level.L0, certifications: [], group: 'A', availability: fsosAvail, dateUnavailability: [] };
+    const tHeavy: Task = {
+      id: 'b4-tHeavy', name: 'Heavy', timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 6, 14), requiredCount: 1,
+      slots: [{ slotId: 'b4-sHeavy', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    const tLight: Task = {
+      id: 'b4-tLight', name: 'Light', timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 6, 10), requiredCount: 1,
+      slots: [{ slotId: 'b4-sLight', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    };
+    const vacatedTask = tHeavy; // anchors the affected day
+    const assignmentsByParticipant = new Map<string, Assignment[]>();
+    assignmentsByParticipant.set('b4-p1', [{ id: 'b4-ah', taskId: 'b4-tHeavy', slotId: 'b4-sHeavy', participantId: 'b4-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() }]);
+    assignmentsByParticipant.set('b4-p2', [{ id: 'b4-al', taskId: 'b4-tLight', slotId: 'b4-sLight', participantId: 'b4-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() }]);
+    assignmentsByParticipant.set('b4-p3', []);
+    const taskMap = new Map<string, Task>([[tHeavy.id, tHeavy], [tLight.id, tLight]]);
+
+    const sorted = sortParticipantsByLoadProximity([p1, p2, p3], vacatedTask, 5, taskMap, assignmentsByParticipant);
+    assert(sorted[0].id === 'b4-p2', 'fsos-B4 helper: smallest |load - avg| (p2) is first');
+    assert(
+      sorted[1].id === 'b4-p1' || sorted[1].id === 'b4-p3',
+      'fsos-B4 helper: equal-distance participants follow (stable within tie)',
+    );
+    // Deterministic under input permutation.
+    const reverseSorted = sortParticipantsByLoadProximity([p3, p2, p1], vacatedTask, 5, taskMap, assignmentsByParticipant);
+    assert(reverseSorted[0].id === 'b4-p2', 'fsos-B4 helper: deterministic under permutation — p2 still first');
+
+    // Empty participants array handled safely.
+    const emptyOrdering = sortParticipantsByLoadProximity([], vacatedTask, 5, taskMap, assignmentsByParticipant);
+    assert(emptyOrdering.length === 0, 'fsos-B4 helper: empty participants yields empty result');
+  }
+
+  // ── Test 15: sortDonorsByProximity orders by |task.start - vacated.start| (B5 unit test) ──
+  {
+    // Donors on days 2, 3, 5, 8. Vacated task on day 1. Proximity distances:
+    //   day2=1d, day3=2d, day5=4d, day8=7d. Expected order: [day2, day3, day5, day8].
+    const mkT = (id: string, d: number): Task => ({
+      id, name: id, timeBlock: createTimeBlockFromHours(new Date(2026, 5, d), 6, 14), requiredCount: 1,
+      slots: [{ slotId: `s-${id}`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+    });
+    const tV = mkT('b5u-tV', 1);
+    const tD2 = mkT('b5u-tD2', 2);
+    const tD3 = mkT('b5u-tD3', 3);
+    const tD5 = mkT('b5u-tD5', 5);
+    const tD8 = mkT('b5u-tD8', 8);
+    const taskMap = new Map<string, Task>([
+      [tV.id, tV],
+      [tD2.id, tD2],
+      [tD3.id, tD3],
+      [tD5.id, tD5],
+      [tD8.id, tD8],
+    ]);
+    const mkA = (id: string, taskId: string): Assignment => ({
+      id, taskId, slotId: `s-${taskId}`, participantId: 'x', status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+    });
+    // Deliberately chaotic input order — the sort must not be input-order sensitive.
+    const donors = [mkA('b5u-a8', tD8.id), mkA('b5u-a3', tD3.id), mkA('b5u-a5', tD5.id), mkA('b5u-a2', tD2.id)];
+    const sorted = sortDonorsByProximity(donors, tV.timeBlock.start.getTime(), taskMap);
+    assert(sorted[0].id === 'b5u-a2', 'fsos-B5 helper: day-2 donor is closest');
+    assert(sorted[1].id === 'b5u-a3', 'fsos-B5 helper: day-3 donor is second');
+    assert(sorted[2].id === 'b5u-a5', 'fsos-B5 helper: day-5 donor is third');
+    assert(sorted[3].id === 'b5u-a8', 'fsos-B5 helper: day-8 donor is last');
+    // Determinism under permutation.
+    const reversed = sortDonorsByProximity([...donors].reverse(), tV.timeBlock.start.getTime(), taskMap);
+    assert(
+      reversed.map((a) => a.id).join(',') === sorted.map((a) => a.id).join(','),
+      'fsos-B5 helper: result is identical under input permutation',
+    );
+    // Missing-task assignments fall to the end (not swallowed or promoted).
+    const donorsWithOrphan = [...donors, mkA('b5u-aOrphan', 'b5u-tMissing')];
+    const withOrphan = sortDonorsByProximity(donorsWithOrphan, tV.timeBlock.start.getTime(), taskMap);
+    assert(
+      withOrphan[withOrphan.length - 1].id === 'b5u-aOrphan',
+      'fsos-B5 helper: donor with missing task sinks to the end',
     );
   }
 }

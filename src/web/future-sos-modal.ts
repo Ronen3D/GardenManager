@@ -507,9 +507,19 @@ function renderBatchPlanCard(
   opts: { expanded: boolean },
 ): string {
   const verdict = computeVerdict(plan);
+  // HC-invalid plans ship without full composite scoring (we skip it at B3's
+  // validate-before-score step). The solo-delta sum we keep for fallback
+  // ordering is NOT the real composite delta — displaying it as "השפעה
+  // כוללת" would mislead. Render an em-dash instead; users already see the
+  // violations list and a warning on Apply.
+  const hasViolations = plan.violations.length > 0;
   const composite = plan.compositeDelta;
-  const compositeClass = composite >= 0 ? 'fsos-headline--pos' : 'fsos-headline--neg';
-  const compositeDisplay = formatSignedNumber(composite, 1);
+  const compositeClass = hasViolations
+    ? 'fsos-headline--muted'
+    : composite >= 0
+      ? 'fsos-headline--pos'
+      : 'fsos-headline--neg';
+  const compositeDisplay = hasViolations ? '—' : formatSignedNumber(composite, 1);
 
   const chainPictogram = renderChainPictogram(plan.depthHistogram);
 
@@ -651,33 +661,43 @@ function renderSwapsGroupedByDay(
 }
 
 function renderPlanDetails(plan: BatchRescuePlan, pMap: Map<string, Participant>): string {
-  const balanceRows: Array<{ label: string; hint: string; value: number }> = [
-    {
-      label: 'הוגנות ג׳וניורים',
-      hint: 'האם עומס המשמרות מתחלק בצורה שווה בין הג׳וניורים',
-      value: plan.fairnessDelta.l0StdDev,
-    },
-    {
-      label: 'הוגנות סגל',
-      hint: 'האם עומס המשמרות מתחלק בצורה שווה בין אנשי הסגל',
-      value: plan.fairnessDelta.seniorStdDev,
-    },
-    {
-      label: 'אחידות לאורך השבוע',
-      hint: 'האם העומס מתחלק בצורה אחידה על פני כל ימי השבוע (עבור כל הצוות וכל משתתף)',
-      value: plan.fairnessDelta.dailyGlobalStdDev + plan.fairnessDelta.dailyPerParticipantStdDev,
-    },
-  ];
-
-  let balanceHtml = '<h5 class="fsos-plan-section-title">איזון עומסים</h5><ul class="fsos-plan-balance-list">';
-  for (const r of balanceRows) {
-    const badge = renderBalanceBadge(r.value);
-    balanceHtml += `<li class="fsos-plan-balance-row">
-      <span class="fsos-plan-balance-label" title="${escAttr(r.hint)}">${escHtml(r.label)}</span>
-      ${badge}
-    </li>`;
+  // HC-invalid plans have no meaningful fairness numbers (we skipped the full
+  // scoring step). Replace the balance breakdown with a short explanation so
+  // users aren't shown all-zero "ללא שינוי משמעותי" badges that look like
+  // computed results.
+  const hasViolations = plan.violations.length > 0;
+  let balanceHtml: string;
+  if (hasViolations) {
+    balanceHtml = `<h5 class="fsos-plan-section-title">איזון עומסים</h5>
+      <p class="fsos-plan-no-eval">לא ניתן להעריך איזון עבור תוכנית שאינה עומדת באילוצים קשיחים.</p>`;
+  } else {
+    const balanceRows: Array<{ label: string; hint: string; value: number }> = [
+      {
+        label: 'הוגנות ג׳וניורים',
+        hint: 'האם עומס המשמרות מתחלק בצורה שווה בין הג׳וניורים',
+        value: plan.fairnessDelta.l0StdDev,
+      },
+      {
+        label: 'הוגנות סגל',
+        hint: 'האם עומס המשמרות מתחלק בצורה שווה בין אנשי הסגל',
+        value: plan.fairnessDelta.seniorStdDev,
+      },
+      {
+        label: 'אחידות לאורך השבוע',
+        hint: 'האם העומס מתחלק בצורה אחידה על פני כל ימי השבוע (עבור כל הצוות וכל משתתף)',
+        value: plan.fairnessDelta.dailyGlobalStdDev + plan.fairnessDelta.dailyPerParticipantStdDev,
+      },
+    ];
+    balanceHtml = '<h5 class="fsos-plan-section-title">איזון עומסים</h5><ul class="fsos-plan-balance-list">';
+    for (const r of balanceRows) {
+      const badge = renderBalanceBadge(r.value);
+      balanceHtml += `<li class="fsos-plan-balance-row">
+        <span class="fsos-plan-balance-label" title="${escAttr(r.hint)}">${escHtml(r.label)}</span>
+        ${badge}
+      </li>`;
+    }
+    balanceHtml += '</ul>';
   }
-  balanceHtml += '</ul>';
 
   let changesHtml = '';
   if (plan.perParticipantChanges.length > 0) {

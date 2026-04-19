@@ -8010,6 +8010,16 @@ tr.now-row-animate > td.time-cell {
 .fsos-headline--neg {
   color: #e74c3c;
 }
+.fsos-headline--muted {
+  color: var(--text-muted, #888);
+  font-weight: 500;
+}
+.fsos-plan-no-eval {
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+  font-style: italic;
+  margin: 4px 0 8px;
+}
 .fsos-chain-pic {
   display: inline-flex;
   gap: 2px;
