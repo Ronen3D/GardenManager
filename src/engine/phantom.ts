@@ -94,7 +94,6 @@ function continuityAssignmentToTask(taskId: string, ca: ContinuityAssignment): T
     },
     requiredCount: 0,
     slots: [],
-    isLight: ca.isLight,
     baseLoadWeight: ca.baseLoadWeight,
     loadWindows: ca.loadWindows?.map((lw) => ({
       id: lw.id,

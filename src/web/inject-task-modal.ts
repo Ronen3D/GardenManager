@@ -47,7 +47,6 @@ interface DraftState {
   startMinute: number;
   durationHours: number;
   sameGroupRequired: boolean;
-  isLight: boolean;
   blocksConsecutive: boolean;
   restRuleId: string;
   description: string;
@@ -110,7 +109,6 @@ function makeDefaultDraft(_periodDays: number): DraftState {
     startMinute: 0,
     durationHours: 4,
     sameGroupRequired: false,
-    isLight: false,
     blocksConsecutive: true,
     restRuleId: '',
     description: '',
@@ -200,7 +198,6 @@ function renderForm(schedule: Schedule): string {
           </div>
           <div class="form-row">
             <label class="checkbox-label"><input type="checkbox" data-inj="sameGroupRequired" ${d.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
-            <label class="checkbox-label"><input type="checkbox" data-inj="isLight" ${d.isLight ? 'checked' : ''} /> משימה קלה</label>
             <label class="checkbox-label"><input type="checkbox" data-inj="blocksConsecutive" ${d.blocksConsecutive ? 'checked' : ''} /> חוסמת רצף</label>
             <label>כלל מרווח: <select class="input-sm" data-inj="restRuleId">${restRuleOptions}</select></label>
             <label>רמת עומס (0–1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-inj="baseLoadWeight" value="${d.baseLoadWeight.toFixed(2)}" /></label>
@@ -561,9 +558,8 @@ function draftToSpec(d: DraftState): InjectedTaskSpec {
     subTeams,
     slots: flatSlots,
     sameGroupRequired: d.sameGroupRequired,
-    isLight: d.isLight,
     blocksConsecutive: d.blocksConsecutive,
-    baseLoadWeight: d.isLight ? 0 : Math.max(0, Math.min(1, d.baseLoadWeight)),
+    baseLoadWeight: Math.max(0, Math.min(1, d.baseLoadWeight)),
     restRuleId: d.restRuleId || undefined,
     description: d.description || undefined,
     displayCategory: d.name.trim().toLowerCase(),

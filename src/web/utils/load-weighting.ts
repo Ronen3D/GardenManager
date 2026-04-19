@@ -5,7 +5,6 @@ function clamp01(value: number): number {
 }
 
 export function getTaskBaseLoadWeight(task: Task): number {
-  if (task.isLight) return 0;
   return clamp01(task.baseLoadWeight ?? 1);
 }
 
@@ -29,8 +28,6 @@ export function getLoadWeightAtTime(task: Task, time: Date): number {
   // C2: Use half-open interval [start, end) — the exact end instant is
   // outside the task duration, consistent with standard scheduling semantics.
   if (t < tStart || t >= tEnd) return 0;
-
-  if (task.isLight) return 0;
 
   const windows = task.loadWindows ?? [];
   const baseWeight = clamp01(task.baseLoadWeight ?? 1);
@@ -181,19 +178,14 @@ function computeWindowOverlapHours(task: Task, window: LoadWindow): number {
 
 /**
  * WeakMap cache for computeTaskEffectiveHours — the result depends only on
- * immutable task properties (timeBlock, loadWindows, baseLoadWeight, isLight)
- * so it is safe to cache by object identity.
+ * immutable task properties (timeBlock, loadWindows, baseLoadWeight) so it
+ * is safe to cache by object identity.
  */
 const _effectiveHoursCache = new WeakMap<Task, number>();
 
 export function computeTaskEffectiveHours(task: Task): number {
   const cached = _effectiveHoursCache.get(task);
   if (cached !== undefined) return cached;
-
-  if (task.isLight) {
-    _effectiveHoursCache.set(task, 0);
-    return 0;
-  }
 
   const durationHours = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
   if (durationHours <= 0) {
@@ -242,11 +234,8 @@ export function computeTaskEffectiveHours(task: Task): number {
  *
  * - Non-Kruv heavy tasks (no loadWindows, baseLoadWeight=1): entire duration is hot.
  * - Kruv tasks (loadWindows defined): only the window-overlap portion is hot.
- * - Karovit (isLight): 0.
  */
 export function computeTaskHotHours(task: Task): number {
-  if (task.isLight) return 0;
-
   const durationHours = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
   if (durationHours <= 0) return 0;
 
@@ -268,10 +257,8 @@ export function computeTaskHotHours(task: Task): number {
  *
  * Only Kruv-style tasks (with loadWindows and baseLoadWeight < 1) produce cold hours.
  * Non-Kruv heavy tasks have 0 cold hours (they're 100% hot).
- * Karovit (isLight): 0.
  */
 export function computeTaskColdHours(task: Task): number {
-  if (task.isLight) return 0;
   const windows = task.loadWindows ?? [];
   if (windows.length === 0) return 0; // standard heavy task — all hot, no cold
 

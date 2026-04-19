@@ -1261,8 +1261,8 @@ export function addTaskTemplate(tpl: Omit<TaskTemplate, 'id'>): TaskTemplate {
     ...sanitized,
     id,
     color: sanitized.color || getNextAvailableColor(),
-    baseLoadWeight: sanitized.isLight ? 0 : (sanitized.baseLoadWeight ?? 1),
-    loadFormula: sanitized.isLight ? undefined : cloneLoadFormula(sanitized.loadFormula),
+    baseLoadWeight: sanitized.baseLoadWeight ?? 1,
+    loadFormula: cloneLoadFormula(sanitized.loadFormula),
     loadWindows: (sanitized.loadWindows || []).map((w) => ({
       ...w,
       loadFormula: cloneLoadFormula(w.loadFormula),
@@ -1286,11 +1286,7 @@ export function updateTaskTemplate(id: string, patch: Partial<Omit<TaskTemplate,
       loadFormula: cloneLoadFormula(w.loadFormula),
     }));
   }
-  if (patch.isLight !== undefined && patch.isLight) {
-    tpl.baseLoadWeight = 0;
-    tpl.loadFormula = undefined;
-  }
-  if (patch.baseLoadWeight !== undefined && !tpl.isLight) {
+  if (patch.baseLoadWeight !== undefined) {
     tpl.baseLoadWeight = Math.max(0, Math.min(1, patch.baseLoadWeight));
   }
   // Invariant: if a formula was set in the patch, base weight must match its computedValue.
@@ -1298,7 +1294,7 @@ export function updateTaskTemplate(id: string, patch: Partial<Omit<TaskTemplate,
     if (patch.loadFormula) {
       const cloned = cloneLoadFormula(patch.loadFormula);
       tpl.loadFormula = cloned;
-      if (!tpl.isLight) tpl.baseLoadWeight = cloned!.computedValue;
+      tpl.baseLoadWeight = cloned!.computedValue;
     } else {
       tpl.loadFormula = undefined;
     }
@@ -1475,7 +1471,7 @@ export function addOneTimeTask(task: Omit<OneTimeTask, 'id'>): OneTimeTask {
     ...task,
     id,
     color: task.color || getNextAvailableColor(),
-    baseLoadWeight: task.isLight ? 0 : (task.baseLoadWeight ?? 1),
+    baseLoadWeight: task.baseLoadWeight ?? 1,
     loadWindows: (task.loadWindows || []).map((w) => ({ ...w })),
   };
   oneTimeTasks.set(id, full);
@@ -1491,10 +1487,7 @@ export function updateOneTimeTask(id: string, patch: Partial<Omit<OneTimeTask, '
   if (patch.loadWindows) {
     ot.loadWindows = patch.loadWindows.map((w) => ({ ...w }));
   }
-  if (patch.isLight !== undefined && patch.isLight) {
-    ot.baseLoadWeight = 0;
-  }
-  if (patch.baseLoadWeight !== undefined && !ot.isLight) {
+  if (patch.baseLoadWeight !== undefined) {
     ot.baseLoadWeight = Math.max(0, Math.min(1, patch.baseLoadWeight));
   }
   notify();
@@ -1906,7 +1899,6 @@ export function seedDefaultTaskTemplates(): void {
     shiftsPerDay: 3,
     startHour: 5,
     sameGroupRequired: true,
-    isLight: false,
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
@@ -1976,7 +1968,6 @@ export function seedDefaultTaskTemplates(): void {
     shiftsPerDay: 2,
     startHour: 6,
     sameGroupRequired: false,
-    isLight: false,
     baseLoadWeight: 5 / 6,
     loadWindows: [],
     blocksConsecutive: true,
@@ -2003,7 +1994,6 @@ export function seedDefaultTaskTemplates(): void {
     shiftsPerDay: 6,
     startHour: 5,
     sameGroupRequired: false,
-    isLight: false,
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
@@ -2037,7 +2027,6 @@ export function seedDefaultTaskTemplates(): void {
     shiftsPerDay: 1,
     startHour: 9,
     sameGroupRequired: false,
-    isLight: false,
     baseLoadWeight: 0.64,
     loadWindows: [],
     blocksConsecutive: true,
@@ -2072,7 +2061,6 @@ export function seedDefaultTaskTemplates(): void {
     shiftsPerDay: 3,
     startHour: 5,
     sameGroupRequired: false,
-    isLight: false,
     baseLoadWeight: 1 / 3,
     blocksConsecutive: false,
     schedulingPriority: 3,
@@ -2128,7 +2116,6 @@ export function seedDefaultTaskTemplates(): void {
     shiftsPerDay: 3,
     startHour: 5,
     sameGroupRequired: false,
-    isLight: true,
     baseLoadWeight: 0,
     loadWindows: [],
     blocksConsecutive: false,
@@ -2173,7 +2160,6 @@ export function seedDefaultTaskTemplates(): void {
     shiftsPerDay: 1,
     startHour: 5,
     sameGroupRequired: false,
-    isLight: false,
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
@@ -2206,7 +2192,6 @@ export function seedDefaultTaskTemplates(): void {
     shiftsPerDay: 1,
     startHour: 17,
     sameGroupRequired: false,
-    isLight: false,
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,

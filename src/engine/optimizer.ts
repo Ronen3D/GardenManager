@@ -108,7 +108,7 @@ export function resetAssignmentCounter(): void {
 
 /**
  * Check if a participant is eligible for a specific slot in a task,
- * considering current assignments (no double-booking of non-light tasks).
+ * considering current assignments (no double-booking).
  */
 /** Enable/disable verbose diagnostic logging */
 let _diagnosticLogging = false;
@@ -299,9 +299,9 @@ function getEligibleCandidates(
  * Tier 0: Same-group tasks (Adanit) — always first
  * Tier 1: Has lowPriority levels + cert required — penalty-critical
  * Tier 2: L0-only + cert required (Shemesh) — very tight pool
- * Tier 3: Mixed levels + cert or exclusion (Karov, Mamtera) — moderate
+ * Tier 3: Mixed levels + cert or exclusion (Karov, Mamtera, Karovit) — moderate
  * Tier 4: L0-only unconstrained (Aruga) — wide pool
- * Tier 5: Light tasks (Karovit) — always last among non-group
+ *         (fallback also lands at tier 3 for tasks that don't match above)
  *
  * Within each tier, tasks are randomly ordered (no sub-priority tiebreaker).
  * Simulation (300 iter × 22 variants, Round 3) showed that removing the
@@ -326,10 +326,8 @@ function computeStructuralPriority(task: Task): number {
     tier = 2; // Shemesh: tight L0+cert pool
   else if (hasCerts || hasExclusion)
     tier = 3; // Karov, Mamtera: moderate
-  else if (allL0Only && !task.isLight)
+  else if (allL0Only)
     tier = 4; // Aruga: wide L0 pool
-  else if (task.isLight)
-    tier = 5; // Karovit: light tasks last
   else tier = 3; // Fallback
 
   return tier * 10;
@@ -428,20 +426,16 @@ export function greedyAssign(
   for (const a of pinnedAssignments) {
     const task = taskMap.get(a.taskId);
     if (task) {
-      // For daily spread: count all tasks (light tasks get a floor of 1h so
-      // the day registers as occupied). For total workload: skip light tasks.
+      // Zero-load tasks contribute 0 via computeTaskEffectiveHours — invisible to fairness.
       const eff = computeTaskEffectiveHours(task);
-      const dailyEff = task.isLight ? Math.max(1, eff) : eff;
-      if (!task.isLight) {
-        workload.set(a.participantId, (workload.get(a.participantId) || 0) + eff);
-      }
+      workload.set(a.participantId, (workload.get(a.participantId) || 0) + eff);
       const dk = operationalDateKey(task.timeBlock.start, dayStartHour);
       let pDaily = dailyWorkload.get(a.participantId);
       if (!pDaily) {
         pDaily = new Map();
         dailyWorkload.set(a.participantId, pDaily);
       }
-      pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
+      pDaily.set(dk, (pDaily.get(dk) || 0) + eff);
     }
   }
 
@@ -559,18 +553,14 @@ export function greedyAssign(
         assignments.push(newAssignment);
         addToAssignmentMap(assignmentsByParticipant, newAssignment);
         const eff = computeTaskEffectiveHours(task);
-        const dailyEff = task.isLight ? Math.max(1, eff) : eff;
-        if (!task.isLight) {
-          workload.set(chosen.id, (workload.get(chosen.id) || 0) + eff);
-        }
-        // Always update daily workload (light tasks get floor of 1h)
+        workload.set(chosen.id, (workload.get(chosen.id) || 0) + eff);
         const dk = operationalDateKey(task.timeBlock.start, dayStartHour);
         let pDaily = dailyWorkload.get(chosen.id);
         if (!pDaily) {
           pDaily = new Map();
           dailyWorkload.set(chosen.id, pDaily);
         }
-        pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
+        pDaily.set(dk, (pDaily.get(dk) || 0) + eff);
       } else {
         // ── Backtracking: try depth-1 swap chains to free a participant ──
         // Find participants who pass level/cert/availability but are blocked by
@@ -655,13 +645,10 @@ export function greedyAssign(
             }
             // Update workload for p (remove blocking task load)
             const blockEff = computeTaskEffectiveHours(blockingTask);
-            const blockDailyEff = blockingTask.isLight ? Math.max(1, blockEff) : blockEff;
-            if (!blockingTask.isLight) {
-              workload.set(p.id, (workload.get(p.id) || 0) - blockEff);
-            }
+            workload.set(p.id, (workload.get(p.id) || 0) - blockEff);
             const blockDk = operationalDateKey(blockingTask.timeBlock.start, dayStartHour);
             const pDailyMap = dailyWorkload.get(p.id);
-            if (pDailyMap) pDailyMap.set(blockDk, (pDailyMap.get(blockDk) || 0) - blockDailyEff);
+            if (pDailyMap) pDailyMap.set(blockDk, (pDailyMap.get(blockDk) || 0) - blockEff);
 
             // 2. Assign replacement to the blocking slot
             const replacementAssign: Assignment = {
@@ -674,15 +661,13 @@ export function greedyAssign(
             };
             assignments.push(replacementAssign);
             addToAssignmentMap(assignmentsByParticipant, replacementAssign);
-            if (!blockingTask.isLight) {
-              workload.set(replacement.id, (workload.get(replacement.id) || 0) + blockEff);
-            }
+            workload.set(replacement.id, (workload.get(replacement.id) || 0) + blockEff);
             let rDaily = dailyWorkload.get(replacement.id);
             if (!rDaily) {
               rDaily = new Map();
               dailyWorkload.set(replacement.id, rDaily);
             }
-            rDaily.set(blockDk, (rDaily.get(blockDk) || 0) + blockDailyEff);
+            rDaily.set(blockDk, (rDaily.get(blockDk) || 0) + blockEff);
 
             // 3. Assign p to the target slot
             const targetAssign: Assignment = {
@@ -696,17 +681,14 @@ export function greedyAssign(
             assignments.push(targetAssign);
             addToAssignmentMap(assignmentsByParticipant, targetAssign);
             const targetEff = computeTaskEffectiveHours(task);
-            const targetDailyEff = task.isLight ? Math.max(1, targetEff) : targetEff;
-            if (!task.isLight) {
-              workload.set(p.id, (workload.get(p.id) || 0) + targetEff);
-            }
+            workload.set(p.id, (workload.get(p.id) || 0) + targetEff);
             const targetDk = operationalDateKey(task.timeBlock.start, dayStartHour);
             let pDailyTarget = dailyWorkload.get(p.id);
             if (!pDailyTarget) {
               pDailyTarget = new Map();
               dailyWorkload.set(p.id, pDailyTarget);
             }
-            pDailyTarget.set(targetDk, (pDailyTarget.get(targetDk) || 0) + targetDailyEff);
+            pDailyTarget.set(targetDk, (pDailyTarget.get(targetDk) || 0) + targetEff);
 
             backtrackSuccess = true;
           }
@@ -890,10 +872,7 @@ function assignSameGroupTask(
         const t = taskMap.get(a.taskId);
         if (t) {
           const eff = computeTaskEffectiveHours(t);
-          const dailyEff = t.isLight ? Math.max(1, eff) : eff;
-          if (!t.isLight) {
-            workload.set(a.participantId, (workload.get(a.participantId) || 0) + eff);
-          }
+          workload.set(a.participantId, (workload.get(a.participantId) || 0) + eff);
           if (dailyWorkload) {
             const dk = operationalDateKey(t.timeBlock.start, dayStartHour);
             let pDaily = dailyWorkload.get(a.participantId);
@@ -901,7 +880,7 @@ function assignSameGroupTask(
               pDaily = new Map();
               dailyWorkload.set(a.participantId, pDaily);
             }
-            pDaily.set(dk, (pDaily.get(dk) || 0) + dailyEff);
+            pDaily.set(dk, (pDaily.get(dk) || 0) + eff);
           }
         }
       }

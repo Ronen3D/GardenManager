@@ -426,8 +426,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
       </div>
       <div class="template-toggles">
         ${tpl.sameGroupRequired ? '<span class="badge badge-sm badge-outline">נדרשת אותה קבוצה</span>' : ''}
-        ${tpl.isLight ? '<span class="badge badge-sm badge-outline">קלה</span>' : ''}
-        ${(tpl.blocksConsecutive ?? !tpl.isLight) ? '' : '<span class="badge badge-sm badge-outline">ניתן לשבץ ברצף</span>'}
+        ${tpl.blocksConsecutive ? '' : '<span class="badge badge-sm badge-outline">ניתן לשבץ ברצף</span>'}
         ${tpl.togethernessRelevant ? '<span class="badge badge-sm badge-outline">אי התאמה</span>' : ''}
         ${_restRuleBadge(tpl.restRuleId)}
         <span class="expand-arrow">${isExpanded ? '▼' : '▶'}</span>
@@ -457,8 +456,8 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
           <label class="tprop-field tprop-field-load">
             <span class="tprop-field-label">רמת עומס (0-1)</span>
             <div class="tprop-field-control">
-              <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? (tpl.isLight ? 0 : 1)).toFixed(2)}" data-tid="${tpl.id}" />
-              ${renderLoadFormulaControls({ kind: 'base', tpl, disabled: tpl.isLight })}
+              <input class="input-sm" type="number" step="0.05" min="0" max="1" data-tpl-field="baseLoadWeight" value="${(tpl.baseLoadWeight ?? 1).toFixed(2)}" data-tid="${tpl.id}" />
+              ${renderLoadFormulaControls({ kind: 'base', tpl, disabled: false })}
             </div>
           </label>
         </div>
@@ -468,8 +467,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         <h5 class="tprop-section-title">התנהגות</h5>
         <div class="tprop-grid tprop-grid-2 tprop-toggles">
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
-          <label class="checkbox-label"><input type="checkbox" data-tpl-field="isLight" data-tid="${tpl.id}" ${tpl.isLight ? 'checked' : ''} /> משימה קלה</label>
-          <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${(tpl.blocksConsecutive ?? !tpl.isLight) ? 'checked' : ''} /> חוסם רצף משימות</label>
+          <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${tpl.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
         </div>
       </section>
@@ -947,7 +945,7 @@ function renderAddTemplateForm(): string {
     </div>
     <div class="form-row">
       <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> נדרשת אותה קבוצה</label>
-      <label class="checkbox-label"><input type="checkbox" data-field="tpl-light" /> משימה קלה</label>
+      <label class="checkbox-label"><input type="checkbox" data-field="tpl-blocks-consecutive" checked /> חוסם רצף משימות</label>
     </div>
     <div class="form-row">
       <button class="btn-sm btn-primary" data-action="confirm-add-template">צור</button>
@@ -982,7 +980,6 @@ function renderAddOneTimeForm(): string {
     </div>
     <div class="form-row">
       <label class="checkbox-label"><input type="checkbox" data-field="ot-samegroup" /> נדרשת אותה קבוצה</label>
-      <label class="checkbox-label"><input type="checkbox" data-field="ot-light" /> משימה קלה</label>
       <label class="checkbox-label"><input type="checkbox" data-field="ot-blocks-consecutive" checked /> חוסמת רצף</label>
       <label>כלל מרווח: <select class="input-sm" data-field="ot-rest-rule">
         <option value="">ללא</option>
@@ -1020,7 +1017,6 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
   const totalSlots = allSlots.length;
 
   const flags: string[] = [];
-  if (ot.isLight) flags.push('קלה');
   if (ot.sameGroupRequired) flags.push('קבוצה');
   if (ot.blocksConsecutive) flags.push('חוסמת');
 
@@ -1071,10 +1067,9 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" data-ot-field="startHour" value="${ot.startHour}" data-ot-id="${ot.id}" /></label>
       <label>דקת התחלה: <input class="input-sm" type="number" min="0" max="59" data-ot-field="startMinute" value="${ot.startMinute}" data-ot-id="${ot.id}" /></label>
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" data-ot-field="durationHours" value="${ot.durationHours}" data-ot-id="${ot.id}" /></label>
-      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-ot-field="baseLoadWeight" value="${(ot.baseLoadWeight ?? (ot.isLight ? 0 : 1)).toFixed(2)}" data-ot-id="${ot.id}" /></label>
+      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-ot-field="baseLoadWeight" value="${(ot.baseLoadWeight ?? 1).toFixed(2)}" data-ot-id="${ot.id}" /></label>
       <label class="checkbox-label"><input type="checkbox" data-ot-field="sameGroupRequired" data-ot-id="${ot.id}" ${ot.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
-      <label class="checkbox-label"><input type="checkbox" data-ot-field="isLight" data-ot-id="${ot.id}" ${ot.isLight ? 'checked' : ''} /> משימה קלה</label>
-      <label class="checkbox-label"><input type="checkbox" data-ot-field="blocksConsecutive" data-ot-id="${ot.id}" ${(ot.blocksConsecutive ?? true) ? 'checked' : ''} /> חוסם רצף משימות</label>
+      <label class="checkbox-label"><input type="checkbox" data-ot-field="blocksConsecutive" data-ot-id="${ot.id}" ${ot.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
       <label>כלל מרווח: <select class="input-sm" data-ot-field="restRuleId" data-ot-id="${ot.id}">
         <option value=""${!ot.restRuleId ? ' selected' : ''}>ללא</option>
         ${store
@@ -1329,7 +1324,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         );
         const sameGroup =
           (body.querySelector('[data-ot-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
-        const isLight = (body.querySelector('[data-ot-field="isLight"]') as HTMLInputElement)?.checked || false;
         const blocksConsecutive =
           (body.querySelector('[data-ot-field="blocksConsecutive"]') as HTMLInputElement)?.checked ?? true;
         const otRestRuleId =
@@ -1346,8 +1340,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           startMinute,
           durationHours: otSanitized.durationHours,
           sameGroupRequired: sameGroup,
-          isLight,
-          baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
+          baseLoadWeight: Math.max(0, Math.min(1, baseLoad)),
           blocksConsecutive,
           restRuleId: otRestRuleId,
           description: desc || undefined,
@@ -1372,7 +1365,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         );
         const sameGroup =
           (body.querySelector('[data-tpl-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
-        const isLight = (body.querySelector('[data-tpl-field="isLight"]') as HTMLInputElement)?.checked || false;
         const blocksConsecutive =
           (body.querySelector('[data-tpl-field="blocksConsecutive"]') as HTMLInputElement)?.checked || false;
         const togethernessRelevant =
@@ -1387,19 +1379,18 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         });
         notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
 
-        const clampedBaseLoad = isLight ? 0 : Math.max(0, Math.min(1, baseLoad));
+        const clampedBaseLoad = Math.max(0, Math.min(1, baseLoad));
         const existingTpl = store.getTaskTemplate(tid);
         const existingFormulaValue = existingTpl?.loadFormula?.computedValue;
         const formulaDroppedByManualEdit =
-          !isLight && existingFormulaValue !== undefined && Math.abs(clampedBaseLoad - existingFormulaValue) > 1e-9;
+          existingFormulaValue !== undefined && Math.abs(clampedBaseLoad - existingFormulaValue) > 1e-9;
         store.updateTaskTemplate(tid, {
           durationHours: sanitized.durationHours,
           shiftsPerDay: sanitized.shiftsPerDay,
           startHour: sanitized.startHour,
           baseLoadWeight: clampedBaseLoad,
-          ...(isLight || formulaDroppedByManualEdit ? { loadFormula: undefined } : {}),
+          ...(formulaDroppedByManualEdit ? { loadFormula: undefined } : {}),
           sameGroupRequired: sameGroup,
-          isLight,
           blocksConsecutive,
           togethernessRelevant,
           restRuleId,
@@ -1804,7 +1795,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           (form.querySelector('[data-field="tpl-base-load"]') as HTMLInputElement)?.value || '1',
         );
         const sameGroup = (form.querySelector('[data-field="tpl-samegroup"]') as HTMLInputElement)?.checked || false;
-        const isLight = (form.querySelector('[data-field="tpl-light"]') as HTMLInputElement)?.checked || false;
+        const blocksConsecutive =
+          (form.querySelector('[data-field="tpl-blocks-consecutive"]') as HTMLInputElement)?.checked ?? true;
 
         const sanitized = store.sanitizeTemplateNumericFields({
           durationHours: dur,
@@ -1814,10 +1806,9 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
 
         const displayCategory = name.toLowerCase();
-        const clampedBaseLoad = isLight ? 0 : Math.max(0, Math.min(1, baseLoad));
-        // Drop pending formula if light OR if user manually edited the input away from the computed value.
+        const clampedBaseLoad = Math.max(0, Math.min(1, baseLoad));
+        // Drop pending formula if user manually edited the input away from the computed value.
         const keepFormula =
-          !isLight &&
           _pendingTplLoadFormula !== undefined &&
           Math.abs(clampedBaseLoad - _pendingTplLoadFormula.computedValue) <= 1e-9;
 
@@ -1827,11 +1818,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           shiftsPerDay: sanitized.shiftsPerDay,
           startHour: sanitized.startHour,
           sameGroupRequired: sameGroup,
-          isLight,
           baseLoadWeight: clampedBaseLoad,
           loadFormula: keepFormula ? _pendingTplLoadFormula : undefined,
           loadWindows: [],
-          blocksConsecutive: !isLight,
+          blocksConsecutive,
           togethernessRelevant: false,
           restRuleId: undefined,
           displayCategory,
@@ -1876,7 +1866,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           (form.querySelector('[data-field="ot-base-load"]') as HTMLInputElement)?.value || '1',
         );
         const sameGroup = (form.querySelector('[data-field="ot-samegroup"]') as HTMLInputElement)?.checked || false;
-        const isLight = (form.querySelector('[data-field="ot-light"]') as HTMLInputElement)?.checked || false;
         const blocksConsecutive =
           (form.querySelector('[data-field="ot-blocks-consecutive"]') as HTMLInputElement)?.checked ?? true;
         const desc = (form.querySelector('[data-field="ot-desc"]') as HTMLInputElement)?.value.trim();
@@ -1898,8 +1887,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           startMinute,
           durationHours: otSanitized.durationHours,
           sameGroupRequired: sameGroup,
-          isLight,
-          baseLoadWeight: isLight ? 0 : Math.max(0, Math.min(1, baseLoad)),
+          baseLoadWeight: Math.max(0, Math.min(1, baseLoad)),
           loadWindows: [],
           blocksConsecutive,
           togethernessRelevant: false,

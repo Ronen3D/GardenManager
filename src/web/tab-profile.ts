@@ -214,7 +214,6 @@ function renderPersonalAgenda(
           <div class="agenda-task-time" dir="ltr">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</div>
           <div class="agenda-task-info">
             ${taskBadge(task)}
-            ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
             ${crossDayBadge}
           </div>
           ${sosHtml}
@@ -304,8 +303,7 @@ function renderMetrics(
   const totalPeriodHours = numDays * 24;
 
   // Shared breakdown utility (R1)
-  const { effectiveHeavyHours, lightHours, sourceHours, sourceCounts, sourceColors } =
-    computeTaskBreakdown(myTasks);
+  const { effectiveHeavyHours, sourceHours, sourceCounts, sourceColors } = computeTaskBreakdown(myTasks);
 
   const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
   const workloadClass = pctOfPeriod > 25 ? 'metric-danger' : pctOfPeriod > 18 ? 'metric-warning' : 'metric-ok';
@@ -316,10 +314,6 @@ function renderMetrics(
       <div class="metric-row">
         <span class="metric-label">עומס (בשעות משוכללות)</span>
         <span class="metric-value">${effectiveHeavyHours.toFixed(1)}h</span>
-      </div>
-      <div class="metric-row">
-        <span class="metric-label">משימות קלות (משימות חסרות עומס)</span>
-        <span class="metric-value">${lightHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
         <span class="metric-label">% עומס אפקטיבי מתוך ${totalPeriodHours} שעות</span>

@@ -64,8 +64,7 @@ export interface InjectedTaskSpec {
   subTeams: SubTeamTemplate[];
   slots: SlotTemplate[];
   sameGroupRequired: boolean;
-  isLight: boolean;
-  blocksConsecutive?: boolean;
+  blocksConsecutive: boolean;
   baseLoadWeight?: number;
   loadWindows?: LoadWindow[];
   schedulingPriority?: number;
@@ -242,11 +241,10 @@ export function buildInjectedTask(spec: InjectedTaskSpec, periodStart: Date, per
     timeBlock: { start, end },
     requiredCount: slots.length,
     slots,
-    isLight: spec.isLight,
     baseLoadWeight: spec.baseLoadWeight,
     loadWindows: (spec.loadWindows ?? []).map((w) => ({ ...w })),
     sameGroupRequired: spec.sameGroupRequired,
-    blocksConsecutive: spec.blocksConsecutive ?? !spec.isLight,
+    blocksConsecutive: spec.blocksConsecutive,
     schedulingPriority: spec.schedulingPriority,
     togethernessRelevant: spec.togethernessRelevant,
     restRuleId: spec.restRuleId,

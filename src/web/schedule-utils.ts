@@ -10,6 +10,7 @@ import type { AssignmentStatus, ConstraintViolation, Schedule, Task } from '../i
 import { hebrewDayName } from '../utils/date-utils';
 import * as store from './config-store';
 import { fmt } from './ui-helpers';
+import { computeTaskEffectiveHours } from './utils/load-weighting';
 
 // ─── Formatting Helpers ─────────────────────────────────────────────────────
 
@@ -211,8 +212,8 @@ export function computePerDayHours(
     const task = tMap.get(a.taskId);
     if (!task) continue;
 
-    // Light tasks (Karovit) contribute 0 hours — only heavy tasks count
-    if (task.isLight) continue;
+    // Zero-effective-hours tasks contribute nothing to daily load
+    if (computeTaskEffectiveHours(task) === 0) continue;
 
     for (let d = 1; d <= numDays; d++) {
       if (taskIntersectsDay(task, d, dsh, base)) {

@@ -101,7 +101,7 @@ function computeDayLoadStdDev(
 
 /**
  * Compute the total workload std-dev across all participants.
- * Uses effective hours (excluding light tasks, applying load windows).
+ * Uses effective hours (zero-load tasks contribute 0, load windows applied).
  * Note: this measures total load across ALL assignments, not per-week.
  */
 function computeTotalLoadStdDev(

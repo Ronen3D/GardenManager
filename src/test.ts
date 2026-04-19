@@ -70,7 +70,6 @@ function createHamamaTask(timeBlock: TimeBlock): Task {
         label: 'מפעיל חממה',
       },
     ],
-    isLight: false,
     baseLoadWeight: 5 / 6,
     sameGroupRequired: false,
     blocksConsecutive: true,
@@ -98,7 +97,6 @@ function createShemeshTask(timeBlock: TimeBlock): Task {
         label: 'משתתף בשמש',
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
     restRuleId: 'test-rest-rule',
@@ -129,7 +127,6 @@ function createMamteraTask(baseDate: Date): Task {
         label: 'משתתף בממטרה',
       },
     ],
-    isLight: false,
     baseLoadWeight: 4 / 9,
     sameGroupRequired: false,
     blocksConsecutive: true,
@@ -169,7 +166,6 @@ function createKarovTask(timeBlock: TimeBlock): Task {
         label: 'משתתף בקרוב',
       },
     ],
-    isLight: false,
     baseLoadWeight: 1 / 3,
     loadWindows: [
       { id: 'karov-hot-am', startHour: 5, startMinute: 0, endHour: 6, endMinute: 30, weight: 1 },
@@ -213,7 +209,7 @@ function createKarovitTask(timeBlock: TimeBlock): Task {
         label: 'משתתף בכרובית',
       },
     ],
-    isLight: true,
+    baseLoadWeight: 0,
     sameGroupRequired: false,
     blocksConsecutive: false,
   };
@@ -240,7 +236,6 @@ function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוגה', sou
         label: 'משתתף בערוגה',
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -288,8 +283,7 @@ function createAdanitTasks(baseDate: Date): Task[] {
       timeBlock: block,
       requiredCount: 6,
       slots,
-      isLight: false,
-      sameGroupRequired: true,
+        sameGroupRequired: true,
       blocksConsecutive: true,
       restRuleId: 'test-rest-rule',
     };
@@ -606,7 +600,7 @@ const restAssignments = [
 const restProfile = computeParticipantRest(testP0.id, restAssignments, [restTask1, restTask2]);
 assert(restProfile.restGaps.length === 1, 'One rest gap between two tasks');
 assert(restProfile.minRestHours === 4, 'Rest gap = 4h (10:00-14:00)');
-assert(restProfile.nonLightAssignmentCount === 2, 'Two non-light assignments counted');
+assert(restProfile.loadBearingAssignmentCount === 2, 'Two non-light assignments counted');
 
 // ─── Validator Tests ─────────────────────────────────────────────────────────
 
@@ -739,7 +733,6 @@ function makeTask(overrides: Partial<Task> & { timeBlock: Task['timeBlock'] }): 
     name: 'Test Task',
     requiredCount: 1,
     slots: [],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
     ...overrides,
@@ -752,15 +745,15 @@ const KRUV_WINDOWS: LoadWindow[] = [
   { id: 'w2', startHour: 17, startMinute: 0, endHour: 18, endMinute: 30, weight: 1 },
 ];
 
-// ── Test 1: Karovit (isLight) → 0 hot, 0 cold, 0 effective ──
+// ── Test 1: Zero-load task (baseLoadWeight=0, no windows) → 0 hot, 0 cold, 0 effective ──
 {
   const t = makeTask({
-    isLight: true,
+    baseLoadWeight: 0,
     timeBlock: { start: new Date(2026, 1, 15, 5, 0), end: new Date(2026, 1, 15, 13, 0) },
   });
-  assert(computeTaskHotHours(t) === 0, 'T1: Karovit hot = 0');
-  assert(computeTaskColdHours(t) === 0, 'T1: Karovit cold = 0');
-  assert(computeTaskEffectiveHours(t) === 0, 'T1: Karovit effective = 0');
+  assert(computeTaskHotHours(t) === 8, 'T1: zero-weight task hot = duration');
+  assert(computeTaskColdHours(t) === 0, 'T1: zero-weight task cold = 0');
+  assert(computeTaskEffectiveHours(t) === 0, 'T1: zero-weight task effective = 0');
 }
 
 // ── Test 2: Adanit 8h (no windows, baseLoadWeight=1) → all hot, 0 cold ──
@@ -934,12 +927,11 @@ const KRUV_WINDOWS: LoadWindow[] = [
 
 // ── Test 16: getTaskBaseLoadWeight returns correct values ──
 {
-  const lightTask = makeTask({
-    isLight: true,
-    baseLoadWeight: 0.5,
+  const zeroWeight = makeTask({
+    baseLoadWeight: 0,
     timeBlock: { start: new Date(2026, 1, 15, 5, 0), end: new Date(2026, 1, 15, 13, 0) },
   });
-  assert(getTaskBaseLoadWeight(lightTask) === 0, 'T16a: light task base weight = 0');
+  assert(getTaskBaseLoadWeight(zeroWeight) === 0, 'T16a: baseLoadWeight=0 → weight = 0');
 
   const heavyNoWeight = makeTask({
     baseLoadWeight: undefined,
@@ -1091,7 +1083,6 @@ const mamteraTask = createMamteraTask(baseDate);
     timeBlock: createTimeBlockFromHours(baseDate, 9, 23),
     requiredCount: 2,
     slots: [slotA, slotB],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -1199,11 +1190,14 @@ console.log('\n── Consecutive High-Load Constraint (HC-12) ──');
   assert(Math.abs(getLoadWeightAtTime(karovTask, coldTime) - 1 / 3) < 0.01, 'HC-12 util: Karov cold zone → weight 1/3');
 }
 
-// T-HC12-3: getLoadWeightAtTime for light task always returns 0
+// T-HC12-3: getLoadWeightAtTime for a zero-weight task with no windows is 0
 {
-  const lightBlock = createTimeBlockFromHours(baseDate, 5, 13);
-  const lightTask = createKarovitTask(lightBlock);
-  assert(getLoadWeightAtTime(lightTask, lightTask.timeBlock.start) === 0, 'HC-12 util: light task → weight 0 at start');
+  const zeroBlock = createTimeBlockFromHours(baseDate, 5, 13);
+  const zeroTask = createKarovitTask(zeroBlock);
+  assert(
+    getLoadWeightAtTime(zeroTask, zeroTask.timeBlock.start) === 0,
+    'HC-12 util: zero-weight task → weight 0 at start',
+  );
 }
 
 // T-HC12-4: isHighLoadAtBoundary for heavy task = true at both edges
@@ -1459,7 +1453,6 @@ const testAdanitTask: Task = {
   timeBlock: testAdanitBlock,
   requiredCount: 6,
   slots: [adMainSlot, adSecSlot, adL0Slot, adL0Slot, adL0Slot, adL0Slot],
-  isLight: false,
   sameGroupRequired: true,
   blocksConsecutive: true,
 };
@@ -1482,7 +1475,6 @@ const testKarovTask: Task = {
   timeBlock: createTimeBlockFromHours(baseDate, 5, 13),
   requiredCount: 4,
   slots: [testKarovSlot, testKarovL0Slot],
-  isLight: false,
   sameGroupRequired: false,
   blocksConsecutive: false,
 };
@@ -1505,7 +1497,7 @@ const testKarovitTask: Task = {
   timeBlock: createTimeBlockFromHours(baseDate, 5, 13),
   requiredCount: 4,
   slots: [testKarovitSlot, testKarovitL0Slot],
-  isLight: true,
+  baseLoadWeight: 0,
   sameGroupRequired: false,
   blocksConsecutive: false,
 };
@@ -1523,7 +1515,6 @@ const testMamTask: Task = {
   timeBlock: createTimeBlockFromHours(baseDate, 9, 23),
   requiredCount: 2,
   slots: [testMamSlot],
-  isLight: false,
   sameGroupRequired: false,
   blocksConsecutive: true,
 };
@@ -1540,7 +1531,6 @@ const testHamTask: Task = {
   timeBlock: createTimeBlockFromHours(baseDate, 6, 18),
   requiredCount: 1,
   slots: [testHamSlot],
-  isLight: false,
   sameGroupRequired: false,
   blocksConsecutive: true,
 };
@@ -1557,7 +1547,6 @@ const testShTask: Task = {
   timeBlock: createTimeBlockFromHours(baseDate, 5, 9),
   requiredCount: 2,
   slots: [testShSlot],
-  isLight: false,
   sameGroupRequired: false,
   blocksConsecutive: true,
 };
@@ -1574,7 +1563,6 @@ const testArTask: Task = {
   timeBlock: createTimeBlockFromHours(baseDate, 5, 7),
   requiredCount: 2,
   slots: [testArSlot],
-  isLight: false,
   sameGroupRequired: false,
   blocksConsecutive: true,
 };
@@ -1661,7 +1649,6 @@ assert(!isNaturalRole(Level.L2, testAdanitTask, adMainSlot), 'HC-13: L2 NOT natu
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [mixedSlot],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: false,
   };
@@ -2043,8 +2030,7 @@ console.log('\n── One-Time Task Integration ──────────�
         },
       ],
       sameGroupRequired: false,
-      isLight: false,
-      blocksConsecutive: true,
+        blocksConsecutive: true,
       ...overrides,
     };
   }
@@ -2071,7 +2057,6 @@ console.log('\n── One-Time Task Integration ──────────�
   const heavyOt = makeOneTimeTask({
     blocksConsecutive: true,
     restRuleId: 'test-rest-rule',
-    isLight: false,
     sameGroupRequired: true,
     schedulingPriority: 5,
     displayCategory: 'patrol',
@@ -2101,7 +2086,6 @@ console.log('\n── One-Time Task Integration ──────────�
         requiredCertifications: [],
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2121,7 +2105,6 @@ console.log('\n── One-Time Task Integration ──────────�
         requiredCertifications: [],
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2170,10 +2153,9 @@ console.log('\n── One-Time Task Integration ──────────�
   assert(!tplTask.id.startsWith('ot-'), 'Template task ID does not start with ot-');
   assert(otTask.id !== tplTask.id, 'One-time and template task IDs are different');
 
-  // Test 7: Light one-time task
-  const lightOt = makeOneTimeTask({ isLight: true, baseLoadWeight: 0 });
-  assert(lightOt.isLight === true, 'Light one-time task: isLight=true');
-  assert(lightOt.baseLoadWeight === 0, 'Light one-time task: baseLoadWeight=0');
+  // Test 7: Zero-load one-time task
+  const zeroOt = makeOneTimeTask({ baseLoadWeight: 0 });
+  assert(zeroOt.baseLoadWeight === 0, 'Zero-load one-time task: baseLoadWeight=0');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2361,7 +2343,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [l2Slot],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2393,7 +2374,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [l2Slot],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2424,7 +2404,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [l2Slot],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2450,7 +2429,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2484,7 +2462,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [multiCertSlot],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2516,7 +2493,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [multiCertSlot],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2547,7 +2523,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [noCertSlot],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2574,7 +2549,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2600,7 +2574,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2625,7 +2598,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2642,7 +2614,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 2,
     slots: [],
-    isLight: false,
     sameGroupRequired: true,
     blocksConsecutive: true,
   };
@@ -2705,7 +2676,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 2,
     slots: [slot1, slot2],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2804,7 +2774,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 2,
     slots: [slot1, slot2],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -2876,7 +2845,6 @@ console.log('\n── Hard Constraints: Individual Functions ──');
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 2,
     slots: [l0Slot, l2Slot],
-    isLight: false,
     sameGroupRequired: true,
     blocksConsecutive: true,
   };
@@ -2982,7 +2950,6 @@ console.log('\n── Category Break (HC-14) ───────────�
     timeBlock: createTimeBlockFromHours(baseDate, 6, 10),
     requiredCount: 1,
     slots: [{ slotId: 'hc14-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
     restRuleId: 'test-rest-rule',
@@ -2993,7 +2960,6 @@ console.log('\n── Category Break (HC-14) ───────────�
     timeBlock: createTimeBlockFromHours(baseDate, 13, 17),
     requiredCount: 1,
     slots: [{ slotId: 'hc14-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
     restRuleId: 'test-rest-rule',
@@ -3481,7 +3447,7 @@ console.log('\n── Rest Calculator: Extended ──────────�
   assert(rest0.restGaps.length === 0, 'Rest: no assignments → no rest gaps');
   assert(rest0.minRestHours === Infinity, 'Rest: no assignments → min rest = Infinity');
   assert(rest0.totalWorkHours === 0, 'Rest: no assignments → 0 work hours');
-  assert(rest0.nonLightAssignmentCount === 0, 'Rest: no assignments → 0 non-light count');
+  assert(rest0.loadBearingAssignmentCount === 0, 'Rest: no assignments → 0 non-light count');
 }
 
 // Single assignment → no rest gaps
@@ -3499,7 +3465,7 @@ console.log('\n── Rest Calculator: Extended ──────────�
   ];
   const rest1 = computeParticipantRest('rest-p1', singleAssign, [singleTask]);
   assert(rest1.restGaps.length === 0, 'Rest: single assignment → no rest gaps');
-  assert(rest1.nonLightAssignmentCount === 1, 'Rest: single assignment → count=1');
+  assert(rest1.loadBearingAssignmentCount === 1, 'Rest: single assignment → count=1');
   assert(rest1.totalWorkHours === 4, 'Rest: 4h task → 4h work');
 }
 
@@ -3517,9 +3483,8 @@ console.log('\n── Rest Calculator: Extended ──────────�
     },
   ];
   const restLight = computeParticipantRest('rest-p2', lightAssign, [lightTask]);
-  assert(restLight.nonLightAssignmentCount === 0, 'Rest: light only → 0 non-light count');
-  assert(restLight.totalWorkHours === 0, 'Rest: light only → 0 work hours');
-  assert(restLight.totalLightHours === 8, 'Rest: light 8h → totalLightHours=8');
+  assert(restLight.loadBearingAssignmentCount === 0, 'Rest: zero-load only → 0 load-bearing count');
+  assert(restLight.totalWorkHours === 0, 'Rest: zero-load only → 0 work hours');
 }
 
 // Three tasks with varying gaps → correct min/max/avg
@@ -3558,7 +3523,7 @@ console.log('\n── Rest Calculator: Extended ──────────�
   assert(rest3.minRestHours === 4, 'Rest: min rest = 4h');
   assert(rest3.maxRestHours === 6, 'Rest: max rest = 6h');
   assert(rest3.avgRestHours === 5, 'Rest: avg rest = 5h');
-  assert(rest3.nonLightAssignmentCount === 3, 'Rest: 3 non-light tasks counted');
+  assert(rest3.loadBearingAssignmentCount === 3, 'Rest: 3 non-light tasks counted');
   assert(rest3.totalWorkHours === 6, 'Rest: 3×2h = 6h work');
 }
 
@@ -3596,7 +3561,7 @@ console.log('\n── Rest Calculator: Extended ──────────�
   const restNb = computeParticipantRest('rest-p4', nbAssigns, [blockingTask, nonBlockingTask, blockingTask2]);
   // Karov (non-blocking) between two blocking tasks: blocking↔karov gap is NOT penalised
   // Only blocking↔blocking gaps are counted
-  assert(restNb.nonLightAssignmentCount === 3, 'Rest: non-blocking still counted as work');
+  assert(restNb.loadBearingAssignmentCount === 3, 'Rest: non-blocking still counted as work');
   // The Karov breaks the blocking chain, so we expect gaps between blocking-blocking pairs only
   // With no direct blocking→blocking adjacency, we should see limited rest gaps
   assert(restNb.restGaps.length <= 1, 'Rest: non-blocking task breaks rest gap chain');
@@ -3635,8 +3600,8 @@ console.log('\n── Rest Calculator: Extended ──────────�
   ];
   const profiles = computeAllRestProfiles([rap1, rap2], rapAssigns, [rapTask]);
   assert(profiles.size === 2, 'computeAllRestProfiles: returns profile for each participant');
-  assert(profiles.get('rap-1')!.nonLightAssignmentCount === 1, 'computeAllRestProfiles: rap-1 has 1 assignment');
-  assert(profiles.get('rap-2')!.nonLightAssignmentCount === 0, 'computeAllRestProfiles: rap-2 has 0 assignments');
+  assert(profiles.get('rap-1')!.loadBearingAssignmentCount === 1, 'computeAllRestProfiles: rap-1 has 1 assignment');
+  assert(profiles.get('rap-2')!.loadBearingAssignmentCount === 0, 'computeAllRestProfiles: rap-2 has 0 assignments');
 }
 
 // computeRestFairness: multiple participants with different rest profiles
@@ -4515,7 +4480,6 @@ console.log('\n── Dynamic Certifications ───────────�
         label: 'slot',
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: false,
   };
@@ -4593,7 +4557,6 @@ console.log('\n── Dynamic Certifications ───────────�
         label: 'slot',
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: false,
   };
@@ -4656,7 +4619,6 @@ console.log('\n── Dynamic Certifications ───────────�
         label: 'slot',
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: false,
   };
@@ -4730,7 +4692,6 @@ console.log('\n── Dynamic Certifications ───────────�
         label: 'slot',
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: false,
   };
@@ -4792,7 +4753,6 @@ console.log('\n── Temporal Engine (Live Mode) ──────────
     timeBlock: createTimeBlockFromHours(tBase, 6, 10),
     requiredCount: 1,
     slots: [{ slotId: 'tp-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -4802,7 +4762,6 @@ console.log('\n── Temporal Engine (Live Mode) ──────────
     timeBlock: createTimeBlockFromHours(tBase, 18, 22),
     requiredCount: 1,
     slots: [{ slotId: 'tp-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -4812,7 +4771,6 @@ console.log('\n── Temporal Engine (Live Mode) ──────────
     timeBlock: createTimeBlockFromHours(tBase, 10, 18),
     requiredCount: 1,
     slots: [{ slotId: 'tp-s3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5019,7 +4977,6 @@ console.log('\n── HC-3: dateUnavailability ───────────
     timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
     requiredCount: 1,
     slots: [{ slotId: 'du-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5099,7 +5056,6 @@ console.log('\n── SC-2: computeNotWithPenalty ──────────
       { slotId: 'nw-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
       { slotId: 'nw-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
     togethernessRelevant: true,
@@ -5330,8 +5286,7 @@ console.log('\n── Phantom Context ──────────────
             taskName: 'חממה D1',
             timeBlock: { start: '2026-02-15T06:00:00', end: '2026-02-15T14:00:00' },
             blocksConsecutive: true,
-            isLight: false,
-            baseLoadWeight: 1,
+                    baseLoadWeight: 1,
             restRuleId: 'rest-A',
             restRuleDurationHours: 5,
           },
@@ -5340,8 +5295,7 @@ console.log('\n── Phantom Context ──────────────
             taskName: 'ממטרה D1',
             timeBlock: { start: '2026-02-15T20:00:00', end: '2026-02-16T04:00:00' },
             blocksConsecutive: true,
-            isLight: false,
-            baseLoadWeight: 1,
+                    baseLoadWeight: 1,
             restRuleId: 'rest-A',
             restRuleDurationHours: 5,
           },
@@ -5358,7 +5312,6 @@ console.log('\n── Phantom Context ──────────────
             taskName: 'x',
             timeBlock: { start: '2026-02-15T06:00:00', end: '2026-02-15T14:00:00' },
             blocksConsecutive: false,
-            isLight: true,
             baseLoadWeight: 0.3,
           },
         ],
@@ -5485,7 +5438,6 @@ console.log('\n── Rescue Plans ───────────────
       { slotId: 'rsc-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
       { slotId: 'rsc-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5499,7 +5451,6 @@ console.log('\n── Rescue Plans ───────────────
     slots: [
       { slotId: 'rsc-s3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'C' },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5669,7 +5620,6 @@ console.log('\n── Optimizer ────────────────
     slots: [
       { slotId: 'opt-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5681,7 +5631,6 @@ console.log('\n── Optimizer ────────────────
     slots: [
       { slotId: 'opt-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5717,7 +5666,6 @@ console.log('\n── Optimizer ────────────────
       { slotId: 'opt-ms-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'X' },
       { slotId: 'opt-ms-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'Y' },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5740,7 +5688,6 @@ console.log('\n── Optimizer ────────────────
     slots: [
       { slotId: 'opt-ol-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'Z' },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5767,7 +5714,6 @@ console.log('\n── Optimizer ────────────────
         label: 'H',
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5783,7 +5729,6 @@ console.log('\n── Optimizer ────────────────
     timeBlock: optBlock1,
     requiredCount: 1,
     slots: [{ slotId: 'opt-l2-s1', acceptableLevels: [{ level: Level.L2 }], requiredCertifications: [], label: 'L' }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5801,7 +5746,6 @@ console.log('\n── Optimizer ────────────────
       { slotId: 'opt-sg-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: '1' },
       { slotId: 'opt-sg-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: '2' },
     ],
-    isLight: false,
     sameGroupRequired: true,
     blocksConsecutive: true,
   };
@@ -5949,7 +5893,6 @@ console.log('\n── Optimizer ────────────────
     slots: [
       { slotId: 'opt-ht-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Hamama'], label: 'H' },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5970,7 +5913,6 @@ console.log('\n── Optimizer ────────────────
     slots: [
       { slotId: 'opt-cons1-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'C1' },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -5982,7 +5924,6 @@ console.log('\n── Optimizer ────────────────
     slots: [
       { slotId: 'opt-cons2-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'C2' },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };
@@ -6296,7 +6237,6 @@ console.log('\n── HC-14: Cross-Boundary & Cross-Rule ──');
     timeBlock: createTimeBlockFromHours(sunEve, 18, 22),
     requiredCount: 1,
     slots: [{ slotId: 'hc14x-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
     restRuleId: 'boundary-rule',
@@ -6307,7 +6247,6 @@ console.log('\n── HC-14: Cross-Boundary & Cross-Rule ──');
     timeBlock: createTimeBlockFromHours(monMorn, 2, 6),
     requiredCount: 1,
     slots: [{ slotId: 'hc14x-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
     restRuleId: 'boundary-rule',
@@ -6383,7 +6322,6 @@ console.log('\n── HC-14: Cross-Boundary & Cross-Rule ──');
     timeBlock: createTimeBlockFromHours(sunEve, 6, 10),
     requiredCount: 1,
     slots: [{ slotId: 'hc14x-sa', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
     restRuleId: 'rule-a',
@@ -6394,7 +6332,6 @@ console.log('\n── HC-14: Cross-Boundary & Cross-Rule ──');
     timeBlock: createTimeBlockFromHours(sunEve, 13, 17),
     requiredCount: 1,
     slots: [{ slotId: 'hc14x-sb', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
     restRuleId: 'rule-b',
@@ -6949,7 +6886,6 @@ console.log('\n── Auto-Tuner: reference-scoring invariance ──');
         label: 'slot-2',
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: false,
     togethernessRelevant: true,
@@ -7098,8 +7034,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
         { slotId: 'crs-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
         { slotId: 'crs-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
       ],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const p1: Participant = {
@@ -7213,8 +7148,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
         { slotId: 'clf-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
         { slotId: 'clf-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
       ],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const p1: Participant = {
@@ -7320,8 +7254,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
           label: 'A',
         },
       ],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const pVacated: Participant = {
@@ -7437,8 +7370,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
         { slotId: 'cnw-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' },
         { slotId: 'cnw-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'B' },
       ],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
       togethernessRelevant: true,
     };
@@ -7572,8 +7504,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
         { slotId: 'cd2-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
         { slotId: 'cd2-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
       ],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const t2: Task = {
@@ -7582,8 +7513,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       timeBlock: rescBlock2,
       requiredCount: 1,
       slots: [{ slotId: 'cd2-s3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'C' }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const p1: Participant = {
@@ -7723,8 +7653,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
           label: 'A',
         },
       ],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     // A second task to give p2 more load
@@ -7734,8 +7663,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       timeBlock: rescBlock2,
       requiredCount: 1,
       slots: [{ slotId: 'cso-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'B' }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const pVacated: Participant = {
@@ -7851,8 +7779,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       timeBlock: rescBlock1,
       requiredCount: 1,
       slots: [{ slotId: 'cpm-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const p1: Participant = {
@@ -7943,8 +7870,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       timeBlock: rescBlock1,
       requiredCount: 1,
       slots: [{ slotId: 'csm-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const p1: Participant = {
@@ -8074,8 +8000,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock,
       requiredCount: 1,
       slots: [{ slotId: 'fx-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     assert(checkAvailability(p, task) === null, 'fsos-hc3: no extra unavailability → HC-3 passes');
@@ -8116,8 +8041,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock,
       requiredCount: 1,
       slots: [{ slotId: 'fa-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const task2: Task = {
@@ -8126,8 +8050,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock2,
       requiredCount: 1,
       slots: [{ slotId: 'fa-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
@@ -8259,8 +8182,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock,
       requiredCount: 1,
       slots: [{ slotId: 'fb-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const t2: Task = {
@@ -8269,8 +8191,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock2,
       requiredCount: 1,
       slots: [{ slotId: 'fb-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
 
@@ -8405,8 +8326,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock,
       requiredCount: 1,
       slots: [{ slotId: 'fi-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
@@ -8557,8 +8477,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: blockIn,
       requiredCount: 1,
       slots: [{ slotId: 'f2-sIn', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const tOut: Task = {
@@ -8567,8 +8486,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: blockOut,
       requiredCount: 1,
       slots: [{ slotId: 'f2-sOut', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
 
@@ -8675,8 +8593,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock,
       requiredCount: 1,
       slots: [{ slotId: 'to-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
@@ -8776,8 +8693,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock, // June 1, 06:00-14:00 (in window below)
       requiredCount: 1,
       slots: [{ slotId: 'f5-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false,
-      sameGroupRequired: false,
+        sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const extra = [
@@ -8871,12 +8787,12 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const t1: Task = {
       id: 'b2-t1', name: 'T1', timeBlock: fsosBlock, requiredCount: 1,
       slots: [{ slotId: 'b2-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false, blocksConsecutive: true,
     };
     const t2: Task = {
       id: 'b2-t2', name: 'T2', timeBlock: fsosBlock2, requiredCount: 1,
       slots: [{ slotId: 'b2-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false, blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
       { id: 'b2-a1', taskId: 'b2-t1', slotId: 'b2-s1', participantId: 'b2-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
@@ -8930,7 +8846,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const t1: Task = {
       id: 'b1-t1', name: 'T1', timeBlock: fsosBlock, requiredCount: 1,
       slots: [{ slotId: 'b1-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false, blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
       { id: 'b1-a1', taskId: 'b1-t1', slotId: 'b1-s1', participantId: 'b1-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
@@ -9012,13 +8928,13 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const tV: Task = {
       id: 'b5-tV', name: 'V', timeBlock: fsosBlock, requiredCount: 1,
       slots: [{ slotId: 'b5-sV', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Hamama'] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false, blocksConsecutive: true,
     };
     // Critical blocker — same time as tV, no cert required.
     const tCONF: Task = {
       id: 'b5-tCONF', name: 'CONF', timeBlock: fsosBlock, requiredCount: 1,
       slots: [{ slotId: 'b5-sCONF', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false, blocksConsecutive: true,
     };
     // 7 additional donor tasks on days 2..8 — bulks p2's donor list past cap.
     const padTasks: Task[] = [];
@@ -9028,7 +8944,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
         timeBlock: createTimeBlockFromHours(new Date(2026, 5, d), 6, 14),
         requiredCount: 1,
         slots: [{ slotId: `b5-sD${d}`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+        sameGroupRequired: false, blocksConsecutive: true,
       });
     }
 
@@ -9119,12 +9035,12 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const tA: Task = {
       id: 'b3-tA', name: 'TA', timeBlock: blkA, requiredCount: 1,
       slots: [{ slotId: 'b3-sA', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false, blocksConsecutive: true,
     };
     const tB: Task = {
       id: 'b3-tB', name: 'TB', timeBlock: blkB, requiredCount: 1,
       slots: [{ slotId: 'b3-sB', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false, blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
       { id: 'b3-aA', taskId: 'b3-tA', slotId: 'b3-sA', participantId: 'b3-focal', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
@@ -9168,12 +9084,12 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const tHeavy: Task = {
       id: 'b4-tHeavy', name: 'Heavy', timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 6, 14), requiredCount: 1,
       slots: [{ slotId: 'b4-sHeavy', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false, blocksConsecutive: true,
     };
     const tLight: Task = {
       id: 'b4-tLight', name: 'Light', timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 6, 10), requiredCount: 1,
       slots: [{ slotId: 'b4-sLight', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false, blocksConsecutive: true,
     };
     const vacatedTask = tHeavy; // anchors the affected day
     const assignmentsByParticipant = new Map<string, Assignment[]>();
@@ -9204,7 +9120,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const mkT = (id: string, d: number): Task => ({
       id, name: id, timeBlock: createTimeBlockFromHours(new Date(2026, 5, d), 6, 14), requiredCount: 1,
       slots: [{ slotId: `s-${id}`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      isLight: false, sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false, blocksConsecutive: true,
     });
     const tV = mkT('b5u-tV', 1);
     const tD2 = mkT('b5u-tD2', 2);

@@ -58,8 +58,6 @@ export interface ContinuityAssignment {
   restRuleId?: string;
   /** HC-14: snapshotted rule duration in hours (for cross-schedule phantom resolution). */
   restRuleDurationHours?: number;
-  /** Is this a light task (Karovit)? */
-  isLight: boolean;
   /** Base load weight outside hot windows (0..1). */
   baseLoadWeight?: number;
   /** Display color (hex). */

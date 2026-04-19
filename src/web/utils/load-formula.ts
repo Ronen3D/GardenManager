@@ -21,7 +21,7 @@ export function formatWindowLabel(w: LoadWindow): string {
 
 export function resolveRateValue(tpl: TaskTemplate, ref: LoadFormulaRateRef): { value: number; label: string } | null {
   if (ref.kind === 'base') {
-    const value = tpl.isLight ? 0 : clamp01(tpl.baseLoadWeight ?? 1);
+    const value = clamp01(tpl.baseLoadWeight ?? 1);
     return { value, label: 'בסיס' };
   }
   const win = (tpl.loadWindows ?? []).find((w) => w.id === ref.windowId);

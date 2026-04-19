@@ -163,8 +163,6 @@ export interface Task {
   requiredCount: number;
   /** Detailed slot requirements */
   slots: SlotRequirement[];
-  /** Whether this task is "light" — doesn't break rest */
-  isLight: boolean;
   /** Base load weight applied outside explicit load windows (0..1). */
   baseLoadWeight?: number;
   /** Optional weighted load windows within the task's timeline. */
@@ -572,7 +570,8 @@ export interface GanttBlock {
   endMs: number;
   durationMs: number;
   status: AssignmentStatus;
-  isLight: boolean;
+  /** True when the underlying task contributes zero effective hours. Drives the dimmed visual style. */
+  isZeroLoad: boolean;
   /** CSS color suggestion */
   color: string;
 }
@@ -698,8 +697,6 @@ export interface TaskTemplate {
   eveningStartHour?: number;
   /** Whether all participants must be from the same group */
   sameGroupRequired: boolean;
-  /** Whether this is a light task */
-  isLight: boolean;
   /** Base load weight outside hot windows (0..1). */
   baseLoadWeight?: number;
   /** Optional comparison formula that derived `baseLoadWeight`. Input-layer only. */
@@ -709,9 +706,9 @@ export interface TaskTemplate {
   /**
    * HC-12 consecutive-task blocking flag.
    * When true, this task prohibits back-to-back placement with another
-   * blocksConsecutive task. Defaults to true for heavy tasks, false for light.
+   * blocksConsecutive task. Required — callers must set this explicitly.
    */
-  blocksConsecutive?: boolean;
+  blocksConsecutive: boolean;
   /** Sub-teams (each has its own slots). If empty, slots are top-level */
   subTeams: SubTeamTemplate[];
   /** Top-level slots (used when there are no sub-teams) */
@@ -750,14 +747,12 @@ export interface OneTimeTask {
   slots: SlotTemplate[];
   /** Whether all participants must be from the same group. */
   sameGroupRequired: boolean;
-  /** Whether this is a light task. */
-  isLight: boolean;
   /** Base load weight outside hot windows (0..1). */
   baseLoadWeight?: number;
   /** Optional weighted windows (typically "hot" windows). */
   loadWindows?: LoadWindow[];
-  /** HC-12 consecutive-task blocking flag. */
-  blocksConsecutive?: boolean;
+  /** HC-12 consecutive-task blocking flag. Required — callers must set explicitly. */
+  blocksConsecutive: boolean;
   /** Scheduling priority (0 = first). */
   schedulingPriority?: number;
   /** Whether "not with" togetherness preferences apply. */

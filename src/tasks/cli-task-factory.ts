@@ -92,8 +92,7 @@ export function createAdanitTasks(baseDate: Date): Task[] {
       timeBlock: block,
       requiredCount: 6,
       slots,
-      isLight: false,
-      sameGroupRequired: true,
+        sameGroupRequired: true,
       blocksConsecutive: true,
       restRuleId: 'demo-rest-rule',
     };
@@ -117,7 +116,6 @@ export function createHamamaTask(timeBlock: TimeBlock): Task {
         label: 'מפעיל חממה',
       },
     ],
-    isLight: false,
     baseLoadWeight: 5 / 6,
     sameGroupRequired: false,
     blocksConsecutive: true,
@@ -147,7 +145,6 @@ export function createShemeshTask(timeBlock: TimeBlock): Task {
         label: 'משתתף בשמש',
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
     restRuleId: 'demo-rest-rule',
@@ -180,7 +177,6 @@ export function createMamteraTask(baseDate: Date): Task {
         label: 'משתתף בממטרה',
       },
     ],
-    isLight: false,
     baseLoadWeight: 4 / 9,
     sameGroupRequired: false,
     blocksConsecutive: true,
@@ -222,7 +218,6 @@ export function createKarovTask(timeBlock: TimeBlock): Task {
         label: 'משתתף בקרוב',
       },
     ],
-    isLight: false,
     baseLoadWeight: 1 / 3,
     loadWindows: [
       {
@@ -282,7 +277,6 @@ export function createKarovitTask(timeBlock: TimeBlock): Task {
         label: 'משתתף בכרובית',
       },
     ],
-    isLight: true,
     sameGroupRequired: false,
     blocksConsecutive: false,
   };
@@ -311,7 +305,6 @@ export function createArugaTask(timeBlock: TimeBlock, label: string = 'ערוג�
         label: 'משתתף בערוגה',
       },
     ],
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   };

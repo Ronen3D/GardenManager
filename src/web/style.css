@@ -824,7 +824,7 @@ section h2 {
   opacity: 0.85;
   z-index: 2;
 }
-.gantt-block.gantt-light {
+.gantt-block.gantt-zero-load {
   opacity: 0.5;
 }
 .gantt-block-text {

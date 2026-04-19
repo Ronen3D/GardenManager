@@ -118,8 +118,7 @@ function prod_current(task: Task): number {
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
-  else if (allL0Only && !task.isLight) tier = 4;
-  else if (task.isLight) tier = 5;
+  else if (allL0Only) tier = 4;
   else tier = 3;
 
   const { min } = countEligiblePerSlot(task);
@@ -149,7 +148,7 @@ function a1_compressedTiers(task: Task): number {
   let tier: number;
   if (hasLowPriority(task) || (allL0Only && hasCerts))
     tier = 1; // Merge Hamama+Shemesh
-  else if (hasCerts || hasExclusion || (allL0Only && !task.isLight))
+  else if (hasCerts || hasExclusion || (allL0Only))
     tier = 2; // Merge Karov+Mamtera+Aruga
   else tier = 3; // Light + fallback
 
@@ -185,10 +184,8 @@ function a2_expandedTiers(task: Task): number {
     tier = 4; // Mamtera (exclusion)
   else if (hasCerts)
     tier = 4; // Other cert tasks
-  else if (allL0Only && !task.isLight)
+  else if (allL0Only)
     tier = 5; // Aruga
-  else if (task.isLight)
-    tier = 6; // Karovit
   else tier = 4;
 
   const { min } = countEligiblePerSlot(task);
@@ -213,8 +210,7 @@ function a3_tieredAvgPool(task: Task): number {
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
-  else if (allL0Only && !task.isLight) tier = 4;
-  else if (task.isLight) tier = 5;
+  else if (allL0Only) tier = 4;
   else tier = 3;
 
   // Use average instead of min for tiebreaker
@@ -240,8 +236,7 @@ function a4_pureTiers(task: Task): number {
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
-  else if (allL0Only && !task.isLight) tier = 4;
-  else if (task.isLight) tier = 5;
+  else if (allL0Only) tier = 4;
   else tier = 3;
 
   // All tasks in same tier get same priority — random tiebreak by optimizer
@@ -254,13 +249,12 @@ function a4_pureTiers(task: Task): number {
 
 /**
  * B1: Pure min-eligible bottleneck (no tiers).
- * Just rank by the tightest slot. Light tasks get +15 offset.
+ * Just rank by the tightest slot.
  */
 function b1_pureBottleneck(task: Task): number {
   if (task.sameGroupRequired) return 0;
   const { min } = countEligiblePerSlot(task);
   let score = Math.min(50, min * 3);
-  if (task.isLight) score += 15;
   return Math.max(1, score);
 }
 
@@ -284,7 +278,6 @@ function b2_harmonicMean(task: Task): number {
   }
   const harmonicMean = task.slots.length / reciprocalSum;
   let score = Math.min(50, harmonicMean * 2.5);
-  if (task.isLight) score += 15;
   if (hasLowPriority(task)) score = Math.max(1, score - 8);
   return Math.max(1, score);
 }
@@ -309,7 +302,6 @@ function b3_constraintDensity(task: Task): number {
 
   // Higher density → lower score → first
   let score = Math.max(1, 50 - density * 4);
-  if (task.isLight) score += 15;
   return Math.max(1, score);
 }
 
@@ -325,7 +317,6 @@ function b4_slotWeightedBottleneck(task: Task): number {
   const scarcity = 1 / Math.max(1, min);
   const difficulty = task.slots.length * scarcity;
   let score = Math.max(1, 50 - difficulty * 12);
-  if (task.isLight) score += 15;
   if (hasLowPriority(task)) score = Math.max(1, score - 5);
   return Math.max(1, score);
 }
@@ -352,8 +343,7 @@ function c1_tierBoostedPenalty(task: Task): number {
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
-  else if (allL0Only && !task.isLight) tier = 4;
-  else if (task.isLight) tier = 5;
+  else if (allL0Only) tier = 4;
   else tier = 3;
 
   const { min } = countEligiblePerSlot(task);
@@ -381,8 +371,7 @@ function c2_tierContinuousBlend(task: Task): number {
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
-  else if (allL0Only && !task.isLight) tier = 4;
-  else if (task.isLight) tier = 5;
+  else if (allL0Only) tier = 4;
   else tier = 3;
 
   // Tier component: 0-50 scale
@@ -409,7 +398,6 @@ function c3_v0PenaltyBoosted(task: Task): number {
   score -= totalCerts * 3;
   score -= task.slots.length * 2;
   if (hasLowPriority(task)) score -= 25; // Aggressive Hamama boost
-  if (task.isLight) score += 20;
   return Math.max(1, score);
 }
 
@@ -430,8 +418,7 @@ function c4_tierDuration(task: Task): number {
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
-  else if (allL0Only && !task.isLight) tier = 4;
-  else if (task.isLight) tier = 5;
+  else if (allL0Only) tier = 4;
   else tier = 3;
 
   const { min } = countEligiblePerSlot(task);
@@ -449,9 +436,10 @@ function c4_tierDuration(task: Task): number {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * D1: Reverse light ordering — schedule light tasks FIRST.
- * Hypothesis: Light tasks are easy and don't block rest, so placing them first
- * frees up more complex scheduling decisions for later when more state is known.
+ * D1: Legacy "light-tasks-first" variant. The light-task flag has been
+ * removed from the model, so this variant no longer special-cases them —
+ * it now behaves identically to the baseline tiered priority. Kept for
+ * benchmark stability / historical comparison only.
  */
 function d1_lightFirst(task: Task): number {
   if (task.sameGroupRequired) return 0;
@@ -463,9 +451,7 @@ function d1_lightFirst(task: Task): number {
   const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
 
   let tier: number;
-  if (task.isLight)
-    tier = 1; // Light FIRST
-  else if (hasLowPriority(task) && hasCerts) tier = 2;
+  if (hasLowPriority(task) && hasCerts) tier = 2;
   else if (allL0Only && hasCerts) tier = 3;
   else if (hasCerts || hasExclusion) tier = 4;
   else if (allL0Only) tier = 5;
@@ -502,8 +488,7 @@ function d3_easyFirst(task: Task): number {
 
   // Reverse tier ordering
   let tier: number;
-  if (task.isLight) tier = 1;
-  else if (allL0Only && !hasCerts) tier = 2;
+  if (allL0Only && !hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
   else if (allL0Only && hasCerts) tier = 4;
   else if (hasLowPriority(task) && hasCerts) tier = 5;
@@ -523,7 +508,6 @@ function d3_easyFirst(task: Task): number {
 function d4_penaltyOnly(task: Task): number {
   if (task.sameGroupRequired) return 0;
   if (hasLowPriority(task)) return 5; // Hamama: top priority
-  if (task.isLight) return 40; // Light: low priority
   return 25; // Everything else: equal
 }
 
@@ -548,8 +532,7 @@ function e1_hamamaTier0(task: Task): number {
   let tier: number;
   if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
-  else if (allL0Only && !task.isLight) tier = 4;
-  else if (task.isLight) tier = 5;
+  else if (allL0Only) tier = 4;
   else tier = 3;
 
   const { min } = countEligiblePerSlot(task);
@@ -574,8 +557,7 @@ function e2_widerTierSpacing(task: Task): number {
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
-  else if (allL0Only && !task.isLight) tier = 4;
-  else if (task.isLight) tier = 5;
+  else if (allL0Only) tier = 4;
   else tier = 3;
 
   const { min } = countEligiblePerSlot(task);
@@ -600,9 +582,8 @@ function e3_arugaPromoted(task: Task): number {
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
-  else if (hasCerts || hasExclusion || (allL0Only && !task.isLight))
+  else if (hasCerts || hasExclusion || (allL0Only))
     tier = 3; // Aruga promoted
-  else if (task.isLight) tier = 5;
   else tier = 3;
 
   const { min } = countEligiblePerSlot(task);
@@ -627,8 +608,7 @@ function e4_geometricTiebreak(task: Task): number {
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
   else if (hasCerts || hasExclusion) tier = 3;
-  else if (allL0Only && !task.isLight) tier = 4;
-  else if (task.isLight) tier = 5;
+  else if (allL0Only) tier = 4;
   else tier = 3;
 
   const { avg, min } = countEligiblePerSlot(task);
@@ -655,8 +635,7 @@ function e5_mergedTier1(task: Task): number {
   // Merge: both preferJuniors+cert AND L0-only+cert go to tier 1
   if ((hasLowPriority(task) && hasCerts) || (allL0Only && hasCerts)) tier = 1;
   else if (hasCerts || hasExclusion) tier = 2;
-  else if (allL0Only && !task.isLight) tier = 3;
-  else if (task.isLight) tier = 4;
+  else if (allL0Only) tier = 3;
   else tier = 2;
 
   const { min } = countEligiblePerSlot(task);

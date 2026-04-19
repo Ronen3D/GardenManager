@@ -188,7 +188,6 @@ function renderTopBar(tasks: Task[], unfilled: number): string {
       <h2 class="task-panel-name" style="border-inline-start:4px solid ${color};padding-inline-start:10px">${escHtml(name)}</h2>
       <div class="task-panel-badges">
         ${taskBadge(first)}
-        ${first.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
         ${first.sameGroupRequired ? '<span class="badge badge-sm" style="background:#8e44ad">קבוצה אחידה</span>' : ''}
         ${first.blocksConsecutive ? '<span class="badge badge-sm" style="background:#c0392b">חוסמת רצף</span>' : ''}
       </div>
@@ -612,9 +611,6 @@ function renderConstraintsCard(firstTask: Task, schedule: Schedule): string {
   );
   items.push(
     `<div class="tp-meta-row"><span class="tp-meta-label">נדרשת אותה הקבוצה</span><span class="tp-meta-value">${firstTask.sameGroupRequired ? 'כן' : 'לא'}</span></div>`,
-  );
-  items.push(
-    `<div class="tp-meta-row"><span class="tp-meta-label">קלה (לא שוברת מנוחה)</span><span class="tp-meta-value">${firstTask.isLight ? 'כן' : 'לא'}</span></div>`,
   );
   if (firstTask.restRuleId) {
     const gapMs = schedule.restRuleSnapshot[firstTask.restRuleId];

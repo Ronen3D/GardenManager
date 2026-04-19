@@ -214,7 +214,7 @@ function colorForTemplate(tpl: TaskTemplate | undefined, idx: number): string {
 }
 
 function templateBaseWeight(tpl: TaskTemplate): number {
-  return tpl.isLight ? 0 : Math.max(0, Math.min(1, tpl.baseLoadWeight ?? 1));
+  return Math.max(0, Math.min(1, tpl.baseLoadWeight ?? 1));
 }
 
 function rateLabelFor(c: LoadFormulaComponent, tpl: TaskTemplate): string {

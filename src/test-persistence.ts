@@ -179,7 +179,7 @@ function makeTaskTemplateData(name: string, overrides?: Partial<Omit<TaskTemplat
     shiftsPerDay: 1,
     startHour: 6,
     sameGroupRequired: false,
-    isLight: false,
+    blocksConsecutive: true,
     slots: [makeSlotTemplate()],
     subTeams: [],
     ...overrides,
@@ -198,7 +198,7 @@ function makeOneTimeTaskData(
     startMinute: 0,
     durationHours: 8,
     sameGroupRequired: false,
-    isLight: false,
+    blocksConsecutive: true,
     slots: [makeSlotTemplate()],
     subTeams: [],
     ...overrides,
@@ -225,7 +225,6 @@ function makeSchedule(overrides?: Partial<Schedule>): Schedule {
             requiredCertifications: [],
           },
         ],
-        isLight: false,
         sameGroupRequired: false,
         blocksConsecutive: false,
       },
@@ -603,7 +602,6 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
           timeBlock: { start: taskStart, end: taskEnd },
           requiredCount: 1,
           slots: [{ slotId: 's1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-          isLight: false,
           sameGroupRequired: false,
           blocksConsecutive: true,
           baseLoadWeight: 0.8,
@@ -621,7 +619,6 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
           },
           requiredCount: 1,
           slots: [{ slotId: 's2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-          isLight: false,
           sameGroupRequired: false,
           blocksConsecutive: false,
         },
@@ -668,7 +665,6 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     // 6. Task properties
     const assignment = snap.participants[0].assignments[0];
     assert(assignment.blocksConsecutive === true, 'U5.6: blocksConsecutive propagated');
-    assert(assignment.isLight === false, 'U5.6: isLight propagated');
     assert(assignment.color === '#FF0000', 'U5.6: color propagated');
 
     // 7. Full export → parse round-trip

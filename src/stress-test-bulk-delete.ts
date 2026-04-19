@@ -82,7 +82,6 @@ for (let t = 0; t < 40; t++) {
       requiredCertifications: [],
       label: `Slot ${i}`,
     })),
-    isLight: false,
     sameGroupRequired: false,
     blocksConsecutive: true,
   });

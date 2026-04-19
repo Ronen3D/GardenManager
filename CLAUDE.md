@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Response Language
+
+**All assistant responses to the user MUST be in English**, even when the user writes in Hebrew. This is a hard rule — do not mirror the user's input language. The project UI is Hebrew and code strings / UI copy stay in Hebrew, but conversational responses, explanations, summaries, commit messages drafted for user review, and `AskUserQuestion` prompts/options are English only. Only switch to Hebrew if the user explicitly asks for a Hebrew response in the current turn.
+
 ## Project Overview
 
 Garden Manager is a constraint-based scheduling system for garden teams. It generates weekly schedules for participants, respecting hard constraints (eligibility, certification, availability) and optimizing soft constraints (rest fairness, workload balance). The UI is in Hebrew.

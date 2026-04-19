@@ -513,11 +513,10 @@ function generateTasksFromTemplates(): Task[] {
           timeBlock: block,
           requiredCount: slots.length,
           slots,
-          isLight: tpl.isLight,
           baseLoadWeight: tpl.baseLoadWeight,
           loadWindows: (tpl.loadWindows ?? []).map((w) => ({ ...w })),
           sameGroupRequired: tpl.sameGroupRequired,
-          blocksConsecutive: tpl.blocksConsecutive ?? !tpl.isLight,
+          blocksConsecutive: tpl.blocksConsecutive,
           schedulingPriority: tpl.schedulingPriority,
           togethernessRelevant: tpl.togethernessRelevant,
           restRuleId: tpl.restRuleId,
@@ -579,11 +578,10 @@ function generateTasksFromTemplates(): Task[] {
       timeBlock: { start, end },
       requiredCount: slots.length,
       slots,
-      isLight: ot.isLight,
       baseLoadWeight: ot.baseLoadWeight,
       loadWindows: (ot.loadWindows ?? []).map((w) => ({ ...w })),
       sameGroupRequired: ot.sameGroupRequired,
-      blocksConsecutive: ot.blocksConsecutive ?? !ot.isLight,
+      blocksConsecutive: ot.blocksConsecutive,
       schedulingPriority: ot.schedulingPriority,
       togethernessRelevant: ot.togethernessRelevant,
       restRuleId: ot.restRuleId,
@@ -771,7 +769,7 @@ function renderWeeklyDashboard(schedule: Schedule): string {
 function renderSidebarEntry(
   entry: {
     p: Participant;
-    w: { totalHours: number; effectiveHours: number; hotHours: number; coldHours: number; nonLightCount: number };
+    w: { totalHours: number; effectiveHours: number; hotHours: number; coldHours: number; loadBearingCount: number };
     pctOfPeriod: number;
     perDay: Map<number, number>;
   },
@@ -819,7 +817,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
 
   // Build all entries
   const allEntries = schedule.participants.map((p) => {
-    const w = workloads.get(p.id) || { totalHours: 0, effectiveHours: 0, hotHours: 0, coldHours: 0, nonLightCount: 0 };
+    const w = workloads.get(p.id) || { totalHours: 0, effectiveHours: 0, hotHours: 0, coldHours: 0, loadBearingCount: 0 };
     const pctOfPeriod = totalPeriodHours > 0 ? (w.effectiveHours / totalPeriodHours) * 100 : 0;
     const perDay = computePerDayHours(p.id, schedule, sidebarTaskMap);
     return { p, w, pctOfPeriod, perDay };
@@ -990,7 +988,6 @@ function renderScheduleTab(): string {
           ${!preflight.canGenerate ? 'title="תקן בעיות קריטיות בכללי המשימות תחילה"' : ''}>
           ${_isOptimizing ? '⏳ מייעל…' : currentSchedule ? '🔄 צור מחדש' : '⚡ צור שבצ"ק'}
         </button>
-        ${!currentSchedule && preflight.canGenerate && !_isOptimizing ? `<button class="btn-sm btn-outline" id="btn-create-manual" title="צור שבצ"ק ריק לבנייה ידנית">✏️ בנייה ידנית</button>` : ''}
       </span>
       <span class="toolbar-group toolbar-group--state">
         ${currentSchedule ? `<button class="btn-sm ${_manualBuildActive ? 'btn-primary' : 'btn-outline'}" id="btn-manual-build" title="${_manualBuildActive ? 'יציאה ממצב בנייה ידנית' : 'בנייה ידנית של שבצ"ק'}">${_manualBuildActive ? '✕ יציאה מבנייה ידנית' : '✏️ בנייה ידנית'}</button>` : ''}
@@ -1796,7 +1793,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
       html += `<tr class="${rowClass}" data-assignment-id="${a.id}">`;
       if (i === 0) {
         html += `<td rowspan="${taskAssignments.length}" class="task-cell task-tooltip-hover${taskIsFrozen ? ' task-cell-frozen' : ''}" data-task-id="${task.id}" style="border-inline-start:4px solid ${task.color || '#7f8c8d'}">
-          <strong>${task.name}</strong>${task.isLight ? ' <small>(קלה)</small>' : ''} ${crossDayTag}
+          <strong>${task.name}</strong> ${crossDayTag}
           ${taskIsFrozen ? '<span class="frozen-label">🧊 מוקפא</span>' : ''}</td>
           <td rowspan="${taskAssignments.length}">${taskBadge(task)}</td>
           <td rowspan="${taskAssignments.length}"><span dir="ltr">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</span></td>`;
@@ -1880,7 +1877,7 @@ function renderGanttChart(schedule: Schedule): string {
       // inside the surrounding RTL tooltip — otherwise "05:00 – 13:00" flips.
       const tooltip = `${block.taskName}&#10;\u2066${new Date(block.startMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} – ${new Date(block.endMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}\u2069${crossFrom ? '&#10;▶ המשך מהיום הקודם' : ''}${crossTo ? '&#10;◀ ממשיך ליום הבא' : ''}`;
       const shortName = block.taskName.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
-      html += `<div class="gantt-block task-tooltip-hover ${block.isLight ? 'gantt-light' : ''} ${crossClass}" data-task-id="${block.taskId}" style="left:${left}%;width:${width}%;background:${block.color}" title="${tooltip}">
+      html += `<div class="gantt-block task-tooltip-hover ${block.isZeroLoad ? 'gantt-zero-load' : ''} ${crossClass}" data-task-id="${block.taskId}" style="left:${left}%;width:${width}%;background:${block.color}" title="${tooltip}">
         <span class="gantt-block-text">${crossFrom ? '▶ ' : ''}${shortName}${crossTo ? ' ◀' : ''}</span></div>`;
     }
     html += `</div></div>`;
@@ -3249,7 +3246,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.7</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3801,8 +3798,6 @@ function wireScheduleEvents(container: HTMLElement): void {
   const genBtn = container.querySelector('#btn-generate');
   if (genBtn) genBtn.addEventListener('click', doGenerate);
 
-  const createManualBtn = container.querySelector('#btn-create-manual');
-  if (createManualBtn) createManualBtn.addEventListener('click', doCreateManualSchedule);
   const createManualEmptyBtn = container.querySelector('#btn-create-manual-empty');
   if (createManualEmptyBtn) createManualEmptyBtn.addEventListener('click', doCreateManualSchedule);
 
@@ -4867,7 +4862,6 @@ function init(): void {
             subTeams: spec.subTeams,
             slots: spec.slots,
             sameGroupRequired: spec.sameGroupRequired,
-            isLight: spec.isLight,
             blocksConsecutive: spec.blocksConsecutive,
             baseLoadWeight: spec.baseLoadWeight,
             loadWindows: spec.loadWindows,

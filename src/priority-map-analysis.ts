@@ -106,7 +106,6 @@ function v0_current(task: Task): number {
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
   score -= task.slots.length * 2;
-  if (task.isLight) score += 20;
   return Math.max(1, score);
 }
 
@@ -115,7 +114,6 @@ function v5_candidatePool(task: Task): number {
   if (task.sameGroupRequired) return 0;
   const { avg } = countEligiblePerSlot(task);
   const score = Math.min(50, avg * 2);
-  if (task.isLight) return Math.max(1, score + 20);
   return Math.max(1, score);
 }
 
@@ -128,7 +126,6 @@ function v6_hybrid(task: Task): number {
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   structural -= totalCerts * 3;
   structural -= task.slots.length * 2;
-  if (task.isLight) structural += 20;
   const { avg } = countEligiblePerSlot(task);
   const candidateScore = Math.min(50, avg * 2);
   const blended = 0.6 * structural + 0.4 * candidateScore;
@@ -140,7 +137,6 @@ function v8_bottleneck(task: Task): number {
   if (task.sameGroupRequired) return 0;
   const { min } = countEligiblePerSlot(task);
   const score = Math.min(50, min * 3);
-  if (task.isLight) return Math.max(1, score + 20);
   return Math.max(1, score);
 }
 
@@ -174,7 +170,6 @@ function vA_bottleneckHybrid(task: Task): number {
 
   // Blend 50/50
   let score = 0.5 * structural + 0.5 * bottleneckScore;
-  if (task.isLight) score += 10;
   return Math.max(1, score);
 }
 
@@ -204,7 +199,6 @@ function vB_penaltyAware(task: Task): number {
   const { min } = countEligiblePerSlot(task);
   if (min <= 5) score -= (6 - min) * 2;
 
-  if (task.isLight) score += 20;
   return Math.max(1, score);
 }
 
@@ -228,7 +222,6 @@ function vC_scarcityRatio(task: Task): number {
   // Invert: higher ratio (scarcer) → lower score → scheduled first
   // Scale to 1-50 range
   const score = Math.max(1, 50 - ratio * 15);
-  if (task.isLight) return Math.max(1, score + 15);
   return Math.max(1, score);
 }
 
@@ -259,7 +252,6 @@ function vD_durationPool(task: Task): number {
   // Normalize to ~1-50 range (empirically calibrated for this task set)
   const score = Math.max(1, 50 - difficulty * 5);
 
-  if (task.isLight) return Math.max(1, score + 15);
   if (hasLowPriority(task)) return Math.max(1, score - 5);
   return Math.max(1, score);
 }
@@ -299,7 +291,6 @@ function vE_multiSignal(task: Task): number {
   // Weighted blend
   let score = 0.3 * (structural + penaltyRisk) + 0.3 * bottleneck + 0.2 * penaltyRisk + 0.2 * pool;
 
-  if (task.isLight) score += 12;
   return Math.max(1, score);
 }
 
@@ -311,9 +302,9 @@ function vE_multiSignal(task: Task): number {
  * Tier 0: sameGroupRequired (Adanit) — always first
  * Tier 1: preferJuniors + cert required (Hamama) — penalty-critical
  * Tier 2: L0-only + cert required (Shemesh) — very tight pool
- * Tier 3: Mixed levels + cert or exclusion (Karov, Mamtera) — moderate
+ * Tier 3: Mixed levels + cert or exclusion (Karov, Mamtera, Karovit) — moderate
  * Tier 4: L0-only, no cert (Aruga) — moderate pool
- * Tier 5: Light tasks (Karovit) — always last among non-group
+ *         (fallback also lands at tier 3)
  *
  * Rationale: Discrete tiers encode domain knowledge about which constraint
  * types are genuinely hardest, then pool size resolves within-tier order.
@@ -334,10 +325,8 @@ function vF_tieredPool(task: Task): number {
     tier = 2; // Shemesh
   else if (hasCerts || hasExclusion)
     tier = 3; // Karov, Mamtera
-  else if (allL0Only && !task.isLight)
+  else if (allL0Only)
     tier = 4; // Aruga
-  else if (task.isLight)
-    tier = 5; // Karovit
   else tier = 3; // Fallback
 
   // Within-tier ordering by min eligible (tighter pool → first)

@@ -74,7 +74,6 @@ function v0_current(task: Task): number {
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
   score -= task.slots.length * 2;
-  if (task.isLight) score += 20;
   return Math.max(1, score);
 }
 
@@ -91,7 +90,6 @@ function v1_strongerLevelWeight(task: Task): number {
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
   score -= task.slots.length * 2;
-  if (task.isLight) score += 20;
   return Math.max(1, score);
 }
 
@@ -107,7 +105,6 @@ function v2_strongerCertWeight(task: Task): number {
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 6; // ← 6 instead of 3
   score -= task.slots.length * 2;
-  if (task.isLight) score += 20;
   return Math.max(1, score);
 }
 
@@ -123,13 +120,14 @@ function v3_strongerSlotWeight(task: Task): number {
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   score -= totalCerts * 3;
   score -= task.slots.length * 4; // ← 4 instead of 2
-  if (task.isLight) score += 20;
   return Math.max(1, score);
 }
 
 /**
- * V4: No light bonus (remove the +20 for light tasks)
- * Hypothesis: Light tasks should compete on structural difficulty alone.
+ * V4: Variant originally defined without the +20 bonus for light tasks.
+ * The light-task flag has been removed from the model, so this variant
+ * no longer differs from the light-bonus variants — kept for historical
+ * benchmark comparison.
  */
 function v4_noLightBonus(task: Task): number {
   if (task.sameGroupRequired) return 0;
@@ -170,7 +168,6 @@ function v5_candidatePoolBased(task: Task): number {
   // Invert: fewer candidates → lower priority score → scheduled first
   // Scale to roughly match the 0-50 range of the structural approach
   const score = Math.min(50, avgEligible * 2);
-  if (task.isLight) return Math.max(1, score + 20);
   return Math.max(1, score);
 }
 
@@ -188,7 +185,6 @@ function v6_hybrid(task: Task): number {
   const totalCerts = task.slots.reduce((s, sl) => s + sl.requiredCertifications.length, 0);
   structural -= totalCerts * 3;
   structural -= task.slots.length * 2;
-  if (task.isLight) structural += 20;
 
   // Candidate pool component
   let totalEligible = 0;
@@ -224,7 +220,6 @@ function v7_durationAware(task: Task): number {
   // Duration penalty: longer tasks block more time
   const durationHrs = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3_600_000;
   score -= Math.max(0, (durationHrs - 4) * 1.5); // penalty kicks in above 4h
-  if (task.isLight) score += 20;
   return Math.max(1, score);
 }
 
@@ -251,7 +246,6 @@ function v8_minSlotBottleneck(task: Task): number {
 
   // Fewer candidates in bottleneck slot → lower score → first
   const score = Math.min(50, minEligible * 3);
-  if (task.isLight) return Math.max(1, score + 20);
   return Math.max(1, score);
 }
 
@@ -291,7 +285,6 @@ function v9_optimizedBlend(task: Task): number {
     score -= Math.max(0, 6 - minEligible) * 2; // penalty if <6 eligible for bottleneck slot
   }
   // Reduced light bonus (+10 instead of +20)
-  if (task.isLight) score += 10;
   return Math.max(1, score);
 }
 

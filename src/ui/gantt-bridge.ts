@@ -14,6 +14,7 @@ import {
   type Task,
 } from '../models/types';
 import { describeSlot } from '../utils/date-utils';
+import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
 import { blockDurationMinutes, getTimelineBounds } from '../web/utils/time-utils';
 
 const STATUS_OPACITY: Record<AssignmentStatus, number> = {
@@ -80,7 +81,7 @@ export function scheduleToGantt(schedule: Schedule): GanttData {
       endMs: task.timeBlock.end.getTime(),
       durationMs: task.timeBlock.end.getTime() - task.timeBlock.start.getTime(),
       status: a.status,
-      isLight: task.isLight,
+      isZeroLoad: computeTaskEffectiveHours(task) === 0,
       color: getBlockColor(task.color || '#95A5A6', a.status),
     };
 
@@ -168,7 +169,7 @@ export function ganttToAscii(data: GanttData, widthChars: number = 120): string 
       const startChar = Math.floor((block.startMs - data.timelineStartMs) / msPerChar);
       const endChar = Math.floor((block.endMs - data.timelineStartMs) / msPerChar);
 
-      const symbol = block.isLight ? '░' : (block.taskName?.[0] || '?').toUpperCase();
+      const symbol = (block.taskName?.[0] || '?').toUpperCase();
       for (let c = Math.max(0, startChar); c < Math.min(chartWidth, endChar); c++) {
         chart[c] = symbol;
       }
@@ -182,11 +183,11 @@ export function ganttToAscii(data: GanttData, widthChars: number = 120): string 
   const taskNames = new Set<string>();
   for (const row of data.rows) {
     for (const block of row.blocks) {
-      if (!block.isLight) taskNames.add(block.taskName);
+      taskNames.add(block.taskName);
     }
   }
   const legend = [...taskNames].map((name) => `${(name[0] || '?').toUpperCase()}=${name}`).join('  ');
-  lines.push(`Legend: ${legend}  ░=Light  ·=Free`);
+  lines.push(`Legend: ${legend}  ·=Free`);
 
   return lines.join('\n');
 }
@@ -220,7 +221,7 @@ export function buildTaskSummary(schedule: Schedule): string {
     const end = task.timeBlock.end.toISOString().slice(11, 16);
 
     lines.push(
-      `║ ${task.name.padEnd(20)} ${start}-${end}  [${task.sourceName || task.name}]${task.isLight ? ' (Light)' : ''}`.padEnd(
+      `║ ${task.name.padEnd(20)} ${start}-${end}  [${task.sourceName || task.name}]`.padEnd(
         63,
       ) + '║',
     );

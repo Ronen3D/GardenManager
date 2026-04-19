@@ -111,8 +111,6 @@ export function buildParticipantTooltipContent(
     effectiveHeavyHours: 0,
     hotHours: 0,
     coldHours: 0,
-    lightHours: 0,
-    lightCount: 0,
     sourceHours: {} as Record<string, number>,
     sourceEffectiveHours: {} as Record<string, number>,
     sourceCounts: {} as Record<string, number>,
@@ -456,7 +454,6 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
     <div class="ttt-header">
       <span class="ttt-task-name" style="border-inline-start:3px solid ${taskColor};padding-inline-start:8px">${task.name}</span>
       <span class="badge badge-sm" style="background:${taskColor}">${task.sourceName || task.name}</span>
-      ${task.isLight ? '<span class="badge badge-sm" style="background:#7f8c8d">קלה</span>' : ''}
     </div>
     <div class="ttt-time">
       <span dir="ltr">${startStr} – ${endStr}</span>

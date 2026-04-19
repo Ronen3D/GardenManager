@@ -129,7 +129,6 @@ function taskToContinuityAssignment(task: Task): ContinuityAssignment {
     blocksConsecutive: task.blocksConsecutive,
     restRuleId: task.restRuleId,
     restRuleDurationHours: task.restRuleId ? _restRuleHoursLookup.get(task.restRuleId) : undefined,
-    isLight: task.isLight,
     baseLoadWeight: task.baseLoadWeight,
     loadWindows: loadWindows?.length ? loadWindows : undefined,
     color: task.color,

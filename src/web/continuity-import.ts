@@ -151,9 +151,5 @@ function validateAssignmentEntry(a: unknown, participantName: string, index: num
   if (obj.restRuleId !== undefined && typeof obj.restRuleId !== 'string') {
     return `${participantName}, שיבוץ #${index + 1}: שדה "restRuleId" לא תקין.`;
   }
-  if (typeof obj.isLight !== 'boolean') {
-    return `${participantName}, שיבוץ #${index + 1}: שדה "isLight" חסר.`;
-  }
-
   return null;
 }

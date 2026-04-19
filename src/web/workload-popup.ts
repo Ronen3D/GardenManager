@@ -49,7 +49,7 @@ interface PopupContext {
   participant: Participant;
   effectiveHours: number;
   pctOfPeriod: number;
-  nonLightCount: number;
+  loadBearingCount: number;
   perDay: Map<number, number>;
   numDays: number;
   scheduleStart: Date;
@@ -127,7 +127,7 @@ function buildPopupHtml(ctx: PopupContext): string {
         <span class="wp-big">${ctx.effectiveHours.toFixed(1)}</span>
         <span class="wp-unit">שעות עומס</span>
       </div>
-      <div class="wp-primary-sub">${ctx.pctOfPeriod.toFixed(1)}% מסך התקופה · ${ctx.nonLightCount} משימות כבדות</div>
+      <div class="wp-primary-sub">${ctx.pctOfPeriod.toFixed(1)}% מסך התקופה · ${ctx.loadBearingCount} משימות נושאות עומס</div>
     </div>
     <div class="wp-section-label">פיזור יומי</div>
     <div class="wp-sparkline">${sparkHtml}</div>
@@ -157,7 +157,7 @@ export function openWorkloadPopup(
     effectiveHours: 0,
     hotHours: 0,
     coldHours: 0,
-    nonLightCount: 0,
+    loadBearingCount: 0,
   };
   const taskMap = new Map<string, Task>(schedule.tasks.map((t) => [t.id, t]));
   const perDay = computePerDayHours(participantId, schedule, taskMap);
@@ -169,7 +169,7 @@ export function openWorkloadPopup(
     participant,
     effectiveHours: w.effectiveHours,
     pctOfPeriod,
-    nonLightCount: w.nonLightCount,
+    loadBearingCount: w.loadBearingCount,
     perDay,
     numDays,
     scheduleStart: schedule.periodStart,

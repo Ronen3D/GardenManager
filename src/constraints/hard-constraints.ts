@@ -209,7 +209,7 @@ export function checkForbiddenCertifications(
 
 /**
  * HC-5: No double-booking — a participant cannot be physically present in two
- * places at once. This applies to ALL tasks including light/Karovit.
+ * places at once. This applies to ALL tasks regardless of load weight.
  * Physical presence is a strictly exclusive constraint.
  */
 export function checkNoDoubleBooking(
@@ -222,7 +222,7 @@ export function checkNoDoubleBooking(
   const displayName = participantName ?? participantId;
   const participantAssignments = assignments.filter((a) => a.participantId === participantId);
 
-  // Check ALL assignments for physical overlap (including light tasks)
+  // Check ALL assignments for physical overlap (including zero-load tasks)
   const allWithTasks = participantAssignments.filter((a) => taskMap.has(a.taskId));
 
   if (allWithTasks.length < 2) return violations;
