@@ -72,7 +72,7 @@ export function renderProfileView(ctx: ProfileContext): string {
   // Right column: Unavailability + Metrics
   html += '<div class="profile-right">';
   html += renderMetrics(p, myTasks, numDays);
-  html += renderUnavailabilitySection(p, schedule, ctx.showSosButtons ?? false);
+  html += renderUnavailabilitySection(p, schedule, ctx.showSosButtons ?? false, numDays);
   html += '</div>';
 
   html += '</div>';
@@ -231,7 +231,12 @@ function renderPersonalAgenda(
 
 // ─── Unavailability Section ──────────────────────────────────────────────────
 
-function renderUnavailabilitySection(p: Participant, schedule: Schedule, showSosButtons: boolean): string {
+function renderUnavailabilitySection(
+  p: Participant,
+  schedule: Schedule,
+  showSosButtons: boolean,
+  numDays: number,
+): string {
   const dateRules = store.getDateUnavailabilities(p.id);
   const fsos = (schedule.scheduleUnavailability ?? []).filter((u) => u.participantId === p.id);
 
@@ -281,7 +286,8 @@ function renderUnavailabilitySection(p: Participant, schedule: Schedule, showSos
   }
 
   if (dateRules.length === 0 && fsos.length === 0) {
-    html += '<p class="text-muted profile-empty-note">לא הוגדרו מגבלות זמינות. המשתתף זמין בכל שעות היממה.</p>';
+    const scopeLabel = numDays <= 1 ? 'לכל אורך היום' : 'לכל אורך השבצ"ק';
+    html += `<p class="text-muted profile-empty-note">לא הוגדרו מגבלות זמינות. המשתתף זמין ${scopeLabel}.</p>`;
   }
 
   html += '</div>';
@@ -298,7 +304,7 @@ function renderMetrics(
   const totalPeriodHours = numDays * 24;
 
   // Shared breakdown utility (R1)
-  const { effectiveHeavyHours, lightHours, sourceHours, sourceEffectiveHours, sourceCounts, sourceColors } =
+  const { effectiveHeavyHours, lightHours, sourceHours, sourceCounts, sourceColors } =
     computeTaskBreakdown(myTasks);
 
   const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
@@ -325,17 +331,17 @@ function renderMetrics(
     <div class="metrics-breakdown">`;
 
   // Bar chart for each task source
-  const maxHours = Math.max(...Object.values(sourceEffectiveHours), 1);
+  const maxHours = Math.max(...Object.values(sourceHours), 1);
   for (const key of Object.keys(sourceCounts)) {
     if (sourceCounts[key] === 0) continue;
     const color = sourceColors[key] || '#7f8c8d';
-    const barPct = (sourceEffectiveHours[key] / maxHours) * 100;
+    const barPct = (sourceHours[key] / maxHours) * 100;
     html += `<div class="breakdown-row">
       <span class="breakdown-label"><span class="badge" style="background:${color}">${key}</span></span>
       <div class="breakdown-bar-bg">
         <div class="breakdown-bar-fill" style="width:${barPct}%;background:${color}"></div>
       </div>
-      <span class="breakdown-value">${sourceCounts[key]}× · ${sourceEffectiveHours[key].toFixed(1)} שעות אפקטיביות (${sourceHours[key].toFixed(1)} שעות גולמיות)</span>
+      <span class="breakdown-value">${sourceCounts[key]}× · ${sourceHours[key].toFixed(1)} שעות גולמיות</span>
     </div>`;
   }
 

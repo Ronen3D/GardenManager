@@ -130,8 +130,6 @@ export function buildParticipantTooltipContent(
   const {
     heavyHours,
     effectiveHeavyHours,
-    heavyCount,
-    lightCount,
     sourceHours,
     sourceEffectiveHours,
     sourceCounts,
@@ -187,8 +185,6 @@ export function buildParticipantTooltipContent(
     <div class="tt-divider"></div>
     ${breakdownRows}
     <div class="tt-divider"></div>
-    <div class="tt-row"><span class="tt-label">משימות כבדות</span><span class="tt-value">${heavyCount}</span></div>
-    <div class="tt-row"><span class="tt-label">משימות קלות</span><span class="tt-value">${lightCount}</span></div>
     <div class="tt-row"><span class="tt-label">סה"כ שעות</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)} שע' אפקטיביות</span></div>
     <div class="tt-row"><span class="tt-label">% עומס</span><span class="tt-value">${pctOfPeriod.toFixed(1)}% מתוך ${totalPeriodHours} שע'</span></div>
     ${isTouchDevice ? `<div class="tt-divider"></div><div class="tt-row"><button class="btn-sm btn-outline" data-action="goto-profile" data-pid="${p.id}" style="width:100%">📋 צפה בפרופיל</button></div>` : ''}
