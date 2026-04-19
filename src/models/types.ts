@@ -187,6 +187,12 @@ export interface Task {
   displayCategory?: string;
   /** Display color propagated from template (hex, e.g. '#4A90D9'). */
   color?: string;
+  /**
+   * True for tasks injected post-generation (BALTAM) — not backed by a live
+   * template or OneTimeTask. Snapshot-only unless the user also saved it to
+   * the store. Excluded from orphan detection.
+   */
+  injectedPostGeneration?: boolean;
 }
 
 // ─── Assignment ──────────────────────────────────────────────────────────────

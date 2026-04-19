@@ -49,6 +49,7 @@ import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
 import { runPreflight } from './preflight';
 import { showRangePicker } from './range-picker-modal';
+import { closeInjectTaskModal, initInjectTaskModal, openInjectTaskModal } from './inject-task-modal';
 import { closeRescueModal, initRescue, openRescueModal, type RescueSwapLabel } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice } from './responsive';
 import { renderScheduleGrid } from './schedule-grid-view';
@@ -208,7 +209,9 @@ function scheduleHasOrphans(sched: Schedule): boolean {
   const liveSources = new Set<string>();
   for (const t of store.getAllTaskTemplates()) liveSources.add(t.name);
   for (const ot of store.getAllOneTimeTasks()) liveSources.add(ot.name);
-  return sched.tasks.some((t) => t.sourceName !== undefined && !liveSources.has(t.sourceName));
+  return sched.tasks.some(
+    (t) => t.sourceName !== undefined && !t.injectedPostGeneration && !liveSources.has(t.sourceName),
+  );
 }
 /** State for inline snapshot forms */
 let _snapshotFormMode: 'none' | 'save-as' | 'rename' = 'none';
@@ -992,6 +995,7 @@ function renderScheduleTab(): string {
         ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="חיבור לשבצ"ק קודם — ייבוא נתוני המשכיות">📋 חיבור לשבצ"ק קודם</button>` : ''}
       </span>
       <span class="toolbar-group toolbar-group--day-actions">
+        ${currentSchedule ? `<button class="btn-sm btn-outline btn-inject-task" id="btn-inject-task" title="הוספת משימת חירום לתמונת המצב הנוכחית" ${_isOptimizing ? 'disabled' : ''}>🚨 הוסף משימת חירום</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא">📤 ייצוא</button>` : ''}
@@ -1660,6 +1664,7 @@ function loadScheduleSnapshot(snapshotId: string): void {
   // 5. Re-validate
   engine.revalidateFull();
   closeRescueModal();
+  closeInjectTaskModal();
   currentSchedule = engine.getSchedule()!;
   currentDay = 1;
   _snapshotDirty = false;
@@ -2076,6 +2081,7 @@ async function doGenerate(): Promise<void> {
 
     // ── Atomic commit: update state in one go, then render once ──
     closeRescueModal();
+    closeInjectTaskModal();
     currentSchedule = schedule;
     scheduleElapsed = Math.round(performance.now() - t0);
     scheduleActualAttempts = schedule.actualAttempts ?? OPTIM_ATTEMPTS;
@@ -2205,6 +2211,7 @@ function doCreateManualSchedule(): void {
   engine.importSchedule(emptySchedule);
   engine.revalidateFull();
   closeRescueModal();
+  closeInjectTaskModal();
   currentSchedule = engine.getSchedule()!;
 
   currentDay = 1;
@@ -3206,7 +3213,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.4</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3824,6 +3831,15 @@ function wireScheduleEvents(container: HTMLElement): void {
       }
     });
     wireParticipantTooltip(availStrip, () => currentSchedule);
+  }
+
+  // ── BALTAM: Inject emergency task into current snapshot ──
+  const injectBtn = container.querySelector('#btn-inject-task');
+  if (injectBtn && currentSchedule) {
+    injectBtn.addEventListener('click', () => {
+      if (!currentSchedule || _isOptimizing) return;
+      openInjectTaskModal();
+    });
   }
 
   // ── Continuity: Export day JSON ──
@@ -4777,6 +4793,74 @@ function init(): void {
     document.addEventListener('gm:open-task-panel', (e: Event) => {
       const detail = (e as CustomEvent<{ sourceName?: string }>).detail;
       if (detail?.sourceName) navigateToTaskPanel(detail.sourceName);
+    });
+
+    // Initialize BALTAM injection modal callbacks
+    initInjectTaskModal({
+      getSchedule: () => currentSchedule,
+      getEngine: () => engine,
+      onCommit: (updatedSchedule, report, saveToStore, spec) => {
+        // Push undo snapshot BEFORE committing — includes the injected task so
+        // a single undo reverts the injection cleanly.
+        if (currentSchedule) {
+          _scheduleUndoStack.push({
+            schedule: structuredClone(currentSchedule),
+            dirty: _scheduleDirty,
+          });
+          if (_scheduleUndoStack.length > 80) _scheduleUndoStack.shift();
+          _scheduleRedoStack.length = 0;
+          store.pushUndoCheckpoint();
+        }
+
+        // Optionally persist to the live store so future regenerations
+        // include this task. We intentionally do NOT mark _scheduleDirty —
+        // the injected task in the snapshot already has sourceName matching
+        // the new OT, and scheduleHasOrphans() ignores injectedPostGeneration.
+        if (saveToStore) {
+          const day = new Date(
+            updatedSchedule.periodStart.getFullYear(),
+            updatedSchedule.periodStart.getMonth(),
+            updatedSchedule.periodStart.getDate() + (spec.dayIndex - 1),
+          );
+          store.addOneTimeTask({
+            name: spec.name,
+            scheduledDate: day,
+            startHour: spec.startHour,
+            startMinute: spec.startMinute,
+            durationHours: spec.durationHours,
+            subTeams: spec.subTeams,
+            slots: spec.slots,
+            sameGroupRequired: spec.sameGroupRequired,
+            isLight: spec.isLight,
+            blocksConsecutive: spec.blocksConsecutive,
+            baseLoadWeight: spec.baseLoadWeight,
+            loadWindows: spec.loadWindows,
+            schedulingPriority: spec.schedulingPriority,
+            togethernessRelevant: spec.togethernessRelevant,
+            restRuleId: spec.restRuleId,
+            displayCategory: spec.displayCategory,
+            color: spec.color,
+            description: spec.description,
+          });
+        }
+
+        // Commit: revalidateFull, persist schedule, re-render. onStoreChanged
+        // would have set _scheduleDirty=true if we added an OT — but the
+        // injected task in the snapshot covers it, so clear it back.
+        const dirtyBefore = _scheduleDirty;
+        currentSchedule = updatedSchedule;
+        revalidateAndRefresh();
+        _scheduleDirty = dirtyBefore;
+
+        showToast(`משימת חירום "${spec.name}" נוספה לשבצ״ק${saveToStore ? ' ונשמרה במסך המשימות' : ''}.`, {
+          type: 'success',
+          duration: 5000,
+          action: {
+            label: 'בטל',
+            callback: () => doUndoRedo('undo'),
+          },
+        });
+      },
     });
 
     // Initialize rescue modal callbacks

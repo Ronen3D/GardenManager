@@ -185,8 +185,13 @@ export function buildParticipantTooltipContent(
     <div class="tt-divider"></div>
     ${breakdownRows}
     <div class="tt-divider"></div>
-    <div class="tt-row"><span class="tt-label">סה"כ שעות</span><span class="tt-value tt-bold">${effectiveHeavyHours.toFixed(1)} שע' אפקטיביות</span></div>
-    <div class="tt-row"><span class="tt-label">% עומס</span><span class="tt-value">${pctOfPeriod.toFixed(1)}% מתוך ${totalPeriodHours} שע'</span></div>
+    <div class="tt-kpi" title="סה&quot;כ שעות אפקטיביות · ${pctOfPeriod.toFixed(1)}% מתוך ${totalPeriodHours} שע'">
+      <div class="tt-kpi-main">
+        <span class="tt-kpi-number">${effectiveHeavyHours.toFixed(1)}</span>
+        <span class="tt-kpi-unit">שעות עומס</span>
+      </div>
+      <span class="tt-kpi-pct tt-kpi-pct-${pctOfPeriod > 25 ? 'danger' : pctOfPeriod > 18 ? 'warning' : 'ok'}">${pctOfPeriod.toFixed(1)}%</span>
+    </div>
     ${isTouchDevice ? `<div class="tt-divider"></div><div class="tt-row"><button class="btn-sm btn-outline" data-action="goto-profile" data-pid="${p.id}" style="width:100%">📋 צפה בפרופיל</button></div>` : ''}
   `;
 }
@@ -261,7 +266,6 @@ export function wireParticipantTooltip(container: HTMLElement, getSchedule: () =
 
       const content = buildParticipantTooltipContent(p, getSchedule(), slotCtx);
       const handle = showBottomSheet(content, {
-        title: p.name,
         onClose: () => {},
       });
 
