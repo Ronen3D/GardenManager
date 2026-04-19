@@ -1868,6 +1868,10 @@
     text-overflow: ellipsis;
   }
 
+  .te-mobile-bottom-bar .te-bottom-bar-save {
+    flex: 2;
+  }
+
   .te-mobile-bulk-bar .te-bulk-count {
     font-size: 0.85rem;
     font-weight: 600;

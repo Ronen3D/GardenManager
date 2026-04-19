@@ -146,7 +146,7 @@ function showRescueModal(): void {
       </div>
       <div class="rescue-context">
         <p>משבצת שהתפנתה על ידי <strong>${vacatedP?.name || '???'}</strong> ב-
-        <strong>${stripDayPrefix(task?.name || '???')}</strong></p>
+        <strong>${taskLabel(task ?? undefined, '???')}</strong></p>
       </div>
       <div class="rescue-plans">`;
 
@@ -196,12 +196,14 @@ function showRescueModal(): void {
         ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${fromP.name}</span>`
         : '';
 
+      const swTask = taskMap.get(sw.taskId);
+      const swLabel = taskLabel(swTask, sw.taskName);
       if (plan.swaps.length === 1) {
         // Direct swap: natural sentence
-        stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${stripDayPrefix(sw.taskName)}</strong> (${sw.slotLabel})</li>`;
+        stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${swLabel}</strong></li>`;
       } else {
         // Chain swap: arrow style
-        stepsHtml += `<li>${assignedSpan} ← <strong>${stripDayPrefix(sw.taskName)}</strong> (${sw.slotLabel})${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
+        stepsHtml += `<li>${assignedSpan} ← <strong>${swLabel}</strong>${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
       }
     }
     stepsHtml += `</ol>`;
@@ -250,9 +252,16 @@ function showRescueModal(): void {
   wireRescueModalEvents();
 }
 
-/** Strip D-prefix (e.g. "D1 ממטרה" → "ממטרה") from task names in the rescue modal. */
-function stripDayPrefix(name: string): string {
-  return name.replace(/^D\d+\s+/, '');
+/** Strip D-prefix ("D1 שמש") and shift suffix ("שמש משמרת 3" → "שמש"). Time range disambiguates shifts. */
+function cleanTaskName(name: string): string {
+  return name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
+}
+
+/** Task label for swap steps: cleaned name + time range, e.g. "שמש 13:00–17:00". */
+function taskLabel(task: Task | undefined, fallbackName: string): string {
+  const name = cleanTaskName(task?.name ?? fallbackName);
+  if (!task) return name;
+  return `${name} <span dir="ltr">${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}</span>`;
 }
 
 function getRescueTooltipEl(): HTMLElement {
@@ -363,7 +372,7 @@ function buildRescueParticipantTooltip(
       const timeStr = `<span dir="ltr">${fmt(t.start)} – ${fmt(t.end)}</span>`;
       const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
       const refMarker = t.isReference ? ' ◄' : '';
-      html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${stripDayPrefix(t.taskName)}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
+      html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${cleanTaskName(t.taskName)}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
     }
   }
   return html;

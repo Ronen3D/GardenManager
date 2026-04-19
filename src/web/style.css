@@ -7205,7 +7205,7 @@ tr.now-row-animate > td.time-cell {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1100;
+  z-index: 1250;
   animation: gmModalFadeIn 0.2s ease;
 }
 
@@ -8249,7 +8249,7 @@ tr.now-row-animate > td.time-cell {
 
 /* Sub-confirmation for soft-violation apply */
 .fsos-subconfirm-backdrop {
-  z-index: 1200;
+  z-index: 1260;
 }
 .fsos-subconfirm-dialog {
   max-width: 480px;

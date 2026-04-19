@@ -567,10 +567,10 @@ function renderMobileCompactList(
     </div>`;
   } else {
     html += `<div class="te-mobile-bottom-bar">
-      <button class="btn-sm btn-outline" data-te-action="quick-add">+ הוספה מהירה</button>
+      <button class="btn-sm btn-outline" data-te-action="quick-add">+ מהיר</button>
       <button class="btn-sm btn-outline" data-te-action="add-row">+ שורה</button>
       <button class="btn-sm btn-outline" data-te-action="cancel">ביטול</button>
-      <button class="btn-primary btn-sm${hasValidationErrors() ? ' btn-disabled' : ''}" data-te-action="save"${hasValidationErrors() ? ' disabled' : ''}>שמירה${getChangeSummary().total > 0 ? ` · ${getChangeSummary().total}` : ''}</button>
+      <button class="btn-primary btn-sm te-bottom-bar-save${hasValidationErrors() ? ' btn-disabled' : ''}" data-te-action="save"${hasValidationErrors() ? ' disabled' : ''}>שמירה${getChangeSummary().total > 0 ? ` · ${getChangeSummary().total}` : ''}</button>
     </div>`;
   }
   return html;
@@ -1083,6 +1083,7 @@ async function handleQuickAdd(rerender: () => void): Promise<void> {
     <div class="te-qa-field">
       <label class="te-compact-label">קבוצה</label>
       <select class="input-sm te-input te-qa-group">
+        ${groups.length === 0 ? '<option value="" disabled selected>בחר קבוצה…</option>' : ''}
         ${groups.map((g) => `<option value="${escAttr(g)}">${escHtml(g)}</option>`).join('')}
         <option value="__new__">+ קבוצה חדשה…</option>
       </select>

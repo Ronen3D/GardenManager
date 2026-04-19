@@ -451,7 +451,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
           </label>
           <label class="tprop-field">
             <span class="tprop-field-label">שעת התחלה</span>
-            <input class="input-sm" type="number" min="0" max="23" data-tpl-field="startHour" value="${tpl.startHour}" data-tid="${tpl.id}" />
+            <input class="input-sm" type="time" step="3600" data-tpl-field="startHour" value="${String(tpl.startHour).padStart(2, '0')}:00" data-tid="${tpl.id}" />
           </label>
           <label class="tprop-field tprop-field-load">
             <span class="tprop-field-label">רמת עומס (0-1)</span>
@@ -940,7 +940,7 @@ function renderAddTemplateForm(): string {
       <label>שם: <input class="input-sm" type="text" data-field="tpl-name" placeholder="שם משימה" /></label>
       <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
       <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
-      <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" value="6" data-field="tpl-start" /></label>
+      <label>שעת התחלה: <input class="input-sm" type="time" step="3600" value="06:00" data-field="tpl-start" /></label>
       <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="${baseLoadValue}" data-field="tpl-base-load" /><span class="lf-controls">${calcBtn}</span></label>
     </div>
     <div class="form-row">
