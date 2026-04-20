@@ -35,7 +35,7 @@ import type {
   Task,
 } from '../models/types';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
-import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
+import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import { sortDonorsByProximity, sortParticipantsByLoadProximity } from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { isEligible } from './validator';

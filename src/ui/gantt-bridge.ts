@@ -14,8 +14,8 @@ import {
   type Task,
 } from '../models/types';
 import { describeSlot } from '../utils/date-utils';
-import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
-import { blockDurationMinutes, getTimelineBounds } from '../web/utils/time-utils';
+import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import { blockDurationMinutes, getTimelineBounds } from '../shared/utils/time-utils';
 
 const STATUS_OPACITY: Record<AssignmentStatus, number> = {
   [AssignmentStatus.Scheduled]: 1.0,

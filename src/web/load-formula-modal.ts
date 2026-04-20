@@ -19,7 +19,7 @@ import {
   rawFormulaSum,
   resolveRateValue,
   validateFormula,
-} from './utils/load-formula';
+} from '../shared/utils/load-formula';
 
 // ─── Context injection ──────────────────────────────────────────────────────
 

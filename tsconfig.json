@@ -16,5 +16,11 @@
     "moduleResolution": "node"
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/web"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/web",
+    "src/test-persistence.ts",
+    "src/stress-test-bulk-delete.ts"
+  ]
 }

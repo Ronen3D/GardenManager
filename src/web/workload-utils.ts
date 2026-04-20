@@ -6,7 +6,7 @@
  */
 
 import type { Assignment, Participant, ParticipantCapacity, Task } from '../models/types';
-import { computeTaskColdHours, computeTaskEffectiveHours, computeTaskHotHours } from './utils/load-weighting';
+import { computeTaskColdHours, computeTaskEffectiveHours, computeTaskHotHours } from '../shared/utils/load-weighting';
 
 export interface TaskBreakdown {
   /** Total raw duration hours across load-bearing tasks */

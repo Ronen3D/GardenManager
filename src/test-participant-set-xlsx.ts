@@ -29,7 +29,7 @@ import {
   SHEET_PAKALS,
   SHEET_PARTICIPANTS,
   SHEET_UNAVAILABILITY,
-} from './web/participant-set-xlsx';
+} from './shared/participant-set-xlsx';
 
 type AssertFn = (condition: boolean, name: string) => void;
 
@@ -38,6 +38,14 @@ type AssertFn = (condition: boolean, name: string) => void;
 const DEFAULT_PAKALS: PakalDefinition[] = [
   { id: 'pakal-sq', label: 'מפקד כיתה' },
   { id: 'pakal-med', label: 'חובש' },
+];
+
+// Salsala is no longer part of DEFAULT_CERTIFICATION_DEFINITIONS (removed in
+// v2.4.0), but the fixture participants below still reference it. Re-add it
+// here so the round-trip preserves those cert assignments.
+const SAMPLE_CERT_CATALOG: CertificationDefinition[] = [
+  ...DEFAULT_CERTIFICATION_DEFINITIONS,
+  { id: 'Salsala', label: 'סלסלה', color: '#8e44ad' },
 ];
 
 function buildSamplePset(overrides: Partial<ParticipantSet> = {}): ParticipantSet {
@@ -94,7 +102,7 @@ function buildSamplePset(overrides: Partial<ParticipantSet> = {}): ParticipantSe
     name: 'סט בדיקה',
     description: 'תיאור דוגמה',
     participants,
-    certificationCatalog: DEFAULT_CERTIFICATION_DEFINITIONS,
+    certificationCatalog: SAMPLE_CERT_CATALOG,
     pakalCatalog: DEFAULT_PAKALS,
     createdAt: Date.now(),
     ...overrides,

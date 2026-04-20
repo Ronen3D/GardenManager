@@ -26,7 +26,7 @@ import type {
   SlotRequirement,
   Task,
 } from '../models/types';
-import { blocksOverlap } from '../web/utils/time-utils';
+import { blocksOverlap } from '../shared/utils/time-utils';
 import {
   type CandidateChain,
   type ChainEnumerationCaps,

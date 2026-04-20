@@ -47,7 +47,7 @@ import {
   type Task,
 } from '../models/types';
 import { operationalDateKey } from '../utils/date-utils';
-import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
+import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import type { SchedulingEngine } from './scheduler';
 import { isEligible } from './validator';
 

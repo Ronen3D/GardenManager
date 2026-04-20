@@ -117,12 +117,12 @@ export {
   computeAllCapacities,
   computeParticipantCapacity,
 } from './utils/capacity';
-export type { ParticipantRestProfile } from './web/utils/rest-calculator';
+export type { ParticipantRestProfile } from './shared/utils/rest-calculator';
 export {
   computeAllRestProfiles,
   computeParticipantRest,
   computeRestFairness,
-} from './web/utils/rest-calculator';
+} from './shared/utils/rest-calculator';
 // ─── Utilities ───────────────────────────────────────────────────────────────
 export {
   blockDurationHours,
@@ -138,4 +138,4 @@ export {
   isFullyCovered,
   mergeBlocks,
   sortBlocksByStart,
-} from './web/utils/time-utils';
+} from './shared/utils/time-utils';

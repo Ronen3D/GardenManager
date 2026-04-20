@@ -16,8 +16,8 @@ import {
   ViolationSeverity,
 } from '../models/types';
 import { bidiTimeRange, describeSlotBidi } from '../utils/date-utils';
-import { isHighLoadAtBoundary } from '../web/utils/load-weighting';
-import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../web/utils/time-utils';
+import { isHighLoadAtBoundary } from '../shared/utils/load-weighting';
+import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../shared/utils/time-utils';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

@@ -25,7 +25,7 @@ import { initLoadFormulaModal, openLoadFormulaModal } from './load-formula-modal
 import { runPreflight } from './preflight';
 import { escHtml, SVG_ICONS } from './ui-helpers';
 import { showConfirm, showPrompt, showToast } from './ui-modal';
-import { detectStale } from './utils/load-formula';
+import { detectStale } from '../shared/utils/load-formula';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

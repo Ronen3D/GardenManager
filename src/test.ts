@@ -303,8 +303,8 @@ import {
 import { collectSoftWarnings, dailyWorkloadImbalance, workloadImbalanceSplit } from './constraints/soft-constraints';
 import { fullValidate, previewSwap } from './engine/validator';
 import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
-import { computeParticipantRest } from './web/utils/rest-calculator';
-import { isDateInBlock } from './web/utils/time-utils';
+import { computeParticipantRest } from './shared/utils/rest-calculator';
+import { isDateInBlock } from './shared/utils/time-utils';
 
 let passed = 0;
 let failed = 0;
@@ -722,7 +722,7 @@ import {
   computeTaskEffectiveHours,
   computeTaskHotHours,
   getTaskBaseLoadWeight,
-} from './web/utils/load-weighting';
+} from './shared/utils/load-weighting';
 
 console.log('\n── Load Weighting (Hot/Cold/Effective) ──');
 
@@ -977,7 +977,7 @@ const KRUV_WINDOWS: LoadWindow[] = [
 import { checkForbiddenCertifications, checkNoConsecutiveHighLoad } from './constraints/hard-constraints';
 import { computeLowPriorityLevelPenalty, isNaturalRole } from './constraints/senior-policy';
 import type { Assignment } from './models/types';
-import { getLoadWeightAtTime, isHighLoadAtBoundary } from './web/utils/load-weighting';
+import { getLoadWeightAtTime, isHighLoadAtBoundary } from './shared/utils/load-weighting';
 
 console.log('\n── Forbidden Certification Constraint (HC-11) ───────────');
 
@@ -4432,18 +4432,16 @@ console.log('\n── Dynamic Certifications ───────────�
 
 {
   // Verify default definitions
-  assert(DEFAULT_CERTIFICATION_DEFINITIONS.length === 4, 'Defaults: 4 certifications');
+  assert(DEFAULT_CERTIFICATION_DEFINITIONS.length === 3, 'Defaults: 3 certifications');
   assert(DEFAULT_CERTIFICATION_DEFINITIONS[0].id === 'Nitzan', 'Defaults: first is Nitzan');
   assert(DEFAULT_CERTIFICATION_DEFINITIONS[0].label === 'ניצן', 'Defaults: Nitzan label is Hebrew');
   assert(DEFAULT_CERTIFICATION_DEFINITIONS[0].color === '#16a085', 'Defaults: Nitzan color is teal');
-  assert(DEFAULT_CERTIFICATION_DEFINITIONS[1].id === 'Salsala', 'Defaults: second is Salsala');
-  assert(DEFAULT_CERTIFICATION_DEFINITIONS[2].id === 'Hamama', 'Defaults: third is Hamama');
-  assert(DEFAULT_CERTIFICATION_DEFINITIONS[3].id === 'Horesh', 'Defaults: fourth is Horesh');
+  assert(DEFAULT_CERTIFICATION_DEFINITIONS[1].id === 'Hamama', 'Defaults: second is Hamama');
+  assert(DEFAULT_CERTIFICATION_DEFINITIONS[2].id === 'Horesh', 'Defaults: third is Horesh');
 
   // Verify IDs match old enum string values (engine compatibility)
   const ids = DEFAULT_CERTIFICATION_DEFINITIONS.map((d) => d.id);
   assert(ids.includes('Nitzan'), 'Compat: Nitzan ID matches legacy enum');
-  assert(ids.includes('Salsala'), 'Compat: Salsala ID matches legacy enum');
   assert(ids.includes('Hamama'), 'Compat: Hamama ID matches legacy enum');
   assert(ids.includes('Horesh'), 'Compat: Horesh ID matches legacy enum');
 

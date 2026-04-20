@@ -18,13 +18,13 @@ import {
   ViolationSeverity,
 } from '../models/types';
 import { describeSlotBidi, operationalDateKey } from '../utils/date-utils';
-import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
+import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import {
   computeAllRestProfiles,
   computeRestFairness,
   computeRestFromAssignments,
   ParticipantRestProfile,
-} from '../web/utils/rest-calculator';
+} from '../shared/utils/rest-calculator';
 import { computeLowPriorityLevelPenalty } from './senior-policy';
 
 /**

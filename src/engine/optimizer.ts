@@ -34,8 +34,8 @@ import {
 } from '../models/types';
 import { computeAllCapacities } from '../utils/capacity';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
-import { computeTaskEffectiveHours } from '../web/utils/load-weighting';
-import { blocksOverlap, isFullyCovered } from '../web/utils/time-utils';
+import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import { blocksOverlap, isFullyCovered } from '../shared/utils/time-utils';
 import type { PhantomContext } from './phantom';
 import { getRejectionReason, isEligible } from './validator';
 

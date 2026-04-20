@@ -10,7 +10,7 @@ import type { AssignmentStatus, ConstraintViolation, Schedule, Task } from '../i
 import { hebrewDayName } from '../utils/date-utils';
 import * as store from './config-store';
 import { fmt } from './ui-helpers';
-import { computeTaskEffectiveHours } from './utils/load-weighting';
+import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 
 // ─── Formatting Helpers ─────────────────────────────────────────────────────
 

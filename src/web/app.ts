@@ -106,7 +106,7 @@ import {
   showToast,
   wireCustomSelect,
 } from './ui-modal';
-import { generateShiftBlocks } from './utils/time-utils';
+import { generateShiftBlocks } from '../shared/utils/time-utils';
 import { openWorkloadPopup } from './workload-popup';
 import { computeWeeklyWorkloads } from './workload-utils';
 
@@ -3246,7 +3246,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.4.9</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.0</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

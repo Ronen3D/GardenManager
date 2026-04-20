@@ -8,7 +8,7 @@
 import { type CertificationDefinition, Level, type PakalDefinition } from '../models/types';
 import type { BulkParticipantOp } from './config-store';
 import * as store from './config-store';
-import { FORBIDDEN_GROUP_PATTERNS } from './group-name-rules';
+import { FORBIDDEN_GROUP_PATTERNS } from '../shared/group-name-rules';
 import { getEffectivePakalIds } from './pakal-utils';
 import { isSmallScreen } from './responsive';
 import { certBadge, escAttr, escHtml, groupColor, SVG_ICONS } from './ui-helpers';
@@ -375,6 +375,14 @@ export function renderTableEditMode(): string {
     </div>
   </div>`;
 
+  // ── Mobile add-actions row (bottom bar holds only commit actions) ──
+  if (isSmallScreen) {
+    html += `<div class="te-mobile-add-actions">
+      <button class="btn-sm btn-outline" data-te-action="quick-add">+ מהיר</button>
+      <button class="btn-sm btn-outline" data-te-action="add-row">+ שורה חדשה</button>
+    </div>`;
+  }
+
   // ── Validation summary ──
   const errorRows = _draftRows.filter((r) => r.status !== 'deleted' && r.errors.size > 0);
   if (errorRows.length > 0) {
@@ -567,8 +575,6 @@ function renderMobileCompactList(
     </div>`;
   } else {
     html += `<div class="te-mobile-bottom-bar">
-      <button class="btn-sm btn-outline" data-te-action="quick-add">+ מהיר</button>
-      <button class="btn-sm btn-outline" data-te-action="add-row">+ שורה</button>
       <button class="btn-sm btn-outline" data-te-action="cancel">ביטול</button>
       <button class="btn-primary btn-sm te-bottom-bar-save${hasValidationErrors() ? ' btn-disabled' : ''}" data-te-action="save"${hasValidationErrors() ? ' disabled' : ''}>שמירה${getChangeSummary().total > 0 ? ` · ${getChangeSummary().total}` : ''}</button>
     </div>`;

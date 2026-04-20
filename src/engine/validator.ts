@@ -19,7 +19,7 @@ import {
   type ValidationResult,
   ViolationSeverity,
 } from '../models/types';
-import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../web/utils/time-utils';
+import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../shared/utils/time-utils';
 
 export interface FullValidationResult extends ValidationResult {
   /** Soft constraint warnings (non-fatal) */

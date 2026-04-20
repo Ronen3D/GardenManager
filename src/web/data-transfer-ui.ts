@@ -14,7 +14,7 @@ import {
   parseParticipantSetXlsx,
   type XlsxImportError,
   type XlsxImportMeta,
-} from './participant-set-xlsx';
+} from '../shared/participant-set-xlsx';
 import { escHtml } from './ui-helpers';
 import { showAlert, showBottomSheet, showConfirm, showToast } from './ui-modal';
 

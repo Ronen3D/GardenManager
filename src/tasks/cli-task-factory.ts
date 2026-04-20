@@ -8,7 +8,7 @@
  */
 
 import { Level, type SlotRequirement, type Task, type TimeBlock } from '../models/types';
-import { createTimeBlockFromHours, generateShiftBlocks } from '../web/utils/time-utils';
+import { createTimeBlockFromHours, generateShiftBlocks } from '../shared/utils/time-utils';
 
 let _slotCounter = 0;
 function nextSlotId(prefix: string): string {
