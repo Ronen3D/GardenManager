@@ -1141,6 +1141,20 @@ select.input-sm {
 .slot-row-editing > td {
   background: var(--bg-hover, rgba(59, 130, 246, 0.08));
 }
+.slot-row-error > td {
+  background: rgba(231, 76, 60, 0.12);
+}
+.slot-row-warn > td {
+  background: rgba(243, 156, 18, 0.12);
+}
+.slot-row-editing.slot-row-error > td,
+.slot-row-editing.slot-row-warn > td {
+  background: var(--bg-hover, rgba(59, 130, 246, 0.08));
+}
+.slot-finding-icon {
+  font-weight: 700;
+  margin-inline-end: 4px;
+}
 .slot-edit-row > td {
   padding: 0 8px 8px 8px !important;
   background: transparent;

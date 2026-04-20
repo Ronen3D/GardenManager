@@ -124,9 +124,9 @@ function makeDefaultSlot(): DraftSlot {
     label: '',
     levels: [
       { level: Level.L0, enabled: false, lowPriority: false },
-      { level: Level.L2, enabled: true, lowPriority: false },
-      { level: Level.L3, enabled: true, lowPriority: false },
-      { level: Level.L4, enabled: true, lowPriority: false },
+      { level: Level.L2, enabled: false, lowPriority: false },
+      { level: Level.L3, enabled: false, lowPriority: false },
+      { level: Level.L4, enabled: false, lowPriority: false },
     ],
     requiredCertifications: [],
     forbiddenCertifications: [],
@@ -529,6 +529,8 @@ function validateDraft(d: DraftState): string | null {
   if (d.startHour < 0 || d.startHour > 23) return 'שעת התחלה לא תקינה';
   if (d.startMinute < 0 || d.startMinute > 59) return 'דקה לא תקינה';
   if (d.durationHours <= 0) return 'משך המשימה חייב להיות חיובי';
+  if (!Number.isFinite(d.baseLoadWeight) || d.baseLoadWeight < 0 || d.baseLoadWeight > 1)
+    return 'רמת עומס חייבת להיות בטווח 0–1';
   if (d.slots.length === 0) return 'נדרשת לפחות משבצת אחת';
   for (let i = 0; i < d.slots.length; i++) {
     const s = d.slots[i];

@@ -33,6 +33,7 @@ const FIELD_LABELS: Record<string, string> = {
   durationHours: 'משך',
   shiftsPerDay: 'משמרות/יום',
   startHour: 'שעת התחלה',
+  startMinute: 'דקת התחלה',
   eveningStartHour: 'שעת ערב',
 };
 
@@ -52,6 +53,25 @@ function notifyIfClamped(raw: Record<string, number | undefined>, sanitized: Rec
   if (corrections.length) {
     showToast(`ערכים לא תקינים תוקנו: ${corrections.join(', ')}`, { type: 'warning', duration: 5000 });
   }
+}
+
+/**
+ * Check whether a task name (case-insensitive, trimmed) is already taken by a
+ * task template or a one-time task. `excludeId` skips a single record (used
+ * when renaming so the item doesn't collide with its own current name).
+ */
+function isTaskNameTaken(name: string, excludeId?: string): boolean {
+  const key = name.trim().toLowerCase();
+  if (!key) return false;
+  for (const t of store.getAllTaskTemplates()) {
+    if (t.id === excludeId) continue;
+    if (t.name.trim().toLowerCase() === key) return true;
+  }
+  for (const ot of store.getAllOneTimeTasks()) {
+    if (ot.id === excludeId) continue;
+    if (ot.name.trim().toLowerCase() === key) return true;
+  }
+  return false;
 }
 
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
@@ -775,7 +795,7 @@ function renderSlotTable(
   if (slots.length === 0) return '<p class="text-muted" style="padding:4px 0;">אין משבצות מוגדרות.</p>';
 
   let html = `<div class="table-responsive"><table class="table table-slots">
-    <thead><tr><th>תווית</th><th>דרגות</th><th>הסמכות נדרשות</th><th>הסמכות אסורות</th><th>סטטוס</th><th></th></tr></thead>
+    <thead><tr><th>תווית</th><th>דרגות</th><th>הסמכות נדרשות</th><th>הסמכות אסורות</th><th></th></tr></thead>
     <tbody>`;
 
   const isOtMatch = opts?.isOneTime ? editingSlot?.isOneTime : !editingSlot?.isOneTime;
@@ -786,22 +806,28 @@ function renderSlotTable(
 
   for (const slot of slots) {
     const finding = pf.findings.find((f) => f.slotId === slot.id);
-    const statusHtml = finding
-      ? `<span class="${finding.severity === PreflightSeverity.Critical ? 'text-danger' : 'text-warn'}">${finding.severity === PreflightSeverity.Critical ? '✗' : '⚠'} ${finding.code}</span>`
-      : '<span style="color:var(--success)">✓</span>';
+    const isCritical = finding?.severity === PreflightSeverity.Critical;
+    const isWarn = finding?.severity === PreflightSeverity.Warning;
+    const findingIcon = finding
+      ? `<span class="slot-finding-icon ${isCritical ? 'text-danger' : 'text-warn'}" title="${escHtml(finding.code)}" aria-label="${escHtml(finding.code)}">${isCritical ? '✗' : '⚠'}</span> `
+      : '';
 
     const forbiddenCerts = slot.forbiddenCertifications ?? [];
     const ownerAttr = opts?.isOneTime ? `data-ot-id="${templateId}"` : `data-tid="${templateId}"`;
     const stAttr = subTeamId ? `data-stid="${subTeamId}"` : '';
     const isEditing = editingHere && editingHere.slotId === slot.id;
-    const rowClass = isEditing ? ' class="slot-row-editing"' : '';
+    const rowClasses = [
+      isEditing ? 'slot-row-editing' : '',
+      isCritical ? 'slot-row-error' : '',
+      isWarn ? 'slot-row-warn' : '',
+    ].filter(Boolean);
+    const rowClassAttr = rowClasses.length ? ` class="${rowClasses.join(' ')}"` : '';
 
-    html += `<tr${rowClass}>
-      <td>${escHtml(stripLevelText(slot.label))}</td>
+    html += `<tr${rowClassAttr}>
+      <td>${findingIcon}${escHtml(stripLevelText(slot.label))}</td>
       <td>${slot.acceptableLevels.map((e) => levelBadge(e.level) + (e.lowPriority ? '<sup class="lp-badge" title="מוצא אחרון – הדרגה מותרת אך לא מועדפת">⚠</sup>' : '')).join(' ')}</td>
       <td>${slot.requiredCertifications.length > 0 ? slot.requiredCertifications.map((c) => certBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
       <td>${forbiddenCerts.length > 0 ? forbiddenCerts.map((c) => forbiddenCertBadge(c)).join(' ') : '<span class="text-muted">אין</span>'}</td>
-      <td>${statusHtml}</td>
       <td>
         ${
           isEditing
@@ -813,7 +839,7 @@ function renderSlotTable(
     </tr>`;
 
     if (isEditing) {
-      html += `<tr class="slot-edit-row"><td colspan="6">${renderSlotForm('edit', templateId, subTeamId, opts, slot)}</td></tr>`;
+      html += `<tr class="slot-edit-row"><td colspan="5">${renderSlotForm('edit', templateId, subTeamId, opts, slot)}</td></tr>`;
     }
   }
 
@@ -826,7 +852,11 @@ function renderAddSlotForm(templateId: string, subTeamId?: string, opts?: { isOn
 }
 
 function readSlotFormFields(form: Element): Omit<SlotTemplate, 'id'> | null {
-  const label = (form.querySelector('[data-field="slot-label"]') as HTMLInputElement)?.value.trim() || 'משבצת';
+  const label = (form.querySelector('[data-field="slot-label"]') as HTMLInputElement)?.value.trim() ?? '';
+  if (!label) {
+    showToast('תווית המשבצת לא יכולה להיות ריקה', { type: 'error' });
+    return null;
+  }
   const acceptableLevels: { level: Level; lowPriority?: boolean }[] = [];
   form.querySelectorAll<HTMLElement>('[data-slot-level]').forEach((btn) => {
     const state = btn.dataset.state;
@@ -834,6 +864,10 @@ function readSlotFormFields(form: Element): Omit<SlotTemplate, 'id'> | null {
     else if (state === 'lowPriority')
       acceptableLevels.push({ level: parseInt(btn.dataset.slotLevel!) as Level, lowPriority: true });
   });
+  if (acceptableLevels.length === 0) {
+    showToast('יש לבחור לפחות דרגה אחת עבור המשבצת', { type: 'error' });
+    return null;
+  }
   const certs: string[] = [];
   form.querySelectorAll<HTMLInputElement>('[data-slot-cert]').forEach((cb) => {
     if (cb.checked && cb.dataset.slotCert) certs.push(cb.dataset.slotCert);
@@ -1239,7 +1273,14 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
 
       // ─── Rest Rule actions ──────────────────────────────────────────
       case 'add-rest-rule': {
-        const rule = store.addRestRule('כלל חדש', 5);
+        // Suffix the default label so it doesn't collide with existing rules.
+        const existing = new Set(store.getRestRules().map((r) => r.label.trim().toLowerCase()));
+        let label = 'כלל חדש';
+        let n = 2;
+        while (existing.has(label.toLowerCase())) {
+          label = `כלל חדש (${n++})`;
+        }
+        const rule = store.addRestRule(label, 5);
         showToast(`כלל "${rule.label}" נוצר`, { type: 'success' });
         rerender();
         break;
@@ -1255,8 +1296,18 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           showToast('שם הכלל לא יכול להיות ריק', { type: 'error' });
           break;
         }
+        const labelKey = label.toLowerCase();
+        const duplicate = store.getRestRules().some((r) => r.id !== rrId && r.label.trim().toLowerCase() === labelKey);
+        if (duplicate) {
+          showToast(`כלל בשם "${label}" כבר קיים`, { type: 'error' });
+          break;
+        }
         if (isNaN(dur) || dur < 0.5) {
           showToast('משך לא תקין (מינימום 0.5 שעות)', { type: 'error' });
+          break;
+        }
+        if (dur > 24) {
+          showToast('משך לא תקין (מקסימום 24 שעות)', { type: 'error' });
           break;
         }
         store.updateRestRule(rrId, { label, durationHours: dur });
@@ -1303,6 +1354,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           showToast('שם משימה נדרש', { type: 'error' });
           break;
         }
+        if (isTaskNameTaken(name, otId)) {
+          showToast(`משימה בשם "${name}" כבר קיימת`, { type: 'error' });
+          break;
+        }
         const dayNumVal = parseInt((body.querySelector('[data-ot-field="dayNum"]') as HTMLSelectElement)?.value || '1');
         const schedDate = store.getScheduleDate();
         const scheduledDate = new Date(
@@ -1310,10 +1365,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           schedDate.getMonth(),
           schedDate.getDate() + dayNumVal - 1,
         );
-        const rawStartHour = parseInt(
+        const rawStartHour = parseFloat(
           (body.querySelector('[data-ot-field="startHour"]') as HTMLInputElement)?.value || '6',
         );
-        const rawStartMinute = parseInt(
+        const rawStartMinute = parseFloat(
           (body.querySelector('[data-ot-field="startMinute"]') as HTMLInputElement)?.value || '0',
         );
         const rawDur = parseFloat(
@@ -1332,6 +1387,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
 
         const otSanitized = store.sanitizeTemplateNumericFields({ durationHours: rawDur, startHour: rawStartHour });
         const startMinute = Math.max(0, Math.min(59, Math.round(Number.isNaN(rawStartMinute) ? 0 : rawStartMinute)));
+        notifyIfClamped(
+          { durationHours: rawDur, startHour: rawStartHour, startMinute: rawStartMinute },
+          { durationHours: otSanitized.durationHours, startHour: otSanitized.startHour, startMinute },
+        );
 
         store.updateOneTimeTask(otId, {
           name,
@@ -1356,10 +1415,13 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const dur = parseFloat(
           (body.querySelector('[data-tpl-field="durationHours"]') as HTMLInputElement)?.value || '8',
         );
-        const shifts = parseInt(
+        // parseFloat so that decimals (e.g. 1.7) reach the sanitizer's rounding
+        // path and surface as a clamp notification instead of being silently
+        // truncated by parseInt.
+        const shifts = parseFloat(
           (body.querySelector('[data-tpl-field="shiftsPerDay"]') as HTMLInputElement)?.value || '1',
         );
-        const startH = parseInt((body.querySelector('[data-tpl-field="startHour"]') as HTMLInputElement)?.value || '6');
+        const startH = parseFloat((body.querySelector('[data-tpl-field="startHour"]') as HTMLInputElement)?.value || '6');
         const baseLoad = parseFloat(
           (body.querySelector('[data-tpl-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1',
         );
@@ -1498,6 +1560,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           showToast('שעה לא תקינה — יש להזין בפורמט HH:MM (00:00–23:59)', { type: 'error' });
           break;
         }
+        if (ps.h === pe.h && ps.m === pe.m) {
+          showToast('שעת ההתחלה והסיום זהות — יש להגדיר טווח עם משך חיובי', { type: 'error' });
+          break;
+        }
 
         const candidate = { startHour: ps.h, startMinute: ps.m, endHour: pe.h, endMinute: pe.m };
         const conflict = (tpl.loadWindows || []).find((w) => loadWindowsOverlap(w, candidate));
@@ -1548,6 +1614,11 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const weight = parseFloat(weightInput.value || '1');
         if (!ps || !pe) {
           showToast('שעה לא תקינה — יש להזין בפורמט HH:MM (00:00–23:59)', { type: 'error' });
+          break;
+        }
+        if (ps.h === pe.h && ps.m === pe.m) {
+          showToast('שעת ההתחלה והסיום זהות — יש להגדיר טווח עם משך חיובי', { type: 'error' });
+          rerender();
           break;
         }
 
@@ -1782,15 +1853,17 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'confirm-add-template': {
         const form = container.querySelector('#add-template-form')!;
         const name = (form.querySelector('[data-field="tpl-name"]') as HTMLInputElement)?.value.trim();
-        if (!name) return;
-        const existingNames = store.getAllTaskTemplates().map((t) => t.name.trim().toLowerCase());
-        if (existingNames.includes(name.toLowerCase())) {
+        if (!name) {
+          showToast('שם משימה נדרש', { type: 'error' });
+          return;
+        }
+        if (isTaskNameTaken(name)) {
           showToast(`משימה בשם "${name}" כבר קיימת`, { type: 'error' });
           return;
         }
         const dur = parseFloat((form.querySelector('[data-field="tpl-duration"]') as HTMLInputElement)?.value || '8');
-        const shifts = parseInt((form.querySelector('[data-field="tpl-shifts"]') as HTMLInputElement)?.value || '1');
-        const startH = parseInt((form.querySelector('[data-field="tpl-start"]') as HTMLInputElement)?.value || '6');
+        const shifts = parseFloat((form.querySelector('[data-field="tpl-shifts"]') as HTMLInputElement)?.value || '1');
+        const startH = parseFloat((form.querySelector('[data-field="tpl-start"]') as HTMLInputElement)?.value || '6');
         const baseLoad = parseFloat(
           (form.querySelector('[data-field="tpl-base-load"]') as HTMLInputElement)?.value || '1',
         );
@@ -1850,15 +1923,22 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       case 'confirm-add-onetime': {
         const form = container.querySelector('#add-onetime-form')!;
         const name = (form.querySelector('[data-field="ot-name"]') as HTMLInputElement)?.value.trim();
-        if (!name) return;
+        if (!name) {
+          showToast('שם משימה נדרש', { type: 'error' });
+          return;
+        }
+        if (isTaskNameTaken(name)) {
+          showToast(`משימה בשם "${name}" כבר קיימת`, { type: 'error' });
+          return;
+        }
         const dayNum = parseInt((form.querySelector('[data-field="ot-day"]') as HTMLSelectElement)?.value || '1');
         const schedDate = store.getScheduleDate();
         const scheduledDate = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate() + dayNum - 1);
 
-        const rawStartHour = parseInt(
+        const rawStartHour = parseFloat(
           (form.querySelector('[data-field="ot-start-hour"]') as HTMLInputElement)?.value || '6',
         );
-        const rawStartMinute = parseInt(
+        const rawStartMinute = parseFloat(
           (form.querySelector('[data-field="ot-start-minute"]') as HTMLInputElement)?.value || '0',
         );
         const rawDur = parseFloat((form.querySelector('[data-field="ot-duration"]') as HTMLInputElement)?.value || '4');
@@ -1876,8 +1956,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const otSanitized = store.sanitizeTemplateNumericFields({ durationHours: rawDur, startHour: rawStartHour });
         const startMinute = Math.max(0, Math.min(59, Math.round(Number.isNaN(rawStartMinute) ? 0 : rawStartMinute)));
         notifyIfClamped(
-          { durationHours: rawDur, startHour: rawStartHour },
-          { durationHours: otSanitized.durationHours, startHour: otSanitized.startHour },
+          { durationHours: rawDur, startHour: rawStartHour, startMinute: rawStartMinute },
+          { durationHours: otSanitized.durationHours, startHour: otSanitized.startHour, startMinute },
         );
 
         store.addOneTimeTask({

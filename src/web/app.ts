@@ -64,6 +64,7 @@ import {
   fmtDate,
   formatLiveClock,
   getDayWindow,
+  operationalHourOrder,
   resolveLogicalDayTimestamp,
   statusBadge,
   taskEndsAfter,
@@ -945,11 +946,15 @@ function renderScheduleTab(): string {
       daySelectOpts[0].selected = true;
     }
 
-    const anchorHour = liveMode.enabled ? liveMode.currentTimestamp.getHours() : store.getDayStartHour();
-    const hourSelectOpts: { value: string; label: string; selected: boolean }[] = [];
-    for (let h = 0; h < 24; h++) {
-      hourSelectOpts.push({ value: String(h), label: `${String(h).padStart(2, '0')}:00`, selected: h === anchorHour });
-    }
+    const frozenDayStartHour = currentSchedule.algorithmSettings.dayStartHour;
+    const anchorHour = liveMode.enabled ? liveMode.currentTimestamp.getHours() : frozenDayStartHour;
+    const hourSelectOpts: { value: string; label: string; selected: boolean }[] = operationalHourOrder(
+      frozenDayStartHour,
+    ).map((h) => ({
+      value: String(h),
+      label: `${String(h).padStart(2, '0')}:00`,
+      selected: h === anchorHour,
+    }));
 
     liveModeControls = `
       <div class="live-mode-controls">
@@ -2522,17 +2527,18 @@ async function ensureLiveModeAnchor(taskGate?: Task | null): Promise<Date | null
     const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
     days.push({ value: String(d), label: `יום ${hebrewDayName(date)}` });
   }
-  const hours: Array<{ value: string; label: string }> = [];
-  for (let h = 0; h < 24; h++) {
-    hours.push({ value: String(h), label: `${String(h).padStart(2, '0')}:00` });
-  }
+  const dayStartHour = currentSchedule.algorithmSettings.dayStartHour;
+  const hours: Array<{ value: string; label: string }> = operationalHourOrder(dayStartHour).map((h) => ({
+    value: String(h),
+    label: `${String(h).padStart(2, '0')}:00`,
+  }));
 
   const result = await showTimePicker('כדי להמשיך, יש להגדיר את הזמן הנוכחי במצב חי.', {
     title: 'הפעלת מצב חי',
     days,
     hours,
     defaultDay: '1',
-    defaultHour: '5',
+    defaultHour: String(dayStartHour),
   });
   if (!result) return null;
 
@@ -2707,19 +2713,23 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
   const dayStartHour = currentSchedule.algorithmSettings.dayStartHour;
 
   const days: Array<{ value: string; label: string }> = [];
-  for (let d = 1; d <= numDays + 1; d++) {
+  for (let d = 1; d <= numDays; d++) {
     const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
     days.push({ value: String(d), label: `יום ${hebrewDayName(date)}` });
   }
-  const hours: Array<{ value: string; label: string }> = [];
-  for (let h = 0; h < 24; h++) {
-    hours.push({ value: String(h), label: `${String(h).padStart(2, '0')}:00` });
-  }
+  const hours: Array<{ value: string; label: string }> = operationalHourOrder(dayStartHour).map((h) => ({
+    value: String(h),
+    label: `${String(h).padStart(2, '0')}:00`,
+  }));
 
+  // Operational-day interpretation: hours before dayStartHour belong to the
+  // previous op-day's tail (e.g. day 7 + 04:00 → calendar day 8 04:00). Mirrors
+  // resolveLogicalDayTimestamp so day-chip semantics are consistent across the UI.
   const toDate = (day: string, hour: string): Date => {
     const dIdx = parseInt(day, 10);
     const hr = parseInt(hour, 10);
-    return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dIdx - 1, hr, 0);
+    const dayOffset = hr < dayStartHour ? dIdx : dIdx - 1;
+    return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dayOffset, hr, 0);
   };
 
   // Anchor: live-mode timestamp if on, else a deferred candidate the user
@@ -2975,9 +2985,13 @@ function computeSmartDefaultWindow(
   dayStartHour: number,
 ): RangePickerDefaults {
   const baseDate = store.getScheduleDate();
-  const dayIndexOf = (d: Date): number => {
+  // Return the op-day index of a timestamp: early-morning hours (< dayStartHour)
+  // belong to the prior op-day's tail, so the day-chip offered to the user
+  // matches the operational grouping used in the schedule view.
+  const opDayIndexOf = (d: Date): number => {
     const ms = d.getTime() - new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate()).getTime();
-    return Math.floor(ms / 86400000) + 1;
+    const calendarIdx = Math.floor(ms / 86400000) + 1;
+    return d.getHours() < dayStartHour ? calendarIdx - 1 : calendarIdx;
   };
 
   const taskMap = new Map<string, Task>();
@@ -2992,9 +3006,9 @@ function computeSmartDefaultWindow(
   if (upcoming.length > 0) {
     const { task } = upcoming[0];
     return {
-      startDay: String(Math.max(1, dayIndexOf(task.timeBlock.start))),
+      startDay: String(Math.max(1, opDayIndexOf(task.timeBlock.start))),
       startHour: String(task.timeBlock.start.getHours()),
-      endDay: String(Math.max(1, dayIndexOf(task.timeBlock.end))),
+      endDay: String(Math.max(1, opDayIndexOf(task.timeBlock.end))),
       endHour: String(task.timeBlock.end.getHours()),
     };
   }
@@ -3246,7 +3260,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.0</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

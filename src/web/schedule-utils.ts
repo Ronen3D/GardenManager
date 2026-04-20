@@ -104,6 +104,17 @@ export function taskEndsAfter(
   return task.timeBlock.end.getTime() > end.getTime();
 }
 
+/**
+ * Hours of the day (0..23) ordered by the operational day boundary: starts
+ * at `dayStartHour` and wraps around midnight. E.g. dsh=5 → [5,6,…,23,0,1,2,3,4].
+ */
+export function operationalHourOrder(dayStartHour: number): number[] {
+  const dsh = ((Math.trunc(dayStartHour) % 24) + 24) % 24;
+  const hours: number[] = [];
+  for (let i = 0; i < 24; i++) hours.push((dsh + i) % 24);
+  return hours;
+}
+
 // ─── Status & Violation Display ─────────────────────────────────────────────
 
 export function statusBadge(status: AssignmentStatus): string {
