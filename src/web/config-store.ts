@@ -1902,7 +1902,6 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
-    schedulingPriority: 0,
     subTeams: [
       {
         id: uid('st'),
@@ -1971,7 +1970,6 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 5 / 6,
     loadWindows: [],
     blocksConsecutive: true,
-    schedulingPriority: 1,
     subTeams: [],
     slots: [
       {
@@ -1997,7 +1995,6 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
-    schedulingPriority: 6,
     subTeams: [],
     slots: [
       {
@@ -2030,7 +2027,6 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 0.64,
     loadWindows: [],
     blocksConsecutive: true,
-    schedulingPriority: 2,
     subTeams: [],
     slots: [
       {
@@ -2063,7 +2059,6 @@ export function seedDefaultTaskTemplates(): void {
     sameGroupRequired: true,
     baseLoadWeight: 1 / 3,
     blocksConsecutive: false,
-    schedulingPriority: 3,
     loadWindows: [
       {
         id: uid('lw'),
@@ -2119,7 +2114,6 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 0,
     loadWindows: [],
     blocksConsecutive: false,
-    schedulingPriority: 5,
     subTeams: [],
     slots: [
       {
@@ -2163,7 +2157,6 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
-    schedulingPriority: 4,
     subTeams: [],
     slots: [
       {
@@ -2195,7 +2188,6 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
-    schedulingPriority: 4,
     subTeams: [],
     slots: [
       {

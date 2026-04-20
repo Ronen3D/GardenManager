@@ -643,6 +643,136 @@ function e5_mergedTier1(task: Task): number {
   return tier * 10 + subPriority;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// FAMILY P1: Phase-1 signal-rich formula + per-signal ablations
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Replicates computeStructuralPriority(task, ctx) from src/engine/optimizer.ts.
+// Kept inline (not imported) so the harness can A/B test signal combinations
+// by flipping flags without altering optimizer.ts itself.
+
+const _p1_P = Math.max(1, allParticipants.length);
+const _p1_certRarity = (() => {
+  const h = new Map<string, number>();
+  for (const p of allParticipants) for (const c of p.certifications) h.set(c, (h.get(c) || 0) + 1);
+  const r = new Map<string, number>();
+  for (const [c, n] of h) r.set(c, 1 - n / _p1_P);
+  return r;
+})();
+
+function _p1_maxCertRarity(task: Task): number {
+  let m = 0;
+  for (const slot of task.slots) {
+    for (const c of slot.requiredCertifications) {
+      const v = _p1_certRarity.get(c) ?? 1;
+      if (v > m) m = v;
+    }
+  }
+  return m;
+}
+
+function _p1_stickinessScore(task: Task): number {
+  const dur = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3_600_000;
+  return (
+    (dur >= 10 ? 1 : 0) + (dur >= 14 ? 1 : 0) + (task.blocksConsecutive ? 1 : 0) + (task.restRuleId ? 1 : 0)
+  );
+}
+
+function _p1_lowPrioRisk(task: Task): number {
+  let slotsWithLowPrio = 0;
+  const nonLowPrioPool = new Set<string>();
+  for (const slot of task.slots) {
+    if (slot.acceptableLevels.some((e) => e.lowPriority)) slotsWithLowPrio++;
+    for (const p of allParticipants) {
+      if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
+      if (slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) continue;
+      if (slot.acceptableLevels.some((e) => e.level === p.level && !e.lowPriority)) nonLowPrioPool.add(p.id);
+    }
+  }
+  return Math.max(0, slotsWithLowPrio - nonLowPrioPool.size);
+}
+
+interface _P1Flags {
+  rarity: boolean;
+  stickiness: boolean;
+  lowPrio: boolean;
+  bottleneckSubPri: boolean;
+}
+
+function _p1_priority(task: Task, flags: _P1Flags): number {
+  if (task.sameGroupRequired) return 0;
+
+  const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
+  const allL0Only = task.slots.every(
+    (s) => s.acceptableLevels.length === 1 && s.acceptableLevels[0].level === Level.L0,
+  );
+  const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
+
+  let tier: number;
+  if (hasLowPriority(task) && hasCerts) tier = 1;
+  else if (allL0Only && hasCerts) tier = 2;
+  else if (hasCerts || hasExclusion) tier = 3;
+  else if (allL0Only) tier = 4;
+  else tier = 3;
+
+  // First-match short-circuit among S2/S3/S4, all guarded by tier > 1.
+  if (tier > 1) {
+    if (flags.rarity && _p1_maxCertRarity(task) > 0.7) {
+      tier -= 1;
+    } else if (flags.stickiness && _p1_stickinessScore(task) >= 2) {
+      tier -= 1;
+    } else if (flags.lowPrio && _p1_lowPrioRisk(task) > 0) {
+      tier -= 1;
+    }
+  }
+
+  if (flags.bottleneckSubPri) {
+    const { min } = countEligiblePerSlot(task);
+    return tier * 10 + Math.max(0, Math.min(9, min));
+  }
+  return tier * 10;
+}
+
+function p1_full(task: Task): number {
+  return _p1_priority(task, { rarity: true, stickiness: true, lowPrio: true, bottleneckSubPri: true });
+}
+function p1_noRarity(task: Task): number {
+  return _p1_priority(task, { rarity: false, stickiness: true, lowPrio: true, bottleneckSubPri: true });
+}
+function p1_noStick(task: Task): number {
+  return _p1_priority(task, { rarity: true, stickiness: false, lowPrio: true, bottleneckSubPri: true });
+}
+function p1_noLowPrio(task: Task): number {
+  return _p1_priority(task, { rarity: true, stickiness: true, lowPrio: false, bottleneckSubPri: true });
+}
+
+// P2: P1 + S5 senior-pressure sub-priority for tier-0 (sameGroupRequired) tasks.
+// Within tier 0, tasks that need more seniors per group sort earlier (lower
+// priority value). Priority mapped to [0, 9] so jitter ±1 stays inside tier 0.
+const _p2_seniorCountByGroup = (() => {
+  const m = new Map<string, number>();
+  for (const p of allParticipants) {
+    if (p.level !== Level.L0) m.set(p.group, (m.get(p.group) || 0) + 1);
+  }
+  return m;
+})();
+
+function p2_full(task: Task): number {
+  if (task.sameGroupRequired) {
+    let seniorSlots = 0;
+    for (const slot of task.slots) {
+      if (slot.acceptableLevels.some((e) => e.level !== Level.L0)) seniorSlots++;
+    }
+    if (seniorSlots === 0) return 0;
+    let minSeniors = Number.POSITIVE_INFINITY;
+    for (const n of _p2_seniorCountByGroup.values()) if (n < minSeniors) minSeniors = n;
+    if (!Number.isFinite(minSeniors) || minSeniors === 0) return 0;
+    const pressure = seniorSlots / minSeniors;
+    return Math.max(0, Math.min(9, 9 - Math.round(pressure * 3)));
+  }
+  return _p1_priority(task, { rarity: true, stickiness: true, lowPrio: true, bottleneckSubPri: true });
+}
+
 // ─── Variant Registry ────────────────────────────────────────────────────────
 
 const VARIANTS: { name: string; fn: PriorityFn; description: string; family: string }[] = [
@@ -699,6 +829,18 @@ const VARIANTS: { name: string; fn: PriorityFn; description: string; family: str
   { name: 'E3_arugaUp', fn: e3_arugaPromoted, family: 'E:Refined', description: 'Aruga promoted to tier 3' },
   { name: 'E4_geoTie', fn: e4_geometricTiebreak, family: 'E:Refined', description: 'Geometric mean tiebreaker' },
   { name: 'E5_merge1', fn: e5_mergedTier1, family: 'E:Refined', description: 'Hamama+Shemesh share tier 1' },
+
+  // Family P1: Phase-1 signal-rich formula + ablations
+  { name: 'P1_full', fn: p1_full, family: 'P1:Signals', description: 'S1+S2+S3+S4 (rarity+stickiness+lowPrio+bneck)' },
+  { name: 'P1_noRarity', fn: p1_noRarity, family: 'P1:Signals', description: 'P1_full − S2 (cert rarity)' },
+  { name: 'P1_noStick', fn: p1_noStick, family: 'P1:Signals', description: 'P1_full − S3 (stickiness)' },
+  { name: 'P1_noLowPrio', fn: p1_noLowPrio, family: 'P1:Signals', description: 'P1_full − S4 (lowPrio risk)' },
+
+  // Family P2: P1 + S5 senior-pressure tier-0 sub-priority. Phase-2 elite-boost
+  // classification and SA intensification are multi-attempt behaviors not
+  // exercised by this single-attempt harness; they're covered by synthetic
+  // scenario tests in test.ts.
+  { name: 'P2_full', fn: p2_full, family: 'P2:Signals', description: 'P1_full + S5 senior-pressure tier-0' },
 ];
 
 // ─── Simulation Engine ───────────────────────────────────────────────────────

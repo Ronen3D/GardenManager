@@ -5594,7 +5594,15 @@ console.log('\n── Rescue Plans ───────────────
 // Optimizer (greedyAssign, optimize — invariant-based)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import { greedyAssign, optimize, optimizeMultiAttempt } from './engine/optimizer';
+import {
+  buildSchedulingContext,
+  classifyUnfilledSlots,
+  computeStructuralPriority,
+  greedyAssign,
+  optimize,
+  optimizeMultiAttempt,
+  type UnfilledSlot,
+} from './engine/optimizer';
 import type { SchedulerConfig } from './models/types';
 
 console.log('\n── Optimizer ───────────────────────────');
@@ -5936,6 +5944,457 @@ console.log('\n── Optimizer ────────────────
   const cons1Pid = consResult.assignments.find((a) => a.taskId === 'opt-cons1')?.participantId;
   const cons2Pid = consResult.assignments.find((a) => a.taskId === 'opt-cons2')?.participantId;
   assert(cons1Pid !== cons2Pid, 'optimize: HC-12 assigns back-to-back blocking tasks to different participants');
+
+  // ═══ Phase 1: SchedulingContext signal-aware ordering ══════════════════════
+
+  console.log('\n── Optimizer: SchedulingContext signals ─────────');
+
+  // Signal fixtures: 10 participants, a mix of common & rare certs
+  const signalPool: Participant[] = [];
+  for (let i = 0; i < 10; i++) {
+    const certs: string[] = ['Common'];
+    if (i < 3) certs.push('Rare'); // 3/10 hold Rare
+    if (i < 9) certs.push('Semi'); // 9/10 hold Semi
+    signalPool.push(mkParticipant(`sig-p${i}`, `SigP${i}`, Level.L0, certs, 'A'));
+  }
+
+  // Cert rarity math
+  const sigCtx = buildSchedulingContext([], signalPool);
+  const rareRarity = sigCtx.certRarity.get('Rare') ?? -1;
+  const commonRarity = sigCtx.certRarity.get('Common') ?? -1;
+  const semiRarity = sigCtx.certRarity.get('Semi') ?? -1;
+  assert(Math.abs(rareRarity - 0.7) < 1e-9, `certRarity: Rare = 0.7, got ${rareRarity}`);
+  assert(Math.abs(commonRarity - 0) < 1e-9, `certRarity: Common (all hold) = 0, got ${commonRarity}`);
+  assert(Math.abs(semiRarity - 0.1) < 1e-9, `certRarity: Semi = 0.1, got ${semiRarity}`);
+
+  // Empty certifications in pool => rarity map excludes that cert; lookups return default 1 (treated rare).
+  const neverHeldRarity = sigCtx.certRarity.get('NeverHeld');
+  assert(neverHeldRarity === undefined, 'certRarity: cert never held → absent from map');
+
+  // Stickiness score: 14h task + blocksConsecutive=true + restRuleId set → boost
+  const stickyTask: Task = {
+    id: 'stick-1',
+    name: 'Sticky',
+    timeBlock: createTimeBlockFromHours(optBase, 5, 19), // 14h
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: 'stick-s1',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Common'],
+        label: 'S',
+      },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+    restRuleId: 'some-rest-rule',
+  };
+  const stickyCtx = buildSchedulingContext([stickyTask], signalPool);
+  const stickyPriWithCtx = computeStructuralPriority(stickyTask, stickyCtx);
+  const stickyPriNoCtx = computeStructuralPriority(stickyTask);
+  // Base tier: allL0+cert = tier 2 (priority 20). Stickiness score = 1(dur≥10)+1(dur≥14)+1(bc)+1(rr) = 4 → tier 1.
+  // With 10 eligible (all have Common), subMin = 9 (clamped). Expected: tier 1 × 10 + 9 = 19.
+  assert(
+    Math.floor(stickyPriWithCtx / 10) === 1,
+    `stickiness: 14h+bc+rr demotes tier 2 → 1 (got ${stickyPriWithCtx})`,
+  );
+  assert(stickyPriWithCtx % 10 === 9, `S1 sub-priority: 10 eligible clamped to 9 (got ${stickyPriWithCtx % 10})`);
+  // Legacy no-ctx path uses old dur≥12 rule — also tier 1 for this task.
+  assert(
+    Math.floor(stickyPriNoCtx / 10) === 1,
+    `stickiness: legacy no-ctx path also reaches tier 1 via dur≥12 bump (got ${stickyPriNoCtx})`,
+  );
+
+  // Non-sticky short task stays tier 2 with ctx
+  const lightTask: Task = {
+    id: 'light-1',
+    name: 'Light',
+    timeBlock: createTimeBlockFromHours(optBase, 6, 10), // 4h
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: 'light-s1',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Common'],
+        label: 'L',
+      },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false, // score = 0
+  };
+  const lightCtx = buildSchedulingContext([lightTask], signalPool);
+  const lightPri = computeStructuralPriority(lightTask, lightCtx);
+  assert(Math.floor(lightPri / 10) === 2, `non-sticky stays tier 2 (got ${lightPri})`);
+
+  // Cert-rarity boost: tier 3 task requiring a rare cert (rarity 0.7 > 0.7 is FALSE, needs strict >)
+  // Use an even rarer cert so rarity > 0.7 holds.
+  const rarePool: Participant[] = [];
+  for (let i = 0; i < 10; i++) {
+    const certs: string[] = ['Nitzan'];
+    if (i < 2) certs.push('UltraRare'); // 2/10 = rarity 0.8 > 0.7
+    rarePool.push(mkParticipant(`rare-p${i}`, `RareP${i}`, Level.L0, certs, 'A'));
+  }
+  const rareTask: Task = {
+    id: 'rare-1',
+    name: 'RareTask',
+    timeBlock: createTimeBlockFromHours(optBase, 6, 12), // 6h, non-sticky
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: 'rare-s1',
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L2 }], // mixed → tier 3
+        requiredCertifications: ['UltraRare'],
+        label: 'R',
+      },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const rareCtx = buildSchedulingContext([rareTask], rarePool);
+  const rarePri = computeStructuralPriority(rareTask, rareCtx);
+  assert(
+    Math.floor(rarePri / 10) === 2,
+    `cert-rarity: UltraRare (rarity 0.8) demotes mixed-level tier 3 → 2 (got ${rarePri})`,
+  );
+
+  // lowPrio risk: slot has lowPriority entry, non-lowPrio eligible pool = 0 → risk > 0 → boost
+  const lowPrioOnlyPool: Participant[] = [
+    mkParticipant('lp-p1', 'LP1', Level.L4, ['Nitzan'], 'A'), // only L4 participants
+    mkParticipant('lp-p2', 'LP2', Level.L4, ['Nitzan'], 'A'),
+  ];
+  const lpRiskTask: Task = {
+    id: 'lp-1',
+    name: 'LPRisk',
+    timeBlock: createTimeBlockFromHours(optBase, 6, 12),
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: 'lp-s1',
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }], // L0 normal, L4 lowPrio
+        requiredCertifications: ['Nitzan'],
+        label: 'LP',
+      },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const lpCtx = buildSchedulingContext([lpRiskTask], lowPrioOnlyPool);
+  const lpRisk = lpCtx.lowPrioRisk.get('lp-1') ?? 0;
+  assert(lpRisk > 0, `lowPrioRisk: no L0 in pool forces lowPrio → risk > 0 (got ${lpRisk})`);
+  // Base tier: lowPrio+cert = tier 1. Guard `tier > 1` prevents any shift. No boost, stays tier 1.
+  const lpPri = computeStructuralPriority(lpRiskTask, lpCtx);
+  assert(Math.floor(lpPri / 10) === 1, `lpRisk: tier 1 unchanged by guard (got ${lpPri})`);
+
+  // S4 fires when tier starts above 1: lowPrio entries + NO required certs →
+  // base tier 3 (fallback), then S4 demotes to tier 2 when pool can't avoid lowPrio.
+  const lpTier3Task: Task = {
+    id: 'lp-t3',
+    name: 'LPTier3',
+    timeBlock: createTimeBlockFromHours(optBase, 6, 12),
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: 'lp-t3-s1',
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
+        requiredCertifications: [], // ← no certs → base tier 3 via fallback
+        label: 'LP3',
+      },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  // Pool of L4 only — forces lowPrio assignment.
+  const lpTier3Ctx = buildSchedulingContext([lpTier3Task], lowPrioOnlyPool);
+  const lpTier3Pri = computeStructuralPriority(lpTier3Task, lpTier3Ctx);
+  assert(Math.floor(lpTier3Pri / 10) === 2, `S4: tier 3 task with lowPrio risk demotes to tier 2 (got ${lpTier3Pri})`);
+
+  // Same task but with an L0 participant in pool: risk = 0, no S4 shift, stays tier 3.
+  const lpTier3MixedPool = [...lowPrioOnlyPool, mkParticipant('lp-l0', 'LP-L0', Level.L0, ['Nitzan'], 'A')];
+  const lpTier3MixedCtx = buildSchedulingContext([lpTier3Task], lpTier3MixedPool);
+  const lpTier3MixedPri = computeStructuralPriority(lpTier3Task, lpTier3MixedCtx);
+  assert(
+    Math.floor(lpTier3MixedPri / 10) === 3,
+    `S4: tier 3 task with L0 pool (risk=0) stays tier 3 (got ${lpTier3MixedPri})`,
+  );
+
+  // Min-eligible sub-priority: task with exactly 4 eligible should surface subPri = 4.
+  const bottleneckTask: Task = {
+    id: 'bn-1',
+    name: 'Bottleneck',
+    timeBlock: createTimeBlockFromHours(optBase, 6, 10),
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: 'bn-s1',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Semi'], // 9/10 hold it; but we'll filter down
+        forbiddenCertifications: ['Rare'], // rules out the first 3 (they have Rare)
+        label: 'BN',
+      },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  // Eligible = L0 ∧ Semi ∧ ¬Rare.
+  //   p0..p2 have Rare → excluded.
+  //   p3..p8 have Semi & no Rare → 6 eligible.
+  //   p9 has no Semi → excluded.
+  const bnCtx = buildSchedulingContext([bottleneckTask], signalPool);
+  const bnMin = bnCtx.minEligiblePerTask.get('bn-1') ?? -1;
+  assert(bnMin === 6, `bottleneck: eligible = 6 (got ${bnMin})`);
+  const bnPri = computeStructuralPriority(bottleneckTask, bnCtx);
+  assert(bnPri % 10 === 6, `S1 sub-priority = minEligible when in [0,9] (got ${bnPri})`);
+
+  // Signals never cross the tier 1 floor (guard `tier > 1` in all shift branches).
+  // A tier-1 task with stickiness ≥ 2 + rare cert + high lpRisk must stay tier 1.
+  const tier1Pool: Participant[] = [mkParticipant('t1-p1', 'T1P1', Level.L4, ['Hamama'], 'A')]; // only L4
+  const tier1Task: Task = {
+    id: 't1-1',
+    name: 'Tier1',
+    timeBlock: createTimeBlockFromHours(optBase, 5, 19), // 14h, sticky
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: 't1-s1',
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }], // lowPrio + cert → tier 1
+        requiredCertifications: ['Hamama'],
+        label: 'T1',
+      },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+    restRuleId: 'rr',
+  };
+  const tier1Ctx = buildSchedulingContext([tier1Task], tier1Pool);
+  const tier1Pri = computeStructuralPriority(tier1Task, tier1Ctx);
+  assert(
+    Math.floor(tier1Pri / 10) === 1,
+    `tier 1 floor: signals never push below tier 1 (got ${tier1Pri})`,
+  );
+
+  // Explicit schedulingPriority override is honored by the sort — verify via
+  // observable greedy ordering. Override sends the high-priority task first
+  // regardless of structural tier. (Indirect test: first slot in greedy
+  // order receives the first available participant.)
+  const overrideTask: Task = {
+    ...lightTask,
+    id: 'ovr-1',
+    name: 'Override',
+    schedulingPriority: 0, // explicit 0 ⇒ schedules before anything else
+    slots: [
+      {
+        slotId: 'ovr-s1',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Common'],
+        label: 'OVR',
+      },
+    ],
+  };
+  const ovrGreedy = greedyAssign([stickyTask, overrideTask], signalPool.slice(0, 3));
+  // With only 3 participants and 2 non-overlapping tasks, both should fill.
+  assert(
+    ovrGreedy.unfilledSlots.length === 0,
+    `schedulingPriority override: both tasks fill (got ${ovrGreedy.unfilledSlots.length} unfilled)`,
+  );
+
+  // Senior-count-by-group signal (Phase 2 input, but built by Phase 1 context).
+  const seniorPool: Participant[] = [
+    mkParticipant('s-a1', 'A-L0', Level.L0, ['Nitzan'], 'GA'),
+    mkParticipant('s-a2', 'A-L2', Level.L2, ['Nitzan'], 'GA'),
+    mkParticipant('s-a3', 'A-L4', Level.L4, ['Nitzan'], 'GA'),
+    mkParticipant('s-b1', 'B-L3', Level.L3, ['Nitzan'], 'GB'),
+  ];
+  const srCtx = buildSchedulingContext([], seniorPool);
+  assert(srCtx.seniorCountByGroup.get('GA') === 2, `seniorCountByGroup: GA has 2 seniors`);
+  assert(srCtx.seniorCountByGroup.get('GB') === 1, `seniorCountByGroup: GB has 1 senior`);
+  assert(
+    (srCtx.seniorCountByGroup.get('Unknown') ?? 0) === 0,
+    `seniorCountByGroup: missing group has 0 (default)`,
+  );
+
+  // ═══ Phase 2: S5 senior-pressure tier-0 ordering ═══════════════════════════
+
+  console.log('\n── Optimizer: S5 senior-pressure tier-0 ordering ─');
+
+  // Build a pool where min seniors per group = 2.
+  const pressurePool: Participant[] = [
+    mkParticipant('pp-a-l0-1', 'A-L0-1', Level.L0, ['Nitzan'], 'GA'),
+    mkParticipant('pp-a-l2', 'A-L2', Level.L2, ['Nitzan'], 'GA'),
+    mkParticipant('pp-a-l3', 'A-L3', Level.L3, ['Nitzan'], 'GA'),
+    mkParticipant('pp-b-l0-1', 'B-L0-1', Level.L0, ['Nitzan'], 'GB'),
+    mkParticipant('pp-b-l2', 'B-L2', Level.L2, ['Nitzan'], 'GB'),
+    mkParticipant('pp-b-l3', 'B-L3', Level.L3, ['Nitzan'], 'GB'),
+  ];
+  const mkSameGroupTask = (id: string, seniorSlots: number): Task => {
+    const slots = [];
+    slots.push({
+      slotId: `${id}-l0`,
+      acceptableLevels: [{ level: Level.L0 }],
+      requiredCertifications: ['Nitzan'],
+      label: 'L0',
+    });
+    for (let k = 0; k < seniorSlots; k++) {
+      slots.push({
+        slotId: `${id}-sr${k}`,
+        acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }],
+        requiredCertifications: ['Nitzan'],
+        label: 'Sr',
+      });
+    }
+    return {
+      id,
+      name: id,
+      timeBlock: createTimeBlockFromHours(optBase, 6, 12),
+      requiredCount: slots.length,
+      slots,
+      sameGroupRequired: true,
+      blocksConsecutive: false,
+    };
+  };
+  const lightTierZero = mkSameGroupTask('t0-light', 0); // 0 senior slots → pressure 0
+  const mediumTierZero = mkSameGroupTask('t0-medium', 1); // 1/2 = 0.5 → round(1.5) = 2
+  const heavyTierZero = mkSameGroupTask('t0-heavy', 6); // 6/2 = 3 → round(9) = 9 (inverted → 0)
+  const pressureCtx = buildSchedulingContext(
+    [lightTierZero, mediumTierZero, heavyTierZero],
+    pressurePool,
+  );
+  const lightPri0 = computeStructuralPriority(lightTierZero, pressureCtx);
+  const medPri0 = computeStructuralPriority(mediumTierZero, pressureCtx);
+  const heavyPri0 = computeStructuralPriority(heavyTierZero, pressureCtx);
+  // heavyTierZero should sort earliest (lowest priority value)
+  assert(heavyPri0 === 0, `S5: heavy tier-0 task (pressure 3.0) → priority 0 (got ${heavyPri0})`);
+  // mediumTierZero: pressure 0.5 → round(1.5) = 2 → sub = 9 - 2 = 7
+  assert(medPri0 === 7, `S5: medium tier-0 task (pressure 0.5) → priority 7 (got ${medPri0})`);
+  // lightTierZero: pressure 0 → early return 0 (no senior demand → doesn't compete)
+  assert(lightPri0 === 0, `S5: zero-senior-demand tier-0 task → priority 0 (got ${lightPri0})`);
+  // Verify: heavy and medium differ — the one needing more seniors sorts earlier.
+  assert(heavyPri0 < medPri0, `S5: higher senior pressure sorts earlier (${heavyPri0} < ${medPri0})`);
+
+  // No-ctx fallback: tier-0 tasks still return 0 (legacy behavior).
+  assert(computeStructuralPriority(heavyTierZero) === 0, `S5: no-ctx fallback → 0 for same-group`);
+
+  // ═══ Phase 2: Elite-boost classification ═══════════════════════════════════
+
+  console.log('\n── Optimizer: Elite-boost classification ─────');
+
+  // Universal boost invariant — EVERY unfilled task appears in boostTaskIds,
+  // regardless of its HC codes. Classification is additive (adjacency-dominated
+  // tasks ALSO appear in saIntensifyTaskIds), never subtractive. This prevents
+  // the pool-shrink regression where "adjacency-locked" classification starved
+  // fixable tasks of the ordering-recovery path.
+
+  // HC-12/HC-14 — adjacency-dominated → BOTH boost AND saIntensify
+  const uf_hc12: UnfilledSlot = { taskId: 't-adj', slotId: 's1', reason: '...', hcCodes: ['HC-12'] };
+  const uf_hc14: UnfilledSlot = { taskId: 't-adj2', slotId: 's1', reason: '...', hcCodes: ['HC-14'] };
+  const uf_hc1214: UnfilledSlot = { taskId: 't-mix', slotId: 's1', reason: '...', hcCodes: ['HC-12', 'HC-14'] };
+  const cls1 = classifyUnfilledSlots([uf_hc12, uf_hc14, uf_hc1214]);
+  assert(cls1.saIntensifyTaskIds.has('t-adj'), `classify: HC-12 → saIntensify`);
+  assert(cls1.saIntensifyTaskIds.has('t-adj2'), `classify: HC-14 → saIntensify`);
+  assert(cls1.saIntensifyTaskIds.has('t-mix'), `classify: HC-12+HC-14 → saIntensify`);
+  assert(cls1.boostTaskIds.has('t-adj'), `classify: HC-12 → ALSO boost (universal)`);
+  assert(cls1.boostTaskIds.has('t-adj2'), `classify: HC-14 → ALSO boost (universal)`);
+  assert(cls1.boostTaskIds.has('t-mix'), `classify: HC-12+HC-14 → ALSO boost (universal)`);
+
+  // Generic "missing" and HC-4 → boost only (not adjacency-dominated)
+  const uf_generic: UnfilledSlot = { taskId: 't-gen', slotId: 's1', reason: 'missing' };
+  const uf_hc4: UnfilledSlot = { taskId: 't-grp', slotId: 's1', reason: 'group', hcCodes: ['HC-4'] };
+  const cls2 = classifyUnfilledSlots([uf_generic, uf_hc4]);
+  assert(cls2.boostTaskIds.has('t-gen'), `classify: empty hcCodes → boost`);
+  assert(cls2.boostTaskIds.has('t-grp'), `classify: HC-4 same-group → boost`);
+  assert(!cls2.saIntensifyTaskIds.has('t-gen'), `classify: no adjacency → NOT saIntensify`);
+  assert(!cls2.saIntensifyTaskIds.has('t-grp'), `classify: HC-4 no adjacency → NOT saIntensify`);
+
+  // HC-1 (capacity block) → boost (never excluded — fix for regression where
+  // "persistent infeasible" trap prematurely abandoned boundary-feasible tasks).
+  const uf_hc1: UnfilledSlot = { taskId: 't-cap', slotId: 's1', reason: 'level', hcCodes: ['HC-1'] };
+  const cls3 = classifyUnfilledSlots([uf_hc1]);
+  assert(cls3.boostTaskIds.has('t-cap'), `classify: HC-1 → boost (never excluded)`);
+  assert(!cls3.saIntensifyTaskIds.has('t-cap'), `classify: HC-1 → NOT saIntensify (no adjacency)`);
+
+  // HC-12 + HC-1 (mixed) — adjacency present → BOTH paths apply (additive).
+  const uf_mixed: UnfilledSlot = { taskId: 't-mixed', slotId: 's1', reason: '...', hcCodes: ['HC-12', 'HC-1'] };
+  const cls4 = classifyUnfilledSlots([uf_mixed]);
+  assert(cls4.boostTaskIds.has('t-mixed'), `classify: HC-12+HC-1 → boost`);
+  assert(cls4.saIntensifyTaskIds.has('t-mixed'), `classify: HC-12+HC-1 → ALSO saIntensify (adjacency present)`);
+
+  // ═══ Phase 2: 4-8 rotation bug scenario ════════════════════════════════════
+  // 9 L0 Nitzan participants, 2 tasks per 4h shift (Shemesh + Matos), 8h rest.
+  // Exactly demand=capacity. Reported in the conversation as failing under the
+  // old ordering. optimizeMultiAttempt with classified elite boost + SA
+  // intensification should reach feasibility.
+
+  console.log('\n── Optimizer: 4-8 rotation bug scenario ─────');
+
+  const rotWindow = [{ start: new Date(2026, 3, 26, 0, 0), end: new Date(2026, 3, 27, 6, 0) }];
+  const rotP = (id: string): Participant => ({
+    id,
+    name: id,
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: rotWindow,
+    dateUnavailability: [],
+  });
+  const rotPool = Array.from({ length: 9 }, (_, k) => rotP(`rot-p${k + 1}`));
+  const restRule8h = new Map<string, number>([['rr-8h', 8]]);
+
+  // Build 6 shifts × 2 task templates for 1 operational day (smaller than 7
+  // days but enough to exercise the HC-12/HC-14 adjacency failure mode).
+  // JS Date constructor normalizes overflow components, so passing hour=26
+  // produces the next calendar day at 02:00 — no manual day/hour wrapping.
+  const rotTasks: Task[] = [];
+  for (let shift = 0; shift < 6; shift++) {
+    const startHr = 6 + shift * 4;
+    const block = {
+      start: new Date(2026, 3, 26, startHr, 0),
+      end: new Date(2026, 3, 26, startHr + 4, 0),
+    };
+    // Guard: test fixture must have a strictly positive duration.
+    assert(block.end.getTime() - block.start.getTime() === 4 * 3_600_000, `4-8 fixture: shift ${shift + 1} is exactly 4h`);
+    // Shemesh-like (2 slots)
+    rotTasks.push({
+      id: `rot-shem-s${shift + 1}`,
+      name: `Shemesh S${shift + 1}`,
+      sourceName: 'Shemesh',
+      timeBlock: block,
+      requiredCount: 2,
+      slots: [
+        { slotId: `rot-shem-${shift + 1}-a`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'S' },
+        { slotId: `rot-shem-${shift + 1}-b`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'S' },
+      ],
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+      restRuleId: 'rr-8h',
+    });
+    // Matos-like (1 slot)
+    rotTasks.push({
+      id: `rot-matos-s${shift + 1}`,
+      name: `Matos S${shift + 1}`,
+      sourceName: 'Matos',
+      timeBlock: block,
+      requiredCount: 1,
+      slots: [
+        { slotId: `rot-matos-${shift + 1}-a`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'M' },
+      ],
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+      restRuleId: 'rr-8h',
+    });
+  }
+  // 12 tasks, 18 slots. 9 participants × 2 shifts/day = 18 capacity. Exact match.
+
+  const rotCfg: SchedulerConfig = { ...DEFAULT_CONFIG, maxIterations: 500, maxSolverTimeMs: 800 };
+  const rotResult = optimizeMultiAttempt(rotTasks, rotPool, rotCfg, [], 20, undefined, undefined, undefined, restRule8h);
+  // With Phase 2 elite-boost classification + SA intensification, the clean
+  // 3-pair rotation is found quickly. Pre-Phase-2 baseline (per the backup
+  // attached in the prior conversation) produced 6 unfilled on this shape.
+  assert(
+    rotResult.unfilledSlots.length === 0,
+    `4-8 scenario: 0 unfilled after 20 multi-attempts (got ${rotResult.unfilledSlots.length})`,
+  );
+  // Re-validate output
+  const rotVal = validateHardConstraints(rotTasks, rotPool, rotResult.assignments);
+  assert(rotVal.valid === true, `4-8 scenario: output passes HC re-validation`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

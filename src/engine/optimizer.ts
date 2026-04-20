@@ -56,6 +56,22 @@ const SA_REHEAT_THRESHOLD = 500;
 const SA_INSERT_PROBABILITY = 0.2;
 
 /**
+ * Diagnostic record for a task slot that the scheduler could not fill.
+ *
+ * `hcCodes` is a machine-stable list of HC codes (e.g. ['HC-12', 'HC-14'])
+ * that indicates which constraints blocked the slot. Used by the multi-attempt
+ * driver to classify unfilled slots into ordering-fixable vs SA-insertable
+ * vs structurally-infeasible, and route the elite-boost / SA-intensify budget
+ * accordingly. `reason` remains a human-readable Hebrew string for UI display.
+ */
+export interface UnfilledSlot {
+  taskId: string;
+  slotId: string;
+  reason: string;
+  hcCodes?: string[];
+}
+
+/**
  * Reusable scratch buffer for HC-12/HC-14 checks inside isSwapFeasible.
  * Avoids per-call .map().filter() array allocations on the hot path.
  * Safe because isSwapFeasible is only called synchronously from the SA loop.
@@ -290,27 +306,187 @@ function getEligibleCandidates(
   return eligible;
 }
 
+// ─── Scheduling Context ─────────────────────────────────────────────────────
+
+/**
+ * Pool-wide signals derived from (tasks, participants) that are invariant
+ * across the attempts of a single `optimizeMultiAttempt*` run. Built once by
+ * `buildSchedulingContext`, then passed to `computeStructuralPriority` so the
+ * tier formula can reason about candidate-pool bottlenecks, cert rarity,
+ * low-priority penalty risk, and other structural signals that were
+ * previously opaque to the ordering phase.
+ *
+ * All fields are read-only after construction. Safe to share across nested
+ * optimize() calls within the same multi-attempt run.
+ */
+export interface SchedulingContext {
+  /** For each (taskId, slotId) → number of participants passing level ∩ cert ∩ ¬forbidden. */
+  eligiblePerSlot: Map<string, Map<string, number>>;
+  /** Per-task min across its slots — the bottleneck slot count. */
+  minEligiblePerTask: Map<string, number>;
+  /** certId → 1 − (participants holding cert / totalParticipants). Missing cert = 1. */
+  certRarity: Map<string, number>;
+  /** group → count of L2+ participants (seniors). */
+  seniorCountByGroup: Map<string, number>;
+  /** taskId → max(0, slotsWithLowPriority − nonLowPrioEligiblePool). */
+  lowPrioRisk: Map<string, number>;
+  /** taskId → computeTaskEffectiveHours(task) × slotCount. */
+  effHoursByTask: Map<string, number>;
+  /** Sum of totalAvailableHours across all participants in the schedule window. 0 if capacities unavailable. */
+  totalCapacityHours: number;
+}
+
+/**
+ * Build a {@link SchedulingContext} from the task and participant inputs.
+ *
+ * Costs O(T × S × P) — negligible vs. a 2000-attempt optimize loop which does
+ * equivalent work inside the greedy phase via getRejectionReason.
+ *
+ * @param tasks          The tasks to be scheduled.
+ * @param participants   The full participant pool.
+ * @param capacities     Optional pre-computed capacities (for totalCapacityHours).
+ *                       When omitted, totalCapacityHours is left at 0.
+ */
+export function buildSchedulingContext(
+  tasks: Task[],
+  participants: Participant[],
+  capacities?: Map<string, { totalAvailableHours: number }>,
+): SchedulingContext {
+  const P = Math.max(1, participants.length);
+
+  // Cert rarity: 1 − (holders / P) across the full pool.
+  const certHolders = new Map<string, number>();
+  for (const p of participants) {
+    for (const c of p.certifications) {
+      certHolders.set(c, (certHolders.get(c) || 0) + 1);
+    }
+  }
+  const certRarity = new Map<string, number>();
+  for (const [cert, count] of certHolders) {
+    certRarity.set(cert, 1 - count / P);
+  }
+
+  // Per-group senior (L2+) count.
+  const seniorCountByGroup = new Map<string, number>();
+  for (const p of participants) {
+    if (p.level !== Level.L0) {
+      seniorCountByGroup.set(p.group, (seniorCountByGroup.get(p.group) || 0) + 1);
+    }
+  }
+
+  // Per-task signals.
+  const eligiblePerSlot = new Map<string, Map<string, number>>();
+  const minEligiblePerTask = new Map<string, number>();
+  const lowPrioRisk = new Map<string, number>();
+  const effHoursByTask = new Map<string, number>();
+
+  for (const task of tasks) {
+    const perSlot = new Map<string, number>();
+    let minEligible = Number.POSITIVE_INFINITY;
+    let lowPrioSlots = 0;
+    const nonLowPrioPool = new Set<string>();
+
+    for (const slot of task.slots) {
+      let count = 0;
+      const hasLowPrioEntry = slot.acceptableLevels.some((e) => e.lowPriority);
+      if (hasLowPrioEntry) lowPrioSlots++;
+
+      for (const p of participants) {
+        if (!isLevelSatisfied(p.level, slot)) continue;
+        if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
+        if (hasForbiddenCertification(p, slot)) continue;
+        count++;
+
+        // Track participants who match a NON-lowPriority level entry of any slot.
+        const nonLowPrioMatch = slot.acceptableLevels.some((e) => e.level === p.level && !e.lowPriority);
+        if (nonLowPrioMatch) nonLowPrioPool.add(p.id);
+      }
+      perSlot.set(slot.slotId, count);
+      if (count < minEligible) minEligible = count;
+    }
+
+    eligiblePerSlot.set(task.id, perSlot);
+    minEligiblePerTask.set(task.id, Number.isFinite(minEligible) ? minEligible : 0);
+    lowPrioRisk.set(task.id, Math.max(0, lowPrioSlots - nonLowPrioPool.size));
+    effHoursByTask.set(task.id, computeTaskEffectiveHours(task) * Math.max(1, task.slots.length));
+  }
+
+  let totalCapacityHours = 0;
+  if (capacities) {
+    for (const cap of capacities.values()) totalCapacityHours += cap.totalAvailableHours;
+  }
+
+  return {
+    eligiblePerSlot,
+    minEligiblePerTask,
+    certRarity,
+    seniorCountByGroup,
+    lowPrioRisk,
+    effHoursByTask,
+    totalCapacityHours,
+  };
+}
+
 // ─── Greedy Phase ────────────────────────────────────────────────────────────
 
 /**
- * Compute a scheduling priority using constraint-type tiers with
- * candidate-pool tiebreakers.
+ * Compute a scheduling priority using constraint-type tiers with optional
+ * pool-signal refinements when a {@link SchedulingContext} is provided.
  *
- * Tier 0: Same-group tasks (Adanit) — always first
- * Tier 1: Has lowPriority levels + cert required — penalty-critical
- * Tier 2: L0-only + cert required (Shemesh) — very tight pool
- * Tier 3: Mixed levels + cert or exclusion (Karov, Mamtera, Karovit) — moderate
- * Tier 4: L0-only unconstrained (Aruga) — wide pool
- *         (fallback also lands at tier 3 for tasks that don't match above)
+ * Base tiers (returned when ctx is omitted — legacy callers):
+ *   Tier 0: Same-group tasks (Adanit) — always first
+ *   Tier 1: Has lowPriority levels + cert required — penalty-critical
+ *   Tier 2: L0-only + cert required (Shemesh) — very tight pool
+ *   Tier 3: Mixed levels + cert or exclusion (Karov, Mamtera, Karovit)
+ *   Tier 4: L0-only unconstrained (Aruga) — wide pool
+ *   Fallback: Tier 3.
+ *
+ * Signal refinements when ctx is provided (bounded to keep stability invariants):
+ *   S2 cert rarity: if max over required certs has rarity > 0.7 → tier − 1.
+ *   S3 stickiness: (dur≥10) + (dur≥14) + blocksConsecutive + restRuleId;
+ *                  score ≥ 2 → tier − 1. Subsumes the standalone duration bump.
+ *   S4 lowPrio risk: lowPrioRisk(t) > 0 → tier − 1.
+ *   At most ONE of {S2, S3, S4} applies (first-match short-circuit) — signals
+ *   may shift a task at most one tier so the random-tiebreak-within-tier
+ *   stability property is preserved.
+ *   S1 bottleneck sub-priority: minEligiblePerTask clamped to [0, 9] is
+ *   added as the low-order digit (`tier*10 + subMin`). Sub-priority keeps
+ *   jitter ±1 inside the tier.
+ *
+ * `task.schedulingPriority` (explicit override) is consulted by the caller
+ * before falling back to this function — it is not read here.
  *
  * Within each tier, tasks are randomly ordered (no sub-priority tiebreaker).
- * Simulation (300 iter × 22 variants, Round 3) showed that removing the
- * min-eligible bottleneck sub-priority improves composite score by +6.4%
- * (p=0.005) and reduces mean penalty by -8.8%, because random tiebreaking
- * gives the jitter + multi-attempt mechanism more exploration room.
+ * Simulation (300 iter × 22 variants, Round 3) showed that removing a
+ * sub-priority tiebreaker improves composite score by +6.4% (p=0.005) and
+ * reduces mean penalty by -8.8%, because random tiebreaking gives the
+ * jitter + multi-attempt mechanism more exploration room. We reintroduce a
+ * sub-priority here only as the bottleneck signal and keep it bounded.
  */
-function computeStructuralPriority(task: Task): number {
-  if (task.sameGroupRequired) return 0;
+export function computeStructuralPriority(task: Task, ctx?: SchedulingContext): number {
+  if (task.sameGroupRequired) {
+    // S5 senior pressure sub-priority (tier 0 only).
+    // Higher pressure = needs more seniors per group = schedule earlier.
+    // Mapped to sub ∈ [0, 9] where 0 is highest priority (earliest).
+    if (!ctx) return 0;
+    let seniorSlotCount = 0;
+    for (const slot of task.slots) {
+      if (slot.acceptableLevels.some((e) => e.level !== Level.L0)) seniorSlotCount++;
+    }
+    if (seniorSlotCount === 0) return 0; // No senior demand → highest-priority tier-0 slot (random tiebreak still applies)
+    let minSeniorCount = Number.POSITIVE_INFINITY;
+    for (const count of ctx.seniorCountByGroup.values()) {
+      if (count < minSeniorCount) minSeniorCount = count;
+    }
+    if (!Number.isFinite(minSeniorCount) || minSeniorCount === 0) {
+      // No seniors available anywhere — push to front (can't hurt; may still be unfillable).
+      return 0;
+    }
+    const pressure = seniorSlotCount / minSeniorCount;
+    // Invert so higher pressure yields lower priority value (earlier sort).
+    const sub = Math.max(0, Math.min(9, 9 - Math.round(pressure * 3)));
+    return sub;
+  }
 
   const hasCerts = task.slots.some((s) => s.requiredCertifications.length > 0);
   const allL0Only = task.slots.every(
@@ -330,6 +506,49 @@ function computeStructuralPriority(task: Task): number {
     tier = 4; // Aruga: wide L0 pool
   else tier = 3; // Fallback
 
+  const durationHours = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3_600_000;
+
+  if (ctx) {
+    // First-match tier shift (at most one of S2/S3/S4 applies). Guard
+    // tier > 1 everywhere so signals never cascade past the lowPriority tier.
+    if (tier > 1) {
+      // S2 cert rarity
+      let maxRarity = 0;
+      for (const slot of task.slots) {
+        for (const c of slot.requiredCertifications) {
+          const r = ctx.certRarity.get(c) ?? 1;
+          if (r > maxRarity) maxRarity = r;
+        }
+      }
+      if (maxRarity > 0.7) {
+        tier -= 1;
+      } else {
+        // S3 stickiness
+        const stick =
+          (durationHours >= 10 ? 1 : 0) +
+          (durationHours >= 14 ? 1 : 0) +
+          (task.blocksConsecutive ? 1 : 0) +
+          (task.restRuleId ? 1 : 0);
+        if (stick >= 2) {
+          tier -= 1;
+        } else if ((ctx.lowPrioRisk.get(task.id) ?? 0) > 0) {
+          // S4 lowPrio penalty risk
+          tier -= 1;
+        }
+      }
+    }
+
+    // S1 bottleneck sub-priority (0..9). Fewer eligible = lower sub-priority
+    // digit = sorted earlier within the tier.
+    const minEligible = ctx.minEligiblePerTask.get(task.id) ?? 9;
+    const subMin = Math.max(0, Math.min(9, minEligible));
+    return tier * 10 + subMin;
+  }
+
+  // Legacy no-ctx path: preserve the previous duration-only bump for callers
+  // (tests, the elite-boost fallback when ctx is not threaded) so behavior is
+  // unchanged for them.
+  if (tier > 1 && durationHours >= 12) tier -= 1;
   return tier * 10;
 }
 
@@ -338,14 +557,14 @@ function computeStructuralPriority(task: Task): number {
  * Uses explicit schedulingPriority if set on the task, otherwise computes
  * priority from constraint tiers.
  */
-function sortTasksByDifficulty(tasks: Task[], jitter: number = 0): Task[] {
+function sortTasksByDifficulty(tasks: Task[], jitter: number = 0, ctx?: SchedulingContext): Task[] {
   // P3: Pre-compute random keys for transitive tiebreaker
   const taskRngKey = new Map<string, number>();
   for (const t of tasks) taskRngKey.set(t.id, Math.random());
 
   const basePriority = new Map<string, number>();
   for (const t of tasks) {
-    basePriority.set(t.id, t.schedulingPriority ?? computeStructuralPriority(t));
+    basePriority.set(t.id, t.schedulingPriority ?? computeStructuralPriority(t, ctx));
   }
 
   // Task-order jitter: with probability `jitter`, apply a random ±1
@@ -388,9 +607,10 @@ export function greedyAssign(
   phantomContext?: PhantomContext,
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
+  ctx?: SchedulingContext,
 ): {
   assignments: Assignment[];
-  unfilledSlots: { taskId: string; slotId: string; reason: string }[];
+  unfilledSlots: UnfilledSlot[];
   pinnedIds: Set<string>;
 } {
   const taskMap = new Map<string, Task>();
@@ -403,7 +623,7 @@ export function greedyAssign(
 
   const pinnedIds = new Set(pinnedAssignments.map((a) => a.id));
   const assignments: Assignment[] = [...pinnedAssignments];
-  const unfilledSlots: { taskId: string; slotId: string; reason: string }[] = [];
+  const unfilledSlots: UnfilledSlot[] = [];
 
   // P4: Pre-build per-participant assignment index for O(1) lookups
   const assignmentsByParticipant = buildAssignmentMap(pinnedAssignments);
@@ -483,7 +703,7 @@ export function greedyAssign(
     }
   }
 
-  const sortedTasks = sortTasksByDifficulty(tasks, taskOrderJitter);
+  const sortedTasks = sortTasksByDifficulty(tasks, taskOrderJitter, ctx);
 
   for (const task of sortedTasks) {
     // For same-group tasks (Adanit), we need special handling
@@ -509,7 +729,7 @@ export function greedyAssign(
             const certStr =
               slot.requiredCertifications.length > 0 ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
             const reason = `אף קבוצה לא יכולה למלא את כל העמדות ב${task.name}. חסר ${levelStr}${certStr} עבור ${task.name}`;
-            unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason });
+            unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason, hcCodes: ['HC-4'] });
           }
         }
       }
@@ -711,18 +931,24 @@ export function greedyAssign(
           }
 
           let reason: string;
+          const hcCodes: string[] = [];
           const hc12Count = rejectionCounts.get('HC-12') || 0;
           const hc14Count = rejectionCounts.get('HC-14') || 0;
           if (hc14Count > 0 && hc12Count > 0) {
             reason = `התנגשות אילוצים ב${task.name}: ${hc14Count} ע"י מרווח מינימלי, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
+            hcCodes.push('HC-14', 'HC-12');
           } else if (hc14Count > 0) {
             reason = `חסימת HC-14 מרווח מינימלי: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות קרובות עם דרישת מרווח`;
+            hcCodes.push('HC-14');
           } else if (hc12Count > 0) {
             reason = `חסימת HC-12 עומס רצוף: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות כבדות סמוכות`;
+            hcCodes.push('HC-12');
           } else {
             reason = `חסר ${levelStr}${certStr} עבור ${task.name}`;
+            // Include any HC codes that appeared in rejections (e.g. HC-1 level, HC-2 cert)
+            for (const code of rejectionCounts.keys()) hcCodes.push(code);
           }
-          unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason });
+          unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason, hcCodes });
         }
       }
     }
@@ -1116,12 +1342,13 @@ export function localSearchOptimize(
   assignments: Assignment[],
   config: SchedulerConfig,
   disabledHC?: Set<string>,
-  unfilledSlots?: { taskId: string; slotId: string; reason: string }[],
+  unfilledSlots?: UnfilledSlot[],
   phantomContext?: PhantomContext,
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
   pinnedIds: Set<string> = new Set(),
   abortSignal?: AbortSignal,
+  saIntensifyTaskIds?: Set<string>,
 ): { assignments: Assignment[]; filledSlots: string[] } {
   const current = [...assignments.map((a) => ({ ...a }))];
 
@@ -1240,8 +1467,24 @@ export function localSearchOptimize(
     // feasibility over quality. Otherwise use the default 20%.
     const insertProb = remainingUnfilled.length > 0 ? 0.5 : SA_INSERT_PROBABILITY;
     if (remainingUnfilled.length > 0 && Math.random() < insertProb) {
-      // Pick a random unfilled slot
-      const ufIdx = Math.floor(Math.random() * remainingUnfilled.length);
+      // Pick a random unfilled slot. When `saIntensifyTaskIds` is set (from
+      // elite-boost classification: tasks whose unfill is HC-12/HC-14 adjacency
+      // rather than ordering-fixable), bias the pick with 80% probability
+      // toward those task IDs so SA spends its insert-move budget where SA
+      // can actually help. Falls back to uniform pick when the intensify set
+      // is empty or has no overlap with remainingUnfilled.
+      let ufIdx: number;
+      if (saIntensifyTaskIds && saIntensifyTaskIds.size > 0 && Math.random() < 0.8) {
+        const intensifyIdxs: number[] = [];
+        for (let k = 0; k < remainingUnfilled.length; k++) {
+          if (saIntensifyTaskIds.has(remainingUnfilled[k].taskId)) intensifyIdxs.push(k);
+        }
+        ufIdx = intensifyIdxs.length > 0
+          ? intensifyIdxs[Math.floor(Math.random() * intensifyIdxs.length)]
+          : Math.floor(Math.random() * remainingUnfilled.length);
+      } else {
+        ufIdx = Math.floor(Math.random() * remainingUnfilled.length);
+      }
       const uf = remainingUnfilled[ufIdx];
       const ufTask = taskMap.get(uf.taskId);
       if (ufTask) {
@@ -1541,7 +1784,7 @@ export interface OptimizationResult {
   assignments: Assignment[];
   score: ScheduleScore;
   feasible: boolean;
-  unfilledSlots: { taskId: string; slotId: string; reason: string }[];
+  unfilledSlots: UnfilledSlot[];
   iterations: number;
   durationMs: number;
   actualAttempts: number;
@@ -1562,8 +1805,15 @@ export function optimize(
   dayStartHour: number = 5,
   certLabelResolver?: (certId: string) => string,
   abortSignal?: AbortSignal,
+  ctx?: SchedulingContext,
+  saIntensifyTaskIds?: Set<string>,
 ): OptimizationResult {
   const startTime = Date.now();
+
+  // Build SchedulingContext on-demand for callers that didn't pre-build.
+  // Multi-attempt drivers pass a pre-built ctx so we don't repeat this
+  // O(T×S×P) work per attempt.
+  const schedulingCtx = ctx ?? buildSchedulingContext(tasks, participants);
 
   // Phase 1: Greedy construction
   const greedy = greedyAssign(
@@ -1575,6 +1825,7 @@ export function optimize(
     phantomContext,
     restRuleMap,
     dayStartHour,
+    schedulingCtx,
   );
 
   // Phase 2: Local search improvement (also tries to fill unfilled slots)
@@ -1590,6 +1841,7 @@ export function optimize(
     dayStartHour,
     greedy.pinnedIds,
     abortSignal,
+    saIntensifyTaskIds,
   );
 
   // Remove slots that SA managed to fill
@@ -1685,6 +1937,56 @@ function isBetterResult(candidate: OptimizationResult, current: OptimizationResu
   return candidate.score.compositeScore > current.score.compositeScore;
 }
 
+// ─── Elite-boost classification ──────────────────────────────────────────────
+
+/**
+ * Derives two *additive* recovery hints from the current best's unfilled slots:
+ *
+ *   - `boostTaskIds`: **every** unfilled task. Each gets its
+ *     `schedulingPriority` dropped by 10 for the next batch, scheduling it a
+ *     tier earlier in greedy. Universal by design — classification must never
+ *     gate the ordering recovery path, because adjacency failures are often
+ *     curable by scheduling the sensitive task *before* its blocker is placed
+ *     (only possible via ordering).
+ *   - `saIntensifyTaskIds`: adjacency-dominated (HC-12 / HC-14). Passed to
+ *     `localSearchOptimize` so SA's insert-move budget *additionally* biases
+ *     toward these slots. This is a superset-compatible enrichment — a task
+ *     can be in both sets simultaneously and both mechanisms work on it.
+ *
+ * Rationale for dropping the earlier three-way partition (`infeasibleTaskIds`
+ * excluded from boost after N persistent HC-1/HC-2 intervals): the exclusion
+ * was a premature optimization. Boosting a truly-infeasible task costs one
+ * priority recompute; *not* boosting a fixable task costs an unfilled slot.
+ * When the pool shrinks (e.g. a group is removed), transient HC-1/HC-2/HC-12
+ * flicker more often, and exclusive classification starved fixable tasks of
+ * the recovery path that the original algorithm used universally.
+ */
+/** @internal exported for test coverage only; consumers should not depend on this shape. */
+export interface EliteBoostState {
+  boostTaskIds: Set<string>;
+  saIntensifyTaskIds: Set<string>;
+}
+
+/** @internal exported for test coverage only. */
+export function classifyUnfilledSlots(unfilled: UnfilledSlot[]): EliteBoostState {
+  const state: EliteBoostState = {
+    boostTaskIds: new Set(),
+    saIntensifyTaskIds: new Set(),
+  };
+  for (const uf of unfilled) {
+    // Universal boost — every unfilled task goes into the ordering recovery path.
+    state.boostTaskIds.add(uf.taskId);
+
+    // Additive SA bias — tasks whose reasons are dominated by adjacency
+    // (HC-12 / HC-14) also benefit from SA intensification on top of boost.
+    const codes = uf.hcCodes ?? [];
+    if (codes.includes('HC-12') || codes.includes('HC-14')) {
+      state.saIntensifyTaskIds.add(uf.taskId);
+    }
+  }
+  return state;
+}
+
 /**
  * Run the optimizer multiple times with shuffled participant order and
  * task-order jitter, keeping the best result. This introduces diversity
@@ -1716,28 +2018,42 @@ export function optimizeMultiAttempt(
     improved: string;
   }> = [];
 
-  // Elite restart: periodically boost scheduling priority for tasks that
-  // have unfilled slots in the current best result, so subsequent attempts
-  // schedule them earlier (one tier up).
+  // Elite restart: every ELITE_INTERVAL attempts, inspect the current best's
+  // unfilled slots and refresh the two additive recovery hints. Every unfilled
+  // task gets an ordering boost; adjacency-dominated tasks additionally receive
+  // SA insert-move intensification. No task is ever *excluded* from either path.
   const ELITE_INTERVAL = 200;
-  let eliteBoostTaskIds: Set<string> | null = null;
+  let eliteBoost: EliteBoostState = {
+    boostTaskIds: new Set(),
+    saIntensifyTaskIds: new Set(),
+  };
+
+  // Build SchedulingContext once for the whole multi-attempt run — signals
+  // depend only on (tasks, participants), both invariant across attempts.
+  const ctx = buildSchedulingContext(tasks, participants);
 
   for (let i = 0; i < attempts; i++) {
-    // Update elite boost set every ELITE_INTERVAL attempts
+    // Refresh elite-boost hints every ELITE_INTERVAL attempts
     if (best && i > 0 && i % ELITE_INTERVAL === 0 && best.unfilledSlots.length > 0) {
-      eliteBoostTaskIds = new Set(best.unfilledSlots.map((uf) => uf.taskId));
+      eliteBoost = classifyUnfilledSlots(best.unfilledSlots);
     }
 
     // Shuffle participant order to create diversity
     // (first attempt uses original order for determinism)
     const shuffledParticipants = i === 0 ? [...participants] : shuffle([...participants]);
 
-    // Apply elite boost: create task copies with reduced priority for unfilled tasks
+    // Apply elite boost: every unfilled task gets its priority dropped by 10
+    // so it schedules one tier earlier in greedy. Adjacency-dominated tasks
+    // *additionally* receive SA insert-move bias (see `optimize()` call below)
+    // — the two mechanisms are additive, never mutually exclusive.
     const attemptTasks =
-      eliteBoostTaskIds && i > 0
+      eliteBoost.boostTaskIds.size > 0 && i > 0
         ? tasks.map((t) =>
-            eliteBoostTaskIds!.has(t.id)
-              ? { ...t, schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t)) - 10) }
+            eliteBoost.boostTaskIds.has(t.id)
+              ? {
+                  ...t,
+                  schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t, ctx)) - 10),
+                }
               : t,
           )
         : tasks;
@@ -1755,6 +2071,9 @@ export function optimizeMultiAttempt(
       restRuleMap,
       undefined,
       certLabelResolver,
+      undefined,
+      ctx,
+      eliteBoost.saIntensifyTaskIds.size > 0 ? eliteBoost.saIntensifyTaskIds : undefined,
     );
 
     const improved = best === null || isBetterResult(result, best);
@@ -1840,9 +2159,16 @@ export function optimizeMultiAttemptAsync(
       improved: string;
     }> = [];
 
-    // Elite restart state (same logic as sync version)
+    // Elite restart state (same classification as sync version)
     const ELITE_INTERVAL = 200;
-    let eliteBoostTaskIds: Set<string> | null = null;
+    let eliteBoost: EliteBoostState = {
+      boostTaskIds: new Set(),
+      saIntensifyTaskIds: new Set(),
+    };
+
+    // Build SchedulingContext once for the whole multi-attempt run — signals
+    // depend only on (tasks, participants), both invariant across attempts.
+    const ctx = buildSchedulingContext(tasks, participants);
 
     function runBatch(): void {
       try {
@@ -1861,22 +2187,23 @@ export function optimizeMultiAttemptAsync(
             return;
           }
 
-          // Update elite boost set every ELITE_INTERVAL attempts
+          // Refresh elite-boost hints every ELITE_INTERVAL attempts
           if (best && i > 0 && i % ELITE_INTERVAL === 0 && best.unfilledSlots.length > 0) {
-            eliteBoostTaskIds = new Set(best.unfilledSlots.map((uf) => uf.taskId));
+            eliteBoost = classifyUnfilledSlots(best.unfilledSlots);
           }
 
           // Shuffle participant order (first attempt uses original order)
           const shuffledParticipants = i === 0 ? [...participants] : shuffle([...participants]);
 
-          // Apply elite boost: create task copies with reduced priority for unfilled tasks
+          // Apply elite boost: every unfilled task gets priority drop; adjacency-
+          // dominated tasks additionally receive SA insert-move bias (additive).
           const attemptTasks =
-            eliteBoostTaskIds && i > 0
+            eliteBoost.boostTaskIds.size > 0 && i > 0
               ? tasks.map((t) =>
-                  eliteBoostTaskIds!.has(t.id)
+                  eliteBoost.boostTaskIds.has(t.id)
                     ? {
                         ...t,
-                        schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t)) - 10),
+                        schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t, ctx)) - 10),
                       }
                     : t,
                 )
@@ -1896,6 +2223,8 @@ export function optimizeMultiAttemptAsync(
             dayStartHour,
             certLabelResolver,
             abortSignal,
+            ctx,
+            eliteBoost.saIntensifyTaskIds.size > 0 ? eliteBoost.saIntensifyTaskIds : undefined,
           );
 
           const improved = best === null || isBetterResult(result, best);
