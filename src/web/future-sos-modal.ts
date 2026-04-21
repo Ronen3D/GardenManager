@@ -258,6 +258,8 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
   const hasInfeasible = ctx.result.infeasibleAssignmentIds.length > 0;
   const warningHtml = hasInfeasible ? renderInfeasibleWarning(ctx.result) : '';
   const timeoutHtml = ctx.result.timedOut ? renderTimeoutBanner(ctx.result.plans.length > 0) : '';
+  const usesDeepFallback = ctx.result.plans.some((p) => p.fallbackDepthUsed !== undefined);
+  const fallbackHtml = usesDeepFallback ? renderFallbackBanner() : '';
   const isTouch = document.documentElement.classList.contains('touch-device');
 
   let plansHtml = '';
@@ -287,6 +289,7 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
       </div>
       ${timeoutHtml}
       ${warningHtml}
+      ${fallbackHtml}
       ${pagerHtml}
       ${plansHtml}
       <div class="gm-modal-actions fsos-sticky-actions">
@@ -487,10 +490,23 @@ function renderNoPlans(): string {
   return `<div class="fsos-empty-state">
     <div class="fsos-empty-state-icon" aria-hidden="true">🔍</div>
     <h4 class="fsos-empty-state-title">לא נמצאו תוכניות החלפה</h4>
-    <p class="fsos-empty-state-body">ניסינו עומק 1, 2 ו־3 ולא הצלחנו להשלים את השיבוצים.</p>
+    <p class="fsos-empty-state-body">ניסינו עומק 1–5 ולא הצלחנו להשלים את השיבוצים.</p>
     <div class="fsos-empty-state-actions">
       <button type="button" class="fsos-narrow-btn btn-sm btn-outline">צמצם חלון</button>
     </div>
+  </div>`;
+}
+
+/**
+ * Rendered when at least one plan in the result used the deep-chain fallback
+ * (depth 4 or 5). Signals to the user that the shallow-chain search exhausted
+ * and the engine produced unusually long chains as a last-resort. Plan details
+ * are still shown as usual — the banner just primes the user to expect deeper
+ * chains inside the per-slot "Show Details" sections.
+ */
+function renderFallbackBanner(): string {
+  return `<div class="fsos-warning-banner fsos-warning-banner--fallback">
+    <strong>⚠️ תוכנית זו נוצרה במצב חירום ועלולה לכלול שרשראות עמוקות — כדאי לעיין בפרטים לפני אישור.</strong>
   </div>`;
 }
 

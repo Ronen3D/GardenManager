@@ -32,6 +32,7 @@ import {
   type ChainEnumerationCaps,
   DEFAULT_CAPS,
   enumerateChainsForSlot,
+  type FallbackLevel,
   type SlotEnumerationContext,
 } from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';
@@ -70,8 +71,8 @@ export interface BatchRescuePlan {
   compositeDelta: number;
   /** Baseline stdDev − candidate stdDev. Positive = fairness improvement. */
   fairnessDelta: FairnessDelta;
-  /** { 1: n1, 2: n2, 3: n3 } — chain depths used across all slots. */
-  depthHistogram: Record<1 | 2 | 3, number>;
+  /** { 1: n1, 2: n2, 3: n3, 4: n4, 5: n5 } — chain depths used across all slots. */
+  depthHistogram: Record<1 | 2 | 3 | 4 | 5, number>;
   perParticipantChanges: PerParticipantChange[];
   violations: ConstraintViolation[];
   /**
@@ -80,6 +81,12 @@ export interface BatchRescuePlan {
    * plan and should clearly mark it as an illustrative preview.
    */
   isPartial: boolean;
+  /**
+   * Highest chain depth used in this plan when depth 4 or 5 was reached via
+   * the deep-chain fallback cascade. Undefined for normal depth 1..3 plans.
+   * The UI uses this to render a "fallback mode" banner.
+   */
+  fallbackDepthUsed?: 4 | 5;
 }
 
 export interface BatchRescueResult {
@@ -571,176 +578,227 @@ export function generateBatchRescuePlans(
     excludeParticipantIds: new Set([request.participantId]),
   };
 
-  // Enumerate chains per vacated slot.
-  const candidatesPerSlot: CandidateChain[][] = [];
-  const infeasibleAssignmentIds: string[] = [];
-  for (const v of affected) {
-    const chains = enumerateChainsForSlot(slotCtx, v.assignment, caps);
-    if (chains.length === 0) infeasibleAssignmentIds.push(v.assignment.id);
-    candidatesPerSlot.push(chains);
-  }
+  // Inner helper — runs enumeration + DFS composition + scoring at a given
+  // fallback level. Factored out so the deep-chain cascade can invoke it
+  // multiple times without duplicating the scoring block.
+  //
+  // Returns:
+  //  - validPlans: ranked & diversity-selected (never includes invalid plans)
+  //  - invalidPlans: kept as a last-resort bucket across the whole cascade
+  //  - infeasibleAssignmentIds: slots that had no chain at this fallback level
+  //  - timedOut: whether DFS hit its wall-clock deadline
+  //  - anySolvable: false iff every slot had zero chains (nothing to compose)
+  const runStage = (
+    fallbackLevel: FallbackLevel,
+    budgetMs: number,
+  ): {
+    validPlans: BatchRescuePlan[];
+    invalidPlans: BatchRescuePlan[];
+    infeasibleIds: string[];
+    timedOut: boolean;
+    anySolvable: boolean;
+  } => {
+    const candidatesPerSlot: CandidateChain[][] = [];
+    const infeasibleIds: string[] = [];
+    for (const v of affected) {
+      const chains = enumerateChainsForSlot(slotCtx, v.assignment, caps, fallbackLevel);
+      if (chains.length === 0) infeasibleIds.push(v.assignment.id);
+      candidatesPerSlot.push(chains);
+    }
 
-  // If any slot is infeasible, we still compose over the solvable ones so the
-  // UI can show what would have been possible — but per user choice the UI
-  // blocks Apply unless every slot has at least one candidate.
-  const solvableIdx: number[] = [];
-  for (let i = 0; i < candidatesPerSlot.length; i++) {
-    if (candidatesPerSlot[i].length > 0) solvableIdx.push(i);
-  }
-  if (solvableIdx.length === 0) {
-    return {
-      request,
-      affected,
-      excludedInWindow,
-      lockedInPast,
-      plans: [],
-      infeasibleAssignmentIds,
-      timedOut: false,
+    const solvableIdx: number[] = [];
+    for (let i = 0; i < candidatesPerSlot.length; i++) {
+      if (candidatesPerSlot[i].length > 0) solvableIdx.push(i);
+    }
+    if (solvableIdx.length === 0) {
+      return { validPlans: [], invalidPlans: [], infeasibleIds, timedOut: false, anySolvable: false };
+    }
+
+    // Order slots by ascending candidate count (fail-fast DFS).
+    const orderedSolvable = [...solvableIdx].sort((a, b) => candidatesPerSlot[a].length - candidatesPerSlot[b].length);
+    const orderedCandidates = orderedSolvable.map((i) => candidatesPerSlot[i]);
+
+    const deadline = Date.now() + budgetMs;
+    const { compositions, timedOut } = dfsCompose(orderedCandidates, Math.max(maxPlans * 4, 8), deadline);
+
+    if (compositions.length === 0) {
+      return { validPlans: [], invalidPlans: [], infeasibleIds, timedOut, anySolvable: true };
+    }
+
+    const isPartial = infeasibleIds.length > 0;
+
+    // Highest-depth-used, for the fallback badge. If any chain in the composition
+    // is at depth 4 or 5, that's what the UI surfaces.
+    const computeFallbackDepthUsed = (chains: CandidateChain[]): 4 | 5 | undefined => {
+      let max: 1 | 2 | 3 | 4 | 5 = 1;
+      for (const c of chains) if (c.depth > max) max = c.depth;
+      return max === 4 || max === 5 ? max : undefined;
     };
-  }
 
-  // Order slots by ascending candidate count (fail-fast DFS).
-  const orderedSolvable = [...solvableIdx].sort((a, b) => candidatesPerSlot[a].length - candidatesPerSlot[b].length);
-  const orderedCandidates = orderedSolvable.map((i) => candidatesPerSlot[i]);
+    const scored: BatchRescuePlan[] = [];
+    const scoredInvalid: BatchRescuePlan[] = [];
+    for (let i = 0; i < compositions.length; i++) {
+      const comp = compositions[i];
+      const touched = new Set<string>();
+      for (const c of comp.chains) for (const id of c.touchedAssignmentIds) touched.add(id);
 
-  const deadline = Date.now() + timeBudgetMs;
-  // Compose up to 4× the requested plans to give the full-scorer room to rerank.
-  const { compositions, timedOut } = dfsCompose(orderedCandidates, Math.max(maxPlans * 4, 8), deadline);
+      const tempAssignments = applyCompositionToAssignments(schedule, comp.chains);
 
-  if (compositions.length === 0) {
-    return {
-      request,
-      affected,
-      excludedInWindow,
-      lockedInPast,
-      plans: [],
-      infeasibleAssignmentIds,
-      timedOut,
-    };
-  }
+      const validation = validateHardConstraints(
+        schedule.tasks,
+        schedule.participants,
+        tempAssignments,
+        opts.disabledHC,
+        opts.restRuleMap,
+        opts.certLabelResolver,
+        extraUnavailability,
+      );
 
-  // Partial-plan flag: any composition built over a strict subset of affected
-  // slots is a preview, not something the user can apply.
-  const isPartial = infeasibleAssignmentIds.length > 0;
+      const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+      for (const c of comp.chains) depthHistogram[c.depth]++;
+      const fallbackDepthUsed = computeFallbackDepthUsed(comp.chains);
 
-  // Score compositions in two buckets:
-  //   scored     — passed validateHardConstraints (combined HC-5/12/14 + extraUnavailability).
-  //   scoredInvalid — failed; retained only as fallback when no valid plan exists.
-  // Validation runs BEFORE the full scoring so invalid compositions skip the
-  // expensive computeScheduleScore call. DFS ranks by summed solo-delta, which
-  // does not see cross-chain combined constraints — hoisting validation here
-  // catches compositions where two individually-valid chains together create
-  // HC-5 (time overlap), HC-12 (consecutive blocking), or HC-14 (rest-gap)
-  // violations on a shared participant.
-  const scored: BatchRescuePlan[] = [];
-  const scoredInvalid: BatchRescuePlan[] = [];
-  for (let i = 0; i < compositions.length; i++) {
-    const comp = compositions[i];
-    const touched = new Set<string>();
-    for (const c of comp.chains) for (const id of c.touchedAssignmentIds) touched.add(id);
+      if (validation.violations.length > 0) {
+        scoredInvalid.push({
+          id: `fsos-${hashSwaps(mergeSwaps(comp.chains))}-${i}`,
+          rank: 0,
+          swaps: mergeSwaps(comp.chains),
+          compositeDelta: comp.deltaSum,
+          fairnessDelta: { l0StdDev: 0, seniorStdDev: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 },
+          depthHistogram,
+          perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
+          violations: validation.violations,
+          isPartial,
+          fallbackDepthUsed,
+        });
+        continue;
+      }
 
-    const tempAssignments = applyCompositionToAssignments(schedule, comp.chains);
+      const candScore = computeScheduleScore(
+        schedule.tasks,
+        schedule.participants,
+        tempAssignments,
+        opts.config,
+        opts.scoreCtx,
+      );
+      const compositeDelta = candScore.compositeScore - baselineScore.compositeScore;
 
-    const validation = validateHardConstraints(
-      schedule.tasks,
-      schedule.participants,
-      tempAssignments,
-      opts.disabledHC,
-      opts.restRuleMap,
-      opts.certLabelResolver,
-      extraUnavailability,
-    );
+      const candSplit = workloadImbalanceSplit(schedule.participants, tempAssignments, schedule.tasks, taskMap);
+      const candDaily = dailyWorkloadImbalance(
+        schedule.participants,
+        tempAssignments,
+        schedule.tasks,
+        taskMap,
+        undefined,
+        undefined,
+        schedule.algorithmSettings.dayStartHour,
+      );
+      const fairnessDelta: FairnessDelta = {
+        l0StdDev: baselineSplit.l0StdDev - candSplit.l0StdDev,
+        seniorStdDev: baselineSplit.seniorStdDev - candSplit.seniorStdDev,
+        dailyPerParticipantStdDev: baselineDaily.dailyPerParticipantStdDev - candDaily.dailyPerParticipantStdDev,
+        dailyGlobalStdDev: baselineDaily.dailyGlobalStdDev - candDaily.dailyGlobalStdDev,
+      };
 
-    const depthHistogram: Record<1 | 2 | 3, number> = { 1: 0, 2: 0, 3: 0 };
-    for (const c of comp.chains) depthHistogram[c.depth]++;
-
-    if (validation.violations.length > 0) {
-      // Fallback bucket — skip expensive scoring; use solo-delta sum as a
-      // best-available rough ordering. The UI already surfaces violation count
-      // and gates the Apply button behind a confirm dialog, so users aren't
-      // silently handed an invalid plan.
-      scoredInvalid.push({
+      scored.push({
         id: `fsos-${hashSwaps(mergeSwaps(comp.chains))}-${i}`,
         rank: 0,
         swaps: mergeSwaps(comp.chains),
-        compositeDelta: comp.deltaSum,
-        fairnessDelta: { l0StdDev: 0, seniorStdDev: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 },
+        compositeDelta,
+        fairnessDelta,
         depthHistogram,
         perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
         violations: validation.violations,
         isPartial,
+        fallbackDepthUsed,
       });
-      continue;
     }
 
-    const candScore = computeScheduleScore(
-      schedule.tasks,
-      schedule.participants,
-      tempAssignments,
-      opts.config,
-      opts.scoreCtx,
-    );
-    const compositeDelta = candScore.compositeScore - baselineScore.compositeScore;
-
-    const candSplit = workloadImbalanceSplit(schedule.participants, tempAssignments, schedule.tasks, taskMap);
-    const candDaily = dailyWorkloadImbalance(
-      schedule.participants,
-      tempAssignments,
-      schedule.tasks,
-      taskMap,
-      undefined,
-      undefined,
-      schedule.algorithmSettings.dayStartHour,
-    );
-    const fairnessDelta: FairnessDelta = {
-      l0StdDev: baselineSplit.l0StdDev - candSplit.l0StdDev,
-      seniorStdDev: baselineSplit.seniorStdDev - candSplit.seniorStdDev,
-      dailyPerParticipantStdDev: baselineDaily.dailyPerParticipantStdDev - candDaily.dailyPerParticipantStdDev,
-      dailyGlobalStdDev: baselineDaily.dailyGlobalStdDev - candDaily.dailyGlobalStdDev,
-    };
-
-    scored.push({
-      id: `fsos-${hashSwaps(mergeSwaps(comp.chains))}-${i}`,
-      rank: 0,
-      swaps: mergeSwaps(comp.chains),
-      compositeDelta,
-      fairnessDelta,
-      depthHistogram,
-      perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
-      violations: validation.violations,
-      isPartial,
+    // Rank valid plans; leave invalid ones unranked (caller may mix them in only
+    // if no valid composition survived anywhere across the cascade).
+    scored.sort((a, b) => {
+      const delta = b.compositeDelta - a.compositeDelta;
+      if (Math.abs(delta) > 0.1) return delta;
+      const aDisturbed = a.perParticipantChanges.length;
+      const bDisturbed = b.perParticipantChanges.length;
+      if (aDisturbed !== bDisturbed) return aDisturbed - bDisturbed;
+      return a.swaps.length - b.swaps.length;
     });
+
+    const top = selectDiversePlans(scored, maxPlans);
+    for (let i = 0; i < top.length; i++) top[i].rank = i + 1;
+
+    return { validPlans: top, invalidPlans: scoredInvalid, infeasibleIds, timedOut, anySolvable: true };
+  };
+
+  // Deep-chain fallback cascade — feasibility-only escalation.
+  // Stage 1: normal depth 1..3. Stage 2: depth 4 enumeration per slot (unlocks
+  // slots that had zero chains AND gives DFS extra breadth to break
+  // compositional deadlocks). Stage 3: depth 5 as last-resort.
+  // We escalate only when the previous stage produced no valid plans; fallback
+  // never overrides a feasible shallow-chain result.
+  const FALLBACK_MAX_BUDGET_MS = 10_000;
+  const fallbackBudget = Math.min(FALLBACK_MAX_BUDGET_MS, timeBudgetMs * 4);
+
+  const stage1 = runStage('none', timeBudgetMs);
+  let finalPlans = stage1.validPlans;
+  let finalInfeasible = stage1.infeasibleIds;
+  let finalTimedOut = stage1.timedOut;
+  let lastInvalidBucket = stage1.invalidPlans;
+  let stageAnySolvable = stage1.anySolvable;
+
+  if (finalPlans.length === 0 && (stage1.anySolvable || stage1.infeasibleIds.length > 0)) {
+    console.warn(
+      `[future-sos] depth-4 fallback fired for participant ${request.participantId} ` +
+        `(window ${request.window.start.toISOString()}..${request.window.end.toISOString()}, ` +
+        `infeasibleSlots=${stage1.infeasibleIds.length}/${affected.length})`,
+    );
+    const stage2 = runStage('depth4', fallbackBudget);
+    finalPlans = stage2.validPlans;
+    finalInfeasible = stage2.infeasibleIds;
+    finalTimedOut = stage2.timedOut;
+    lastInvalidBucket = stage2.invalidPlans;
+    stageAnySolvable = stage2.anySolvable;
   }
 
-  // Prefer valid plans; fall back to invalid only when no valid composition survived.
-  // Ranking: composite delta primary; disruption tiebreakers secondary. Two plans
-  // with near-identical composite improvement are preferred by (1) fewer distinct
-  // participants touched, then (2) fewer total swaps. Aligns with the "minimum
-  // disruption" goal without overriding clear composite wins.
-  const ranked = scored.length > 0 ? scored : scoredInvalid;
-  ranked.sort((a, b) => {
-    const delta = b.compositeDelta - a.compositeDelta;
-    if (Math.abs(delta) > 0.1) return delta;
-    const aDisturbed = a.perParticipantChanges.length;
-    const bDisturbed = b.perParticipantChanges.length;
-    if (aDisturbed !== bDisturbed) return aDisturbed - bDisturbed;
-    return a.swaps.length - b.swaps.length;
-  });
+  if (finalPlans.length === 0 && (stageAnySolvable || finalInfeasible.length > 0)) {
+    console.warn(
+      `[future-sos] depth-5 fallback fired for participant ${request.participantId} ` +
+        `(window ${request.window.start.toISOString()}..${request.window.end.toISOString()}, ` +
+        `infeasibleSlots=${finalInfeasible.length}/${affected.length})`,
+    );
+    const stage3 = runStage('depth5', fallbackBudget);
+    finalPlans = stage3.validPlans;
+    finalInfeasible = stage3.infeasibleIds;
+    finalTimedOut = stage3.timedOut;
+    lastInvalidBucket = stage3.invalidPlans;
+  }
 
-  // Diversity-preserving top-K. Without this, top-K often collapses to
-  // near-duplicate plans sharing slot-0's best candidate — user sees 3 nearly
-  // identical plans instead of 3 real alternatives.
-  const top = selectDiversePlans(ranked, maxPlans);
-  for (let i = 0; i < top.length; i++) top[i].rank = i + 1;
+  // Last-resort: if no valid plan at any depth, surface the final stage's
+  // invalid-bucket compositions (if any). Preserves prior behavior where the
+  // UI can show a violating plan behind a confirm dialog.
+  if (finalPlans.length === 0 && lastInvalidBucket.length > 0) {
+    lastInvalidBucket.sort((a, b) => {
+      const delta = b.compositeDelta - a.compositeDelta;
+      if (Math.abs(delta) > 0.1) return delta;
+      const aDisturbed = a.perParticipantChanges.length;
+      const bDisturbed = b.perParticipantChanges.length;
+      if (aDisturbed !== bDisturbed) return aDisturbed - bDisturbed;
+      return a.swaps.length - b.swaps.length;
+    });
+    const topInvalid = selectDiversePlans(lastInvalidBucket, maxPlans);
+    for (let i = 0; i < topInvalid.length; i++) topInvalid[i].rank = i + 1;
+    finalPlans = topInvalid;
+  }
 
   return {
     request,
     affected,
     excludedInWindow,
     lockedInPast,
-    plans: top,
-    infeasibleAssignmentIds,
-    timedOut,
+    plans: finalPlans,
+    infeasibleAssignmentIds: finalInfeasible,
+    timedOut: finalTimedOut,
   };
 }
 

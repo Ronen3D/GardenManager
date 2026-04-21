@@ -9617,6 +9617,264 @@ console.log('\n── Future SOS (batch rescue) ──────────�
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-Chain Fallback (depth-4 / depth-5) — Rescue & Future-SOS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+console.log('\n── Deep-chain fallback (depth 4/5) ────');
+
+{
+  // Shared fixtures. All tasks at the SAME time block on day 1 so that every
+  // participant already assigned somewhere has an HC-5 time conflict when
+  // directly moved — this is what forces the chain to keep rippling.
+  const dcfBase = new Date(2026, 5, 1);
+  const dcfAnchor = new Date(2026, 4, 30);
+  const dcfBlock = createTimeBlockFromHours(dcfBase, 8, 12);
+  const dcfAvail = [{ start: new Date(2026, 4, 29), end: new Date(2026, 5, 3) }];
+
+  function mkTask(id: string, cert: string, slotId: string): Task {
+    return {
+      id,
+      name: id,
+      timeBlock: dcfBlock,
+      requiredCount: 1,
+      slots: [{ slotId, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [cert], label: id }],
+      sameGroupRequired: false,
+      blocksConsecutive: false,
+    };
+  }
+
+  function mkP(id: string, certs: string[]): Participant {
+    return {
+      id,
+      name: id,
+      level: Level.L0,
+      certifications: certs,
+      group: 'A',
+      availability: dcfAvail,
+      dateUnavailability: [],
+    };
+  }
+
+  function mkA(id: string, taskId: string, slotId: string, pid: string): Assignment {
+    return {
+      id,
+      taskId,
+      slotId,
+      participantId: pid,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    };
+  }
+
+  const dcfDummyScore: ScheduleScore = {
+    minRestHours: 0,
+    avgRestHours: 0,
+    restStdDev: 0,
+    totalPenalty: 0,
+    compositeScore: 0,
+    l0StdDev: 0,
+    l0AvgEffective: 0,
+    seniorStdDev: 0,
+    seniorAvgEffective: 0,
+    dailyPerParticipantStdDev: 0,
+    dailyGlobalStdDev: 0,
+  };
+
+  function mkSchedule(tasks: Task[], participants: Participant[], assignments: Assignment[]): Schedule {
+    return {
+      id: 'dcf-sched',
+      tasks,
+      participants,
+      assignments,
+      feasible: true,
+      score: dcfDummyScore,
+      violations: [],
+      generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2026, 4, 28),
+      periodDays: 7,
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
+    };
+  }
+
+  function buildScoreCtx(tasks: Task[], participants: Participant[]): ScoreContext {
+    let schedStart = tasks[0]?.timeBlock.start ?? new Date();
+    let schedEnd = tasks[0]?.timeBlock.end ?? new Date();
+    for (const t of tasks) {
+      if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+      if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+    }
+    return {
+      taskMap: new Map(tasks.map((t) => [t.id, t])),
+      pMap: new Map(participants.map((p) => [p.id, p])),
+      capacities: computeAllCapacities(participants, schedStart, schedEnd, 5),
+      notWithPairs: new Map(),
+      dayStartHour: 5,
+    };
+  }
+
+  // ── Test A: depth-1 succeeds → no fallbackDepth set ──
+  {
+    const t0 = mkTask('dcfA-t0', 'cN', 'dcfA-s0');
+    const pv = mkP('dcfA-pv', ['cN']);
+    const pr = mkP('dcfA-pr', ['cN']); // free replacement, no assignment
+    const assigns = [mkA('dcfA-a0', 'dcfA-t0', 'dcfA-s0', 'dcfA-pv')];
+    const sched = mkSchedule([t0], [pv, pr], assigns);
+    const result = generateRescuePlans(
+      sched,
+      { vacatedAssignmentId: 'dcfA-a0', taskId: 'dcfA-t0', slotId: 'dcfA-s0', vacatedBy: 'dcfA-pv' },
+      dcfAnchor,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      undefined,
+      { ...DEFAULT_CONFIG },
+      buildScoreCtx(sched.tasks, sched.participants),
+    );
+    assert(result.plans.length >= 1, 'dcf-A: depth-1 case returns at least one plan');
+    assert(
+      result.plans.every((p) => p.fallbackDepth === undefined),
+      'dcf-A: no plan carries fallbackDepth when depth-1 suffices',
+    );
+  }
+
+  // ── Test B: every depth 1..3 blocked; depth-4 fallback finds a plan ──
+  // Cert cascade: t0 needs c0, t1 needs c1, t2 needs c2, t3 needs c3.
+  // P_B has {c0,c1}, P_C has {c1,c2}, P_D has {c2,c3}, P_free has {c3}. P_A has {c0}.
+  // All 4 tasks at the same time. After vacating P_A from t0, direct placements
+  // of P_B (and only P_B is cert-eligible) conflict via HC-5 with P_B's t1
+  // assignment. Depth-2 / depth-3 bottleneck at P_C / P_D for the same reason.
+  // Depth-4 chains: P_B→t0, P_C→t1, P_D→t2, P_free→t3 — the free participant
+  // absorbs the final ripple. Only depth-4 can close the chain.
+  {
+    const t0 = mkTask('dcfB-t0', 'c0', 'dcfB-s0');
+    const t1 = mkTask('dcfB-t1', 'c1', 'dcfB-s1');
+    const t2 = mkTask('dcfB-t2', 'c2', 'dcfB-s2');
+    const t3 = mkTask('dcfB-t3', 'c3', 'dcfB-s3');
+    const pA = mkP('dcfB-pA', ['c0']);
+    const pB = mkP('dcfB-pB', ['c0', 'c1']);
+    const pC = mkP('dcfB-pC', ['c1', 'c2']);
+    const pD = mkP('dcfB-pD', ['c2', 'c3']);
+    const pFree = mkP('dcfB-pFree', ['c3']);
+    const assigns = [
+      mkA('dcfB-a0', 'dcfB-t0', 'dcfB-s0', 'dcfB-pA'),
+      mkA('dcfB-a1', 'dcfB-t1', 'dcfB-s1', 'dcfB-pB'),
+      mkA('dcfB-a2', 'dcfB-t2', 'dcfB-s2', 'dcfB-pC'),
+      mkA('dcfB-a3', 'dcfB-t3', 'dcfB-s3', 'dcfB-pD'),
+    ];
+    const sched = mkSchedule([t0, t1, t2, t3], [pA, pB, pC, pD, pFree], assigns);
+    const result = generateRescuePlans(
+      sched,
+      { vacatedAssignmentId: 'dcfB-a0', taskId: 'dcfB-t0', slotId: 'dcfB-s0', vacatedBy: 'dcfB-pA' },
+      dcfAnchor,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      undefined,
+      { ...DEFAULT_CONFIG },
+      buildScoreCtx(sched.tasks, sched.participants),
+    );
+    assert(result.plans.length >= 1, 'dcf-B: depth-4 fallback returns at least one plan');
+    assert(
+      result.plans.every((p) => p.fallbackDepth === 4),
+      'dcf-B: every returned plan is flagged fallbackDepth === 4',
+    );
+    assert(
+      result.plans.every((p) => p.swaps.length === 4),
+      'dcf-B: every returned plan has exactly 4 swaps',
+    );
+    // Every swap must be hard-constraint valid — the depth-4 path re-validates
+    // via validateHardConstraints, so plans with violations must never reach here.
+    assert(
+      result.plans.every((p) => p.violations.length === 0),
+      'dcf-B: fallback plans are HC-valid',
+    );
+  }
+
+  // ── Test C: rescue does NOT attempt depth-5 (single-slot, by design) ──
+  // Same cascade as Test B but extended one more level — depth-4 also fails
+  // (cert c4 is held only by a fifth chained person who is still assigned).
+  // Rescue should return an empty plan list, NOT a depth-5 chain.
+  {
+    const t0 = mkTask('dcfC-t0', 'c0', 'dcfC-s0');
+    const t1 = mkTask('dcfC-t1', 'c1', 'dcfC-s1');
+    const t2 = mkTask('dcfC-t2', 'c2', 'dcfC-s2');
+    const t3 = mkTask('dcfC-t3', 'c3', 'dcfC-s3');
+    const t4 = mkTask('dcfC-t4', 'c4', 'dcfC-s4');
+    const pA = mkP('dcfC-pA', ['c0']);
+    const pB = mkP('dcfC-pB', ['c0', 'c1']);
+    const pC = mkP('dcfC-pC', ['c1', 'c2']);
+    const pD = mkP('dcfC-pD', ['c2', 'c3']);
+    const pE = mkP('dcfC-pE', ['c3', 'c4']);
+    const pFree = mkP('dcfC-pFree', ['c4']);
+    const assigns = [
+      mkA('dcfC-a0', 'dcfC-t0', 'dcfC-s0', 'dcfC-pA'),
+      mkA('dcfC-a1', 'dcfC-t1', 'dcfC-s1', 'dcfC-pB'),
+      mkA('dcfC-a2', 'dcfC-t2', 'dcfC-s2', 'dcfC-pC'),
+      mkA('dcfC-a3', 'dcfC-t3', 'dcfC-s3', 'dcfC-pD'),
+      mkA('dcfC-a4', 'dcfC-t4', 'dcfC-s4', 'dcfC-pE'),
+    ];
+    const sched = mkSchedule([t0, t1, t2, t3, t4], [pA, pB, pC, pD, pE, pFree], assigns);
+    const result = generateRescuePlans(
+      sched,
+      { vacatedAssignmentId: 'dcfC-a0', taskId: 'dcfC-t0', slotId: 'dcfC-s0', vacatedBy: 'dcfC-pA' },
+      dcfAnchor,
+      0,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      undefined,
+      { ...DEFAULT_CONFIG },
+      buildScoreCtx(sched.tasks, sched.participants),
+    );
+    assert(result.plans.length === 0, 'dcf-C: rescue returns empty when depth-4 also fails (no depth-5 in single-slot)');
+  }
+
+  // ── Test D: Future SOS cascades to depth-4 ──
+  // Same 4-task cascade as Test B but treated as a batch: marking pA unavailable
+  // for the window vacates t0 (via pA). In the multi-slot batch path, only t0 is
+  // affected — and the same cert cascade blocks depth 1..3. The batch must
+  // surface a plan with fallbackDepthUsed === 4.
+  {
+    const t0 = mkTask('dcfD-t0', 'c0', 'dcfD-s0');
+    const t1 = mkTask('dcfD-t1', 'c1', 'dcfD-s1');
+    const t2 = mkTask('dcfD-t2', 'c2', 'dcfD-s2');
+    const t3 = mkTask('dcfD-t3', 'c3', 'dcfD-s3');
+    const pA = mkP('dcfD-pA', ['c0']);
+    const pB = mkP('dcfD-pB', ['c0', 'c1']);
+    const pC = mkP('dcfD-pC', ['c1', 'c2']);
+    const pD = mkP('dcfD-pD', ['c2', 'c3']);
+    const pFree = mkP('dcfD-pFree', ['c3']);
+    const assigns = [
+      mkA('dcfD-a0', 'dcfD-t0', 'dcfD-s0', 'dcfD-pA'),
+      mkA('dcfD-a1', 'dcfD-t1', 'dcfD-s1', 'dcfD-pB'),
+      mkA('dcfD-a2', 'dcfD-t2', 'dcfD-s2', 'dcfD-pC'),
+      mkA('dcfD-a3', 'dcfD-t3', 'dcfD-s3', 'dcfD-pD'),
+    ];
+    const sched = mkSchedule([t0, t1, t2, t3], [pA, pB, pC, pD, pFree], assigns);
+    const window = { start: dcfBlock.start, end: dcfBlock.end };
+    const result = generateBatchRescuePlans(sched, { participantId: 'dcfD-pA', window }, dcfAnchor, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildScoreCtx(sched.tasks, sched.participants),
+    });
+    assert(result.plans.length >= 1, 'dcf-D: batch returns at least one plan via fallback');
+    const anyFallback = result.plans.some((p) => p.fallbackDepthUsed === 4);
+    assert(anyFallback, 'dcf-D: batch plan is flagged fallbackDepthUsed === 4');
+    // Infeasible list should be empty because the fallback unlocked the slot.
+    assert(
+      result.infeasibleAssignmentIds.length === 0,
+      'dcf-D: fallback clears infeasibleAssignmentIds for recoverable slot',
+    );
+  }
+}
+
 // ─── Async test blocks + Summary ─────────────────────────────────────────────
 
 (async () => {

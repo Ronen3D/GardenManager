@@ -128,8 +128,12 @@ function validateComponent(
   c: LoadFormulaComponent,
   editingTemplateId: string,
   templates: Map<string, TaskTemplate>,
+  ignoreEmptyRefs: boolean,
 ): ValidateResult {
-  if (!c.refTemplateId) return { ok: false, reason: 'השמירה מושבתת — בחר משימה להשוואה.' };
+  if (!c.refTemplateId) {
+    if (ignoreEmptyRefs) return { ok: true };
+    return { ok: false, reason: 'בחר משימה להשוואה.' };
+  }
   if (c.refTemplateId === editingTemplateId) return { ok: false, reason: 'לא ניתן להפנות משימה לעצמה.' };
   if (!(c.hours > 0)) return { ok: false, reason: 'מספר השעות חייב להיות חיובי.' };
   const tpl = templates.get(c.refTemplateId);
@@ -142,20 +146,27 @@ function validateComponent(
   return { ok: true };
 }
 
+export interface ValidateFormulaOptions {
+  /** When true, rows with no selected reference template are treated as valid. */
+  ignoreEmptyRefs?: boolean;
+}
+
 export function validateFormula(
   components: LoadFormulaComponent[],
   editingTemplateId: string,
   templates: Map<string, TaskTemplate>,
   lhsExtras?: LoadFormulaComponent[],
+  options: ValidateFormulaOptions = {},
 ): ValidateResult {
   if (!components.length) return { ok: false, reason: 'נדרש לפחות רכיב אחד.' };
+  const ignoreEmptyRefs = !!options.ignoreEmptyRefs;
   for (const c of components) {
-    const res = validateComponent(c, editingTemplateId, templates);
+    const res = validateComponent(c, editingTemplateId, templates, ignoreEmptyRefs);
     if (!res.ok) return res;
   }
   if (lhsExtras) {
     for (const c of lhsExtras) {
-      const res = validateComponent(c, editingTemplateId, templates);
+      const res = validateComponent(c, editingTemplateId, templates, ignoreEmptyRefs);
       if (!res.ok) return res;
     }
   }

@@ -821,6 +821,10 @@ export interface RescuePlan {
   compositeDelta?: number;
   /** Constraint violations that would exist after applying this plan */
   violations: ConstraintViolation[];
+  /** When set, this plan was produced by a deep-chain fallback (depth 4+).
+   *  Only populated when depth 1..3 returned zero valid plans. The UI uses
+   *  this to render a "deep chain" warning banner. */
+  fallbackDepth?: number;
 }
 
 /** Request to generate rescue plans for a vacated assignment */

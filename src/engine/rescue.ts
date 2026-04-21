@@ -592,6 +592,249 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
   return plans;
 }
 
+// ─── Depth 4: Three-hop chains (fallback only) ──────────────────────────────
+
+/**
+ * Generate depth-4 swap chains as a last-resort fallback.
+ *
+ * ONLY invoked when depth 1..3 return zero hard-constraint-valid plans.
+ * Never used for quality ranking or backfill; the goal is to unlock feasibility
+ * when the natural replacement pool is exhausted (cert/group/rest gates lock
+ * every shallower candidate). Plans returned here carry `fallbackDepth = 4` so
+ * the UI can warn the user that the chain is unusually deep.
+ */
+function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
+  const plans: CandidatePlan[] = [];
+  const MAX_P_DONORS = 3;
+  const MAX_Q_DONORS = 2;
+  const MAX_R_DONORS = 2;
+  const MAX_DEPTH4 = 100;
+
+  const sortedParticipants = sortParticipantsByLoadProximity(
+    ctx.schedule.participants,
+    ctx.vacatedTask,
+    ctx.dayStartHour,
+    ctx.taskMap,
+    ctx.assignmentsByParticipant,
+  );
+  const vacatedStart = ctx.vacatedTask.timeBlock.start.getTime();
+
+  outer: for (const p of sortedParticipants) {
+    if (p.id === ctx.vacatedAssignment.participantId) continue;
+    const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
+
+    const pDonors = sortDonorsByProximity(
+      pAssignments.filter((a) => {
+        const t = ctx.taskMap.get(a.taskId);
+        return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
+      }),
+      vacatedStart,
+      ctx.taskMap,
+    ).slice(0, MAX_P_DONORS);
+
+    for (const donorP of pDonors) {
+      const donorPTask = ctx.taskMap.get(donorP.taskId);
+      if (!donorPTask) continue;
+      const donorPSlot = donorPTask.slots.find((s) => s.slotId === donorP.slotId);
+      if (!donorPSlot) continue;
+
+      const pWithout = pAssignments.filter((a) => a.id !== donorP.id);
+      const d4VacatedExclude = new Set([ctx.vacatedAssignment.id]);
+      if (
+        !isEligible(p, ctx.vacatedTask, ctx.vacatedSlot, pWithout, ctx.taskMap, {
+          checkSameGroup: true,
+          taskAssignments: ctx.taskAssignmentsFor(ctx.vacatedTask.id, d4VacatedExclude),
+          participantMap: ctx.participantMap,
+          disabledHC: ctx.disabledHC,
+          restRuleMap: ctx.restRuleMap,
+        })
+      )
+        continue;
+
+      for (const q of sortedParticipants) {
+        if (q.id === p.id || q.id === ctx.vacatedAssignment.participantId) continue;
+        const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
+
+        const qDonors = sortDonorsByProximity(
+          qAssignments.filter((a) => {
+            const t = ctx.taskMap.get(a.taskId);
+            return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
+          }),
+          vacatedStart,
+          ctx.taskMap,
+        ).slice(0, MAX_Q_DONORS);
+
+        for (const donorQ of qDonors) {
+          const donorQTask = ctx.taskMap.get(donorQ.taskId);
+          if (!donorQTask) continue;
+          const donorQSlot = donorQTask.slots.find((s) => s.slotId === donorQ.slotId);
+          if (!donorQSlot) continue;
+
+          const qWithout = qAssignments.filter((a) => a.id !== donorQ.id);
+          const d4DonorPExclude = new Set([donorP.id]);
+
+          const d4DonorPExtra: Array<{ slotId: string; participantId: string }> = [];
+          if (donorPTask.id === ctx.vacatedTask.id) {
+            d4DonorPExtra.push({ slotId: ctx.vacatedSlot.slotId, participantId: p.id });
+          }
+
+          if (
+            !isEligible(q, donorPTask, donorPSlot, qWithout, ctx.taskMap, {
+              checkSameGroup: true,
+              taskAssignments: ctx.taskAssignmentsFor(
+                donorPTask.id,
+                d4DonorPExclude,
+                d4DonorPExtra.length > 0 ? d4DonorPExtra : undefined,
+              ),
+              participantMap: ctx.participantMap,
+              disabledHC: ctx.disabledHC,
+              restRuleMap: ctx.restRuleMap,
+            })
+          )
+            continue;
+
+          for (const r of sortedParticipants) {
+            if (r.id === p.id || r.id === q.id || r.id === ctx.vacatedAssignment.participantId) continue;
+            const rAssignments = ctx.assignmentsByParticipant.get(r.id) || [];
+
+            const rDonors = sortDonorsByProximity(
+              rAssignments.filter((a) => {
+                const t = ctx.taskMap.get(a.taskId);
+                return t && isFutureTask(t, ctx.anchor) && isModifiableAssignment(a, ctx.taskMap, ctx.anchor);
+              }),
+              vacatedStart,
+              ctx.taskMap,
+            ).slice(0, MAX_R_DONORS);
+
+            for (const donorR of rDonors) {
+              const donorRTask = ctx.taskMap.get(donorR.taskId);
+              if (!donorRTask) continue;
+              const donorRSlot = donorRTask.slots.find((s) => s.slotId === donorR.slotId);
+              if (!donorRSlot) continue;
+
+              const rWithout = rAssignments.filter((a) => a.id !== donorR.id);
+              const d4DonorQExclude = new Set([donorQ.id]);
+
+              const d4DonorQExtra: Array<{ slotId: string; participantId: string }> = [];
+              if (donorQTask.id === ctx.vacatedTask.id) {
+                d4DonorQExtra.push({ slotId: ctx.vacatedSlot.slotId, participantId: p.id });
+              }
+              if (donorQTask.id === donorPTask.id) {
+                d4DonorQExtra.push({ slotId: donorPSlot.slotId, participantId: q.id });
+              }
+
+              if (
+                !isEligible(r, donorQTask, donorQSlot, rWithout, ctx.taskMap, {
+                  checkSameGroup: true,
+                  taskAssignments: ctx.taskAssignmentsFor(
+                    donorQTask.id,
+                    d4DonorQExclude,
+                    d4DonorQExtra.length > 0 ? d4DonorQExtra : undefined,
+                  ),
+                  participantMap: ctx.participantMap,
+                  disabledHC: ctx.disabledHC,
+                  restRuleMap: ctx.restRuleMap,
+                })
+              )
+                continue;
+
+              for (const s of sortedParticipants) {
+                if (
+                  s.id === p.id ||
+                  s.id === q.id ||
+                  s.id === r.id ||
+                  s.id === ctx.vacatedAssignment.participantId
+                )
+                  continue;
+                const sAssignments = ctx.assignmentsByParticipant.get(s.id) || [];
+                const d4DonorRExclude = new Set([donorR.id]);
+
+                const d4DonorRExtra: Array<{ slotId: string; participantId: string }> = [];
+                if (donorRTask.id === ctx.vacatedTask.id) {
+                  d4DonorRExtra.push({ slotId: ctx.vacatedSlot.slotId, participantId: p.id });
+                }
+                if (donorRTask.id === donorPTask.id) {
+                  d4DonorRExtra.push({ slotId: donorPSlot.slotId, participantId: q.id });
+                }
+                if (donorRTask.id === donorQTask.id) {
+                  d4DonorRExtra.push({ slotId: donorQSlot.slotId, participantId: r.id });
+                }
+
+                if (
+                  !isEligible(s, donorRTask, donorRSlot, sAssignments, ctx.taskMap, {
+                    checkSameGroup: true,
+                    taskAssignments: ctx.taskAssignmentsFor(
+                      donorRTask.id,
+                      d4DonorRExclude,
+                      d4DonorRExtra.length > 0 ? d4DonorRExtra : undefined,
+                    ),
+                    participantMap: ctx.participantMap,
+                    disabledHC: ctx.disabledHC,
+                    restRuleMap: ctx.restRuleMap,
+                  })
+                )
+                  continue;
+
+                const swapSet = [
+                  { assignmentId: ctx.vacatedAssignment.id, newParticipantId: p.id },
+                  { assignmentId: donorP.id, newParticipantId: q.id },
+                  { assignmentId: donorQ.id, newParticipantId: r.id },
+                  { assignmentId: donorR.id, newParticipantId: s.id },
+                ];
+                const { impactScore, compositeDelta } = scoreCandidate(ctx, swapSet, 4);
+
+                plans.push({
+                  swaps: [
+                    {
+                      assignmentId: ctx.vacatedAssignment.id,
+                      fromParticipantId: ctx.vacatedAssignment.participantId,
+                      toParticipantId: p.id,
+                      taskId: ctx.vacatedTask.id,
+                      taskName: ctx.vacatedTask.name,
+                      slotLabel: describeSlot(ctx.vacatedSlot.label, ctx.vacatedTask.timeBlock),
+                    },
+                    {
+                      assignmentId: donorP.id,
+                      fromParticipantId: p.id,
+                      toParticipantId: q.id,
+                      taskId: donorPTask.id,
+                      taskName: donorPTask.name,
+                      slotLabel: describeSlot(donorPSlot.label, donorPTask.timeBlock),
+                    },
+                    {
+                      assignmentId: donorQ.id,
+                      fromParticipantId: q.id,
+                      toParticipantId: r.id,
+                      taskId: donorQTask.id,
+                      taskName: donorQTask.name,
+                      slotLabel: describeSlot(donorQSlot.label, donorQTask.timeBlock),
+                    },
+                    {
+                      assignmentId: donorR.id,
+                      fromParticipantId: r.id,
+                      toParticipantId: s.id,
+                      taskId: donorRTask.id,
+                      taskName: donorRTask.name,
+                      slotLabel: describeSlot(donorRSlot.label, donorRTask.timeBlock),
+                    },
+                  ],
+                  impactScore,
+                  compositeDelta,
+                });
+
+                if (plans.length >= MAX_DEPTH4) break outer;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  plans.sort((a, b) => a.impactScore - b.impactScore);
+  return plans;
+}
+
 // ─── Main Entry Point ────────────────────────────────────────────────────────
 
 /**
@@ -733,7 +976,11 @@ export function generateRescuePlans(
   // Validate each plan and filter out those with hard-constraint violations.
   // Plans that fail validation will always fail during application, so showing
   // them to the user is misleading.
-  const validPlans: Array<CandidatePlan & { violations: import('../models/types').ConstraintViolation[] }> = [];
+  type ValidatedPlan = CandidatePlan & {
+    violations: import('../models/types').ConstraintViolation[];
+    fallbackDepth?: number;
+  };
+  const validPlans: ValidatedPlan[] = [];
   for (const cp of allCandidates) {
     const tempAssignments = schedule.assignments.map((a) => {
       const sw = cp.swaps.find((s) => s.assignmentId === a.id);
@@ -753,6 +1000,36 @@ export function generateRescuePlans(
     }
   }
 
+  // Deep-chain fallback: when depth 1..3 produce zero valid plans, try depth 4.
+  // This is a feasibility unlocker, not a quality improver — we only reach it
+  // when every shallower chain was blocked by HC gates. Plans from this path
+  // are flagged with fallbackDepth = 4 so the UI can warn the user.
+  if (validPlans.length === 0) {
+    console.warn(
+      `[rescue] depth-4 fallback fired for assignment ${request.vacatedAssignmentId} ` +
+        `(task=${vacatedTask.id}, slot=${vacatedSlot.slotId}) — depth 1..3 returned zero valid plans`,
+    );
+    const depth4Plans = generateDepth4Plans(ctx);
+    for (const cp of depth4Plans) {
+      const tempAssignments = schedule.assignments.map((a) => {
+        const sw = cp.swaps.find((s) => s.assignmentId === a.id);
+        if (sw) return { ...a, participantId: sw.toParticipantId };
+        return a;
+      });
+      const validation = validateHardConstraints(
+        schedule.tasks,
+        schedule.participants,
+        tempAssignments,
+        disabledHC,
+        restRuleMap,
+        certLabelResolver,
+      );
+      if (validation.valid) {
+        validPlans.push({ ...cp, violations: [], fallbackDepth: 4 });
+      }
+    }
+  }
+
   // When maxPlans is specified, return the top N plans (no page slicing)
   const startIdx = maxPlans !== undefined ? 0 : page * PAGE_SIZE;
   const endIdx = maxPlans !== undefined ? maxPlans : startIdx + PAGE_SIZE;
@@ -765,6 +1042,7 @@ export function generateRescuePlans(
     impactScore: cp.impactScore,
     compositeDelta: cp.compositeDelta,
     violations: cp.violations,
+    fallbackDepth: cp.fallbackDepth,
   }));
 
   return {

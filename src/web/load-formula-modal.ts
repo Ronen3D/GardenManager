@@ -68,6 +68,8 @@ let _activeRow: { side: Side; idx: number } | null = null;
 let _targetHours: number = 1;
 /** Whether the raw arithmetic breakdown is expanded; collapsed by default. */
 let _showBreakdown: boolean = false;
+/** Set once the user clicks "שמור" while the formula is invalid — reveals the banner for empty rows. */
+let _saveAttempted: boolean = false;
 
 function listFor(side: Side): LoadFormulaComponent[] {
   return side === 'lhs' ? _lhsExtras : _components;
@@ -101,6 +103,7 @@ export function openLoadFormulaModal(target: LoadFormulaTarget): void {
     : normalizeTargetHours(defaultTargetHoursFor(target));
   // Start with first RHS row's picker open if the formula is new or the first row is unset.
   _activeRow = !existing || !_components[0]?.refTemplateId ? { side: 'rhs', idx: 0 } : null;
+  _saveAttempted = false;
 
   render();
 }
@@ -113,6 +116,7 @@ export function closeLoadFormulaModal(): void {
   _activeRow = null;
   _targetHours = 1;
   _showBreakdown = false;
+  _saveAttempted = false;
   if (_escHandler) {
     document.removeEventListener('keydown', _escHandler);
     _escHandler = null;
@@ -259,6 +263,13 @@ function render(): void {
   const rhsSnapshot = buildSnapshot(_components, map);
   const lhsSnapshot = buildSnapshot(_lhsExtras, map);
   const validation = validateFormula(_components, view.editingId, map, _lhsExtras);
+  // Empty rows are the natural initial state; only surface the banner for genuine issues
+  // (self-reference, deleted refs, non-positive hours). The disabled save button still
+  // prevents saving while any row is unfilled.
+  const validationSansEmpty = validateFormula(_components, view.editingId, map, _lhsExtras, {
+    ignoreEmptyRefs: true,
+  });
+  const showValidationMsg = !validation.ok && (!validationSansEmpty.ok || _saveAttempted);
   const rhsRaw = rawFormulaSum(_components, rhsSnapshot);
   const lhsRaw = rawFormulaSum(_lhsExtras, lhsSnapshot);
   const netRaw = rhsRaw - lhsRaw;
@@ -322,13 +333,13 @@ function render(): void {
           <div class="lf-stack">${rhsStackHtml}</div>
           ${_components.every((c) => c.refTemplateId) ? '<button class="lf-stack-add" data-lf-action="add-row" data-lf-side="rhs">+ הוסף רכיב השוואה</button>' : ''}
 
-          ${!validation.ok ? `<div class="lf-validation-msg">${escAttr(validation.reason)}</div>` : ''}
+          ${showValidationMsg && !validation.ok ? `<div class="lf-validation-msg">${escAttr(validation.reason)}</div>` : ''}
         </div>
         <div class="lf-footer">
           ${canShowClearBtn ? `<button class="btn-sm btn-outline" data-lf-action="clear">חזור לערך ידני</button>` : '<span></span>'}
           <div class="lf-footer-right">
             <button class="btn-sm btn-outline" data-lf-action="cancel">ביטול</button>
-            <button class="btn-sm btn-primary" data-lf-action="save" ${validation.ok ? '' : 'disabled'}>שמור</button>
+            <button class="btn-sm btn-primary" data-lf-action="save">שמור</button>
           </div>
         </div>
       </div>
@@ -396,6 +407,28 @@ function renderStackRow(
   const isActive = _activeRow?.side === side && _activeRow.idx === idx;
   const hoursVal = Number.isFinite(c.hours) ? c.hours : 0;
 
+  const rowClass = side === 'lhs' ? 'lf-stack-row lf-stack-row-lhs' : 'lf-stack-row';
+
+  // For the only RHS row, ✕ is a no-op (remove-row re-adds an empty row). Hide it in that case.
+  const canRemove = side === 'lhs' || _components.length > 1;
+  const removeBtnHtml = canRemove
+    ? `<button type="button" class="lf-stack-remove" data-lf-action="remove-row" data-lf-idx="${idx}" data-lf-side="${side}" aria-label="הסר רכיב">✕</button>`
+    : '';
+
+  // Empty + picker open: the chip pill is redundant with the visible task list.
+  // Promote the picker to the row's primary content with a clear header instead.
+  if (!refTpl && isActive) {
+    return `
+      <div class="${rowClass} active lf-stack-row-empty lf-stack-row-picker" data-lf-row="${idx}" data-lf-side="${side}">
+        <div class="lf-stack-row-head">
+          ${side === 'lhs' ? '<span class="lf-stack-plus">+</span>' : ''}
+          <span class="lf-stack-row-head-title">בחר משימה להשוואה</span>
+          ${removeBtnHtml}
+        </div>
+        ${renderPicker(side, idx, c, refTpl, templatesSorted, { bare: true })}
+      </div>`;
+  }
+
   const rateLbl = refTpl ? rateLabelFor(c, refTpl) : '';
   const rateDisplay = rateLbl
     ? `${escAttr(rateLbl)} · ${rateInfo ? rateInfo.value.toFixed(2) : '?'}`
@@ -406,8 +439,6 @@ function renderStackRow(
         <span class="lf-ref-chip-name">${escAttr(refTpl.name)}</span>
         <span class="lf-ref-chip-rate">${rateDisplay}</span>`
     : `<span class="lf-ref-chip-empty">בחר משימה להשוואה…</span>`;
-
-  const rowClass = side === 'lhs' ? 'lf-stack-row lf-stack-row-lhs' : 'lf-stack-row';
 
   const hoursControls = refTpl
     ? `
@@ -432,7 +463,7 @@ function renderStackRow(
           <span class="lf-ref-chip-caret">${isActive ? '▴' : '▾'}</span>
         </button>
         ${hoursControls}
-        <button type="button" class="lf-stack-remove" data-lf-action="remove-row" data-lf-idx="${idx}" data-lf-side="${side}" aria-label="הסר רכיב">✕</button>
+        ${removeBtnHtml}
       </div>
       ${isActive ? renderPicker(side, idx, c, refTpl, templatesSorted) : ''}
     </div>`;
@@ -444,9 +475,11 @@ function renderPicker(
   currentComp: LoadFormulaComponent,
   currentRefTpl: TaskTemplate | undefined,
   templatesSorted: TaskTemplate[],
+  opts: { bare?: boolean } = {},
 ): string {
+  const pickerClass = opts.bare ? 'lf-picker lf-picker-bare' : 'lf-picker';
   if (templatesSorted.length === 0) {
-    return `<div class="lf-picker"><div class="lf-picker-empty">אין משימות אחרות להשוואה.</div></div>`;
+    return `<div class="${pickerClass}"><div class="lf-picker-empty">אין משימות אחרות להשוואה.</div></div>`;
   }
 
   const chipsHtml = templatesSorted
@@ -485,8 +518,8 @@ function renderPicker(
   }
 
   return `
-    <div class="lf-picker">
-      <div class="lf-picker-title">השווה ל:</div>
+    <div class="${pickerClass}">
+      ${opts.bare ? '' : '<div class="lf-picker-title">השווה ל:</div>'}
       <div class="lf-chips">${chipsHtml}</div>
       ${rateHtml}
     </div>`;
@@ -657,12 +690,10 @@ function wireEvents(): void {
 function updatePreviewOnly(): void {
   const backdrop = document.getElementById('lf-modal-backdrop');
   if (!backdrop || !_target) return;
-  const view = resolveTargetView(_target);
-  if (!view) return;
+  if (!resolveTargetView(_target)) return;
   const map = templatesMap();
   const rhsSnapshot = buildSnapshot(_components, map);
   const lhsSnapshot = buildSnapshot(_lhsExtras, map);
-  const validation = validateFormula(_components, view.editingId, map, _lhsExtras);
   const rhsRaw = rawFormulaSum(_components, rhsSnapshot);
   const lhsRaw = rawFormulaSum(_lhsExtras, lhsSnapshot);
   const netRaw = rhsRaw - lhsRaw;
@@ -684,9 +715,6 @@ function updatePreviewOnly(): void {
       rawEl.setAttribute('hidden', '');
     }
   }
-
-  const saveBtn = backdrop.querySelector<HTMLButtonElement>('[data-lf-action="save"]');
-  if (saveBtn) saveBtn.disabled = !validation.ok;
 
   // Update each stack row's "= contribution" total (both sides).
   const updateRowContribs = (side: Side, list: LoadFormulaComponent[], snap: ReturnType<typeof buildSnapshot>) => {
@@ -744,7 +772,11 @@ function saveFormula(): void {
   const map = templatesMap();
   if (target.kind === 'ephemeral') {
     const validation = validateFormula(_components, '', map, _lhsExtras);
-    if (!validation.ok) return;
+    if (!validation.ok) {
+      _saveAttempted = true;
+      render();
+      return;
+    }
     const formula = buildFormula(_components, map, _targetHours, _lhsExtras);
     target.onSave(formula);
     closeLoadFormulaModal();
@@ -754,7 +786,11 @@ function saveFormula(): void {
   const tpl = store.getTaskTemplate(target.templateId);
   if (!tpl) return;
   const validation = validateFormula(_components, tpl.id, map, _lhsExtras);
-  if (!validation.ok) return;
+  if (!validation.ok) {
+    _saveAttempted = true;
+    render();
+    return;
+  }
   const formula = buildFormula(_components, map, _targetHours, _lhsExtras);
   applyFormulaToStore(tpl, target, formula);
   closeLoadFormulaModal();

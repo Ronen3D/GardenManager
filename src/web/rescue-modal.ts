@@ -177,13 +177,22 @@ function showRescueModal(): void {
     // Swap count label — friendly wording
     const swapLabel = plan.swaps.length === 1 ? 'החלפה ישירה' : `שרשרת של ${plan.swaps.length}`;
 
-    html += `<div class="rescue-plan${isRecommended ? ' rescue-plan--recommended' : ''}" data-plan-id="${plan.id}">
+    const isDeepFallback = typeof plan.fallbackDepth === 'number' && plan.fallbackDepth >= 4;
+
+    html += `<div class="rescue-plan${isRecommended ? ' rescue-plan--recommended' : ''}${isDeepFallback ? ' rescue-plan--fallback' : ''}" data-plan-id="${plan.id}">
       <div class="rescue-plan-header">
         <span class="rescue-rank">#${plan.rank}${isRecommended ? ' <span class="rescue-recommended-tag">מומלץ ✓</span>' : ''}</span>
         <span class="rescue-quality rescue-quality--${qualityTier}">● ${qualityLabel}</span>
         <span class="rescue-swaps">${swapLabel}</span>
         ${hasViolations ? `<span class="rescue-violations-badge" title="${plan.violations!.length} הפרות אילוצים">⚠️</span>` : ''}
-      </div>`;
+      </div>
+      ${
+        isDeepFallback
+          ? `<div class="rescue-fallback-warning" dir="rtl">
+              ⚠️ שרשרת מעמיקה — הוצעה רק כי לא נמצאה חלופה קצרה יותר
+            </div>`
+          : ''
+      }`;
 
     // Build swap steps as plain-language list
     let stepsHtml = `<ol class="rescue-steps">`;
