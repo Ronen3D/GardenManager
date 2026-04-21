@@ -283,7 +283,7 @@ function createAdanitTasks(baseDate: Date): Task[] {
       timeBlock: block,
       requiredCount: 6,
       slots,
-        sameGroupRequired: true,
+      sameGroupRequired: true,
       blocksConsecutive: true,
       restRuleId: 'test-rest-rule',
     };
@@ -301,6 +301,7 @@ import {
   checkUniqueParticipantsPerTask,
 } from './constraints/hard-constraints';
 import { collectSoftWarnings, dailyWorkloadImbalance, workloadImbalanceSplit } from './constraints/soft-constraints';
+import { getRecoveryWindow } from './constraints/sleep-recovery';
 import { fullValidate, previewSwap } from './engine/validator';
 import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
 import { computeParticipantRest } from './shared/utils/rest-calculator';
@@ -2030,7 +2031,7 @@ console.log('\n── One-Time Task Integration ──────────�
         },
       ],
       sameGroupRequired: false,
-        blocksConsecutive: true,
+      blocksConsecutive: true,
       ...overrides,
     };
   }
@@ -3092,6 +3093,454 @@ console.log('\n── Category Break (HC-14) ───────────�
     r14.violations.some((v) => v.code === 'CATEGORY_BREAK_VIOLATION'),
     'HC-14: full validation catches rest rule violation',
   );
+}
+
+// ── HC-15: Sleep & Recovery ─────────────────────────────────────────────────
+
+console.log('\n── Sleep & Recovery (HC-15) ───────────');
+
+{
+  const srP: Participant = {
+    id: 'hc15-p1',
+    name: 'SleepTester',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 17, 12, 0) }],
+    dateUnavailability: [],
+  };
+
+  const emptySlot = {
+    slotId: 'hc15-s',
+    acceptableLevels: [{ level: Level.L0 }],
+    requiredCertifications: [],
+  };
+
+  // The trigger task may cross midnight — any "loaded" follow-up must be on baseDate+1
+  // so its timestamp lands inside the recovery window.
+  const nextDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + 1);
+  const mkTask = (
+    id: string,
+    startH: number,
+    endH: number,
+    opts: Partial<Task> = {},
+    dayBase: Date = baseDate,
+  ): Task => ({
+    id,
+    name: id,
+    timeBlock: createTimeBlockFromHours(dayBase, startH, endH),
+    requiredCount: 1,
+    slots: [{ ...emptySlot, slotId: `${id}-slot` }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    baseLoadWeight: 1,
+    ...opts,
+  });
+
+  // Test 1: Normal trigger range — task ends at 04:00, rule 22:00–06:00, 5h
+  {
+    const trigger = mkTask('hc15-trigger', 22, 4, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    const loaded = mkTask('hc15-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
+    const tMap = new Map([
+      [trigger.id, trigger],
+      [loaded.id, loaded],
+    ]);
+    const as: Assignment[] = [
+      {
+        id: 'a1',
+        taskId: trigger.id,
+        slotId: `${trigger.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'a2',
+        taskId: loaded.id,
+        slotId: `${loaded.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const r = validateHardConstraints([trigger, loaded], [srP], as);
+    assert(
+      r.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-15: loaded task inside recovery window → violation',
+    );
+  }
+
+  // Test 2: Midnight-crossing trigger range (22–6): task ending 05:00 triggers
+  {
+    const trigger = mkTask('hc15-cross', 23, 5, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 3 },
+    });
+    const loaded = mkTask('hc15-cross-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
+    const tMap = new Map([
+      [trigger.id, trigger],
+      [loaded.id, loaded],
+    ]);
+    const as: Assignment[] = [
+      {
+        id: 'b1',
+        taskId: trigger.id,
+        slotId: `${trigger.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'b2',
+        taskId: loaded.id,
+        slotId: `${loaded.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const r = validateHardConstraints([trigger, loaded], [srP], as);
+    assert(
+      r.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-15: midnight-crossing range, ending at 05:00 → violation',
+    );
+
+    // Same range, task ending at 07:00 (outside the 22..6 inclusive range) → no trigger
+    const triggerOut = mkTask(
+      'hc15-cross-out',
+      3,
+      7,
+      {
+        baseLoadWeight: 0,
+        sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 3 },
+      },
+      nextDate,
+    );
+    const as2: Assignment[] = [
+      {
+        id: 'b3',
+        taskId: triggerOut.id,
+        slotId: `${triggerOut.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'b4',
+        taskId: loaded.id,
+        slotId: `${loaded.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const r2 = validateHardConstraints([triggerOut, loaded], [srP], as2);
+    assert(
+      !r2.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-15: ending at 07:00 outside 22..6 range → no trigger',
+    );
+  }
+
+  // Test 3: Inclusive boundaries (start hour and end hour both trigger)
+  {
+    const endsAtStart = mkTask('hc15-bdy1', 18, 22, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 2 },
+    });
+    const endsAtEnd = mkTask('hc15-bdy2', 2, 6, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 2 },
+    });
+    const endsJustAfter = mkTask('hc15-bdy3', 3, 7, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 2 },
+    });
+    assert(getRecoveryWindow(endsAtStart) !== null, 'HC-15: end hour 22 (== rangeStartHour) triggers');
+    assert(getRecoveryWindow(endsAtEnd) !== null, 'HC-15: end hour 06 (== rangeEndHour) triggers');
+    assert(getRecoveryWindow(endsJustAfter) === null, 'HC-15: end hour 07 (outside) does not trigger');
+  }
+
+  // Test 4 / 5: Load window segmentation inside overlap
+  {
+    // Recovery window ends 05:30. Candidate runs 04:00–08:00.
+    // Test 4: load 0 from 04:00–05:00, load 1 from 05:00–08:00 → blocked (load 1 inside 05:00–05:30 overlap)
+    const trigger4 = mkTask('hc15-seg-trigger4', 19, 0.5, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    // trigger4 ends at 00:30, recovery window 00:30–05:30
+    const blocked = mkTask(
+      'hc15-blocked',
+      4,
+      8,
+      {
+        baseLoadWeight: 0,
+        loadWindows: [{ id: 'w1', startHour: 5, startMinute: 0, endHour: 8, endMinute: 0, weight: 1 }],
+      },
+      nextDate,
+    );
+    const asBlocked: Assignment[] = [
+      {
+        id: 'c1',
+        taskId: trigger4.id,
+        slotId: `${trigger4.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'c2',
+        taskId: blocked.id,
+        slotId: `${blocked.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const rBlocked = validateHardConstraints([trigger4, blocked], [srP], asBlocked);
+    assert(
+      rBlocked.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-15: load > 0 inside overlap segment → blocked',
+    );
+
+    // Test 5: load 0 throughout overlap (04:00–05:30 is zero-load, 05:30–08:00 has load but is outside recovery window)
+    const allowed = mkTask(
+      'hc15-allowed',
+      4,
+      8,
+      {
+        baseLoadWeight: 0,
+        loadWindows: [{ id: 'w2', startHour: 5, startMinute: 30, endHour: 8, endMinute: 0, weight: 1 }],
+      },
+      nextDate,
+    );
+    const asAllowed: Assignment[] = [
+      {
+        id: 'd1',
+        taskId: trigger4.id,
+        slotId: `${trigger4.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'd2',
+        taskId: allowed.id,
+        slotId: `${allowed.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const rAllowed = validateHardConstraints([trigger4, allowed], [srP], asAllowed);
+    assert(
+      !rAllowed.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-15: overlap portion is all zero-load → allowed',
+    );
+  }
+
+  // Test 6: Zero-load task (baseLoadWeight=0, no windows) always allowed
+  {
+    const trigger = mkTask('hc15-z-trigger', 22, 4, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    const zero = mkTask('hc15-zero', 5, 8, { baseLoadWeight: 0 }, nextDate);
+    const as: Assignment[] = [
+      {
+        id: 'e1',
+        taskId: trigger.id,
+        slotId: `${trigger.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'e2',
+        taskId: zero.id,
+        slotId: `${zero.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const r = validateHardConstraints([trigger, zero], [srP], as);
+    assert(!r.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'), 'HC-15: zero-load candidate → allowed');
+  }
+
+  // Test 7: Symmetric (order-independent) — candidate carries the rule, existing assignment is loaded
+  {
+    // Candidate is the night-ender with rule; existing loaded task is in its recovery window
+    const trigger = mkTask('hc15-sym-trig', 22, 4, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    const loaded = mkTask('hc15-sym-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
+    const tMap = new Map([
+      [trigger.id, trigger],
+      [loaded.id, loaded],
+    ]);
+    const existingAssignments: Assignment[] = [
+      {
+        id: 'f1',
+        taskId: loaded.id,
+        slotId: `${loaded.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    // Try to place trigger next — reverse direction should catch it
+    const reject = getRejectionReason(srP, trigger, trigger.slots[0], existingAssignments, tMap);
+    assert(reject === 'HC-15', 'HC-15: reverse direction (candidate has the rule) also blocked');
+  }
+
+  // Test 8: Interaction with HC-14 — both can fire independently
+  {
+    const trigger = mkTask('hc15-int-trig', 22, 4, {
+      baseLoadWeight: 1,
+      restRuleId: 'test-rule',
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    const other = mkTask('hc15-int-other', 5, 9, { baseLoadWeight: 1, restRuleId: 'test-rule' }, nextDate);
+    const as: Assignment[] = [
+      {
+        id: 'g1',
+        taskId: trigger.id,
+        slotId: `${trigger.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'g2',
+        taskId: other.id,
+        slotId: `${other.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const restRuleMap15 = new Map([['test-rule', 5 * 3600000]]);
+    const r = validateHardConstraints([trigger, other], [srP], as, undefined, restRuleMap15);
+    assert(
+      r.violations.some((v) => v.code === 'CATEGORY_BREAK_VIOLATION'),
+      'HC-14/HC-15 interaction: HC-14 still fires',
+    );
+    assert(
+      r.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-14/HC-15 interaction: HC-15 still fires',
+    );
+
+    // Disabling HC-14 leaves HC-15 in place
+    const disabled14 = new Set(['HC-14']);
+    const r2 = validateHardConstraints([trigger, other], [srP], as, disabled14, restRuleMap15);
+    assert(
+      !r2.violations.some((v) => v.code === 'CATEGORY_BREAK_VIOLATION'),
+      'HC-14 disabled → no CATEGORY_BREAK_VIOLATION',
+    );
+    assert(
+      r2.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-14 disabled but HC-15 still fires',
+    );
+  }
+
+  // Test 9: HC-15 disabled → no violation
+  {
+    const trigger = mkTask('hc15-off-trig', 22, 4, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    const loaded = mkTask('hc15-off-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
+    const as: Assignment[] = [
+      {
+        id: 'h1',
+        taskId: trigger.id,
+        slotId: `${trigger.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'h2',
+        taskId: loaded.id,
+        slotId: `${loaded.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const disabled = new Set(['HC-15']);
+    const r = validateHardConstraints([trigger, loaded], [srP], as, disabled);
+    assert(!r.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'), 'HC-15 disabled → no violation');
+  }
+
+  // Test 10: Placement-path coverage — isEligible / getRejectionReason
+  {
+    const trigger = mkTask('hc15-p-trig', 22, 4, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    const loaded = mkTask('hc15-p-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
+    const tMap = new Map([
+      [trigger.id, trigger],
+      [loaded.id, loaded],
+    ]);
+    const pAssignments: Assignment[] = [
+      {
+        id: 'i1',
+        taskId: trigger.id,
+        slotId: `${trigger.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    assert(
+      !isEligible(srP, loaded, loaded.slots[0], pAssignments, tMap),
+      'HC-15: isEligible rejects candidate inside recovery window',
+    );
+    assert(
+      getRejectionReason(srP, loaded, loaded.slots[0], pAssignments, tMap) === 'HC-15',
+      'HC-15: getRejectionReason returns "HC-15"',
+    );
+  }
+
+  // Test 11: Candidate starts exactly at taskEnd + recoveryHours → allowed (half-open)
+  {
+    const trigger = mkTask('hc15-sharp-trig', 22, 4, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    // trigger ends at 04:00 baseDate+1; recovery window ends at 09:00
+    const sharp = mkTask('hc15-sharp', 9, 13, { baseLoadWeight: 1 }, nextDate);
+    const as: Assignment[] = [
+      {
+        id: 'j1',
+        taskId: trigger.id,
+        slotId: `${trigger.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'j2',
+        taskId: sharp.id,
+        slotId: `${sharp.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const r = validateHardConstraints([trigger, sharp], [srP], as);
+    assert(
+      !r.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-15: candidate starts exactly at recovery end → allowed',
+    );
+  }
 }
 
 // ── disabledHC parameter ───────────────────────────────────────────────────
@@ -4875,6 +5324,7 @@ console.log('\n── Temporal Engine (Live Mode) ──────────
     periodStart: new Date(2025, 0, 1),
     periodDays: 7,
     restRuleSnapshot: {},
+    sleepRecoverySnapshot: {},
     certLabelSnapshot: {},
   };
 
@@ -5284,7 +5734,7 @@ console.log('\n── Phantom Context ──────────────
             taskName: 'חממה D1',
             timeBlock: { start: '2026-02-15T06:00:00', end: '2026-02-15T14:00:00' },
             blocksConsecutive: true,
-                    baseLoadWeight: 1,
+            baseLoadWeight: 1,
             restRuleId: 'rest-A',
             restRuleDurationHours: 5,
           },
@@ -5293,7 +5743,7 @@ console.log('\n── Phantom Context ──────────────
             taskName: 'ממטרה D1',
             timeBlock: { start: '2026-02-15T20:00:00', end: '2026-02-16T04:00:00' },
             blocksConsecutive: true,
-                    baseLoadWeight: 1,
+            baseLoadWeight: 1,
             restRuleId: 'rest-A',
             restRuleDurationHours: 5,
           },
@@ -5537,6 +5987,7 @@ console.log('\n── Rescue Plans ───────────────
     periodStart: new Date(2025, 0, 1),
     periodDays: 7,
     restRuleSnapshot: {},
+    sleepRecoverySnapshot: {},
     certLabelSnapshot: {},
   };
 
@@ -5994,10 +6445,7 @@ console.log('\n── Optimizer ────────────────
   const stickyPriNoCtx = computeStructuralPriority(stickyTask);
   // Base tier: allL0+cert = tier 2 (priority 20). Stickiness score = 1(dur≥10)+1(dur≥14)+1(bc)+1(rr) = 4 → tier 1.
   // With 10 eligible (all have Common), subMin = 9 (clamped). Expected: tier 1 × 10 + 9 = 19.
-  assert(
-    Math.floor(stickyPriWithCtx / 10) === 1,
-    `stickiness: 14h+bc+rr demotes tier 2 → 1 (got ${stickyPriWithCtx})`,
-  );
+  assert(Math.floor(stickyPriWithCtx / 10) === 1, `stickiness: 14h+bc+rr demotes tier 2 → 1 (got ${stickyPriWithCtx})`);
   assert(stickyPriWithCtx % 10 === 9, `S1 sub-priority: 10 eligible clamped to 9 (got ${stickyPriWithCtx % 10})`);
   // Legacy no-ctx path uses old dur≥12 rule — also tier 1 for this task.
   assert(
@@ -6167,10 +6615,7 @@ console.log('\n── Optimizer ────────────────
   };
   const tier1Ctx = buildSchedulingContext([tier1Task], tier1Pool);
   const tier1Pri = computeStructuralPriority(tier1Task, tier1Ctx);
-  assert(
-    Math.floor(tier1Pri / 10) === 1,
-    `tier 1 floor: signals never push below tier 1 (got ${tier1Pri})`,
-  );
+  assert(Math.floor(tier1Pri / 10) === 1, `tier 1 floor: signals never push below tier 1 (got ${tier1Pri})`);
 
   // Explicit schedulingPriority override is honored by the sort — verify via
   // observable greedy ordering. Override sends the high-priority task first
@@ -6207,10 +6652,7 @@ console.log('\n── Optimizer ────────────────
   const srCtx = buildSchedulingContext([], seniorPool);
   assert(srCtx.seniorCountByGroup.get('GA') === 2, `seniorCountByGroup: GA has 2 seniors`);
   assert(srCtx.seniorCountByGroup.get('GB') === 1, `seniorCountByGroup: GB has 1 senior`);
-  assert(
-    (srCtx.seniorCountByGroup.get('Unknown') ?? 0) === 0,
-    `seniorCountByGroup: missing group has 0 (default)`,
-  );
+  assert((srCtx.seniorCountByGroup.get('Unknown') ?? 0) === 0, `seniorCountByGroup: missing group has 0 (default)`);
 
   // ═══ Phase 2: S5 senior-pressure tier-0 ordering ═══════════════════════════
 
@@ -6254,10 +6696,7 @@ console.log('\n── Optimizer ────────────────
   const lightTierZero = mkSameGroupTask('t0-light', 0); // 0 senior slots → pressure 0
   const mediumTierZero = mkSameGroupTask('t0-medium', 1); // 1/2 = 0.5 → round(1.5) = 2
   const heavyTierZero = mkSameGroupTask('t0-heavy', 6); // 6/2 = 3 → round(9) = 9 (inverted → 0)
-  const pressureCtx = buildSchedulingContext(
-    [lightTierZero, mediumTierZero, heavyTierZero],
-    pressurePool,
-  );
+  const pressureCtx = buildSchedulingContext([lightTierZero, mediumTierZero, heavyTierZero], pressurePool);
   const lightPri0 = computeStructuralPriority(lightTierZero, pressureCtx);
   const medPri0 = computeStructuralPriority(mediumTierZero, pressureCtx);
   const heavyPri0 = computeStructuralPriority(heavyTierZero, pressureCtx);
@@ -6350,7 +6789,10 @@ console.log('\n── Optimizer ────────────────
       end: new Date(2026, 3, 26, startHr + 4, 0),
     };
     // Guard: test fixture must have a strictly positive duration.
-    assert(block.end.getTime() - block.start.getTime() === 4 * 3_600_000, `4-8 fixture: shift ${shift + 1} is exactly 4h`);
+    assert(
+      block.end.getTime() - block.start.getTime() === 4 * 3_600_000,
+      `4-8 fixture: shift ${shift + 1} is exactly 4h`,
+    );
     // Shemesh-like (2 slots)
     rotTasks.push({
       id: `rot-shem-s${shift + 1}`,
@@ -6359,8 +6801,18 @@ console.log('\n── Optimizer ────────────────
       timeBlock: block,
       requiredCount: 2,
       slots: [
-        { slotId: `rot-shem-${shift + 1}-a`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'S' },
-        { slotId: `rot-shem-${shift + 1}-b`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'S' },
+        {
+          slotId: `rot-shem-${shift + 1}-a`,
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: ['Nitzan'],
+          label: 'S',
+        },
+        {
+          slotId: `rot-shem-${shift + 1}-b`,
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: ['Nitzan'],
+          label: 'S',
+        },
       ],
       sameGroupRequired: false,
       blocksConsecutive: true,
@@ -6374,7 +6826,12 @@ console.log('\n── Optimizer ────────────────
       timeBlock: block,
       requiredCount: 1,
       slots: [
-        { slotId: `rot-matos-${shift + 1}-a`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'M' },
+        {
+          slotId: `rot-matos-${shift + 1}-a`,
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: ['Nitzan'],
+          label: 'M',
+        },
       ],
       sameGroupRequired: false,
       blocksConsecutive: true,
@@ -6384,7 +6841,17 @@ console.log('\n── Optimizer ────────────────
   // 12 tasks, 18 slots. 9 participants × 2 shifts/day = 18 capacity. Exact match.
 
   const rotCfg: SchedulerConfig = { ...DEFAULT_CONFIG, maxIterations: 500, maxSolverTimeMs: 800 };
-  const rotResult = optimizeMultiAttempt(rotTasks, rotPool, rotCfg, [], 20, undefined, undefined, undefined, restRule8h);
+  const rotResult = optimizeMultiAttempt(
+    rotTasks,
+    rotPool,
+    rotCfg,
+    [],
+    20,
+    undefined,
+    undefined,
+    undefined,
+    restRule8h,
+  );
   // With Phase 2 elite-boost classification + SA intensification, the clean
   // 3-pair rotation is found quickly. Pre-Phase-2 baseline (per the backup
   // attached in the prior conversation) produced 6 unfilled on this shape.
@@ -7491,7 +7958,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
         { slotId: 'crs-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
         { slotId: 'crs-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
       ],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const p1: Participant = {
@@ -7566,6 +8033,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -7605,7 +8073,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
         { slotId: 'clf-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
         { slotId: 'clf-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
       ],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const p1: Participant = {
@@ -7680,6 +8148,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -7711,7 +8180,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
           label: 'A',
         },
       ],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const pVacated: Participant = {
@@ -7778,6 +8247,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -7827,7 +8297,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
         { slotId: 'cnw-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' },
         { slotId: 'cnw-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'B' },
       ],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
       togethernessRelevant: true,
     };
@@ -7916,6 +8386,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -7961,7 +8432,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
         { slotId: 'cd2-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'A' },
         { slotId: 'cd2-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'B' },
       ],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const t2: Task = {
@@ -7970,7 +8441,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       timeBlock: rescBlock2,
       requiredCount: 1,
       slots: [{ slotId: 'cd2-s3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'C' }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const p1: Participant = {
@@ -8062,6 +8533,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8110,7 +8582,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
           label: 'A',
         },
       ],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     // A second task to give p2 more load
@@ -8120,7 +8592,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       timeBlock: rescBlock2,
       requiredCount: 1,
       slots: [{ slotId: 'cso-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'B' }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const pVacated: Participant = {
@@ -8196,6 +8668,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8236,7 +8709,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       timeBlock: rescBlock1,
       requiredCount: 1,
       slots: [{ slotId: 'cpm-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const p1: Participant = {
@@ -8294,6 +8767,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8327,7 +8801,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       timeBlock: rescBlock1,
       requiredCount: 1,
       slots: [{ slotId: 'csm-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'A' }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const p1: Participant = {
@@ -8385,6 +8859,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8457,7 +8932,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock,
       requiredCount: 1,
       slots: [{ slotId: 'fx-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     assert(checkAvailability(p, task) === null, 'fsos-hc3: no extra unavailability → HC-3 passes');
@@ -8498,7 +8973,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock,
       requiredCount: 1,
       slots: [{ slotId: 'fa-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const task2: Task = {
@@ -8507,7 +8982,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock2,
       requiredCount: 1,
       slots: [{ slotId: 'fa-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
@@ -8562,6 +9037,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8639,7 +9115,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock,
       requiredCount: 1,
       slots: [{ slotId: 'fb-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const t2: Task = {
@@ -8648,7 +9124,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock2,
       requiredCount: 1,
       slots: [{ slotId: 'fb-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
 
@@ -8696,6 +9172,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8737,13 +9214,9 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       excludedAssignmentIds: new Set(['fb-a1']),
     });
     assert(partialResult.affected.length === 1, 'fsos-batch: partial-opt-out reduces affected set');
+    assert(partialResult.affected[0].assignment.id === 'fb-a2', 'fsos-batch: only the non-excluded slot is planned');
     assert(
-      partialResult.affected[0].assignment.id === 'fb-a2',
-      'fsos-batch: only the non-excluded slot is planned',
-    );
-    assert(
-      partialResult.excludedInWindow.length === 1 &&
-        partialResult.excludedInWindow[0].assignment.id === 'fb-a1',
+      partialResult.excludedInWindow.length === 1 && partialResult.excludedInWindow[0].assignment.id === 'fb-a1',
       'fsos-batch: excluded slot is reported in excludedInWindow',
     );
     assert(partialResult.plans.length > 0, 'fsos-batch: partial-opt-out still yields a plan');
@@ -8783,7 +9256,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock,
       requiredCount: 1,
       slots: [{ slotId: 'fi-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
@@ -8822,6 +9295,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
     const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
@@ -8934,7 +9408,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: blockIn,
       requiredCount: 1,
       slots: [{ slotId: 'f2-sIn', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const tOut: Task = {
@@ -8943,7 +9417,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: blockOut,
       requiredCount: 1,
       slots: [{ slotId: 'f2-sOut', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
 
@@ -8993,6 +9467,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -9001,12 +9476,12 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23, 59) };
     const anchor = new Date(2026, 4, 30);
 
-    const result = generateBatchRescuePlans(
-      sched,
-      { participantId: 'f2-focal', window },
-      anchor,
-      { config: { ...DEFAULT_CONFIG }, scoreCtx, maxPlans: 10, caps: { depth1: 6, depth2: 8, depth3: 4 } },
-    );
+    const result = generateBatchRescuePlans(sched, { participantId: 'f2-focal', window }, anchor, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx,
+      maxPlans: 10,
+      caps: { depth1: 6, depth2: 8, depth3: 4 },
+    });
 
     assert(result.affected.length === 1, 'fsos-focal-reassign: one affected in-window slot');
 
@@ -9050,7 +9525,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock,
       requiredCount: 1,
       slots: [{ slotId: 'to-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
@@ -9089,27 +9564,27 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
     const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
     const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23) };
 
     // Normal budget → not timed out.
-    const normal = generateBatchRescuePlans(
-      sched,
-      { participantId: 'to-p1', window },
-      fsosAnchor,
-      { config: { ...DEFAULT_CONFIG }, scoreCtx, maxPlans: 3 },
-    );
+    const normal = generateBatchRescuePlans(sched, { participantId: 'to-p1', window }, fsosAnchor, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx,
+      maxPlans: 3,
+    });
     assert(normal.timedOut === false, 'fsos-timeout: normal budget → timedOut is false');
 
     // Zero budget → DFS cannot finish, best-so-far flag set.
-    const timed = generateBatchRescuePlans(
-      sched,
-      { participantId: 'to-p1', window },
-      fsosAnchor,
-      { config: { ...DEFAULT_CONFIG }, scoreCtx, maxPlans: 3, timeBudgetMs: -1 },
-    );
+    const timed = generateBatchRescuePlans(sched, { participantId: 'to-p1', window }, fsosAnchor, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx,
+      maxPlans: 3,
+      timeBudgetMs: -1,
+    });
     assert(timed.timedOut === true, 'fsos-timeout: exhausted budget → timedOut is true');
   }
 
@@ -9150,12 +9625,10 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       timeBlock: fsosBlock, // June 1, 06:00-14:00 (in window below)
       requiredCount: 1,
       slots: [{ slotId: 'f5-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        sameGroupRequired: false,
+      sameGroupRequired: false,
       blocksConsecutive: true,
     };
-    const extra = [
-      { participantId: 'f5-focal', start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23, 59) },
-    ];
+    const extra = [{ participantId: 'f5-focal', start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23, 59) }];
 
     // Without extraUnavailability: focal should be eligible (master availability is wide-open).
     const without = getEligibleWithExtra(task, 'f5-s1', [focal, other], [], [task]);
@@ -9230,47 +9703,104 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     // assignment is still held by focal — without the punched-hole fix, the
     // final validator fires HC-3 on it.
     const p1: Participant = {
-      id: 'b2-p1', name: 'P1', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b2-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const p2: Participant = {
-      id: 'b2-p2', name: 'P2', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b2-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const p3: Participant = {
-      id: 'b2-p3', name: 'P3', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b2-p3',
+      name: 'P3',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const t1: Task = {
-      id: 'b2-t1', name: 'T1', timeBlock: fsosBlock, requiredCount: 1,
+      id: 'b2-t1',
+      name: 'T1',
+      timeBlock: fsosBlock,
+      requiredCount: 1,
       slots: [{ slotId: 'b2-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     const t2: Task = {
-      id: 'b2-t2', name: 'T2', timeBlock: fsosBlock2, requiredCount: 1,
+      id: 'b2-t2',
+      name: 'T2',
+      timeBlock: fsosBlock2,
+      requiredCount: 1,
       slots: [{ slotId: 'b2-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
-      { id: 'b2-a1', taskId: 'b2-t1', slotId: 'b2-s1', participantId: 'b2-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'b2-a2', taskId: 'b2-t2', slotId: 'b2-s2', participantId: 'b2-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'b2-a1',
+        taskId: 'b2-t1',
+        slotId: 'b2-s1',
+        participantId: 'b2-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'b2-a2',
+        taskId: 'b2-t2',
+        slotId: 'b2-s2',
+        participantId: 'b2-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
     const dScore: ScheduleScore = {
-      minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0,
-      l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0,
-      dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0,
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
     };
     const sched: Schedule = {
-      id: 'b2-sched', tasks: [t1, t2], participants: [p1, p2, p3], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'b2-sched',
+      tasks: [t1, t2],
+      participants: [p1, p2, p3],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      periodStart: new Date(2025, 0, 1), periodDays: 7, restRuleSnapshot: {}, certLabelSnapshot: {},
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
+      restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
+      certLabelSnapshot: {},
     };
     const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
     const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 3, 0) };
 
     const result = generateBatchRescuePlans(sched, { participantId: 'b2-p1', window }, fsosAnchor, {
-      config: { ...DEFAULT_CONFIG }, scoreCtx, maxPlans: 3,
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx,
+      maxPlans: 3,
       excludedAssignmentIds: new Set(['b2-a1']),
     });
     assert(result.plans.length > 0, 'fsos-B2: partial opt-out yields plans');
@@ -9289,35 +9819,79 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     // P2 already has a persisted FSOS window covering day 1. Without B1, the
     // planner would still return P2 as a depth-1 candidate for a day-1 slot.
     const p1: Participant = {
-      id: 'b1-p1', name: 'P1', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b1-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const p2: Participant = {
-      id: 'b1-p2', name: 'P2', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b1-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const p3: Participant = {
-      id: 'b1-p3', name: 'P3', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b1-p3',
+      name: 'P3',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const t1: Task = {
-      id: 'b1-t1', name: 'T1', timeBlock: fsosBlock, requiredCount: 1,
+      id: 'b1-t1',
+      name: 'T1',
+      timeBlock: fsosBlock,
+      requiredCount: 1,
       slots: [{ slotId: 'b1-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
-      { id: 'b1-a1', taskId: 'b1-t1', slotId: 'b1-s1', participantId: 'b1-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'b1-a1',
+        taskId: 'b1-t1',
+        slotId: 'b1-s1',
+        participantId: 'b1-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
     const dScore: ScheduleScore = {
-      minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0,
-      l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0,
-      dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0,
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
     };
     const sched: Schedule = {
-      id: 'b1-sched', tasks: [t1], participants: [p1, p2, p3], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'b1-sched',
+      tasks: [t1],
+      participants: [p1, p2, p3],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      periodStart: new Date(2025, 0, 1), periodDays: 7, restRuleSnapshot: {}, certLabelSnapshot: {},
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
+      restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
+      certLabelSnapshot: {},
       scheduleUnavailability: [
         {
           id: 'u-pre-p2',
@@ -9333,7 +9907,9 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23) };
 
     const result = generateBatchRescuePlans(sched, { participantId: 'b1-p1', window }, fsosAnchor, {
-      config: { ...DEFAULT_CONFIG }, scoreCtx, maxPlans: 5,
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx,
+      maxPlans: 5,
     });
 
     // At least one plan must exist (p3 is unblocked).
@@ -9369,64 +9945,125 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     //     in p2's donor list → sliced out → depth-2 chain infeasible.
     //   p3 is free at day 1 so can fill tCONF when p2 vacates it.
     const focal: Participant = {
-      id: 'b5-focal', name: 'Focal', level: Level.L0, certifications: ['Hamama'],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b5-focal',
+      name: 'Focal',
+      level: Level.L0,
+      certifications: ['Hamama'],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const p2: Participant = {
-      id: 'b5-p2', name: 'P2', level: Level.L0, certifications: ['Hamama'],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b5-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: ['Hamama'],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const p3: Participant = {
-      id: 'b5-p3', name: 'P3', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b5-p3',
+      name: 'P3',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
 
     // Vacated task — requires Hamama cert.
     const tV: Task = {
-      id: 'b5-tV', name: 'V', timeBlock: fsosBlock, requiredCount: 1,
+      id: 'b5-tV',
+      name: 'V',
+      timeBlock: fsosBlock,
+      requiredCount: 1,
       slots: [{ slotId: 'b5-sV', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Hamama'] }],
-      sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     // Critical blocker — same time as tV, no cert required.
     const tCONF: Task = {
-      id: 'b5-tCONF', name: 'CONF', timeBlock: fsosBlock, requiredCount: 1,
+      id: 'b5-tCONF',
+      name: 'CONF',
+      timeBlock: fsosBlock,
+      requiredCount: 1,
       slots: [{ slotId: 'b5-sCONF', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     // 7 additional donor tasks on days 2..8 — bulks p2's donor list past cap.
     const padTasks: Task[] = [];
     for (let d = 2; d <= 8; d++) {
       padTasks.push({
-        id: `b5-tD${d}`, name: `D${d}`,
+        id: `b5-tD${d}`,
+        name: `D${d}`,
         timeBlock: createTimeBlockFromHours(new Date(2026, 5, d), 6, 14),
         requiredCount: 1,
         slots: [{ slotId: `b5-sD${d}`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-        sameGroupRequired: false, blocksConsecutive: true,
+        sameGroupRequired: false,
+        blocksConsecutive: true,
       });
     }
 
     const baseAssigns: Assignment[] = [
       // Focal holds tV (the one being rescued).
-      { id: 'b5-aV', taskId: 'b5-tV', slotId: 'b5-sV', participantId: 'b5-focal', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'b5-aV',
+        taskId: 'b5-tV',
+        slotId: 'b5-sV',
+        participantId: 'b5-focal',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
       // p2 holds tCONF — the critical donor.
-      { id: 'b5-aCONF', taskId: 'b5-tCONF', slotId: 'b5-sCONF', participantId: 'b5-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'b5-aCONF',
+        taskId: 'b5-tCONF',
+        slotId: 'b5-sCONF',
+        participantId: 'b5-p2',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
     for (let d = 2; d <= 8; d++) {
       baseAssigns.push({
-        id: `b5-aD${d}`, taskId: `b5-tD${d}`, slotId: `b5-sD${d}`, participantId: 'b5-p2',
-        status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+        id: `b5-aD${d}`,
+        taskId: `b5-tD${d}`,
+        slotId: `b5-sD${d}`,
+        participantId: 'b5-p2',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
       });
     }
     const dScore: ScheduleScore = {
-      minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0,
-      l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0,
-      dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0,
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
     };
     const buildSched = (assigns: Assignment[]): Schedule => ({
-      id: 'b5', tasks: [tV, tCONF, ...padTasks], participants: [focal, p2, p3], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'b5',
+      tasks: [tV, tCONF, ...padTasks],
+      participants: [focal, p2, p3],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      periodStart: new Date(2025, 0, 1), periodDays: 7, restRuleSnapshot: {}, certLabelSnapshot: {},
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
+      restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
+      certLabelSnapshot: {},
     });
     // Put tCONF LAST in the reverse ordering → without B5, the slice would
     // see [tD8, tD7, tD6, tD5, tD4] first and drop tCONF on the floor.
@@ -9474,45 +10111,105 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const blkA = createTimeBlockFromHours(new Date(2026, 5, 1), 8, 12);
     const blkB = createTimeBlockFromHours(new Date(2026, 5, 1), 11, 15);
     const focal: Participant = {
-      id: 'b3-focal', name: 'Focal', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b3-focal',
+      name: 'Focal',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const cGreedy: Participant = {
-      id: 'b3-cGreedy', name: 'CGreedy', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b3-cGreedy',
+      name: 'CGreedy',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const altA: Participant = {
-      id: 'b3-altA', name: 'AltA', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b3-altA',
+      name: 'AltA',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const altB: Participant = {
-      id: 'b3-altB', name: 'AltB', level: Level.L0, certifications: [],
-      group: 'A', availability: fsosAvail, dateUnavailability: [],
+      id: 'b3-altB',
+      name: 'AltB',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
     };
     const tA: Task = {
-      id: 'b3-tA', name: 'TA', timeBlock: blkA, requiredCount: 1,
+      id: 'b3-tA',
+      name: 'TA',
+      timeBlock: blkA,
+      requiredCount: 1,
       slots: [{ slotId: 'b3-sA', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     const tB: Task = {
-      id: 'b3-tB', name: 'TB', timeBlock: blkB, requiredCount: 1,
+      id: 'b3-tB',
+      name: 'TB',
+      timeBlock: blkB,
+      requiredCount: 1,
       slots: [{ slotId: 'b3-sB', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     const assigns: Assignment[] = [
-      { id: 'b3-aA', taskId: 'b3-tA', slotId: 'b3-sA', participantId: 'b3-focal', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'b3-aB', taskId: 'b3-tB', slotId: 'b3-sB', participantId: 'b3-focal', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'b3-aA',
+        taskId: 'b3-tA',
+        slotId: 'b3-sA',
+        participantId: 'b3-focal',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'b3-aB',
+        taskId: 'b3-tB',
+        slotId: 'b3-sB',
+        participantId: 'b3-focal',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
     const dScore: ScheduleScore = {
-      minRestHours: 0, avgRestHours: 0, restStdDev: 0, totalPenalty: 0, compositeScore: 0,
-      l0StdDev: 0, l0AvgEffective: 0, seniorStdDev: 0, seniorAvgEffective: 0,
-      dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0,
+      minRestHours: 0,
+      avgRestHours: 0,
+      restStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
     };
     const sched: Schedule = {
-      id: 'b3-sched', tasks: [tA, tB], participants: [focal, cGreedy, altA, altB], assignments: assigns,
-      feasible: true, score: dScore, violations: [], generatedAt: new Date(),
+      id: 'b3-sched',
+      tasks: [tA, tB],
+      participants: [focal, cGreedy, altA, altB],
+      assignments: assigns,
+      feasible: true,
+      score: dScore,
+      violations: [],
+      generatedAt: new Date(),
       algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
-      periodStart: new Date(2025, 0, 1), periodDays: 7, restRuleSnapshot: {}, certLabelSnapshot: {},
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
+      restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
+      certLabelSnapshot: {},
     };
     const r = generateBatchRescuePlans(
       sched,
@@ -9535,25 +10232,78 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     // Hours on day 1: p1=8 (one 6-14 task), p2=4 (one 6-10 task), p3=0.
     // Mean = (8+4+0)/3 = 4. Distances: p1=|8-4|=4, p2=|4-4|=0, p3=|0-4|=4.
     // Expected leading element: p2 (smallest distance). p1/p3 tie.
-    const p1: Participant = { id: 'b4-p1', name: 'P1', level: Level.L0, certifications: [], group: 'A', availability: fsosAvail, dateUnavailability: [] };
-    const p2: Participant = { id: 'b4-p2', name: 'P2', level: Level.L0, certifications: [], group: 'A', availability: fsosAvail, dateUnavailability: [] };
-    const p3: Participant = { id: 'b4-p3', name: 'P3', level: Level.L0, certifications: [], group: 'A', availability: fsosAvail, dateUnavailability: [] };
+    const p1: Participant = {
+      id: 'b4-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const p2: Participant = {
+      id: 'b4-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
+    const p3: Participant = {
+      id: 'b4-p3',
+      name: 'P3',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: fsosAvail,
+      dateUnavailability: [],
+    };
     const tHeavy: Task = {
-      id: 'b4-tHeavy', name: 'Heavy', timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 6, 14), requiredCount: 1,
+      id: 'b4-tHeavy',
+      name: 'Heavy',
+      timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 6, 14),
+      requiredCount: 1,
       slots: [{ slotId: 'b4-sHeavy', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     const tLight: Task = {
-      id: 'b4-tLight', name: 'Light', timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 6, 10), requiredCount: 1,
+      id: 'b4-tLight',
+      name: 'Light',
+      timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 6, 10),
+      requiredCount: 1,
       slots: [{ slotId: 'b4-sLight', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     };
     const vacatedTask = tHeavy; // anchors the affected day
     const assignmentsByParticipant = new Map<string, Assignment[]>();
-    assignmentsByParticipant.set('b4-p1', [{ id: 'b4-ah', taskId: 'b4-tHeavy', slotId: 'b4-sHeavy', participantId: 'b4-p1', status: AssignmentStatus.Scheduled, updatedAt: new Date() }]);
-    assignmentsByParticipant.set('b4-p2', [{ id: 'b4-al', taskId: 'b4-tLight', slotId: 'b4-sLight', participantId: 'b4-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() }]);
+    assignmentsByParticipant.set('b4-p1', [
+      {
+        id: 'b4-ah',
+        taskId: 'b4-tHeavy',
+        slotId: 'b4-sHeavy',
+        participantId: 'b4-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ]);
+    assignmentsByParticipant.set('b4-p2', [
+      {
+        id: 'b4-al',
+        taskId: 'b4-tLight',
+        slotId: 'b4-sLight',
+        participantId: 'b4-p2',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ]);
     assignmentsByParticipant.set('b4-p3', []);
-    const taskMap = new Map<string, Task>([[tHeavy.id, tHeavy], [tLight.id, tLight]]);
+    const taskMap = new Map<string, Task>([
+      [tHeavy.id, tHeavy],
+      [tLight.id, tLight],
+    ]);
 
     const sorted = sortParticipantsByLoadProximity([p1, p2, p3], vacatedTask, 5, taskMap, assignmentsByParticipant);
     assert(sorted[0].id === 'b4-p2', 'fsos-B4 helper: smallest |load - avg| (p2) is first');
@@ -9562,7 +10312,13 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       'fsos-B4 helper: equal-distance participants follow (stable within tie)',
     );
     // Deterministic under input permutation.
-    const reverseSorted = sortParticipantsByLoadProximity([p3, p2, p1], vacatedTask, 5, taskMap, assignmentsByParticipant);
+    const reverseSorted = sortParticipantsByLoadProximity(
+      [p3, p2, p1],
+      vacatedTask,
+      5,
+      taskMap,
+      assignmentsByParticipant,
+    );
     assert(reverseSorted[0].id === 'b4-p2', 'fsos-B4 helper: deterministic under permutation — p2 still first');
 
     // Empty participants array handled safely.
@@ -9575,9 +10331,13 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     // Donors on days 2, 3, 5, 8. Vacated task on day 1. Proximity distances:
     //   day2=1d, day3=2d, day5=4d, day8=7d. Expected order: [day2, day3, day5, day8].
     const mkT = (id: string, d: number): Task => ({
-      id, name: id, timeBlock: createTimeBlockFromHours(new Date(2026, 5, d), 6, 14), requiredCount: 1,
+      id,
+      name: id,
+      timeBlock: createTimeBlockFromHours(new Date(2026, 5, d), 6, 14),
+      requiredCount: 1,
       slots: [{ slotId: `s-${id}`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
-      sameGroupRequired: false, blocksConsecutive: true,
+      sameGroupRequired: false,
+      blocksConsecutive: true,
     });
     const tV = mkT('b5u-tV', 1);
     const tD2 = mkT('b5u-tD2', 2);
@@ -9592,7 +10352,12 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       [tD8.id, tD8],
     ]);
     const mkA = (id: string, taskId: string): Assignment => ({
-      id, taskId, slotId: `s-${taskId}`, participantId: 'x', status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+      id,
+      taskId,
+      slotId: `s-${taskId}`,
+      participantId: 'x',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
     });
     // Deliberately chaotic input order — the sort must not be input-order sensitive.
     const donors = [mkA('b5u-a8', tD8.id), mkA('b5u-a3', tD3.id), mkA('b5u-a5', tD5.id), mkA('b5u-a2', tD2.id)];
@@ -9695,6 +10460,7 @@ console.log('\n── Deep-chain fallback (depth 4/5) ────');
       periodStart: new Date(2026, 4, 28),
       periodDays: 7,
       restRuleSnapshot: {},
+      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
   }
@@ -9834,7 +10600,10 @@ console.log('\n── Deep-chain fallback (depth 4/5) ────');
       { ...DEFAULT_CONFIG },
       buildScoreCtx(sched.tasks, sched.participants),
     );
-    assert(result.plans.length === 0, 'dcf-C: rescue returns empty when depth-4 also fails (no depth-5 in single-slot)');
+    assert(
+      result.plans.length === 0,
+      'dcf-C: rescue returns empty when depth-4 also fails (no depth-5 in single-slot)',
+    );
   }
 
   // ── Test D: Future SOS cascades to depth-4 ──

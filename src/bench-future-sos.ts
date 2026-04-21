@@ -160,6 +160,7 @@ function printTable(rows: BenchRow[]): void {
     periodStart: new Date(2025, 0, 1),
     periodDays: 7,
     restRuleSnapshot: {},
+    sleepRecoverySnapshot: {},
     certLabelSnapshot: {},
   };
   const scoreCtx = buildScoreCtx(tasks, participants);
@@ -304,6 +305,7 @@ function printTable(rows: BenchRow[]): void {
     periodStart: new Date(2025, 0, 1),
     periodDays: 7,
     restRuleSnapshot: {},
+    sleepRecoverySnapshot: {},
     certLabelSnapshot: {},
   };
   const slackCtx = buildScoreCtx(tasks, slackParticipants);

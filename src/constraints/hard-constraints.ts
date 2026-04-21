@@ -18,6 +18,7 @@ import {
 import { bidiTimeRange, describeSlotBidi } from '../utils/date-utils';
 import { isHighLoadAtBoundary } from '../shared/utils/load-weighting';
 import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../shared/utils/time-utils';
+import { checkSleepRecovery } from './sleep-recovery';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -767,6 +768,15 @@ export function validateHardConstraints(
       const pAssigns = assignmentsByParticipant.get(p.id) || [];
       if (pAssigns.length < 2) continue;
       allViolations.push(...checkRestRules(p.id, pAssigns, tMap, restRuleMap, p.name));
+    }
+  }
+
+  // HC-15: Sleep & Recovery — per-task recovery window forbids loaded placements
+  if (!disabledHC?.has('HC-15')) {
+    for (const p of participants) {
+      const pAssigns = assignmentsByParticipant.get(p.id) || [];
+      if (pAssigns.length < 2) continue;
+      allViolations.push(...checkSleepRecovery(p.id, pAssigns, tMap, p.name));
     }
   }
 

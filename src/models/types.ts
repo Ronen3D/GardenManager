@@ -181,6 +181,8 @@ export interface Task {
   togethernessRelevant?: boolean;
   /** HC-14: Rest rule ID — when set, enforces a minimum gap between this and other tasks sharing a rest rule. */
   restRuleId?: string;
+  /** HC-15: Sleep & Recovery rule propagated from the template. When set and the task's end hour falls inside the rule's range, a recovery window begins at task end. */
+  sleepRecovery?: SleepRecoveryRule;
   /** Display section for schedule grid/PDF layout. */
   displayCategory?: string;
   /** Display color propagated from template (hex, e.g. '#4A90D9'). */
@@ -267,6 +269,8 @@ export interface Schedule {
   periodDays: number;
   /** Serialized rest-rule map (derived from templates at generation; frozen thereafter). */
   restRuleSnapshot: Record<string, number>;
+  /** HC-15 sleep-recovery rules keyed by task id, frozen at generation. Defensive redundancy; enforcement reads the rule directly off each Task. */
+  sleepRecoverySnapshot: Record<string, SleepRecoveryRule>;
   /** Certification id → label map, frozen at generation. Drives cert badges/tooltips. */
   certLabelSnapshot: Record<string, string>;
   /**
@@ -387,7 +391,8 @@ export type HardConstraintCode =
   | 'HC-11' // Forbidden certification (per-slot)
   | 'HC-12' // No consecutive high-load
   | 'HC-13' // Senior policy (soft penalty only)
-  | 'HC-14'; // Minimum category break (5h)
+  | 'HC-14' // Minimum category break (5h)
+  | 'HC-15'; // Sleep & recovery window after late/overnight tasks
 
 /** Full algorithm settings: weights + constraint toggles */
 export interface AlgorithmSettings {
@@ -413,6 +418,7 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-12': 'ללא עומס רצוף',
   'HC-13': 'מדיניות סגל (עונש רך)',
   'HC-14': 'הפסקה מינימלית בין משימות קטגוריה',
+  'HC-15': 'השלמות שינה והתאוששות',
 };
 
 /** Build the HC-14 label (generic — rest rules are now per-rule). */
@@ -434,6 +440,7 @@ export const ALL_HC_CODES: HardConstraintCode[] = [
   'HC-12',
   'HC-13',
   'HC-14',
+  'HC-15',
 ];
 
 /** Factory default algorithm settings */
@@ -533,6 +540,25 @@ export interface RestRule {
   durationHours: number;
   /** Soft-delete tombstone — tasks referencing a deleted rule show an orphan warning. */
   deleted?: boolean;
+}
+
+/**
+ * HC-15: Sleep & Recovery rule attached to a single task (template or one-time).
+ *
+ * If the task instance's clock end hour falls inside the inclusive range
+ * [rangeStartHour..rangeEndHour] (may cross midnight when end < start), a recovery
+ * window starts at the task's end timestamp and lasts `recoveryHours` whole hours.
+ * During that window the assigned participant may not take any other task that has
+ * effective load > 0 at any instant overlapping the window. Tasks whose effective
+ * load is 0 throughout the overlapping portion remain allowed.
+ */
+export interface SleepRecoveryRule {
+  /** Inclusive clock hour (0..23) — start of the end-time trigger range. */
+  rangeStartHour: number;
+  /** Inclusive clock hour (0..23) — end of the end-time trigger range. May be less than rangeStartHour (crosses midnight). */
+  rangeEndHour: number;
+  /** Whole hours of recovery window starting at the task's end timestamp. Must be ≥ 1. */
+  recoveryHours: number;
 }
 
 /** A named, saveable collection of task templates */
@@ -719,6 +745,8 @@ export interface TaskTemplate {
   togethernessRelevant?: boolean;
   /** HC-14: Rest rule ID — when set, enforces a minimum gap between this and other tasks sharing a rest rule. */
   restRuleId?: string;
+  /** HC-15: Sleep & Recovery rule. At most one per template. */
+  sleepRecovery?: SleepRecoveryRule;
   /** Display section for schedule grid/PDF layout. */
   displayCategory?: string;
   /** Display color for UI rendering (hex, e.g. '#4A90D9'). Auto-assigned if unset. */
@@ -759,6 +787,8 @@ export interface OneTimeTask {
   togethernessRelevant?: boolean;
   /** HC-14: Rest rule ID — when set, enforces a minimum gap between this and other tasks sharing a rest rule. */
   restRuleId?: string;
+  /** HC-15: Sleep & Recovery rule. At most one per one-time task. */
+  sleepRecovery?: SleepRecoveryRule;
   /** Display section for schedule grid/PDF layout. */
   displayCategory?: string;
   /** Display color for UI rendering (hex, e.g. '#4A90D9'). Auto-assigned if unset. */

@@ -5,6 +5,7 @@
  */
 
 import { effectivelyBlocksAt, isLevelSatisfied, validateHardConstraints } from '../constraints/hard-constraints';
+import { checkSleepRecoveryForPlacement } from '../constraints/sleep-recovery';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
 import {
   type Assignment,
@@ -96,7 +97,8 @@ export type RejectionCode =
   | 'HC-7' // Already assigned to this task
   | 'HC-11' // Forbidden certification (per-slot)
   | 'HC-12' // Consecutive high-load tasks
-  | 'HC-14'; // Category break (5h minimum)
+  | 'HC-14' // Category break (5h minimum)
+  | 'HC-15'; // Sleep & recovery window after late/overnight tasks
 
 /** Optional context for eligibility / rejection checks. */
 export interface EligibilityOpts {
@@ -238,6 +240,11 @@ function checkEligibility(
     }
   }
 
+  // HC-15: Sleep & Recovery — per-task recovery window forbids loaded placements
+  if (!disabled?.has('HC-15') && checkSleepRecoveryForPlacement(task, participantAssignments, taskMap)) {
+    return 'HC-15';
+  }
+
   return null;
 }
 
@@ -333,6 +340,7 @@ export const REJECTION_REASONS_HE: Record<RejectionCode, string> = {
   'HC-11': 'למשתתף הסמכה אסורה למשבצת הזו',
   'HC-12': 'לא ניתן לשבץ למשימות כבדות רצופות',
   'HC-14': 'נדרשת הפסקה של 5 שעות לפחות ממשימת קטגוריה',
+  'HC-15': 'בחלון השלמות שינה והתאוששות אחרי משימה מקדימה',
 };
 
 /** Candidate row for the post-generation swap picker. */

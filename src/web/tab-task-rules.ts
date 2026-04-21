@@ -15,6 +15,7 @@ import {
   PreflightSeverity,
   RestRule,
   type LoadFormulaSnapshotEntry,
+  type SleepRecoveryRule,
   type SlotTemplate,
   type SubTeamTemplate,
   type TaskSet,
@@ -158,6 +159,113 @@ function fmtHm(h: number, m: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+/**
+ * Read back the HC-15 "Sleep & Recovery" fields from the given container.
+ * Returns the rule when the toggle is checked with valid inputs, or
+ * `undefined` when disabled / incomplete. Hour inputs of the form "HH:MM"
+ * contribute only the hour component.
+ */
+function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): SleepRecoveryRule | undefined {
+  const attr = target === 'tpl' ? 'tpl' : 'ot';
+  const enabled =
+    (scope.querySelector(`[data-${attr}-field="sleepRecoveryEnabled"]`) as HTMLInputElement | null)?.checked ?? false;
+  if (!enabled) return undefined;
+  const parseHour = (raw: string | undefined): number | null => {
+    if (!raw) return null;
+    const [h] = raw.split(':');
+    const n = parseInt(h, 10);
+    if (Number.isNaN(n) || n < 0 || n > 23) return null;
+    return n;
+  };
+  const startRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryStart"]`) as HTMLInputElement | null)?.value;
+  const endRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryEnd"]`) as HTMLInputElement | null)?.value;
+  const hoursRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryHours"]`) as HTMLInputElement | null)?.value;
+  const startHour = parseHour(startRaw);
+  const endHour = parseHour(endRaw);
+  const hours = parseInt(hoursRaw ?? '', 10);
+  if (startHour === null || endHour === null) return undefined;
+  if (!Number.isFinite(hours) || hours < 1) return undefined;
+  return { rangeStartHour: startHour, rangeEndHour: endHour, recoveryHours: Math.floor(hours) };
+}
+
+/**
+ * Render the HC-15 "Sleep & Recovery" editor section. Used by both
+ * TaskTemplate and OneTimeTask editors.
+ *
+ * Collapsed by default — clicking the header toggles the full editor open.
+ * When collapsed we show a compact summary badge (range + hours) if a rule
+ * is configured, or a muted "לא פעיל" label when disabled. Layout stacks
+ * vertically on narrow viewports (mobile) and avoids packed inline text that
+ * wraps awkwardly.
+ */
+function renderSleepRecoveryEditor(rule: SleepRecoveryRule | undefined, target: 'tpl' | 'ot', id: string): string {
+  const enabled = !!rule;
+  const start = rule?.rangeStartHour ?? 22;
+  const end = rule?.rangeEndHour ?? 6;
+  const hours = rule?.recoveryHours ?? 5;
+  const attr = target === 'tpl' ? 'tpl' : 'ot';
+  const idAttr = target === 'tpl' ? 'tid' : 'ot-id';
+  const expandKey = `${target}:${id}`;
+  const isExpanded = expandedSleepRecovery.has(expandKey);
+  const crossesMidnight = enabled && end < start;
+  const fmtHh = (h: number) => `${String(h).padStart(2, '0')}:00`;
+
+  const summary = enabled
+    ? `<span class="sr-summary-chip">${fmtHh(start)}–${fmtHh(end)} · ${hours} שע׳${crossesMidnight ? ' · חוצה חצות' : ''}</span>`
+    : `<span class="sr-summary-off">לא פעיל</span>`;
+
+  const body = isExpanded
+    ? `
+      <div class="sr-body">
+        <label class="sr-toggle">
+          <input type="checkbox" data-${attr}-field="sleepRecoveryEnabled" data-${idAttr}="${id}" ${enabled ? 'checked' : ''} />
+          <span>הפעל כלל</span>
+        </label>
+        <div class="sr-field-group">
+          <div class="sr-field">
+            <label class="sr-field-label">טווח שעות סיום המשימה שמפעיל את הכלל</label>
+            <div class="sr-field-row sr-field-row--times">
+              <input class="input-sm sr-time" type="time" step="3600"
+                     data-${attr}-field="sleepRecoveryStart" data-${idAttr}="${id}"
+                     value="${fmtHh(start)}" aria-label="משעה" />
+              <span class="sr-sep">עד</span>
+              <input class="input-sm sr-time" type="time" step="3600"
+                     data-${attr}-field="sleepRecoveryEnd" data-${idAttr}="${id}"
+                     value="${fmtHh(end)}" aria-label="עד שעה" />
+            </div>
+            <div class="sr-field-hint">כולל שני הקצוות${crossesMidnight ? ' · <strong>חוצה חצות</strong>' : ''}</div>
+          </div>
+          <div class="sr-field">
+            <label class="sr-field-label">חסום משימות עם עומס &gt; 0 למשך</label>
+            <div class="sr-field-row">
+              <input class="input-sm sr-hours" type="number" min="1" step="1" inputmode="numeric"
+                     data-${attr}-field="sleepRecoveryHours" data-${idAttr}="${id}"
+                     value="${hours}" aria-label="מספר שעות" />
+              <span class="sr-sep">שעות לאחר סיום המשימה</span>
+            </div>
+          </div>
+        </div>
+      </div>`
+    : '';
+
+  return `
+    <section class="tprop-section tprop-section--sleep-recovery sr-collapsible${enabled ? ' sr-enabled' : ''}${isExpanded ? ' sr-open' : ''}">
+      <button type="button" class="sr-header"
+              data-action="toggle-sleep-recovery" data-sr-target="${target}" data-sr-id="${id}"
+              aria-expanded="${isExpanded}">
+        <span class="sr-title">
+          <span class="sr-icon" aria-hidden="true">💤</span>
+          <span>השלמות שינה והתאוששות</span>
+        </span>
+        <span class="sr-header-right">
+          ${summary}
+          <span class="sr-arrow" aria-hidden="true">${isExpanded ? '▾' : '◂'}</span>
+        </span>
+      </button>
+      ${body}
+    </section>`;
+}
+
 /** Parse an HH:MM string with range validation (00:00–23:59). */
 function parseHm(value: string): { h: number; m: number } | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
@@ -203,6 +311,8 @@ let addingSlotTo: { templateId: string; subTeamId?: string; isOneTime?: boolean 
 let editingSlot: { templateId: string; subTeamId?: string; slotId: string; isOneTime?: boolean } | null = null;
 let showAddTemplate = false;
 let showAddOneTime = false;
+/** IDs of templates / one-time tasks whose Sleep & Recovery section is currently expanded. Collapsed by default. */
+const expandedSleepRecovery = new Set<string>();
 
 /**
  * Pending load formulas for the "new task" forms. Populated when the user opens
@@ -509,6 +619,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         <button class="btn-sm btn-primary tprop-save-btn" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
       </div>
       ${_restRuleOrphanNote(tpl.restRuleId)}
+      ${renderSleepRecoveryEditor(tpl.sleepRecovery, 'tpl', tpl.id)}
     </div>`;
 
     html += renderLoadWindowsEditor(tpl);
@@ -1114,6 +1225,7 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
           )
           .join('')}
       </select></label>${_restRuleOrphanNote(ot.restRuleId)}
+      ${renderSleepRecoveryEditor(ot.sleepRecovery, 'ot', ot.id)}
       <label>תיאור: <input class="input-sm" type="text" data-ot-field="description" value="${escHtml(ot.description || '')}" data-ot-id="${ot.id}" /></label>
       <button class="btn-sm btn-primary" data-action="save-onetime-props" data-ot-id="${ot.id}">שמור</button>
     </div>`;
@@ -1338,6 +1450,16 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         rerender();
         break;
       }
+      case 'toggle-sleep-recovery': {
+        const srTarget = actionButton?.dataset.srTarget;
+        const srId = actionButton?.dataset.srId;
+        if (!srTarget || !srId) break;
+        const key = `${srTarget}:${srId}`;
+        if (expandedSleepRecovery.has(key)) expandedSleepRecovery.delete(key);
+        else expandedSleepRecovery.add(key);
+        rerender();
+        break;
+      }
       case 'toggle-onetime': {
         const otId = actionButton?.dataset.otId!;
         expandedOtId = expandedOtId === otId ? null : otId;
@@ -1392,6 +1514,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           { durationHours: otSanitized.durationHours, startHour: otSanitized.startHour, startMinute },
         );
 
+        const otSleepRecovery = parseSleepRecoveryInput(body as HTMLElement, 'ot');
         store.updateOneTimeTask(otId, {
           name,
           scheduledDate,
@@ -1402,6 +1525,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           baseLoadWeight: Math.max(0, Math.min(1, baseLoad)),
           blocksConsecutive,
           restRuleId: otRestRuleId,
+          sleepRecovery: otSleepRecovery,
           description: desc || undefined,
           displayCategory: name.toLowerCase(),
         });
@@ -1421,7 +1545,9 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const shifts = parseFloat(
           (body.querySelector('[data-tpl-field="shiftsPerDay"]') as HTMLInputElement)?.value || '1',
         );
-        const startH = parseFloat((body.querySelector('[data-tpl-field="startHour"]') as HTMLInputElement)?.value || '6');
+        const startH = parseFloat(
+          (body.querySelector('[data-tpl-field="startHour"]') as HTMLInputElement)?.value || '6',
+        );
         const baseLoad = parseFloat(
           (body.querySelector('[data-tpl-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1',
         );
@@ -1446,6 +1572,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const existingFormulaValue = existingTpl?.loadFormula?.computedValue;
         const formulaDroppedByManualEdit =
           existingFormulaValue !== undefined && Math.abs(clampedBaseLoad - existingFormulaValue) > 1e-9;
+        const sleepRecovery = parseSleepRecoveryInput(body as HTMLElement, 'tpl');
         store.updateTaskTemplate(tid, {
           durationHours: sanitized.durationHours,
           shiftsPerDay: sanitized.shiftsPerDay,
@@ -1456,6 +1583,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           blocksConsecutive,
           togethernessRelevant,
           restRuleId,
+          sleepRecovery,
         });
         rerender();
         break;

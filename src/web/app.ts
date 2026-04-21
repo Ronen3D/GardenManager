@@ -198,6 +198,7 @@ function hasFrozenFields(sched: Schedule | null | undefined): boolean {
     !!s.algorithmSettings &&
     !!s.algorithmSettings.config &&
     s.restRuleSnapshot !== undefined &&
+    s.sleepRecoverySnapshot !== undefined &&
     s.certLabelSnapshot !== undefined &&
     s.periodStart instanceof Date &&
     typeof s.periodDays === 'number'
@@ -521,6 +522,7 @@ function generateTasksFromTemplates(): Task[] {
           schedulingPriority: tpl.schedulingPriority,
           togethernessRelevant: tpl.togethernessRelevant,
           restRuleId: tpl.restRuleId,
+          sleepRecovery: tpl.sleepRecovery ? { ...tpl.sleepRecovery } : undefined,
           displayCategory: tpl.displayCategory,
           color: tpl.color || v?.color || '#7f8c8d',
         });
@@ -586,6 +588,7 @@ function generateTasksFromTemplates(): Task[] {
       schedulingPriority: ot.schedulingPriority,
       togethernessRelevant: ot.togethernessRelevant,
       restRuleId: ot.restRuleId,
+      sleepRecovery: ot.sleepRecovery ? { ...ot.sleepRecovery } : undefined,
       displayCategory: ot.displayCategory,
       color: ot.color || '#7f8c8d',
     });
@@ -2211,6 +2214,9 @@ function doCreateManualSchedule(): void {
     periodStart: store.getScheduleDate(),
     periodDays: store.getScheduleDays(),
     restRuleSnapshot: Object.fromEntries(store.buildRestRuleMap()),
+    sleepRecoverySnapshot: Object.fromEntries(
+      tasks.filter((t) => t.sleepRecovery).map((t) => [t.id, { ...t.sleepRecovery! }]),
+    ),
     certLabelSnapshot: buildCertLabelSnapshot(),
     scheduleUnavailability: [],
   };
@@ -3260,7 +3266,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.5</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

@@ -1492,6 +1492,211 @@ select.input-sm {
   flex: 0 0 auto;
 }
 
+/* ─── Sleep & Recovery (HC-15) section ─────────────────── */
+/* Collapsible disclosure card. Header is a full-width tap target so it works
+   well on phones; body stacks vertically with large inputs and clear labels. */
+.tprop-section--sleep-recovery.sr-collapsible {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+  gap: 0;
+  transition:
+    border-color var(--transition-normal),
+    background var(--transition-normal);
+}
+.tprop-section--sleep-recovery.sr-enabled {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.sr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-align: start;
+  min-height: 44px; /* iOS tap target */
+  box-sizing: border-box;
+}
+.sr-header:hover,
+.sr-header:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+.tprop-section--sleep-recovery.sr-open .sr-header {
+  border-bottom: 1px solid var(--border);
+}
+
+.sr-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sr-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.sr-header-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.sr-summary-chip {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+.sr-summary-off {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.sr-arrow {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  width: 1em;
+  text-align: center;
+}
+
+.sr-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 12px;
+}
+
+.sr-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 0.85rem;
+  cursor: pointer;
+  min-height: 40px;
+  box-sizing: border-box;
+}
+.sr-toggle input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+.sr-toggle:has(input:checked) {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+}
+
+.sr-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* Dim fields when rule is disabled — purely visual, values remain saved on submit */
+.sr-body:has(.sr-toggle input:not(:checked)) .sr-field-group {
+  opacity: 0.45;
+}
+
+.sr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sr-field-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.sr-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sr-field-row--times {
+  flex-wrap: nowrap;
+}
+.sr-time {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 9em;
+  width: auto;
+  text-align: center;
+}
+.sr-hours {
+  width: 5em;
+  text-align: center;
+}
+.sr-sep {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  flex-shrink: 0;
+}
+.sr-field-hint {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.sr-field-hint strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Mobile: full-width fields, bigger tap targets */
+@media (max-width: 479px) {
+  .sr-header {
+    padding: 12px;
+    font-size: 0.92rem;
+  }
+  .sr-summary-chip {
+    font-size: 0.7rem;
+    padding: 3px 7px;
+  }
+  .sr-body {
+    padding: 12px;
+    gap: 14px;
+  }
+  .sr-toggle {
+    width: 100%;
+    min-height: 48px;
+    font-size: 0.95rem;
+  }
+  .sr-field-row {
+    gap: 10px;
+  }
+  .sr-hours {
+    min-height: 44px;
+    font-size: 1rem;
+    flex: 0 0 auto;
+  }
+  .sr-time {
+    min-height: 44px;
+    font-size: 1rem;
+  }
+  .sr-field-label {
+    font-size: 0.85rem;
+  }
+}
+
 /* Two-column outer layout on tablet+ — places the numeric and behavior
    sections side-by-side so the form fits a typical viewport without scrolling */
 @media (min-width: 720px) {
