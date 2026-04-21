@@ -12,6 +12,7 @@
 
 import './style.css';
 import './style-mobile.css';
+import { getRecoveryWindow } from '../constraints/sleep-recovery';
 import {
   computeEffectiveUnavailabilityWindows,
   findAffectedAssignments,
@@ -251,6 +252,9 @@ let _availabilityInspectorTimeEnd = '06:00';
 let _availabilityMarginEnabled = false;
 let _availabilityPreMarginHours = 2;
 let _availabilityPostMarginHours = 1;
+// Strict sleep-recovery filter (off by default — resting participants are shown
+// with a 😴 badge so SOS/rescue triage can still see them).
+let _availabilityHideSleepRecovery = false;
 
 // Two-click cell range selection
 let _timeCellSelectionPhase: 'idle' | 'start-selected' = 'idle';
@@ -388,6 +392,12 @@ function renderAvailabilityInspectorInline(): string {
         <label>אחרי: <input type="number" id="gm-availability-post-margin" class="input-sm avail-margin-input" value="${_availabilityPostMarginHours}" min="0" max="24" step="0.5" /> שעות</label>
       </div>
     </div>
+    <div class="avail-strip-margin-row">
+      <label class="avail-strip-margin-toggle">
+        <input type="checkbox" id="gm-availability-hide-sleep-recovery" ${_availabilityHideSleepRecovery ? 'checked' : ''} />
+        <span>ללא השלמות שינה והתאוששות</span>
+      </label>
+    </div>
   `;
 }
 
@@ -418,7 +428,7 @@ function renderAvailabilityStrip(): string {
   if (_availabilityRangeStartMs !== null && _availabilityRangeEndMs !== null) {
     const preMs = _availabilityMarginEnabled ? _availabilityPreMarginHours * 3600000 : 0;
     const postMs = _availabilityMarginEnabled ? _availabilityPostMarginHours * 3600000 : 0;
-    html += `<div class="avail-strip-results">${buildAvailabilityPopoverContent(_availabilityRangeStartMs, _availabilityRangeEndMs, preMs, postMs)}</div>`;
+    html += `<div class="avail-strip-results">${buildAvailabilityPopoverContent(_availabilityRangeStartMs, _availabilityRangeEndMs, preMs, postMs, _availabilityHideSleepRecovery)}</div>`;
   }
 
   html += `</div></div>`;
@@ -3261,7 +3271,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.9</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.0</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4157,6 +4167,15 @@ function wireScheduleEvents(container: HTMLElement): void {
     });
   }
 
+  // ── Sleep-recovery strict filter toggle ──
+  const sleepToggle = container.querySelector('#gm-availability-hide-sleep-recovery') as HTMLInputElement | null;
+  if (sleepToggle) {
+    sleepToggle.addEventListener('change', () => {
+      _availabilityHideSleepRecovery = sleepToggle.checked;
+      renderAll();
+    });
+  }
+
   const availabilityBtn = container.querySelector('#btn-open-availability-inspector') as HTMLElement | null;
   if (availabilityBtn) {
     availabilityBtn.addEventListener('click', () => {
@@ -4605,9 +4624,11 @@ function getAvailableParticipantsInRange(
   rangeEndMs: number,
   preMarginMs = 0,
   postMarginMs = 0,
-): Participant[] {
+  hideSleepRecovery = false,
+): { participants: Participant[]; sleepRecoveryIds: Set<string> } {
   const taskMap = new Map(schedule.tasks.map((task) => [task.id, task]));
   const participantWindows = new Map<string, { startMs: number; endMs: number }[]>();
+  const participantTasks = new Map<string, Task[]>();
   let orphanAssignments = 0;
   for (const assignment of schedule.assignments) {
     const task = taskMap.get(assignment.taskId);
@@ -4622,23 +4643,49 @@ function getAvailableParticipantsInRange(
       startMs: task.timeBlock.start.getTime(),
       endMs: task.timeBlock.end.getTime(),
     });
+    if (!participantTasks.has(assignment.participantId)) {
+      participantTasks.set(assignment.participantId, []);
+    }
+    participantTasks.get(assignment.participantId)!.push(task);
   }
   const effectiveStart = rangeStartMs - preMarginMs;
   const effectiveEnd = rangeEndMs + postMarginMs;
   const effectiveWindow = { start: new Date(effectiveStart), end: new Date(effectiveEnd) };
-  const result = schedule.participants.filter((participant) => {
+  const sleepRecoveryIds = new Set<string>();
+  const participants: Participant[] = [];
+  for (const participant of schedule.participants) {
     const windows = participantWindows.get(participant.id);
-    if (windows?.some((w) => w.startMs < effectiveEnd && w.endMs > effectiveStart)) return false;
+    if (windows?.some((w) => w.startMs < effectiveEnd && w.endMs > effectiveStart)) continue;
     // Also exclude participants marked unavailable for any portion of the range
     // via availability gaps, recurring weekly rules, or schedule-level
     // unavailability entries (🆘 Future SOS).
     if (findPreExistingUnavailabilityOverlaps(participant, schedule, effectiveWindow).length > 0) {
-      return false;
+      continue;
     }
-    return true;
-  });
+    // HC-15 sleep-recovery: reports whether any finished task produces a
+    // recovery window that overlaps the effective range. When the strict
+    // filter is on, these participants are excluded; otherwise they stay in
+    // the list and the caller renders a 😴 badge.
+    let inRecovery = false;
+    const tasks = participantTasks.get(participant.id);
+    if (tasks) {
+      for (const task of tasks) {
+        const rw = getRecoveryWindow(task);
+        if (!rw) continue;
+        if (rw.start.getTime() < effectiveEnd && rw.end.getTime() > effectiveStart) {
+          inRecovery = true;
+          break;
+        }
+      }
+    }
+    if (inRecovery) {
+      if (hideSleepRecovery) continue;
+      sleepRecoveryIds.add(participant.id);
+    }
+    participants.push(participant);
+  }
   // Warn if suspiciously all participants are available despite assignments existing
-  if (result.length === schedule.participants.length && schedule.assignments.length > 0) {
+  if (participants.length === schedule.participants.length && schedule.assignments.length > 0) {
     console.warn('[עתודה] כל המשתתפים מסומנים כפנויים למרות שיש שיבוצים. מידע לאבחון:', {
       tasks: schedule.tasks.length,
       assignments: schedule.assignments.length,
@@ -4658,14 +4705,27 @@ function getAvailableParticipantsInRange(
       participantIdInWindows: participantWindows.has(schedule.participants[0]?.id ?? ''),
     });
   }
-  return result;
+  return { participants, sleepRecoveryIds };
 }
 
-function buildAvailabilityPopoverContent(startMs: number, endMs: number, preMarginMs = 0, postMarginMs = 0): string {
+function buildAvailabilityPopoverContent(
+  startMs: number,
+  endMs: number,
+  preMarginMs = 0,
+  postMarginMs = 0,
+  hideSleepRecovery = false,
+): string {
   if (!currentSchedule) return '';
   const isRange = startMs !== endMs;
   const definitions = store.getPakalDefinitions();
-  const available = getAvailableParticipantsInRange(currentSchedule, startMs, endMs, preMarginMs, postMarginMs);
+  const { participants: available, sleepRecoveryIds } = getAvailableParticipantsInRange(
+    currentSchedule,
+    startMs,
+    endMs,
+    preMarginMs,
+    postMarginMs,
+    hideSleepRecovery,
+  );
   const pakalimByParticipantId = new Map(
     available.map((participant) => [participant.id, getEffectivePakalDefinitions(participant, definitions)]),
   );
@@ -4715,7 +4775,13 @@ function buildAvailabilityPopoverContent(startMs: number, endMs: number, preMarg
     return `<div class="availability-name-list">${participants
       .map((participant) => {
         const pakalCount = pakalimByParticipantId.get(participant.id)?.length ?? 0;
-        return `<div class="availability-name-row"><span class="participant-hover" data-pid="${participant.id}">${escHtml(participant.name)}</span>${pakalCount > 1 ? `<span class="badge badge-sm availability-multi-tag">${pakalCount} פק"לים</span>` : ''}</div>`;
+        const inRecovery = sleepRecoveryIds.has(participant.id);
+        const recoveryBadge = inRecovery
+          ? `<span class="badge badge-sm availability-sleep-tag" title="בהשלמות שינה והתאוששות">😴</span>`
+          : '';
+        const pakalBadge =
+          pakalCount > 1 ? `<span class="badge badge-sm availability-multi-tag">${pakalCount} פק"לים</span>` : '';
+        return `<div class="availability-name-row"><span class="participant-hover" data-pid="${participant.id}">${escHtml(participant.name)}</span>${recoveryBadge}${pakalBadge}</div>`;
       })
       .join('')}</div>`;
   };

@@ -161,15 +161,20 @@ function fmtHm(h: number, m: number): string {
 
 /**
  * Read back the HC-15 "Sleep & Recovery" fields from the given container.
- * Returns the rule when the toggle is checked with valid inputs, or
- * `undefined` when disabled / incomplete. Hour inputs of the form "HH:MM"
- * contribute only the hour component.
+ *
+ * The 💤 editor body is conditionally rendered — when the section is
+ * collapsed its inputs are absent from the DOM. We must distinguish that
+ * case ("preserve the stored rule") from an expanded section whose toggle
+ * is unchecked or whose inputs are invalid ("clear the rule"), otherwise a
+ * save while collapsed silently wipes the rule.
  */
-function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): SleepRecoveryRule | undefined {
+type ParsedSleepRecovery = { kind: 'preserve' } | { kind: 'set'; value: SleepRecoveryRule | undefined };
+
+function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): ParsedSleepRecovery {
   const attr = target === 'tpl' ? 'tpl' : 'ot';
-  const enabled =
-    (scope.querySelector(`[data-${attr}-field="sleepRecoveryEnabled"]`) as HTMLInputElement | null)?.checked ?? false;
-  if (!enabled) return undefined;
+  const checkboxEl = scope.querySelector(`[data-${attr}-field="sleepRecoveryEnabled"]`) as HTMLInputElement | null;
+  if (!checkboxEl) return { kind: 'preserve' };
+  if (!checkboxEl.checked) return { kind: 'set', value: undefined };
   const parseHour = (raw: string | undefined): number | null => {
     if (!raw) return null;
     const [h] = raw.split(':');
@@ -183,9 +188,12 @@ function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): Slee
   const startHour = parseHour(startRaw);
   const endHour = parseHour(endRaw);
   const hours = parseInt(hoursRaw ?? '', 10);
-  if (startHour === null || endHour === null) return undefined;
-  if (!Number.isFinite(hours) || hours < 1) return undefined;
-  return { rangeStartHour: startHour, rangeEndHour: endHour, recoveryHours: Math.floor(hours) };
+  if (startHour === null || endHour === null) return { kind: 'set', value: undefined };
+  if (!Number.isFinite(hours) || hours < 1) return { kind: 'set', value: undefined };
+  return {
+    kind: 'set',
+    value: { rangeStartHour: startHour, rangeEndHour: endHour, recoveryHours: Math.floor(hours) },
+  };
 }
 
 /**
@@ -1525,7 +1533,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           baseLoadWeight: Math.max(0, Math.min(1, baseLoad)),
           blocksConsecutive,
           restRuleId: otRestRuleId,
-          sleepRecovery: otSleepRecovery,
+          ...(otSleepRecovery.kind === 'set' ? { sleepRecovery: otSleepRecovery.value } : {}),
           description: desc || undefined,
           displayCategory: name.toLowerCase(),
         });
@@ -1583,7 +1591,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           blocksConsecutive,
           togethernessRelevant,
           restRuleId,
-          sleepRecovery,
+          ...(sleepRecovery.kind === 'set' ? { sleepRecovery: sleepRecovery.value } : {}),
         });
         rerender();
         break;

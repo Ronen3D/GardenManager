@@ -555,7 +555,7 @@ export interface SleepRecoveryRule {
   rangeStartHour: number;
   /** Inclusive clock hour (0..23) — end of the end-time trigger range. May be less than rangeStartHour (crosses midnight). */
   rangeEndHour: number;
-  /** Whole hours of recovery window starting at the task's end timestamp. Must be ≥ 1. */
+  /** Whole hours of recovery window starting at the task's end timestamp. Must be in [1, 48]. */
   recoveryHours: number;
 }
 
