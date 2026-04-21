@@ -7992,74 +7992,11 @@ tr.now-row-animate > td.time-cell {
   font-size: 0.8rem;
   color: var(--text-muted, #888);
 }
-.fsos-plan-headlines {
-  display: flex;
-  gap: 12px;
-  align-items: stretch;
-  margin-top: 2px;
-  flex-wrap: wrap;
-}
-.fsos-headline {
-  flex: 1 1 120px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border);
-}
-.fsos-headline-label {
-  font-size: 0.7rem;
-  color: var(--text-muted, #888);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.fsos-headline-value {
-  font-size: 1.4rem;
-  font-weight: 700;
-  line-height: 1.1;
-  unicode-bidi: isolate;
-  direction: ltr;
-}
-.fsos-headline--pos {
-  color: #2ecc71;
-}
-.fsos-headline--neg {
-  color: #e74c3c;
-}
-.fsos-headline--muted {
-  color: var(--text-muted, #888);
-  font-weight: 500;
-}
 .fsos-plan-no-eval {
   font-size: 0.85rem;
   color: var(--text-muted, #888);
   font-style: italic;
   margin: 4px 0 8px;
-}
-.fsos-chain-pic {
-  display: inline-flex;
-  gap: 2px;
-  align-items: center;
-  padding: 2px 4px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
-  font-size: 0.85rem;
-  color: var(--text);
-}
-.fsos-chain-pic-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent, #3a7cc5);
-}
-.fsos-chain-pic-arrow {
-  color: var(--text-muted, #888);
-}
-.fsos-chain-pic-empty {
-  color: var(--text-muted, #888);
-  font-size: 0.85rem;
 }
 
 .fsos-plan-toggle {
@@ -8382,9 +8319,6 @@ tr.now-row-animate > td.time-cell {
   .fsos-carousel .fsos-plan-card {
     flex-basis: 88%;
   }
-  .fsos-headline-value {
-    font-size: 1.2rem;
-  }
   .gm-range-picker-v2-section {
     padding: 0 12px 8px;
   }
@@ -8436,7 +8370,6 @@ tr.now-row-animate > td.time-cell {
    modal in light mode — give them explicit subtle contrast and darker
    text where readability matters. */
 [data-theme="light"] .fsos-plan-card,
-[data-theme="light"] .fsos-headline,
 [data-theme="light"] .fsos-plan-balance-row,
 [data-theme="light"] .fsos-plan-changes li {
   background: rgba(0, 0, 0, 0.03);
@@ -8469,9 +8402,6 @@ tr.now-row-animate > td.time-cell {
 }
 [data-theme="light"] .fsos-plan-swap-day-header {
   border-bottom-color: rgba(0, 0, 0, 0.08);
-}
-[data-theme="light"] .fsos-chain-pic {
-  background: rgba(0, 0, 0, 0.05);
 }
 [data-theme="light"] .fsos-affected-day-group {
   background: rgba(0, 0, 0, 0.02);

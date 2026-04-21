@@ -6,10 +6,9 @@
  *      affected assignment (opt-out per slot), collapsible locked-past chip,
  *      sticky action bar. Returns `{ confirmed, excludedIds }`.
  *   2) openBatchPlansModal — each plan is rendered as a card with a human
- *      verdict headline, two headline numbers (composite delta, chain
- *      pictogram), swaps grouped by day, and a `פרטים ▾` expander that
- *      reveals the full fairness breakdown, per-participant deltas, and
- *      violations. On touch devices the cards form a scroll-snap carousel
+ *      verdict headline, swaps grouped by day, and a `פרטים ▾` expander
+ *      that reveals the full fairness breakdown, per-participant deltas,
+ *      and violations. On touch devices the cards form a scroll-snap carousel
  *      with a pager; on pointer devices they stack with only rank #1
  *      expanded. Soft-violation Apply goes through a confirmation step;
  *      infeasibility is surfaced as inline text with a "narrow the window"
@@ -54,7 +53,7 @@ export function openConfirmModal(ctx: ConfirmContext): Promise<ConfirmResult> {
       <div class="gm-modal-dialog fsos-modal fsos-confirm-v2" role="dialog" aria-modal="true">
         <div class="gm-modal-header">
           <span class="gm-modal-icon">🆘</span>
-          <span class="gm-modal-title">אי זמינות עתידית — שלב 2: השפעה · ${escHtml(ctx.participantName)}</span>
+          <span class="gm-modal-title">אי זמינות עתידית — השפעה · ${escHtml(ctx.participantName)}</span>
         </div>
         <div class="fsos-window-sentence">${windowSentence}</div>
         ${
@@ -284,7 +283,7 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
     <div class="gm-modal-dialog fsos-modal fsos-plans-v2 ${isTouch ? 'fsos-plans--touch' : ''}" role="dialog" aria-modal="true">
       <div class="gm-modal-header">
         <span class="gm-modal-icon">🆘</span>
-        <span class="gm-modal-title">אי זמינות עתידית — שלב 3: תוכנית · ${escHtml(ctx.participantName)}</span>
+        <span class="gm-modal-title">אי זמינות עתידית — תוכניות · ${escHtml(ctx.participantName)}</span>
       </div>
       ${timeoutHtml}
       ${warningHtml}
@@ -509,21 +508,6 @@ function renderBatchPlanCard(
   opts: { expanded: boolean },
 ): string {
   const verdict = computeVerdict(plan);
-  // HC-invalid plans ship without full composite scoring (we skip it at B3's
-  // validate-before-score step). The solo-delta sum we keep for fallback
-  // ordering is NOT the real composite delta — displaying it as "השפעה
-  // כוללת" would mislead. Render an em-dash instead; users already see the
-  // violations list and a warning on Apply.
-  const hasViolations = plan.violations.length > 0;
-  const composite = plan.compositeDelta;
-  const compositeClass = hasViolations
-    ? 'fsos-headline--muted'
-    : composite >= 0
-      ? 'fsos-headline--pos'
-      : 'fsos-headline--neg';
-  const compositeDisplay = hasViolations ? '—' : formatSignedNumber(composite, 1);
-
-  const chainPictogram = renderChainPictogram(plan.depthHistogram);
 
   const swapsGrouped = renderSwapsGroupedByDay(plan, pMap, taskMap, dayStartHour);
 
@@ -558,16 +542,6 @@ function renderBatchPlanCard(
           <span class="fsos-plan-toggle-arrow">▾</span>
         </button>
       </div>
-      <div class="fsos-plan-headlines">
-        <div class="fsos-headline">
-          <div class="fsos-headline-label">השפעה כוללת</div>
-          <div class="fsos-headline-value ${compositeClass}" dir="ltr">${escHtml(compositeDisplay)}</div>
-        </div>
-        <div class="fsos-headline">
-          <div class="fsos-headline-label">שרשראות</div>
-          <div class="fsos-headline-value">${chainPictogram}</div>
-        </div>
-      </div>
     </header>
     <div class="fsos-plan-body">
       ${swapsGrouped}
@@ -575,25 +549,6 @@ function renderBatchPlanCard(
       ${applyHtml}
     </div>
   </div>`;
-}
-
-function formatSignedNumber(v: number, digits: number): string {
-  const rounded = v.toFixed(digits);
-  if (v > 0) return `+${rounded}`;
-  if (v < 0) return `\u2212${Math.abs(v).toFixed(digits)}`;
-  return rounded;
-}
-
-function renderChainPictogram(depth: Record<1 | 2 | 3, number>): string {
-  const parts: string[] = [];
-  if (depth[1] > 0) parts.push(`<span class="fsos-chain-pic"><span class="fsos-chain-pic-dot"></span>×${depth[1]}</span>`);
-  if (depth[2] > 0) parts.push(`<span class="fsos-chain-pic"><span class="fsos-chain-pic-dot"></span><span class="fsos-chain-pic-arrow">→</span><span class="fsos-chain-pic-dot"></span>×${depth[2]}</span>`);
-  if (depth[3] > 0)
-    parts.push(
-      `<span class="fsos-chain-pic"><span class="fsos-chain-pic-dot"></span><span class="fsos-chain-pic-arrow">→</span><span class="fsos-chain-pic-dot"></span><span class="fsos-chain-pic-arrow">→</span><span class="fsos-chain-pic-dot"></span>×${depth[3]}</span>`,
-    );
-  if (parts.length === 0) return '<span class="fsos-chain-pic-empty">ללא שינוי</span>';
-  return parts.join(' · ');
 }
 
 function renderSwapsGroupedByDay(
