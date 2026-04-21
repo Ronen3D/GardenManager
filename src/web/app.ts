@@ -198,7 +198,6 @@ function hasFrozenFields(sched: Schedule | null | undefined): boolean {
     !!s.algorithmSettings &&
     !!s.algorithmSettings.config &&
     s.restRuleSnapshot !== undefined &&
-    s.sleepRecoverySnapshot !== undefined &&
     s.certLabelSnapshot !== undefined &&
     s.periodStart instanceof Date &&
     typeof s.periodDays === 'number'
@@ -2214,9 +2213,6 @@ function doCreateManualSchedule(): void {
     periodStart: store.getScheduleDate(),
     periodDays: store.getScheduleDays(),
     restRuleSnapshot: Object.fromEntries(store.buildRestRuleMap()),
-    sleepRecoverySnapshot: Object.fromEntries(
-      tasks.filter((t) => t.sleepRecovery).map((t) => [t.id, { ...t.sleepRecovery! }]),
-    ),
     certLabelSnapshot: buildCertLabelSnapshot(),
     scheduleUnavailability: [],
   };
@@ -3266,7 +3262,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.6</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

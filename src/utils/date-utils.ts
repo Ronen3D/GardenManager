@@ -37,6 +37,17 @@ export function describeSlotBidi(slotLabel: string | undefined, timeBlock: { sta
 }
 
 /**
+ * Task description for pair-based violation messages: strips the leading
+ * `D{n}` day-index prefix and the trailing ` משמרת N` shift suffix from
+ * task.name, then appends the bidi-safe time range — which already
+ * disambiguates shifts of the same template.
+ */
+export function describeTaskBidi(task: { name: string; timeBlock: { start: Date; end: Date } }): string {
+  const clean = task.name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
+  return `${clean} ${bidiTimeRange(task.timeBlock)}`;
+}
+
+/**
  * Calendar-date key from a Date (YYYY-MM-DD in local time).
  *
  * For scheduling/day-grouping logic, use {@link operationalDateKey} instead —

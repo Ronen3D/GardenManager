@@ -269,8 +269,6 @@ export interface Schedule {
   periodDays: number;
   /** Serialized rest-rule map (derived from templates at generation; frozen thereafter). */
   restRuleSnapshot: Record<string, number>;
-  /** HC-15 sleep-recovery rules keyed by task id, frozen at generation. Defensive redundancy; enforcement reads the rule directly off each Task. */
-  sleepRecoverySnapshot: Record<string, SleepRecoveryRule>;
   /** Certification id → label map, frozen at generation. Drives cert badges/tooltips. */
   certLabelSnapshot: Record<string, string>;
   /**

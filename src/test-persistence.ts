@@ -270,7 +270,6 @@ function makeSchedule(overrides?: Partial<Schedule>): Schedule {
     periodStart: new Date(2025, 0, 1),
     periodDays: 7,
     restRuleSnapshot: { 'rule-x': 12 },
-    sleepRecoverySnapshot: {},
     certLabelSnapshot: { Nitzan: 'ניצן' },
     ...overrides,
   };

@@ -3541,6 +3541,134 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
       'HC-15: candidate starts exactly at recovery end → allowed',
     );
   }
+
+  // Test 12: Single-hour range (startHour === endHour) matches only that hour
+  {
+    const trigEqual5 = mkTask('hc15-eq-trig', 1, 5, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 5, rangeEndHour: 5, recoveryHours: 3 },
+    });
+    const trigEqual4 = mkTask('hc15-eq-trig-off', 0, 4, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 5, rangeEndHour: 5, recoveryHours: 3 },
+    });
+    assert(getRecoveryWindow(trigEqual5) !== null, 'HC-15: single-hour range 5..5 matches end hour 5');
+    assert(getRecoveryWindow(trigEqual4) === null, 'HC-15: single-hour range 5..5 does not match end hour 4');
+  }
+
+  // Test 13: recoveryHours <= 0 → no window produced (defensive guard)
+  {
+    const badRule = mkTask('hc15-bad-hrs', 22, 4, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 0 },
+    });
+    assert(getRecoveryWindow(badRule) === null, 'HC-15: recoveryHours=0 yields no window');
+  }
+
+  // Test 14: Aggregate participant isolation — one participant's violation doesn't attribute to another
+  {
+    const srP2: Participant = {
+      id: 'hc15-p2',
+      name: 'SecondTester',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 17, 12, 0) }],
+      dateUnavailability: [],
+    };
+    const trigger = mkTask('hc15-iso-trig', 22, 4, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    const loaded = mkTask('hc15-iso-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
+    const as: Assignment[] = [
+      { id: 'iso1', taskId: trigger.id, slotId: `${trigger.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      // Second participant gets only the loaded task (no trigger for them) — must not violate
+      { id: 'iso2', taskId: loaded.id, slotId: `${loaded.id}-slot`, participantId: srP2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    ];
+    const r = validateHardConstraints([trigger, loaded], [srP, srP2], as);
+    const srViolations = r.violations.filter((v) => v.code === 'SLEEP_RECOVERY_VIOLATION');
+    assert(srViolations.length === 0, 'HC-15: violation does not leak across participants (only srP triggers, srP2 holds loaded)');
+  }
+
+  // Test 15: Mutual rules — both tasks carry a rule; dedup emits exactly one violation per pair
+  {
+    const a = mkTask('hc15-mut-a', 22, 4, {
+      baseLoadWeight: 1,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    const b = mkTask('hc15-mut-b', 5, 9, {
+      baseLoadWeight: 1,
+      sleepRecovery: { rangeStartHour: 5, rangeEndHour: 10, recoveryHours: 5 },
+    }, nextDate);
+    const as: Assignment[] = [
+      { id: 'mut1', taskId: a.id, slotId: `${a.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'mut2', taskId: b.id, slotId: `${b.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    ];
+    const r = validateHardConstraints([a, b], [srP], as);
+    const srViolations = r.violations.filter((v) => v.code === 'SLEEP_RECOVERY_VIOLATION');
+    assert(srViolations.length === 1, `HC-15: mutual rules deduped to one violation per pair (got ${srViolations.length})`);
+  }
+
+  // Test 16: fullValidate places HC-15 in `violations`, not `warnings`
+  {
+    const trigger = mkTask('hc15-fv-trig', 22, 4, {
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    });
+    const loaded = mkTask('hc15-fv-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
+    const as: Assignment[] = [
+      { id: 'fv1', taskId: trigger.id, slotId: `${trigger.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'fv2', taskId: loaded.id, slotId: `${loaded.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    ];
+    const fv = fullValidate([trigger, loaded], [srP], as);
+    assert(
+      fv.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-15: fullValidate surfaces violation in `violations`',
+    );
+    assert(
+      !fv.warnings.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-15: fullValidate does NOT surface it in `warnings`',
+    );
+    assert(fv.valid === false, 'HC-15: fullValidate reports schedule as invalid');
+  }
+
+  // Test 17: Non-hour-aligned end time (one-time-task shape) — hour extracted correctly
+  {
+    // Task starts 22:00 baseDate, ends 04:30 nextDate (duration 6.5h).
+    // end.getHours() === 4 → inside range 22..6 → triggers.
+    const baseDay = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
+    const start = new Date(baseDay.getFullYear(), baseDay.getMonth(), baseDay.getDate(), 22, 0);
+    const end = new Date(start.getTime() + 6.5 * 3600000);
+    const trigger: Task = {
+      id: 'hc15-ot-trig',
+      name: 'ot-trig',
+      timeBlock: { start, end },
+      requiredCount: 1,
+      slots: [{ slotId: 'hc15-ot-trig-slot', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: false,
+      baseLoadWeight: 0,
+      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    };
+    const window = getRecoveryWindow(trigger);
+    assert(window !== null, 'HC-15: end at 04:30 (non-hour-aligned) triggers by hour extraction');
+    assert(
+      !!window && window.end.getTime() - window.start.getTime() === 5 * 3600000,
+      'HC-15: recovery window duration = recoveryHours × 3600000 ms',
+    );
+    // Loaded task covers 05:00–09:00 on nextDate → full overlap with window [04:30, 09:30)
+    const loaded = mkTask('hc15-ot-loaded', 5, 9, { baseLoadWeight: 1 }, nextDate);
+    const as: Assignment[] = [
+      { id: 'ot1', taskId: trigger.id, slotId: 'hc15-ot-trig-slot', participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'ot2', taskId: loaded.id, slotId: `${loaded.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    ];
+    const r = validateHardConstraints([trigger, loaded], [srP], as);
+    assert(
+      r.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+      'HC-15: non-hour-aligned trigger still blocks loaded candidate in overlap',
+    );
+  }
 }
 
 // ── disabledHC parameter ───────────────────────────────────────────────────
@@ -5324,7 +5452,6 @@ console.log('\n── Temporal Engine (Live Mode) ──────────
     periodStart: new Date(2025, 0, 1),
     periodDays: 7,
     restRuleSnapshot: {},
-    sleepRecoverySnapshot: {},
     certLabelSnapshot: {},
   };
 
@@ -5987,7 +6114,6 @@ console.log('\n── Rescue Plans ───────────────
     periodStart: new Date(2025, 0, 1),
     periodDays: 7,
     restRuleSnapshot: {},
-    sleepRecoverySnapshot: {},
     certLabelSnapshot: {},
   };
 
@@ -8033,7 +8159,6 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8148,7 +8273,6 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8247,7 +8371,6 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8386,7 +8509,6 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8533,7 +8655,6 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8668,7 +8789,6 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8767,7 +8887,6 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -8859,7 +8978,6 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -9037,7 +9155,6 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -9172,7 +9289,6 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -9295,7 +9411,6 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
     const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
@@ -9467,7 +9582,6 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
 
@@ -9564,7 +9678,6 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
     const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
@@ -9791,7 +9904,6 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
     const scoreCtx = buildFsosScoreCtx(sched.tasks, sched.participants);
@@ -9890,7 +10002,6 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
       scheduleUnavailability: [
         {
@@ -10062,7 +10173,6 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     });
     // Put tCONF LAST in the reverse ordering → without B5, the slice would
@@ -10208,7 +10318,6 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       periodStart: new Date(2025, 0, 1),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
     const r = generateBatchRescuePlans(
@@ -10460,7 +10569,6 @@ console.log('\n── Deep-chain fallback (depth 4/5) ────');
       periodStart: new Date(2026, 4, 28),
       periodDays: 7,
       restRuleSnapshot: {},
-      sleepRecoverySnapshot: {},
       certLabelSnapshot: {},
     };
   }

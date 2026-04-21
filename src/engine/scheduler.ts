@@ -18,7 +18,6 @@ import {
   type ReScheduleRequest,
   type Schedule,
   type SchedulerConfig,
-  type SleepRecoveryRule,
   type SwapRequest,
   type Task,
   type ValidationResult,
@@ -59,15 +58,6 @@ export interface SwapPreview {
 /** Stable key for diffing soft warnings between pre- and post-swap states. */
 function softWarningKey(w: ConstraintViolation): string {
   return `${w.code}|${w.taskId}|${w.slotId ?? ''}|${w.participantId ?? ''}|${w.message}`;
-}
-
-/** Freeze HC-15 rules onto the schedule snapshot, keyed by task id. */
-function buildSleepRecoverySnapshot(tasks: Task[]): Record<string, SleepRecoveryRule> {
-  const snap: Record<string, SleepRecoveryRule> = {};
-  for (const t of tasks) {
-    if (t.sleepRecovery) snap[t.id] = { ...t.sleepRecovery };
-  }
-  return snap;
 }
 
 export class SchedulingEngine {
@@ -382,7 +372,6 @@ export class SchedulingEngine {
       periodStart,
       periodDays,
       restRuleSnapshot: Object.fromEntries(this.restRuleMap ?? new Map()),
-      sleepRecoverySnapshot: buildSleepRecoverySnapshot(tasks),
       certLabelSnapshot: { ...this._certLabelSnapshot },
       scheduleUnavailability: [],
     };
@@ -1039,7 +1028,6 @@ export class SchedulingEngine {
       periodStart,
       periodDays,
       restRuleSnapshot: Object.fromEntries(this.restRuleMap ?? new Map()),
-      sleepRecoverySnapshot: buildSleepRecoverySnapshot(this.currentSchedule.tasks),
       certLabelSnapshot: { ...this._certLabelSnapshot },
       scheduleUnavailability: this.currentSchedule.scheduleUnavailability ?? [],
     };

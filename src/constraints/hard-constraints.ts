@@ -15,7 +15,7 @@ import {
   type ValidationResult,
   ViolationSeverity,
 } from '../models/types';
-import { bidiTimeRange, describeSlotBidi } from '../utils/date-utils';
+import { bidiTimeRange, describeSlotBidi, describeTaskBidi } from '../utils/date-utils';
 import { isHighLoadAtBoundary } from '../shared/utils/load-weighting';
 import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../shared/utils/time-utils';
 import { checkSleepRecovery } from './sleep-recovery';
@@ -244,7 +244,7 @@ export function checkNoDoubleBooking(
         violations.push(
           violation(
             'DOUBLE_BOOKING',
-            `${displayName} \u200F— "${taskA.name}" \u200F↔ "${taskB.name}"`,
+            `${displayName} \u200F— "${describeTaskBidi(taskA)}" \u200F↔ "${describeTaskBidi(taskB)}"`,
             taskA.id,
             undefined,
             participantId,
@@ -425,7 +425,7 @@ export function checkNoConsecutiveHighLoad(
       violations.push(
         violation(
           'CONSECUTIVE_HIGH_LOAD',
-          `${displayName} \u200F— "${current.task.name}" \u200F→ "${next.task.name}"`,
+          `${displayName} \u200F— "${describeTaskBidi(current.task)}" \u200F→ "${describeTaskBidi(next.task)}"`,
           next.task.id,
           undefined,
           participantId,
@@ -504,7 +504,7 @@ export function checkRestRules(
         violations.push(
           violation(
             'CATEGORY_BREAK_VIOLATION',
-            `${displayName} \u200F— ${(gap / 3600000).toFixed(1)} שעות בין "${cur.task.name}" ל-"${nxt.task.name}" (מינימום ${(durationMs / 3600000).toFixed(1)})`,
+            `${displayName} \u200F— ${(gap / 3600000).toFixed(1)} שעות בין "${describeTaskBidi(cur.task)}" ל-"${describeTaskBidi(nxt.task)}" (מינימום ${(durationMs / 3600000).toFixed(1)})`,
             nxt.task.id,
             undefined,
             participantId,
@@ -530,7 +530,7 @@ export function checkRestRules(
         violations.push(
           violation(
             'CATEGORY_BREAK_VIOLATION',
-            `${displayName} \u200F— ${(gap / 3600000).toFixed(1)} שעות בין "${cur.task.name}" ל-"${nxt.task.name}" (מינימום ${(durationMs / 3600000).toFixed(1)})`,
+            `${displayName} \u200F— ${(gap / 3600000).toFixed(1)} שעות בין "${describeTaskBidi(cur.task)}" ל-"${describeTaskBidi(nxt.task)}" (מינימום ${(durationMs / 3600000).toFixed(1)})`,
             nxt.task.id,
             undefined,
             participantId,
@@ -718,7 +718,7 @@ export function validateHardConstraints(
               allViolations.push(
                 violation(
                   'DOUBLE_BOOKING',
-                  `${p.name} \u200F— "${prevTask.name}" \u200F↔ "${task.name}"`,
+                  `${p.name} \u200F— "${describeTaskBidi(prevTask)}" \u200F↔ "${describeTaskBidi(task)}"`,
                   prevTask.id,
                   undefined,
                   p.id,
@@ -751,7 +751,7 @@ export function validateHardConstraints(
           allViolations.push(
             violation(
               'CONSECUTIVE_HIGH_LOAD',
-              `${p.name} \u200F— "${cur.task.name}" \u200F→ "${nxt.task.name}"`,
+              `${p.name} \u200F— "${describeTaskBidi(cur.task)}" \u200F→ "${describeTaskBidi(nxt.task)}"`,
               nxt.task.id,
               undefined,
               p.id,
