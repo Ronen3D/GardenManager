@@ -173,7 +173,7 @@ export function buildParticipantTooltipContent(
 
   return `
     <div class="tt-header">
-      <span class="tt-name">${p.name}</span>
+      <span class="tt-name">${escHtml(p.name)}</span>
       ${actionsHtml}
       <span class="tt-level" style="background:${LEVEL_COLORS[p.level]}">${p.level}</span>
     </div>
@@ -431,11 +431,11 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
           : '';
       teammatesHtml += `<div class="ttt-mate">
         <div class="ttt-mate-main">
-          <span class="ttt-mate-name">${p.name}</span>
+          <span class="ttt-mate-name">${escHtml(p.name)}</span>
           <span class="ttt-mate-level" style="background:${levelColors[p.level]}">${p.level}</span>
         </div>
         <div class="ttt-mate-meta">
-          ${slot ? `<span class="ttt-slot">${slot.label || task.name}</span>` : ''}
+          ${slot ? `<span class="ttt-slot">${escHtml(slot.label || task.name)}</span>` : ''}
           ${certsHtml}
         </div>
       </div>`;
@@ -452,8 +452,8 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
 
   return `
     <div class="ttt-header">
-      <span class="ttt-task-name" style="border-inline-start:3px solid ${taskColor};padding-inline-start:8px">${task.name}</span>
-      <span class="badge badge-sm" style="background:${taskColor}">${task.sourceName || task.name}</span>
+      <span class="ttt-task-name" style="border-inline-start:3px solid ${taskColor};padding-inline-start:8px">${escHtml(task.name)}</span>
+      <span class="badge badge-sm" style="background:${taskColor}">${escHtml(task.sourceName || task.name)}</span>
     </div>
     <div class="ttt-time">
       <span dir="ltr">${startStr} – ${endStr}</span>

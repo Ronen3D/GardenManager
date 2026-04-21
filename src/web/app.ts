@@ -786,11 +786,11 @@ function renderSidebarEntry(
   const todayRatio = totalPeriodHours > 0 ? todayHrs / totalPeriodHours : 0;
   const todayBarWidth = Math.min(todayRatio * 100 * (100 / 30), barWidth);
 
-  const hoverTitle = `${p.name} — ${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfPeriod.toFixed(1)}%)`;
+  const hoverTitle = `${escHtml(p.name)} — ${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfPeriod.toFixed(1)}%)`;
 
   return `<div class="sidebar-entry">
     <div class="sidebar-name">
-      <span class="participant-hover" data-pid="${p.id}">${p.name}</span>
+      <span class="participant-hover" data-pid="${p.id}">${escHtml(p.name)}</span>
       <span class="sidebar-meta">${groupBadge(p.group)} ${levelBadge(p.level)}</span>
     </div>
     <div class="sidebar-bar-row">
@@ -1882,10 +1882,10 @@ function renderGanttChart(schedule: Schedule): string {
       // Browser title tooltips render as plain text (no HTML), so we use
       // U+2066 LRI + U+2069 PDI to force the time range into an LTR isolate
       // inside the surrounding RTL tooltip — otherwise "05:00 – 13:00" flips.
-      const tooltip = `${block.taskName}&#10;\u2066${new Date(block.startMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} – ${new Date(block.endMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}\u2069${crossFrom ? '&#10;▶ המשך מהיום הקודם' : ''}${crossTo ? '&#10;◀ ממשיך ליום הבא' : ''}`;
+      const tooltip = `${escHtml(block.taskName)}&#10;\u2066${new Date(block.startMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} – ${new Date(block.endMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}\u2069${crossFrom ? '&#10;▶ המשך מהיום הקודם' : ''}${crossTo ? '&#10;◀ ממשיך ליום הבא' : ''}`;
       const shortName = block.taskName.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
       html += `<div class="gantt-block task-tooltip-hover ${block.isZeroLoad ? 'gantt-zero-load' : ''} ${crossClass}" data-task-id="${block.taskId}" style="left:${left}%;width:${width}%;background:${block.color}" title="${tooltip}">
-        <span class="gantt-block-text">${crossFrom ? '▶ ' : ''}${shortName}${crossTo ? ' ◀' : ''}</span></div>`;
+        <span class="gantt-block-text">${crossFrom ? '▶ ' : ''}${escHtml(shortName)}${crossTo ? ' ◀' : ''}</span></div>`;
     }
     html += `</div></div>`;
   }
@@ -3262,7 +3262,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.7</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4622,10 +4622,17 @@ function getAvailableParticipantsInRange(
   }
   const effectiveStart = rangeStartMs - preMarginMs;
   const effectiveEnd = rangeEndMs + postMarginMs;
+  const effectiveWindow = { start: new Date(effectiveStart), end: new Date(effectiveEnd) };
   const result = schedule.participants.filter((participant) => {
     const windows = participantWindows.get(participant.id);
-    if (!windows) return true;
-    return !windows.some((w) => w.startMs < effectiveEnd && w.endMs > effectiveStart);
+    if (windows?.some((w) => w.startMs < effectiveEnd && w.endMs > effectiveStart)) return false;
+    // Also exclude participants marked unavailable for any portion of the range
+    // via availability gaps, recurring weekly rules, or schedule-level
+    // unavailability entries (🆘 Future SOS).
+    if (findPreExistingUnavailabilityOverlaps(participant, schedule, effectiveWindow).length > 0) {
+      return false;
+    }
+    return true;
   });
   // Warn if suspiciously all participants are available despite assignments existing
   if (result.length === schedule.participants.length && schedule.assignments.length > 0) {

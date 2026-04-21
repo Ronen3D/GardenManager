@@ -805,6 +805,25 @@ function candidateGroups(ctx: StaffingCtx): string[] {
   return [...groups];
 }
 
+/**
+ * Run one trial per candidate group against the same clean baseline, record
+ * only the `TrialOutcome` data for each, then replay the winner so its
+ * mutations end up materialized on the schedule.
+ *
+ * Why dry-run + replay rather than keep-the-best in place:
+ *   - `ctx.createdAssignmentIds` is a single shared log; scoping it per trial
+ *     would complicate every caller of createAssignment/mutateAssignment.
+ *   - More importantly, if trial N's assignments are left in place while
+ *     trial N+1 runs, HC-4 (sameGroupRequired) rejects every candidate from
+ *     a different group, so later trials are evaluated against a polluted
+ *     baseline and score 0 by construction. Running each trial from the
+ *     same clean state is the only way to compare groups fairly.
+ *
+ * `runTrial` is deterministic over `ctx.schedule` state (stable participant
+ * iteration, stable sort, no RNG in placement decisions), so replaying the
+ * winning group produces the same outcomes we recorded. A dev-mode sanity
+ * check asserts this; if it ever diverges we want to know loudly.
+ */
 function runWithGroupBacktracking(ctx: StaffingCtx): TrialOutcome {
   const groups = candidateGroups(ctx);
   if (groups.length === 0) {
@@ -812,24 +831,45 @@ function runWithGroupBacktracking(ctx: StaffingCtx): TrialOutcome {
     return runTrial(ctx);
   }
 
-  let best: TrialOutcome | null = null;
+  let bestOutcome: TrialOutcome | null = null;
+  let bestGroup: string | null = null;
+
   for (const g of groups) {
     ctx.groupLock = g;
     const trial = runTrial(ctx);
-    if (
-      best === null ||
-      trial.filledCount > best.filledCount ||
-      (trial.filledCount === best.filledCount && trial.impactSum < best.impactSum)
-    ) {
-      // This trial beats the previous best — discard previous and keep this.
-      if (best) rollbackAssignments(ctx);
-      best = trial;
-    } else {
-      // Discard this trial.
-      rollbackAssignments(ctx);
+    const isBetter =
+      bestOutcome === null ||
+      trial.filledCount > bestOutcome.filledCount ||
+      (trial.filledCount === bestOutcome.filledCount && trial.impactSum < bestOutcome.impactSum);
+
+    // Always roll this trial back so the next group is evaluated from the
+    // same clean baseline. The winner is materialized by a replay below.
+    rollbackAssignments(ctx);
+    if (isBetter) {
+      bestOutcome = trial;
+      bestGroup = g;
     }
   }
-  return best ?? runTrial(ctx);
+
+  if (bestGroup === null) return runTrial(ctx);
+
+  // Replay the winner to materialize its mutations on the schedule.
+  ctx.groupLock = bestGroup;
+  const replay = runTrial(ctx);
+
+  if (
+    bestOutcome !== null &&
+    (replay.filledCount !== bestOutcome.filledCount || replay.impactSum !== bestOutcome.impactSum)
+  ) {
+    // Determinism broken: `runTrial` produced a different result for the
+    // same inputs. Surface loudly rather than silently ship a preview that
+    // doesn't match the schedule state.
+    console.warn(
+      'injectAndStaff: replay diverged from recorded outcome',
+      { group: bestGroup, recorded: bestOutcome, replay },
+    );
+  }
+  return replay;
 }
 
 // ─── Entry point ────────────────────────────────────────────────────────────
@@ -885,6 +925,29 @@ export function injectAndStaff(
   };
 
   const trial = task.sameGroupRequired ? runWithGroupBacktracking(ctx) : runTrial(ctx);
+
+  // Reconcile outcomes against actual schedule state. Guards against any
+  // future regression that lets the two diverge (as previously happened
+  // when sameGroup backtracking rolled back the winning trial's state).
+  // If a filled outcome has no matching assignment, we flip it to unfilled
+  // so the preview never claims staffing that doesn't exist on the schedule.
+  const injectedTaskAssignments = taskAssignments(task.id, schedule.assignments);
+  const assignedByKey = new Map<string, Assignment>();
+  for (const a of injectedTaskAssignments) assignedByKey.set(`${a.slotId}|${a.participantId}`, a);
+  for (const o of trial.outcomes) {
+    if (!o.filled || !o.participantId) continue;
+    if (!assignedByKey.has(`${o.slotId}|${o.participantId}`)) {
+      console.warn('injectAndStaff: outcome claims filled but no assignment exists', {
+        taskId: task.id,
+        slotId: o.slotId,
+        participantId: o.participantId,
+      });
+      o.filled = false;
+      o.participantId = undefined;
+      o.swapChain = undefined;
+      o.reason = 'inconsistent';
+    }
+  }
 
   const report: StaffingReport = {
     task,

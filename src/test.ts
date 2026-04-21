@@ -10752,6 +10752,236 @@ console.log('\n── Deep-chain fallback (depth 4/5) ────');
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// BALTAM injection (src/engine/inject.ts) — regression for same-group backtracking
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { type InjectedTaskSpec, injectAndStaff } from './engine/inject';
+
+console.log('\n── BALTAM injection (inject.ts) ─────────');
+
+{
+  const injBase = new Date(2026, 5, 1); // Monday
+  const injAvail = [{ start: new Date(2026, 4, 28), end: new Date(2026, 5, 10) }];
+
+  function mkP(id: string, group: string, certs: string[] = [], level: Level = Level.L0): Participant {
+    return {
+      id,
+      name: id,
+      level,
+      certifications: certs,
+      group,
+      availability: injAvail,
+      dateUnavailability: [],
+    };
+  }
+
+  const injDummyScore: ScheduleScore = {
+    minRestHours: 0,
+    avgRestHours: 0,
+    restStdDev: 0,
+    totalPenalty: 0,
+    compositeScore: 0,
+    l0StdDev: 0,
+    l0AvgEffective: 0,
+    seniorStdDev: 0,
+    seniorAvgEffective: 0,
+    dailyPerParticipantStdDev: 0,
+    dailyGlobalStdDev: 0,
+  };
+
+  function mkInjSchedule(participants: Participant[]): Schedule {
+    return {
+      id: 'inj-sched',
+      tasks: [],
+      participants,
+      assignments: [],
+      feasible: true,
+      score: injDummyScore,
+      violations: [],
+      generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: injBase,
+      periodDays: 7,
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
+    };
+  }
+
+  function mkEngine(schedule: Schedule): SchedulingEngine {
+    const e = new SchedulingEngine({}, undefined, undefined, 5);
+    e.addParticipants(schedule.participants);
+    e.importSchedule(schedule);
+    return e;
+  }
+
+  // Base spec: one slot, L0 only, sameGroupRequired = true.
+  function mkInjSpec(overrides: Partial<InjectedTaskSpec> = {}): InjectedTaskSpec {
+    const spec: InjectedTaskSpec = {
+      name: 'BALTAM',
+      dayIndex: 1,
+      startHour: 6,
+      startMinute: 0,
+      durationHours: 4,
+      subTeams: [],
+      slots: [
+        {
+          id: 'inj-slot-1',
+          label: 'משבצת 1',
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: [],
+        },
+      ],
+      sameGroupRequired: true,
+      blocksConsecutive: true,
+      baseLoadWeight: 1,
+      displayCategory: 'baltam',
+      ...overrides,
+    };
+    return spec;
+  }
+
+  // ── Test 1: regression — sameGroupRequired + 2 candidate groups must produce
+  //    outcomes that match schedule.assignments (was: winning trial wiped by
+  //    else-branch rollback, preview claimed filled but task had 0 assignments). ──
+  {
+    const pA1 = mkP('inj1-A1', 'A');
+    const pA2 = mkP('inj1-A2', 'A');
+    const pB1 = mkP('inj1-B1', 'B');
+    const pB2 = mkP('inj1-B2', 'B');
+    const sched = mkInjSchedule([pA1, pA2, pB1, pB2]);
+    const engine = mkEngine(sched);
+
+    const { report, error } = injectAndStaff(engine, mkInjSpec(), { allowLowPriority: true });
+    assert(!error && report !== null, 'inject-G1: injectAndStaff returns a report');
+    if (report) {
+      assert(report.fullyStaffed === true, 'inject-G1: fullyStaffed === true');
+      assert(report.outcomes.length === 1, 'inject-G1: one outcome per slot');
+      assert(report.outcomes[0].filled === true, 'inject-G1: slot outcome is filled');
+      assert(typeof report.outcomes[0].participantId === 'string', 'inject-G1: outcome has participantId');
+
+      // The core assertion: every "filled" outcome has a matching assignment on the schedule.
+      const injAssigns = sched.assignments.filter((a) => a.taskId === report.task.id);
+      assert(
+        injAssigns.length === report.outcomes.filter((o) => o.filled).length,
+        'inject-G1: assignments on schedule match filled-outcome count (regression)',
+      );
+      const assignedKey = new Set(injAssigns.map((a) => `${a.slotId}|${a.participantId}`));
+      assert(
+        assignedKey.has(`${report.outcomes[0].slotId}|${report.outcomes[0].participantId}`),
+        'inject-G1: assignment matches outcome (same slotId + participantId)',
+      );
+      // sameGroupRequired invariant: all assignees share a group.
+      const pMap = new Map(sched.participants.map((p) => [p.id, p]));
+      const assignedGroups = new Set(injAssigns.map((a) => pMap.get(a.participantId)?.group));
+      assert(assignedGroups.size === 1, 'inject-G1: all injected-task assignments share one group');
+    }
+  }
+
+  // ── Test 2: rollback removes the injected task and all its assignments ──
+  {
+    const pA1 = mkP('inj2-A1', 'A');
+    const pB1 = mkP('inj2-B1', 'B');
+    const sched = mkInjSchedule([pA1, pB1]);
+    const engine = mkEngine(sched);
+
+    const { report } = injectAndStaff(engine, mkInjSpec());
+    assert(report !== null, 'inject-G2: report returned');
+    if (report) {
+      assert(sched.tasks.some((t) => t.id === report.task.id), 'inject-G2: task present before rollback');
+      assert(sched.assignments.some((a) => a.taskId === report.task.id), 'inject-G2: assignment present before rollback');
+
+      report.rollback();
+
+      assert(!sched.tasks.some((t) => t.id === report.task.id), 'inject-G2: task removed after rollback');
+      assert(
+        !sched.assignments.some((a) => a.taskId === report.task.id),
+        'inject-G2: injected-task assignments removed after rollback',
+      );
+    }
+  }
+
+  // ── Test 3: group backtracking actually picks the more-capable group ──
+  //    Two slots: slot-1 needs Hamama, slot-2 any L0. Group A has a Hamama-certified
+  //    member; group B does not. Only group A can fill both slots. Pre-fix, trial 1
+  //    could have locked in whichever group came first; post-fix, each trial runs from
+  //    a clean baseline and the strictly-better group wins.
+  {
+    const pA_cert = mkP('inj3-Acert', 'A', ['Hamama']);
+    const pA_plain = mkP('inj3-Aplain', 'A');
+    const pB1 = mkP('inj3-B1', 'B');
+    const pB2 = mkP('inj3-B2', 'B');
+    const sched = mkInjSchedule([pA_cert, pA_plain, pB1, pB2]);
+    const engine = mkEngine(sched);
+
+    const spec = mkInjSpec({
+      slots: [
+        {
+          id: 'inj3-s1',
+          label: 'Hamama slot',
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: ['Hamama'],
+        },
+        {
+          id: 'inj3-s2',
+          label: 'plain slot',
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: [],
+        },
+      ],
+    });
+    const { report } = injectAndStaff(engine, spec);
+    assert(report !== null, 'inject-G3: report returned');
+    if (report) {
+      const filled = report.outcomes.filter((o) => o.filled);
+      assert(filled.length === 2, 'inject-G3: both slots filled (group A chosen by filledCount)');
+      const pMap = new Map(sched.participants.map((p) => [p.id, p]));
+      const groupsChosen = new Set(filled.map((o) => (o.participantId ? pMap.get(o.participantId)?.group : undefined)));
+      assert(groupsChosen.size === 1 && groupsChosen.has('A'), 'inject-G3: winning group is A');
+      // And the schedule reflects it.
+      const injAssigns = sched.assignments.filter((a) => a.taskId === report.task.id);
+      assert(injAssigns.length === 2, 'inject-G3: schedule has 2 assignments for injected task');
+    }
+  }
+
+  // ── Test 4: non-same-group path remains unaffected ──
+  {
+    const pA = mkP('inj4-A', 'A');
+    const pB = mkP('inj4-B', 'B');
+    const sched = mkInjSchedule([pA, pB]);
+    const engine = mkEngine(sched);
+
+    const { report } = injectAndStaff(engine, mkInjSpec({ sameGroupRequired: false }));
+    assert(report !== null, 'inject-G4: report returned');
+    if (report) {
+      assert(report.fullyStaffed === true, 'inject-G4: non-same-group slot filled');
+      const injAssigns = sched.assignments.filter((a) => a.taskId === report.task.id);
+      assert(injAssigns.length === 1, 'inject-G4: one assignment materialized');
+    }
+  }
+
+  // ── Test 5: zero candidate groups → unfilled outcome, no assignments, no crash ──
+  {
+    // One L2 participant; slot requires L0. No group qualifies.
+    const pA = mkP('inj5-A', 'A', [], Level.L2);
+    const pB = mkP('inj5-B', 'B', [], Level.L2);
+    const sched = mkInjSchedule([pA, pB]);
+    const engine = mkEngine(sched);
+
+    const { report } = injectAndStaff(engine, mkInjSpec());
+    assert(report !== null, 'inject-G5: report returned even when unstaffable');
+    if (report) {
+      assert(report.fullyStaffed === false, 'inject-G5: not fully staffed');
+      assert(report.outcomes[0].filled === false, 'inject-G5: slot outcome is unfilled');
+      const injAssigns = sched.assignments.filter((a) => a.taskId === report.task.id);
+      assert(injAssigns.length === 0, 'inject-G5: no assignments on schedule');
+      // Task was added up front — rollback should still clean it up.
+      report.rollback();
+      assert(!sched.tasks.some((t) => t.id === report.task.id), 'inject-G5: rollback removes task');
+    }
+  }
+}
+
 // ─── Async test blocks + Summary ─────────────────────────────────────────────
 
 (async () => {

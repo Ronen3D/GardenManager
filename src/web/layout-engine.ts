@@ -613,7 +613,7 @@ export function renderSectionTable(
     })
     .join('');
 
-  const headerCells = columns.map((c) => `<th>${c.header}</th>`).join('');
+  const headerCells = columns.map((c) => `<th>${escHtml(c.header)}</th>`).join('');
   const wrapperClass = section.wrapperClass
     ? `schedule-table-wrapper ${section.wrapperClass}`
     : 'schedule-table-wrapper';
@@ -633,7 +633,7 @@ export function renderSectionTable(
 
   return `
     <div class="${wrapperClass}" data-section="${section.id}" data-columns="${columns.length}" style="--section-color: ${sectionColor}; --col-count: ${columns.length}">
-      <h3 class="table-title">${section.title}</h3>
+      <h3 class="table-title">${escHtml(section.title)}</h3>
       ${titleChips ? `<div class="table-title-chips">${titleChips}</div>` : ''}
       <table class="table schedule-grid-table">
         <thead><tr><th class="col-time">זמן</th>${headerCells}</tr></thead>
