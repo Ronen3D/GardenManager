@@ -215,6 +215,7 @@ function computeTradeCandidates(
   const trades: TradeCandidate[] = [];
   for (const candidate of schedule.assignments) {
     if (candidate.id === sourceAssignment.id) continue;
+    if (candidate.participantId === sourceParticipant.id) continue;
     if (candidate.status === AssignmentStatus.Frozen) continue;
     if (!eligibleForSource.has(candidate.participantId)) continue;
 

@@ -317,17 +317,19 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
     });
   });
 
-  backdrop.querySelectorAll<HTMLElement>('.fsos-plan-collapsed').forEach((header) => {
-    header.addEventListener('click', () => togglePlanCard(header));
-  });
-
-  backdrop.querySelectorAll<HTMLElement>('.fsos-plan-toggle').forEach((toggle) => {
-    toggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const card = toggle.closest('.fsos-plan-card') as HTMLElement | null;
-      if (card) togglePlanCard(card);
+  if (!isTouch) {
+    backdrop.querySelectorAll<HTMLElement>('.fsos-plan-collapsed').forEach((header) => {
+      header.addEventListener('click', () => togglePlanCard(header));
     });
-  });
+
+    backdrop.querySelectorAll<HTMLElement>('.fsos-plan-toggle').forEach((toggle) => {
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const card = toggle.closest('.fsos-plan-card') as HTMLElement | null;
+        if (card) togglePlanCard(card);
+      });
+    });
+  }
 
   backdrop.querySelectorAll<HTMLButtonElement>('.fsos-apply-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {

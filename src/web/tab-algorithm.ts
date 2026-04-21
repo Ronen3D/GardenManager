@@ -527,7 +527,7 @@ function renderCertificationContent(): string {
     ${_certError ? `<div class="preset-validation-error">${escHtml(_certError)}</div>` : ''}
     <div class="cert-add-form">
       <div class="cert-add-row">
-        <input type="text" class="input-sm" data-field="cert-name" placeholder="שם הסמכה חדשה" value="${escHtml(_pendingCertName)}" />
+        <input type="text" class="input-sm" data-field="cert-name" placeholder="שם הסמכה חדשה" value="${escHtml(_pendingCertName)}" maxlength="100" />
         <button class="btn-sm btn-primary" data-action="cert-add">+ הוסף</button>
       </div>
       <div class="cert-color-palette">`;

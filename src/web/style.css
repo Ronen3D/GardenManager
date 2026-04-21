@@ -7847,6 +7847,10 @@ tr.now-row-animate > td.time-cell {
 }
 .fsos-plans--touch .fsos-carousel .fsos-plan-card .fsos-plan-collapsed {
   flex-shrink: 0;
+  cursor: default;
+}
+.fsos-plans--touch .fsos-plan-toggle {
+  display: none;
 }
 .fsos-plans--touch .fsos-carousel .fsos-plan-card .fsos-plan-body {
   flex: 1 1 auto;

@@ -254,14 +254,10 @@ function renderUnavailabilitySection(
     for (const entry of fsos) {
       const startLabel = `יום ${hebrewDayName(entry.start)}`;
       const endLabel = `יום ${hebrewDayName(entry.end)}`;
-      const timeLabel = `<span dir="ltr">${fmt(entry.start)} (${startLabel}) – ${fmt(entry.end)} (${endLabel})</span>`;
+      const timeLabel = `${startLabel} <span dir="ltr">${fmt(entry.start)}</span> – ${endLabel} <span dir="ltr">${fmt(entry.end)}</span>`;
       const reason = entry.reason ? `<span class="text-muted"> · ${escHtml(entry.reason)}</span>` : '';
-      const swapBadge =
-        typeof entry.appliedSwapCount === 'number' && entry.appliedSwapCount > 0
-          ? `<span class="profile-fsos-swap-badge" title="החלפות שנעשו עבור חלון זה">הוחלפו ${entry.appliedSwapCount}</span>`
-          : '';
       html += `<li>
-        <span>${timeLabel}${reason}${swapBadge}</span>
+        <span>${timeLabel}${reason}</span>
         <button class="profile-fsos-remove" data-action="remove-fsos" data-entry-id="${entry.id}" title="הסר">הסר</button>
       </li>`;
     }
