@@ -46,9 +46,10 @@ import {
   type SubTeamTemplate,
   type Task,
 } from '../models/types';
-import { operationalDateKey } from '../utils/date-utils';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import { operationalDateKey } from '../utils/date-utils';
 import type { SchedulingEngine } from './scheduler';
+import { assertInjectableTimeBlock } from './temporal';
 import { isEligible } from './validator';
 
 // ─── Public types ───────────────────────────────────────────────────────────
@@ -111,6 +112,12 @@ export interface StaffingReport {
 export interface InjectStaffOptions {
   /** Allow the staffer to consider `lowPriority` level placements. Default true. */
   allowLowPriority?: boolean;
+  /**
+   * Live Mode temporal anchor. When provided, the injection is rejected if
+   * the resolved task start is strictly before the anchor — the "past is
+   * closed" contract. Omit for non-Live-Mode callers (CLI, tests).
+   */
+  anchor?: Date;
 }
 
 // ─── ID generation ──────────────────────────────────────────────────────────
@@ -864,10 +871,11 @@ function runWithGroupBacktracking(ctx: StaffingCtx): TrialOutcome {
     // Determinism broken: `runTrial` produced a different result for the
     // same inputs. Surface loudly rather than silently ship a preview that
     // doesn't match the schedule state.
-    console.warn(
-      'injectAndStaff: replay diverged from recorded outcome',
-      { group: bestGroup, recorded: bestOutcome, replay },
-    );
+    console.warn('injectAndStaff: replay diverged from recorded outcome', {
+      group: bestGroup,
+      recorded: bestOutcome,
+      replay,
+    });
   }
   return replay;
 }
@@ -884,6 +892,13 @@ export function injectAndStaff(
 
   const task = buildInjectedTask(spec, schedule.periodStart, schedule.periodDays);
   if (!task) return { report: null, error: 'invalid-spec' };
+
+  // Live Mode gate: refuse to touch engine/schedule if the resolved start
+  // is before the anchor. Defense-in-depth for the UI's day/hour blocking.
+  if (opts.anchor) {
+    const gate = assertInjectableTimeBlock(task.timeBlock, opts.anchor);
+    if (!gate.ok) return { report: null, error: gate.reason };
+  }
 
   // Commit the task to engine + snapshot. All mutations below are reverted
   // by the returned rollback() if the caller cancels.

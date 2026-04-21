@@ -12,6 +12,7 @@
  */
 
 import { type InjectedTaskSpec, injectAndStaff, type StaffingReport } from '../engine/inject';
+import { getInjectStartFloor, isDayModifiable } from '../engine/temporal';
 import { Level, type Schedule, type SchedulingEngine, type SlotTemplate, type SubTeamTemplate } from '../index';
 import * as store from './config-store';
 import { escHtml } from './ui-helpers';
@@ -74,11 +75,17 @@ let _escHandler: ((e: KeyboardEvent) => void) | null = null;
 export function openInjectTaskModal(): void {
   const schedule = _ctx?.getSchedule();
   if (!schedule) return;
-  _draft = makeDefaultDraft(schedule.periodDays);
+  _draft = makeDefaultDraft(schedule, getAnchor());
   _phase = 'form';
   _lastReport = null;
   _lastSpec = null;
   render();
+}
+
+/** Live Mode anchor or null when Live Mode is off. */
+function getAnchor(): Date | null {
+  const lm = store.getLiveModeState();
+  return lm.enabled ? lm.currentTimestamp : null;
 }
 
 export function closeInjectTaskModal(): void {
@@ -101,12 +108,37 @@ export function closeInjectTaskModal(): void {
 
 // ─── Draft defaults ─────────────────────────────────────────────────────────
 
-function makeDefaultDraft(_periodDays: number): DraftState {
+function makeDefaultDraft(schedule: Schedule, anchor: Date | null): DraftState {
+  // Pick the first day whose calendar day still has at least one future hour.
+  // In non-Live-Mode this is always day 1; in Live Mode it skips past days.
+  let dayIndex = 1;
+  if (anchor) {
+    for (let d = 1; d <= schedule.periodDays; d++) {
+      if (isDayModifiable(d, schedule.periodStart, anchor)) {
+        dayIndex = d;
+        break;
+      }
+    }
+  }
+
+  let startHour = 6;
+  let startMinute = 0;
+  if (anchor) {
+    const floor = getInjectStartFloor(dayIndex, schedule.periodStart, anchor);
+    if (floor) {
+      // Round (hourMin, minuteMin) up to the next half-hour for a tidy default.
+      const totalMin = floor.hourMin * 60 + floor.minuteMin;
+      const rounded = Math.ceil(totalMin / 30) * 30;
+      startHour = Math.min(23, Math.floor(rounded / 60));
+      startMinute = rounded >= 24 * 60 ? 30 : rounded % 60;
+    }
+  }
+
   return {
     name: '',
-    dayIndex: 1,
-    startHour: 6,
-    startMinute: 0,
+    dayIndex,
+    startHour,
+    startMinute,
     durationHours: 4,
     sameGroupRequired: false,
     blocksConsecutive: true,
@@ -157,10 +189,52 @@ function render(): void {
 
 function renderForm(schedule: Schedule): string {
   const d = _draft!;
-  const dayOptions = Array.from(
-    { length: schedule.periodDays },
-    (_, i) => `<option value="${i + 1}"${i + 1 === d.dayIndex ? ' selected' : ''}>יום ${i + 1}</option>`,
-  ).join('');
+  const anchor = getAnchor();
+
+  // Live Mode clamps: the engine composes task start as
+  // `calendarMidnight(dayIndex) + startHour*h + startMinute*m`, so hour/minute
+  // must be gated against calendar midnight (not the operational-day start).
+  const floor = anchor ? getInjectStartFloor(d.dayIndex, schedule.periodStart, anchor) : null;
+  const dayIsInjectable = anchor ? isDayModifiable(d.dayIndex, schedule.periodStart, anchor) : true;
+  let hourMin = 0;
+  const hourMax = 23;
+  let minuteMin = 0;
+  if (anchor && floor && (floor.hourMin > 0 || floor.minuteMin > 0)) {
+    hourMin = floor.hourMin;
+    if (d.startHour === hourMin) minuteMin = floor.minuteMin;
+    if (d.startHour < hourMin) {
+      d.startHour = hourMin;
+      d.startMinute = floor.minuteMin;
+    } else if (d.startHour === hourMin && d.startMinute < floor.minuteMin) {
+      d.startMinute = floor.minuteMin;
+    }
+  }
+
+  const dayOptions = Array.from({ length: schedule.periodDays }, (_, i) => {
+    const idx = i + 1;
+    const selected = idx === d.dayIndex ? ' selected' : '';
+    if (anchor === null) {
+      return `<option value="${idx}"${selected}>יום ${idx}</option>`;
+    }
+    if (!isDayModifiable(idx, schedule.periodStart, anchor)) {
+      return `<option value="${idx}" disabled title="יום בעבר — לא ניתן להוסיף משימת חירום">יום ${idx} 🧊</option>`;
+    }
+    // ⏳ when the anchor is on this calendar day — hour will need clamping.
+    const calMidnight = new Date(
+      schedule.periodStart.getFullYear(),
+      schedule.periodStart.getMonth(),
+      schedule.periodStart.getDate() + idx - 1,
+    );
+    if (anchor.getTime() > calMidnight.getTime()) {
+      return `<option value="${idx}"${selected} title="יום נוכחי — שעת ההתחלה תוגבל להווה">יום ${idx} ⏳</option>`;
+    }
+    return `<option value="${idx}"${selected}>יום ${idx}</option>`;
+  }).join('');
+
+  const pastTimeBanner =
+    anchor !== null && !dayIsInjectable
+      ? `<div class="inject-past-banner" role="alert">היום שנבחר בעבר — בחר יום עתידי.</div>`
+      : '';
 
   // Frozen map stores milliseconds; live store owns the human label. Prefer
   // the live label when it still exists, fall back to the id otherwise.
@@ -187,13 +261,14 @@ function renderForm(schedule: Schedule): string {
       </div>
       <div class="inject-body">
         <p class="inject-intro">המשימה תתווסף לתמונת המצב הנוכחית והמערכת תנסה לשבץ אליה משתתפים מהצוות הקיים. לאחר "צור שבצ״ק" חדש היא תימחק — אלא אם סימנת את התיבה להוסיף גם למסך המשימות.</p>
+        ${pastTimeBanner}
         <section class="inject-section">
           <h4>פרטי משימה</h4>
           <div class="form-row">
             <label>שם: <input class="input-sm" type="text" data-inj="name" value="${escHtml(d.name)}" placeholder="BALTAM" /></label>
             <label>יום: <select class="input-sm" data-inj="dayIndex">${dayOptions}</select></label>
-            <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" data-inj="startHour" value="${d.startHour}" /></label>
-            <label>דקה: <input class="input-sm" type="number" min="0" max="59" data-inj="startMinute" value="${d.startMinute}" style="width:60px" /></label>
+            <label>שעת התחלה: <input class="input-sm" type="number" min="${hourMin}" max="${hourMax}" data-inj="startHour" value="${d.startHour}" /></label>
+            <label>דקה: <input class="input-sm" type="number" min="${minuteMin}" max="59" data-inj="startMinute" value="${d.startMinute}" style="width:60px" /></label>
             <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" data-inj="durationHours" value="${d.durationHours}" /></label>
           </div>
           <div class="form-row">
@@ -389,6 +464,11 @@ function wireFormEvents(backdrop: HTMLElement): void {
     };
     el.addEventListener('change', commit);
     el.addEventListener('input', commit);
+    // Day change may change the hour/minute floor — re-render so `min`
+    // attributes and coerced values refresh.
+    if (el.dataset.inj === 'dayIndex' && el instanceof HTMLSelectElement) {
+      el.addEventListener('change', () => render());
+    }
   });
 
   // Slot actions.
@@ -505,15 +585,26 @@ function runStaffing(): void {
   const schedule = _ctx?.getSchedule();
   if (!engine || !schedule || !_draft) return;
 
-  const err = validateDraft(_draft);
+  const anchor = getAnchor();
+  const err = validateDraft(_draft, schedule, anchor);
   if (err) {
     showInlineError(err);
     return;
   }
 
   const spec = draftToSpec(_draft);
-  const { report, error } = injectAndStaff(engine, spec, { allowLowPriority: true });
+  const { report, error } = injectAndStaff(engine, spec, {
+    allowLowPriority: true,
+    anchor: anchor ?? undefined,
+  });
   if (!report) {
+    if (error === 'past-time') {
+      // Anchor raced ahead of the selected start while the modal was open.
+      // Refresh the form so day/hour options reflect the new anchor.
+      showInlineError('הזמן שנבחר כבר בעבר — בחר יום/שעה אחרים.');
+      render();
+      return;
+    }
     showInlineError(error === 'invalid-spec' ? 'פרטי המשימה לא תקינים' : 'שגיאה לא צפויה');
     return;
   }
@@ -524,7 +615,7 @@ function runStaffing(): void {
   render();
 }
 
-function validateDraft(d: DraftState): string | null {
+function validateDraft(d: DraftState, schedule: Schedule, anchor: Date | null): string | null {
   if (!d.name.trim()) return 'שם המשימה חסר';
   if (d.startHour < 0 || d.startHour > 23) return 'שעת התחלה לא תקינה';
   if (d.startMinute < 0 || d.startMinute > 59) return 'דקה לא תקינה';
@@ -535,6 +626,21 @@ function validateDraft(d: DraftState): string | null {
   for (let i = 0; i < d.slots.length; i++) {
     const s = d.slots[i];
     if (!s.levels.some((l) => l.enabled)) return `במשבצת ${i + 1} לא נבחרה אף דרגה`;
+  }
+  if (anchor !== null) {
+    if (!isDayModifiable(d.dayIndex, schedule.periodStart, anchor)) {
+      return 'לא ניתן להוסיף משימה ליום שעבר.';
+    }
+    const start = new Date(
+      schedule.periodStart.getFullYear(),
+      schedule.periodStart.getMonth(),
+      schedule.periodStart.getDate() + (d.dayIndex - 1),
+      d.startHour,
+      d.startMinute,
+    );
+    if (start.getTime() < anchor.getTime()) {
+      return 'שעת ההתחלה שנבחרה כבר בעבר — בחר שעה עתידית.';
+    }
   }
   return null;
 }

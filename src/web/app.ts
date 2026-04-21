@@ -40,6 +40,7 @@ import {
   type Task,
   ViolationSeverity,
 } from '../index';
+import { generateShiftBlocks } from '../shared/utils/time-utils';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { hebrewDayName } from '../utils/date-utils';
 import { runAutoTune, setAutoTunerTaskFactory, type TuneRecommendation } from './auto-tuner';
@@ -49,12 +50,12 @@ import { parseContinuitySnapshot } from './continuity-import';
 import { wireDataTransferEvents } from './data-transfer-ui';
 import { exportDailyExcel, exportWeeklyExcel } from './excel-export';
 import { openBatchPlansModal, openConfirmModal } from './future-sos-modal';
+import { closeInjectTaskModal, initInjectTaskModal, openInjectTaskModal } from './inject-task-modal';
 import { getEffectivePakalDefinitions } from './pakal-utils';
 import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
 import { runPreflight } from './preflight';
 import { showRangePicker } from './range-picker-modal';
-import { closeInjectTaskModal, initInjectTaskModal, openInjectTaskModal } from './inject-task-modal';
 import { closeRescueModal, initRescue, openRescueModal, type RescueSwapLabel } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice } from './responsive';
 import { renderScheduleGrid } from './schedule-grid-view';
@@ -107,7 +108,6 @@ import {
   showToast,
   wireCustomSelect,
 } from './ui-modal';
-import { generateShiftBlocks } from '../shared/utils/time-utils';
 import { openWorkloadPopup } from './workload-popup';
 import { computeWeeklyWorkloads } from './workload-utils';
 
@@ -820,7 +820,13 @@ function renderParticipantSidebar(schedule: Schedule): string {
 
   // Build all entries
   const allEntries = schedule.participants.map((p) => {
-    const w = workloads.get(p.id) || { totalHours: 0, effectiveHours: 0, hotHours: 0, coldHours: 0, loadBearingCount: 0 };
+    const w = workloads.get(p.id) || {
+      totalHours: 0,
+      effectiveHours: 0,
+      hotHours: 0,
+      coldHours: 0,
+      loadBearingCount: 0,
+    };
     const pctOfPeriod = totalPeriodHours > 0 ? (w.effectiveHours / totalPeriodHours) * 100 : 0;
     const perDay = computePerDayHours(p.id, schedule, sidebarTaskMap);
     return { p, w, pctOfPeriod, perDay };
@@ -2849,13 +2855,8 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
     // so HC-3 doesn't fire on them. If the user opted out of literally everything
     // and the kept tasks cover the whole window, effective is [] and no entry is
     // persisted (the window is effectively a no-op, matching opt-out intent).
-    const keptBlocks = affected
-      .filter((a) => excludedIds.has(a.assignment.id))
-      .map((a) => a.task.timeBlock);
-    const effectiveWindows = computeEffectiveUnavailabilityWindows(
-      { start: windowStart, end: windowEnd },
-      keptBlocks,
-    );
+    const keptBlocks = affected.filter((a) => excludedIds.has(a.assignment.id)).map((a) => a.task.timeBlock);
+    const effectiveWindows = computeEffectiveUnavailabilityWindows({ start: windowStart, end: windowEnd }, keptBlocks);
     let updated = currentSchedule.scheduleUnavailability;
     const baseId = `fsos-${Date.now()}`;
     for (let i = 0; i < effectiveWindows.length; i++) {
@@ -2927,9 +2928,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
       // Punch holes around kept (excluded) in-window assignments so the persisted
       // entry matches the planner's effective windows — otherwise downstream
       // revalidation fires HC-3 on assignments the user chose to keep.
-      const keptBlocks = affected
-        .filter((a) => excludedIds.has(a.assignment.id))
-        .map((a) => a.task.timeBlock);
+      const keptBlocks = affected.filter((a) => excludedIds.has(a.assignment.id)).map((a) => a.task.timeBlock);
       const effectiveWindows = computeEffectiveUnavailabilityWindows(
         { start: windowStart, end: windowEnd },
         keptBlocks,
@@ -3262,7 +3261,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.8</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.5.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3417,6 +3416,10 @@ function doUndoRedo(action: 'undo' | 'redo'): void {
     const restored = snap.schedule;
     if (restored) {
       currentSchedule = restored;
+      // Re-apply the "past is closed" freeze on the restored snapshot so an
+      // anchor-advance + undo can't resurrect past assignments as editable.
+      const lm = store.getLiveModeState();
+      if (lm.enabled) freezeAssignments(currentSchedule, lm.currentTimestamp);
       // Re-wire the engine so violations/scoring stay consistent
       if (engine) {
         engine.importSchedule(currentSchedule);

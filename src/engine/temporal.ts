@@ -237,3 +237,93 @@ export function isDayPartiallyFrozen(
   );
   return anchor.getTime() > dayStart.getTime() && anchor.getTime() < dayEnd.getTime();
 }
+
+// ─── Injection Gates (calendar-day semantics) ────────────────────────────────
+//
+// BALTAM-style post-generation injection composes a task's absolute start as
+//   calendarMidnight(dayIndex) + startHour*h + startMinute*m
+// where `calendarMidnight(dayIndex) = periodStart.date + (dayIndex - 1)` at
+// local midnight — i.e. the calendar day, NOT the operational day.
+//
+// This means modifiability for injection is tied to calendar midnight, not to
+// `isDayFrozen` (which uses operational-day boundaries). The two diverge when
+// `dayStartHour > 0`: an operational day whose anchor is past its calendar
+// midnight but before `dayStartHour` the next morning is still "partially
+// frozen" operationally — but every calendar hour [0..23] on its calendar
+// day is already past, so no `startHour` can produce a future start.
+//
+// The helpers below are the correct contract surface for day-index-based
+// mutation entry points. For existing-assignment status checks, use
+// `isModifiableAssignment` / `isFutureTask` instead.
+
+/**
+ * Returns true iff a task composed as
+ * `calendarMidnight(dayIndex) + startHour*h + startMinute*m` for some
+ * `startHour ∈ [0, 23]` and `startMinute ∈ [0, 59]` can land at or after the
+ * anchor.
+ *
+ * Equivalent to `anchor < calendarMidnight(dayIndex + 1)`.
+ */
+export function isDayModifiable(dayIndex: number, scheduleDate: Date, anchor: Date): boolean {
+  if (dayIndex < 1) return false;
+  const nextCalMidnight = new Date(
+    scheduleDate.getFullYear(),
+    scheduleDate.getMonth(),
+    scheduleDate.getDate() + dayIndex,
+  );
+  return anchor.getTime() < nextCalMidnight.getTime();
+}
+
+/**
+ * For a modifiable `dayIndex`, returns `{ hourMin, minuteMin }` — the
+ * minimum `(startHour, startMinute)` pair such that
+ * `calendarMidnight(dayIndex) + startHour*h + startMinute*m >= anchor`.
+ * Returns `null` when the calendar day is fully past (see `isDayModifiable`).
+ *
+ * `minuteMin` applies only when `startHour === hourMin`; for larger hours
+ * any minute 0..59 is legal.
+ *
+ * Rounds up to whole-minute precision so a user picking exactly
+ * `(hourMin, minuteMin)` still produces a start `>=` anchor even when the
+ * anchor has sub-minute components.
+ */
+export function getInjectStartFloor(
+  dayIndex: number,
+  scheduleDate: Date,
+  anchor: Date,
+): { hourMin: number; minuteMin: number } | null {
+  if (!isDayModifiable(dayIndex, scheduleDate, anchor)) return null;
+  const calMidnight = new Date(
+    scheduleDate.getFullYear(),
+    scheduleDate.getMonth(),
+    scheduleDate.getDate() + dayIndex - 1,
+  );
+  const deltaMs = anchor.getTime() - calMidnight.getTime();
+  if (deltaMs <= 0) return { hourMin: 0, minuteMin: 0 };
+  const deltaMin = Math.ceil(deltaMs / 60000);
+  // Defensive: isDayModifiable already excludes deltaMin >= 24*60, but if
+  // ceil pushed us exactly to that boundary treat it as fully past.
+  if (deltaMin >= 24 * 60) return null;
+  return {
+    hourMin: Math.floor(deltaMin / 60),
+    minuteMin: deltaMin % 60,
+  };
+}
+
+/**
+ * Final engine-side gate for post-generation task injection.
+ *
+ * Rejects any TimeBlock whose start is strictly before the anchor, matching
+ * the "equal-to-anchor counts as future" semantics of `isFutureTask`.
+ *
+ * Used by `injectAndStaff` before any mutation of the engine or schedule.
+ */
+export function assertInjectableTimeBlock(
+  block: TimeBlock,
+  anchor: Date,
+): { ok: true } | { ok: false; reason: 'past-time' } {
+  if (block.start.getTime() < anchor.getTime()) {
+    return { ok: false, reason: 'past-time' };
+  }
+  return { ok: true };
+}

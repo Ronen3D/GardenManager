@@ -1847,13 +1847,17 @@ export function optimize(
   // Remove slots that SA managed to fill
   const remainingUnfilled = greedy.unfilledSlots.filter((uf) => !lsResult.filledSlots.includes(uf.slotId));
 
-  // Validate final result
+  // Validate final result. Pass restRuleMap so HC-14 is part of the feasibility
+  // verdict — otherwise `validation.valid` (and therefore the schedule's
+  // `feasible` flag, which is derived from it) is silently blind to HC-14, while
+  // the scheduler's post-optimize validation reports HC-14 violations in
+  // `schedule.violations`. That split let `violations` and `feasible` disagree.
   const validation = validateHardConstraints(
     tasks,
     participants,
     lsResult.assignments,
     disabledHC,
-    undefined,
+    restRuleMap,
     certLabelResolver,
   );
 

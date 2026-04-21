@@ -300,12 +300,12 @@ import {
   checkSlotsFilled,
   checkUniqueParticipantsPerTask,
 } from './constraints/hard-constraints';
-import { collectSoftWarnings, dailyWorkloadImbalance, workloadImbalanceSplit } from './constraints/soft-constraints';
 import { getRecoveryWindow } from './constraints/sleep-recovery';
+import { collectSoftWarnings, dailyWorkloadImbalance, workloadImbalanceSplit } from './constraints/soft-constraints';
 import { fullValidate, previewSwap } from './engine/validator';
-import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
 import { computeParticipantRest } from './shared/utils/rest-calculator';
 import { isDateInBlock } from './shared/utils/time-utils';
+import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
 
 let passed = 0;
 let failed = 0;
@@ -3582,13 +3582,30 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     });
     const loaded = mkTask('hc15-iso-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
     const as: Assignment[] = [
-      { id: 'iso1', taskId: trigger.id, slotId: `${trigger.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'iso1',
+        taskId: trigger.id,
+        slotId: `${trigger.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
       // Second participant gets only the loaded task (no trigger for them) — must not violate
-      { id: 'iso2', taskId: loaded.id, slotId: `${loaded.id}-slot`, participantId: srP2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'iso2',
+        taskId: loaded.id,
+        slotId: `${loaded.id}-slot`,
+        participantId: srP2.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
     const r = validateHardConstraints([trigger, loaded], [srP, srP2], as);
     const srViolations = r.violations.filter((v) => v.code === 'SLEEP_RECOVERY_VIOLATION');
-    assert(srViolations.length === 0, 'HC-15: violation does not leak across participants (only srP triggers, srP2 holds loaded)');
+    assert(
+      srViolations.length === 0,
+      'HC-15: violation does not leak across participants (only srP triggers, srP2 holds loaded)',
+    );
   }
 
   // Test 15: Mutual rules — both tasks carry a rule; dedup emits exactly one violation per pair
@@ -3597,17 +3614,40 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
       baseLoadWeight: 1,
       sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
     });
-    const b = mkTask('hc15-mut-b', 5, 9, {
-      baseLoadWeight: 1,
-      sleepRecovery: { rangeStartHour: 5, rangeEndHour: 10, recoveryHours: 5 },
-    }, nextDate);
+    const b = mkTask(
+      'hc15-mut-b',
+      5,
+      9,
+      {
+        baseLoadWeight: 1,
+        sleepRecovery: { rangeStartHour: 5, rangeEndHour: 10, recoveryHours: 5 },
+      },
+      nextDate,
+    );
     const as: Assignment[] = [
-      { id: 'mut1', taskId: a.id, slotId: `${a.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'mut2', taskId: b.id, slotId: `${b.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'mut1',
+        taskId: a.id,
+        slotId: `${a.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'mut2',
+        taskId: b.id,
+        slotId: `${b.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
     const r = validateHardConstraints([a, b], [srP], as);
     const srViolations = r.violations.filter((v) => v.code === 'SLEEP_RECOVERY_VIOLATION');
-    assert(srViolations.length === 1, `HC-15: mutual rules deduped to one violation per pair (got ${srViolations.length})`);
+    assert(
+      srViolations.length === 1,
+      `HC-15: mutual rules deduped to one violation per pair (got ${srViolations.length})`,
+    );
   }
 
   // Test 16: fullValidate places HC-15 in `violations`, not `warnings`
@@ -3618,8 +3658,22 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     });
     const loaded = mkTask('hc15-fv-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
     const as: Assignment[] = [
-      { id: 'fv1', taskId: trigger.id, slotId: `${trigger.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'fv2', taskId: loaded.id, slotId: `${loaded.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'fv1',
+        taskId: trigger.id,
+        slotId: `${trigger.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'fv2',
+        taskId: loaded.id,
+        slotId: `${loaded.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
     const fv = fullValidate([trigger, loaded], [srP], as);
     assert(
@@ -3660,8 +3714,22 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     // Loaded task covers 05:00–09:00 on nextDate → full overlap with window [04:30, 09:30)
     const loaded = mkTask('hc15-ot-loaded', 5, 9, { baseLoadWeight: 1 }, nextDate);
     const as: Assignment[] = [
-      { id: 'ot1', taskId: trigger.id, slotId: 'hc15-ot-trig-slot', participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'ot2', taskId: loaded.id, slotId: `${loaded.id}-slot`, participantId: srP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'ot1',
+        taskId: trigger.id,
+        slotId: 'hc15-ot-trig-slot',
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'ot2',
+        taskId: loaded.id,
+        slotId: `${loaded.id}-slot`,
+        participantId: srP.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
     const r = validateHardConstraints([trigger, loaded], [srP], as);
     assert(
@@ -5306,10 +5374,13 @@ console.log('\n── Dynamic Certifications ───────────�
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import {
+  assertInjectableTimeBlock,
   freezeAssignments,
   getAnchorDayIndex,
   getFutureWindow,
+  getInjectStartFloor,
   isDayFrozen,
+  isDayModifiable,
   isDayPartiallyFrozen,
   isFutureTask,
   isInProgressTask,
@@ -5984,13 +6055,13 @@ console.log('\n── Phantom Context ──────────────
 // Rescue Plans (generateRescuePlans)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import { generateRescuePlans } from './engine/rescue';
 import {
   computeEffectiveUnavailabilityWindows,
   findAffectedAssignments,
   generateBatchRescuePlans,
   upsertScheduleUnavailability,
 } from './engine/future-sos';
+import { generateRescuePlans } from './engine/rescue';
 import { sortDonorsByProximity, sortParticipantsByLoadProximity } from './engine/rescue-primitives';
 import type { RescueRequest, ScheduleScore } from './models/types';
 
@@ -7542,12 +7613,12 @@ console.log('\n── Auto-Tuner: pure helpers ───────────
 
 import {
   computeRankScore,
-  iqr as tunerIqr,
   latinHypercubeSample,
   maxUnfilledIn,
-  median as tunerMedian,
   mulberry32,
   type TunerDim,
+  iqr as tunerIqr,
+  median as tunerMedian,
 } from './utils/tuner-math';
 
 // median / iqr
@@ -10888,8 +10959,14 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
     const { report } = injectAndStaff(engine, mkInjSpec());
     assert(report !== null, 'inject-G2: report returned');
     if (report) {
-      assert(sched.tasks.some((t) => t.id === report.task.id), 'inject-G2: task present before rollback');
-      assert(sched.assignments.some((a) => a.taskId === report.task.id), 'inject-G2: assignment present before rollback');
+      assert(
+        sched.tasks.some((t) => t.id === report.task.id),
+        'inject-G2: task present before rollback',
+      );
+      assert(
+        sched.assignments.some((a) => a.taskId === report.task.id),
+        'inject-G2: assignment present before rollback',
+      );
 
       report.rollback();
 
@@ -10979,6 +11056,140 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
       report.rollback();
       assert(!sched.tasks.some((t) => t.id === report.task.id), 'inject-G5: rollback removes task');
     }
+  }
+
+  // ── Test 6: Live Mode gate — past day rejected, no mutation leaks ──
+  // injBase = 2026-06-01 (Monday), dayStartHour=5, periodDays=7.
+  // Anchor at day 3 morning (2026-06-03 10:00) → day 1 is fully frozen.
+  {
+    const pA = mkP('inj6-A', 'A');
+    const pB = mkP('inj6-B', 'A');
+    const sched = mkInjSchedule([pA, pB]);
+    const engine = mkEngine(sched);
+
+    const tasksBefore = sched.tasks.length;
+    const assignmentsBefore = sched.assignments.length;
+    const anchor = new Date(2026, 5, 3, 10, 0);
+
+    const { report, error } = injectAndStaff(engine, mkInjSpec({ dayIndex: 1 }), { anchor });
+    assert(report === null, 'inject-G6: past-day spec returns null report');
+    assert(error === 'past-time', 'inject-G6: error code is past-time');
+    assert(sched.tasks.length === tasksBefore, 'inject-G6: no task leaked past the gate');
+    assert(sched.assignments.length === assignmentsBefore, 'inject-G6: no assignment leaked past the gate');
+  }
+
+  // ── Test 7: Live Mode gate — future day still succeeds ──
+  {
+    const pA = mkP('inj7-A', 'A');
+    const pB = mkP('inj7-B', 'A');
+    const sched = mkInjSchedule([pA, pB]);
+    const engine = mkEngine(sched);
+
+    // Anchor in the past (before schedule) — every day is future.
+    const anchor = new Date(2026, 4, 20, 0, 0);
+    const { report, error } = injectAndStaff(engine, mkInjSpec({ dayIndex: 2 }), { anchor });
+    assert(report !== null, 'inject-G7: future-day spec succeeds with anchor set');
+    assert(error === undefined, 'inject-G7: no error returned');
+  }
+
+  // ── Test 8: regression — without anchor, past-day spec still succeeds
+  //    (non-Live-Mode callers unaffected). ──
+  {
+    const pA = mkP('inj8-A', 'A');
+    const pB = mkP('inj8-B', 'A');
+    const sched = mkInjSchedule([pA, pB]);
+    const engine = mkEngine(sched);
+
+    const { report, error } = injectAndStaff(engine, mkInjSpec({ dayIndex: 1 }));
+    assert(report !== null, 'inject-G8: past-day spec succeeds when anchor is omitted');
+    assert(error === undefined, 'inject-G8: no error without anchor');
+  }
+}
+
+// ─── Temporal mutation-gate helpers (day-index based) ──────────────────────
+
+console.log('\n── Temporal mutation gates ──────────────');
+
+{
+  const base = new Date(2026, 5, 1); // 2026-06-01 (periodStart)
+
+  // ── Suite A: mid-operational-day-3 anchor (calendar day matches dayIndex) ──
+  // Anchor 2026-06-03 10:00. With the calendar-day semantics, day 1 & 2 are
+  // fully past, day 3 is the anchor's calendar day (hour clamp applies), days
+  // 4+ are future.
+  {
+    const anchor = new Date(2026, 5, 3, 10, 0);
+
+    assert(isDayModifiable(1, base, anchor) === false, 'gate-A1: day 1 not modifiable');
+    assert(isDayModifiable(2, base, anchor) === false, 'gate-A1: day 2 not modifiable');
+    assert(isDayModifiable(3, base, anchor) === true, 'gate-A1: day 3 (anchor day) modifiable');
+    assert(isDayModifiable(4, base, anchor) === true, 'gate-A1: day 4 modifiable');
+
+    const floor3 = getInjectStartFloor(3, base, anchor);
+    assert(floor3 !== null, 'gate-A2: day 3 floor not null');
+    assert(floor3!.hourMin === 10, 'gate-A2: day 3 hourMin = anchor hour');
+    assert(floor3!.minuteMin === 0, 'gate-A2: day 3 minuteMin = 0 (anchor at :00)');
+
+    const floor4 = getInjectStartFloor(4, base, anchor);
+    assert(floor4 !== null, 'gate-A3: day 4 floor not null');
+    assert(floor4!.hourMin === 0, 'gate-A3: day 4 hourMin = 0 (calendar midnight)');
+    assert(floor4!.minuteMin === 0, 'gate-A3: day 4 minuteMin = 0');
+
+    assert(getInjectStartFloor(1, base, anchor) === null, 'gate-A4: past day floor is null');
+  }
+
+  // ── Suite B: Bug #1 regression — post-midnight anchor with dayStartHour=5 ──
+  // Anchor 2026-06-04 02:00 sits operationally inside day 3 (op-day 3 runs
+  // 2026-06-03 05:00 → 2026-06-04 05:00, dayStartHour=5), so the OPERATIONAL
+  // predicate would call day 3 partially-frozen. But the inject path composes
+  // `start = calMidnight(dayIndex) + startHour*h`, and every hour [0..23] on
+  // the calendar day 2026-06-03 is already past. Day 3 must therefore be
+  // NOT injectable, and the correct dayIndex for an anchor-time task is 4.
+  {
+    const anchor = new Date(2026, 5, 4, 2, 0);
+
+    assert(isDayModifiable(3, base, anchor) === false, 'gate-B1: day 3 not injectable (calendar past)');
+    assert(isDayModifiable(4, base, anchor) === true, 'gate-B1: day 4 injectable (anchor on its cal day)');
+    assert(getInjectStartFloor(3, base, anchor) === null, 'gate-B2: day 3 floor is null');
+
+    const floor4 = getInjectStartFloor(4, base, anchor);
+    assert(floor4 !== null, 'gate-B3: day 4 floor not null');
+    assert(floor4!.hourMin === 2, 'gate-B3: day 4 hourMin = 2 (anchor hour)');
+    assert(floor4!.minuteMin === 0, 'gate-B3: day 4 minuteMin = 0');
+  }
+
+  // ── Suite C: sub-minute anchor — minute floor rounds UP ──
+  // Anchor 2026-06-03 10:00:30 → a user picking (10, 0) would produce a start
+  // of 10:00:00, which is BEFORE the anchor. Floor must be (10, 1).
+  {
+    const anchor = new Date(2026, 5, 3, 10, 0, 30);
+    const floor = getInjectStartFloor(3, base, anchor);
+    assert(floor !== null, 'gate-C: floor not null');
+    assert(floor!.hourMin === 10, 'gate-C: hourMin = 10');
+    assert(floor!.minuteMin === 1, 'gate-C: minuteMin rounded up to 1');
+  }
+
+  // ── Suite D: assertInjectableTimeBlock — past rejected, equal/future ok ──
+  {
+    const anchor = new Date(2026, 5, 3, 10, 0);
+    const pastBlock = {
+      start: new Date(2026, 5, 1, 6, 0),
+      end: new Date(2026, 5, 1, 10, 0),
+    };
+    const gatePast = assertInjectableTimeBlock(pastBlock, anchor);
+    assert(gatePast.ok === false, 'gate-D1: past block rejected');
+    if (!gatePast.ok) {
+      assert(gatePast.reason === 'past-time', 'gate-D1: reason is past-time');
+    }
+
+    const atAnchor = { start: anchor, end: new Date(anchor.getTime() + 3600000) };
+    assert(assertInjectableTimeBlock(atAnchor, anchor).ok === true, 'gate-D2: exactly-at-anchor accepted');
+
+    const futureBlock = {
+      start: new Date(2026, 5, 4, 6, 0),
+      end: new Date(2026, 5, 4, 10, 0),
+    };
+    assert(assertInjectableTimeBlock(futureBlock, anchor).ok === true, 'gate-D3: future block accepted');
   }
 }
 
