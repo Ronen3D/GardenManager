@@ -32,6 +32,9 @@ playwright-report/
 # Generated result files
 results/
 
+# Local scratch/experiments (committed experiments go under experiments/)
+tmp/
+
 # Build assets (large icons)
 build/
 
