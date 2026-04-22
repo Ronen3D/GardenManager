@@ -149,7 +149,7 @@ export function escAttr(s: string): string {
 
 const THEME_STORAGE_KEY = 'gardenmanager_theme';
 const DEFAULT_ATTEMPTS_STORAGE_KEY = 'gardenmanager_default_attempts';
-const FALLBACK_DEFAULT_ATTEMPTS = 100;
+const FALLBACK_DEFAULT_ATTEMPTS = 60;
 
 export function applyTheme(theme: 'dark' | 'light'): void {
   if (theme === 'light') {
