@@ -1189,8 +1189,9 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
   if (ot.blocksConsecutive) flags.push('חוסמת');
 
   const relatedFindings = pf.findings.filter((f) => {
+    if (f.oneTimeTaskId === ot.id) return true;
     const slotIds = new Set(allSlots.map((s) => s.id));
-    return f.slotId && slotIds.has(f.slotId);
+    return !!f.slotId && slotIds.has(f.slotId);
   });
   const hasCritical = relatedFindings.some((f) => f.severity === PreflightSeverity.Critical);
   const hasWarning = relatedFindings.some((f) => f.severity === PreflightSeverity.Warning);
@@ -1519,6 +1520,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const rawDur = parseFloat(
           (body.querySelector('[data-ot-field="durationHours"]') as HTMLInputElement)?.value || '4',
         );
+        if (!Number.isFinite(rawDur) || rawDur <= 0) {
+          showToast('משך המשימה חייב להיות חיובי (0.5 ומעלה)', { type: 'error' });
+          break;
+        }
         const baseLoad = parseFloat(
           (body.querySelector('[data-ot-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1',
         );
@@ -2101,6 +2106,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           (form.querySelector('[data-field="ot-start-minute"]') as HTMLInputElement)?.value || '0',
         );
         const rawDur = parseFloat((form.querySelector('[data-field="ot-duration"]') as HTMLInputElement)?.value || '4');
+        if (!Number.isFinite(rawDur) || rawDur <= 0) {
+          showToast('משך המשימה חייב להיות חיובי (0.5 ומעלה)', { type: 'error' });
+          return;
+        }
         const baseLoad = parseFloat(
           (form.querySelector('[data-field="ot-base-load"]') as HTMLInputElement)?.value || '1',
         );

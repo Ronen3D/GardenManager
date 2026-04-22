@@ -893,6 +893,8 @@ export interface PreflightFinding {
   message: string;
   /** Related template ID */
   templateId?: string;
+  /** Related one-time task ID */
+  oneTimeTaskId?: string;
   /** Related slot or sub-team */
   slotId?: string;
 }

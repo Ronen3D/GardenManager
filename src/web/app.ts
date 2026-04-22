@@ -3287,7 +3287,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.3</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4204,7 +4204,13 @@ function wireScheduleEvents(container: HTMLElement): void {
       const tsEnd = resolveLogicalDayTimestamp(selectedDayEnd, _availabilityInspectorTimeEnd);
       if (!tsStart || !tsEnd) return;
       if (tsEnd.getTime() <= tsStart.getTime()) {
-        showToast('שעת סיום חייבת להיות אחרי שעת התחלה', { type: 'error' });
+        const message =
+          selectedDayEnd < selectedDayStart
+            ? 'יום הסיום חייב להיות זהה ליום ההתחלה או אחריו'
+            : selectedDayEnd === selectedDayStart
+              ? 'שעת סיום חייבת להיות אחרי שעת התחלה'
+              : 'מועד הסיום חייב להיות אחרי מועד ההתחלה';
+        showToast(message, { type: 'error' });
         return;
       }
       _availabilityRangeStartMs = tsStart.getTime();

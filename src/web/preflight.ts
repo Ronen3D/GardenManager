@@ -281,6 +281,36 @@ function checkGroupIntegrity(
   return findings;
 }
 
+// ─── Zero-Slot Task Check ────────────────────────────────────────────────────
+
+function checkZeroSlotTasks(templates: TaskTemplate[], oneTimeTasks: OneTimeTask[]): PreflightFinding[] {
+  const findings: PreflightFinding[] = [];
+
+  for (const tpl of templates) {
+    if (collectAllSlots(tpl).length === 0) {
+      findings.push({
+        severity: PreflightSeverity.Warning,
+        code: 'ZERO_SLOTS',
+        message: `המשימה "${tpl.name}" מוגדרת ללא אף משבצת — היא לא תופיע בשבצ"ק. הוסף משבצות במסך פירוט משימות.`,
+        templateId: tpl.id,
+      });
+    }
+  }
+
+  for (const ot of oneTimeTasks) {
+    if (collectAllSlots(ot).length === 0) {
+      findings.push({
+        severity: PreflightSeverity.Warning,
+        code: 'ZERO_SLOTS',
+        message: `המשימה החד-פעמית "${ot.name}" מוגדרת ללא אף משבצת — היא לא תופיע בשבצ"ק. הוסף משבצות במסך פירוט משימות.`,
+        oneTimeTaskId: ot.id,
+      });
+    }
+  }
+
+  return findings;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export function runPreflight(): PreflightResult {
@@ -321,7 +351,8 @@ export function runPreflight(): PreflightResult {
   const skillGapFindings = checkSkillGaps(participants, templates, inRangeOts);
   const capacityResult = checkCapacity(participants, templates, inRangeOts);
   const groupFindings = checkGroupIntegrity(participants, templates, inRangeOts);
-  const allFindings = [...skillGapFindings, ...capacityResult.findings, ...groupFindings];
+  const zeroSlotFindings = checkZeroSlotTasks(templates, inRangeOts);
+  const allFindings = [...skillGapFindings, ...capacityResult.findings, ...groupFindings, ...zeroSlotFindings];
 
   const hasCritical = allFindings.some((f) => f.severity === PreflightSeverity.Critical);
 

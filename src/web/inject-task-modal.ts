@@ -676,6 +676,11 @@ function validateDraft(d: DraftState, schedule: Schedule, anchor: Date | null): 
   for (let i = 0; i < d.slots.length; i++) {
     const s = d.slots[i];
     if (!s.levels.some((l) => l.enabled)) return `במשבצת ${i + 1} לא נבחרה אף דרגה`;
+    const overlap = s.requiredCertifications.filter((c) => s.forbiddenCertifications.includes(c));
+    if (overlap.length > 0) {
+      const labels = overlap.map((c) => schedule.certLabelSnapshot[c] ?? c).join(', ');
+      return `במשבצת ${i + 1}: הסמכה לא יכולה להיות גם נדרשת וגם אסורה: ${labels}`;
+    }
   }
   if (anchor !== null) {
     const dsh = schedule.algorithmSettings.dayStartHour;
