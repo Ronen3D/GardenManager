@@ -33,6 +33,7 @@ import {
   type TaskSet,
   type TaskTemplate,
 } from '../models/types';
+import { buildFormula } from '../shared/utils/load-formula';
 import { normalizeCertificationDefinitions, sanitizeCertificationIds } from './certification-utils';
 import {
   clonePakalDefinitions,
@@ -1892,7 +1893,7 @@ export function seedDefaultTaskTemplates(): void {
   _restRules.push(defaultRestRule);
 
   // Adanit
-  addTaskTemplate({
+  const adanitTpl = addTaskTemplate({
     name: 'אדנית',
 
     durationHours: 8,
@@ -1959,8 +1960,9 @@ export function seedDefaultTaskTemplates(): void {
     displayOrder: 0,
   });
 
-  // Hamama
-  addTaskTemplate({
+  // Hamama — loadFormula is attached at the end of this function,
+  // once ערוגת ערב has been seeded (Hamama's formula references it).
+  const hamamaTpl = addTaskTemplate({
     name: 'חממה',
 
     durationHours: 12,
@@ -1985,7 +1987,7 @@ export function seedDefaultTaskTemplates(): void {
   });
 
   // Shemesh
-  addTaskTemplate({
+  const shemeshTpl = addTaskTemplate({
     name: 'שמש',
 
     durationHours: 4,
@@ -2016,7 +2018,16 @@ export function seedDefaultTaskTemplates(): void {
     displayOrder: 4,
   });
 
-  // Mamtera
+  // Mamtera — default load derived via the calculator:
+  // 14 hours of Mamtera = 8 hours of Adanit (base) + 2.5 hours of Shemesh (base) → 0.75
+  const mamteraLoadFormula = buildFormula(
+    [
+      { refTemplateId: adanitTpl.id, refRate: { kind: 'base' }, hours: 8 },
+      { refTemplateId: shemeshTpl.id, refRate: { kind: 'base' }, hours: 2.5 },
+    ],
+    taskTemplates,
+    14,
+  );
   addTaskTemplate({
     name: 'ממטרה',
 
@@ -2024,7 +2035,8 @@ export function seedDefaultTaskTemplates(): void {
     shiftsPerDay: 1,
     startHour: 9,
     sameGroupRequired: false,
-    baseLoadWeight: 0.64,
+    baseLoadWeight: mamteraLoadFormula.computedValue,
+    loadFormula: mamteraLoadFormula,
     loadWindows: [],
     blocksConsecutive: true,
     subTeams: [],
@@ -2178,7 +2190,7 @@ export function seedDefaultTaskTemplates(): void {
   });
 
   // ערוגת ערב
-  addTaskTemplate({
+  const arugatErevTpl = addTaskTemplate({
     name: 'ערוגת ערב',
 
     durationHours: 1.5,
@@ -2207,6 +2219,18 @@ export function seedDefaultTaskTemplates(): void {
     color: '#1ABC9C',
     displayOrder: 2,
   });
+
+  // Hamama default load derived via the calculator:
+  // 12 hours of Hamama = 8 hours of Adanit (base) + 1.5 hours of ערוגת ערב (base) → 9.5/12 ≈ 0.79
+  const hamamaLoadFormula = buildFormula(
+    [
+      { refTemplateId: adanitTpl.id, refRate: { kind: 'base' }, hours: 8 },
+      { refTemplateId: arugatErevTpl.id, refRate: { kind: 'base' }, hours: 1.5 },
+    ],
+    taskTemplates,
+    12,
+  );
+  updateTaskTemplate(hamamaTpl.id, { loadFormula: hamamaLoadFormula });
 }
 
 // ─── Initialization ──────────────────────────────────────────────────────────

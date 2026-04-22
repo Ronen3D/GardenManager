@@ -422,7 +422,7 @@ export class SchedulingEngine {
    * yielding to the event loop between each so the UI can show progress.
    * Only the best result is committed to the engine state.
    *
-   * @param attempts Number of optimization attempts (default: 2000)
+   * @param attempts Number of optimization attempts
    * @param onProgress Callback fired after each attempt for progress UI
    */
   async generateScheduleAsync(

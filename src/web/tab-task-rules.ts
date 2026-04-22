@@ -721,12 +721,12 @@ function renderLoadFormulaExplanation(tpl: TaskTemplate, kind: 'base' | 'window'
   // Checks current state so drifted refs read naturally.
   const rateText = (snap: LoadFormulaSnapshotEntryLocal & { templateId?: string }): string => {
     if (snap.rate.kind === 'window') {
-      return `בחלון החם ${escHtml(snap.rate.windowLabel)} (קצב ${snap.rate.value.toFixed(2)} לשעה)`;
+      return `בחלון החם ${escHtml(snap.rate.windowLabel)} (עומס ${snap.rate.value.toFixed(2)} לשעה)`;
     }
     const refTpl = snap.templateId ? templates.get(snap.templateId) : undefined;
     const currentHasWindows = !!refTpl && (refTpl.loadWindows ?? []).length > 0;
     const where = currentHasWindows ? 'במצב בסיס ' : '';
-    return `${where}(קצב ${snap.rate.value.toFixed(2)} לשעה)`;
+    return `${where}(עומס ${snap.rate.value.toFixed(2)} לשעה)`;
   };
 
   // Detect ref tasks that gained hot windows since save — those now need "במצב בסיס" disambiguation
@@ -780,7 +780,7 @@ function renderLoadFormulaExplanation(tpl: TaskTemplate, kind: 'base' | 'window'
       stale.entries[i] &&
       stale.entries[i].currentValue !== null &&
       Math.abs((stale.entries[i].currentValue as number) - snap.rate.value) > 1e-9
-        ? ` <span class="lf-info-stale">(הקצב כעת ${(stale.entries[i].currentValue as number).toFixed(2)})</span>`
+        ? ` <span class="lf-info-stale">(העומס כעת ${(stale.entries[i].currentValue as number).toFixed(2)})</span>`
         : '';
     if (gainedWindows(snap) && !gainedList.includes(snap.templateName)) gainedList.push(snap.templateName);
     body += `<li class="lf-info-row">${hoursPhrase(c.hours)} של <strong>${escHtml(snap.templateName)}</strong> ${rateText(snap)} — תרומה <strong>${product.toFixed(2)}</strong>${driftHint}</li>`;
@@ -818,7 +818,7 @@ function renderLoadFormulaExplanation(tpl: TaskTemplate, kind: 'base' | 'window'
     body += `<div class="lf-info-clamp">הצד העליון גדול מסכום הרכיבים, לכן הערך נחתך ל-0.00.</div>`;
   }
   if (stale.stale) {
-    body += `<div class="lf-info-warn">⚠ ערכי הקצב של רכיבי ההשוואה השתנו מאז שנשמר. פתח ושמור מחדש כדי לעדכן.</div>`;
+    body += `<div class="lf-info-warn">⚠ ערכי העומס של רכיבי ההשוואה השתנו מאז שנשמר. פתח ושמור מחדש כדי לעדכן.</div>`;
   }
   if (gainedList.length) {
     const names = gainedList.map((n) => escHtml(n)).join(', ');

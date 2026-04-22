@@ -511,7 +511,7 @@ function renderPicker(
       .join('');
     rateHtml = `
       <div class="lf-rate-picker">
-        <span class="lf-rate-label">קצב של ${escAttr(currentRefTpl.name)}:</span>
+        <span class="lf-rate-label">עומס של ${escAttr(currentRefTpl.name)}:</span>
         <button type="button" class="lf-rate-opt${isBase ? ' selected' : ''}" data-lf-action="pick-rate" data-lf-idx="${idx}" data-lf-side="${side}" data-lf-rate="base">בסיס · ${templateBaseWeight(currentRefTpl).toFixed(2)}</button>
         ${winOpts}
       </div>`;

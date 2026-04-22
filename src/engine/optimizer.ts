@@ -339,7 +339,7 @@ export interface SchedulingContext {
 /**
  * Build a {@link SchedulingContext} from the task and participant inputs.
  *
- * Costs O(T × S × P) — negligible vs. a 2000-attempt optimize loop which does
+ * Costs O(T × S × P) — negligible vs. a multi-attempt optimize loop which does
  * equivalent work inside the greedy phase via getRejectionReason.
  *
  * @param tasks          The tasks to be scheduled.
@@ -1996,7 +1996,7 @@ export function classifyUnfilledSlots(unfilled: UnfilledSlot[]): EliteBoostState
  * task-order jitter, keeping the best result. This introduces diversity
  * in both participant ordering and task scheduling priority.
  *
- * @param attempts Number of optimization attempts (default: 2000)
+ * @param attempts Number of optimization attempts
  * @param onProgress Optional callback fired after each attempt
  */
 export function optimizeMultiAttempt(
@@ -2131,7 +2131,7 @@ export function optimizeMultiAttempt(
  *
  * Uses batched execution: runs BATCH_SIZE attempts synchronously, then
  * yields once via setTimeout so the browser can repaint the progress
- * overlay. This avoids 2000 individual setTimeout round-trips while
+ * overlay. This avoids one setTimeout round-trip per attempt while
  * still keeping the UI responsive.
  */
 const ASYNC_BATCH_SIZE = 4;
