@@ -311,7 +311,7 @@ function renderForm(schedule: Schedule): string {
         <section class="inject-section">
           <h4>פרטי משימה</h4>
           <div class="form-row">
-            <label>שם: <input class="input-sm" type="text" data-inj="name" value="${escHtml(d.name)}" placeholder="BALTAM" /></label>
+            <label>שם: <input class="input-sm" type="text" data-inj="name" value="${escHtml(d.name)}" placeholder="BALTAM" maxlength="40" /></label>
             <label>יום: <select class="input-sm" data-inj="dayIndex">${dayOptions}</select></label>
             <label>שעת התחלה: <select class="input-sm" data-inj="startHour">${hourOptions}</select></label>
             <label>דקה: <select class="input-sm" data-inj="startMinute" style="width:70px">${minuteOptions}</select></label>
@@ -666,6 +666,7 @@ function runStaffing(): void {
 
 function validateDraft(d: DraftState, schedule: Schedule, anchor: Date | null): string | null {
   if (!d.name.trim()) return 'שם המשימה חסר';
+  if (d.name.trim().length > 40) return 'שם המשימה ארוך מדי (מקסימום 40 תווים)';
   if (d.startHour < 0 || d.startHour > 23) return 'שעת התחלה לא תקינה';
   if (d.startMinute < 0 || d.startMinute > 59) return 'דקה לא תקינה';
   if (d.durationHours <= 0) return 'משך המשימה חייב להיות חיובי';

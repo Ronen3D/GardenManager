@@ -163,12 +163,19 @@ function fmtHm(h: number, m: number): string {
  * Read back the HC-15 "Sleep & Recovery" fields from the given container.
  *
  * The 💤 editor body is conditionally rendered — when the section is
- * collapsed its inputs are absent from the DOM. We must distinguish that
- * case ("preserve the stored rule") from an expanded section whose toggle
- * is unchecked or whose inputs are invalid ("clear the rule"), otherwise a
- * save while collapsed silently wipes the rule.
+ * collapsed its inputs are absent from the DOM. We must distinguish:
+ *  - 'preserve': section collapsed, inputs absent → keep the stored rule
+ *  - 'set' (undefined value): toggle unchecked → deliberately clear the rule
+ *  - 'set' (rule): toggle checked with valid inputs → persist new rule
+ *  - 'invalid': toggle checked but inputs are out of range → refuse to save
+ *    (do NOT silently wipe the rule; caller shows an error toast and bails)
  */
-type ParsedSleepRecovery = { kind: 'preserve' } | { kind: 'set'; value: SleepRecoveryRule | undefined };
+type ParsedSleepRecovery =
+  | { kind: 'preserve' }
+  | { kind: 'set'; value: SleepRecoveryRule | undefined }
+  | { kind: 'invalid'; reason: string };
+
+const SLEEP_RECOVERY_MAX_HOURS = 24;
 
 function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): ParsedSleepRecovery {
   const attr = target === 'tpl' ? 'tpl' : 'ot';
@@ -187,9 +194,17 @@ function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): Pars
   const hoursRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryHours"]`) as HTMLInputElement | null)?.value;
   const startHour = parseHour(startRaw);
   const endHour = parseHour(endRaw);
-  const hours = parseInt(hoursRaw ?? '', 10);
-  if (startHour === null || endHour === null) return { kind: 'set', value: undefined };
-  if (!Number.isFinite(hours) || hours < 1) return { kind: 'set', value: undefined };
+  if (startHour === null || endHour === null) {
+    return { kind: 'invalid', reason: 'שעת טווח ההפעלה לא תקינה (00:00–23:00)' };
+  }
+  const trimmed = (hoursRaw ?? '').trim();
+  if (trimmed === '') {
+    return { kind: 'invalid', reason: 'נא להזין מספר שעות להתאוששות' };
+  }
+  const hours = Number(trimmed);
+  if (!Number.isFinite(hours) || hours < 1 || hours > SLEEP_RECOVERY_MAX_HOURS) {
+    return { kind: 'invalid', reason: `משך התאוששות לא תקין (1–${SLEEP_RECOVERY_MAX_HOURS} שעות)` };
+  }
   return {
     kind: 'set',
     value: { rangeStartHour: startHour, rangeEndHour: endHour, recoveryHours: Math.floor(hours) },
@@ -246,7 +261,7 @@ function renderSleepRecoveryEditor(rule: SleepRecoveryRule | undefined, target: 
           <div class="sr-field">
             <label class="sr-field-label">חסום משימות עם עומס &gt; 0 למשך</label>
             <div class="sr-field-row">
-              <input class="input-sm sr-hours" type="number" min="1" step="1" inputmode="numeric"
+              <input class="input-sm sr-hours" type="number" min="1" max="${SLEEP_RECOVERY_MAX_HOURS}" step="1" inputmode="numeric"
                      data-${attr}-field="sleepRecoveryHours" data-${idAttr}="${id}"
                      value="${hours}" aria-label="מספר שעות" />
               <span class="sr-sep">שעות לאחר סיום המשימה</span>
@@ -1523,6 +1538,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         );
 
         const otSleepRecovery = parseSleepRecoveryInput(body as HTMLElement, 'ot');
+        if (otSleepRecovery.kind === 'invalid') {
+          showToast(otSleepRecovery.reason, { type: 'error' });
+          break;
+        }
         store.updateOneTimeTask(otId, {
           name,
           scheduledDate,
@@ -1581,6 +1600,10 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const formulaDroppedByManualEdit =
           existingFormulaValue !== undefined && Math.abs(clampedBaseLoad - existingFormulaValue) > 1e-9;
         const sleepRecovery = parseSleepRecoveryInput(body as HTMLElement, 'tpl');
+        if (sleepRecovery.kind === 'invalid') {
+          showToast(sleepRecovery.reason, { type: 'error' });
+          break;
+        }
         store.updateTaskTemplate(tid, {
           durationHours: sanitized.durationHours,
           shiftsPerDay: sanitized.shiftsPerDay,
