@@ -102,7 +102,7 @@ Foundation
 ### Key Domain Concepts
 
 - **Levels:** L0 (junior), L2, L3, L4 (senior). No L1 exists.
-- **Certifications:** Nitzan, Salsala, Hamama, Horesh — gate eligibility for specific task types (configured per slot, not per task type).
+- **Certifications:** Nitzan, Hamama, Horesh — gate eligibility for specific task types (configured per slot, not per task type). Defined in `DEFAULT_CERTIFICATION_DEFINITIONS` (`src/models/types.ts`) and user-editable at runtime.
 - **Hard constraints** (HC-1..HC-8, HC-11, HC-12, HC-14): Binary pass/fail. Violations make a schedule invalid. HC-1 is the sole level gate for all participants. Note: HC-9, HC-10, HC-13 do not exist (removed or never created).
 - **Soft constraints** (SC-3, SC-6..SC-10): Numeric penalties. The optimizer minimizes total penalty. SC-7 is a warning-only safety net. SC-1, SC-2, SC-4, SC-5 do not exist.
 - **Senior policy:** Seniors have "natural roles" determined by `isNaturalRole()`. Slots can mark a senior level as `lowPriority` (last-resort) — the soft penalty `lowPriorityLevelPenalty` heavily discourages these placements. Hard level-gating is handled by HC-1.

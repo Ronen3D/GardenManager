@@ -50,7 +50,7 @@ import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import { operationalDateKey } from '../utils/date-utils';
 import type { SchedulingEngine } from './scheduler';
 import { assertInjectableTimeBlock } from './temporal';
-import { isEligible } from './validator';
+import { getRejectionReason, isEligible, REJECTION_REASONS_HE, type RejectionCode } from './validator';
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -175,9 +175,12 @@ function dayEffectiveLoad(
   return total;
 }
 
-function slotLabel(slot: SlotRequirement): string {
+function slotLabel(slot: SlotRequirement, ownerTask: Task): string {
   if (slot.subTeamLabel && slot.label) return `${slot.subTeamLabel} / ${slot.label}`;
-  return slot.subTeamLabel || slot.label || slot.slotId;
+  if (slot.subTeamLabel) return slot.subTeamLabel;
+  if (slot.label) return slot.label;
+  const idx = ownerTask.slots.findIndex((s) => s.slotId === slot.slotId);
+  return `משבצת ${idx >= 0 ? idx + 1 : 1}`;
 }
 
 function isLowPriorityOnly(participant: Participant, slot: SlotRequirement): boolean {
@@ -204,12 +207,23 @@ function levelCertCompatible(p: Participant, slot: SlotRequirement, disabledHC?:
  * Build the Task object from a spec. Mirrors the one-time-task expansion
  * path in app.ts:generateTasksFromTemplates — kept in lock-step manually
  * rather than imported to avoid coupling the engine to web-layer code.
+ *
+ * `spec.dayIndex` is the **operational** day (1-based). When `startHour` is
+ * below `dayStartHour` the composed calendar date rolls forward by one day,
+ * so `operationalDateKey(start, dayStartHour)` always matches `dayIndex`.
  */
-export function buildInjectedTask(spec: InjectedTaskSpec, periodStart: Date, periodDays: number): Task | null {
+export function buildInjectedTask(
+  spec: InjectedTaskSpec,
+  periodStart: Date,
+  periodDays: number,
+  dayStartHour: number,
+): Task | null {
   if (spec.dayIndex < 1 || spec.dayIndex > periodDays) return null;
   if (spec.durationHours <= 0) return null;
 
-  const day = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() + (spec.dayIndex - 1));
+  const dsh = ((Math.trunc(dayStartHour) % 24) + 24) % 24;
+  const calOffset = spec.dayIndex - 1 + (spec.startHour < dsh ? 1 : 0);
+  const day = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() + calOffset);
   const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), spec.startHour, spec.startMinute);
   const end = new Date(start.getTime() + spec.durationHours * 3600000);
 
@@ -690,8 +704,57 @@ function buildFullRollback(ctx: StaffingCtx): () => void {
 
 // ─── Per-slot staffing pipeline ─────────────────────────────────────────────
 
+// Highest-listed code wins: context blockers trump structural ones — if anyone
+// is structurally qualified, their context rejection is the real story.
+const UNFILLABLE_PRIORITY: RejectionCode[] = [
+  'HC-5',
+  'HC-7',
+  'HC-3',
+  'HC-14',
+  'HC-15',
+  'HC-12',
+  'HC-4',
+  'HC-11',
+  'HC-2',
+  'HC-1',
+];
+
+function diagnoseUnfillableSlot(ctx: StaffingCtx, slot: SlotRequirement): string {
+  const tally = new Map<RejectionCode, number>();
+  const bump = (code: RejectionCode) => tally.set(code, (tally.get(code) ?? 0) + 1);
+  const disabled = ctx.disabledHC;
+  const thisTaskAssignments = taskAssignments(ctx.task.id, ctx.schedule.assignments);
+
+  for (const p of ctx.schedule.participants) {
+    if (ctx.task.sameGroupRequired && ctx.groupLock !== null && p.group !== ctx.groupLock) {
+      bump('HC-4');
+      continue;
+    }
+    if (!disabled?.has('HC-1') && !slot.acceptableLevels.some((le) => le.level === p.level)) {
+      bump('HC-1');
+      continue;
+    }
+    if (!disabled?.has('HC-11') && slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) {
+      bump('HC-11');
+      continue;
+    }
+    if (!disabled?.has('HC-2') && !slot.requiredCertifications.every((c) => p.certifications.includes(c))) {
+      bump('HC-2');
+      continue;
+    }
+    const pAssignments = participantAssignments(p.id, ctx.schedule.assignments);
+    const code = getRejectionReason(p, ctx.task, slot, pAssignments, ctx.taskMap, eligOpts(ctx, thisTaskAssignments));
+    if (code) bump(code);
+  }
+
+  for (const code of UNFILLABLE_PRIORITY) {
+    if (tally.has(code)) return REJECTION_REASONS_HE[code];
+  }
+  return 'אין מועמד כשיר';
+}
+
 function staffSlot(ctx: StaffingCtx, slot: SlotRequirement): SlotStaffingOutcome {
-  const label = slotLabel(slot);
+  const label = slotLabel(slot, ctx.task);
 
   // Phase 1: direct fill.
   const direct = pickDirectCandidate(ctx, slot);
@@ -719,7 +782,7 @@ function staffSlot(ctx: StaffingCtx, slot: SlotRequirement): SlotStaffingOutcome
           toParticipantId: d2.backfill.id,
           taskId: d2.displacedTask.id,
           taskName: d2.displacedTask.name,
-          slotLabel: slotLabel(d2.displacedSlot),
+          slotLabel: slotLabel(d2.displacedSlot, d2.displacedTask),
         },
       ],
     };
@@ -748,7 +811,7 @@ function staffSlot(ctx: StaffingCtx, slot: SlotRequirement): SlotStaffingOutcome
           toParticipantId: d3.backfillQ.id,
           taskId: d3.displacedATask.id,
           taskName: d3.displacedATask.name,
-          slotLabel: slotLabel(d3.displacedASlot),
+          slotLabel: slotLabel(d3.displacedASlot, d3.displacedATask),
         },
         {
           assignmentId: d3.displacedB.id,
@@ -756,14 +819,14 @@ function staffSlot(ctx: StaffingCtx, slot: SlotRequirement): SlotStaffingOutcome
           toParticipantId: d3.backfillR.id,
           taskId: d3.displacedBTask.id,
           taskName: d3.displacedBTask.name,
-          slotLabel: slotLabel(d3.displacedBSlot),
+          slotLabel: slotLabel(d3.displacedBSlot, d3.displacedBTask),
         },
       ],
     };
   }
 
   // All phases failed.
-  return { slotId: slot.slotId, slotLabel: label, filled: false, reason: 'HC-6' };
+  return { slotId: slot.slotId, slotLabel: label, filled: false, reason: diagnoseUnfillableSlot(ctx, slot) };
 }
 
 // ─── Full-task trials (shared by the simple and group-backtracking paths) ──
@@ -890,7 +953,7 @@ export function injectAndStaff(
   const schedule = engine.getSchedule();
   if (!schedule) return { report: null, error: 'no-schedule' };
 
-  const task = buildInjectedTask(spec, schedule.periodStart, schedule.periodDays);
+  const task = buildInjectedTask(spec, schedule.periodStart, schedule.periodDays, engine.getDayStartHour());
   if (!task) return { report: null, error: 'invalid-spec' };
 
   // Live Mode gate: refuse to touch engine/schedule if the resolved start

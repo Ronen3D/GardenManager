@@ -257,31 +257,34 @@ export function isDayPartiallyFrozen(
 // `isModifiableAssignment` / `isFutureTask` instead.
 
 /**
- * Returns true iff a task composed as
- * `calendarMidnight(dayIndex) + startHour*h + startMinute*m` for some
- * `startHour ∈ [0, 23]` and `startMinute ∈ [0, 59]` can land at or after the
- * anchor.
+ * Returns true iff some `(startHour, startMinute)` pair can place a task on
+ * operational day `dayIndex` at or after the anchor. Operational day N spans
+ * `[calendarMidnight(N) + dsh, calendarMidnight(N+1) + dsh)`.
  *
- * Equivalent to `anchor < calendarMidnight(dayIndex + 1)`.
+ * Equivalent to `anchor < calendarMidnight(dayIndex + 1) + dsh*h`.
  */
-export function isDayModifiable(dayIndex: number, scheduleDate: Date, anchor: Date): boolean {
+export function isDayModifiable(dayIndex: number, scheduleDate: Date, anchor: Date, dayStartHour: number): boolean {
   if (dayIndex < 1) return false;
-  const nextCalMidnight = new Date(
+  const dsh = ((Math.trunc(dayStartHour) % 24) + 24) % 24;
+  const opEnd = new Date(
     scheduleDate.getFullYear(),
     scheduleDate.getMonth(),
     scheduleDate.getDate() + dayIndex,
+    dsh,
+    0,
   );
-  return anchor.getTime() < nextCalMidnight.getTime();
+  return anchor.getTime() < opEnd.getTime();
 }
 
 /**
- * For a modifiable `dayIndex`, returns `{ hourMin, minuteMin }` — the
- * minimum `(startHour, startMinute)` pair such that
- * `calendarMidnight(dayIndex) + startHour*h + startMinute*m >= anchor`.
- * Returns `null` when the calendar day is fully past (see `isDayModifiable`).
+ * For a modifiable operational `dayIndex`, returns `{ hourMin, minuteMin }` —
+ * the first `(startHour, startMinute)` on the operational ring (starting at
+ * `dsh`) such that the resulting composed start `>= anchor`. Returns `null`
+ * when the operational day is fully past (see `isDayModifiable`).
  *
- * `minuteMin` applies only when `startHour === hourMin`; for larger hours
- * any minute 0..59 is legal.
+ * `hourMin` is a 0..23 clock hour; "earlier" vs. "later" comparisons against
+ * it must be done on the operational ring (`(h - dsh + 24) % 24`), not by
+ * raw numeric comparison. `minuteMin` applies only when `startHour === hourMin`.
  *
  * Rounds up to whole-minute precision so a user picking exactly
  * `(hourMin, minuteMin)` still produces a start `>=` anchor even when the
@@ -291,21 +294,24 @@ export function getInjectStartFloor(
   dayIndex: number,
   scheduleDate: Date,
   anchor: Date,
+  dayStartHour: number,
 ): { hourMin: number; minuteMin: number } | null {
-  if (!isDayModifiable(dayIndex, scheduleDate, anchor)) return null;
-  const calMidnight = new Date(
+  if (!isDayModifiable(dayIndex, scheduleDate, anchor, dayStartHour)) return null;
+  const dsh = ((Math.trunc(dayStartHour) % 24) + 24) % 24;
+  const opStart = new Date(
     scheduleDate.getFullYear(),
     scheduleDate.getMonth(),
     scheduleDate.getDate() + dayIndex - 1,
+    dsh,
+    0,
   );
-  const deltaMs = anchor.getTime() - calMidnight.getTime();
-  if (deltaMs <= 0) return { hourMin: 0, minuteMin: 0 };
+  const deltaMs = anchor.getTime() - opStart.getTime();
+  if (deltaMs <= 0) return { hourMin: dsh, minuteMin: 0 };
   const deltaMin = Math.ceil(deltaMs / 60000);
-  // Defensive: isDayModifiable already excludes deltaMin >= 24*60, but if
-  // ceil pushed us exactly to that boundary treat it as fully past.
   if (deltaMin >= 24 * 60) return null;
+  const opHourOffset = Math.floor(deltaMin / 60);
   return {
-    hourMin: Math.floor(deltaMin / 60),
+    hourMin: (dsh + opHourOffset) % 24,
     minuteMin: deltaMin % 60,
   };
 }

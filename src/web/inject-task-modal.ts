@@ -15,7 +15,15 @@ import { type InjectedTaskSpec, injectAndStaff, type StaffingReport } from '../e
 import { getInjectStartFloor, isDayModifiable } from '../engine/temporal';
 import { Level, type Schedule, type SchedulingEngine, type SlotTemplate, type SubTeamTemplate } from '../index';
 import * as store from './config-store';
+import { operationalHourOrder } from './schedule-utils';
 import { escHtml } from './ui-helpers';
+
+const MINUTE_STEPS = [0, 10, 20, 30, 40, 50] as const;
+
+/** Position of `hour` on the operational ring starting at `dsh` (0..23). */
+function opIndex(hour: number, dsh: number): number {
+  return (hour - dsh + 24) % 24;
+}
 
 // ─── Context injection ──────────────────────────────────────────────────────
 
@@ -109,28 +117,35 @@ export function closeInjectTaskModal(): void {
 // ─── Draft defaults ─────────────────────────────────────────────────────────
 
 function makeDefaultDraft(schedule: Schedule, anchor: Date | null): DraftState {
-  // Pick the first day whose calendar day still has at least one future hour.
+  const dsh = schedule.algorithmSettings.dayStartHour;
+
+  // Pick the first operational day that still has at least one future minute.
   // In non-Live-Mode this is always day 1; in Live Mode it skips past days.
   let dayIndex = 1;
   if (anchor) {
     for (let d = 1; d <= schedule.periodDays; d++) {
-      if (isDayModifiable(d, schedule.periodStart, anchor)) {
+      if (isDayModifiable(d, schedule.periodStart, anchor, dsh)) {
         dayIndex = d;
         break;
       }
     }
   }
 
-  let startHour = 6;
+  // Default to the first operational hour of the chosen day.
+  let startHour = dsh;
   let startMinute = 0;
   if (anchor) {
-    const floor = getInjectStartFloor(dayIndex, schedule.periodStart, anchor);
+    const floor = getInjectStartFloor(dayIndex, schedule.periodStart, anchor, dsh);
     if (floor) {
-      // Round (hourMin, minuteMin) up to the next half-hour for a tidy default.
-      const totalMin = floor.hourMin * 60 + floor.minuteMin;
-      const rounded = Math.ceil(totalMin / 30) * 30;
-      startHour = Math.min(23, Math.floor(rounded / 60));
-      startMinute = rounded >= 24 * 60 ? 30 : rounded % 60;
+      // Round the floor up to the next 10-minute step so the default lands on
+      // a value the minute dropdown actually exposes.
+      startHour = floor.hourMin;
+      startMinute = Math.ceil(floor.minuteMin / 10) * 10;
+      if (startMinute >= 60) {
+        startMinute = 0;
+        const nextOpIdx = opIndex(startHour, dsh) + 1;
+        if (nextOpIdx < 24) startHour = (dsh + nextOpIdx) % 24;
+      }
     }
   }
 
@@ -190,24 +205,38 @@ function render(): void {
 function renderForm(schedule: Schedule): string {
   const d = _draft!;
   const anchor = getAnchor();
+  const dsh = schedule.algorithmSettings.dayStartHour;
 
-  // Live Mode clamps: the engine composes task start as
-  // `calendarMidnight(dayIndex) + startHour*h + startMinute*m`, so hour/minute
-  // must be gated against calendar midnight (not the operational-day start).
-  const floor = anchor ? getInjectStartFloor(d.dayIndex, schedule.periodStart, anchor) : null;
-  const dayIsInjectable = anchor ? isDayModifiable(d.dayIndex, schedule.periodStart, anchor) : true;
-  let hourMin = 0;
-  const hourMax = 23;
+  // Live Mode clamps: `hourMin`/`minuteMin` mark the first legal (hour, minute)
+  // on the operational ring for the selected day. Ordering is relative to
+  // `dsh`, not raw numeric — compare via `opIndex`.
+  const floor = anchor ? getInjectStartFloor(d.dayIndex, schedule.periodStart, anchor, dsh) : null;
+  const dayIsInjectable = anchor ? isDayModifiable(d.dayIndex, schedule.periodStart, anchor, dsh) : true;
+  let hourMin = dsh;
   let minuteMin = 0;
-  if (anchor && floor && (floor.hourMin > 0 || floor.minuteMin > 0)) {
+  if (anchor && floor) {
     hourMin = floor.hourMin;
     if (d.startHour === hourMin) minuteMin = floor.minuteMin;
-    if (d.startHour < hourMin) {
+    if (opIndex(d.startHour, dsh) < opIndex(hourMin, dsh)) {
       d.startHour = hourMin;
       d.startMinute = floor.minuteMin;
     } else if (d.startHour === hourMin && d.startMinute < floor.minuteMin) {
       d.startMinute = floor.minuteMin;
     }
+    // Snap draft minute up to the next 10-minute step so the dropdown's
+    // selected option always matches a real <option value>.
+    if (d.startMinute % 10 !== 0) {
+      const snapped = Math.ceil(d.startMinute / 10) * 10;
+      if (snapped >= 60) {
+        d.startMinute = 0;
+        const nextOpIdx = opIndex(d.startHour, dsh) + 1;
+        if (nextOpIdx < 24) d.startHour = (dsh + nextOpIdx) % 24;
+      } else {
+        d.startMinute = snapped;
+      }
+    }
+  } else if (d.startMinute % 10 !== 0) {
+    d.startMinute = Math.ceil(d.startMinute / 10) * 10 % 60;
   }
 
   const dayOptions = Array.from({ length: schedule.periodDays }, (_, i) => {
@@ -216,19 +245,36 @@ function renderForm(schedule: Schedule): string {
     if (anchor === null) {
       return `<option value="${idx}"${selected}>יום ${idx}</option>`;
     }
-    if (!isDayModifiable(idx, schedule.periodStart, anchor)) {
+    if (!isDayModifiable(idx, schedule.periodStart, anchor, dsh)) {
       return `<option value="${idx}" disabled title="יום בעבר — לא ניתן להוסיף משימת חירום">יום ${idx} 🧊</option>`;
     }
-    // ⏳ when the anchor is on this calendar day — hour will need clamping.
-    const calMidnight = new Date(
+    // ⏳ when the anchor is inside this operational day — hour will be clamped.
+    const opStart = new Date(
       schedule.periodStart.getFullYear(),
       schedule.periodStart.getMonth(),
       schedule.periodStart.getDate() + idx - 1,
+      dsh,
+      0,
     );
-    if (anchor.getTime() > calMidnight.getTime()) {
+    if (anchor.getTime() > opStart.getTime()) {
       return `<option value="${idx}"${selected} title="יום נוכחי — שעת ההתחלה תוגבל להווה">יום ${idx} ⏳</option>`;
     }
     return `<option value="${idx}"${selected}>יום ${idx}</option>`;
+  }).join('');
+
+  const hourMinOp = opIndex(hourMin, dsh);
+  const hourOptions = operationalHourOrder(dsh)
+    .map((h) => {
+      const disabled = anchor !== null && opIndex(h, dsh) < hourMinOp;
+      const sel = h === d.startHour ? ' selected' : '';
+      return `<option value="${h}"${sel}${disabled ? ' disabled' : ''}>${String(h).padStart(2, '0')}</option>`;
+    })
+    .join('');
+
+  const minuteOptions = MINUTE_STEPS.map((m) => {
+    const disabled = d.startHour === hourMin && m < minuteMin;
+    const sel = m === d.startMinute ? ' selected' : '';
+    return `<option value="${m}"${sel}${disabled ? ' disabled' : ''}>${String(m).padStart(2, '0')}</option>`;
   }).join('');
 
   const pastTimeBanner =
@@ -267,8 +313,8 @@ function renderForm(schedule: Schedule): string {
           <div class="form-row">
             <label>שם: <input class="input-sm" type="text" data-inj="name" value="${escHtml(d.name)}" placeholder="BALTAM" /></label>
             <label>יום: <select class="input-sm" data-inj="dayIndex">${dayOptions}</select></label>
-            <label>שעת התחלה: <input class="input-sm" type="number" min="${hourMin}" max="${hourMax}" data-inj="startHour" value="${d.startHour}" /></label>
-            <label>דקה: <input class="input-sm" type="number" min="${minuteMin}" max="59" data-inj="startMinute" value="${d.startMinute}" style="width:60px" /></label>
+            <label>שעת התחלה: <select class="input-sm" data-inj="startHour">${hourOptions}</select></label>
+            <label>דקה: <select class="input-sm" data-inj="startMinute" style="width:70px">${minuteOptions}</select></label>
             <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" data-inj="durationHours" value="${d.durationHours}" /></label>
           </div>
           <div class="form-row">
@@ -456,7 +502,7 @@ function wireFormEvents(backdrop: HTMLElement): void {
       } else if (el instanceof HTMLInputElement && el.type === 'number') {
         const num = Number(el.value);
         bag[field] = Number.isFinite(num) ? num : 0;
-      } else if (field === 'dayIndex') {
+      } else if (field === 'dayIndex' || field === 'startHour' || field === 'startMinute') {
         bag[field] = parseInt(el.value, 10);
       } else {
         bag[field] = el.value;
@@ -464,9 +510,12 @@ function wireFormEvents(backdrop: HTMLElement): void {
     };
     el.addEventListener('change', commit);
     el.addEventListener('input', commit);
-    // Day change may change the hour/minute floor — re-render so `min`
-    // attributes and coerced values refresh.
-    if (el.dataset.inj === 'dayIndex' && el instanceof HTMLSelectElement) {
+    // Day / hour change can shift the active floor — re-render so the
+    // dependent minute options refresh their disabled state.
+    if (
+      (el.dataset.inj === 'dayIndex' || el.dataset.inj === 'startHour') &&
+      el instanceof HTMLSelectElement
+    ) {
       el.addEventListener('change', () => render());
     }
   });
@@ -628,13 +677,16 @@ function validateDraft(d: DraftState, schedule: Schedule, anchor: Date | null): 
     if (!s.levels.some((l) => l.enabled)) return `במשבצת ${i + 1} לא נבחרה אף דרגה`;
   }
   if (anchor !== null) {
-    if (!isDayModifiable(d.dayIndex, schedule.periodStart, anchor)) {
+    const dsh = schedule.algorithmSettings.dayStartHour;
+    if (!isDayModifiable(d.dayIndex, schedule.periodStart, anchor, dsh)) {
       return 'לא ניתן להוסיף משימה ליום שעבר.';
     }
+    const dshNorm = ((Math.trunc(dsh) % 24) + 24) % 24;
+    const calOffset = d.dayIndex - 1 + (d.startHour < dshNorm ? 1 : 0);
     const start = new Date(
       schedule.periodStart.getFullYear(),
       schedule.periodStart.getMonth(),
-      schedule.periodStart.getDate() + (d.dayIndex - 1),
+      schedule.periodStart.getDate() + calOffset,
       d.startHour,
       d.startMinute,
     );

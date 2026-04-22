@@ -340,6 +340,7 @@ function clearManualSelection(): void {
 function renderAvailabilityInspectorInline(): string {
   const numDays = store.getScheduleDays();
   const baseDate = store.getScheduleDate();
+  const dayStartHour = store.getDayStartHour();
   const selectedDayStart =
     _availabilityInspectorDay && _availabilityInspectorDay >= 1 && _availabilityInspectorDay <= numDays
       ? _availabilityInspectorDay
@@ -350,6 +351,14 @@ function renderAvailabilityInspectorInline(): string {
       ? _availabilityInspectorDayEnd
       : selectedDayStart;
   _availabilityInspectorDayEnd = selectedDayEnd;
+
+  const normalizeHourLabel = (v: string): string => {
+    const m = v.match(/^(\d{1,2}):/);
+    const h = m ? Math.max(0, Math.min(23, parseInt(m[1], 10))) : dayStartHour;
+    return `${String(h).padStart(2, '0')}:00`;
+  };
+  _availabilityInspectorTimeStart = normalizeHourLabel(_availabilityInspectorTimeStart);
+  _availabilityInspectorTimeEnd = normalizeHourLabel(_availabilityInspectorTimeEnd);
 
   const makeDayOptions = (selectedDay: number) => {
     const opts: { value: string; label: string; selected: boolean }[] = [];
@@ -364,10 +373,11 @@ function renderAvailabilityInspectorInline(): string {
     return opts;
   };
 
-  const timeTitle =
-    store.getDayStartHour() > 0
-      ? `שעה לבדיקת זמינות (00:00–${String(store.getDayStartHour() - 1).padStart(2, '0')}:59 נספרות לסוף היום)`
-      : 'שעה לבדיקת זמינות';
+  const makeHourOptions = (selectedTime: string) =>
+    operationalHourOrder(dayStartHour).map((h) => {
+      const label = `${String(h).padStart(2, '0')}:00`;
+      return { value: label, label, selected: label === selectedTime };
+    });
 
   const marginDisplay = _availabilityMarginEnabled ? '' : ' style="display:none"';
 
@@ -375,11 +385,11 @@ function renderAvailabilityInspectorInline(): string {
     <div class="avail-strip-inputs-row">
       <span class="avail-strip-range-label">מ:</span>
       ${renderCustomSelect({ id: 'gm-availability-day-start', options: makeDayOptions(selectedDayStart), className: 'input-sm availability-day-select' })}
-      <input type="time" id="gm-availability-time-start" class="input-sm availability-time-input" value="${_availabilityInspectorTimeStart}" step="60" title="${timeTitle}" />
+      ${renderCustomSelect({ id: 'gm-availability-time-start', options: makeHourOptions(_availabilityInspectorTimeStart), className: 'input-sm availability-time-input' })}
       <span class="avail-strip-range-sep">—</span>
       <span class="avail-strip-range-label">עד:</span>
       ${renderCustomSelect({ id: 'gm-availability-day-end', options: makeDayOptions(selectedDayEnd), className: 'input-sm availability-day-select' })}
-      <input type="time" id="gm-availability-time-end" class="input-sm availability-time-input" value="${_availabilityInspectorTimeEnd}" step="60" title="${timeTitle}" />
+      ${renderCustomSelect({ id: 'gm-availability-time-end', options: makeHourOptions(_availabilityInspectorTimeEnd), className: 'input-sm availability-time-input' })}
       <button class="btn-sm btn-primary" id="btn-open-availability-inspector" title="בדיקת זמינות לפי טווח">הצג זמינות</button>
     </div>
     <div class="avail-strip-margin-row">
@@ -2778,25 +2788,31 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
     defaultStartHour: initial.startHour,
     defaultEndDay: initial.endDay,
     defaultEndHour: initial.endHour,
-    anchor: liveModeInitiallyOn
-      ? undefined
-      : {
-          currentLabel: anchorLabel(anchor),
-          changeButtonLabel: 'שנה',
-          onChange: async () => {
-            const result = await showTimePicker('בחר את נקודת ההקפאה. שיבוצים לפני נקודה זו ייחשבו כעבר.', {
-              title: 'נקודת הקפאה',
-              days,
-              hours,
-              defaultDay: '1',
-              defaultHour: String(dayStartHour),
-            });
-            if (!result) return null;
-            const ts = toDate(result.day, result.hour);
-            anchor = ts;
-            return { label: anchorLabel(ts) };
-          },
-        },
+    anchor: {
+      currentLabel: anchorLabel(anchor),
+      changeButtonLabel: 'שנה',
+      onChange: async () => {
+        const result = await showTimePicker('בחר את נקודת ההקפאה. שיבוצים לפני נקודה זו ייחשבו כעבר.', {
+          title: 'נקודת הקפאה',
+          days,
+          hours,
+          defaultDay: '1',
+          defaultHour: String(dayStartHour),
+        });
+        if (!result) return null;
+        const ts = toDate(result.day, result.hour);
+        anchor = ts;
+        // When live mode is already ON, persist the new anchor immediately so the
+        // schedule's frozen/future split updates — matches the Live Mode panel
+        // pattern. When OFF, persistence is deferred to the apply paths below.
+        if (liveModeInitiallyOn && currentSchedule) {
+          store.setLiveModeTimestamp(ts);
+          freezeAssignments(currentSchedule, ts);
+          requestAnimationFrame(() => renderAll());
+        }
+        return { label: anchorLabel(ts) };
+      },
+    },
     validate: (v) => {
       const s = toDate(v.startDay, v.startHour);
       const e = toDate(v.endDay, v.endHour);
@@ -3271,7 +3287,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.1</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4114,34 +4130,12 @@ function wireScheduleEvents(container: HTMLElement): void {
     const day = parseInt(value, 10);
     if (!Number.isNaN(day)) _availabilityInspectorDayEnd = day;
   });
-
-  const availTimeStart = container.querySelector('#gm-availability-time-start') as HTMLInputElement | null;
-  const availTimeEnd = container.querySelector('#gm-availability-time-end') as HTMLInputElement | null;
-  const wireTimeInput = (input: HTMLInputElement | null, setter: (v: string) => void, fallback: string) => {
-    if (!input) return;
-    input.addEventListener('input', () => {
-      setter(input.value || fallback);
-    });
-    input.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      container.querySelector<HTMLElement>('#btn-open-availability-inspector')?.click();
-    });
-  };
-  wireTimeInput(
-    availTimeStart,
-    (v) => {
-      _availabilityInspectorTimeStart = v;
-    },
-    '05:00',
-  );
-  wireTimeInput(
-    availTimeEnd,
-    (v) => {
-      _availabilityInspectorTimeEnd = v;
-    },
-    '06:00',
-  );
+  wireCustomSelect(container, 'gm-availability-time-start', (value) => {
+    if (value) _availabilityInspectorTimeStart = value;
+  });
+  wireCustomSelect(container, 'gm-availability-time-end', (value) => {
+    if (value) _availabilityInspectorTimeEnd = value;
+  });
 
   // ── Margin toggle + fields ──
   const marginToggle = container.querySelector('#gm-availability-margin-toggle') as HTMLInputElement | null;
@@ -4206,26 +4200,13 @@ function wireScheduleEvents(container: HTMLElement): void {
     availabilityBtn.addEventListener('click', () => {
       const selectedDayStart = _availabilityInspectorDay ?? currentDay;
       const selectedDayEnd = _availabilityInspectorDayEnd ?? selectedDayStart;
-      const startValue = availTimeStart?.value || _availabilityInspectorTimeStart;
-      const endValue = availTimeEnd?.value || _availabilityInspectorTimeEnd;
-      const tsStart = resolveLogicalDayTimestamp(selectedDayStart, startValue);
-      const tsEnd = resolveLogicalDayTimestamp(selectedDayEnd, endValue);
-      if (!tsStart) {
-        showToast('יש להזין שעת התחלה תקינה בפורמט HH:MM', { type: 'error' });
-        availTimeStart?.focus();
-        return;
-      }
-      if (!tsEnd) {
-        showToast('יש להזין שעת סיום תקינה בפורמט HH:MM', { type: 'error' });
-        availTimeEnd?.focus();
-        return;
-      }
+      const tsStart = resolveLogicalDayTimestamp(selectedDayStart, _availabilityInspectorTimeStart);
+      const tsEnd = resolveLogicalDayTimestamp(selectedDayEnd, _availabilityInspectorTimeEnd);
+      if (!tsStart || !tsEnd) return;
       if (tsEnd.getTime() <= tsStart.getTime()) {
         showToast('שעת סיום חייבת להיות אחרי שעת התחלה', { type: 'error' });
         return;
       }
-      _availabilityInspectorTimeStart = startValue;
-      _availabilityInspectorTimeEnd = endValue;
       _availabilityRangeStartMs = tsStart.getTime();
       _availabilityRangeEndMs = tsEnd.getTime();
       renderAll();

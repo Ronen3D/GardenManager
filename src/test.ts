@@ -10827,7 +10827,7 @@ console.log('\n── Deep-chain fallback (depth 4/5) ────');
 // BALTAM injection (src/engine/inject.ts) — regression for same-group backtracking
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import { type InjectedTaskSpec, injectAndStaff } from './engine/inject';
+import { buildInjectedTask, type InjectedTaskSpec, injectAndStaff } from './engine/inject';
 
 console.log('\n── BALTAM injection (inject.ts) ─────────');
 
@@ -11050,11 +11050,74 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
     if (report) {
       assert(report.fullyStaffed === false, 'inject-G5: not fully staffed');
       assert(report.outcomes[0].filled === false, 'inject-G5: slot outcome is unfilled');
+      assert(
+        report.outcomes[0].reason === 'הדרגה לא מתאימה למשבצת הזו',
+        'inject-G5: unfilled reason reports HC-1 in Hebrew (level mismatch)',
+      );
       const injAssigns = sched.assignments.filter((a) => a.taskId === report.task.id);
       assert(injAssigns.length === 0, 'inject-G5: no assignments on schedule');
       // Task was added up front — rollback should still clean it up.
       report.rollback();
       assert(!sched.tasks.some((t) => t.id === report.task.id), 'inject-G5: rollback removes task');
+    }
+  }
+
+  // ── Test 5b: slot requires a cert no one has → reason is HC-2 in Hebrew ──
+  {
+    const pA = mkP('inj5b-A', 'A', []);
+    const pB = mkP('inj5b-B', 'A', []);
+    const sched = mkInjSchedule([pA, pB]);
+    const engine = mkEngine(sched);
+
+    const spec = mkInjSpec({
+      slots: [
+        {
+          id: 'inj5b-slot',
+          label: 'משבצת 1',
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: ['cert-A', 'cert-B', 'cert-C'],
+        },
+      ],
+    });
+    const { report } = injectAndStaff(engine, spec);
+    assert(report !== null, 'inject-G5b: report returned');
+    if (report) {
+      assert(report.outcomes[0].filled === false, 'inject-G5b: slot unfilled');
+      assert(
+        report.outcomes[0].reason === 'חסרה הסמכה נדרשת',
+        'inject-G5b: unfilled reason reports HC-2 in Hebrew (missing required cert)',
+      );
+      report.rollback();
+    }
+  }
+
+  // ── Test 5c: everyone has a forbidden cert → reason is HC-11 in Hebrew ──
+  {
+    const pA = mkP('inj5c-A', 'A', ['cert-forbidden']);
+    const pB = mkP('inj5c-B', 'A', ['cert-forbidden']);
+    const sched = mkInjSchedule([pA, pB]);
+    const engine = mkEngine(sched);
+
+    const spec = mkInjSpec({
+      slots: [
+        {
+          id: 'inj5c-slot',
+          label: 'משבצת 1',
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: [],
+          forbiddenCertifications: ['cert-forbidden'],
+        },
+      ],
+    });
+    const { report } = injectAndStaff(engine, spec);
+    assert(report !== null, 'inject-G5c: report returned');
+    if (report) {
+      assert(report.outcomes[0].filled === false, 'inject-G5c: slot unfilled');
+      assert(
+        report.outcomes[0].reason === 'למשתתף הסמכה אסורה למשבצת הזו',
+        'inject-G5c: unfilled reason reports HC-11 in Hebrew (forbidden cert)',
+      );
+      report.rollback();
     }
   }
 
@@ -11106,64 +11169,61 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
   }
 }
 
-// ─── Temporal mutation-gate helpers (day-index based) ──────────────────────
+// ─── Temporal mutation-gate helpers (operational-day based) ─────────────────
 
 console.log('\n── Temporal mutation gates ──────────────');
 
 {
   const base = new Date(2026, 5, 1); // 2026-06-01 (periodStart)
 
-  // ── Suite A: mid-operational-day-3 anchor (calendar day matches dayIndex) ──
-  // Anchor 2026-06-03 10:00. With the calendar-day semantics, day 1 & 2 are
-  // fully past, day 3 is the anchor's calendar day (hour clamp applies), days
-  // 4+ are future.
+  // ── Suite A: mid-day-3 anchor with dsh=0 (operational = calendar) ──
+  // Anchor 2026-06-03 10:00. Day 1 & 2 fully past, day 3 is the anchor day,
+  // days 4+ are fully future.
   {
     const anchor = new Date(2026, 5, 3, 10, 0);
+    const dsh = 0;
 
-    assert(isDayModifiable(1, base, anchor) === false, 'gate-A1: day 1 not modifiable');
-    assert(isDayModifiable(2, base, anchor) === false, 'gate-A1: day 2 not modifiable');
-    assert(isDayModifiable(3, base, anchor) === true, 'gate-A1: day 3 (anchor day) modifiable');
-    assert(isDayModifiable(4, base, anchor) === true, 'gate-A1: day 4 modifiable');
+    assert(isDayModifiable(1, base, anchor, dsh) === false, 'gate-A1: day 1 not modifiable');
+    assert(isDayModifiable(2, base, anchor, dsh) === false, 'gate-A1: day 2 not modifiable');
+    assert(isDayModifiable(3, base, anchor, dsh) === true, 'gate-A1: day 3 (anchor day) modifiable');
+    assert(isDayModifiable(4, base, anchor, dsh) === true, 'gate-A1: day 4 modifiable');
 
-    const floor3 = getInjectStartFloor(3, base, anchor);
+    const floor3 = getInjectStartFloor(3, base, anchor, dsh);
     assert(floor3 !== null, 'gate-A2: day 3 floor not null');
     assert(floor3!.hourMin === 10, 'gate-A2: day 3 hourMin = anchor hour');
     assert(floor3!.minuteMin === 0, 'gate-A2: day 3 minuteMin = 0 (anchor at :00)');
 
-    const floor4 = getInjectStartFloor(4, base, anchor);
+    const floor4 = getInjectStartFloor(4, base, anchor, dsh);
     assert(floor4 !== null, 'gate-A3: day 4 floor not null');
-    assert(floor4!.hourMin === 0, 'gate-A3: day 4 hourMin = 0 (calendar midnight)');
+    assert(floor4!.hourMin === 0, 'gate-A3: day 4 hourMin = 0 (operational-day start)');
     assert(floor4!.minuteMin === 0, 'gate-A3: day 4 minuteMin = 0');
 
-    assert(getInjectStartFloor(1, base, anchor) === null, 'gate-A4: past day floor is null');
+    assert(getInjectStartFloor(1, base, anchor, dsh) === null, 'gate-A4: past day floor is null');
   }
 
-  // ── Suite B: Bug #1 regression — post-midnight anchor with dayStartHour=5 ──
-  // Anchor 2026-06-04 02:00 sits operationally inside day 3 (op-day 3 runs
-  // 2026-06-03 05:00 → 2026-06-04 05:00, dayStartHour=5), so the OPERATIONAL
-  // predicate would call day 3 partially-frozen. But the inject path composes
-  // `start = calMidnight(dayIndex) + startHour*h`, and every hour [0..23] on
-  // the calendar day 2026-06-03 is already past. Day 3 must therefore be
-  // NOT injectable, and the correct dayIndex for an anchor-time task is 4.
+  // ── Suite B: anchor 2026-06-04 02:00 with dsh=0 — calendar == operational ──
+  // Day 3 is fully past (its op-end 2026-06-04 00:00 preceded the anchor);
+  // day 4 is the anchor day.
   {
     const anchor = new Date(2026, 5, 4, 2, 0);
+    const dsh = 0;
 
-    assert(isDayModifiable(3, base, anchor) === false, 'gate-B1: day 3 not injectable (calendar past)');
-    assert(isDayModifiable(4, base, anchor) === true, 'gate-B1: day 4 injectable (anchor on its cal day)');
-    assert(getInjectStartFloor(3, base, anchor) === null, 'gate-B2: day 3 floor is null');
+    assert(isDayModifiable(3, base, anchor, dsh) === false, 'gate-B1: day 3 not injectable');
+    assert(isDayModifiable(4, base, anchor, dsh) === true, 'gate-B1: day 4 injectable');
+    assert(getInjectStartFloor(3, base, anchor, dsh) === null, 'gate-B2: day 3 floor is null');
 
-    const floor4 = getInjectStartFloor(4, base, anchor);
+    const floor4 = getInjectStartFloor(4, base, anchor, dsh);
     assert(floor4 !== null, 'gate-B3: day 4 floor not null');
     assert(floor4!.hourMin === 2, 'gate-B3: day 4 hourMin = 2 (anchor hour)');
     assert(floor4!.minuteMin === 0, 'gate-B3: day 4 minuteMin = 0');
   }
 
   // ── Suite C: sub-minute anchor — minute floor rounds UP ──
-  // Anchor 2026-06-03 10:00:30 → a user picking (10, 0) would produce a start
-  // of 10:00:00, which is BEFORE the anchor. Floor must be (10, 1).
+  // Anchor 2026-06-03 10:00:30 → picking (10, 0) would produce a start at
+  // 10:00:00, before the anchor. Floor must be (10, 1).
   {
     const anchor = new Date(2026, 5, 3, 10, 0, 30);
-    const floor = getInjectStartFloor(3, base, anchor);
+    const floor = getInjectStartFloor(3, base, anchor, 0);
     assert(floor !== null, 'gate-C: floor not null');
     assert(floor!.hourMin === 10, 'gate-C: hourMin = 10');
     assert(floor!.minuteMin === 1, 'gate-C: minuteMin rounded up to 1');
@@ -11190,6 +11250,85 @@ console.log('\n── Temporal mutation gates ───────────�
       end: new Date(2026, 5, 4, 10, 0),
     };
     assert(assertInjectableTimeBlock(futureBlock, anchor).ok === true, 'gate-D3: future block accepted');
+  }
+
+  // ── Suite E: operational-day semantics with dsh=5 ──
+  // Op-day 3 runs [2026-06-03 05:00, 2026-06-04 05:00). Anchors inside that
+  // window must leave day 3 modifiable and surface floors on the operational
+  // ring, including hours 0..4 that live on the next calendar day.
+  {
+    const dsh = 5;
+
+    // Anchor late in op-day 3 (calendar day 3 at 23:30).
+    const anchorLate = new Date(2026, 5, 3, 23, 30);
+    assert(isDayModifiable(3, base, anchorLate, dsh) === true, 'gate-E1: op-day 3 modifiable at 23:30');
+    const fE1 = getInjectStartFloor(3, base, anchorLate, dsh);
+    assert(fE1 !== null, 'gate-E1: floor not null');
+    assert(fE1!.hourMin === 23, 'gate-E1: hourMin = 23');
+    assert(fE1!.minuteMin === 30, 'gate-E1: minuteMin = 30');
+
+    // Anchor past midnight but still inside op-day 3 (calendar day 4 at 02:30).
+    const anchorWrap = new Date(2026, 5, 4, 2, 30);
+    assert(isDayModifiable(3, base, anchorWrap, dsh) === true, 'gate-E2: op-day 3 still modifiable at 02:30 next cal day');
+    const fE2 = getInjectStartFloor(3, base, anchorWrap, dsh);
+    assert(fE2 !== null, 'gate-E2: floor not null');
+    assert(fE2!.hourMin === 2, 'gate-E2: hourMin = 2 (operational tail)');
+    assert(fE2!.minuteMin === 30, 'gate-E2: minuteMin = 30');
+
+    // Anchor exactly at op-day 3 end → day 3 no longer modifiable.
+    const anchorEnd = new Date(2026, 5, 4, 5, 0);
+    assert(isDayModifiable(3, base, anchorEnd, dsh) === false, 'gate-E3: op-day 3 closed at op-end');
+    assert(getInjectStartFloor(3, base, anchorEnd, dsh) === null, 'gate-E3: op-day 3 floor null after close');
+
+    // Op-day 4 is still modifiable and its floor starts at dsh=5.
+    assert(isDayModifiable(4, base, anchorEnd, dsh) === true, 'gate-E4: op-day 4 modifiable');
+    const fE4 = getInjectStartFloor(4, base, anchorEnd, dsh);
+    assert(fE4 !== null && fE4!.hourMin === 5 && fE4!.minuteMin === 0, 'gate-E4: op-day 4 floor = (5, 0)');
+  }
+
+  // ── Suite F: buildInjectedTask operational-day composition with dsh=5 ──
+  // Op-day 3 + startHour 3 must roll to calendar day 4 at 03:00 so that
+  // operationalDateKey matches op-day 3 (bug BALTAM).
+  {
+    const dsh = 5;
+    const baseSpec = {
+      name: 'BALTAM',
+      subTeams: [],
+      slots: [{ id: 's1', label: '', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+      durationHours: 2,
+    };
+
+    // Roll-over case: startHour < dsh → next calendar day.
+    const taskRoll = buildInjectedTask({ ...baseSpec, dayIndex: 3, startHour: 3, startMinute: 0 }, base, 7, dsh);
+    assert(taskRoll !== null, 'gate-F1: roll task built');
+    assert(taskRoll!.timeBlock.start.getTime() === new Date(2026, 5, 4, 3, 0).getTime(), 'gate-F1: start on cal day 4 at 03:00');
+    assert(
+      operationalDateKey(taskRoll!.timeBlock.start, dsh) === calendarDateKey(new Date(2026, 5, 3)),
+      'gate-F1: operationalDateKey matches op-day 3 (cal day 3)',
+    );
+    assert(taskRoll!.name === 'יום 3 BALTAM', 'gate-F1: label uses operational dayIndex');
+
+    // No-roll case: startHour >= dsh → same calendar day.
+    const taskNoRoll = buildInjectedTask({ ...baseSpec, dayIndex: 3, startHour: 9, startMinute: 0 }, base, 7, dsh);
+    assert(taskNoRoll !== null, 'gate-F2: no-roll task built');
+    assert(
+      taskNoRoll!.timeBlock.start.getTime() === new Date(2026, 5, 3, 9, 0).getTime(),
+      'gate-F2: start on cal day 3 at 09:00',
+    );
+    assert(
+      operationalDateKey(taskNoRoll!.timeBlock.start, dsh) === calendarDateKey(new Date(2026, 5, 3)),
+      'gate-F2: operationalDateKey matches op-day 3',
+    );
+
+    // Exact boundary: startHour === dsh → no roll.
+    const taskBoundary = buildInjectedTask({ ...baseSpec, dayIndex: 3, startHour: 5, startMinute: 0 }, base, 7, dsh);
+    assert(taskBoundary !== null, 'gate-F3: boundary task built');
+    assert(
+      taskBoundary!.timeBlock.start.getTime() === new Date(2026, 5, 3, 5, 0).getTime(),
+      'gate-F3: startHour = dsh does not roll',
+    );
   }
 }
 
