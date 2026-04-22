@@ -3271,7 +3271,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.0</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4152,20 +4152,45 @@ function wireScheduleEvents(container: HTMLElement): void {
       if (fields) fields.style.display = _availabilityMarginEnabled ? '' : 'none';
     });
   }
-  const preMarginInput = container.querySelector('#gm-availability-pre-margin') as HTMLInputElement | null;
-  if (preMarginInput) {
-    preMarginInput.addEventListener('input', () => {
-      const v = parseFloat(preMarginInput.value);
-      if (Number.isFinite(v) && v >= 0) _availabilityPreMarginHours = v;
+  const MARGIN_MIN_HOURS = 0;
+  const MARGIN_MAX_HOURS = 24;
+  const clampMarginHours = (v: number) =>
+    Math.max(MARGIN_MIN_HOURS, Math.min(MARGIN_MAX_HOURS, v));
+  const wireMarginInput = (
+    input: HTMLInputElement | null,
+    getState: () => number,
+    setState: (v: number) => void,
+  ) => {
+    if (!input) return;
+    input.addEventListener('input', () => {
+      const v = parseFloat(input.value);
+      if (Number.isFinite(v)) setState(clampMarginHours(v));
     });
-  }
-  const postMarginInput = container.querySelector('#gm-availability-post-margin') as HTMLInputElement | null;
-  if (postMarginInput) {
-    postMarginInput.addEventListener('input', () => {
-      const v = parseFloat(postMarginInput.value);
-      if (Number.isFinite(v) && v >= 0) _availabilityPostMarginHours = v;
+    input.addEventListener('change', () => {
+      const v = parseFloat(input.value);
+      if (Number.isFinite(v)) {
+        const clamped = clampMarginHours(v);
+        setState(clamped);
+        input.value = String(clamped);
+      } else {
+        input.value = String(getState());
+      }
     });
-  }
+  };
+  wireMarginInput(
+    container.querySelector('#gm-availability-pre-margin') as HTMLInputElement | null,
+    () => _availabilityPreMarginHours,
+    (v) => {
+      _availabilityPreMarginHours = v;
+    },
+  );
+  wireMarginInput(
+    container.querySelector('#gm-availability-post-margin') as HTMLInputElement | null,
+    () => _availabilityPostMarginHours,
+    (v) => {
+      _availabilityPostMarginHours = v;
+    },
+  );
 
   // ── Sleep-recovery strict filter toggle ──
   const sleepToggle = container.querySelector('#gm-availability-hide-sleep-recovery') as HTMLInputElement | null;
@@ -4810,11 +4835,19 @@ function buildAvailabilityPopoverContent(
     { label: 'בכמה פק"לים', value: multiPakalParticipants.length },
   ];
 
+  const startDate = new Date(startMs);
+  const endDate = new Date(endMs);
+  const sameDay = hebrewDayName(startDate) === hebrewDayName(endDate);
+  const rangeLabel = sameDay
+    ? `${fmtDate(startDate)} — ${fmt(endDate)}`
+    : `${fmtDate(startDate)} — ${fmtDate(endDate)}`;
+  const subtitle = isRange ? rangeLabel : `נכון ל${fmtDate(startDate)}`;
+
   return `
     <div class="availability-popover-header">
       <div>
         <h3>פנויים לפי פק"ל</h3>
-        <div class="availability-popover-subtitle">${isRange ? `${fmtDate(new Date(startMs))} — ${fmt(new Date(endMs))}` : `נכון ל${fmtDate(new Date(startMs))}`}</div>
+        <div class="availability-popover-subtitle">${subtitle}</div>
         ${preMarginMs > 0 || postMarginMs > 0 ? `<div class="availability-popover-margin-note">מרווח: ${preMarginMs / 3600000} שעות לפני, ${postMarginMs / 3600000} שעות אחרי</div>` : ''}
       </div>
       <button class="btn-sm btn-outline availability-close" data-action="close-availability-popover">סגור</button>
