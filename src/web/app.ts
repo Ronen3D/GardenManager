@@ -1321,6 +1321,17 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
     openWarehouseSheet();
   } else {
     renderAll();
+    // Desktop has no modal — scroll the inline warehouse into view and flash
+    // it briefly so the user sees where the eligible participants are.
+    requestAnimationFrame(() => {
+      const warehouse = document.getElementById('manual-warehouse');
+      if (!warehouse) return;
+      warehouse.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      warehouse.classList.remove('flash');
+      void warehouse.offsetWidth;
+      warehouse.classList.add('flash');
+      window.setTimeout(() => warehouse.classList.remove('flash'), 600);
+    });
   }
 }
 
@@ -1341,43 +1352,54 @@ async function handleManualParticipantClick(participantId: string): Promise<bool
     (a) => a.taskId === task.id && a.slotId === _manualSelectedSlotId,
   );
 
-  // Build participant's current assignments, excluding ONLY the assignment
-  // at the slot we're currently filling (if any). Mirrors the filter in
-  // getEligibleParticipantsForSlot (validator.ts) so HC-5/HC-7 still fire
-  // when the participant is already in a DIFFERENT slot of the same task.
-  const pAssignments = currentSchedule.assignments.filter(
+  // Build participant's other assignments (everything except the target slot).
+  // Mirrors getEligibleParticipantsForSlot (validator.ts) so HC-5/HC-7 still
+  // fire when the participant is already in a DIFFERENT slot of the same task.
+  const pAssignmentsAddBoth = currentSchedule.assignments.filter(
     (a) => a.participantId === participantId && !(a.taskId === task.id && a.slotId === _manualSelectedSlotId),
   );
 
   const taskAssignments = currentSchedule.assignments.filter((a) => a.taskId === task.id);
   const disabledHC = engine.getDisabledHC() ?? new Set();
-
-  const reason = getRejectionReason(participant, task, slot, pAssignments, taskMap, {
+  const validateOpts = {
     checkSameGroup: true,
     taskAssignments,
     participantMap: pMap,
     disabledHC,
     restRuleMap: engine.getRestRuleMap(),
     extraUnavailability: currentSchedule.scheduleUnavailability,
-  });
+  };
 
-  if (reason) {
-    showToast(REJECTION_REASONS_HE[reason] || `אילוץ ${reason}`, { type: 'error' });
-    return false;
+  // Try add-both first: keep the participant's existing assignments and add
+  // this one. Matches optimizer semantics — a participant can hold multiple
+  // slots whenever HC permits (e.g. two non-overlapping shifts of the same task).
+  const reasonAddBoth = getRejectionReason(participant, task, slot, pAssignmentsAddBoth, taskMap, validateOpts);
+  if (reasonAddBoth === null) {
+    executeManualAssignment(participantId, existingAssignment, null);
+    return true;
   }
 
-  // Check if participant is already assigned elsewhere (not in target slot)
-  const otherAssignment = currentSchedule.assignments.find(
-    (a) => a.participantId === participantId && !(a.taskId === task.id && a.slotId === _manualSelectedSlotId),
-  );
+  // Add-both violates a hard constraint. If the participant has another
+  // assignment, see whether removing it (i.e., a move) would resolve the
+  // violation — and if so, ask the user to confirm the move.
+  const otherAssignment = pAssignmentsAddBoth[0];
   if (otherAssignment) {
-    const otherTask = currentSchedule.tasks.find((t) => t.id === otherAssignment.taskId);
-    const confirmed = await showConfirm(`${participant.name} משובץ כרגע ב-"${otherTask?.name || '?'}". להעביר לכאן?`);
-    if (!confirmed) return false;
+    const pAssignmentsMove = pAssignmentsAddBoth.filter((a) => a.id !== otherAssignment.id);
+    const reasonMove = getRejectionReason(participant, task, slot, pAssignmentsMove, taskMap, validateOpts);
+    if (reasonMove === null) {
+      const otherTask = currentSchedule.tasks.find((t) => t.id === otherAssignment.taskId);
+      const reasonText = REJECTION_REASONS_HE[reasonAddBoth] || `אילוץ ${reasonAddBoth}`;
+      const confirmed = await showConfirm(
+        `${participant.name} משובץ ב-"${otherTask?.name || '?'}" — שיבוץ נוסף יפר אילוץ (${reasonText}). להעביר לכאן?`,
+      );
+      if (!confirmed) return false;
+      executeManualAssignment(participantId, existingAssignment, otherAssignment);
+      return true;
+    }
   }
 
-  executeManualAssignment(participantId, existingAssignment, otherAssignment || null);
-  return true;
+  showToast(REJECTION_REASONS_HE[reasonAddBoth] || `אילוץ ${reasonAddBoth}`, { type: 'error' });
+  return false;
 }
 
 function executeManualAssignment(
@@ -3287,7 +3309,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.6</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

@@ -2061,7 +2061,14 @@ export function seedDefaultTaskTemplates(): void {
     displayOrder: 3,
   });
 
-  // Karov
+  // Karov — base load derived via the calculator:
+  // 24 hours of Karov (base) = 8 hours of Adanit (base) → 8/24 ≈ 0.33
+  // (Hot-window weights are independent, defined below.)
+  const karovBaseLoadFormula = buildFormula(
+    [{ refTemplateId: adanitTpl.id, refRate: { kind: 'base' }, hours: 8 }],
+    taskTemplates,
+    24,
+  );
   addTaskTemplate({
     name: 'כרוב',
 
@@ -2069,7 +2076,8 @@ export function seedDefaultTaskTemplates(): void {
     shiftsPerDay: 3,
     startHour: 5,
     sameGroupRequired: true,
-    baseLoadWeight: 1 / 3,
+    baseLoadWeight: karovBaseLoadFormula.computedValue,
+    loadFormula: karovBaseLoadFormula,
     blocksConsecutive: false,
     loadWindows: [
       {

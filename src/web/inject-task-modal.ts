@@ -170,10 +170,10 @@ function makeDefaultSlot(): DraftSlot {
     id: `s-${Math.random().toString(36).slice(2, 8)}`,
     label: '',
     levels: [
-      { level: Level.L0, enabled: false, lowPriority: false },
-      { level: Level.L2, enabled: false, lowPriority: false },
-      { level: Level.L3, enabled: false, lowPriority: false },
-      { level: Level.L4, enabled: false, lowPriority: false },
+      { level: Level.L0, enabled: true, lowPriority: false },
+      { level: Level.L2, enabled: true, lowPriority: false },
+      { level: Level.L3, enabled: true, lowPriority: false },
+      { level: Level.L4, enabled: true, lowPriority: false },
     ],
     requiredCertifications: [],
     forbiddenCertifications: [],
@@ -324,7 +324,7 @@ function renderForm(schedule: Schedule): string {
             <label>רמת עומס (0–1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-inj="baseLoadWeight" value="${d.baseLoadWeight.toFixed(2)}" /></label>
           </div>
           <div class="form-row">
-            <label>תיאור: <input class="input-sm" type="text" data-inj="description" value="${escHtml(d.description)}" placeholder="אופציונלי" style="width:300px" /></label>
+            <label>תיאור: <input class="input-sm" type="text" data-inj="description" value="${escHtml(d.description)}" placeholder="אופציונלי" /></label>
           </div>
         </section>
         <section class="inject-section">
