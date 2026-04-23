@@ -1634,6 +1634,35 @@ select.input-sm {
 }
 .sr-field-row--times {
   flex-wrap: nowrap;
+  gap: 14px;
+  align-items: stretch;
+}
+.sr-time-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.sr-input-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.sr-select {
+  width: 100%;
+  min-width: 0;
+}
+.sr-toggle--inline {
+  font-size: 0.78rem;
+  padding: 6px 10px;
+  min-height: 34px;
+  width: fit-content;
+}
+.sr-toggle--inline input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
 }
 .sr-time {
   flex: 1 1 0;
@@ -1680,8 +1709,15 @@ select.input-sm {
     min-height: 48px;
     font-size: 0.95rem;
   }
+  .sr-toggle--inline {
+    min-height: 42px;
+    font-size: 0.88rem;
+  }
   .sr-field-row {
     gap: 10px;
+  }
+  .sr-field-row--times {
+    gap: 12px;
   }
   .sr-hours {
     min-height: 44px;
@@ -1691,6 +1727,13 @@ select.input-sm {
   .sr-time {
     min-height: 44px;
     font-size: 1rem;
+  }
+  .sr-select .gm-select-trigger {
+    min-height: 44px;
+    font-size: 1rem;
+  }
+  .sr-input-label {
+    font-size: 0.8rem;
   }
   .sr-field-label {
     font-size: 0.85rem;

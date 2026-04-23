@@ -25,7 +25,7 @@ import * as store from './config-store';
 import { initLoadFormulaModal, openLoadFormulaModal } from './load-formula-modal';
 import { runPreflight } from './preflight';
 import { escHtml, SVG_ICONS } from './ui-helpers';
-import { showConfirm, showPrompt, showToast } from './ui-modal';
+import { renderCustomSelect, showConfirm, showPrompt, showToast, wireCustomSelect } from './ui-modal';
 import { detectStale } from '../shared/utils/load-formula';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -182,21 +182,38 @@ function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): Pars
   const checkboxEl = scope.querySelector(`[data-${attr}-field="sleepRecoveryEnabled"]`) as HTMLInputElement | null;
   if (!checkboxEl) return { kind: 'preserve' };
   if (!checkboxEl.checked) return { kind: 'set', value: undefined };
-  const parseHour = (raw: string | undefined): number | null => {
-    if (!raw) return null;
-    const [h] = raw.split(':');
-    const n = parseInt(h, 10);
-    if (Number.isNaN(n) || n < 0 || n > 23) return null;
+
+  const readHourFromSelectBlock = (blockField: string): number | null => {
+    const block = scope.querySelector(`[data-${attr}-field="${blockField}"]`) as HTMLElement | null;
+    const select = block?.querySelector('.gm-select') as HTMLElement | null;
+    const raw = select?.dataset.value ?? '';
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 0 || n > 23) return null;
     return n;
   };
-  const startRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryStart"]`) as HTMLInputElement | null)?.value;
-  const endRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryEnd"]`) as HTMLInputElement | null)?.value;
-  const hoursRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryHours"]`) as HTMLInputElement | null)?.value;
-  const startHour = parseHour(startRaw);
-  const endHour = parseHour(endRaw);
+
+  const startHour = readHourFromSelectBlock('sleepRecoveryStartBlock');
+  const endHour = readHourFromSelectBlock('sleepRecoveryEndBlock');
   if (startHour === null || endHour === null) {
-    return { kind: 'invalid', reason: 'שעת טווח ההפעלה לא תקינה (00:00–23:00)' };
+    return { kind: 'invalid', reason: 'שעת טווח ההפעלה לא תקינה' };
   }
+
+  const crossesEl = scope.querySelector(`[data-${attr}-field="sleepRecoveryCrossesMidnight"]`) as HTMLInputElement | null;
+  const crossesMidnight = !!crossesEl?.checked;
+  if (!crossesMidnight && endHour < startHour) {
+    return {
+      kind: 'invalid',
+      reason: 'שעת הסיום לפני שעת ההתחלה. סמנו "חוצה חצות" אם הטווח אמור לעבור חצות.',
+    };
+  }
+  if (crossesMidnight && endHour >= startHour) {
+    return {
+      kind: 'invalid',
+      reason: 'סומן "חוצה חצות" אבל הטווח לא עובר חצות. שעת הסיום חייבת להיות לפני שעת ההתחלה, או שיש להסיר את הסימון.',
+    };
+  }
+
+  const hoursRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryHours"]`) as HTMLInputElement | null)?.value;
   const trimmed = (hoursRaw ?? '').trim();
   if (trimmed === '') {
     return { kind: 'invalid', reason: 'נא להזין מספר שעות להתאוששות' };
@@ -230,12 +247,26 @@ function renderSleepRecoveryEditor(rule: SleepRecoveryRule | undefined, target: 
   const idAttr = target === 'tpl' ? 'tid' : 'ot-id';
   const expandKey = `${target}:${id}`;
   const isExpanded = expandedSleepRecovery.has(expandKey);
-  const crossesMidnight = enabled && end < start;
+  // Checkbox state tracks the displayed values, not the enabled flag — so when a
+  // disabled rule is rendered with crossing defaults (e.g. 22→6), the box is
+  // pre-checked and enabling the rule passes validation without a round-trip.
+  const crossesMidnight = end < start;
+  const summaryShowsCrossing = enabled && crossesMidnight;
   const fmtHh = (h: number) => `${String(h).padStart(2, '0')}:00`;
 
+  const hourOptions = (selectedHour: number) =>
+    Array.from({ length: 24 }, (_, h) => ({
+      value: String(h),
+      label: fmtHh(h),
+      selected: h === selectedHour,
+    }));
+
   const summary = enabled
-    ? `<span class="sr-summary-chip">${fmtHh(start)}–${fmtHh(end)} · ${hours} שע׳${crossesMidnight ? ' · חוצה חצות' : ''}</span>`
+    ? `<span class="sr-summary-chip">מ־${fmtHh(start)} עד ${fmtHh(end)}${summaryShowsCrossing ? ' (חוצה חצות)' : ''} · ${hours} שע׳</span>`
     : `<span class="sr-summary-off">לא פעיל</span>`;
+
+  const startSelectId = `sr-start-${attr}-${id}`;
+  const endSelectId = `sr-end-${attr}-${id}`;
 
   const body = isExpanded
     ? `
@@ -248,15 +279,20 @@ function renderSleepRecoveryEditor(rule: SleepRecoveryRule | undefined, target: 
           <div class="sr-field">
             <label class="sr-field-label">טווח שעות סיום המשימה שמפעיל את הכלל</label>
             <div class="sr-field-row sr-field-row--times">
-              <input class="input-sm sr-time" type="time" step="3600"
-                     data-${attr}-field="sleepRecoveryStart" data-${idAttr}="${id}"
-                     value="${fmtHh(start)}" aria-label="משעה" />
-              <span class="sr-sep">עד</span>
-              <input class="input-sm sr-time" type="time" step="3600"
-                     data-${attr}-field="sleepRecoveryEnd" data-${idAttr}="${id}"
-                     value="${fmtHh(end)}" aria-label="עד שעה" />
+              <div class="sr-time-block" data-${attr}-field="sleepRecoveryStartBlock" data-${idAttr}="${id}">
+                <span class="sr-input-label">משעה</span>
+                ${renderCustomSelect({ id: startSelectId, options: hourOptions(start), className: 'sr-select' })}
+              </div>
+              <div class="sr-time-block" data-${attr}-field="sleepRecoveryEndBlock" data-${idAttr}="${id}">
+                <span class="sr-input-label">עד שעה</span>
+                ${renderCustomSelect({ id: endSelectId, options: hourOptions(end), className: 'sr-select' })}
+              </div>
             </div>
-            <div class="sr-field-hint">כולל שני הקצוות${crossesMidnight ? ' · <strong>חוצה חצות</strong>' : ''}</div>
+            <label class="sr-toggle sr-toggle--inline">
+              <input type="checkbox" data-${attr}-field="sleepRecoveryCrossesMidnight" data-${idAttr}="${id}" ${crossesMidnight ? 'checked' : ''} />
+              <span>חוצה חצות — שעת הסיום נופלת ביום שלמחרת</span>
+            </label>
+            <div class="sr-field-hint">כולל שני הקצוות</div>
           </div>
           <div class="sr-field">
             <label class="sr-field-label">חסום משימות עם עומס &gt; 0 למשך</label>
@@ -1291,6 +1327,13 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
 
 export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void): void {
   initLoadFormulaModal({ onChanged: rerender });
+
+  // Re-wire sleep-recovery hour dropdowns after each render. Values are read
+  // from `.gm-select[data-value]` on save; the onChange callback is a no-op.
+  container.querySelectorAll('.sr-body .gm-select').forEach((el) => {
+    const selectId = (el as HTMLElement).id;
+    if (selectId) wireCustomSelect(container, selectId, () => {});
+  });
 
   container.addEventListener('input', (e) => {
     const target = e.target as HTMLInputElement;
