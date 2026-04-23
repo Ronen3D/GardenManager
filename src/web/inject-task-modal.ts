@@ -236,7 +236,7 @@ function renderForm(schedule: Schedule): string {
       }
     }
   } else if (d.startMinute % 10 !== 0) {
-    d.startMinute = Math.ceil(d.startMinute / 10) * 10 % 60;
+    d.startMinute = (Math.ceil(d.startMinute / 10) * 10) % 60;
   }
 
   const dayOptions = Array.from({ length: schedule.periodDays }, (_, i) => {
@@ -512,10 +512,7 @@ function wireFormEvents(backdrop: HTMLElement): void {
     el.addEventListener('input', commit);
     // Day / hour change can shift the active floor — re-render so the
     // dependent minute options refresh their disabled state.
-    if (
-      (el.dataset.inj === 'dayIndex' || el.dataset.inj === 'startHour') &&
-      el instanceof HTMLSelectElement
-    ) {
+    if ((el.dataset.inj === 'dayIndex' || el.dataset.inj === 'startHour') && el instanceof HTMLSelectElement) {
       el.addEventListener('change', () => render());
     }
   });

@@ -126,7 +126,7 @@ export async function openSwapPicker(assignmentId: string, deps: SwapPickerDeps)
  * ──────────────────────────────────────────────────────────────────────── */
 
 function resolveContext(state: PickerState, deps: SwapPickerDeps): ResolvedContext | null {
-  const { schedule, disabledHC, restRuleMap, dayStartHour } = deps;
+  const { engine, schedule, disabledHC, restRuleMap, dayStartHour } = deps;
   const sourceAssignment = schedule.assignments.find((a) => a.id === state.assignmentId);
   if (!sourceAssignment || sourceAssignment.status === AssignmentStatus.Frozen) return null;
 
@@ -140,6 +140,7 @@ function resolveContext(state: PickerState, deps: SwapPickerDeps): ResolvedConte
   // participant master availability so focal participants don't surface as
   // candidates for slots that fall within their unavailability window.
   const extraUnavailability = schedule.scheduleUnavailability;
+  const scheduleContext = engine.getScheduleContext();
 
   // Candidates: every participant with eligibility + rejection reason
   const candidates = getCandidatesWithEligibility(
@@ -151,6 +152,7 @@ function resolveContext(state: PickerState, deps: SwapPickerDeps): ResolvedConte
     disabledHC,
     restRuleMap,
     extraUnavailability,
+    scheduleContext,
   ).filter((c) => c.participant.id !== sourceParticipant.id);
 
   // Trade candidates: for each OTHER assignment, check if the outgoing
@@ -164,6 +166,7 @@ function resolveContext(state: PickerState, deps: SwapPickerDeps): ResolvedConte
     disabledHC,
     restRuleMap,
     extraUnavailability,
+    scheduleContext,
   );
 
   // Capacities + workloads (baseline — used for "before" numbers in preview)
@@ -197,6 +200,7 @@ function computeTradeCandidates(
   disabledHC: Set<string>,
   restRuleMap: Map<string, number>,
   extraUnavailability: Array<{ participantId: string; start: Date; end: Date }> | undefined,
+  scheduleContext: import('../shared/utils/time-utils').ScheduleContext | undefined,
 ): TradeCandidate[] {
   // Eligible participants for the source slot (used as filter A).
   const eligibleForSource = new Set(
@@ -209,6 +213,7 @@ function computeTradeCandidates(
       disabledHC,
       restRuleMap,
       extraUnavailability,
+      scheduleContext,
     ).map((p) => p.id),
   );
 
@@ -233,6 +238,7 @@ function computeTradeCandidates(
         disabledHC,
         restRuleMap,
         extraUnavailability,
+        scheduleContext,
       ).map((p) => p.id),
     );
     if (!eligibleForCandidateSlot.has(sourceParticipant.id)) continue;

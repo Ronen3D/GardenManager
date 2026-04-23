@@ -9,7 +9,6 @@
  */
 
 import type { LoadFormula, LoadFormulaComponent, LoadWindow, TaskTemplate } from '../models/types';
-import * as store from './config-store';
 import {
   buildFormula,
   buildSnapshot,
@@ -20,6 +19,7 @@ import {
   resolveRateValue,
   validateFormula,
 } from '../shared/utils/load-formula';
+import * as store from './config-store';
 
 // ─── Context injection ──────────────────────────────────────────────────────
 

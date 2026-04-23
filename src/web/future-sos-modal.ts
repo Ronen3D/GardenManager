@@ -511,7 +511,9 @@ function renderFallbackBanner(): string {
 }
 
 function renderCarouselPager(plans: BatchRescuePlan[]): string {
-  const dots = plans.map((_, i) => `<span class="fsos-carousel-dot${i === 0 ? ' fsos-carousel-dot--active' : ''}"></span>`).join('');
+  const dots = plans
+    .map((_, i) => `<span class="fsos-carousel-dot${i === 0 ? ' fsos-carousel-dot--active' : ''}"></span>`)
+    .join('');
   return `<div class="fsos-carousel-pager"><div class="fsos-carousel-dots" aria-hidden="true">${dots}</div></div>`;
 }
 
@@ -542,8 +544,7 @@ function renderBatchPlanCard(
   } else {
     const disabledAttr = '';
     const violationHint = plan.violations.length > 0 ? ' fsos-apply-btn--warn' : '';
-    const label =
-      plan.violations.length > 0 ? `⚠️ החל בכל זאת (${plan.violations.length} הפרות)` : '✅ החל תוכנית';
+    const label = plan.violations.length > 0 ? `⚠️ החל בכל זאת (${plan.violations.length} הפרות)` : '✅ החל תוכנית';
     applyHtml = `<button class="btn-primary fsos-apply-btn${violationHint}" data-plan-id="${escAttr(plan.id)}"${disabledAttr}>${label}</button>`;
   }
 
@@ -587,7 +588,7 @@ function renderSwapsGroupedByDay(
 
   for (const sw of plan.swaps) {
     const toName = pMap.get(sw.toParticipantId)?.name ?? '???';
-    const fromName = sw.fromParticipantId ? pMap.get(sw.fromParticipantId)?.name ?? '???' : '—';
+    const fromName = sw.fromParticipantId ? (pMap.get(sw.fromParticipantId)?.name ?? '???') : '—';
     const task = taskMap.get(sw.taskId);
     const taskStart = task?.timeBlock.start ?? null;
     const taskEnd = task?.timeBlock.end ?? null;
@@ -682,8 +683,14 @@ function renderPlanDetails(plan: BatchRescuePlan, pMap: Map<string, Participant>
       const added = change.added.length;
       const removed = change.removed.length;
       const parts: string[] = [];
-      if (added > 0) parts.push(`<span class="fsos-plan-change-added">${added === 1 ? 'שיבוץ חדש' : `${added} שיבוצים חדשים`}</span>`);
-      if (removed > 0) parts.push(`<span class="fsos-plan-change-removed">${removed === 1 ? 'שיבוץ הוסר' : `${removed} שיבוצים הוסרו`}</span>`);
+      if (added > 0)
+        parts.push(
+          `<span class="fsos-plan-change-added">${added === 1 ? 'שיבוץ חדש' : `${added} שיבוצים חדשים`}</span>`,
+        );
+      if (removed > 0)
+        parts.push(
+          `<span class="fsos-plan-change-removed">${removed === 1 ? 'שיבוץ הוסר' : `${removed} שיבוצים הוסרו`}</span>`,
+        );
       changesHtml += `<li><span class="fsos-plan-change-name">${escHtml(name)}</span><span class="fsos-plan-change-delta">${parts.join(' · ')}</span></li>`;
     }
     changesHtml += '</ul>';
@@ -691,7 +698,8 @@ function renderPlanDetails(plan: BatchRescuePlan, pMap: Map<string, Participant>
 
   let violationsHtml = '';
   if (plan.violations.length > 0) {
-    violationsHtml = '<h5 class="fsos-plan-section-title fsos-plan-section-title--warn">הפרות אילוצים</h5><ul class="fsos-plan-violations">';
+    violationsHtml =
+      '<h5 class="fsos-plan-section-title fsos-plan-section-title--warn">הפרות אילוצים</h5><ul class="fsos-plan-violations">';
     for (const v of plan.violations) {
       violationsHtml += `<li>${escHtml(v.message)}</li>`;
     }

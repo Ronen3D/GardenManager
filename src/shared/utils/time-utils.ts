@@ -104,45 +104,81 @@ export function isFullyCovered(taskBlock: TimeBlock, availability: AvailabilityW
 }
 
 /**
- * Check whether a task's time block is blocked by any recurring dateUnavailability rule.
- * Returns true if the task overlaps with any unavailability window.
+ * Schedule context needed to evaluate weekly `dateUnavailability` rules.
+ *
+ * Rules are indexed by `dayOfWeek` (JS weekday). They are instantiated against
+ * the **operational days** that fall inside the scheduling window, not against
+ * arbitrary calendar days a task's timeBlock happens to touch. This prevents
+ * cross-midnight false violations where a Day-N task spilling past calendar
+ * midnight into Day N+1 triggers a rule for Day N+1's calendar weekday even
+ * when Day N+1 is outside the schedule or operationally still the same day.
  */
-export function isBlockedByDateUnavailability(taskBlock: TimeBlock, rules: DateUnavailability[]): boolean {
+export interface ScheduleContext {
+  /** Calendar date of operational Day 1 (the hour component is ignored). */
+  baseDate: Date;
+  /** Number of operational days in the scheduling window. */
+  scheduleDays: number;
+  /** Operational day boundary hour (e.g. 5 means a day rolls at 05:00). */
+  dayStartHour: number;
+}
+
+/**
+ * Check whether a task's time block is blocked by any recurring dateUnavailability rule.
+ *
+ * Iterates the operational days inside the schedule window (Day 1..N). For each
+ * op-day whose base calendar weekday matches a rule's `dayOfWeek`, the rule is
+ * instantiated at that calendar date:
+ *   - `allDay`: blackout spans the full operational day window
+ *     `[baseDate(D) + dayStartHour, baseDate(D+1) + dayStartHour)`.
+ *   - partial hours: wall-clock anchored to the op-day's base calendar date,
+ *     with wrap-around when `endHour <= startHour`.
+ *
+ * Days outside the scheduling window never contribute a blackout — per user
+ * semantics, weekly rules only apply to the operational days the user actually
+ * scheduled.
+ */
+export function isBlockedByDateUnavailability(
+  taskBlock: TimeBlock,
+  rules: DateUnavailability[],
+  ctx: ScheduleContext,
+): boolean {
   if (!rules || rules.length === 0) return false;
+  if (ctx.scheduleDays <= 0) return false;
 
   const taskStartMs = taskBlock.start.getTime();
   const taskEndMs = taskBlock.end.getTime();
+  const baseY = ctx.baseDate.getFullYear();
+  const baseM = ctx.baseDate.getMonth();
+  const baseD = ctx.baseDate.getDate();
 
-  // Iterate through each calendar day the task touches
-  let cursor = startOfDay(taskBlock.start);
-  while (cursor.getTime() < taskEndMs) {
-    const dow = cursor.getDay();
+  for (let dayIdx = 0; dayIdx < ctx.scheduleDays; dayIdx++) {
+    const opDayBase = new Date(baseY, baseM, baseD + dayIdx);
+    const opDayStartMs = new Date(baseY, baseM, baseD + dayIdx, ctx.dayStartHour, 0).getTime();
+    const opDayEndMs = new Date(baseY, baseM, baseD + dayIdx + 1, ctx.dayStartHour, 0).getTime();
+    // Quick skip: op-day window doesn't overlap the task at all
+    if (opDayEndMs <= taskStartMs || opDayStartMs >= taskEndMs) continue;
+
+    const dow = opDayBase.getDay();
     for (const rule of rules) {
       if (rule.dayOfWeek !== dow) continue;
 
       let blockStartMs: number;
       let blockEndMs: number;
-
       if (rule.allDay) {
-        blockStartMs = cursor.getTime();
-        blockEndMs = addDays(cursor, 1).getTime();
+        blockStartMs = opDayStartMs;
+        blockEndMs = opDayEndMs;
       } else {
-        const y = cursor.getFullYear();
-        const m = cursor.getMonth();
-        const d = cursor.getDate();
-        blockStartMs = new Date(y, m, d, rule.startHour, 0).getTime();
+        blockStartMs = new Date(baseY, baseM, baseD + dayIdx, rule.startHour, 0).getTime();
         blockEndMs =
           rule.endHour <= rule.startHour
-            ? new Date(y, m, d + 1, rule.endHour, 0).getTime()
-            : new Date(y, m, d, rule.endHour, 0).getTime();
+            ? new Date(baseY, baseM, baseD + dayIdx + 1, rule.endHour, 0).getTime()
+            : new Date(baseY, baseM, baseD + dayIdx, rule.endHour, 0).getTime();
       }
 
-      // Overlap check: task overlaps unavailability window
       if (taskStartMs < blockEndMs && blockStartMs < taskEndMs) {
         return true;
       }
     }
-    cursor = addDays(cursor, 1);
   }
 
   return false;

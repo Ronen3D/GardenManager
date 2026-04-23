@@ -106,17 +106,6 @@ export {
   PreflightSeverity,
   ViolationSeverity,
 } from './models/types';
-// ─── UI Bridge ───────────────────────────────────────────────────────────────
-export {
-  buildTaskSummary,
-  exportGanttJson,
-  ganttToAscii,
-  scheduleToGantt,
-} from './ui/gantt-bridge';
-export {
-  computeAllCapacities,
-  computeParticipantCapacity,
-} from './utils/capacity';
 export type { ParticipantRestProfile } from './shared/utils/rest-calculator';
 export {
   computeAllRestProfiles,
@@ -139,3 +128,14 @@ export {
   mergeBlocks,
   sortBlocksByStart,
 } from './shared/utils/time-utils';
+// ─── UI Bridge ───────────────────────────────────────────────────────────────
+export {
+  buildTaskSummary,
+  exportGanttJson,
+  ganttToAscii,
+  scheduleToGantt,
+} from './ui/gantt-bridge';
+export {
+  computeAllCapacities,
+  computeParticipantCapacity,
+} from './utils/capacity';

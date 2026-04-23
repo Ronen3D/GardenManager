@@ -22,7 +22,8 @@
  */
 
 import { validateHardConstraints } from '../constraints/hard-constraints';
-import { type ScoreContext, computeScheduleScore } from '../constraints/soft-constraints';
+import { computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
+import type { ScheduleContext } from '../shared/utils/time-utils';
 import type {
   Assignment,
   Participant,
@@ -34,8 +35,8 @@ import type {
   SchedulerConfig,
   Task,
 } from '../models/types';
-import { describeSlot, operationalDateKey } from '../utils/date-utils';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import { describeSlot, operationalDateKey } from '../utils/date-utils';
 import { sortDonorsByProximity, sortParticipantsByLoadProximity } from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { isEligible } from './validator';
@@ -282,6 +283,8 @@ interface RescueContext {
   disabledHC?: Set<string>;
   restRuleMap?: Map<string, number>;
   dayStartHour: number;
+  /** Schedule window context for HC-3 operational-day rule evaluation. */
+  scheduleContext?: ScheduleContext;
   // Full composite scoring (when available)
   config?: SchedulerConfig;
   scoreCtx?: ScoreContext;
@@ -305,6 +308,7 @@ function generateDepth1Plans(ctx: RescueContext): CandidatePlan[] {
         participantMap: ctx.participantMap,
         disabledHC: ctx.disabledHC,
         restRuleMap: ctx.restRuleMap,
+        scheduleContext: ctx.scheduleContext,
       })
     )
       continue;
@@ -361,6 +365,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
           participantMap: ctx.participantMap,
           disabledHC: ctx.disabledHC,
           restRuleMap: ctx.restRuleMap,
+          scheduleContext: ctx.scheduleContext,
         })
       )
         continue;
@@ -381,6 +386,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
             participantMap: ctx.participantMap,
             disabledHC: ctx.disabledHC,
             restRuleMap: ctx.restRuleMap,
+            scheduleContext: ctx.scheduleContext,
           })
         )
           continue;
@@ -469,6 +475,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
           participantMap: ctx.participantMap,
           disabledHC: ctx.disabledHC,
           restRuleMap: ctx.restRuleMap,
+          scheduleContext: ctx.scheduleContext,
         })
       )
         continue;
@@ -511,6 +518,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
               participantMap: ctx.participantMap,
               disabledHC: ctx.disabledHC,
               restRuleMap: ctx.restRuleMap,
+              scheduleContext: ctx.scheduleContext,
             })
           )
             continue;
@@ -539,6 +547,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
                 participantMap: ctx.participantMap,
                 disabledHC: ctx.disabledHC,
                 restRuleMap: ctx.restRuleMap,
+                scheduleContext: ctx.scheduleContext,
               })
             )
               continue;
@@ -647,6 +656,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
           participantMap: ctx.participantMap,
           disabledHC: ctx.disabledHC,
           restRuleMap: ctx.restRuleMap,
+          scheduleContext: ctx.scheduleContext,
         })
       )
         continue;
@@ -689,6 +699,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
               participantMap: ctx.participantMap,
               disabledHC: ctx.disabledHC,
               restRuleMap: ctx.restRuleMap,
+              scheduleContext: ctx.scheduleContext,
             })
           )
             continue;
@@ -734,17 +745,13 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
                   participantMap: ctx.participantMap,
                   disabledHC: ctx.disabledHC,
                   restRuleMap: ctx.restRuleMap,
+                  scheduleContext: ctx.scheduleContext,
                 })
               )
                 continue;
 
               for (const s of sortedParticipants) {
-                if (
-                  s.id === p.id ||
-                  s.id === q.id ||
-                  s.id === r.id ||
-                  s.id === ctx.vacatedAssignment.participantId
-                )
+                if (s.id === p.id || s.id === q.id || s.id === r.id || s.id === ctx.vacatedAssignment.participantId)
                   continue;
                 const sAssignments = ctx.assignmentsByParticipant.get(s.id) || [];
                 const d4DonorRExclude = new Set([donorR.id]);
@@ -771,6 +778,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
                     participantMap: ctx.participantMap,
                     disabledHC: ctx.disabledHC,
                     restRuleMap: ctx.restRuleMap,
+                    scheduleContext: ctx.scheduleContext,
                   })
                 )
                   continue;
@@ -860,6 +868,7 @@ export function generateRescuePlans(
   certLabelResolver?: (certId: string) => string,
   config?: SchedulerConfig,
   scoreCtx?: ScoreContext,
+  scheduleContext?: ScheduleContext,
 ): RescueResult {
   // Validate page parameter
   page = Math.max(0, Math.floor(page));
@@ -955,6 +964,7 @@ export function generateRescuePlans(
     disabledHC,
     restRuleMap,
     dayStartHour,
+    scheduleContext,
     config,
     scoreCtx,
     baselineComposite,
@@ -994,6 +1004,8 @@ export function generateRescuePlans(
       disabledHC,
       restRuleMap,
       certLabelResolver,
+      schedule.scheduleUnavailability ?? [],
+      scheduleContext,
     );
     if (validation.valid) {
       validPlans.push({ ...cp, violations: [] });
@@ -1023,6 +1035,8 @@ export function generateRescuePlans(
         disabledHC,
         restRuleMap,
         certLabelResolver,
+        schedule.scheduleUnavailability ?? [],
+        scheduleContext,
       );
       if (validation.valid) {
         validPlans.push({ ...cp, violations: [], fallbackDepth: 4 });

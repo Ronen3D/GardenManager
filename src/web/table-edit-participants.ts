@@ -6,9 +6,9 @@
  */
 
 import { type CertificationDefinition, Level, type PakalDefinition } from '../models/types';
+import { FORBIDDEN_GROUP_PATTERNS } from '../shared/group-name-rules';
 import type { BulkParticipantOp } from './config-store';
 import * as store from './config-store';
-import { FORBIDDEN_GROUP_PATTERNS } from '../shared/group-name-rules';
 import { getEffectivePakalIds } from './pakal-utils';
 import { isSmallScreen } from './responsive';
 import { certBadge, escAttr, escHtml, groupColor, SVG_ICONS } from './ui-helpers';

@@ -286,6 +286,8 @@ interface StaffingCtx {
   participantMap: Map<string, Participant>;
   disabledHC?: Set<string>;
   restRuleMap?: Map<string, number>;
+  /** Schedule window context for HC-3 operational-day rule evaluation. */
+  scheduleContext?: import('../shared/utils/time-utils').ScheduleContext;
   extraUnavailability: Array<{ participantId: string; start: Date; end: Date }>;
   allowLowPriority: boolean;
   dayStartHour: number;
@@ -307,6 +309,7 @@ function eligOpts(ctx: StaffingCtx, taskAssignmentsForCheck: Assignment[]) {
     participantMap: ctx.participantMap,
     disabledHC: ctx.disabledHC,
     restRuleMap: ctx.restRuleMap,
+    scheduleContext: ctx.scheduleContext,
     extraUnavailability: ctx.extraUnavailability,
   };
 }
@@ -993,6 +996,7 @@ export function injectAndStaff(
     participantMap,
     disabledHC: engine.getDisabledHC(),
     restRuleMap: engine.getRestRuleMap(),
+    scheduleContext: engine.getScheduleContext(),
     extraUnavailability,
     allowLowPriority: opts.allowLowPriority ?? true,
     dayStartHour,

@@ -21,8 +21,9 @@ import type {
   SlotRequirement,
   Task,
 } from '../models/types';
-import { describeSlot, operationalDateKey } from '../utils/date-utils';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import type { ScheduleContext } from '../shared/utils/time-utils';
+import { describeSlot, operationalDateKey } from '../utils/date-utils';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { isEligible } from './validator';
 
@@ -78,6 +79,8 @@ export interface SlotEnumerationContext {
   anchor: Date;
   disabledHC?: Set<string>;
   restRuleMap?: Map<string, number>;
+  /** Schedule window context for HC-3 operational-day rule evaluation. */
+  scheduleContext?: ScheduleContext;
   config: SchedulerConfig;
   scoreCtx: ScoreContext;
   baselineComposite: number;
@@ -206,13 +209,7 @@ function scoreSwapSet(
     reverts.push({ idx, prev: workArr[idx].participantId });
     workArr[idx].participantId = s.newParticipantId;
   }
-  const score = computeScheduleScore(
-    ctx.schedule.tasks,
-    ctx.schedule.participants,
-    workArr,
-    ctx.config,
-    ctx.scoreCtx,
-  );
+  const score = computeScheduleScore(ctx.schedule.tasks, ctx.schedule.participants, workArr, ctx.config, ctx.scoreCtx);
   for (const r of reverts) workArr[r.idx].participantId = r.prev;
   return score.compositeScore - ctx.baselineComposite;
 }
@@ -250,6 +247,7 @@ function depth1(
         participantMap: ctx.participantMap,
         disabledHC: ctx.disabledHC,
         restRuleMap: ctx.restRuleMap,
+        scheduleContext: ctx.scheduleContext,
         extraUnavailability: ctx.extraUnavailability,
       })
     )
@@ -304,9 +302,7 @@ function depth2(
 
     const pAssignments = ctx.assignmentsByParticipant.get(p.id) || [];
     const pFutureAssignments = sortDonorsByProximity(
-      pAssignments.filter(
-        (a) => a.id !== vacatedAssignment.id && isModifiableAssignment(a, ctx.taskMap, ctx.anchor),
-      ),
+      pAssignments.filter((a) => a.id !== vacatedAssignment.id && isModifiableAssignment(a, ctx.taskMap, ctx.anchor)),
       vacatedStart,
       ctx.taskMap,
     );
@@ -326,6 +322,7 @@ function depth2(
           participantMap: ctx.participantMap,
           disabledHC: ctx.disabledHC,
           restRuleMap: ctx.restRuleMap,
+          scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
         })
       )
@@ -350,6 +347,7 @@ function depth2(
             participantMap: ctx.participantMap,
             disabledHC: ctx.disabledHC,
             restRuleMap: ctx.restRuleMap,
+            scheduleContext: ctx.scheduleContext,
             extraUnavailability: ctx.extraUnavailability,
           })
         )
@@ -443,6 +441,7 @@ function depth3(
           participantMap: ctx.participantMap,
           disabledHC: ctx.disabledHC,
           restRuleMap: ctx.restRuleMap,
+          scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
         })
       )
@@ -489,6 +488,7 @@ function depth3(
               participantMap: ctx.participantMap,
               disabledHC: ctx.disabledHC,
               restRuleMap: ctx.restRuleMap,
+              scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
             })
           )
@@ -523,6 +523,7 @@ function depth3(
                 participantMap: ctx.participantMap,
                 disabledHC: ctx.disabledHC,
                 restRuleMap: ctx.restRuleMap,
+                scheduleContext: ctx.scheduleContext,
                 extraUnavailability: ctx.extraUnavailability,
               })
             )
@@ -643,6 +644,7 @@ function depth4(
           participantMap: ctx.participantMap,
           disabledHC: ctx.disabledHC,
           restRuleMap: ctx.restRuleMap,
+          scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
         })
       )
@@ -686,6 +688,7 @@ function depth4(
               participantMap: ctx.participantMap,
               disabledHC: ctx.disabledHC,
               restRuleMap: ctx.restRuleMap,
+              scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
             })
           )
@@ -735,6 +738,7 @@ function depth4(
                   participantMap: ctx.participantMap,
                   disabledHC: ctx.disabledHC,
                   restRuleMap: ctx.restRuleMap,
+                  scheduleContext: ctx.scheduleContext,
                   extraUnavailability: ctx.extraUnavailability,
                 })
               )
@@ -769,6 +773,7 @@ function depth4(
                     participantMap: ctx.participantMap,
                     disabledHC: ctx.disabledHC,
                     restRuleMap: ctx.restRuleMap,
+                    scheduleContext: ctx.scheduleContext,
                     extraUnavailability: ctx.extraUnavailability,
                   })
                 )
@@ -900,6 +905,7 @@ function depth5(
           participantMap: ctx.participantMap,
           disabledHC: ctx.disabledHC,
           restRuleMap: ctx.restRuleMap,
+          scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
         })
       )
@@ -943,6 +949,7 @@ function depth5(
               participantMap: ctx.participantMap,
               disabledHC: ctx.disabledHC,
               restRuleMap: ctx.restRuleMap,
+              scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
             })
           )
@@ -992,6 +999,7 @@ function depth5(
                   participantMap: ctx.participantMap,
                   disabledHC: ctx.disabledHC,
                   restRuleMap: ctx.restRuleMap,
+                  scheduleContext: ctx.scheduleContext,
                   extraUnavailability: ctx.extraUnavailability,
                 })
               )
@@ -1045,6 +1053,7 @@ function depth5(
                       participantMap: ctx.participantMap,
                       disabledHC: ctx.disabledHC,
                       restRuleMap: ctx.restRuleMap,
+                      scheduleContext: ctx.scheduleContext,
                       extraUnavailability: ctx.extraUnavailability,
                     })
                   )
@@ -1082,6 +1091,7 @@ function depth5(
                         participantMap: ctx.participantMap,
                         disabledHC: ctx.disabledHC,
                         restRuleMap: ctx.restRuleMap,
+                        scheduleContext: ctx.scheduleContext,
                         extraUnavailability: ctx.extraUnavailability,
                       })
                     )

@@ -92,7 +92,7 @@ export function createAdanitTasks(baseDate: Date): Task[] {
       timeBlock: block,
       requiredCount: 6,
       slots,
-        sameGroupRequired: true,
+      sameGroupRequired: true,
       blocksConsecutive: true,
       restRuleId: 'demo-rest-rule',
     };

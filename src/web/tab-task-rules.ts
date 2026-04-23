@@ -9,26 +9,45 @@ import {
   type CertificationDefinition,
   Level,
   type LoadFormula,
+  type LoadFormulaSnapshotEntry,
   type LoadWindow,
   type OneTimeTask,
   type PreflightResult,
   PreflightSeverity,
   RestRule,
-  type LoadFormulaSnapshotEntry,
   type SleepRecoveryRule,
   type SlotTemplate,
   type SubTeamTemplate,
   type TaskSet,
   type TaskTemplate,
 } from '../models/types';
+import { detectStale } from '../shared/utils/load-formula';
 import * as store from './config-store';
 import { initLoadFormulaModal, openLoadFormulaModal } from './load-formula-modal';
 import { runPreflight } from './preflight';
 import { escHtml, SVG_ICONS } from './ui-helpers';
-import { renderCustomSelect, showConfirm, showPrompt, showToast, wireCustomSelect } from './ui-modal';
-import { detectStale } from '../shared/utils/load-formula';
+import { renderCustomSelect, showAlert, showConfirm, showPrompt, showToast, wireCustomSelect } from './ui-modal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function isCriticalOrWarning(severity: PreflightSeverity): boolean {
+  return severity === PreflightSeverity.Critical || severity === PreflightSeverity.Warning;
+}
+
+function getRelevantFindingsForTemplate(tpl: TaskTemplate, pf: PreflightResult) {
+  return pf.findings.filter((f) => f.templateId === tpl.id && isCriticalOrWarning(f.severity));
+}
+
+function getRelevantFindingsForOneTime(ot: OneTimeTask, pf: PreflightResult) {
+  const slotIds = new Set<string>();
+  for (const s of ot.slots) slotIds.add(s.id);
+  for (const st of ot.subTeams) for (const s of st.slots) slotIds.add(s.id);
+  return pf.findings.filter((f) => {
+    if (!isCriticalOrWarning(f.severity)) return false;
+    if (f.oneTimeTaskId === ot.id) return true;
+    return !!f.slotId && slotIds.has(f.slotId);
+  });
+}
 
 const FIELD_LABELS: Record<string, string> = {
   durationHours: 'משך',
@@ -198,7 +217,9 @@ function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): Pars
     return { kind: 'invalid', reason: 'שעת טווח ההפעלה לא תקינה' };
   }
 
-  const crossesEl = scope.querySelector(`[data-${attr}-field="sleepRecoveryCrossesMidnight"]`) as HTMLInputElement | null;
+  const crossesEl = scope.querySelector(
+    `[data-${attr}-field="sleepRecoveryCrossesMidnight"]`,
+  ) as HTMLInputElement | null;
   const crossesMidnight = !!crossesEl?.checked;
   if (!crossesMidnight && endHour < startHour) {
     return {
@@ -591,9 +612,9 @@ function buildTaskSetLoadConfirmMessage(taskSet: TaskSet): string {
 
 function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
   const isExpanded = expandedTemplateId === tpl.id;
-  const relatedFindings = pf.findings.filter((f) => f.templateId === tpl.id);
-  const hasCritical = relatedFindings.some((f) => f.severity === PreflightSeverity.Critical);
-  const hasWarning = relatedFindings.some((f) => f.severity === PreflightSeverity.Warning);
+  const relevantFindings = getRelevantFindingsForTemplate(tpl, pf);
+  const hasCritical = relevantFindings.some((f) => f.severity === PreflightSeverity.Critical);
+  const hasWarning = relevantFindings.some((f) => f.severity === PreflightSeverity.Warning);
 
   const allSlots = [...tpl.slots];
   for (const st of tpl.subTeams) allSlots.push(...st.slots);
@@ -609,8 +630,8 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         ${templateBadge(tpl)}
         <strong>${escHtml(tpl.name)}</strong>
         <span class="text-muted"> · ${tpl.shiftsPerDay} משמרות × ${tpl.durationHours} שע׳ — ${totalPeople} איש/יום</span>
-        ${hasCritical ? '<span class="badge badge-sm" style="background:var(--danger)">!</span>' : ''}
-        ${hasWarning && !hasCritical ? '<span class="badge badge-sm" style="background:var(--warning)">⚠</span>' : ''}
+        ${hasCritical ? `<span class="badge badge-sm badge-clickable" style="background:var(--danger)" role="button" tabindex="0" data-action="show-task-findings" data-kind="tpl" data-tid="${tpl.id}" title="הצג פירוט בעיות" aria-label="הצג פירוט בעיות">!</span>` : ''}
+        ${hasWarning && !hasCritical ? `<span class="badge badge-sm badge-clickable" style="background:var(--warning)" role="button" tabindex="0" data-action="show-task-findings" data-kind="tpl" data-tid="${tpl.id}" title="הצג פירוט אזהרות" aria-label="הצג פירוט אזהרות">⚠</span>` : ''}
         ${hasOrphans ? '<span class="badge badge-sm badge-orphan">⚠</span>' : ''}
       </div>
       <div class="template-toggles">
@@ -1224,13 +1245,9 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
   if (ot.sameGroupRequired) flags.push('קבוצה');
   if (ot.blocksConsecutive) flags.push('חוסמת');
 
-  const relatedFindings = pf.findings.filter((f) => {
-    if (f.oneTimeTaskId === ot.id) return true;
-    const slotIds = new Set(allSlots.map((s) => s.id));
-    return !!f.slotId && slotIds.has(f.slotId);
-  });
-  const hasCritical = relatedFindings.some((f) => f.severity === PreflightSeverity.Critical);
-  const hasWarning = relatedFindings.some((f) => f.severity === PreflightSeverity.Warning);
+  const relevantFindings = getRelevantFindingsForOneTime(ot, pf);
+  const hasCritical = relevantFindings.some((f) => f.severity === PreflightSeverity.Critical);
+  const hasWarning = relevantFindings.some((f) => f.severity === PreflightSeverity.Warning);
   const alertClass = hasCritical ? 'template-card-error' : hasWarning ? 'template-card-warn' : '';
 
   let html = `<div class="template-card onetime-card ${alertClass}" data-ot-id="${ot.id}">
@@ -1239,8 +1256,8 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
         ${templateBadge({ color: ot.color, name: ot.name })}
         <strong>${escHtml(ot.name)}</strong>
         <span class="text-muted" style="font-size:0.85em;">📅 ${dateStr} <span dir="ltr">${timeStr}–${endStr}</span> (${ot.durationHours} שע')</span>
-        ${hasCritical ? '<span class="badge badge-sm" style="background:var(--danger)">!</span>' : ''}
-        ${hasWarning && !hasCritical ? '<span class="badge badge-sm" style="background:var(--warning)">⚠</span>' : ''}
+        ${hasCritical ? `<span class="badge badge-sm badge-clickable" style="background:var(--danger)" role="button" tabindex="0" data-action="show-task-findings" data-kind="ot" data-ot-id="${ot.id}" title="הצג פירוט בעיות" aria-label="הצג פירוט בעיות">!</span>` : ''}
+        ${hasWarning && !hasCritical ? `<span class="badge badge-sm badge-clickable" style="background:var(--warning)" role="button" tabindex="0" data-action="show-task-findings" data-kind="ot" data-ot-id="${ot.id}" title="הצג פירוט אזהרות" aria-label="הצג פירוט אזהרות">⚠</span>` : ''}
       </div>
       <div class="template-toggles">
         ${flags.length > 0 ? flags.map((f) => `<span class="badge badge-sm badge-outline">${f}</span>`).join('') : ''}
@@ -1533,6 +1550,38 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         expandedTemplateId = null;
         addingSlotTo = null;
         rerender();
+        break;
+      }
+      case 'show-task-findings': {
+        const kind = actionButton?.dataset.kind;
+        const pf = runPreflight();
+        let findings: { message: string; severity: PreflightSeverity }[] = [];
+        if (kind === 'tpl') {
+          const tid = actionButton?.dataset.tid;
+          const tpl = tid ? store.getTaskTemplate(tid) : undefined;
+          if (tpl) findings = getRelevantFindingsForTemplate(tpl, pf);
+        } else if (kind === 'ot') {
+          const otId = actionButton?.dataset.otId;
+          const ot = otId ? store.getOneTimeTask(otId) : undefined;
+          if (ot) findings = getRelevantFindingsForOneTime(ot, pf);
+        }
+        if (findings.length === 0) {
+          // Findings may have just been resolved by another edit — refresh and bail.
+          rerender();
+          break;
+        }
+        const hasCrit = findings.some((f) => f.severity === PreflightSeverity.Critical);
+        const list = findings
+          .map((f) => {
+            const prefix = f.severity === PreflightSeverity.Critical ? '🚫' : '⚠️';
+            return `<li>${prefix} ${escHtml(f.message)}</li>`;
+          })
+          .join('');
+        await showAlert('', {
+          title: hasCrit ? 'בעיות בהגדרת המשימה' : 'אזהרות בהגדרת המשימה',
+          icon: hasCrit ? '🚫' : '⚠️',
+          bodyHtml: `<ul class="gm-modal-finding-list">${list}</ul>`,
+        });
         break;
       }
       case 'save-onetime-props': {

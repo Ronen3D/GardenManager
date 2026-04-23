@@ -15,6 +15,8 @@ const _selectCleanups = new Map<string, () => void>();
 export interface AlertOptions {
   title?: string;
   icon?: string;
+  /** If set, injected as-is into the modal body instead of the escaped `message`. Caller owns escaping of any untrusted text within the fragment. */
+  bodyHtml?: string;
 }
 
 export interface PromptOptions {
@@ -36,6 +38,7 @@ export function showAlert(message: string, opts?: AlertOptions): Promise<void> {
   return new Promise((resolve) => {
     const title = opts?.title || 'התראה';
     const icon = opts?.icon || 'ℹ️';
+    const body = opts?.bodyHtml ?? escHtml(message);
 
     const backdrop = document.createElement('div');
     backdrop.className = 'gm-modal-backdrop';
@@ -45,7 +48,7 @@ export function showAlert(message: string, opts?: AlertOptions): Promise<void> {
           <span class="gm-modal-icon">${icon}</span>
           <span class="gm-modal-title">${escHtml(title)}</span>
         </div>
-        <div class="gm-modal-body">${escHtml(message)}</div>
+        <div class="gm-modal-body">${body}</div>
         <div class="gm-modal-actions">
           <button class="btn-primary gm-modal-btn-ok">אישור</button>
         </div>

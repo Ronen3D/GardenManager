@@ -4,20 +4,20 @@
  * envelope format.
  */
 
-import {
-  type AlgorithmExportPayload,
-  type AlgorithmPreset,
-  type ExportType,
-  type FullBackupPayload,
-  type GardenManagerExport,
-  type ImportResult,
-  type ImportValidationResult,
-  type ParticipantSet,
-  type ParticipantSetExportPayload,
-  type ScheduleSnapshot,
-  type ScheduleSnapshotExportPayload,
-  type TaskSet,
-  type TaskSetExportPayload,
+import type {
+  AlgorithmExportPayload,
+  AlgorithmPreset,
+  ExportType,
+  FullBackupPayload,
+  GardenManagerExport,
+  ImportResult,
+  ImportValidationResult,
+  ParticipantSet,
+  ParticipantSetExportPayload,
+  ScheduleSnapshot,
+  ScheduleSnapshotExportPayload,
+  TaskSet,
+  TaskSetExportPayload,
 } from '../models/types';
 import * as store from './config-store';
 import {

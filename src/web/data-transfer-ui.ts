@@ -5,8 +5,6 @@
  */
 
 import type { ParticipantSet } from '../models/types';
-import * as store from './config-store';
-import * as transfer from './data-transfer';
 import {
   generateParticipantSetXlsx,
   generateXlsxFilename,
@@ -15,6 +13,8 @@ import {
   type XlsxImportError,
   type XlsxImportMeta,
 } from '../shared/participant-set-xlsx';
+import * as store from './config-store';
+import * as transfer from './data-transfer';
 import { escHtml } from './ui-helpers';
 import { showAlert, showBottomSheet, showConfirm, showToast } from './ui-modal';
 

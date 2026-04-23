@@ -20,7 +20,12 @@ import {
   type ValidationResult,
   ViolationSeverity,
 } from '../models/types';
-import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../shared/utils/time-utils';
+import {
+  blocksOverlap,
+  isBlockedByDateUnavailability,
+  isFullyCovered,
+  type ScheduleContext,
+} from '../shared/utils/time-utils';
 
 export interface FullValidationResult extends ValidationResult {
   /** Soft constraint warnings (non-fatal) */
@@ -39,8 +44,19 @@ export function fullValidate(
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
   certLabelResolver?: (certId: string) => string,
+  scheduleContext?: ScheduleContext,
+  extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
 ): FullValidationResult {
-  const hard = validateHardConstraints(tasks, participants, assignments, disabledHC, restRuleMap, certLabelResolver);
+  const hard = validateHardConstraints(
+    tasks,
+    participants,
+    assignments,
+    disabledHC,
+    restRuleMap,
+    certLabelResolver,
+    extraUnavailability,
+    scheduleContext,
+  );
   const warnings = collectSoftWarnings(tasks, participants, assignments);
 
   const hardCount = hard.violations.length;
@@ -73,6 +89,8 @@ export function previewSwap(
   swap: SwapRequest,
   restRuleMap?: Map<string, number>,
   certLabelResolver?: (certId: string) => string,
+  scheduleContext?: ScheduleContext,
+  extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
 ): FullValidationResult {
   // Create a temporary copy with the swap applied
   const tempAssignments = assignments.map((a) => {
@@ -82,7 +100,16 @@ export function previewSwap(
     return { ...a };
   });
 
-  return fullValidate(tasks, participants, tempAssignments, undefined, restRuleMap, certLabelResolver);
+  return fullValidate(
+    tasks,
+    participants,
+    tempAssignments,
+    undefined,
+    restRuleMap,
+    certLabelResolver,
+    scheduleContext,
+    extraUnavailability,
+  );
 }
 
 // ─── R8: Rejection Reason Codes ──────────────────────────────────────────────
@@ -119,6 +146,13 @@ export interface EligibilityOpts {
    * overlaps one of their entries. Checked alongside HC-3.
    */
   extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>;
+  /**
+   * Schedule window context needed to evaluate weekly `dateUnavailability`
+   * rules in operational-day semantics (see `ScheduleContext`). When omitted,
+   * the recurring-rule check is skipped and HC-3 relies solely on
+   * `participant.availability` and `extraUnavailability`.
+   */
+  scheduleContext?: ScheduleContext;
 }
 
 /**
@@ -163,9 +197,10 @@ function checkEligibility(
   // HC-3: Availability check (windows + recurring dateUnavailability rules
   //       + schedule-scoped Future SOS windows).
   if (!disabled?.has('HC-3')) {
+    if (!isFullyCovered(task.timeBlock, participant.availability)) return 'HC-3';
     if (
-      !isFullyCovered(task.timeBlock, participant.availability) ||
-      isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability)
+      opts?.scheduleContext &&
+      isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability, opts.scheduleContext)
     )
       return 'HC-3';
     if (opts?.extraUnavailability) {
@@ -292,6 +327,7 @@ export function getEligibleParticipantsForSlot(
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
   extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
+  scheduleContext?: ScheduleContext,
 ): Participant[] {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) return [];
@@ -319,6 +355,7 @@ export function getEligibleParticipantsForSlot(
       disabledHC,
       restRuleMap,
       extraUnavailability,
+      scheduleContext,
     });
   });
 }
@@ -366,6 +403,7 @@ export function getCandidatesWithEligibility(
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
   extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
+  scheduleContext?: ScheduleContext,
 ): CandidateEligibility[] {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) return [];
@@ -392,6 +430,7 @@ export function getCandidatesWithEligibility(
       disabledHC,
       restRuleMap,
       extraUnavailability,
+      scheduleContext,
     });
     return {
       participant: p,

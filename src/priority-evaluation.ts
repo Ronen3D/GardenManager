@@ -148,7 +148,7 @@ function a1_compressedTiers(task: Task): number {
   let tier: number;
   if (hasLowPriority(task) || (allL0Only && hasCerts))
     tier = 1; // Merge Hamama+Shemesh
-  else if (hasCerts || hasExclusion || (allL0Only))
+  else if (hasCerts || hasExclusion || allL0Only)
     tier = 2; // Merge Karov+Mamtera+Aruga
   else tier = 3; // Light + fallback
 
@@ -254,7 +254,7 @@ function a4_pureTiers(task: Task): number {
 function b1_pureBottleneck(task: Task): number {
   if (task.sameGroupRequired) return 0;
   const { min } = countEligiblePerSlot(task);
-  let score = Math.min(50, min * 3);
+  const score = Math.min(50, min * 3);
   return Math.max(1, score);
 }
 
@@ -301,7 +301,7 @@ function b3_constraintDensity(task: Task): number {
   const density = constraintFeatures / Math.max(1, avg);
 
   // Higher density → lower score → first
-  let score = Math.max(1, 50 - density * 4);
+  const score = Math.max(1, 50 - density * 4);
   return Math.max(1, score);
 }
 
@@ -582,7 +582,7 @@ function e3_arugaPromoted(task: Task): number {
   let tier: number;
   if (hasLowPriority(task) && hasCerts) tier = 1;
   else if (allL0Only && hasCerts) tier = 2;
-  else if (hasCerts || hasExclusion || (allL0Only))
+  else if (hasCerts || hasExclusion || allL0Only)
     tier = 3; // Aruga promoted
   else tier = 3;
 
@@ -673,9 +673,7 @@ function _p1_maxCertRarity(task: Task): number {
 
 function _p1_stickinessScore(task: Task): number {
   const dur = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3_600_000;
-  return (
-    (dur >= 10 ? 1 : 0) + (dur >= 14 ? 1 : 0) + (task.blocksConsecutive ? 1 : 0) + (task.restRuleId ? 1 : 0)
-  );
+  return (dur >= 10 ? 1 : 0) + (dur >= 14 ? 1 : 0) + (task.blocksConsecutive ? 1 : 0) + (task.restRuleId ? 1 : 0);
 }
 
 function _p1_lowPrioRisk(task: Task): number {

@@ -5,9 +5,9 @@
  */
 
 import { Level, type Participant, SchedulingEngine, ViolationSeverity } from './index';
+import { computeAllRestProfiles, computeRestFairness } from './shared/utils/rest-calculator';
 import { generateDailyTasks } from './tasks/cli-task-factory';
 import { buildTaskSummary, ganttToAscii, scheduleToGantt } from './ui/gantt-bridge';
-import { computeAllRestProfiles, computeRestFairness } from './shared/utils/rest-calculator';
 
 // ─── Sample Participants ─────────────────────────────────────────────────────
 

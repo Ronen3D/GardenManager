@@ -169,7 +169,7 @@ function vA_bottleneckHybrid(task: Task): number {
   const bottleneckScore = Math.min(50, min * 3);
 
   // Blend 50/50
-  let score = 0.5 * structural + 0.5 * bottleneckScore;
+  const score = 0.5 * structural + 0.5 * bottleneckScore;
   return Math.max(1, score);
 }
 
@@ -289,7 +289,7 @@ function vE_multiSignal(task: Task): number {
   const pool = Math.min(50, avg * 2);
 
   // Weighted blend
-  let score = 0.3 * (structural + penaltyRisk) + 0.3 * bottleneck + 0.2 * penaltyRisk + 0.2 * pool;
+  const score = 0.3 * (structural + penaltyRisk) + 0.3 * bottleneck + 0.2 * penaltyRisk + 0.2 * pool;
 
   return Math.max(1, score);
 }

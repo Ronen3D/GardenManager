@@ -21,6 +21,7 @@
  */
 
 import { effectivelyBlocksAt, isLevelSatisfied, validateHardConstraints } from '../constraints/hard-constraints';
+import { checkSleepRecoveryForPlacement } from '../constraints/sleep-recovery';
 import { computeScheduleScore, IncrementalScorer, type ScoreContext } from '../constraints/soft-constraints';
 import {
   type Assignment,
@@ -32,10 +33,15 @@ import {
   type SlotRequirement,
   type Task,
 } from '../models/types';
+import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import {
+  blocksOverlap,
+  isBlockedByDateUnavailability,
+  isFullyCovered,
+  type ScheduleContext,
+} from '../shared/utils/time-utils';
 import { computeAllCapacities } from '../utils/capacity';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
-import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
-import { blocksOverlap, isFullyCovered } from '../shared/utils/time-utils';
 import type { PhantomContext } from './phantom';
 import { getRejectionReason, isEligible } from './validator';
 
@@ -169,11 +175,13 @@ function isEligibleForSlot(
   taskMap: Map<string, Task>,
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
+  scheduleContext?: ScheduleContext,
 ): boolean {
   if (_diagnosticLogging) {
     const code = getRejectionReason(participant, task, slot, participantAssignments, taskMap, {
       disabledHC,
       restRuleMap,
+      scheduleContext,
     });
     if (code) {
       const _tag = `${participant.name} → ${task.name} [${describeSlot(slot.label, task.timeBlock)}]`;
@@ -181,7 +189,11 @@ function isEligibleForSlot(
     }
     return code === null;
   }
-  return isEligible(participant, task, slot, participantAssignments, taskMap, { disabledHC, restRuleMap });
+  return isEligible(participant, task, slot, participantAssignments, taskMap, {
+    disabledHC,
+    restRuleMap,
+    scheduleContext,
+  });
 }
 
 /**
@@ -202,9 +214,19 @@ function getEligibleCandidates(
   sameGroupEligibleCount?: Map<string, number>,
   restRuleMap?: Map<string, number>,
   dayStartHour?: number,
+  scheduleContext?: ScheduleContext,
 ): Participant[] {
   const eligible = participants.filter((p) =>
-    isEligibleForSlot(p, task, slot, assignmentsByParticipant.get(p.id) || [], taskMap, disabledHC, restRuleMap),
+    isEligibleForSlot(
+      p,
+      task,
+      slot,
+      assignmentsByParticipant.get(p.id) || [],
+      taskMap,
+      disabledHC,
+      restRuleMap,
+      scheduleContext,
+    ),
   );
 
   // Operational day of the task being assigned
@@ -608,6 +630,7 @@ export function greedyAssign(
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
   ctx?: SchedulingContext,
+  scheduleContext?: ScheduleContext,
 ): {
   assignments: Assignment[];
   unfilledSlots: UnfilledSlot[];
@@ -719,6 +742,7 @@ export function greedyAssign(
         disabledHC,
         restRuleMap,
         dayStartHour,
+        scheduleContext,
       );
       if (!assigned) {
         // Mark all slots as unfilled with specific reasons
@@ -758,6 +782,7 @@ export function greedyAssign(
         sameGroupEligibleCount,
         restRuleMap,
         dayStartHour,
+        scheduleContext,
       );
 
       if (candidates.length > 0) {
@@ -804,7 +829,7 @@ export function greedyAssign(
 
           // Already eligible (shouldn't happen since candidates was empty, but guard)
           const pAssigns = assignmentsByParticipant.get(p.id) || [];
-          if (isEligibleForSlot(p, task, slot, pAssigns, taskMap, disabledHC, restRuleMap)) continue;
+          if (isEligibleForSlot(p, task, slot, pAssigns, taskMap, disabledHC, restRuleMap, scheduleContext)) continue;
 
           // Find which of p's current assignments blocks them from this slot
           // (must overlap in time — HC-5 conflict)
@@ -833,7 +858,16 @@ export function greedyAssign(
               const rAssigns = assignmentsByParticipant.get(replacement.id) || [];
               if (rAssigns.some((a) => a.taskId === blockingAssign.taskId)) continue;
               if (
-                !isEligibleForSlot(replacement, blockingTask, blockingSlot, rAssigns, taskMap, disabledHC, restRuleMap)
+                !isEligibleForSlot(
+                  replacement,
+                  blockingTask,
+                  blockingSlot,
+                  rAssigns,
+                  taskMap,
+                  disabledHC,
+                  restRuleMap,
+                  scheduleContext,
+                )
               )
                 continue;
 
@@ -841,7 +875,8 @@ export function greedyAssign(
               // would p then become eligible for the target slot once unblocked?
               // Simulate: remove blockingAssign from p, check eligibility
               const pAssignsWithout = pAssigns.filter((a) => a.id !== blockingAssign.id);
-              if (!isEligibleForSlot(p, task, slot, pAssignsWithout, taskMap, disabledHC, restRuleMap)) continue;
+              if (!isEligibleForSlot(p, task, slot, pAssignsWithout, taskMap, disabledHC, restRuleMap, scheduleContext))
+                continue;
 
               swapPlan = { p, blockingAssign, blockingTask, replacement };
               break;
@@ -995,6 +1030,7 @@ function assignSameGroupTask(
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
+  scheduleContext?: ScheduleContext,
 ): boolean {
   // Already have some pinned assignments for this task?
   const pinnedForTask = currentAssignments.filter((a) => a.taskId === task.id);
@@ -1073,6 +1109,7 @@ function assignSameGroupTask(
         undefined,
         restRuleMap,
         dayStartHour,
+        scheduleContext,
       );
 
       if (candidates.length > 0) {
@@ -1142,8 +1179,10 @@ function assignSameGroupTask(
  * Accepts pre-built per-participant and per-task assignment indices to
  * avoid O(n) scans on every call. The caller must pass the indices as
  * they exist AFTER the swap has been applied to the candidate array.
+ *
+ * Exported for regression tests — the SA hot path calls it internally.
  */
-function isSwapFeasible(
+export function isSwapFeasible(
   candidate: Assignment[],
   idxI: number,
   idxJ: number,
@@ -1155,6 +1194,7 @@ function isSwapFeasible(
   byTask: Map<string, Assignment[]>,
   disabledHC?: Set<string>,
   restRuleMap?: Map<string, number>,
+  scheduleContext?: ScheduleContext,
 ): boolean {
   const aI = candidate[idxI];
   const aJ = candidate[idxJ];
@@ -1178,10 +1218,18 @@ function isSwapFeasible(
     for (const c of slotJ.requiredCertifications) if (!pJ.certifications.includes(c)) return false;
   }
 
-  // HC-3: Availability
+  // HC-3: Availability — both pre-expanded availability windows AND the
+  // recurring weekly dateUnavailability rules must be honored. Without the
+  // rule check, SA can accept a swap that places a participant into a
+  // cross-midnight task whose operational day matches a weekly blackout,
+  // silently producing an HC-3 violation that the final validator catches.
   if (!disabledHC?.has('HC-3')) {
     if (!isFullyCovered(taskI.timeBlock, pI.availability)) return false;
     if (!isFullyCovered(taskJ.timeBlock, pJ.availability)) return false;
+    if (scheduleContext) {
+      if (isBlockedByDateUnavailability(taskI.timeBlock, pI.dateUnavailability, scheduleContext)) return false;
+      if (isBlockedByDateUnavailability(taskJ.timeBlock, pJ.dateUnavailability, scheduleContext)) return false;
+    }
   }
 
   // HC-11: Forbidden certification check (per-slot)
@@ -1312,6 +1360,17 @@ function isSwapFeasible(
     if (!checkRestRules(pI.id) || !checkRestRules(pJ.id)) return false;
   }
 
+  // HC-15: Sleep & Recovery — only the new placement can introduce a violation.
+  // pI is the participant now occupying slot I (post-swap), so pI's new task
+  // is taskI; symmetrically pJ's new task is taskJ. Pre-existing violations
+  // between unchanged assignment pairs are not the swap's fault, so we check
+  // only each participant's new task as the candidate. checkSleepRecoveryForPlacement
+  // skips `candidate.id === other.id`, so passing the post-swap list is correct.
+  if (!disabledHC?.has('HC-15')) {
+    if (checkSleepRecoveryForPlacement(taskI, byParticipant.get(pI.id) || [], taskMap)) return false;
+    if (checkSleepRecoveryForPlacement(taskJ, byParticipant.get(pJ.id) || [], taskMap)) return false;
+  }
+
   return true;
 }
 
@@ -1349,6 +1408,7 @@ export function localSearchOptimize(
   pinnedIds: Set<string> = new Set(),
   abortSignal?: AbortSignal,
   saIntensifyTaskIds?: Set<string>,
+  scheduleContext?: ScheduleContext,
 ): { assignments: Assignment[]; filledSlots: string[] } {
   const current = [...assignments.map((a) => ({ ...a }))];
 
@@ -1479,9 +1539,10 @@ export function localSearchOptimize(
         for (let k = 0; k < remainingUnfilled.length; k++) {
           if (saIntensifyTaskIds.has(remainingUnfilled[k].taskId)) intensifyIdxs.push(k);
         }
-        ufIdx = intensifyIdxs.length > 0
-          ? intensifyIdxs[Math.floor(Math.random() * intensifyIdxs.length)]
-          : Math.floor(Math.random() * remainingUnfilled.length);
+        ufIdx =
+          intensifyIdxs.length > 0
+            ? intensifyIdxs[Math.floor(Math.random() * intensifyIdxs.length)]
+            : Math.floor(Math.random() * remainingUnfilled.length);
       } else {
         ufIdx = Math.floor(Math.random() * remainingUnfilled.length);
       }
@@ -1498,7 +1559,8 @@ export function localSearchOptimize(
           }
           for (const p of pOrder) {
             const pAssigns = byParticipant.get(p.id) || [];
-            if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, restRuleMap)) continue;
+            if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, restRuleMap, scheduleContext))
+              continue;
             // Also check HC-7: no duplicate participant in the same task
             const taskAssigns = byTask.get(uf.taskId) || [];
             if (taskAssigns.some((a) => a.participantId === p.id)) continue;
@@ -1636,7 +1698,9 @@ export function localSearchOptimize(
         // byTask: no change needed — same object references, same taskIds
 
         // 3. Delta validation with patched indices
-        if (!isSwapFeasible(current, i, j, taskMap, pMap, byParticipant, byTask, disabledHC, restRuleMap)) {
+        if (
+          !isSwapFeasible(current, i, j, taskMap, pMap, byParticipant, byTask, disabledHC, restRuleMap, scheduleContext)
+        ) {
           // Undo in-place swap
           ai.participantId = oldPidI;
           aj.participantId = oldPidJ;
@@ -1741,7 +1805,8 @@ export function localSearchOptimize(
 
       for (const p of participants) {
         const pAssigns = sweepByParticipant.get(p.id) || [];
-        if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, restRuleMap)) continue;
+        if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, restRuleMap, scheduleContext))
+          continue;
         // HC-7: no duplicate participant in same task
         const taskAssigns = sweepByTask.get(uf.taskId) || [];
         if (taskAssigns.some((a) => a.participantId === p.id)) continue;
@@ -1807,6 +1872,7 @@ export function optimize(
   abortSignal?: AbortSignal,
   ctx?: SchedulingContext,
   saIntensifyTaskIds?: Set<string>,
+  scheduleContext?: ScheduleContext,
 ): OptimizationResult {
   const startTime = Date.now();
 
@@ -1826,6 +1892,7 @@ export function optimize(
     restRuleMap,
     dayStartHour,
     schedulingCtx,
+    scheduleContext,
   );
 
   // Phase 2: Local search improvement (also tries to fill unfilled slots)
@@ -1842,6 +1909,7 @@ export function optimize(
     greedy.pinnedIds,
     abortSignal,
     saIntensifyTaskIds,
+    scheduleContext,
   );
 
   // Remove slots that SA managed to fill
@@ -1859,6 +1927,8 @@ export function optimize(
     disabledHC,
     restRuleMap,
     certLabelResolver,
+    undefined,
+    scheduleContext,
   );
 
   // Build capacities for final scoring
@@ -2010,6 +2080,8 @@ export function optimizeMultiAttempt(
   phantomContext?: PhantomContext,
   restRuleMap?: Map<string, number>,
   certLabelResolver?: (certId: string) => string,
+  scheduleContext?: ScheduleContext,
+  dayStartHour?: number,
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
   const totalStart = Date.now();
@@ -2026,7 +2098,10 @@ export function optimizeMultiAttempt(
   // unfilled slots and refresh the two additive recovery hints. Every unfilled
   // task gets an ordering boost; adjacency-dominated tasks additionally receive
   // SA insert-move intensification. No task is ever *excluded* from either path.
-  const ELITE_INTERVAL = 200;
+  // When best is feasible, drop any stale boost so the remaining attempts can
+  // optimise fairness/penalty without distortion from old hints — best.unfilled
+  // is monotone non-increasing under isBetterResult, so a cleared boost is safe.
+  const ELITE_INTERVAL = 20;
   let eliteBoost: EliteBoostState = {
     boostTaskIds: new Set(),
     saIntensifyTaskIds: new Set(),
@@ -2038,8 +2113,10 @@ export function optimizeMultiAttempt(
 
   for (let i = 0; i < attempts; i++) {
     // Refresh elite-boost hints every ELITE_INTERVAL attempts
-    if (best && i > 0 && i % ELITE_INTERVAL === 0 && best.unfilledSlots.length > 0) {
-      eliteBoost = classifyUnfilledSlots(best.unfilledSlots);
+    if (best && i > 0 && i % ELITE_INTERVAL === 0) {
+      eliteBoost = best.unfilledSlots.length > 0
+        ? classifyUnfilledSlots(best.unfilledSlots)
+        : { boostTaskIds: new Set(), saIntensifyTaskIds: new Set() };
     }
 
     // Shuffle participant order to create diversity
@@ -2073,11 +2150,12 @@ export function optimizeMultiAttempt(
       jitter,
       phantomContext,
       restRuleMap,
-      undefined,
+      dayStartHour,
       certLabelResolver,
       undefined,
       ctx,
       eliteBoost.saIntensifyTaskIds.size > 0 ? eliteBoost.saIntensifyTaskIds : undefined,
+      scheduleContext,
     );
 
     const improved = best === null || isBetterResult(result, best);
@@ -2149,6 +2227,7 @@ export function optimizeMultiAttemptAsync(
   dayStartHour: number = 5,
   certLabelResolver?: (certId: string) => string,
   abortSignal?: AbortSignal,
+  scheduleContext?: ScheduleContext,
 ): Promise<OptimizationResult> {
   return new Promise((resolve, reject) => {
     let best: OptimizationResult | null = null;
@@ -2164,7 +2243,7 @@ export function optimizeMultiAttemptAsync(
     }> = [];
 
     // Elite restart state (same classification as sync version)
-    const ELITE_INTERVAL = 200;
+    const ELITE_INTERVAL = 20;
     let eliteBoost: EliteBoostState = {
       boostTaskIds: new Set(),
       saIntensifyTaskIds: new Set(),
@@ -2191,9 +2270,13 @@ export function optimizeMultiAttemptAsync(
             return;
           }
 
-          // Refresh elite-boost hints every ELITE_INTERVAL attempts
-          if (best && i > 0 && i % ELITE_INTERVAL === 0 && best.unfilledSlots.length > 0) {
-            eliteBoost = classifyUnfilledSlots(best.unfilledSlots);
+          // Refresh elite-boost hints every ELITE_INTERVAL attempts. When best
+          // is feasible, drop any stale boost so subsequent attempts can
+          // optimise fairness/penalty without distortion from old hints.
+          if (best && i > 0 && i % ELITE_INTERVAL === 0) {
+            eliteBoost = best.unfilledSlots.length > 0
+              ? classifyUnfilledSlots(best.unfilledSlots)
+              : { boostTaskIds: new Set(), saIntensifyTaskIds: new Set() };
           }
 
           // Shuffle participant order (first attempt uses original order)
@@ -2207,7 +2290,10 @@ export function optimizeMultiAttemptAsync(
                   eliteBoost.boostTaskIds.has(t.id)
                     ? {
                         ...t,
-                        schedulingPriority: Math.max(1, (t.schedulingPriority ?? computeStructuralPriority(t, ctx)) - 10),
+                        schedulingPriority: Math.max(
+                          1,
+                          (t.schedulingPriority ?? computeStructuralPriority(t, ctx)) - 10,
+                        ),
                       }
                     : t,
                 )
@@ -2229,6 +2315,7 @@ export function optimizeMultiAttemptAsync(
             abortSignal,
             ctx,
             eliteBoost.saIntensifyTaskIds.size > 0 ? eliteBoost.saIntensifyTaskIds : undefined,
+            scheduleContext,
           );
 
           const improved = best === null || isBetterResult(result, best);

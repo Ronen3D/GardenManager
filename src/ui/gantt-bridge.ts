@@ -13,9 +13,9 @@ import {
   type Schedule,
   type Task,
 } from '../models/types';
-import { describeSlot } from '../utils/date-utils';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import { blockDurationMinutes, getTimelineBounds } from '../shared/utils/time-utils';
+import { describeSlot } from '../utils/date-utils';
 
 const STATUS_OPACITY: Record<AssignmentStatus, number> = {
   [AssignmentStatus.Scheduled]: 1.0,
@@ -220,11 +220,7 @@ export function buildTaskSummary(schedule: Schedule): string {
     const start = task.timeBlock.start.toISOString().slice(11, 16);
     const end = task.timeBlock.end.toISOString().slice(11, 16);
 
-    lines.push(
-      `║ ${task.name.padEnd(20)} ${start}-${end}  [${task.sourceName || task.name}]`.padEnd(
-        63,
-      ) + '║',
-    );
+    lines.push(`║ ${task.name.padEnd(20)} ${start}-${end}  [${task.sourceName || task.name}]`.padEnd(63) + '║');
 
     for (const a of taskAssignments) {
       const p = pMap.get(a.participantId);

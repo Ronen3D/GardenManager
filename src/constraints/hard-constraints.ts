@@ -15,9 +15,14 @@ import {
   type ValidationResult,
   ViolationSeverity,
 } from '../models/types';
-import { bidiTimeRange, describeSlotBidi, describeTaskBidi } from '../utils/date-utils';
 import { isHighLoadAtBoundary } from '../shared/utils/load-weighting';
-import { blocksOverlap, isBlockedByDateUnavailability, isFullyCovered } from '../shared/utils/time-utils';
+import {
+  blocksOverlap,
+  isBlockedByDateUnavailability,
+  isFullyCovered,
+  type ScheduleContext,
+} from '../shared/utils/time-utils';
+import { bidiTimeRange, describeSlotBidi, describeTaskBidi } from '../utils/date-utils';
 import { checkSleepRecovery } from './sleep-recovery';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -120,11 +125,16 @@ export function checkCertificationRequirement(
  * @param extraUnavailability Optional schedule-scoped windows (Future SOS).
  *        When any entry belongs to the participant and overlaps the task,
  *        HC-3 fires just as it would for master-data unavailability.
+ * @param scheduleContext Required to evaluate weekly `dateUnavailability`
+ *        rules in operational-day semantics. When omitted, the recurring-rule
+ *        check is skipped (the caller must have pre-expanded blackouts into
+ *        `participant.availability`). All production call paths pass it.
  */
 export function checkAvailability(
   participant: Participant,
   task: Task,
   extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
+  scheduleContext?: ScheduleContext,
 ): ConstraintViolation | null {
   if (!isFullyCovered(task.timeBlock, participant.availability)) {
     return violation(
@@ -135,7 +145,10 @@ export function checkAvailability(
       participant.id,
     );
   }
-  if (isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability)) {
+  if (
+    scheduleContext &&
+    isBlockedByDateUnavailability(task.timeBlock, participant.dateUnavailability, scheduleContext)
+  ) {
     return violation(
       'AVAILABILITY_VIOLATION',
       `${participant.name} \u200F— ${task.name} (${bidiTimeRange(task.timeBlock)})`,
@@ -560,6 +573,7 @@ export function validateHardConstraints(
   restRuleMap?: Map<string, number>,
   certLabelResolver: (certId: string) => string = (id) => id,
   extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
+  scheduleContext?: ScheduleContext,
 ): ValidationResult {
   const allViolations: ConstraintViolation[] = [];
   const pMap = buildParticipantMap(participants);
@@ -658,7 +672,7 @@ export function validateHardConstraints(
 
       // HC-3: Availability
       if (!disabledHC?.has('HC-3')) {
-        const availV = checkAvailability(participant, task, extraUnavailability);
+        const availV = checkAvailability(participant, task, extraUnavailability, scheduleContext);
         if (availV) allViolations.push(availV);
       }
     }

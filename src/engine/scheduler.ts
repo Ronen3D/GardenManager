@@ -23,6 +23,7 @@ import {
   type ValidationResult,
   ViolationSeverity,
 } from '../models/types';
+import type { ScheduleContext } from '../shared/utils/time-utils';
 import { computeAllCapacities } from '../utils/capacity';
 import { describeSlotBidi } from '../utils/date-utils';
 import {
@@ -208,6 +209,30 @@ export class SchedulingEngine {
     return this._buildScoreCtx(this.currentSchedule.tasks, this.currentSchedule.participants);
   }
 
+  /**
+   * Build a `ScheduleContext` so HC-3 can evaluate weekly `dateUnavailability`
+   * rules in operational-day semantics (see `ScheduleContext`). Uses the
+   * frozen period when set, otherwise derives it from task time blocks.
+   */
+  private _scheduleContext(tasks: Task[]): ScheduleContext {
+    const { periodStart, periodDays } = this._resolvePeriod(tasks);
+    return { baseDate: periodStart, scheduleDays: periodDays, dayStartHour: this.dayStartHour };
+  }
+
+  /**
+   * Public accessor: build a `ScheduleContext` from the current schedule.
+   * Consumers outside the engine (rescue/inject UI paths, swap previews)
+   * use this to parameterise HC-3 evaluation consistently.
+   */
+  getScheduleContext(): ScheduleContext | undefined {
+    if (!this.currentSchedule) return undefined;
+    return {
+      baseDate: new Date(this.currentSchedule.periodStart.getTime()),
+      scheduleDays: this.currentSchedule.periodDays,
+      dayStartHour: this.dayStartHour,
+    };
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Stage 1: Data Setup
   // ═══════════════════════════════════════════════════════════════════════════
@@ -332,6 +357,8 @@ export class SchedulingEngine {
       this.disabledHC,
       this.restRuleMap,
       this.certLabelResolver,
+      undefined,
+      this._scheduleContext(tasks),
     );
     const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.config);
 
@@ -412,6 +439,11 @@ export class SchedulingEngine {
       this.phantomContext ?? undefined,
       this.restRuleMap,
       this.dayStartHour,
+      this.certLabelResolver,
+      undefined,
+      undefined,
+      undefined,
+      this._scheduleContext(tasks),
     );
     return this._commitOptimizationResult(tasks, participants, result);
   }
@@ -447,6 +479,7 @@ export class SchedulingEngine {
       this.dayStartHour,
       this.certLabelResolver,
       abortSignal,
+      this._scheduleContext(tasks),
     );
 
     return this._commitOptimizationResult(tasks, participants, result);
@@ -502,6 +535,7 @@ export class SchedulingEngine {
       this.restRuleMap,
       this.certLabelResolver,
       this.currentSchedule.scheduleUnavailability ?? [],
+      this.getScheduleContext(),
     );
   }
 
@@ -524,6 +558,7 @@ export class SchedulingEngine {
       this.restRuleMap,
       this.certLabelResolver,
       this.currentSchedule.scheduleUnavailability ?? [],
+      this.getScheduleContext(),
     );
     const soft = collectSoftWarnings(tasks, participants, assignments, this.config);
     const score = computeScheduleScore(
@@ -977,6 +1012,7 @@ export class SchedulingEngine {
     const availableParticipants = this.getAllParticipants().filter((p) => !unavailableSet.has(p.id));
 
     // Re-optimize with pinned assignments
+    const reoptCtx = this.getScheduleContext();
     const result = optimize(
       this.currentSchedule.tasks,
       availableParticipants,
@@ -987,6 +1023,11 @@ export class SchedulingEngine {
       undefined,
       this.restRuleMap,
       this.dayStartHour,
+      this.certLabelResolver,
+      undefined,
+      undefined,
+      undefined,
+      reoptCtx,
     );
 
     // Validate
@@ -997,6 +1038,8 @@ export class SchedulingEngine {
       this.disabledHC,
       this.restRuleMap,
       this.certLabelResolver,
+      undefined,
+      reoptCtx,
     );
     const softWarnings = collectSoftWarnings(
       this.currentSchedule.tasks,
@@ -1007,9 +1050,7 @@ export class SchedulingEngine {
 
     const prev = this.currentSchedule;
     const fallback = this._resolvePeriod(prev.tasks);
-    const periodStart = prev.periodStart
-      ? new Date(prev.periodStart.getTime())
-      : fallback.periodStart;
+    const periodStart = prev.periodStart ? new Date(prev.periodStart.getTime()) : fallback.periodStart;
     const periodDays = prev.periodDays ?? fallback.periodDays;
     const schedule: Schedule = {
       id: `schedule-${Date.now()}`,

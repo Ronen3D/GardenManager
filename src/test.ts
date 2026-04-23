@@ -304,7 +304,7 @@ import { getRecoveryWindow } from './constraints/sleep-recovery';
 import { collectSoftWarnings, dailyWorkloadImbalance, workloadImbalanceSplit } from './constraints/soft-constraints';
 import { fullValidate, previewSwap } from './engine/validator';
 import { computeParticipantRest } from './shared/utils/rest-calculator';
-import { isDateInBlock } from './shared/utils/time-utils';
+import { isBlockedByDateUnavailability, isDateInBlock, type ScheduleContext } from './shared/utils/time-utils';
 import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
 
 let passed = 0;
@@ -5627,9 +5627,14 @@ console.log('\n── HC-3: dateUnavailability ───────────
     blocksConsecutive: true,
   };
 
+  // Schedule window anchored at Sunday Feb 15, 2026 with dayStartHour=5.
+  // Weekly rules are evaluated in operational-day semantics; `scheduleContext`
+  // tells HC-3 which Day-of-week index each schedule day maps to.
+  const duSchedCtx = { baseDate: new Date(2026, 1, 15), scheduleDays: 7, dayStartHour: 5 };
+
   // Check eligibility — dateUnavailability must block this participant
   const tMap = new Map([[duTask.id, duTask]]);
-  const eligible = isEligible(duP, duTask, duTask.slots[0], [], tMap);
+  const eligible = isEligible(duP, duTask, duTask.slots[0], [], tMap, { scheduleContext: duSchedCtx });
   assert(eligible === false, 'HC-3: dateUnavailability blocks isEligible on matching day');
 
   // Also verify via validateHardConstraints
@@ -5643,7 +5648,16 @@ console.log('\n── HC-3: dateUnavailability ───────────
       updatedAt: new Date(),
     },
   ];
-  const duResult = validateHardConstraints([duTask], [duP], duAssigns);
+  const duResult = validateHardConstraints(
+    [duTask],
+    [duP],
+    duAssigns,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    duSchedCtx,
+  );
   const hasDateViolation = duResult.violations.some((v) => v.code === 'AVAILABILITY_VIOLATION');
   assert(hasDateViolation, 'HC-3: dateUnavailability produces AVAILABILITY_VIOLATION in validateHardConstraints');
 
@@ -5659,7 +5673,7 @@ console.log('\n── HC-3: dateUnavailability ───────────
     id: 'du-p2',
     availability: [{ start: new Date(2026, 1, 16, 0, 0), end: new Date(2026, 1, 17, 12, 0) }],
   };
-  const eligMon = isEligible(monAvail, monTask, monTask.slots[0], [], tMap2);
+  const eligMon = isEligible(monAvail, monTask, monTask.slots[0], [], tMap2, { scheduleContext: duSchedCtx });
   assert(eligMon === true, 'HC-3: dateUnavailability on Sunday does not block Monday');
 
   // Partial-day unavailability: unavailable Sunday 10:00–14:00
@@ -5669,7 +5683,7 @@ console.log('\n── HC-3: dateUnavailability ───────────
     dateUnavailability: [{ id: 'du-u2', dayOfWeek: 0, startHour: 10, endHour: 14, allDay: false }],
   };
   // Task 06:00–14:00 overlaps with 10:00–14:00 → blocked
-  const eligPartialOverlap = isEligible(partialP, duTask, duTask.slots[0], [], tMap);
+  const eligPartialOverlap = isEligible(partialP, duTask, duTask.slots[0], [], tMap, { scheduleContext: duSchedCtx });
   assert(eligPartialOverlap === false, 'HC-3: partial-day unavailability blocks overlapping task');
 
   // Task 06:00–10:00 does NOT overlap with 10:00–14:00 (endpoint-exclusive) → eligible
@@ -5679,8 +5693,382 @@ console.log('\n── HC-3: dateUnavailability ───────────
     timeBlock: createTimeBlockFromHours(baseDate, 6, 10),
   };
   const tMap3 = new Map([[earlyTask.id, earlyTask]]);
-  const eligEarly = isEligible(partialP, earlyTask, earlyTask.slots[0], [], tMap3);
+  const eligEarly = isEligible(partialP, earlyTask, earlyTask.slots[0], [], tMap3, { scheduleContext: duSchedCtx });
   assert(eligEarly === true, 'HC-3: task ending at unavailability start is not blocked');
+
+  // ── New: cross-midnight Day-N spill does NOT fire Sunday-outside-window rule
+  // Day 7 (Saturday Feb 21) 21:00 → Day 8 (Sunday Feb 22) 05:00. Day 8 is outside
+  // the scheduling window (Day 1..7), so the Sunday all-day rule must not block.
+  const spillTask: Task = {
+    id: 'du-spill',
+    name: 'Spill Task',
+    timeBlock: {
+      start: new Date(2026, 1, 21, 21, 0), // Sat 21:00
+      end: new Date(2026, 1, 22, 5, 0), // Sun 05:00 (op-Saturday still)
+    },
+    requiredCount: 1,
+    slots: [{ slotId: 'du-sp-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const spillAvailP: Participant = {
+    ...duP,
+    id: 'du-spill-p',
+    availability: [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 22, 12, 0) }],
+  };
+  const tMapSpill = new Map([[spillTask.id, spillTask]]);
+  const spillCtx = { baseDate: new Date(2026, 1, 15), scheduleDays: 7, dayStartHour: 5 };
+  const eligSpill = isEligible(spillAvailP, spillTask, spillTask.slots[0], [], tMapSpill, {
+    scheduleContext: spillCtx,
+  });
+  assert(eligSpill === true, 'HC-3: Sunday rule does not fire on Day-7 spill into out-of-window calendar Sunday');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HC-3 op-day semantics — edge cases
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// These tests pin down the boundary behaviour of the operational-day
+// interpretation of weekly `dateUnavailability` rules. Each test uses a
+// synthetic schedule window and invokes `isBlockedByDateUnavailability`
+// directly — the single primitive every HC-3 code path depends on.
+
+console.log('\n── HC-3: op-day semantics ──────────');
+
+{
+  // Convenience: Sunday = Feb 15 2026 (dow=0), so Day 1 is Sunday, Day 7 is Saturday.
+  const SUN_BASE = new Date(2026, 1, 15);
+  const ctx7d: ScheduleContext = { baseDate: SUN_BASE, scheduleDays: 7, dayStartHour: 5 };
+  const sundayAllDay = [{ id: 'r1', dayOfWeek: 0, startHour: 0, endHour: 0, allDay: true }];
+  const saturdayAllDay = [{ id: 'r2', dayOfWeek: 6, startHour: 0, endHour: 0, allDay: true }];
+  const mondayAllDay = [{ id: 'r3', dayOfWeek: 1, startHour: 0, endHour: 0, allDay: true }];
+
+  // Helper to build a TimeBlock from explicit calendar components.
+  const tb = (sm: number, sd: number, sh: number, em: number, ed: number, eh: number): TimeBlock => ({
+    start: new Date(2026, sm, sd, sh, 0),
+    end: new Date(2026, em, ed, eh, 0),
+  });
+
+  // ── E1: Cross-midnight Day-7 → Day-8 spill (primary fix) ──────────────────
+  // Day 7 Sat 21:00 → Day 8 Sun 05:00. Day 8 is outside the 7-day window.
+  const e1 = tb(1, 21, 21, 1, 22, 5);
+  assert(
+    isBlockedByDateUnavailability(e1, sundayAllDay, ctx7d) === false,
+    'E1: Day-7 spill into out-of-window calendar Sunday is NOT blocked',
+  );
+  // Same task WITH Saturday rule → Day 7 itself is Saturday, so blocked.
+  assert(
+    isBlockedByDateUnavailability(e1, saturdayAllDay, ctx7d) === true,
+    'E1: Day-7 spill IS blocked by Saturday rule (op-day is Saturday)',
+  );
+
+  // ── E2: Cross-midnight within window ──────────────────────────────────────
+  // Day 1 Sun 21:00 → Day 2 Mon 05:00. Task ends AT op-day-2 start; not strict overlap.
+  const e2 = tb(1, 15, 21, 1, 16, 5);
+  assert(
+    isBlockedByDateUnavailability(e2, sundayAllDay, ctx7d) === true,
+    'E2: Day-1 Sunday-night task IS blocked by Sunday rule',
+  );
+  assert(
+    isBlockedByDateUnavailability(e2, mondayAllDay, ctx7d) === false,
+    'E2: Day-1 task ending exactly at op-day-2 start is NOT blocked by Monday rule (endpoint-exclusive)',
+  );
+
+  // ── E3: Op-boundary straddle at dayStartHour ─────────────────────────────
+  // Task Sun 04:00–06:00 spans operational Saturday (04:00–05:00) and Sunday (05:00–06:00).
+  const e3 = tb(1, 15, 4, 1, 15, 6);
+  assert(
+    isBlockedByDateUnavailability(e3, sundayAllDay, ctx7d) === true,
+    'E3: boundary-straddling task IS blocked by Sunday rule (overlaps op-Sunday portion)',
+  );
+  // Pre-boundary task entirely operationally Saturday (Sun 02:00–04:00) —
+  // in this 7-day Sun-based window, calendar Sun 02:00 is operationally
+  // "the Saturday BEFORE Day 1" which is OUTSIDE the scheduling window.
+  // No rule fires, including Saturday: op-Day-7 is the *following* Saturday (Feb 21),
+  // which doesn't overlap the task.
+  const e3b = tb(1, 15, 2, 1, 15, 4);
+  assert(
+    isBlockedByDateUnavailability(e3b, saturdayAllDay, ctx7d) === false,
+    'E3b: task on Sun 02:00–04:00 is operationally pre-Day-1 (out-of-window Saturday); Saturday rule does NOT fire',
+  );
+  assert(
+    isBlockedByDateUnavailability(e3b, sundayAllDay, ctx7d) === false,
+    'E3b: same pre-boundary task is NOT blocked by Sunday rule — operationally out-of-window',
+  );
+  // Complement: a task entirely inside op-Day-7 (Sat 05:00 onward through the
+  // following calendar Sunday pre-boundary tail) IS blocked by Saturday rule.
+  const e3c = tb(1, 22, 2, 1, 22, 4); // Sun Feb 22 02:00–04:00 = op-Saturday Feb 21 tail
+  assert(
+    isBlockedByDateUnavailability(e3c, saturdayAllDay, ctx7d) === true,
+    'E3c: Sun Feb 22 02:00–04:00 is op-Day-7 (Saturday) tail and IS blocked by Saturday rule',
+  );
+
+  // ── E4: Partial rule on matching op-day ──────────────────────────────────
+  const sunPartial = [{ id: 'r4', dayOfWeek: 0, startHour: 10, endHour: 14, allDay: false }];
+  const e4 = tb(1, 15, 6, 1, 15, 14); // Day 1 Sun 06:00–14:00
+  assert(
+    isBlockedByDateUnavailability(e4, sunPartial, ctx7d) === true,
+    'E4: partial Sunday 10:00–14:00 rule blocks Day-1 task that overlaps',
+  );
+  const e4b = tb(1, 15, 6, 1, 15, 10);
+  assert(
+    isBlockedByDateUnavailability(e4b, sunPartial, ctx7d) === false,
+    'E4b: partial rule is endpoint-exclusive — task ending at 10:00 is NOT blocked',
+  );
+
+  // ── E5: Partial cross-midnight rule (wrap) ───────────────────────────────
+  // Sun 22:00 → Mon 02:00. Task Mon 01:00–02:30 overlaps.
+  const sunWrap = [{ id: 'r5', dayOfWeek: 0, startHour: 22, endHour: 2, allDay: false }];
+  const e5 = tb(1, 16, 1, 1, 16, 3);
+  assert(
+    isBlockedByDateUnavailability(e5, sunWrap, ctx7d) === true,
+    'E5: Sunday 22:00 → Mon 02:00 rule blocks task on calendar Monday early AM',
+  );
+
+  // ── E6: baseDate on a non-Sunday — rule fires on the correct op-day only ──
+  // baseDate = Wednesday Feb 18. Day 5 is Sunday. Day 1 is Wednesday.
+  const WED_BASE = new Date(2026, 1, 18);
+  const ctxWed: ScheduleContext = { baseDate: WED_BASE, scheduleDays: 7, dayStartHour: 5 };
+  const e6_day1 = tb(1, 18, 10, 1, 18, 14); // Day 1 Wed 10:00–14:00
+  const e6_day5 = tb(1, 22, 10, 1, 22, 14); // Day 5 Sun 10:00–14:00
+  assert(
+    isBlockedByDateUnavailability(e6_day1, sundayAllDay, ctxWed) === false,
+    'E6: Sunday rule does not fire on Day 1 (Wed) under Wed-based schedule',
+  );
+  assert(
+    isBlockedByDateUnavailability(e6_day5, sundayAllDay, ctxWed) === true,
+    'E6: Sunday rule fires on Day 5 (Sun) under Wed-based schedule',
+  );
+
+  // ── E7: Schedule shorter than a week — out-of-window weekday never fires ──
+  // 3-day window starting Thursday (Feb 19). Days are Thu/Fri/Sat. Sunday is out-of-window.
+  const THU_BASE = new Date(2026, 1, 19);
+  const ctx3d: ScheduleContext = { baseDate: THU_BASE, scheduleDays: 3, dayStartHour: 5 };
+  // Cross-midnight from Day 3 (Sat Feb 21) into calendar Sunday Feb 22.
+  const e7 = tb(1, 21, 21, 1, 22, 5);
+  assert(
+    isBlockedByDateUnavailability(e7, sundayAllDay, ctx3d) === false,
+    'E7: 3-day Thu-start window — Sunday rule never fires on any day',
+  );
+
+  // ── E8: Empty rule list, zero scheduleDays ───────────────────────────────
+  assert(isBlockedByDateUnavailability(e2, [], ctx7d) === false, 'E8: empty rules list returns false');
+  const ctxZero: ScheduleContext = { baseDate: SUN_BASE, scheduleDays: 0, dayStartHour: 5 };
+  assert(
+    isBlockedByDateUnavailability(e2, sundayAllDay, ctxZero) === false,
+    'E8: scheduleDays=0 returns false regardless of rules',
+  );
+
+  // ── E9: Multiple rules — independence ────────────────────────────────────
+  const multi = [
+    { id: 'r6', dayOfWeek: 0, startHour: 0, endHour: 0, allDay: true },
+    { id: 'r7', dayOfWeek: 2, startHour: 9, endHour: 12, allDay: false },
+  ];
+  const e9_sun = tb(1, 15, 10, 1, 15, 14);
+  const e9_tue = tb(1, 17, 10, 1, 17, 11);
+  const e9_wed = tb(1, 18, 10, 1, 18, 11);
+  assert(isBlockedByDateUnavailability(e9_sun, multi, ctx7d) === true, 'E9: multi-rule — Sunday rule fires on Day 1');
+  assert(
+    isBlockedByDateUnavailability(e9_tue, multi, ctx7d) === true,
+    'E9: multi-rule — Tuesday partial rule fires on Day 3',
+  );
+  assert(
+    isBlockedByDateUnavailability(e9_wed, multi, ctx7d) === false,
+    'E9: multi-rule — no rule matches Wednesday (Day 4)',
+  );
+
+  // ── E10: AllDay rule uses dayStartHour boundary, not midnight ────────────
+  // Task Day 1 Sun 05:00–05:30 — exactly op-Sunday start.
+  const e10_start = tb(1, 15, 5, 1, 15, 6);
+  assert(
+    isBlockedByDateUnavailability(e10_start, sundayAllDay, ctx7d) === true,
+    'E10: task starting at op-Sunday boundary IS blocked by Sunday allDay rule',
+  );
+  // Task Monday 04:00–04:30 — still inside op-Sunday (before Mon 05:00 boundary).
+  const e10_endtail = tb(1, 16, 4, 1, 16, 4);
+  // Pick a non-empty range:
+  const e10_endtail2 = tb(1, 16, 4, 1, 16, 4);
+  void e10_endtail;
+  void e10_endtail2; // silence unused
+  const e10_tail = tb(1, 16, 3, 1, 16, 4);
+  assert(
+    isBlockedByDateUnavailability(e10_tail, sundayAllDay, ctx7d) === true,
+    'E10: task at Mon 03:00–04:00 (still op-Sunday tail) IS blocked by Sunday allDay rule',
+  );
+  // Task Monday 05:00–06:00 — beyond op-Sunday; op-day is Monday.
+  const e10_mon = tb(1, 16, 5, 1, 16, 6);
+  assert(
+    isBlockedByDateUnavailability(e10_mon, sundayAllDay, ctx7d) === false,
+    'E10: task at Mon 05:00+ is op-Monday; Sunday allDay rule does NOT fire',
+  );
+
+  // ── E11: dayStartHour other than 5 ───────────────────────────────────────
+  const ctx7d_h7: ScheduleContext = { baseDate: SUN_BASE, scheduleDays: 7, dayStartHour: 7 };
+  // With hBoundary=7, op-Sunday = Sun 07:00 → Mon 07:00. Task Mon 06:00-06:30 is op-Sunday.
+  const e11 = tb(1, 16, 6, 1, 16, 6);
+  // (zero-length; craft a real range):
+  const e11_real = tb(1, 16, 5, 1, 16, 6);
+  void e11;
+  assert(
+    isBlockedByDateUnavailability(e11_real, sundayAllDay, ctx7d_h7) === true,
+    'E11: with dayStartHour=7, Mon 05:00-06:00 is op-Sunday tail and IS blocked',
+  );
+  // Task Sun 06:00-06:30 — BEFORE op-Sunday start (Sun 07:00). In op-Saturday = Day 7.
+  const e11b = tb(1, 15, 6, 1, 15, 7);
+  assert(
+    isBlockedByDateUnavailability(e11b, sundayAllDay, ctx7d_h7) === false,
+    'E11b: with dayStartHour=7, Sun 06:00 is op-Saturday tail, NOT blocked by Sunday rule',
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HC-3 op-day semantics — integration: validator + SA swap feasibility
+// ═══════════════════════════════════════════════════════════════════════════════
+
+console.log('\n── HC-3: op-day integration (validator + SA) ──────────');
+
+{
+  const SUN_BASE = new Date(2026, 1, 15);
+  const ctx7d: ScheduleContext = { baseDate: SUN_BASE, scheduleDays: 7, dayStartHour: 5 };
+
+  // Scenario A: validateHardConstraints catches a Day-1 Sunday placement.
+  const pSun: Participant = {
+    id: 'i-pSun',
+    name: 'SundayOff',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 22, 12, 0) }],
+    dateUnavailability: [{ id: 'i-r1', dayOfWeek: 0, startHour: 0, endHour: 0, allDay: true }],
+  };
+  const day1Task: Task = {
+    id: 'i-t1',
+    name: 'Day1 Task',
+    timeBlock: { start: new Date(2026, 1, 15, 10, 0), end: new Date(2026, 1, 15, 14, 0) },
+    requiredCount: 1,
+    slots: [{ slotId: 'i-t1-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const day1Assign: Assignment[] = [
+    {
+      id: 'i-a1',
+      taskId: day1Task.id,
+      slotId: 'i-t1-s1',
+      participantId: pSun.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+  const resA = validateHardConstraints(
+    [day1Task],
+    [pSun],
+    day1Assign,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    ctx7d,
+  );
+  assert(
+    resA.violations.some((v) => v.code === 'AVAILABILITY_VIOLATION'),
+    'INT-A: validator reports HC-3 for Sunday-unavailable participant on Day-1 Sunday task',
+  );
+
+  // Scenario B: validateHardConstraints must NOT flag a Day-7 spill into calendar Sunday.
+  const spillTask: Task = {
+    id: 'i-t2',
+    name: 'Day7 Spill',
+    timeBlock: { start: new Date(2026, 1, 21, 21, 0), end: new Date(2026, 1, 22, 5, 0) },
+    requiredCount: 1,
+    slots: [{ slotId: 'i-t2-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const spillAssign: Assignment[] = [
+    {
+      id: 'i-a2',
+      taskId: spillTask.id,
+      slotId: 'i-t2-s1',
+      participantId: pSun.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+  const resB = validateHardConstraints(
+    [spillTask],
+    [pSun],
+    spillAssign,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    ctx7d,
+  );
+  assert(
+    !resB.violations.some((v) => v.code === 'AVAILABILITY_VIOLATION'),
+    'INT-B: validator does NOT report HC-3 for Sunday-rule participant on Day-7 spill into out-of-window Sunday',
+  );
+
+  // Scenario C: end-to-end optimizer — SA cannot produce a schedule that violates the
+  //           new HC-3 semantics. Two participants, two tasks (one cross-midnight Day 7,
+  //           one ordinary Day-3 Tuesday). pSun has Sunday all-day; pFlex has no rules.
+  //           Greedy should pick pSun for the spill task (no HC-3 conflict since Day 7
+  //           is Saturday, and Day 8 Sunday is out-of-window) and pFlex for Tuesday.
+  //           No swap should ever land pSun on a Day-1 task.
+  const pFlex: Participant = {
+    id: 'i-pFlex',
+    name: 'Flex',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 22, 12, 0) }],
+    dateUnavailability: [],
+  };
+  const day3Task: Task = {
+    id: 'i-t3',
+    name: 'Day3 Tue',
+    timeBlock: { start: new Date(2026, 1, 17, 10, 0), end: new Date(2026, 1, 17, 14, 0) },
+    requiredCount: 1,
+    slots: [{ slotId: 'i-t3-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const day1AlsoSun: Task = {
+    id: 'i-t4',
+    name: 'Day1 Sun',
+    timeBlock: { start: new Date(2026, 1, 15, 10, 0), end: new Date(2026, 1, 15, 14, 0) },
+    requiredCount: 1,
+    slots: [{ slotId: 'i-t4-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  // Three tasks: the Sunday (Day 1), the Tuesday (Day 3), and the Day-7 spill.
+  // Feasible assignment: pFlex→Day1, pSun→Day3, pFlex→Day7 (or pSun→Day7 since op-day is Saturday).
+  // The interesting case: pSun CAN take the spill task; SA must not move pSun onto Day-1 Sunday.
+  const engine = new SchedulingEngine({}, undefined, undefined, 5);
+  engine.setPeriod(SUN_BASE, 7);
+  engine.addParticipants([pSun, pFlex]);
+  engine.addTasks([day1AlsoSun, day3Task, spillTask]);
+  const sched = engine.generateSchedule();
+
+  // Final validator already runs inside generateSchedule and captures violations.
+  const hc3Violations = sched.violations.filter((v) => v.code === 'AVAILABILITY_VIOLATION');
+  assert(hc3Violations.length === 0, `INT-C: engine produces zero HC-3 violations (got ${hc3Violations.length})`);
+
+  // Sanity: pSun is NEVER on the Day-1 Sunday task.
+  const day1Aoutput = sched.assignments.find((a) => a.taskId === day1AlsoSun.id);
+  assert(day1Aoutput !== undefined, 'INT-C: Day-1 Sunday task was assigned');
+  assert(
+    day1Aoutput?.participantId !== pSun.id,
+    'INT-C: Sunday-unavailable participant is NEVER placed on the Day-1 Sunday task after SA',
+  );
+
+  // Sanity: pSun CAN be on the Day-7 spill (operationally Saturday, no Sunday rule applies).
+  const day7Aoutput = sched.assignments.find((a) => a.taskId === spillTask.id);
+  assert(day7Aoutput !== undefined, 'INT-C: Day-7 spill task was assigned');
+  // Either participant is legal here. Just ensure the assignment was made feasibly.
+  assert(hc3Violations.length === 0, 'INT-C: Day-7 spill slot filled without HC-3 violation regardless of who got it');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -6247,6 +6635,7 @@ import {
   classifyUnfilledSlots,
   computeStructuralPriority,
   greedyAssign,
+  isSwapFeasible,
   optimize,
   optimizeMultiAttempt,
   type UnfilledSlot,
@@ -7059,6 +7448,173 @@ console.log('\n── Optimizer ────────────────
   // Re-validate output
   const rotVal = validateHardConstraints(rotTasks, rotPool, rotResult.assignments);
   assert(rotVal.valid === true, `4-8 scenario: output passes HC re-validation`);
+}
+
+// ─── isSwapFeasible: HC-15 regression ───────────────────────────────────────
+// Regression for a real bug where SA's hand-rolled swap delta check skipped
+// HC-15, letting a swap produce a participant with both an overnight trigger
+// task and a loaded task inside the recovery window. The aggregate validator
+// flagged it post-hoc, but SA had already committed the bad swap.
+
+console.log('\n── Optimizer: isSwapFeasible HC-15 regression ─');
+
+{
+  const baseDay = new Date(2026, 3, 10); // April 10, 2026
+  const nextDay = new Date(2026, 3, 11);
+  const availRange: TimeBlock[] = [{ start: new Date(2026, 3, 9, 0, 0), end: new Date(2026, 3, 12, 0, 0) }];
+
+  // NIGHT (21:00 → 05:00 next day) — triggers HC-15 with 7h recovery ending 12:00.
+  const nightStart = new Date(baseDay.getFullYear(), baseDay.getMonth(), baseDay.getDate(), 21, 0);
+  const nightEnd = new Date(nextDay.getFullYear(), nextDay.getMonth(), nextDay.getDate(), 5, 0);
+  const nightTask: Task = {
+    id: 'sf-night',
+    name: 'Night',
+    timeBlock: { start: nightStart, end: nightEnd },
+    requiredCount: 1,
+    slots: [{ slotId: 'sf-night-s', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'N' }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    baseLoadWeight: 1,
+    sleepRecovery: { rangeStartHour: 3, rangeEndHour: 8, recoveryHours: 7 },
+  };
+
+  // LOADED_DAY (09:00-12:00 next day) — sits fully inside [05:00, 12:00) recovery window.
+  const loadedDayStart = new Date(nextDay.getFullYear(), nextDay.getMonth(), nextDay.getDate(), 9, 0);
+  const loadedDayEnd = new Date(nextDay.getFullYear(), nextDay.getMonth(), nextDay.getDate(), 12, 0);
+  const loadedTask: Task = {
+    id: 'sf-loaded',
+    name: 'LoadedDay',
+    timeBlock: { start: loadedDayStart, end: loadedDayEnd },
+    requiredCount: 1,
+    slots: [{ slotId: 'sf-loaded-s', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'L' }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    baseLoadWeight: 1,
+  };
+
+  // SAFE_DAY (13:00-16:00 next day) — outside the recovery window, never triggers HC-15.
+  const safeStart = new Date(nextDay.getFullYear(), nextDay.getMonth(), nextDay.getDate(), 13, 0);
+  const safeEnd = new Date(nextDay.getFullYear(), nextDay.getMonth(), nextDay.getDate(), 16, 0);
+  const safeTask: Task = {
+    id: 'sf-safe',
+    name: 'SafeDay',
+    timeBlock: { start: safeStart, end: safeEnd },
+    requiredCount: 1,
+    slots: [{ slotId: 'sf-safe-s', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'S' }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    baseLoadWeight: 1,
+  };
+
+  const sfP1: Participant = {
+    id: 'sf-p1',
+    name: 'SF-P1',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: availRange,
+    dateUnavailability: [],
+  };
+  const sfP2: Participant = {
+    id: 'sf-p2',
+    name: 'SF-P2',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: availRange,
+    dateUnavailability: [],
+  };
+
+  // Proposed POST-SWAP state: P1 holds NIGHT + LOADED_DAY (the violation), P2 holds SAFE_DAY.
+  // Pre-swap would have been: P1 holds NIGHT + SAFE_DAY, P2 holds LOADED_DAY — both legal.
+  const postSwap: Assignment[] = [
+    {
+      id: 'sf-a1',
+      taskId: nightTask.id,
+      slotId: 'sf-night-s',
+      participantId: sfP1.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'sf-a2',
+      taskId: loadedTask.id,
+      slotId: 'sf-loaded-s',
+      participantId: sfP1.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'sf-a3',
+      taskId: safeTask.id,
+      slotId: 'sf-safe-s',
+      participantId: sfP2.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+
+  const sfTaskMap = new Map<string, Task>([
+    [nightTask.id, nightTask],
+    [loadedTask.id, loadedTask],
+    [safeTask.id, safeTask],
+  ]);
+  const sfPMap = new Map<string, Participant>([
+    [sfP1.id, sfP1],
+    [sfP2.id, sfP2],
+  ]);
+
+  // byParticipant reflects the POST-swap state, as isSwapFeasible's contract requires.
+  const sfByParticipant = new Map<string, Assignment[]>([
+    [sfP1.id, [postSwap[0], postSwap[1]]],
+    [sfP2.id, [postSwap[2]]],
+  ]);
+  const sfByTask = new Map<string, Assignment[]>([
+    [nightTask.id, [postSwap[0]]],
+    [loadedTask.id, [postSwap[1]]],
+    [safeTask.id, [postSwap[2]]],
+  ]);
+
+  // idxI = LOADED_DAY (now owned by P1), idxJ = SAFE_DAY (now owned by P2) — the two
+  // assignments whose participant IDs were exchanged.
+  const feasible = isSwapFeasible(postSwap, 1, 2, sfTaskMap, sfPMap, sfByParticipant, sfByTask);
+  assert(
+    feasible === false,
+    'isSwapFeasible: rejects a swap that leaves P1 holding both a HC-15 trigger and a loaded task in the recovery window',
+  );
+
+  // Sanity: with HC-15 disabled, the same swap is now feasible (confirms the
+  // rejection above is specifically HC-15 and not leaking from another check).
+  const feasibleDisabled = isSwapFeasible(
+    postSwap,
+    1,
+    2,
+    sfTaskMap,
+    sfPMap,
+    sfByParticipant,
+    sfByTask,
+    new Set<string>(['HC-15']),
+  );
+  assert(
+    feasibleDisabled === true,
+    'isSwapFeasible: accepts the same swap when HC-15 is disabled (isolates the rejection cause)',
+  );
+
+  // Symmetry: the opposite direction (candidate is triggering task, existing loaded)
+  // must also be rejected. Build a state where P1 already had LOADED_DAY and we
+  // swap in NIGHT — post-swap is identical but idxI is the night task.
+  const feasibleSym = isSwapFeasible(postSwap, 0, 2, sfTaskMap, sfPMap, sfByParticipant, sfByTask);
+  assert(
+    feasibleSym === false,
+    'isSwapFeasible: rejects symmetrically when the trigger task is the newly-placed assignment',
+  );
+
+  // Aggregate validator agrees — keeps placement and aggregate paths in sync.
+  const sfVal = validateHardConstraints([nightTask, loadedTask, safeTask], [sfP1, sfP2], postSwap);
+  assert(
+    sfVal.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
+    'isSwapFeasible regression: aggregate validator flags the same post-swap state as HC-15 violation',
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -11269,7 +11825,10 @@ console.log('\n── Temporal mutation gates ───────────�
 
     // Anchor past midnight but still inside op-day 3 (calendar day 4 at 02:30).
     const anchorWrap = new Date(2026, 5, 4, 2, 30);
-    assert(isDayModifiable(3, base, anchorWrap, dsh) === true, 'gate-E2: op-day 3 still modifiable at 02:30 next cal day');
+    assert(
+      isDayModifiable(3, base, anchorWrap, dsh) === true,
+      'gate-E2: op-day 3 still modifiable at 02:30 next cal day',
+    );
     const fE2 = getInjectStartFloor(3, base, anchorWrap, dsh);
     assert(fE2 !== null, 'gate-E2: floor not null');
     assert(fE2!.hourMin === 2, 'gate-E2: hourMin = 2 (operational tail)');
@@ -11303,7 +11862,10 @@ console.log('\n── Temporal mutation gates ───────────�
     // Roll-over case: startHour < dsh → next calendar day.
     const taskRoll = buildInjectedTask({ ...baseSpec, dayIndex: 3, startHour: 3, startMinute: 0 }, base, 7, dsh);
     assert(taskRoll !== null, 'gate-F1: roll task built');
-    assert(taskRoll!.timeBlock.start.getTime() === new Date(2026, 5, 4, 3, 0).getTime(), 'gate-F1: start on cal day 4 at 03:00');
+    assert(
+      taskRoll!.timeBlock.start.getTime() === new Date(2026, 5, 4, 3, 0).getTime(),
+      'gate-F1: start on cal day 4 at 03:00',
+    );
     assert(
       operationalDateKey(taskRoll!.timeBlock.start, dsh) === calendarDateKey(new Date(2026, 5, 3)),
       'gate-F1: operationalDateKey matches op-day 3 (cal day 3)',

@@ -1314,6 +1314,7 @@ function handleManualSlotClick(taskId: string, slotId: string): void {
     disabledHC,
     restRuleMap,
     currentSchedule.scheduleUnavailability,
+    engine?.getScheduleContext(),
   );
   _eligibleForSelectedSlot = new Set(eligible.map((p) => p.id));
 
@@ -2686,31 +2687,41 @@ function findPreExistingUnavailabilityOverlaps(
 
   const rules = participant.dateUnavailability ?? [];
   if (rules.length > 0) {
-    const ws = window.start;
-    let cursor = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate());
-    while (cursor.getTime() < wEnd) {
-      const dow = cursor.getDay();
+    // Iterate operational days (Day 1..N) inside the schedule window, mirroring
+    // `isBlockedByDateUnavailability` so the UI pre-existing-overlap preview
+    // agrees with HC-3. Days outside the schedule window intentionally produce
+    // no overlap — weekly rules only bind to the operational days the user
+    // actually scheduled.
+    const baseDate = schedule.periodStart;
+    const scheduleDays = schedule.periodDays;
+    const hBoundary = schedule.algorithmSettings.dayStartHour;
+    const baseY = baseDate.getFullYear();
+    const baseM = baseDate.getMonth();
+    const baseD = baseDate.getDate();
+    for (let dayIdx = 0; dayIdx < scheduleDays; dayIdx++) {
+      const opDayBase = new Date(baseY, baseM, baseD + dayIdx);
+      const opDayStartMs = new Date(baseY, baseM, baseD + dayIdx, hBoundary, 0).getTime();
+      const opDayEndMs = new Date(baseY, baseM, baseD + dayIdx + 1, hBoundary, 0).getTime();
+      if (opDayEndMs <= wStart || opDayStartMs >= wEnd) continue;
+      const dow = opDayBase.getDay();
       for (const rule of rules) {
         if (rule.dayOfWeek !== dow) continue;
         let rStart: number;
         let rEnd: number;
-        const y = cursor.getFullYear();
-        const m = cursor.getMonth();
-        const d = cursor.getDate();
         if (rule.allDay) {
-          rStart = cursor.getTime();
-          rEnd = new Date(y, m, d + 1).getTime();
+          rStart = opDayStartMs;
+          rEnd = opDayEndMs;
         } else {
-          rStart = new Date(y, m, d, rule.startHour, 0).getTime();
+          rStart = new Date(baseY, baseM, baseD + dayIdx, rule.startHour, 0).getTime();
           rEnd =
             rule.endHour <= rule.startHour
-              ? new Date(y, m, d + 1, rule.endHour, 0).getTime()
-              : new Date(y, m, d, rule.endHour, 0).getTime();
+              ? new Date(baseY, baseM, baseD + dayIdx + 1, rule.endHour, 0).getTime()
+              : new Date(baseY, baseM, baseD + dayIdx, rule.endHour, 0).getTime();
         }
         const oStart = Math.max(rStart, wStart);
         const oEnd = Math.min(rEnd, wEnd);
         if (oStart < oEnd) {
-          const dayName = hebrewDayName(new Date(rStart));
+          const dayName = hebrewDayName(opDayBase);
           const timeLabel = rule.allDay
             ? 'כל היום'
             : `${String(rule.startHour).padStart(2, '0')}:00–${String(rule.endHour).padStart(2, '0')}:00`;
@@ -2723,7 +2734,6 @@ function findPreExistingUnavailabilityOverlaps(
           });
         }
       }
-      cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1);
     }
   }
 
@@ -2941,6 +2951,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
       certLabelResolver: engine.getCertLabelResolver(),
       maxPlans: 3,
       excludedAssignmentIds: excludedIds,
+      scheduleContext: engine.getScheduleContext(),
     },
   );
 
@@ -3309,7 +3320,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.8</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4170,13 +4181,8 @@ function wireScheduleEvents(container: HTMLElement): void {
   }
   const MARGIN_MIN_HOURS = 0;
   const MARGIN_MAX_HOURS = 24;
-  const clampMarginHours = (v: number) =>
-    Math.max(MARGIN_MIN_HOURS, Math.min(MARGIN_MAX_HOURS, v));
-  const wireMarginInput = (
-    input: HTMLInputElement | null,
-    getState: () => number,
-    setState: (v: number) => void,
-  ) => {
+  const clampMarginHours = (v: number) => Math.max(MARGIN_MIN_HOURS, Math.min(MARGIN_MAX_HOURS, v));
+  const wireMarginInput = (input: HTMLInputElement | null, getState: () => number, setState: (v: number) => void) => {
     if (!input) return;
     input.addEventListener('input', () => {
       const v = parseFloat(input.value);

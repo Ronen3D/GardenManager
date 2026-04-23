@@ -125,14 +125,7 @@ export function buildParticipantTooltipContent(
       .filter((x) => x.task);
     bd = computeTaskBreakdown(myItems);
   }
-  const {
-    heavyHours,
-    effectiveHeavyHours,
-    sourceHours,
-    sourceEffectiveHours,
-    sourceCounts,
-    sourceColors,
-  } = bd;
+  const { heavyHours, effectiveHeavyHours, sourceHours, sourceEffectiveHours, sourceCounts, sourceColors } = bd;
 
   // R7: Use effectiveHeavyHours for workload %, consistent with sidebar & profile
   const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;

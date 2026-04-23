@@ -110,6 +110,10 @@ function renderTopBar(
   const iconPin = `<svg class="icon-pin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.2-7-12a7 7 0 1 1 14 0c0 5.8-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>`;
   const iconMedal = `<svg class="icon-medal" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3l4 7 4-7"/><path d="M8 3h8"/><circle cx="12" cy="15" r="6"/><path d="M10 14l2 2 2-2"/></svg>`;
   const iconTag = `<svg class="icon-tag" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5"/></svg>`;
+  const iconHeart = `<svg class="icon-heart" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
+  const iconHeartOff = `<svg class="icon-heart-off" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3a5.5 5.5 0 0 1 4.38 8.84l-.1.13L19 14M12 21.23l-7.78-7.78a5.5 5.5 0 0 1 .03-7.8 5.5 5.5 0 0 1 7.78-.02L12 6.66M3 3l18 18"/></svg>`;
+
+  const preferencesHtml = renderPreferences(p, iconHeart, iconHeartOff);
 
   return `
   <div class="profile-topbar">
@@ -139,8 +143,36 @@ function renderTopBar(
         ${iconTag}
         ${pakalHtml}
       </div>
+      ${preferencesHtml}
     </div>
   </div>`;
+}
+
+function renderPreferences(p: Participant, iconHeart: string, iconHeartOff: string): string {
+  if (!p.preferredTaskName && !p.lessPreferredTaskName) return '';
+  const templateMap = store.getTemplateVisualMap();
+  const badge = (name: string): string => {
+    const color = templateMap[name]?.color || '#7f8c8d';
+    return `<span class="badge" style="background:${color}">${escHtml(name)}</span>`;
+  };
+  let html = '';
+  if (p.preferredTaskName) {
+    html += `
+      <div class="profile-meta-row profile-meta-pref" aria-label="משימה מועדפת" title="משימה מועדפת">
+        ${iconHeart}
+        <span class="profile-pref-label">מעדיף</span>
+        ${badge(p.preferredTaskName)}
+      </div>`;
+  }
+  if (p.lessPreferredTaskName) {
+    html += `
+      <div class="profile-meta-row profile-meta-pref" aria-label="משימה פחות מועדפת" title="משימה פחות מועדפת">
+        ${iconHeartOff}
+        <span class="profile-pref-label">פחות מעדיף</span>
+        ${badge(p.lessPreferredTaskName)}
+      </div>`;
+  }
+  return html;
 }
 
 function computeHeavyHours(myTasks: Array<{ assignment: Assignment; task: Task }>): number {

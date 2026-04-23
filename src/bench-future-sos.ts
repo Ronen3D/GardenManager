@@ -9,9 +9,9 @@
  * Usage: npx ts-node src/bench-future-sos.ts
  */
 
+import { computeScheduleScore, type ScoreContext } from './constraints/soft-constraints';
 import { generateBatchRescuePlans } from './engine/future-sos';
 import { optimize } from './engine/optimizer';
-import { computeScheduleScore, type ScoreContext } from './constraints/soft-constraints';
 import {
   type Assignment,
   AssignmentStatus,
@@ -309,7 +309,8 @@ function printTable(rows: BenchRow[]): void {
   const slackCtx = buildScoreCtx(tasks, slackParticipants);
 
   const slackByPid = new Map<string, number>();
-  for (const a of slackSchedule.assignments) slackByPid.set(a.participantId, (slackByPid.get(a.participantId) ?? 0) + 1);
+  for (const a of slackSchedule.assignments)
+    slackByPid.set(a.participantId, (slackByPid.get(a.participantId) ?? 0) + 1);
   const slackFocal = [...slackByPid.entries()].sort((a, b) => b[1] - a[1])[0];
   console.log(`  Focal: ${slackFocal[0]} holds ${slackFocal[1]} assignments\n`);
 

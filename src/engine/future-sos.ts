@@ -126,6 +126,8 @@ export interface GenerateBatchOpts {
   excludedAssignmentIds?: ReadonlySet<string>;
   config: SchedulerConfig;
   scoreCtx: ScoreContext;
+  /** Schedule window context for HC-3 operational-day rule evaluation. */
+  scheduleContext?: import('../shared/utils/time-utils').ScheduleContext;
 }
 
 // ─── Affected-set identification ────────────────────────────────────────────
@@ -472,9 +474,7 @@ export function generateBatchRescuePlans(
   // realistic week-long windows routinely hit K=5+ where the DFS would time
   // out mid-composition. Scale the default up for larger batches; callers can
   // still override explicitly.
-  const affectedCount = allAffected.filter(
-    (a) => !opts.excludedAssignmentIds?.has(a.assignment.id),
-  ).length;
+  const affectedCount = allAffected.filter((a) => !opts.excludedAssignmentIds?.has(a.assignment.id)).length;
   const defaultBudget = affectedCount >= 5 ? 1500 : 500;
   const timeBudgetMs = opts.timeBudgetMs ?? defaultBudget;
 
@@ -571,6 +571,7 @@ export function generateBatchRescuePlans(
     anchor,
     disabledHC: opts.disabledHC,
     restRuleMap: opts.restRuleMap,
+    scheduleContext: opts.scheduleContext,
     config: opts.config,
     scoreCtx: opts.scoreCtx,
     baselineComposite: baselineScore.compositeScore,
@@ -652,6 +653,7 @@ export function generateBatchRescuePlans(
         opts.restRuleMap,
         opts.certLabelResolver,
         extraUnavailability,
+        opts.scheduleContext,
       );
 
       const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };

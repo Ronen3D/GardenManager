@@ -595,6 +595,21 @@ section h2 {
   border: 1px solid var(--text-muted);
   color: var(--text-muted);
 }
+.badge-clickable {
+  cursor: pointer;
+}
+.badge-clickable:focus-visible {
+  outline: 2px solid var(--focus-ring, #66afe9);
+  outline-offset: 2px;
+}
+
+.gm-modal-finding-list {
+  margin: 0;
+  padding-inline-start: 1.25em;
+}
+.gm-modal-finding-list li + li {
+  margin-top: 0.35em;
+}
 
 /* ─── Score Cards ────────────────────────────────────── */
 .score-grid {
@@ -1752,9 +1767,15 @@ select.input-sm {
     column-gap: 20px;
     row-gap: 14px;
   }
-  .tprop-section--numeric  { grid-area: numeric; }
-  .tprop-section--behavior { grid-area: behavior; }
-  .tprop-footer-row        { grid-area: footer; }
+  .tprop-section--numeric {
+    grid-area: numeric;
+  }
+  .tprop-section--behavior {
+    grid-area: behavior;
+  }
+  .tprop-footer-row {
+    grid-area: footer;
+  }
 
   /* In the half-width column, 4-up numeric is too cramped for the labels.
      Drop to 2x2 for breathing room. */
@@ -3836,7 +3857,7 @@ tr.row-rest td {
 .profile-topbar {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  grid-template-areas: 'kpi identity back';
+  grid-template-areas: "kpi identity back";
   column-gap: 20px;
   row-gap: 12px;
   padding: 16px 20px;
@@ -3961,14 +3982,19 @@ tr.row-rest td {
   flex-shrink: 0;
   opacity: 0.65;
 }
+.profile-pref-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-inline-end: 2px;
+}
 
 /* Tablet + narrow desktop: KPI joins toolbar row; identity spans full width */
 @media (max-width: 959px) {
   .profile-topbar {
     grid-template-columns: auto 1fr;
     grid-template-areas:
-      'back kpi'
-      'identity identity';
+      "back kpi"
+      "identity identity";
     row-gap: 14px;
   }
   .profile-kpi-hero {
@@ -9132,7 +9158,9 @@ tr.now-row-animate > td.time-cell {
   padding: 12px;
   margin-bottom: 12px;
   background: var(--bg-card);
-  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+  transition:
+    box-shadow 0.3s ease,
+    border-color 0.3s ease;
 }
 
 .manual-warehouse.flash {

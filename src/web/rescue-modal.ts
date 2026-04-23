@@ -98,6 +98,7 @@ export function openRescueModal(assignmentId: string): void {
     engine?.getCertLabelResolver() ?? ((id: string) => id),
     engine?.getConfig(),
     engine?.buildScoreContext(),
+    engine?.getScheduleContext(),
   );
   showRescueModal();
 }
@@ -428,6 +429,7 @@ function wireRescueModalEvents(): void {
       engine?.getCertLabelResolver() ?? ((id: string) => id),
       engine?.getConfig(),
       engine?.buildScoreContext(),
+      engine?.getScheduleContext(),
     );
     // Ranks are already sequential from the engine (1-based per returned plan)
     _rescueResult = result;

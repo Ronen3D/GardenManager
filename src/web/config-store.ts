@@ -794,29 +794,39 @@ function computeAvailability(participantId: string): AvailabilityWindow[] {
   const dateRules = dateUnavailabilities.get(participantId) || [];
 
   // Expand recurring weekday rules into concrete blackout-style windows.
+  //
+  // Semantics: a rule's `dayOfWeek` names the weekday of an OPERATIONAL day
+  // inside the schedule window (Day 1..N). Each rule fires at most once per
+  // matching operational day and is anchored to that day's base calendar date.
+  //   - allDay: blackout spans the full operational day
+  //             `[baseDate(D) + dayStartHour, baseDate(D+1) + dayStartHour)`
+  //   - partial: wall-clock anchored to the op-day's base calendar date, with
+  //              wrap-around when `endHour <= startHour`
+  // Days outside the scheduling window never contribute a blackout, which is
+  // what prevents HC-3 false positives from cross-midnight Day-N spills.
   const expandedBlackouts: Array<{ start: Date; end: Date }> = [];
 
   const schedStart = scheduleDate;
+  const hBoundary = getDayStartHour();
   for (const rule of dateRules) {
     for (let dayOff = 0; dayOff < scheduleDays; dayOff++) {
       const dayDate = new Date(schedStart.getFullYear(), schedStart.getMonth(), schedStart.getDate() + dayOff);
-      if (dayDate.getDay() === rule.dayOfWeek) {
-        if (rule.allDay) {
-          expandedBlackouts.push({
-            start: new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0),
-            end: new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1, 0, 0),
-          });
-        } else {
-          const endH = rule.endHour;
-          let endDay = dayDate.getDate();
-          if (endH < rule.startHour) {
-            endDay += 1;
-          } // crosses midnight
-          expandedBlackouts.push({
-            start: new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), rule.startHour, 0),
-            end: new Date(dayDate.getFullYear(), dayDate.getMonth(), endDay, endH, 0),
-          });
+      if (dayDate.getDay() !== rule.dayOfWeek) continue;
+      if (rule.allDay) {
+        expandedBlackouts.push({
+          start: new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), hBoundary, 0),
+          end: new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1, hBoundary, 0),
+        });
+      } else {
+        const endH = rule.endHour;
+        let endDay = dayDate.getDate();
+        if (endH <= rule.startHour) {
+          endDay += 1; // wraps past midnight
         }
+        expandedBlackouts.push({
+          start: new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), rule.startHour, 0),
+          end: new Date(dayDate.getFullYear(), dayDate.getMonth(), endDay, endH, 0),
+        });
       }
     }
   }
@@ -1860,8 +1870,126 @@ export function seedDefaultParticipants(): void {
     'קבוצה 3': new Set([8]), // 1 standard L0 participant
   };
 
+  // Per-name attribute overrides applied on top of the base seed so the
+  // out-of-box demo exercises SC-9 (not-with), SC-10 (task preference),
+  // and HC-3 (date unavailability) without manual data entry.
+  type SeedDateRule = Omit<DateUnavailability, 'id'>;
+  interface AttributePatch {
+    preferredTaskName?: string;
+    lessPreferredTaskName?: string;
+    dateUnavailability?: SeedDateRule[];
+  }
+  const attributePatches: Record<string, AttributePatch> = {
+    // ── קבוצה 1 ──
+    'איתי לוין': { preferredTaskName: 'אדנית' },
+    'נועה אברהמי': { lessPreferredTaskName: 'כרוב' },
+    'עידו כהן': { preferredTaskName: 'כרוב' },
+    'מאיה ישראלי': {
+      lessPreferredTaskName: 'אדנית',
+      dateUnavailability: [{ dayOfWeek: 4, startHour: 14, endHour: 17, allDay: false, reason: 'לימודים' }],
+    },
+    'יונתן רפאלי': { preferredTaskName: 'אדנית', lessPreferredTaskName: 'כרוב' },
+    'עדי מזרחי': {
+      dateUnavailability: [{ dayOfWeek: 1, startHour: 10, endHour: 13, allDay: false, reason: 'רופא' }],
+    },
+    'רועי שפירא': { preferredTaskName: 'שמש' },
+    'מיכל אשכנזי': { lessPreferredTaskName: 'ממטרה' },
+    'עומר דרוקר': {
+      dateUnavailability: [{ dayOfWeek: 0, startHour: 8, endHour: 16, allDay: false, reason: 'חופש משפחתי' }],
+    },
+    'ענבר חזן': { preferredTaskName: 'כרוב' },
+    'אורי גבאי': { lessPreferredTaskName: 'ערוגת בוקר' },
+    'טל בן-דור': { preferredTaskName: 'כרוב', lessPreferredTaskName: 'ערוגת ערב' },
+
+    // ── קבוצה 2 ──
+    'דניאל וייס': { preferredTaskName: 'כרוב' },
+    'שירה אדרי': { lessPreferredTaskName: 'אדנית' },
+    'אסף גרינברג': { preferredTaskName: 'אדנית' },
+    'ליאור פלד': {
+      lessPreferredTaskName: 'כרוב',
+      dateUnavailability: [{ dayOfWeek: 3, startHour: 16, endHour: 19, allDay: false, reason: 'אימון' }],
+    },
+    'נדב הראל': { preferredTaskName: 'אדנית', lessPreferredTaskName: 'כרוב' },
+    'רוני סגל': {
+      dateUnavailability: [{ dayOfWeek: 2, startHour: 9, endHour: 12, allDay: false, reason: 'תור רפואי' }],
+    },
+    'גיא מור': { preferredTaskName: 'חממה' },
+    'יעל שלום': { lessPreferredTaskName: 'ממטרה' },
+    'אלון ברק': {
+      preferredTaskName: 'כרוב',
+      dateUnavailability: [{ dayOfWeek: 4, startHour: 8, endHour: 16, allDay: false, reason: 'חופש' }],
+    },
+    'מתן אלוני': { lessPreferredTaskName: 'ערוגת בוקר' },
+    'שחר עמר': { preferredTaskName: 'כרוב', lessPreferredTaskName: 'ערוגת ערב' },
+
+    // ── קבוצה 3 ──
+    'איתן דהן': { preferredTaskName: 'אדנית' },
+    'עמית מלכה': { lessPreferredTaskName: 'כרוב' },
+    'יובל קליין': { preferredTaskName: 'כרוב' },
+    'נטע לביא': {
+      lessPreferredTaskName: 'אדנית',
+      dateUnavailability: [{ dayOfWeek: 5, startHour: 13, endHour: 16, allDay: false, reason: 'שבת' }],
+    },
+    'דורון פרידמן': { preferredTaskName: 'אדנית', lessPreferredTaskName: 'כרוב' },
+    'קרן אורן': {
+      dateUnavailability: [{ dayOfWeek: 1, startHour: 8, endHour: 11, allDay: false, reason: 'לימודים' }],
+    },
+    'אריאל נחום': {
+      preferredTaskName: 'שמש',
+      dateUnavailability: [{ dayOfWeek: 2, startHour: 8, endHour: 16, allDay: false, reason: 'משפחתי' }],
+    },
+    'דנה צור': { lessPreferredTaskName: 'ממטרה' },
+    'אביב סוויסה': { preferredTaskName: 'כרוב' },
+    'גלית שדה': { preferredTaskName: 'כרוב', lessPreferredTaskName: 'ערוגת ערב' },
+    'ספיר מלמד': { lessPreferredTaskName: 'ערוגת בוקר' },
+
+    // ── קבוצה 4 ──
+    'אופיר ביטון': { preferredTaskName: 'כרוב' },
+    'נועם פרץ': { lessPreferredTaskName: 'אדנית' },
+    'אייל רוזנפלד': { preferredTaskName: 'אדנית' },
+    'ליהי כץ': { lessPreferredTaskName: 'כרוב' },
+    'בועז נאמן': { preferredTaskName: 'אדנית', lessPreferredTaskName: 'כרוב' },
+    'תמר יוספי': {
+      dateUnavailability: [{ dayOfWeek: 3, startHour: 11, endHour: 14, allDay: false, reason: 'תור' }],
+    },
+    'יואב פולק': {
+      preferredTaskName: 'חממה',
+      dateUnavailability: [{ dayOfWeek: 6, startHour: 8, endHour: 16, allDay: false, reason: 'חופש' }],
+    },
+    'סיון ריבלין': {
+      lessPreferredTaskName: 'ממטרה',
+      dateUnavailability: [{ dayOfWeek: 0, startHour: 15, endHour: 18, allDay: false, reason: 'לימודים' }],
+    },
+    'אוהד שטרן': { preferredTaskName: 'כרוב' },
+    'רותם גנות': { lessPreferredTaskName: 'ערוגת בוקר' },
+    'נעמה שקד': { preferredTaskName: 'כרוב', lessPreferredTaskName: 'ערוגת ערב' },
+  };
+
+  // Bidirectional not-with pairs. Each edge listed once — addNotWith mirrors it.
+  // 12 within-group + 4 cross-group; "choosers" are 3 L0s per group
+  // (2 pick one partner, 1 picks two).
+  const notWithPairs: Array<[string, string]> = [
+    ['עדי מזרחי', 'טל בן-דור'],
+    ['רועי שפירא', 'יעל שלום'], // cross G1↔G2
+    ['עומר דרוקר', 'ענבר חזן'],
+    ['עומר דרוקר', 'אורי גבאי'],
+    ['רוני סגל', 'שחר עמר'],
+    ['גיא מור', 'הילה חדד'],
+    ['אלון ברק', 'מתן אלוני'],
+    ['אלון ברק', 'דנה צור'], // cross G2↔G3
+    ['קרן אורן', 'תומר גולן'],
+    ['אריאל נחום', 'גלית שדה'],
+    ['אביב סוויסה', 'ספיר מלמד'],
+    ['אביב סוויסה', 'אורי גבאי'], // cross G3↔G1
+    ['תמר יוספי', 'ברק אוריון'],
+    ['יואב פולק', 'רותם גנות'],
+    ['אוהד שטרן', 'נעמה שקד'],
+    ['אוהד שטרן', 'רוני סגל'], // cross G4↔G2
+  ];
+
   let nameIdx = 0;
   const l0PakalIndexByDept = new Map<string, number>();
+  const nameToId = new Map<string, string>();
   for (const dept of deptNames) {
     const horeshIndices = horeshByDept[dept];
     template.forEach((spec, i) => {
@@ -1871,9 +1999,11 @@ export function seedDefaultParticipants(): void {
       const nextL0Index = l0PakalIndexByDept.get(dept) ?? 0;
       const pakalId = spec.level === Level.L0 ? DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP[dept]?.[nextL0Index] : undefined;
       if (spec.level === Level.L0) l0PakalIndexByDept.set(dept, nextL0Index + 1);
+      const name = defaultNames[nameIdx++];
+      const patch = attributePatches[name];
       const p: Participant = {
         id,
-        name: defaultNames[nameIdx++],
+        name,
         level: spec.level,
         certifications: certs,
         pakalIds: pakalId ? [pakalId] : [],
@@ -1881,9 +2011,28 @@ export function seedDefaultParticipants(): void {
         availability: getDefaultAvailability(),
         dateUnavailability: [],
       };
+      if (patch?.preferredTaskName) p.preferredTaskName = patch.preferredTaskName;
+      if (patch?.lessPreferredTaskName) p.lessPreferredTaskName = patch.lessPreferredTaskName;
       participants.set(id, p);
+      nameToId.set(name, id);
     });
   }
+
+  for (const [name, patch] of Object.entries(attributePatches)) {
+    if (!patch.dateUnavailability) continue;
+    const pid = nameToId.get(name);
+    if (!pid) continue;
+    for (const rule of patch.dateUnavailability) {
+      addDateUnavailability(pid, rule);
+    }
+  }
+
+  for (const [nameA, nameB] of notWithPairs) {
+    const idA = nameToId.get(nameA);
+    const idB = nameToId.get(nameB);
+    if (idA && idB) addNotWith(idA, idB);
+  }
+
   notify();
 }
 
@@ -1955,7 +2104,7 @@ export function seedDefaultTaskTemplates(): void {
     ],
     slots: [],
     restRuleId: defaultRestRule.id,
-    sleepRecovery: { rangeStartHour: 3, rangeEndHour: 8, recoveryHours: 7 },
+    sleepRecovery: { rangeStartHour: 3, rangeEndHour: 8, recoveryHours: 5 },
     displayCategory: 'patrol',
     color: '#4A90D9',
     displayOrder: 0,
@@ -2014,7 +2163,7 @@ export function seedDefaultTaskTemplates(): void {
       },
     ],
     restRuleId: defaultRestRule.id,
-    sleepRecovery: { rangeStartHour: 4, rangeEndHour: 6, recoveryHours: 7 },
+    sleepRecovery: { rangeStartHour: 4, rangeEndHour: 6, recoveryHours: 5 },
     displayCategory: 'shemesh',
     color: '#F39C12',
     displayOrder: 4,
@@ -2773,6 +2922,7 @@ export function getAlgorithmSettings(): AlgorithmSettings {
  */
 export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
   const current = getAlgorithmSettings();
+  const dayStartHourChanged = patch.dayStartHour !== undefined && patch.dayStartHour !== current.dayStartHour;
   _algorithmSettings = {
     config: patch.config ? { ...current.config, ...patch.config } : current.config,
     disabledHardConstraints:
@@ -2782,6 +2932,9 @@ export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
     dayStartHour: patch.dayStartHour !== undefined ? patch.dayStartHour : current.dayStartHour,
   };
   _saveAlgorithmSettings();
+  // The op-day boundary anchors weekly blackout windows in `computeAvailability`,
+  // so when it changes every participant's pre-expanded availability must be rebuilt.
+  if (dayStartHourChanged) recalcAllAvailability();
   notifyAlgorithmChanged();
 }
 

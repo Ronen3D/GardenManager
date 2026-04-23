@@ -7,10 +7,10 @@
  */
 
 import type { AssignmentStatus, ConstraintViolation, Schedule, Task } from '../index';
+import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import { hebrewDayName } from '../utils/date-utils';
 import * as store from './config-store';
 import { fmt } from './ui-helpers';
-import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 
 // ─── Formatting Helpers ─────────────────────────────────────────────────────
 
@@ -52,11 +52,7 @@ export function resolveLogicalDayTimestamp(dayIndex: number, timeValue: string):
  * values (`schedule.algorithmSettings.dayStartHour`, `schedule.periodStart`)
  * so day grouping stays stable across external edits.
  */
-export function getDayWindow(
-  dayIndex: number,
-  dayStartHour?: number,
-  baseDate?: Date,
-): { start: Date; end: Date } {
+export function getDayWindow(dayIndex: number, dayStartHour?: number, baseDate?: Date): { start: Date; end: Date } {
   const base = baseDate ?? store.getScheduleDate();
   const dsh = dayStartHour ?? store.getDayStartHour();
   const start = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex - 1, dsh, 0);
@@ -67,12 +63,7 @@ export function getDayWindow(
 /**
  * Does a task intersect (partially or fully) with a given day window?
  */
-export function taskIntersectsDay(
-  task: Task,
-  dayIndex: number,
-  dayStartHour?: number,
-  baseDate?: Date,
-): boolean {
+export function taskIntersectsDay(task: Task, dayIndex: number, dayStartHour?: number, baseDate?: Date): boolean {
   const { start, end } = getDayWindow(dayIndex, dayStartHour, baseDate);
   return task.timeBlock.start.getTime() < end.getTime() && task.timeBlock.end.getTime() > start.getTime();
 }
@@ -81,12 +72,7 @@ export function taskIntersectsDay(
  * Does a task start before this day window (i.e. it's a continuation from
  * the previous day)?
  */
-export function taskStartsBefore(
-  task: Task,
-  dayIndex: number,
-  dayStartHour?: number,
-  baseDate?: Date,
-): boolean {
+export function taskStartsBefore(task: Task, dayIndex: number, dayStartHour?: number, baseDate?: Date): boolean {
   const { start } = getDayWindow(dayIndex, dayStartHour, baseDate);
   return task.timeBlock.start.getTime() < start.getTime();
 }
@@ -94,12 +80,7 @@ export function taskStartsBefore(
 /**
  * Does a task end after this day window (i.e. continues into the next day)?
  */
-export function taskEndsAfter(
-  task: Task,
-  dayIndex: number,
-  dayStartHour?: number,
-  baseDate?: Date,
-): boolean {
+export function taskEndsAfter(task: Task, dayIndex: number, dayStartHour?: number, baseDate?: Date): boolean {
   const { end } = getDayWindow(dayIndex, dayStartHour, baseDate);
   return task.timeBlock.end.getTime() > end.getTime();
 }
