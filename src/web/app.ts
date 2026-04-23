@@ -152,6 +152,8 @@ function readHash(): void {
 let _isOptimizing = false;
 /** AbortController for cancelling a running optimization */
 let _optimAbortController: AbortController | null = null;
+/** AbortController for stopping early and accepting the best result so far */
+let _optimEarlyStopController: AbortController | null = null;
 /** True while undo/redo is executing — prevents onStoreChanged from reconciling */
 let _undoRedoInProgress = false;
 /** Parallel schedule snapshots kept in sync with the store's undo/redo stacks */
@@ -1994,7 +1996,10 @@ function renderOptimOverlay(): string {
             : ''
         }
       </div>
-      <button class="btn-cancel-optim" id="btn-cancel-optim">ביטול</button>
+      <div class="optim-actions">
+        <button class="btn-accept-best" id="btn-accept-best" ${attempt < 1 ? 'disabled' : ''}>לשבצ"ק</button>
+        <button class="btn-cancel-optim" id="btn-cancel-optim">ביטול</button>
+      </div>
     </div>
   </div>`;
 }
@@ -2005,6 +2010,15 @@ function wireOptimCancelButton(): void {
   if (btn && !btn.dataset.wired) {
     btn.dataset.wired = '1';
     btn.addEventListener('click', () => _optimAbortController?.abort());
+  }
+}
+
+/** Wire the "accept best so far" button inside the optimization overlay (idempotent). */
+function wireOptimAcceptBestButton(): void {
+  const btn = document.getElementById('btn-accept-best') as HTMLButtonElement | null;
+  if (btn && !btn.dataset.wired) {
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => _optimEarlyStopController?.abort());
   }
 }
 
@@ -2037,6 +2051,9 @@ function updateOverlay(): void {
       unfilledVal.textContent = String(bestUnfilled);
       unfilledVal.className = `optim-metric-value ${bestUnfilled === 0 ? 'optim-ok' : 'optim-warn'}`;
     }
+    // Enable accept-best once at least one attempt has produced a best result
+    const acceptBtn = overlay.querySelector('#btn-accept-best') as HTMLButtonElement | null;
+    if (acceptBtn) acceptBtn.disabled = attempt < 1;
   } else {
     // First render — insert full overlay with cube
     const html = renderOptimOverlay();
@@ -2044,6 +2061,7 @@ function updateOverlay(): void {
     if (content) {
       content.insertAdjacentHTML('beforeend', html);
       wireOptimCancelButton();
+      wireOptimAcceptBestButton();
     }
   }
 }
@@ -2096,6 +2114,7 @@ async function doGenerate(): Promise<void> {
   pushHash();
   _isOptimizing = true;
   _optimAbortController = new AbortController();
+  _optimEarlyStopController = new AbortController();
   _optimProgress = {
     attempt: 0,
     totalAttempts: OPTIM_ATTEMPTS,
@@ -2107,6 +2126,7 @@ async function doGenerate(): Promise<void> {
   // Render the tab (with old schedule or empty state) + overlay
   renderAll();
   wireOptimCancelButton();
+  wireOptimAcceptBestButton();
 
   // Disable generate button during optimization
   const genBtn = document.getElementById('btn-generate') as HTMLButtonElement | null;
@@ -2118,6 +2138,7 @@ async function doGenerate(): Promise<void> {
   const t0 = performance.now();
   let scheduleSaved = false;
   let wasCancelled = false;
+  let wasEarlyStopped = false;
 
   try {
     const schedule = await engine.generateScheduleAsync(
@@ -2135,7 +2156,9 @@ async function doGenerate(): Promise<void> {
         updateOverlay();
       },
       _optimAbortController!.signal,
+      _optimEarlyStopController!.signal,
     );
+    wasEarlyStopped = _optimEarlyStopController?.signal.aborted === true;
 
     // ── Atomic commit: update state in one go, then render once ──
     closeRescueModal();
@@ -2188,6 +2211,7 @@ async function doGenerate(): Promise<void> {
     _isOptimizing = false;
     _optimProgress = null;
     _optimAbortController = null;
+    _optimEarlyStopController = null;
   }
 
   if (wasCancelled) {
@@ -2199,7 +2223,13 @@ async function doGenerate(): Promise<void> {
   // Final atomic render with the winning schedule
   renderAll();
   if (scheduleSaved) {
-    showToast(`שבצ"ק נוצר בהצלחה (${(scheduleElapsed / 1000).toFixed(1)} שניות)`, { type: 'success' });
+    if (wasEarlyStopped) {
+      showToast(`שבצ"ק נוצר מתוך ${scheduleActualAttempts} ניסיונות (${(scheduleElapsed / 1000).toFixed(1)} שניות)`, {
+        type: 'success',
+      });
+    } else {
+      showToast(`שבצ"ק נוצר בהצלחה (${(scheduleElapsed / 1000).toFixed(1)} שניות)`, { type: 'success' });
+    }
   } else {
     showToast('השבצ"ק נוצר אך לא נשמר — נפח האחסון בדפדפן מלא. בטעינה מחדש הוא יאבד.', {
       type: 'warning',
@@ -3320,7 +3350,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.6.9</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.7.0</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

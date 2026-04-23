@@ -1409,6 +1409,7 @@ export function localSearchOptimize(
   abortSignal?: AbortSignal,
   saIntensifyTaskIds?: Set<string>,
   scheduleContext?: ScheduleContext,
+  stopSignal?: AbortSignal,
 ): { assignments: Assignment[]; filledSlots: string[] } {
   const current = [...assignments.map((a) => ({ ...a }))];
 
@@ -1505,7 +1506,7 @@ export function localSearchOptimize(
   }
 
   while (iterations < maxIter) {
-    if (Date.now() - startTime > config.maxSolverTimeMs || abortSignal?.aborted) break;
+    if (Date.now() - startTime > config.maxSolverTimeMs || abortSignal?.aborted || stopSignal?.aborted) break;
 
     // Geometric temperature decay with reheating
     temperature *= SA_COOLING_RATE;
@@ -1655,7 +1656,7 @@ export function localSearchOptimize(
       const i = idxOrder[ii];
       for (let jj = ii + 1; jj < idxOrder.length && !accepted; jj++) {
         const j = idxOrder[jj];
-        if (Date.now() - startTime > config.maxSolverTimeMs || abortSignal?.aborted) break;
+        if (Date.now() - startTime > config.maxSolverTimeMs || abortSignal?.aborted || stopSignal?.aborted) break;
 
         const ai = current[i];
         const aj = current[j];
@@ -1873,6 +1874,7 @@ export function optimize(
   ctx?: SchedulingContext,
   saIntensifyTaskIds?: Set<string>,
   scheduleContext?: ScheduleContext,
+  stopSignal?: AbortSignal,
 ): OptimizationResult {
   const startTime = Date.now();
 
@@ -1910,6 +1912,7 @@ export function optimize(
     abortSignal,
     saIntensifyTaskIds,
     scheduleContext,
+    stopSignal,
   );
 
   // Remove slots that SA managed to fill
@@ -2114,9 +2117,10 @@ export function optimizeMultiAttempt(
   for (let i = 0; i < attempts; i++) {
     // Refresh elite-boost hints every ELITE_INTERVAL attempts
     if (best && i > 0 && i % ELITE_INTERVAL === 0) {
-      eliteBoost = best.unfilledSlots.length > 0
-        ? classifyUnfilledSlots(best.unfilledSlots)
-        : { boostTaskIds: new Set(), saIntensifyTaskIds: new Set() };
+      eliteBoost =
+        best.unfilledSlots.length > 0
+          ? classifyUnfilledSlots(best.unfilledSlots)
+          : { boostTaskIds: new Set(), saIntensifyTaskIds: new Set() };
     }
 
     // Shuffle participant order to create diversity
@@ -2228,6 +2232,7 @@ export function optimizeMultiAttemptAsync(
   certLabelResolver?: (certId: string) => string,
   abortSignal?: AbortSignal,
   scheduleContext?: ScheduleContext,
+  stopSignal?: AbortSignal,
 ): Promise<OptimizationResult> {
   return new Promise((resolve, reject) => {
     let best: OptimizationResult | null = null;
@@ -2253,8 +2258,26 @@ export function optimizeMultiAttemptAsync(
     // depend only on (tasks, participants), both invariant across attempts.
     const ctx = buildSchedulingContext(tasks, participants);
 
+    function finalizeEarlyStop(): boolean {
+      if (!stopSignal?.aborted || best === null) return false;
+      best.durationMs = Date.now() - totalStart;
+      best.actualAttempts = diagRows.length;
+      if (_diagnosticLogging) {
+        console.log(
+          `[Scheduler] Multi-attempt async early-stopped after ${best.actualAttempts} attempts in ${best.durationMs}ms. ` +
+            `Best score: ${best.score.compositeScore.toFixed(2)}, ` +
+            `unfilled: ${best.unfilledSlots.length}, ` +
+            `restStdDev: ${best.score.restStdDev.toFixed(2)}`,
+        );
+      }
+      resolve(best);
+      return true;
+    }
+
     function runBatch(): void {
       try {
+        // Check early-stop before abort — returning best is more useful than throwing.
+        if (finalizeEarlyStop()) return;
         // Check abort before starting a new batch
         if (abortSignal?.aborted) {
           reject(new DOMException('Schedule generation cancelled', 'AbortError'));
@@ -2264,6 +2287,8 @@ export function optimizeMultiAttemptAsync(
         const batchEnd = Math.min(i + ASYNC_BATCH_SIZE, attempts);
 
         while (i < batchEnd) {
+          // Check early-stop between attempts — graceful exit with best-so-far.
+          if (finalizeEarlyStop()) return;
           // Check abort between attempts within a batch
           if (abortSignal?.aborted) {
             reject(new DOMException('Schedule generation cancelled', 'AbortError'));
@@ -2274,9 +2299,10 @@ export function optimizeMultiAttemptAsync(
           // is feasible, drop any stale boost so subsequent attempts can
           // optimise fairness/penalty without distortion from old hints.
           if (best && i > 0 && i % ELITE_INTERVAL === 0) {
-            eliteBoost = best.unfilledSlots.length > 0
-              ? classifyUnfilledSlots(best.unfilledSlots)
-              : { boostTaskIds: new Set(), saIntensifyTaskIds: new Set() };
+            eliteBoost =
+              best.unfilledSlots.length > 0
+                ? classifyUnfilledSlots(best.unfilledSlots)
+                : { boostTaskIds: new Set(), saIntensifyTaskIds: new Set() };
           }
 
           // Shuffle participant order (first attempt uses original order)
@@ -2316,6 +2342,7 @@ export function optimizeMultiAttemptAsync(
             ctx,
             eliteBoost.saIntensifyTaskIds.size > 0 ? eliteBoost.saIntensifyTaskIds : undefined,
             scheduleContext,
+            stopSignal,
           );
 
           const improved = best === null || isBetterResult(result, best);

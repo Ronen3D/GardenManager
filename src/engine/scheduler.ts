@@ -461,6 +461,7 @@ export class SchedulingEngine {
     attempts: number = 2000,
     onProgress?: MultiAttemptProgressCallback,
     abortSignal?: AbortSignal,
+    stopSignal?: AbortSignal,
   ): Promise<Schedule> {
     const tasks = this.getAllTasks();
     const participants = this.getAllParticipants();
@@ -480,6 +481,7 @@ export class SchedulingEngine {
       this.certLabelResolver,
       abortSignal,
       this._scheduleContext(tasks),
+      stopSignal,
     );
 
     return this._commitOptimizationResult(tasks, participants, result);

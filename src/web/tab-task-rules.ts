@@ -513,7 +513,6 @@ export function renderTaskRulesTab(): string {
               <input type="number" class="input-sm" data-rr-field="durationHours" value="${r.durationHours}" min="0.5" max="24" step="0.5" style="width:60px; text-align:center;" />
             </td>
             <td style="padding:8px; text-align:center;">
-              <button class="btn-xs btn-outline" data-action="save-rest-rule" data-rr-id="${r.id}" title="שמור">✓</button>
               <button class="btn-xs btn-danger-outline" data-action="delete-rest-rule" data-rr-id="${r.id}" title="מחק">✕</button>
             </td>
           </tr>
@@ -696,7 +695,6 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
               .join('')}
           </select>
         </label>
-        <button class="btn-sm btn-primary tprop-save-btn" data-action="save-template-props" data-tid="${tpl.id}">שמור</button>
       </div>
       ${_restRuleOrphanNote(tpl.restRuleId)}
       ${renderSleepRecoveryEditor(tpl.sleepRecovery, 'tpl', tpl.id)}
@@ -920,7 +918,6 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
           ${renderLoadFormulaControls({ kind: 'window', tpl, window: w, disabled: false })}
         </div>
         <div class="lw-actions">
-          <button class="lw-btn lw-save" data-action="update-load-window" data-tid="${tpl.id}" data-lwid="${w.id}" title="שמור שינויים" aria-label="שמור שינויים">✓</button>
           <button class="lw-btn lw-remove" data-action="remove-load-window" data-tid="${tpl.id}" data-lwid="${w.id}" title="מחק חלון" aria-label="מחק חלון">✕</button>
         </div>
       </div>`;
@@ -1304,7 +1301,6 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
       </select></label>${_restRuleOrphanNote(ot.restRuleId)}
       ${renderSleepRecoveryEditor(ot.sleepRecovery, 'ot', ot.id)}
       <label>תיאור: <input class="input-sm" type="text" data-ot-field="description" value="${escHtml(ot.description || '')}" data-ot-id="${ot.id}" /></label>
-      <button class="btn-sm btn-primary" data-action="save-onetime-props" data-ot-id="${ot.id}">שמור</button>
     </div>`;
 
     // Sub-teams
@@ -1340,16 +1336,312 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
   return html;
 }
 
+// ─── Auto-save helpers ───────────────────────────────────────────────────────
+
+/**
+ * Read-and-commit the template properties block. Returns true on success,
+ * false if a validation error was shown (commit was skipped).
+ *
+ * Shared by the change-event auto-save handler. All tpl-field inputs route
+ * through here so a single edit reads the whole block and writes one atomic
+ * store update — matching the former explicit-save semantics.
+ */
+function _commitTemplateProps(body: HTMLElement, tid: string): boolean {
+  const dur = parseFloat((body.querySelector('[data-tpl-field="durationHours"]') as HTMLInputElement)?.value || '8');
+  // parseFloat so that decimals (e.g. 1.7) reach the sanitizer's rounding
+  // path and surface as a clamp notification instead of being silently
+  // truncated by parseInt.
+  const shifts = parseFloat((body.querySelector('[data-tpl-field="shiftsPerDay"]') as HTMLInputElement)?.value || '1');
+  const startH = parseFloat((body.querySelector('[data-tpl-field="startHour"]') as HTMLInputElement)?.value || '6');
+  const baseLoad = parseFloat(
+    (body.querySelector('[data-tpl-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1',
+  );
+  const sameGroup = (body.querySelector('[data-tpl-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
+  const blocksConsecutive =
+    (body.querySelector('[data-tpl-field="blocksConsecutive"]') as HTMLInputElement)?.checked || false;
+  const togethernessRelevant =
+    (body.querySelector('[data-tpl-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
+  const restRuleId = (body.querySelector('[data-tpl-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
+
+  const sanitized = store.sanitizeTemplateNumericFields({
+    durationHours: dur,
+    shiftsPerDay: shifts,
+    startHour: startH,
+  });
+  notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
+
+  const clampedBaseLoad = Math.max(0, Math.min(1, baseLoad));
+  const existingTpl = store.getTaskTemplate(tid);
+  const existingFormulaValue = existingTpl?.loadFormula?.computedValue;
+  const formulaDroppedByManualEdit =
+    existingFormulaValue !== undefined && Math.abs(clampedBaseLoad - existingFormulaValue) > 1e-9;
+  const sleepRecovery = parseSleepRecoveryInput(body, 'tpl');
+  if (sleepRecovery.kind === 'invalid') {
+    showToast(sleepRecovery.reason, { type: 'error' });
+    return false;
+  }
+  store.updateTaskTemplate(tid, {
+    durationHours: sanitized.durationHours,
+    shiftsPerDay: sanitized.shiftsPerDay,
+    startHour: sanitized.startHour,
+    baseLoadWeight: clampedBaseLoad,
+    ...(formulaDroppedByManualEdit ? { loadFormula: undefined } : {}),
+    sameGroupRequired: sameGroup,
+    blocksConsecutive,
+    togethernessRelevant,
+    restRuleId,
+    ...(sleepRecovery.kind === 'set' ? { sleepRecovery: sleepRecovery.value } : {}),
+  });
+  return true;
+}
+
+/** Read-and-commit one-time task properties. Returns false on validation error. */
+function _commitOneTimeProps(body: HTMLElement, otId: string): boolean {
+  const name = (body.querySelector('[data-ot-field="name"]') as HTMLInputElement)?.value.trim();
+  if (!name) {
+    showToast('שם משימה נדרש', { type: 'error' });
+    return false;
+  }
+  if (isTaskNameTaken(name, otId)) {
+    showToast(`משימה בשם "${name}" כבר קיימת`, { type: 'error' });
+    return false;
+  }
+  const dayNumVal = parseInt((body.querySelector('[data-ot-field="dayNum"]') as HTMLSelectElement)?.value || '1');
+  const schedDate = store.getScheduleDate();
+  const scheduledDate = new Date(schedDate.getFullYear(), schedDate.getMonth(), schedDate.getDate() + dayNumVal - 1);
+  const rawStartHour = parseFloat(
+    (body.querySelector('[data-ot-field="startHour"]') as HTMLInputElement)?.value || '6',
+  );
+  const rawStartMinute = parseFloat(
+    (body.querySelector('[data-ot-field="startMinute"]') as HTMLInputElement)?.value || '0',
+  );
+  const rawDur = parseFloat((body.querySelector('[data-ot-field="durationHours"]') as HTMLInputElement)?.value || '4');
+  if (!Number.isFinite(rawDur) || rawDur <= 0) {
+    showToast('משך המשימה חייב להיות חיובי (0.5 ומעלה)', { type: 'error' });
+    return false;
+  }
+  const baseLoad = parseFloat(
+    (body.querySelector('[data-ot-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1',
+  );
+  const sameGroup = (body.querySelector('[data-ot-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
+  const blocksConsecutive =
+    (body.querySelector('[data-ot-field="blocksConsecutive"]') as HTMLInputElement)?.checked ?? true;
+  const otRestRuleId = (body.querySelector('[data-ot-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
+  const desc = (body.querySelector('[data-ot-field="description"]') as HTMLInputElement)?.value.trim();
+
+  const otSanitized = store.sanitizeTemplateNumericFields({ durationHours: rawDur, startHour: rawStartHour });
+  const startMinute = Math.max(0, Math.min(59, Math.round(Number.isNaN(rawStartMinute) ? 0 : rawStartMinute)));
+  notifyIfClamped(
+    { durationHours: rawDur, startHour: rawStartHour, startMinute: rawStartMinute },
+    { durationHours: otSanitized.durationHours, startHour: otSanitized.startHour, startMinute },
+  );
+
+  const otSleepRecovery = parseSleepRecoveryInput(body, 'ot');
+  if (otSleepRecovery.kind === 'invalid') {
+    showToast(otSleepRecovery.reason, { type: 'error' });
+    return false;
+  }
+  store.updateOneTimeTask(otId, {
+    name,
+    scheduledDate,
+    startHour: otSanitized.startHour,
+    startMinute,
+    durationHours: otSanitized.durationHours,
+    sameGroupRequired: sameGroup,
+    baseLoadWeight: Math.max(0, Math.min(1, baseLoad)),
+    blocksConsecutive,
+    restRuleId: otRestRuleId,
+    ...(otSleepRecovery.kind === 'set' ? { sleepRecovery: otSleepRecovery.value } : {}),
+    description: desc || undefined,
+    displayCategory: name.toLowerCase(),
+  });
+  return true;
+}
+
+/** Read-and-commit a rest rule row. Returns false on validation error. */
+function _commitRestRule(row: HTMLElement, rrId: string): boolean {
+  const label = (row.querySelector('[data-rr-field="label"]') as HTMLInputElement)?.value?.trim();
+  const dur = parseFloat((row.querySelector('[data-rr-field="durationHours"]') as HTMLInputElement)?.value);
+  if (!label) {
+    showToast('שם הכלל לא יכול להיות ריק', { type: 'error' });
+    return false;
+  }
+  const labelKey = label.toLowerCase();
+  const duplicate = store.getRestRules().some((r) => r.id !== rrId && r.label.trim().toLowerCase() === labelKey);
+  if (duplicate) {
+    showToast(`כלל בשם "${label}" כבר קיים`, { type: 'error' });
+    return false;
+  }
+  if (isNaN(dur) || dur < 0.5) {
+    showToast('משך לא תקין (מינימום 0.5 שעות)', { type: 'error' });
+    return false;
+  }
+  if (dur > 24) {
+    showToast('משך לא תקין (מקסימום 24 שעות)', { type: 'error' });
+    return false;
+  }
+  store.updateRestRule(rrId, { label, durationHours: dur });
+  return true;
+}
+
+/** Read-and-commit a single load-window row. Returns false on validation error. */
+function _commitLoadWindow(body: HTMLElement, tid: string, lwid: string): boolean {
+  const tpl = store.getTaskTemplate(tid);
+  if (!tpl) return false;
+
+  const startInput = body.querySelector(`[data-field="lw-edit-start"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
+  const endInput = body.querySelector(`[data-field="lw-edit-end"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
+  const weightInput = body.querySelector(
+    `[data-field="lw-edit-weight"][data-lwid="${lwid}"]`,
+  ) as HTMLInputElement | null;
+  if (!startInput || !endInput || !weightInput) return false;
+
+  const ps = parseHm(startInput.value);
+  const pe = parseHm(endInput.value);
+  const weight = parseFloat(weightInput.value || '1');
+  if (!ps || !pe) {
+    showToast('שעה לא תקינה — יש להזין בפורמט HH:MM (00:00–23:59)', { type: 'error' });
+    return false;
+  }
+  if (ps.h === pe.h && ps.m === pe.m) {
+    showToast('שעת ההתחלה והסיום זהות — יש להגדיר טווח עם משך חיובי', { type: 'error' });
+    return false;
+  }
+
+  const candidate = { startHour: ps.h, startMinute: ps.m, endHour: pe.h, endMinute: pe.m };
+  const conflict = (tpl.loadWindows || []).find((w) => w.id !== lwid && loadWindowsOverlap(w, candidate));
+  if (conflict) {
+    showToast(
+      `החלון חופף לחלון קיים (${fmtHm(conflict.startHour, conflict.startMinute)}–${fmtHm(conflict.endHour, conflict.endMinute)}) — השינוי לא נשמר`,
+      { type: 'error' },
+    );
+    return false;
+  }
+
+  store.updateTaskTemplate(tid, {
+    loadWindows: (tpl.loadWindows || []).map((w) => {
+      if (w.id !== lwid) return w;
+      const nextWeight = Math.max(0, Math.min(1, weight));
+      const next: LoadWindow = {
+        ...w,
+        startHour: ps.h,
+        startMinute: ps.m,
+        endHour: pe.h,
+        endMinute: pe.m,
+        weight: nextWeight,
+      };
+      // Manual edit of window weight clears any stored formula.
+      if (w.loadFormula && Math.abs(nextWeight - w.loadFormula.computedValue) > 1e-9) {
+        delete next.loadFormula;
+      }
+      return next;
+    }),
+  });
+  return true;
+}
+
+/** Brief visual confirmation that an auto-save landed. */
+function _flashSaved(el: HTMLElement | null): void {
+  if (!el) return;
+  el.classList.remove('tr-just-saved');
+  // Force reflow so re-adding the class restarts the animation.
+  void el.offsetWidth;
+  el.classList.add('tr-just-saved');
+}
+
+/** Build a selector that re-identifies `el` after a rerender replaces it. */
+function _buildFocusSelector(el: HTMLElement): string | null {
+  const ds = el.dataset;
+  if (ds.tplField && ds.tid) return `[data-tpl-field="${ds.tplField}"][data-tid="${ds.tid}"]`;
+  if (ds.otField && ds.otId) return `[data-ot-field="${ds.otField}"][data-ot-id="${ds.otId}"]`;
+  if (ds.rrField) {
+    const row = el.closest<HTMLElement>('[data-rest-rule-id]');
+    if (row?.dataset.restRuleId)
+      return `[data-rest-rule-id="${row.dataset.restRuleId}"] [data-rr-field="${ds.rrField}"]`;
+  }
+  if (ds.field && ds.field.startsWith('lw-edit-') && ds.lwid) {
+    return `[data-field="${ds.field}"][data-lwid="${ds.lwid}"]`;
+  }
+  return null;
+}
+
+/**
+ * Rerender the tab while preserving focus on whichever data-attribute-bearing
+ * input currently holds it, and flash the just-saved field's post-render
+ * replacement. Skipped while a slot add/edit form is open so the user's
+ * unsaved slot-form entries aren't wiped by an unrelated auto-save.
+ */
+function autoSaveRerender(rerender: () => void, flashSelector?: string | null): void {
+  // Slot add/edit forms hold in-DOM unsaved state (label, level buttons, cert
+  // checkboxes). A rerender would replace them with values from the store,
+  // discarding user input. Defer refresh until the slot form closes.
+  if (editingSlot || addingSlotTo) return;
+
+  const active = document.activeElement as HTMLElement | null;
+  let focusSelector: string | null = null;
+  let selStart: number | null = null;
+  let selEnd: number | null = null;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA')) {
+    focusSelector = _buildFocusSelector(active);
+    const inp = active as HTMLInputElement;
+    try {
+      if (typeof inp.selectionStart === 'number') selStart = inp.selectionStart;
+      if (typeof inp.selectionEnd === 'number') selEnd = inp.selectionEnd;
+    } catch {
+      // selection API not supported on this input type
+    }
+  }
+  rerender();
+  if (focusSelector) {
+    const el = document.querySelector(focusSelector) as HTMLInputElement | null;
+    if (el) {
+      el.focus();
+      if (selStart !== null && selEnd !== null) {
+        try {
+          el.setSelectionRange(selStart, selEnd);
+        } catch {
+          // e.g. type=checkbox doesn't support selection
+        }
+      }
+    }
+  }
+  if (flashSelector) {
+    // Flash happens after rerender so it lands on the post-render element,
+    // not on the one about to be replaced.
+    const target = document.querySelector(flashSelector) as HTMLElement | null;
+    _flashSaved(target);
+  }
+}
+
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
 export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void): void {
   initLoadFormulaModal({ onChanged: rerender });
 
   // Re-wire sleep-recovery hour dropdowns after each render. Values are read
-  // from `.gm-select[data-value]` on save; the onChange callback is a no-op.
+  // from `.gm-select[data-value]` on auto-save; picking an option auto-commits
+  // the enclosing template or one-time task.
   container.querySelectorAll('.sr-body .gm-select').forEach((el) => {
     const selectId = (el as HTMLElement).id;
-    if (selectId) wireCustomSelect(container, selectId, () => {});
+    if (!selectId) return;
+    wireCustomSelect(container, selectId, () => {
+      const block = el.closest('[data-tpl-field], [data-ot-field]') as HTMLElement | null;
+      if (!block) return;
+      const body = block.closest('.template-body') as HTMLElement | null;
+      if (!body) return;
+      const flashSelector = _buildFocusSelector(block);
+      if (block.hasAttribute('data-tpl-field')) {
+        const tid = block.dataset.tid;
+        if (tid && _commitTemplateProps(body, tid)) {
+          autoSaveRerender(rerender, flashSelector);
+        }
+      } else {
+        const otId = block.dataset.otId;
+        if (otId && _commitOneTimeProps(body, otId)) {
+          autoSaveRerender(rerender, flashSelector);
+        }
+      }
+    });
   });
 
   container.addEventListener('input', (e) => {
@@ -1364,11 +1656,67 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
 
   container.addEventListener('change', (e) => {
     const target = e.target as HTMLElement;
-    if ((target as HTMLSelectElement).dataset.field === 'tpl-display-category') {
+    if ((target as HTMLSelectElement).dataset?.field === 'tpl-display-category') {
       const customInput = container.querySelector<HTMLInputElement>('[data-field="tpl-display-category-custom"]');
       if (customInput) customInput.style.display = (target as HTMLSelectElement).value === '' ? 'inline-block' : 'none';
     }
-    // (rest rule inline edits are saved via button action, not change event)
+
+    // ── Auto-save: template properties ────────────────────────────────
+    const tplField = target.closest<HTMLElement>('[data-tpl-field]');
+    if (tplField && tplField.dataset.tplField) {
+      const tid = tplField.dataset.tid;
+      const body = target.closest<HTMLElement>('.template-body');
+      if (tid && body) {
+        const flashSelector = _buildFocusSelector(tplField);
+        if (_commitTemplateProps(body, tid)) {
+          autoSaveRerender(rerender, flashSelector);
+        }
+      }
+      return;
+    }
+
+    // ── Auto-save: one-time task properties ───────────────────────────
+    const otField = target.closest<HTMLElement>('[data-ot-field]');
+    if (otField && otField.dataset.otField) {
+      const otId = otField.dataset.otId;
+      const body = target.closest<HTMLElement>('.template-body');
+      if (otId && body) {
+        const flashSelector = _buildFocusSelector(otField);
+        if (_commitOneTimeProps(body, otId)) {
+          autoSaveRerender(rerender, flashSelector);
+        }
+      }
+      return;
+    }
+
+    // ── Auto-save: rest rule row ──────────────────────────────────────
+    const rrField = target.closest<HTMLElement>('[data-rr-field]');
+    if (rrField) {
+      const row = target.closest<HTMLElement>('[data-rest-rule-id]');
+      const rrId = row?.dataset.restRuleId;
+      if (row && rrId) {
+        const flashSelector = _buildFocusSelector(rrField);
+        if (_commitRestRule(row, rrId)) {
+          autoSaveRerender(rerender, flashSelector);
+        }
+      }
+      return;
+    }
+
+    // ── Auto-save: load window row ────────────────────────────────────
+    const lwField = target.closest<HTMLElement>('[data-field^="lw-edit-"]');
+    if (lwField && lwField.dataset.lwid) {
+      const lwid = lwField.dataset.lwid;
+      const body = target.closest<HTMLElement>('.template-body');
+      const card = target.closest<HTMLElement>('.template-card[data-template-id]');
+      const tid = card?.dataset.templateId;
+      if (body && tid) {
+        const flashSelector = _buildFocusSelector(lwField);
+        if (_commitLoadWindow(body, tid, lwid)) {
+          autoSaveRerender(rerender, flashSelector);
+        }
+      }
+    }
   });
 
   container.addEventListener('click', async (e) => {
@@ -1481,36 +1829,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         rerender();
         break;
       }
-      case 'save-rest-rule': {
-        const rrId = actionButton?.dataset.rrId;
-        if (!rrId) break;
-        const row = container.querySelector<HTMLElement>(`[data-rest-rule-id="${rrId}"]`);
-        if (!row) break;
-        const label = (row.querySelector('[data-rr-field="label"]') as HTMLInputElement)?.value?.trim();
-        const dur = parseFloat((row.querySelector('[data-rr-field="durationHours"]') as HTMLInputElement)?.value);
-        if (!label) {
-          showToast('שם הכלל לא יכול להיות ריק', { type: 'error' });
-          break;
-        }
-        const labelKey = label.toLowerCase();
-        const duplicate = store.getRestRules().some((r) => r.id !== rrId && r.label.trim().toLowerCase() === labelKey);
-        if (duplicate) {
-          showToast(`כלל בשם "${label}" כבר קיים`, { type: 'error' });
-          break;
-        }
-        if (isNaN(dur) || dur < 0.5) {
-          showToast('משך לא תקין (מינימום 0.5 שעות)', { type: 'error' });
-          break;
-        }
-        if (dur > 24) {
-          showToast('משך לא תקין (מקסימום 24 שעות)', { type: 'error' });
-          break;
-        }
-        store.updateRestRule(rrId, { label, durationHours: dur });
-        showToast('הכלל עודכן', { type: 'success' });
-        rerender();
-        break;
-      }
       case 'delete-rest-rule': {
         const rrId = actionButton?.dataset.rrId;
         if (!rrId) break;
@@ -1582,138 +1900,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           icon: hasCrit ? '🚫' : '⚠️',
           bodyHtml: `<ul class="gm-modal-finding-list">${list}</ul>`,
         });
-        break;
-      }
-      case 'save-onetime-props': {
-        const otId = actionButton?.dataset.otId!;
-        const body = actionButton?.closest('.template-body')!;
-        const name = (body.querySelector('[data-ot-field="name"]') as HTMLInputElement)?.value.trim();
-        if (!name) {
-          showToast('שם משימה נדרש', { type: 'error' });
-          break;
-        }
-        if (isTaskNameTaken(name, otId)) {
-          showToast(`משימה בשם "${name}" כבר קיימת`, { type: 'error' });
-          break;
-        }
-        const dayNumVal = parseInt((body.querySelector('[data-ot-field="dayNum"]') as HTMLSelectElement)?.value || '1');
-        const schedDate = store.getScheduleDate();
-        const scheduledDate = new Date(
-          schedDate.getFullYear(),
-          schedDate.getMonth(),
-          schedDate.getDate() + dayNumVal - 1,
-        );
-        const rawStartHour = parseFloat(
-          (body.querySelector('[data-ot-field="startHour"]') as HTMLInputElement)?.value || '6',
-        );
-        const rawStartMinute = parseFloat(
-          (body.querySelector('[data-ot-field="startMinute"]') as HTMLInputElement)?.value || '0',
-        );
-        const rawDur = parseFloat(
-          (body.querySelector('[data-ot-field="durationHours"]') as HTMLInputElement)?.value || '4',
-        );
-        if (!Number.isFinite(rawDur) || rawDur <= 0) {
-          showToast('משך המשימה חייב להיות חיובי (0.5 ומעלה)', { type: 'error' });
-          break;
-        }
-        const baseLoad = parseFloat(
-          (body.querySelector('[data-ot-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1',
-        );
-        const sameGroup =
-          (body.querySelector('[data-ot-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
-        const blocksConsecutive =
-          (body.querySelector('[data-ot-field="blocksConsecutive"]') as HTMLInputElement)?.checked ?? true;
-        const otRestRuleId =
-          (body.querySelector('[data-ot-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
-        const desc = (body.querySelector('[data-ot-field="description"]') as HTMLInputElement)?.value.trim();
-
-        const otSanitized = store.sanitizeTemplateNumericFields({ durationHours: rawDur, startHour: rawStartHour });
-        const startMinute = Math.max(0, Math.min(59, Math.round(Number.isNaN(rawStartMinute) ? 0 : rawStartMinute)));
-        notifyIfClamped(
-          { durationHours: rawDur, startHour: rawStartHour, startMinute: rawStartMinute },
-          { durationHours: otSanitized.durationHours, startHour: otSanitized.startHour, startMinute },
-        );
-
-        const otSleepRecovery = parseSleepRecoveryInput(body as HTMLElement, 'ot');
-        if (otSleepRecovery.kind === 'invalid') {
-          showToast(otSleepRecovery.reason, { type: 'error' });
-          break;
-        }
-        store.updateOneTimeTask(otId, {
-          name,
-          scheduledDate,
-          startHour: otSanitized.startHour,
-          startMinute,
-          durationHours: otSanitized.durationHours,
-          sameGroupRequired: sameGroup,
-          baseLoadWeight: Math.max(0, Math.min(1, baseLoad)),
-          blocksConsecutive,
-          restRuleId: otRestRuleId,
-          ...(otSleepRecovery.kind === 'set' ? { sleepRecovery: otSleepRecovery.value } : {}),
-          description: desc || undefined,
-          displayCategory: name.toLowerCase(),
-        });
-        showToast('המשימה עודכנה', { type: 'success' });
-        rerender();
-        break;
-      }
-      case 'save-template-props': {
-        const tid = actionButton?.dataset.tid!;
-        const body = actionButton?.closest('.template-body')!;
-        const dur = parseFloat(
-          (body.querySelector('[data-tpl-field="durationHours"]') as HTMLInputElement)?.value || '8',
-        );
-        // parseFloat so that decimals (e.g. 1.7) reach the sanitizer's rounding
-        // path and surface as a clamp notification instead of being silently
-        // truncated by parseInt.
-        const shifts = parseFloat(
-          (body.querySelector('[data-tpl-field="shiftsPerDay"]') as HTMLInputElement)?.value || '1',
-        );
-        const startH = parseFloat(
-          (body.querySelector('[data-tpl-field="startHour"]') as HTMLInputElement)?.value || '6',
-        );
-        const baseLoad = parseFloat(
-          (body.querySelector('[data-tpl-field="baseLoadWeight"]') as HTMLInputElement)?.value || '1',
-        );
-        const sameGroup =
-          (body.querySelector('[data-tpl-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
-        const blocksConsecutive =
-          (body.querySelector('[data-tpl-field="blocksConsecutive"]') as HTMLInputElement)?.checked || false;
-        const togethernessRelevant =
-          (body.querySelector('[data-tpl-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
-        const restRuleId =
-          (body.querySelector('[data-tpl-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
-
-        const sanitized = store.sanitizeTemplateNumericFields({
-          durationHours: dur,
-          shiftsPerDay: shifts,
-          startHour: startH,
-        });
-        notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
-
-        const clampedBaseLoad = Math.max(0, Math.min(1, baseLoad));
-        const existingTpl = store.getTaskTemplate(tid);
-        const existingFormulaValue = existingTpl?.loadFormula?.computedValue;
-        const formulaDroppedByManualEdit =
-          existingFormulaValue !== undefined && Math.abs(clampedBaseLoad - existingFormulaValue) > 1e-9;
-        const sleepRecovery = parseSleepRecoveryInput(body as HTMLElement, 'tpl');
-        if (sleepRecovery.kind === 'invalid') {
-          showToast(sleepRecovery.reason, { type: 'error' });
-          break;
-        }
-        store.updateTaskTemplate(tid, {
-          durationHours: sanitized.durationHours,
-          shiftsPerDay: sanitized.shiftsPerDay,
-          startHour: sanitized.startHour,
-          baseLoadWeight: clampedBaseLoad,
-          ...(formulaDroppedByManualEdit ? { loadFormula: undefined } : {}),
-          sameGroupRequired: sameGroup,
-          blocksConsecutive,
-          togethernessRelevant,
-          restRuleId,
-          ...(sleepRecovery.kind === 'set' ? { sleepRecovery: sleepRecovery.value } : {}),
-        });
-        rerender();
         break;
       }
       case 'open-load-formula': {
@@ -1844,71 +2030,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         if (action === 'add-load-window-and-compute') {
           openLoadFormulaModal({ kind: 'window', templateId: tid, windowId: newWindow.id });
         }
-        break;
-      }
-      case 'update-load-window': {
-        const tid = actionButton?.dataset.tid!;
-        const lwid = actionButton?.dataset.lwid!;
-        const tpl = store.getTaskTemplate(tid);
-        if (!tpl) break;
-
-        const body = actionButton?.closest('.template-body') as HTMLElement | null;
-        if (!body) break;
-        const startInput = body.querySelector(
-          `[data-field="lw-edit-start"][data-lwid="${lwid}"]`,
-        ) as HTMLInputElement | null;
-        const endInput = body.querySelector(
-          `[data-field="lw-edit-end"][data-lwid="${lwid}"]`,
-        ) as HTMLInputElement | null;
-        const weightInput = body.querySelector(
-          `[data-field="lw-edit-weight"][data-lwid="${lwid}"]`,
-        ) as HTMLInputElement | null;
-        if (!startInput || !endInput || !weightInput) break;
-
-        const ps = parseHm(startInput.value);
-        const pe = parseHm(endInput.value);
-        const weight = parseFloat(weightInput.value || '1');
-        if (!ps || !pe) {
-          showToast('שעה לא תקינה — יש להזין בפורמט HH:MM (00:00–23:59)', { type: 'error' });
-          break;
-        }
-        if (ps.h === pe.h && ps.m === pe.m) {
-          showToast('שעת ההתחלה והסיום זהות — יש להגדיר טווח עם משך חיובי', { type: 'error' });
-          rerender();
-          break;
-        }
-
-        const candidate = { startHour: ps.h, startMinute: ps.m, endHour: pe.h, endMinute: pe.m };
-        const conflict = (tpl.loadWindows || []).find((w) => w.id !== lwid && loadWindowsOverlap(w, candidate));
-        if (conflict) {
-          showToast(
-            `החלון חופף לחלון קיים (${fmtHm(conflict.startHour, conflict.startMinute)}–${fmtHm(conflict.endHour, conflict.endMinute)}) — השינוי לא נשמר`,
-            { type: 'error' },
-          );
-          rerender();
-          break;
-        }
-
-        store.updateTaskTemplate(tid, {
-          loadWindows: (tpl.loadWindows || []).map((w) => {
-            if (w.id !== lwid) return w;
-            const nextWeight = Math.max(0, Math.min(1, weight));
-            const next: LoadWindow = {
-              ...w,
-              startHour: ps.h,
-              startMinute: ps.m,
-              endHour: pe.h,
-              endMinute: pe.m,
-              weight: nextWeight,
-            };
-            // Manual edit of window weight clears any stored formula.
-            if (w.loadFormula && Math.abs(nextWeight - w.loadFormula.computedValue) > 1e-9) {
-              delete next.loadFormula;
-            }
-            return next;
-          }),
-        });
-        rerender();
         break;
       }
       case 'remove-load-window': {

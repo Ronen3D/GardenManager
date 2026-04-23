@@ -1503,8 +1503,22 @@ select.input-sm {
   border-top: 1px solid var(--border);
   margin-top: 2px;
 }
-.tprop-save-btn {
-  flex: 0 0 auto;
+
+/* ─── Auto-save flash ────────────────────────────────────
+   Applied briefly to a field container when its change lands in the store.
+   Uses a box-shadow ring so it's visible over any existing border/padding
+   and on both inputs and wrapping labels/tds. */
+@keyframes tr-saved-flash {
+  0% {
+    box-shadow: 0 0 0 2px var(--success, #27ae60);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.tr-just-saved {
+  animation: tr-saved-flash 900ms ease-out;
+  border-radius: 4px;
 }
 
 /* ─── Sleep & Recovery (HC-15) section ─────────────────── */
@@ -3026,8 +3040,14 @@ tr.row-rest td {
   color: var(--danger);
 }
 
-.btn-cancel-optim {
+.optim-actions {
   margin-top: 18px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
+}
+.btn-cancel-optim {
   padding: 8px 28px;
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 8px;
@@ -3044,6 +3064,29 @@ tr.row-rest td {
   background: rgba(255, 255, 255, 0.12);
   color: var(--text);
   border-color: rgba(255, 255, 255, 0.25);
+}
+.btn-accept-best {
+  padding: 8px 28px;
+  border: 1px solid rgba(74, 144, 217, 0.6);
+  border-radius: 8px;
+  background: rgba(74, 144, 217, 0.25);
+  color: #eaf3ff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
+}
+.btn-accept-best:hover:not(:disabled) {
+  background: rgba(74, 144, 217, 0.4);
+  border-color: rgba(74, 144, 217, 0.85);
+}
+.btn-accept-best:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .optim-error {
@@ -5748,6 +5791,15 @@ tr.now-row-animate > td.time-cell {
   background: rgba(0, 0, 0, 0.08);
   color: var(--text);
   border-color: rgba(0, 0, 0, 0.25);
+}
+[data-theme="light"] .btn-accept-best {
+  border-color: rgba(74, 144, 217, 0.5);
+  background: rgba(74, 144, 217, 0.18);
+  color: #1b4a8a;
+}
+[data-theme="light"] .btn-accept-best:hover:not(:disabled) {
+  background: rgba(74, 144, 217, 0.3);
+  border-color: rgba(74, 144, 217, 0.75);
 }
 
 [data-theme="light"] .tune-card-breathing {
