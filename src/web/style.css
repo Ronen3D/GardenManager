@@ -3045,7 +3045,7 @@ tr.row-rest td {
   display: flex;
   gap: 10px;
   justify-content: center;
-  align-items: center;
+  align-items: stretch;
 }
 .btn-cancel-optim {
   padding: 8px 28px;
@@ -3055,6 +3055,7 @@ tr.row-rest td {
   color: var(--text-muted);
   font-size: 0.9rem;
   cursor: pointer;
+  white-space: nowrap;
   transition:
     background 0.15s,
     color 0.15s,
@@ -3074,6 +3075,7 @@ tr.row-rest td {
   font-size: 0.95rem;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
   transition:
     background 0.15s,
     color 0.15s,

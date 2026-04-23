@@ -1997,7 +1997,7 @@ function renderOptimOverlay(): string {
         }
       </div>
       <div class="optim-actions">
-        <button class="btn-accept-best" id="btn-accept-best" ${attempt < 1 ? 'disabled' : ''}>לשבצ"ק</button>
+        <button class="btn-accept-best" id="btn-accept-best" ${attempt < 1 ? 'disabled' : ''}>לשבצ"ק (סיים עכשיו)</button>
         <button class="btn-cancel-optim" id="btn-cancel-optim">ביטול</button>
       </div>
     </div>
@@ -3350,7 +3350,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.7.0</span>
+      <h1 id="app-title">⏱ מערכת שיבוץ חכמה</h1><span class="beta-badge">v2.7.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

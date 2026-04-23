@@ -66,30 +66,39 @@ The web build uses Vite with path alias `@/` mapping to `src/`. All configs use 
 
 ```
 Web UI (src/web/app.ts)
-  ├── Tab views: participants, task-rules, schedule, algorithm (+ profile overlay)
+  ├── Tabs: participants, task-rules, schedule, algorithm (+ profile / task-panel overlays)
   ├── Config persistence: config-store.ts (localStorage singleton)
-  ├── PDF export, snapshot versioning
-  ├── schedule-utils.ts  — Pure helpers: date formatting, day windows, status badges, violation labels
-  ├── tooltips.ts        — Participant & task tooltip UI (hover/touch, callback injection)
-  └── rescue-modal.ts    — Rescue planning modal (swap-chain UI, callback injection)
+  ├── Tab renderers: tab-participants.ts, tab-task-rules.ts, tab-algorithm.ts, tab-profile.ts, tab-task-panel.ts
+  ├── Modals: rescue-modal.ts, future-sos-modal.ts, inject-task-modal.ts, range-picker-modal.ts,
+  │           load-formula-modal.ts, swap-picker.ts, ui-modal.ts
+  ├── Helpers: schedule-utils.ts, tooltips.ts, workload-popup.ts, workload-utils.ts, preflight.ts, ui-helpers.ts
+  └── PDF/XLSX export, snapshot versioning
         │
 Scheduling Engine (src/engine/)
-  ├── scheduler.ts     — SchedulingEngine class (two-stage: data setup → optimization)
-  ├── optimizer.ts     — Greedy construction + simulated annealing local search
-  ├── validator.ts     — Real-time hard+soft constraint checking
-  ├── temporal.ts      — Live mode: "point of no return" freezes past assignments
-  └── rescue.ts        — Minimum-disruption replanning (depth 1→2→3 swap chains)
+  ├── scheduler.ts         — SchedulingEngine class (two-stage: data setup → optimization)
+  ├── optimizer.ts         — Greedy construction + simulated annealing local search
+  ├── validator.ts         — Real-time hard+soft constraint checking
+  ├── temporal.ts          — Live mode: "point of no return" freezes past assignments
+  ├── rescue.ts            — Minimum-disruption replanning (depth 1→3, + depth-4 deep-chain fallback)
+  ├── rescue-primitives.ts — Shared per-slot chain enumeration (used by rescue + future-sos)
+  ├── future-sos.ts        — Multi-slot batch rescue when a participant goes unavailable for a window
+  └── inject.ts            — BALTAM: post-generation one-time task injection & staffing
         │
 Constraints (src/constraints/)
-  ├── hard-constraints.ts  — HC-1..HC-8, HC-11, HC-12, HC-14 (must pass or schedule is invalid)
+  ├── hard-constraints.ts  — HC-1..HC-8, HC-11, HC-12, HC-14, HC-15 (must pass or schedule is invalid)
   ├── soft-constraints.ts  — SC-3, SC-6..SC-10 (penalties guiding optimization)
-  └── senior-policy.ts     — Senior soft penalty (lowPriority last-resort) + isNaturalRole classification
+  ├── senior-policy.ts     — Senior soft penalty (lowPriority last-resort) + isNaturalRole classification
+  └── sleep-recovery.ts    — HC-15 helpers: per-task recovery-window check
         │
 Foundation
-  ├── models/types.ts          — All enums, interfaces, type aliases (TaskTemplate, SlotTemplate, etc.)
+  ├── models/types.ts            — All enums, interfaces, type aliases (TaskTemplate, SlotTemplate,
+  │                                ScheduleUnavailability, etc.)
+  ├── shared/                    — Code usable by both Node/CLI and web builds
+  │                                (utils/{time-utils,rest-calculator,load-formula,load-weighting},
+  │                                 group-name-rules, participant-set-xlsx)
   ├── tasks/cli-task-factory.ts  — Task factories for CLI scripts (demo, priority analysis)
-  ├── utils/                    — Capacity computation, date utilities
-  └── ui/gantt-bridge.ts       — Schedule → Gantt data conversion
+  ├── utils/                     — Capacity computation, date utilities
+  └── ui/gantt-bridge.ts         — Schedule → Gantt data conversion
 ```
 
 ### Key Design Rules
@@ -97,27 +106,31 @@ Foundation
 - **No hardcoded task types.** The engine and constraints must never reference specific task names (Adanit, Hamama, etc.). All task behavior is driven by template properties: `sameGroupRequired`, `blocksConsecutive`, `isLight`, `restRuleId`, slot `acceptableLevels`, `requiredCertifications`, `forbiddenCertifications`, `subTeamId`, etc. Comments may mention task names as examples, but code must not branch on them.
 - **Task instantiation path (web):** `generateTasksFromTemplates()` in `app.ts` iterates `getAllTaskTemplates()`, builds shifts from `shiftsPerDay`/`durationHours`/`startHour`, and converts `SlotTemplate` → `SlotRequirement`. One-time tasks (`OneTimeTask`) are also supported for non-recurring events.
 - **Operational day boundary.** A "day" in the system runs from a configurable hour (default 05:00) to the same hour the next calendar day. The boundary is stored in `AlgorithmSettings.dayStartHour` and accessed via `store.getDayStartHour()`. When grouping tasks or timestamps by day in the engine layer, always use `operationalDateKey()` from `date-utils.ts` — never `calendarDateKey()`, which uses midnight boundaries. `calendarDateKey()` exists only for calendar-date formatting in UI/export contexts.
-- **Frozen-snapshot schedules.** Once generated, a `Schedule` is a frozen snapshot. It embeds the values the engine and display layer need: `algorithmSettings` (config, disabledHardConstraints, dayStartHour), `restRuleSnapshot`, and `certLabelSnapshot`. Any edit outside the schedule screen (participants, templates, algorithm settings, cert labels) only sets `_scheduleDirty = true` and shows the dirty warning — it must **not** mutate the displayed schedule, the engine, or validation results. Schedule-screen code paths (render, rescue/SOS, manual swap, slot eligibility, tooltips, day grouping, violation filtering) must read frozen values from `schedule.algorithmSettings.*` / `engine.get*()`, never from `store.*`. The engine is the single source of truth post-generation; `store.*` is only consulted at generation time. Pre-schema saved schedules (missing frozen fields) are detected by `hasFrozenFields()` in `app.ts` and discarded at load — there is no migration.
+- **Frozen-snapshot schedules.** Once generated, a `Schedule` is a frozen snapshot. It embeds the values the engine and display layer need: `algorithmSettings` (config, disabledHardConstraints, dayStartHour), `restRuleSnapshot`, `certLabelSnapshot`, `periodStart` + `periodDays`, and `scheduleUnavailability` (Future-SOS windows scoped to this snapshot). Any edit outside the schedule screen (participants, templates, algorithm settings, cert labels) only sets `_scheduleDirty = true` and shows the dirty warning — it must **not** mutate the displayed schedule, the engine, or validation results. Schedule-screen code paths (render, rescue/SOS, manual swap, slot eligibility, tooltips, day grouping, violation filtering) must read frozen values from `schedule.algorithmSettings.*` / `engine.get*()`, never from `store.*`. The engine is the single source of truth post-generation; `store.*` is only consulted at generation time. Pre-schema saved schedules (missing frozen fields) are detected by `hasFrozenFields()` in `app.ts` and discarded at load — there is no migration.
 
 ### Key Domain Concepts
 
 - **Levels:** L0 (junior), L2, L3, L4 (senior). No L1 exists.
 - **Certifications:** Nitzan, Hamama, Horesh — gate eligibility for specific task types (configured per slot, not per task type). Defined in `DEFAULT_CERTIFICATION_DEFINITIONS` (`src/models/types.ts`) and user-editable at runtime.
-- **Hard constraints** (HC-1..HC-8, HC-11, HC-12, HC-14): Binary pass/fail. Violations make a schedule invalid. HC-1 is the sole level gate for all participants. Note: HC-9, HC-10, HC-13 do not exist (removed or never created).
+- **Hard constraints** (HC-1..HC-8, HC-11, HC-12, HC-14, HC-15): Binary pass/fail. Violations make a schedule invalid. HC-1 is the sole level gate for all participants. HC-15 (sleep & recovery) enforces a per-task recovery window: if a task's end falls in a configured inclusive clock-hour range, the assigned participant cannot take any other loaded task during the following `recoveryHours` window. Every HC is gated by the `disabledHardConstraints` set frozen on the schedule. Note: HC-9, HC-10, HC-13 do not exist (removed or never created).
 - **Soft constraints** (SC-3, SC-6..SC-10): Numeric penalties. The optimizer minimizes total penalty. SC-7 is a warning-only safety net. SC-1, SC-2, SC-4, SC-5 do not exist.
 - **Senior policy:** Seniors have "natural roles" determined by `isNaturalRole()`. Slots can mark a senior level as `lowPriority` (last-resort) — the soft penalty `lowPriorityLevelPenalty` heavily discourages these placements. Hard level-gating is handled by HC-1.
 - **Optimizer:** Two-phase — greedy assignment followed by swap-based local search with simulated annealing. Multi-attempt runs pick the best result.
 - **Temporal (live mode):** A time anchor divides the schedule into frozen past and modifiable future.
-- **Rescue planning:** When a slot is vacated, enumerates single-swap, then 2-swap, then 3-swap chain alternatives scored by workload impact.
+- **Rescue planning:** When a slot is vacated, enumerates single-swap, then 2-swap, then 3-swap chain alternatives scored by composite-score delta. If depths 1–3 yield zero valid plans, a depth-4 deep-chain fallback runs and tags plans with `fallbackDepth = 4` so the UI can warn. Per-slot chain enumeration lives in `rescue-primitives.ts` and is shared with Future SOS.
+- **Future SOS:** When a participant is marked unavailable for a future window (stored on the frozen `Schedule.scheduleUnavailability`, not on the live participant), Future SOS identifies every affected assignment and composes a single batch plan that fills all vacated slots together. Scored by full composite score, pruned by admissible bounds, bounded disruption (depth ≤ 3 per slot). HC-3 layers `scheduleUnavailability` on top of master-data availability during validation and rescue planning.
+- **BALTAM injection:** Post-generation injection of a one-time task into an existing schedule (`src/engine/inject.ts`). Runs depth-1/2/3 chain search with per-group backtracking for `sameGroupRequired` tasks, gated by `assertInjectableTimeBlock` from temporal.ts. Injected tasks carry `injectedPostGeneration = true` so orphan detection in `app.ts` ignores them.
 - **Split-pool fairness:** L0 and seniors are balanced independently via Gini coefficient on rest distribution.
 
 ### Web UI Structure
 
-`src/web/app.ts` is the main UI orchestrator (~3900 lines). It manages a tabbed interface (participants, task-rules, schedule, algorithm) with day navigation (days 1-7), schedule grid rendering, manual drag-drop swaps, live mode controls, and triggers full 7-day re-validation after every change. A profile view is rendered as a separate overlay, not as a tab. State is persisted in localStorage via `src/web/config-store.ts`.
+`src/web/app.ts` is the main UI orchestrator (~5200 lines). It manages a tabbed interface (participants, task-rules, schedule, algorithm) with day navigation over `schedule.periodDays` (configurable 1..7 via `store.getScheduleDays()`), schedule grid rendering, manual drag-drop swaps, live mode controls, and triggers full period-wide re-validation after every change. Profile and task-panel views are rendered as separate overlays (`_viewMode = 'PROFILE_VIEW' | 'TASK_PANEL_VIEW'`), not as tabs. State is persisted in localStorage via `src/web/config-store.ts`.
 
-Extracted modules use **callback injection** to avoid circular imports back to `app.ts`:
+Most rendering logic is extracted into per-tab and per-modal modules; `app.ts` orchestrates lifecycle, navigation, engine calls, and state. Extracted modules use **callback injection** to avoid circular imports back to `app.ts`:
+- **Tab renderers** (`tab-participants.ts`, `tab-task-rules.ts`, `tab-algorithm.ts`, `tab-profile.ts`, `tab-task-panel.ts`) expose `render*` + `wire*Events` pairs and receive context objects / getters from `app.ts`.
+- **Modal modules** (`rescue-modal.ts`, `future-sos-modal.ts`, `inject-task-modal.ts`, `range-picker-modal.ts`, `load-formula-modal.ts`, `swap-picker.ts`) receive engine/schedule getters and result callbacks via their `init*` functions.
 - `tooltips.ts` receives action callbacks (`onSwap`, `onRescue`, `onNavigateToProfile`) via `initTooltips()` and a `() => Schedule | null` getter for live schedule access.
-- `rescue-modal.ts` receives engine/schedule getters and result callbacks via `initRescue()`.
 - `schedule-utils.ts` is pure — reads only from the `store` singleton, no app-level state.
+- `preflight.ts` runs real-time feasibility checks (skill gap, capacity, group integrity) before schedule generation.
 
 Debug helpers available in browser console: `toggleSchedulerDiag()`, `gardenWisdom()`.
