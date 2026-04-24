@@ -1,7 +1,7 @@
 {
-  "name": "מערכת שיבוץ חכמה",
-  "short_name": "מערכת שיבוץ חכמה",
-  "description": "מערכת שיבוץ חכמה לצוותי גינה",
+  "name": "השבצקיסט",
+  "short_name": "השבצקיסט",
+  "description": "השבצקיסט לצוותי גינה",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
