@@ -313,7 +313,7 @@ export function collectSoftWarnings(
         warnings.push({
           severity: ViolationSeverity.Warning,
           code: 'GROUP_MISMATCH',
-          message: `${task.name} \u200F— ${groups.size} קבוצות: ${[...groups].join(', ')}`,
+          message: `${describeTaskInstance(task)} \u200F— ${groups.size} קבוצות: ${[...groups].join(', ')}`,
           taskId: task.id,
         });
       }
@@ -325,7 +325,7 @@ export function collectSoftWarnings(
         warnings.push({
           severity: ViolationSeverity.Warning,
           code: 'LESS_PREFERRED_ASSIGNMENT',
-          message: `${p.name} \u200F— ${task.name}`,
+          message: `${p.name} \u200F— ${describeTaskInstance(task)}`,
           taskId: task.id,
           participantId: p.id,
         });

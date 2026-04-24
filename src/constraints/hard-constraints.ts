@@ -22,7 +22,7 @@ import {
   isFullyCovered,
   type ScheduleContext,
 } from '../shared/utils/time-utils';
-import { bidiTimeRange, describeTaskBidi, describeTaskInstance } from '../utils/date-utils';
+import { describeTaskBidi, describeTaskInstance } from '../utils/date-utils';
 import { checkSleepRecovery } from './sleep-recovery';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -75,7 +75,7 @@ export function checkLevelRequirement(
   if (!slot) {
     return violation(
       'SLOT_NOT_FOUND',
-      `${task.name} \u200F— משבצת ${slotId} לא נמצאה`,
+      `${describeTaskInstance(task)} \u200F— משבצת ${slotId} לא נמצאה`,
       task.id,
       slotId,
       participant.id,
@@ -139,7 +139,7 @@ export function checkAvailability(
   if (!isFullyCovered(task.timeBlock, participant.availability)) {
     return violation(
       'AVAILABILITY_VIOLATION',
-      `${participant.name} \u200F— ${task.name} (${bidiTimeRange(task.timeBlock)})`,
+      `${participant.name} \u200F— ${describeTaskInstance(task)}`,
       task.id,
       undefined,
       participant.id,
@@ -151,7 +151,7 @@ export function checkAvailability(
   ) {
     return violation(
       'AVAILABILITY_VIOLATION',
-      `${participant.name} \u200F— ${task.name} (${bidiTimeRange(task.timeBlock)})`,
+      `${participant.name} \u200F— ${describeTaskInstance(task)}`,
       task.id,
       undefined,
       participant.id,
@@ -163,7 +163,7 @@ export function checkAvailability(
       if (blocksOverlap(task.timeBlock, { start: u.start, end: u.end })) {
         return violation(
           'AVAILABILITY_VIOLATION',
-          `${participant.name} \u200F— ${task.name} (${bidiTimeRange(task.timeBlock)})`,
+          `${participant.name} \u200F— ${describeTaskInstance(task)}`,
           task.id,
           undefined,
           participant.id,
@@ -183,7 +183,7 @@ export function checkSameGroup(task: Task, assignedParticipants: Participant[]):
   const groups = new Set(assignedParticipants.map((p) => p.group));
   if (groups.size > 1) {
     return [
-      violation('GROUP_MISMATCH', `${task.name} \u200F— קבוצות: ${[...groups].join(', ')} (נדרשת קבוצה אחת)`, task.id),
+      violation('GROUP_MISMATCH', `${describeTaskInstance(task)} \u200F— קבוצות: ${[...groups].join(', ')} (נדרשת קבוצה אחת)`, task.id),
     ];
   }
   return [];
@@ -313,7 +313,7 @@ export function checkUniqueParticipantsPerTask(task: Task, assignments: Assignme
   for (const a of taskAssignments) {
     if (seen.has(a.participantId)) {
       violations.push(
-        violation('DUPLICATE_IN_TASK', `${a.participantId} \u200F— ${task.name}`, task.id, a.slotId, a.participantId),
+        violation('DUPLICATE_IN_TASK', `${a.participantId} \u200F— ${describeTaskInstance(task)}`, task.id, a.slotId, a.participantId),
       );
     }
     seen.add(a.participantId);
@@ -634,7 +634,7 @@ export function validateHardConstraints(
         if (seen.has(a.participantId)) {
           const pName = pMap.get(a.participantId)?.name || a.participantId;
           allViolations.push(
-            violation('DUPLICATE_IN_TASK', `${pName} \u200F— ${task.name}`, task.id, a.slotId, a.participantId),
+            violation('DUPLICATE_IN_TASK', `${pName} \u200F— ${describeTaskInstance(task)}`, task.id, a.slotId, a.participantId),
           );
         }
         seen.add(a.participantId);

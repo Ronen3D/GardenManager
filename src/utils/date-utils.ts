@@ -22,12 +22,6 @@ export function bidiTimeRange(tb: { start: Date; end: Date }): string {
   return `\u2066${fmtTime(tb.start)}\u2013${fmtTime(tb.end)}\u2069`;
 }
 
-/** Slot description with BiDi isolates for safe RTL embedding in violation messages. */
-export function describeSlotBidi(slotLabel: string | undefined, timeBlock: { start: Date; end: Date }): string {
-  const time = bidiTimeRange(timeBlock);
-  return slotLabel ? `${slotLabel} ${time}` : time;
-}
-
 /**
  * Task description for pair-based violation messages: strips the leading
  * `D{n}` day-index prefix and the trailing ` משמרת N` shift suffix from
