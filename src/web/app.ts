@@ -35,6 +35,7 @@ import {
   Level,
   LiveModeState,
   type Participant,
+  type ConstraintViolation,
   type Schedule,
   SchedulingEngine,
   type SlotRequirement,
@@ -1754,6 +1755,45 @@ function renderViolations(schedule: Schedule): string {
     return `<div class="alert alert-ok">✓ אין אזהרות או הפרות בכל ${schedule.periodDays} הימים.</div>`;
   }
 
+  // Derive day index from the task's baked-in `D{n}` prefix (set at
+  // generation time). Returns null for violations without a resolvable task
+  // (e.g., schedule-level errors) so they can fall into a 'no day' bucket.
+  const taskById = new Map(schedule.tasks.map((t) => [t.id, t]));
+  const dayOf = (v: ConstraintViolation): number | null => {
+    if (!v.taskId) return null;
+    const t = taskById.get(v.taskId);
+    if (!t) return null;
+    const m = t.name.match(/^D(\d+)\s/);
+    return m ? parseInt(m[1], 10) : null;
+  };
+
+  const renderItem = (v: ConstraintViolation): string =>
+    `<li dir="rtl"><code>${violationLabel(v.code)}</code> · ${v.message}</li>`;
+
+  const renderOtherDays = (items: ConstraintViolation[]): string => {
+    const byDay = new Map<number | null, ConstraintViolation[]>();
+    for (const v of items) {
+      const d = dayOf(v);
+      const bucket = byDay.get(d);
+      if (bucket) bucket.push(v);
+      else byDay.set(d, [v]);
+    }
+    const sortedDays = [...byDay.keys()].filter((d): d is number => d !== null).sort((a, b) => a - b);
+    let out = '';
+    for (const d of sortedDays) {
+      out += `<div class="violation-day"><em>יום ${d}:</em><ul>`;
+      for (const v of byDay.get(d)!) out += renderItem(v);
+      out += '</ul></div>';
+    }
+    const unassigned = byDay.get(null);
+    if (unassigned) {
+      out += '<ul>';
+      for (const v of unassigned) out += renderItem(v);
+      out += '</ul>';
+    }
+    return out;
+  };
+
   // Separate into current-day and other-day violations
   const dayTaskIds = new Set(getFilteredTasks(schedule).map((t) => t.id));
 
@@ -1765,20 +1805,31 @@ function renderViolations(schedule: Schedule): string {
     html += `<div class="alert alert-error"><strong>הפרות חמורות (${hard.length})</strong>`;
     if (today.length > 0) {
       html += `<div class="violation-section"><em>יום ${currentDay}:</em><ul>`;
-      for (const v of today) html += `<li dir="rtl"><code>${violationLabel(v.code)}</code> · ${v.message}</li>`;
+      for (const v of today) html += renderItem(v);
       html += `</ul></div>`;
     }
     if (other.length > 0) {
-      html += `<div class="violation-section violation-other"><em>ימים אחרים:</em><ul>`;
-      for (const v of other) html += `<li dir="rtl"><code>${violationLabel(v.code)}</code> · ${v.message}</li>`;
-      html += `</ul></div>`;
+      html += `<div class="violation-section violation-other"><em>ימים אחרים:</em>`;
+      html += renderOtherDays(other);
+      html += `</div>`;
     }
     html += '</div>';
   }
   if (warn.length > 0) {
-    html += `<div class="alert alert-warn"><strong>אזהרות (${warn.length})</strong><ul>`;
-    for (const w of warn) html += `<li dir="rtl"><code>${violationLabel(w.code)}</code> · ${w.message}</li>`;
-    html += '</ul></div>';
+    const today = warn.filter((v) => v.taskId && dayTaskIds.has(v.taskId));
+    const other = warn.filter((v) => !v.taskId || !dayTaskIds.has(v.taskId));
+    html += `<div class="alert alert-warn"><strong>אזהרות (${warn.length})</strong>`;
+    if (today.length > 0) {
+      html += `<div class="violation-section"><em>יום ${currentDay}:</em><ul>`;
+      for (const v of today) html += renderItem(v);
+      html += `</ul></div>`;
+    }
+    if (other.length > 0) {
+      html += `<div class="violation-section violation-other"><em>ימים אחרים:</em>`;
+      html += renderOtherDays(other);
+      html += `</div>`;
+    }
+    html += '</div>';
   }
   return html;
 }

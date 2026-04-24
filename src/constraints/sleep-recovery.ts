@@ -13,6 +13,7 @@
  */
 
 import type { Assignment, ConstraintViolation, LoadWindow, Task } from '../models/types';
+import { describeTaskBidi } from '../utils/date-utils';
 import { ViolationSeverity } from '../models/types';
 import { getLoadWeightAtTime } from '../shared/utils/load-weighting';
 
@@ -205,7 +206,7 @@ export function checkSleepRecovery(
       violations.push(
         violation(
           'SLEEP_RECOVERY_VIOLATION',
-          `${displayName} ‏— "${other.name}" נופל בחלון ההתאוששות של ${hours} שעות אחרי "${trigger.name}"`,
+          `${displayName} ‏— "${describeTaskBidi(other)}" נופל בחלון ההתאוששות של ${hours} שעות אחרי "${describeTaskBidi(trigger)}"`,
           other.id,
           participantId,
         ),

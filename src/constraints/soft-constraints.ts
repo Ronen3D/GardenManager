@@ -24,7 +24,7 @@ import {
   computeRestFromAssignments,
   ParticipantRestProfile,
 } from '../shared/utils/rest-calculator';
-import { describeSlotBidi, operationalDateKey } from '../utils/date-utils';
+import { describeTaskInstance, operationalDateKey } from '../utils/date-utils';
 import { computeLowPriorityLevelPenalty } from './senior-policy';
 
 /**
@@ -297,7 +297,7 @@ export function collectSoftWarnings(
           warnings.push({
             severity: ViolationSeverity.Warning,
             code: 'LOW_PRIORITY_LEVEL',
-            message: `${p.name} (דרגה ${p.level}) \u200F— ${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)}`,
+            message: `${p.name} (דרגה ${p.level}) \u200F— ${describeTaskInstance(task)}`,
             taskId: task.id,
             participantId: p.id,
           });

@@ -22,7 +22,7 @@ import {
   isFullyCovered,
   type ScheduleContext,
 } from '../shared/utils/time-utils';
-import { bidiTimeRange, describeSlotBidi, describeTaskBidi } from '../utils/date-utils';
+import { bidiTimeRange, describeTaskBidi, describeTaskInstance } from '../utils/date-utils';
 import { checkSleepRecovery } from './sleep-recovery';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ export function checkLevelRequirement(
   if (!isLevelSatisfied(participant.level, slot)) {
     return violation(
       'LEVEL_MISMATCH',
-      `${participant.name} (דרגה ${participant.level}) \u200F— ${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} (נדרש: ${slot.acceptableLevels.map((e) => 'דרגה ' + e.level).join(', ')})`,
+      `${participant.name} (דרגה ${participant.level}) \u200F— ${describeTaskInstance(task)} (נדרש: ${slot.acceptableLevels.map((e) => 'דרגה ' + e.level).join(', ')})`,
       task.id,
       slotId,
       participant.id,
@@ -109,7 +109,7 @@ export function checkCertificationRequirement(
     if (!participant.certifications.includes(cert)) {
       return violation(
         'CERT_MISSING',
-        `${participant.name} \u200F— ${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} (חסר: ${certLabelResolver(cert)})`,
+        `${participant.name} \u200F— ${describeTaskInstance(task)} (חסר: ${certLabelResolver(cert)})`,
         task.id,
         slotId,
         participant.id,
@@ -210,7 +210,7 @@ export function checkForbiddenCertifications(
       violations.push(
         violation(
           'EXCLUDED_CERTIFICATION',
-          `${p.name} \u200F— ${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} (מחזיק/ה: ${forbidden.map(certLabelResolver).join(', ')})`,
+          `${p.name} \u200F— ${describeTaskInstance(task)} (מחזיק/ה: ${forbidden.map(certLabelResolver).join(', ')})`,
           task.id,
           slot.slotId,
           p.id,
@@ -283,7 +283,7 @@ export function checkSlotsFilled(task: Task, assignments: Assignment[]): Constra
       violations.push(
         violation(
           'SLOT_UNFILLED',
-          `${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)}`,
+          `${describeTaskInstance(task)}`,
           task.id,
           slot.slotId,
         ),
@@ -292,7 +292,7 @@ export function checkSlotsFilled(task: Task, assignments: Assignment[]): Constra
       violations.push(
         violation(
           'SLOT_OVERBOOKED',
-          `${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} \u200F— ${slotAssignments.length} במקום 1`,
+          `${describeTaskInstance(task)} \u200F— ${slotAssignments.length} במקום 1`,
           task.id,
           slot.slotId,
         ),
@@ -368,7 +368,7 @@ export function checkGroupFeasibility(
       violations.push(
         violation(
           'GROUP_INSUFFICIENT',
-          `${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} \u200F— נדרש: ${levelDesc}${certDesc}`,
+          `${describeTaskInstance(task)} \u200F— נדרש: ${levelDesc}${certDesc}`,
           task.id,
           slot.slotId,
         ),
@@ -609,7 +609,7 @@ export function validateHardConstraints(
           allViolations.push(
             violation(
               'SLOT_UNFILLED',
-              `${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)}`,
+              `${describeTaskInstance(task)}`,
               task.id,
               slot.slotId,
             ),
@@ -618,7 +618,7 @@ export function validateHardConstraints(
           allViolations.push(
             violation(
               'SLOT_OVERBOOKED',
-              `${task.name}, ${describeSlotBidi(slot.label, task.timeBlock)} \u200F— ${slotAssignments.length} במקום 1`,
+              `${describeTaskInstance(task)} \u200F— ${slotAssignments.length} במקום 1`,
               task.id,
               slot.slotId,
             ),
@@ -649,7 +649,7 @@ export function validateHardConstraints(
         allViolations.push(
           violation(
             'PARTICIPANT_NOT_FOUND',
-            `${task.name}, ${describeSlotBidi(slot?.label, task.timeBlock)} \u200F— מזהה: ${a.participantId}`,
+            `${describeTaskInstance(task)} \u200F— מזהה: ${a.participantId}`,
             task.id,
             a.slotId,
             a.participantId,
