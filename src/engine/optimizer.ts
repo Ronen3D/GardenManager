@@ -751,8 +751,8 @@ export function greedyAssign(
           if (!alreadyFilled) {
             const levelStr = slot.acceptableLevels.map((e) => 'L' + e.level).join('/');
             const certStr =
-              slot.requiredCertifications.length > 0 ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
-            const reason = `אף קבוצה לא יכולה למלא את כל העמדות ב${task.name}. חסר ${levelStr}${certStr} עבור ${task.name}`;
+              slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
+            const reason = `אף קבוצה לא יכולה למלא את כל העמדות. חסר ${levelStr}${certStr}`;
             unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason, hcCodes: ['HC-4'] });
           }
         }
@@ -953,7 +953,8 @@ export function greedyAssign(
           // R8: Build specific reason with constraint codes for diagnostics
           const levelStr = slot.acceptableLevels.map((e) => 'L' + e.level).join('/');
           const certStr =
-            slot.requiredCertifications.length > 0 ? ` with ${slot.requiredCertifications.join(', ')} cert` : '';
+            slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
+          const profile = `${levelStr}${certStr}`;
 
           // Collect per-participant rejection codes to surface constraint conflicts
           const rejectionCounts = new Map<string, number>();
@@ -970,16 +971,16 @@ export function greedyAssign(
           const hc12Count = rejectionCounts.get('HC-12') || 0;
           const hc14Count = rejectionCounts.get('HC-14') || 0;
           if (hc14Count > 0 && hc12Count > 0) {
-            reason = `התנגשות אילוצים ב${task.name}: ${hc14Count} ע"י מרווח מינימלי, ${hc12Count} ע"י עומס רצוף. ${levelStr}${certStr}`;
+            reason = `התנגשות אילוצים (${profile}): ${hc14Count} חסומים ע"י HC-14 (מרווח מינימלי), ${hc12Count} ע"י HC-12 (עומס רצוף)`;
             hcCodes.push('HC-14', 'HC-12');
           } else if (hc14Count > 0) {
-            reason = `חסימת HC-14 מרווח מינימלי: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות קרובות עם דרישת מרווח`;
+            reason = `חסימת HC-14 (מרווח מינימלי): כל מועמדי ${profile} משובצים למשימות קרובות עם דרישת מרווח`;
             hcCodes.push('HC-14');
           } else if (hc12Count > 0) {
-            reason = `חסימת HC-12 עומס רצוף: כל המועמדים ${levelStr}${certStr} ל${task.name} משובצים למשימות כבדות סמוכות`;
+            reason = `חסימת HC-12 (עומס רצוף): כל מועמדי ${profile} משובצים למשימות כבדות סמוכות`;
             hcCodes.push('HC-12');
           } else {
-            reason = `חסר ${levelStr}${certStr} עבור ${task.name}`;
+            reason = `חסר ${profile}`;
             // Include any HC codes that appeared in rejections (e.g. HC-1 level, HC-2 cert)
             for (const code of rejectionCounts.keys()) hcCodes.push(code);
           }

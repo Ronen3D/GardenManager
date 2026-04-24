@@ -1697,9 +1697,9 @@ export function updateSlotInOneTimeSubTeam(otId: string, subTeamId: string, slot
 const defaultNames: string[] = [
   'איתי לוין',
   'נועה אברהמי',
-  'עידו כהן',
-  'מאיה ישראלי',
   'יונתן רפאלי',
+  'מאיה ישראלי',
+  'עידו כהן',
   'עדי מזרחי',
   'רועי שפירא',
   'מיכל אשכנזי',
@@ -1709,9 +1709,9 @@ const defaultNames: string[] = [
   'טל בן-דור',
   'דניאל וייס',
   'שירה אדרי',
-  'אסף גרינברג',
-  'ליאור פלד',
   'נדב הראל',
+  'ליאור פלד',
+  'אסף גרינברג',
   'רוני סגל',
   'גיא מור',
   'יעל שלום',
@@ -1721,9 +1721,9 @@ const defaultNames: string[] = [
   'שחר עמר',
   'איתן דהן',
   'עמית מלכה',
-  'יובל קליין',
-  'נטע לביא',
   'דורון פרידמן',
+  'נטע לביא',
+  'יובל קליין',
   'קרן אורן',
   'אריאל נחום',
   'דנה צור',
@@ -1733,9 +1733,9 @@ const defaultNames: string[] = [
   'ספיר מלמד',
   'אופיר ביטון',
   'נועם פרץ',
-  'אייל רוזנפלד',
-  'ליהי כץ',
   'בועז נאמן',
+  'ליהי כץ',
+  'אייל רוזנפלד',
   'תמר יוספי',
   'יואב פולק',
   'סיון ריבלין',
@@ -1746,9 +1746,10 @@ const defaultNames: string[] = [
 ];
 
 const DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP: Record<string, string[]> = {
-  //                    L0idx: 0             1              2             3                4                5               6              7(unused)
-  // Horesh cert at L0 indices 3,4 (template 8,9) — must align with HORESH_PAKAL_ID positions
+  //                    L0idx: 0             1              2             3                4                5               6              7
+  // Horesh cert at L0 indices 4,5 (template 8,9) — must align with HORESH_PAKAL_ID positions
   'קבוצה 1': [
+    'pakal-til-lao',
     'pakal-matol',
     'pakal-negev',
     'pakal-kala',
@@ -1756,10 +1757,10 @@ const DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP: Record<string, string[]> = {
     HORESH_PAKAL_ID,
     'pakal-rahpan',
     'pakal-matol',
-    'pakal-negev',
   ],
-  // Horesh cert at L0 index 3 (template 8)
+  // Horesh cert at L0 index 4 (template 8)
   'קבוצה 2': [
+    'pakal-rahpan',
     'pakal-matol',
     'pakal-negev',
     'pakal-kala',
@@ -1767,10 +1768,10 @@ const DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP: Record<string, string[]> = {
     'pakal-mag',
     'pakal-matol',
     'pakal-kala',
-    'pakal-til-lao',
   ],
-  // Horesh cert at L0 index 3 (template 8)
+  // Horesh cert at L0 index 4 (template 8)
   'קבוצה 3': [
+    'pakal-til-lao',
     'pakal-matol',
     'pakal-negev',
     'pakal-kala',
@@ -1778,10 +1779,10 @@ const DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP: Record<string, string[]> = {
     'pakal-matol',
     'pakal-negev',
     'pakal-mag',
-    'pakal-matol',
   ],
   // No Horesh cert
   'קבוצה 4': [
+    'pakal-mag',
     'pakal-matol',
     'pakal-negev',
     'pakal-kala',
@@ -1789,7 +1790,6 @@ const DEFAULT_L0_PAKAL_ASSIGNMENTS_BY_GROUP: Record<string, string[]> = {
     'pakal-til-lao',
     'pakal-matol',
     'pakal-kala',
-    'pakal-matol',
   ],
 };
 
@@ -1847,8 +1847,8 @@ export function seedDefaultParticipants(): void {
   // Per department:
   //   1× L4 (Nitzan)
   //   1× L3 (Nitzan)
-  //   3× L2 (Nitzan)
-  //   1× L0 (Nitzan)
+  //   2× L2 (Nitzan)
+  //   2× L0 (Nitzan)
   //   2× L0 + Hamama (Nitzan)
   //   4× L0 standard (Nitzan)
   // All have Nitzan. 2 Hamama-certified L0.
@@ -1871,7 +1871,7 @@ export function seedDefaultParticipants(): void {
     { level: Level.L3, certs: ['Nitzan', 'Hamama'], tag: 'L3' },
     { level: Level.L2, certs: ['Nitzan', 'Hamama'], tag: 'L2' },
     { level: Level.L2, certs: ['Nitzan', 'Hamama'], tag: 'L2' },
-    { level: Level.L2, certs: ['Nitzan', 'Hamama'], tag: 'L2' },
+    { level: Level.L0, certs: ['Nitzan'], tag: 'L0' },
     { level: Level.L0, certs: ['Nitzan'], tag: 'L0' },
     { level: Level.L0, certs: ['Nitzan', 'Hamama'], tag: 'L0-Hamama' },
     { level: Level.L0, certs: ['Nitzan', 'Hamama'], tag: 'L0-Hamama' },

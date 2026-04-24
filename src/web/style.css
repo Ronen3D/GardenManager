@@ -4898,13 +4898,15 @@ tr.row-selected:hover {
 }
 
 /* ─── Rescue Participant Hover Tooltip ────────────────── */
-.rescue-participant-hover {
+.rescue-participant-hover,
+.swap-delta-hover {
   cursor: pointer;
   text-decoration: underline dotted;
   text-underline-offset: 2px;
   transition: color var(--transition-fast);
 }
-.rescue-participant-hover:hover {
+.rescue-participant-hover:hover,
+.swap-delta-hover:hover {
   color: var(--frozen);
 }
 

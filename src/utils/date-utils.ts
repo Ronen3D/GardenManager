@@ -40,6 +40,24 @@ export function describeTaskBidi(task: { name: string; timeBlock: { start: Date;
 }
 
 /**
+ * Task-instance description for single-task violation messages. Drops the
+ * `D{n}` day-index prefix (day context is provided by the panel's day section
+ * header). For multi-shift tasks the bidi-safe time range is appended to
+ * disambiguate shifts; for single-shift tasks just the template name is
+ * returned. Prefers `task.sourceName` when available, falling back to
+ * regex-stripping `task.name`.
+ */
+export function describeTaskInstance(task: {
+  name: string;
+  sourceName?: string;
+  timeBlock: { start: Date; end: Date };
+}): string {
+  const isMultiShift = /\sמשמרת\s+\d+$/.test(task.name);
+  const clean = task.sourceName ?? task.name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
+  return isMultiShift ? `${clean} ${bidiTimeRange(task.timeBlock)}` : clean;
+}
+
+/**
  * Calendar-date key from a Date (YYYY-MM-DD in local time).
  *
  * For scheduling/day-grouping logic, use {@link operationalDateKey} instead —

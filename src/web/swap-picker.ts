@@ -28,6 +28,7 @@ import {
 } from '../index';
 import { computeAllCapacities } from '../utils/capacity';
 import { renderParticipantCard } from './participant-card';
+import { isTouchDevice } from './responsive';
 import { violationLabel } from './schedule-utils';
 import { escHtml, fmt } from './ui-helpers';
 import { showBottomSheet, showToast } from './ui-modal';
@@ -112,6 +113,9 @@ export async function openSwapPicker(assignmentId: string, deps: SwapPickerDeps)
 
   const sheet = showBottomSheet(renderBody(state, ctx), {
     title: `החלפת משתתף — ${escHtml(cleanTaskName(ctx.sourceTask))}`,
+    onClose: () => {
+      if (_swapTooltipEl) _swapTooltipEl.style.display = 'none';
+    },
   });
   sheet.el.classList.add('swap-picker-sheet');
 
@@ -511,7 +515,7 @@ function renderDeltaRow(p: Participant, before: WeeklyWorkload, after: WeeklyWor
   // (arrow pointing with reading flow) regardless of the RTL parent. The
   // Hebrew "שע׳" inside remains strong-RTL and still renders correctly.
   return `<div class="swap-preview-delta-row">
-    <span class="swap-preview-delta-name">${escHtml(p.name)}</span>
+    <span class="swap-preview-delta-name swap-delta-hover" data-pid="${p.id}">${escHtml(p.name)}</span>
     <span class="swap-preview-delta-values" dir="ltr">
       ${before.effectiveHours.toFixed(1)} → ${after.effectiveHours.toFixed(1)} שע׳
       <span class="${deltaClass}">(${sign}${deltaEff.toFixed(1)})</span>
@@ -600,11 +604,127 @@ function wireEvents(
   // Card clicks (free mode) + trade-row clicks (trade mode)
   wireCardClicks(root, state, ctx, deps, rerender);
 
+  // Preview delta-row hover/tap → show surrounding tasks for that participant
+  wireDeltaHover(root, state, ctx, deps);
+
   // Cancel / Confirm
   root.querySelector('.swap-picker-cancel')?.addEventListener('click', close);
   root.querySelector('.swap-picker-confirm')?.addEventListener('click', () => {
     commitSwap(state, ctx, deps, close);
   });
+}
+
+function wireDeltaHover(
+  root: HTMLElement,
+  state: PickerState,
+  ctx: ResolvedContext,
+  deps: SwapPickerDeps,
+): void {
+  const triggers = root.querySelectorAll<HTMLElement>('.swap-delta-hover');
+  if (triggers.length === 0) return;
+
+  const referenceTaskId = ctx.sourceTask.id;
+
+  if (isTouchDevice) {
+    // Remove any stale inline preview left from a prior render cycle.
+    root.querySelector('.swap-inline-preview')?.remove();
+    triggers.forEach((trigger) => {
+      trigger.addEventListener('click', () => {
+        const pid = trigger.dataset.pid;
+        if (!pid || !state.preview) return;
+        const existing = root.querySelector('.swap-inline-preview');
+        const alreadyOpen = existing?.previousElementSibling === trigger.parentElement;
+        existing?.remove();
+        if (alreadyOpen) return;
+
+        const participant = getParticipantById(ctx, pid);
+        if (!participant) return;
+        const nextTasks = computePostSwapTasksForPreview(pid, state.preview, ctx.tasks, referenceTaskId);
+        const detail = document.createElement('div');
+        detail.className = 'swap-inline-preview rescue-hover-tt';
+        detail.style.position = 'static';
+        detail.style.width = 'auto';
+        detail.style.marginTop = '4px';
+        detail.innerHTML = buildSwapParticipantTooltip(
+          participant.name,
+          nextTasks,
+          deps.schedule.periodStart,
+          deps.dayStartHour,
+        );
+        trigger.parentElement?.insertAdjacentElement('afterend', detail);
+      });
+    });
+    return;
+  }
+
+  const tooltip = getSwapTooltipEl();
+  let hideTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleHide = (): void => {
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      tooltip.style.display = 'none';
+    }, 120);
+  };
+  tooltip.addEventListener('mouseenter', () => {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  });
+  tooltip.addEventListener('mouseleave', () => {
+    tooltip.style.display = 'none';
+  });
+
+  triggers.forEach((trigger) => {
+    trigger.addEventListener('mouseenter', () => {
+      const pid = trigger.dataset.pid;
+      if (!pid || !state.preview) return;
+      const participant = getParticipantById(ctx, pid);
+      if (!participant) return;
+
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+
+      const nextTasks = computePostSwapTasksForPreview(pid, state.preview, ctx.tasks, referenceTaskId);
+      tooltip.innerHTML = buildSwapParticipantTooltip(
+        participant.name,
+        nextTasks,
+        deps.schedule.periodStart,
+        deps.dayStartHour,
+      );
+      tooltip.style.display = 'block';
+
+      const rect = trigger.getBoundingClientRect();
+      const ttWidth = 260;
+      const ttHeight = tooltip.offsetHeight || 140;
+      // Preferred anchor: above the trigger, aligned to its right edge so the
+      // tooltip flows away from the sticky footer rather than into it.
+      let left = rect.right - ttWidth;
+      let top = rect.top - ttHeight - 8;
+      if (top < 4) top = rect.bottom + 8;
+      if (left < 4) left = 4;
+      if (left + ttWidth > window.innerWidth) left = window.innerWidth - ttWidth - 4;
+      if (top + ttHeight > window.innerHeight) top = window.innerHeight - ttHeight - 4;
+
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    });
+    trigger.addEventListener('mouseleave', scheduleHide);
+  });
+}
+
+let _swapTooltipEl: HTMLElement | null = null;
+function getSwapTooltipEl(): HTMLElement {
+  if (_swapTooltipEl && document.body.contains(_swapTooltipEl)) return _swapTooltipEl;
+  const el = document.createElement('div');
+  // Reuse rescue styling so both surfaces look identical.
+  el.className = 'rescue-hover-tt swap-hover-tt';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  _swapTooltipEl = el;
+  return el;
 }
 
 function wireCardClicks(
@@ -764,4 +884,81 @@ function getAffectedParticipants(ctx: ResolvedContext, preview: SwapPreview): Pa
 
 function getParticipantById(ctx: ResolvedContext, id: string): Participant | null {
   return ctx.participants.find((p) => p.id === id) ?? null;
+}
+
+/**
+ * Mirror of rescue-modal's `computePostSwapTasks`, but driven by
+ * `SwapPreview.simulatedAssignments` (already post-swap) instead of by
+ * applying a plan's step list. Returns 2 before + reference + 2 after.
+ */
+function computePostSwapTasksForPreview(
+  participantId: string,
+  preview: SwapPreview,
+  tasks: Task[],
+  referenceTaskId: string,
+): Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> {
+  const taskMap = new Map<string, Task>();
+  for (const t of tasks) taskMap.set(t.id, t);
+
+  const myTaskIds = new Set<string>();
+  for (const a of preview.simulatedAssignments) {
+    if (a.participantId === participantId) myTaskIds.add(a.taskId);
+  }
+
+  const resolved: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> = [];
+  for (const tid of myTaskIds) {
+    const t = taskMap.get(tid);
+    if (!t) continue;
+    resolved.push({
+      taskName: t.name,
+      start: t.timeBlock.start,
+      end: t.timeBlock.end,
+      isReference: tid === referenceTaskId,
+    });
+  }
+  resolved.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  // Find the reference; if this participant is losing the slot (outgoing),
+  // the reference task won't appear in their post-swap set — fall back to
+  // anchoring on the source task's start time.
+  let refIdx = resolved.findIndex((t) => t.isReference);
+  if (refIdx === -1) {
+    const refStart = taskMap.get(referenceTaskId)?.timeBlock.start.getTime();
+    if (refStart !== undefined) {
+      refIdx = resolved.findIndex((t) => t.start.getTime() >= refStart);
+    }
+    if (refIdx === -1) refIdx = 0;
+  }
+
+  const startIdx = Math.max(0, refIdx - 2);
+  const endIdx = Math.min(resolved.length, refIdx + 3);
+  return resolved.slice(startIdx, endIdx);
+}
+
+function buildSwapParticipantTooltip(
+  participantName: string,
+  nextTasks: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }>,
+  periodStart: Date,
+  dayStartHour: number,
+): string {
+  let html = `<div class="rescue-hover-tt-header">${escHtml(participantName)} — משימות סביב המשבצת אם תוחל ההחלפה</div>`;
+  if (nextTasks.length === 0) {
+    html += `<div class="rescue-hover-tt-empty">אין משימות קרובות</div>`;
+  } else {
+    const baseMidnight = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()).getTime();
+    for (let i = 0; i < nextTasks.length; i++) {
+      const t = nextTasks[i];
+      const shifted = new Date(t.start.getTime());
+      if (shifted.getHours() < dayStartHour) shifted.setDate(shifted.getDate() - 1);
+      const shiftedMidnight = new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate()).getTime();
+      const dIdx = Math.floor((shiftedMidnight - baseMidnight) / (24 * 3600 * 1000)) + 1;
+      const dayStr = `יום ${dIdx}`;
+      const timeStr = `<span dir="ltr">${fmt(t.start)} – ${fmt(t.end)}</span>`;
+      const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
+      const refMarker = t.isReference ? ' ◄' : '';
+      const cleanName = t.taskName.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
+      html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${escHtml(cleanName)}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
+    }
+  }
+  return html;
 }

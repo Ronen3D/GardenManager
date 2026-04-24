@@ -25,7 +25,7 @@ import {
 } from '../models/types';
 import type { ScheduleContext } from '../shared/utils/time-utils';
 import { computeAllCapacities } from '../utils/capacity';
-import { describeSlotBidi } from '../utils/date-utils';
+import { describeTaskInstance } from '../utils/date-utils';
 import {
   type MultiAttemptProgressCallback,
   type OptimizationResult,
@@ -362,19 +362,33 @@ export class SchedulingEngine {
     );
     const softWarnings = collectSoftWarnings(tasks, participants, result.assignments, this.config);
 
-    const allViolations: ConstraintViolation[] = [...hardValidation.violations, ...softWarnings];
+    // Build key set from optimizer's unfilled-slots list; these will receive the
+    // richer INFEASIBLE_SLOT violation below, so suppress the bare SLOT_UNFILLED
+    // that HC-6 emits for the same (taskId, slotId) — otherwise each empty slot
+    // is reported twice in the violations panel.
+    const infeasibleKey = (taskId: string, slotId: string) => `${taskId}|${slotId}`;
+    const infeasibleSlotKeys = new Set(
+      result.unfilledSlots.map((uf) => infeasibleKey(uf.taskId, uf.slotId)),
+    );
+    const dedupedHard = hardValidation.violations.filter((v) => {
+      if (v.code === 'SLOT_UNFILLED' && v.taskId && v.slotId) {
+        return !infeasibleSlotKeys.has(infeasibleKey(v.taskId, v.slotId));
+      }
+      return true;
+    });
+
+    const allViolations: ConstraintViolation[] = [...dedupedHard, ...softWarnings];
 
     // Add infeasibility alerts for unfilled slots
     for (const { taskId, slotId, reason } of result.unfilledSlots) {
       const task = this.tasks.get(taskId);
-      const slot = task?.slots.find((s) => s.slotId === slotId);
-      const slotDesc = task ? describeSlotBidi(slot?.label, task.timeBlock) : slotId;
+      const where = task ? describeTaskInstance(task) : taskId;
       allViolations.push({
         severity: ViolationSeverity.Error,
         code: 'INFEASIBLE_SLOT',
         message: reason
-          ? `${task?.name ?? taskId}, ${slotDesc} \u200F\u2014 ${reason}`
-          : `${task?.name ?? taskId}, ${slotDesc} \u200F\u2014 אין משתתפים זמינים`,
+          ? `${where} \u200F\u2014 ${reason}`
+          : `${where} \u200F\u2014 אין משתתפים זמינים`,
         taskId,
         slotId,
       });
