@@ -648,7 +648,7 @@ export function renderParticipantsTab(): string {
           <button class="btn-sm btn-outline btn-icon" data-action="edit-participant" data-pid="${p.id}" title="עריכה">${SVG_ICONS.edit}</button>
           <button class="btn-sm btn-outline btn-danger-outline btn-icon" data-action="remove-participant" data-pid="${p.id}" title="הסרה">${SVG_ICONS.trash}</button>
         </td>
-        <td class="col-expand"><button class="btn-expand-details" data-action="toggle-details" data-pid="${p.id}" title="פרטים">${SVG_ICONS.chevronDown}</button></td>
+        <td class="col-expand"><button class="btn-expand-details${totalRules > 0 ? ' has-unavail-badge' : ''}" data-action="toggle-details" data-pid="${p.id}" title="פרטים">${SVG_ICONS.chevronDown}${totalRules > 0 ? `<span class="expand-unavail-count" aria-label="${totalRules} כללי אי-זמינות">${totalRules}</span>` : ''}</button></td>
       </tr>`;
 
       // Blackout expansion row

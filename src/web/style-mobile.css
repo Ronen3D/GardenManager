@@ -1147,16 +1147,19 @@
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
-    transition:
-      transform 0.2s ease,
-      color 0.15s ease;
+    transition: color 0.15s ease;
+  }
+  .table-participants .btn-expand-details svg {
+    transition: transform 0.2s ease;
   }
   .table-participants .btn-expand-details:active {
     background: var(--bg-hover);
   }
   .table-participants tr.row-expanded .btn-expand-details {
-    transform: rotate(180deg);
     color: var(--accent);
+  }
+  .table-participants tr.row-expanded .btn-expand-details svg {
+    transform: rotate(180deg);
   }
 
   /* Override global .btn-sm 44px ONLY inside participant rows */
@@ -1181,6 +1184,11 @@
     display: none !important;
   }
 
+  /* Unavailability chips hidden until the row is expanded on mobile */
+  .table-participants tbody tr:not(.row-expanded):not(.row-editing) .unavail-chips {
+    display: none !important;
+  }
+
   /* When expanded, show detail cells */
   .table-participants tr.row-expanded .col-level {
     display: block !important;
@@ -1200,6 +1208,18 @@
   .table-participants tr.row-expanded .col-pakals {
     display: block !important;
     order: 12;
+    flex-shrink: 0;
+  }
+
+  .table-participants tr.row-expanded .col-prefs {
+    display: block !important;
+    order: 13;
+    flex-shrink: 0;
+  }
+
+  .table-participants tr.row-expanded .col-notwith {
+    display: block !important;
+    order: 14;
     flex-shrink: 0;
   }
 

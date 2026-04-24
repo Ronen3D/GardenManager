@@ -1797,38 +1797,52 @@ function renderViolations(schedule: Schedule): string {
   // Separate into current-day and other-day violations
   const dayTaskIds = new Set(getFilteredTasks(schedule).map((t) => t.id));
 
+  const renderCategorized = (items: ConstraintViolation[]): string => {
+    const byCode = new Map<string, ConstraintViolation[]>();
+    for (const v of items) {
+      const arr = byCode.get(v.code);
+      if (arr) arr.push(v);
+      else byCode.set(v.code, [v]);
+    }
+    const cats = [...byCode.entries()].sort((a, b) => {
+      if (b[1].length !== a[1].length) return b[1].length - a[1].length;
+      return violationLabel(a[0]).localeCompare(violationLabel(b[0]), 'he');
+    });
+    let out = '';
+    for (const [code, catItems] of cats) {
+      const today = catItems.filter((v) => v.taskId && dayTaskIds.has(v.taskId));
+      const other = catItems.filter((v) => !v.taskId || !dayTaskIds.has(v.taskId));
+      out += `<div class="violation-category violation-category-collapsed">
+        <button class="violation-category-toggle" data-action="toggle-violation-category" aria-expanded="false" type="button">
+          <span class="violation-category-label">${violationLabel(code)}</span>
+          <span class="violation-category-count">${catItems.length}</span>
+          <span class="violation-category-icon">▸</span>
+        </button>
+        <div class="violation-category-content" style="display:none">`;
+      if (today.length > 0) {
+        out += `<div class="violation-section"><em>יום ${currentDay}:</em><ul>`;
+        for (const v of today) out += renderItem(v);
+        out += `</ul></div>`;
+      }
+      if (other.length > 0) {
+        out += `<div class="violation-section violation-other"><em>ימים אחרים:</em>`;
+        out += renderOtherDays(other);
+        out += `</div>`;
+      }
+      out += `</div></div>`;
+    }
+    return out;
+  };
+
   let html = '';
   if (hard.length > 0) {
-    const today = hard.filter((v) => v.taskId && dayTaskIds.has(v.taskId));
-    const other = hard.filter((v) => !v.taskId || !dayTaskIds.has(v.taskId));
-
     html += `<div class="alert alert-error"><strong>הפרות חמורות (${hard.length})</strong>`;
-    if (today.length > 0) {
-      html += `<div class="violation-section"><em>יום ${currentDay}:</em><ul>`;
-      for (const v of today) html += renderItem(v);
-      html += `</ul></div>`;
-    }
-    if (other.length > 0) {
-      html += `<div class="violation-section violation-other"><em>ימים אחרים:</em>`;
-      html += renderOtherDays(other);
-      html += `</div>`;
-    }
+    html += renderCategorized(hard);
     html += '</div>';
   }
   if (warn.length > 0) {
-    const today = warn.filter((v) => v.taskId && dayTaskIds.has(v.taskId));
-    const other = warn.filter((v) => !v.taskId || !dayTaskIds.has(v.taskId));
     html += `<div class="alert alert-warn"><strong>אזהרות (${warn.length})</strong>`;
-    if (today.length > 0) {
-      html += `<div class="violation-section"><em>יום ${currentDay}:</em><ul>`;
-      for (const v of today) html += renderItem(v);
-      html += `</ul></div>`;
-    }
-    if (other.length > 0) {
-      html += `<div class="violation-section violation-other"><em>ימים אחרים:</em>`;
-      html += renderOtherDays(other);
-      html += `</div>`;
-    }
+    html += renderCategorized(warn);
     html += '</div>';
   }
   return html;
@@ -3405,7 +3419,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.4</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4143,6 +4157,29 @@ function wireScheduleEvents(container: HTMLElement): void {
       if (icon) icon.textContent = expanded ? '▸' : '▾';
     });
   }
+
+  // ── Violation category toggles ──
+  container.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>(
+      '[data-action="toggle-violation-category"]',
+    );
+    if (!btn) return;
+    const cat = btn.closest<HTMLElement>('.violation-category');
+    if (!cat) return;
+    const content = cat.querySelector<HTMLElement>('.violation-category-content');
+    const icon = btn.querySelector<HTMLElement>('.violation-category-icon');
+    const expanded = btn.getAttribute('aria-expanded') === 'true';
+    btn.setAttribute('aria-expanded', String(!expanded));
+    if (expanded) {
+      cat.classList.add('violation-category-collapsed');
+      if (content) content.style.display = 'none';
+      if (icon) icon.textContent = '▸';
+    } else {
+      cat.classList.remove('violation-category-collapsed');
+      if (content) content.style.display = '';
+      if (icon) icon.textContent = '▾';
+    }
+  });
 
   // ── Participant Tooltip (event delegation) ──
   wireParticipantTooltip(container, () => currentSchedule);

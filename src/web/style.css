@@ -2083,18 +2083,28 @@ select.input-sm {
   border-color: rgba(231, 76, 60, 0.4);
 }
 
-/* ─── Unavailability Row Stripe ───────────────────────── */
-.table-participants tbody tr.has-unavail > td:first-child {
+/* ─── Unavailability Badge on Expand Chevron (mobile only) ───────── */
+/* The .col-expand column is mobile-only (see above), so these styles
+   naturally only take effect on the mobile card layout. */
+.btn-expand-details.has-unavail-badge {
   position: relative;
 }
-.table-participants tbody tr.has-unavail > td:first-child::before {
-  content: "";
+.expand-unavail-count {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  inset-inline-start: 0;
-  width: 3px;
+  top: -4px;
+  inset-inline-end: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
   background: var(--danger);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  box-shadow: 0 0 0 1px var(--bg, #fff);
+  pointer-events: none;
 }
 
 /* ─── Unavail Edit Toggle (edit-mode name cell) ───────── */
@@ -2876,11 +2886,91 @@ select.input-sm {
 
 /* ─── Violation Sections ─────────────────────────────── */
 .violation-section {
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .violation-other {
-  opacity: 0.65;
+  opacity: 0.75;
+}
+
+.violation-section > em {
+  display: block;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  padding-inline-start: 8px;
+  border-inline-start: 3px solid currentColor;
+  margin-bottom: 4px;
+}
+
+.violation-day {
+  margin: 6px 0 6px 12px;
+}
+
+.violation-day > em {
+  display: block;
+  font-style: normal;
+  font-weight: 600;
+  font-size: 0.78rem;
+  opacity: 0.8;
+  margin-bottom: 2px;
+}
+
+.violation-section ul,
+.violation-day ul {
+  margin: 2px 0 6px;
+  padding-inline-start: 22px;
+}
+
+/* ─── Violation Category (collapsible by type) ───────── */
+.violation-category {
+  margin-top: 8px;
+}
+
+.violation-category-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: inherit;
+  text-align: start;
+  font: inherit;
+  opacity: 0.85;
+}
+
+.violation-category-toggle:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.violation-category-label {
+  font-weight: 600;
+}
+
+.violation-category-count {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.12);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.violation-category-icon {
+  margin-inline-start: auto;
+  font-size: 0.9rem;
+  opacity: 0.6;
+}
+
+.violation-category-content {
+  padding: 4px 6px 2px;
 }
 
 /* ─── Rest Highlighting in Tables ────────────────────── */
