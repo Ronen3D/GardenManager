@@ -32,10 +32,10 @@ import { getEligibleParticipantsForSlot, getRejectionReason, REJECTION_REASONS_H
 import {
   type Assignment,
   AssignmentStatus,
+  type ConstraintViolation,
   Level,
   LiveModeState,
   type Participant,
-  type ConstraintViolation,
   type Schedule,
   SchedulingEngine,
   type SlotRequirement,
@@ -68,6 +68,7 @@ import {
   operationalHourOrder,
   resolveLogicalDayTimestamp,
   statusBadge,
+  taskDayIndex,
   taskEndsAfter,
   taskIntersectsDay,
   taskStartsBefore,
@@ -95,6 +96,7 @@ import {
   groupBadge,
   levelBadge,
   SVG_ICONS,
+  stripDayPrefix,
   taskBadge,
 } from './ui-helpers';
 import {
@@ -641,7 +643,8 @@ function renderDayNavigator(): string {
   const baseDate = currentSchedule?.periodStart ?? store.getScheduleDate();
   const liveMode = store.getLiveModeState();
 
-  let html = `<div class="day-navigator">`;
+  type DayMeta = { violationCount: number; frozenTag: string; frozenClass: string };
+  const metaByDay: DayMeta[] = [];
 
   for (let d = 1; d <= numDays; d++) {
     let violationCount = 0;
@@ -656,9 +659,6 @@ function renderDayNavigator(): string {
       ).length;
     }
 
-    const violationDot =
-      violationCount > 0 ? `<span class="day-violation-dot" title="${violationCount} הפרות">!</span>` : '';
-
     let frozenTag = '';
     let frozenClass = '';
     if (liveMode.enabled) {
@@ -671,15 +671,143 @@ function renderDayNavigator(): string {
       }
     }
 
-    html += `<button class="day-tab ${currentDay === d ? 'day-tab-active' : ''}${frozenClass}" data-day="${d}">
+    metaByDay.push({ violationCount, frozenTag, frozenClass });
+  }
+
+  let tabs = `<div class="day-navigator">`;
+  for (let d = 1; d <= numDays; d++) {
+    const m = metaByDay[d - 1];
+    const violationDot =
+      m.violationCount > 0 ? `<span class="day-violation-dot" title="${m.violationCount} הפרות">!</span>` : '';
+    tabs += `<button class="day-tab ${currentDay === d ? 'day-tab-active' : ''}${m.frozenClass}" data-day="${d}">
       <span class="day-tab-label">יום ${d}</span>
       ${violationDot}
-      ${frozenTag}
+      ${m.frozenTag}
+    </button>`;
+  }
+  tabs += `</div>`;
+
+  const cur = Math.min(Math.max(currentDay, 1), numDays);
+  const curMeta = metaByDay[cur - 1];
+  const canPrev = cur > 1;
+  const canNext = cur < numDays;
+  const heroViolation =
+    curMeta.violationCount > 0
+      ? `<span class="day-hero-violation" title="${curMeta.violationCount} הפרות">!${curMeta.violationCount}</span>`
+      : '';
+
+  let dots = '';
+  for (let d = 1; d <= numDays; d++) {
+    const m = metaByDay[d - 1];
+    const activeCls = d === cur ? ' day-hero-dot-active' : '';
+    const violCls = m.violationCount > 0 ? ' day-hero-dot-violation' : '';
+    dots += `<button class="day-hero-dot${activeCls}${violCls}${m.frozenClass}" data-day="${d}" aria-label="יום ${d}${m.violationCount > 0 ? ` (${m.violationCount} הפרות)` : ''}">
+      <span class="day-hero-dot-num">${d}</span>
     </button>`;
   }
 
-  html += `</div>`;
-  return html;
+  const hero = `<div class="day-hero">
+    <div class="day-hero-main">
+      <button class="day-hero-step" data-day-step="-1" aria-label="יום קודם"${canPrev ? '' : ' disabled'}>‹</button>
+      <div class="day-hero-title">
+        <span class="day-hero-label">יום ${cur}</span>
+        ${heroViolation}${curMeta.frozenTag}
+      </div>
+      <button class="day-hero-step" data-day-step="1" aria-label="יום הבא"${canNext ? '' : ' disabled'}>›</button>
+    </div>
+    <div class="day-hero-dots">${dots}</div>
+  </div>`;
+
+  return `<div class="day-nav-wrap">${tabs}${hero}</div>`;
+}
+
+function stepDay(delta: number): void {
+  if (!delta) return;
+  const numDays = currentSchedule?.periodDays ?? store.getScheduleDays();
+  const next = currentDay + delta;
+  if (next < 1 || next > numDays) return;
+  currentDay = next;
+  pushHash(true);
+  renderAll();
+}
+
+function wireScheduleSwipe(container: HTMLElement): void {
+  const body = container.querySelector<HTMLElement>('.schedule-main');
+  if (!body) return;
+  const heroDots = container.querySelector<HTMLElement>('.day-hero-dots');
+
+  type Ctx = {
+    startX: number;
+    startY: number;
+    startT: number;
+    scrollerStart: Map<HTMLElement, number>;
+  };
+  let ctx: Ctx | null = null;
+
+  const onStart = (e: TouchEvent) => {
+    if (e.touches.length !== 1) {
+      ctx = null;
+      return;
+    }
+    const target = e.target as HTMLElement;
+    if (target.closest('.assignment-card, button, input, textarea, select, a, [data-no-swipe]')) {
+      ctx = null;
+      return;
+    }
+    // Remember scrollLeft on any horizontally-scrollable ancestor so we can
+    // bail from the day-swipe if the grid absorbed the gesture as a scroll.
+    const scrollerStart = new Map<HTMLElement, number>();
+    let node: HTMLElement | null = target;
+    const stopAt = body.parentElement;
+    while (node && node !== stopAt) {
+      const cs = getComputedStyle(node);
+      const ox = cs.overflowX;
+      if ((ox === 'auto' || ox === 'scroll') && node.scrollWidth > node.clientWidth) {
+        scrollerStart.set(node, node.scrollLeft);
+      }
+      node = node.parentElement;
+    }
+    ctx = {
+      startX: e.touches[0].clientX,
+      startY: e.touches[0].clientY,
+      startT: Date.now(),
+      scrollerStart,
+    };
+  };
+
+  const onEnd = (e: TouchEvent) => {
+    if (!ctx) return;
+    const c = ctx;
+    ctx = null;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - c.startX;
+    const dy = t.clientY - c.startY;
+    const dt = Date.now() - c.startT;
+    if (dt > 600) return;
+    const ax = Math.abs(dx);
+    const ay = Math.abs(dy);
+    if (ax < 60 || ax < ay * 1.5) return;
+    for (const [el, origScroll] of c.scrollerStart) {
+      if (el.scrollLeft !== origScroll) return;
+    }
+    // In RTL, advancing through the week is a right→left finger motion (dx<0).
+    stepDay(dx < 0 ? 1 : -1);
+  };
+
+  const onCancel = () => {
+    ctx = null;
+  };
+
+  body.addEventListener('touchstart', onStart, { passive: true });
+  body.addEventListener('touchend', onEnd, { passive: true });
+  body.addEventListener('touchcancel', onCancel, { passive: true });
+
+  if (heroDots) {
+    heroDots.addEventListener('touchstart', onStart, { passive: true });
+    heroDots.addEventListener('touchend', onEnd, { passive: true });
+    heroDots.addEventListener('touchcancel', onCancel, { passive: true });
+  }
 }
 
 // ─── Weekly Dashboard (Always Visible Header) ────────────────────────────────
@@ -1224,7 +1352,7 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
     : undefined;
 
   const levels = slot.acceptableLevels.map((l) => l.level).join('/');
-  const cleanTaskName = (task.sourceName || task.name).replace(/^D\d+\s+/, '');
+  const cleanTaskName = task.sourceName ?? stripDayPrefix(task.name);
   const slotLabel = slot.label ? ` — ${slot.label}` : '';
   const timeRange = `<span dir="ltr">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</span>`;
   let header = `<div class="warehouse-sheet-header">
@@ -1441,7 +1569,7 @@ function executeManualAssignment(
 
   // Descriptive toast with participant + task name
   const pName = assignedParticipant?.name || '';
-  const tName = assignedTask ? (assignedTask.sourceName || assignedTask.name).replace(/^D\d+\s+/, '') : '';
+  const tName = assignedTask ? (assignedTask.sourceName ?? stripDayPrefix(assignedTask.name)) : '';
   showToast(`${pName} שובץ/ה ל${tName}`, { type: 'success' });
 
   // Highlight the just-assigned slot with a pulse animation
@@ -1755,16 +1883,19 @@ function renderViolations(schedule: Schedule): string {
     return `<div class="alert alert-ok">✓ אין אזהרות או הפרות בכל ${schedule.periodDays} הימים.</div>`;
   }
 
-  // Derive day index from the task's baked-in `D{n}` prefix (set at
-  // generation time). Returns null for violations without a resolvable task
-  // (e.g., schedule-level errors) so they can fall into a 'no day' bucket.
+  // Derive day index from the task's start timestamp relative to the
+  // schedule's frozen period anchor. Returns null for violations without a
+  // resolvable task (e.g., schedule-level errors) so they can fall into a
+  // 'no day' bucket.
   const taskById = new Map(schedule.tasks.map((t) => [t.id, t]));
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  const periodStart = schedule.periodStart;
   const dayOf = (v: ConstraintViolation): number | null => {
     if (!v.taskId) return null;
     const t = taskById.get(v.taskId);
     if (!t) return null;
-    const m = t.name.match(/^D(\d+)\s/);
-    return m ? parseInt(m[1], 10) : null;
+    const d = taskDayIndex(t, dsh, periodStart);
+    return d >= 1 && d <= schedule.periodDays ? d : null;
   };
 
   const renderItem = (v: ConstraintViolation): string =>
@@ -1991,7 +2122,7 @@ function renderGanttChart(schedule: Schedule): string {
       // U+2066 LRI + U+2069 PDI to force the time range into an LTR isolate
       // inside the surrounding RTL tooltip — otherwise "05:00 – 13:00" flips.
       const tooltip = `${escHtml(block.taskName)}&#10;\u2066${new Date(block.startMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} – ${new Date(block.endMs).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}\u2069${crossFrom ? '&#10;▶ המשך מהיום הקודם' : ''}${crossTo ? '&#10;◀ ממשיך ליום הבא' : ''}`;
-      const shortName = block.taskName.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
+      const shortName = task?.sourceName ?? stripDayPrefix(block.taskName);
       html += `<div class="gantt-block task-tooltip-hover ${block.isZeroLoad ? 'gantt-zero-load' : ''} ${crossClass}" data-task-id="${block.taskId}" style="left:${left}%;width:${width}%;background:${block.color}" title="${tooltip}">
         <span class="gantt-block-text">${crossFrom ? '▶ ' : ''}${escHtml(shortName)}${crossTo ? ' ◀' : ''}</span></div>`;
     }
@@ -3419,7 +3550,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.5</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3995,8 +4126,8 @@ function wireScheduleEvents(container: HTMLElement): void {
   // ── Snapshot Library Events ──
   wireSnapshotEvents(container);
 
-  // Day navigator tabs
-  container.querySelectorAll('.day-tab').forEach((btn) => {
+  // Day navigator tabs (desktop) + hero dots (phone) — both use data-day
+  container.querySelectorAll('.day-tab, .day-hero-dot').forEach((btn) => {
     btn.addEventListener('click', () => {
       const day = parseInt((btn as HTMLElement).dataset.day || '1', 10);
       if (day !== currentDay && day >= 1) {
@@ -4006,6 +4137,18 @@ function wireScheduleEvents(container: HTMLElement): void {
       }
     });
   });
+
+  // Hero chevrons (phone) — step +/- 1 day
+  container.querySelectorAll<HTMLButtonElement>('.day-hero-step').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      const step = parseInt(btn.dataset.dayStep || '0', 10);
+      stepDay(step);
+    });
+  });
+
+  // Horizontal swipe on schedule body (phone) — left = next day, right = prev
+  wireScheduleSwipe(container);
 
   // ── Availability strip: open / close / results ──
   const availStrip = container.querySelector('.avail-strip') as HTMLElement | null;
@@ -4041,7 +4184,7 @@ function wireScheduleEvents(container: HTMLElement): void {
     wireParticipantTooltip(availStrip, () => currentSchedule);
   }
 
-  // ── BALTAM: Inject emergency task into current snapshot ──
+  // ── Inject emergency task into current snapshot ──
   const injectBtn = container.querySelector('#btn-inject-task');
   if (injectBtn && currentSchedule) {
     injectBtn.addEventListener('click', () => {
@@ -4160,9 +4303,7 @@ function wireScheduleEvents(container: HTMLElement): void {
 
   // ── Violation category toggles ──
   container.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLElement>(
-      '[data-action="toggle-violation-category"]',
-    );
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action="toggle-violation-category"]');
     if (!btn) return;
     const cat = btn.closest<HTMLElement>('.violation-category');
     if (!cat) return;
@@ -5083,7 +5224,7 @@ function init(): void {
       if (detail?.sourceName) navigateToTaskPanel(detail.sourceName);
     });
 
-    // Initialize BALTAM injection modal callbacks
+    // Initialize emergency-task injection modal callbacks
     initInjectTaskModal({
       getSchedule: () => currentSchedule,
       getEngine: () => engine,

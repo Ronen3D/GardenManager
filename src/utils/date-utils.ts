@@ -23,32 +23,47 @@ export function bidiTimeRange(tb: { start: Date; end: Date }): string {
 }
 
 /**
- * Task description for pair-based violation messages: strips the leading
- * `D{n}` day-index prefix and the trailing ` משמרת N` shift suffix from
- * task.name, then appends the bidi-safe time range — which already
- * disambiguates shifts of the same template.
+ * Strip the engine-internal `D{N} ` day-index prefix and any trailing numeric
+ * `משמרת {N}` suffix from a task name. Prefer reading `task.sourceName`
+ * directly — this exists as a fallback for transport objects that only carry
+ * the decorated `task.name` string.
  */
-export function describeTaskBidi(task: { name: string; timeBlock: { start: Date; end: Date } }): string {
-  const clean = task.name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
+export function stripTaskNameAffixes(name: string): string {
+  return name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+\s*$/, '');
+}
+
+/** True iff the task was generated with a numeric `משמרת N` shift suffix. */
+function hasShiftSuffix(name: string): boolean {
+  return /\sמשמרת\s+\d+\s*$/.test(name);
+}
+
+/**
+ * Task description for pair-based violation messages: the clean template
+ * name followed by the bidi-safe time range (which disambiguates shifts
+ * of the same template).
+ */
+export function describeTaskBidi(task: {
+  name: string;
+  sourceName?: string;
+  timeBlock: { start: Date; end: Date };
+}): string {
+  const clean = task.sourceName ?? stripTaskNameAffixes(task.name);
   return `${clean} ${bidiTimeRange(task.timeBlock)}`;
 }
 
 /**
- * Task-instance description for single-task violation messages. Drops the
- * `D{n}` day-index prefix (day context is provided by the panel's day section
- * header). For multi-shift tasks the bidi-safe time range is appended to
- * disambiguate shifts; for single-shift tasks just the template name is
- * returned. Prefers `task.sourceName` when available, falling back to
- * regex-stripping `task.name`.
+ * Task-instance description for single-task violation messages. Day context
+ * is provided by the panel's day section header, so only the template name
+ * is shown. For multi-shift tasks the bidi-safe time range is appended to
+ * disambiguate shifts.
  */
 export function describeTaskInstance(task: {
   name: string;
   sourceName?: string;
   timeBlock: { start: Date; end: Date };
 }): string {
-  const isMultiShift = /\sמשמרת\s+\d+$/.test(task.name);
-  const clean = task.sourceName ?? task.name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
-  return isMultiShift ? `${clean} ${bidiTimeRange(task.timeBlock)}` : clean;
+  const clean = task.sourceName ?? stripTaskNameAffixes(task.name);
+  return hasShiftSuffix(task.name) ? `${clean} ${bidiTimeRange(task.timeBlock)}` : clean;
 }
 
 /**

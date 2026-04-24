@@ -1,6 +1,7 @@
 /**
- * Inject Emergency Task Modal — UI for adding a BALTAM task to an existing
- * schedule snapshot and auto-staffing it from the current participant pool.
+ * Inject Emergency Task Modal — UI for adding a one-time emergency task to
+ * an existing schedule snapshot and auto-staffing it from the current
+ * participant pool.
  *
  * Flow:
  *   1. User fills a form (name, day/time/duration, slot levels + certs, flags).
@@ -16,7 +17,7 @@ import { getInjectStartFloor, isDayModifiable } from '../engine/temporal';
 import { Level, type Schedule, type SchedulingEngine, type SlotTemplate, type SubTeamTemplate } from '../index';
 import * as store from './config-store';
 import { operationalHourOrder } from './schedule-utils';
-import { escHtml } from './ui-helpers';
+import { escHtml, stripDayPrefix } from './ui-helpers';
 
 const MINUTE_STEPS = [0, 10, 20, 30, 40, 50] as const;
 
@@ -302,7 +303,7 @@ function renderForm(schedule: Schedule): string {
   return `<div id="inject-modal-backdrop" class="inject-backdrop">
     <div class="inject-modal">
       <div class="inject-header">
-        <h3>🚨 הוספת משימת חירום (BALTAM)</h3>
+        <h3>🚨 הוספת משימת חירום</h3>
         <button class="inject-close" id="btn-inject-close" aria-label="סגור">✕</button>
       </div>
       <div class="inject-body">
@@ -311,7 +312,7 @@ function renderForm(schedule: Schedule): string {
         <section class="inject-section">
           <h4>פרטי משימה</h4>
           <div class="form-row">
-            <label>שם: <input class="input-sm" type="text" data-inj="name" value="${escHtml(d.name)}" placeholder="BALTAM" maxlength="40" /></label>
+            <label>שם: <input class="input-sm" type="text" data-inj="name" value="${escHtml(d.name)}" placeholder="שם המשימה" maxlength="40" /></label>
             <label>יום: <select class="input-sm" data-inj="dayIndex">${dayOptions}</select></label>
             <label>שעת התחלה: <select class="input-sm" data-inj="startHour">${hourOptions}</select></label>
             <label>דקה: <select class="input-sm" data-inj="startMinute" style="width:70px">${minuteOptions}</select></label>
@@ -452,10 +453,6 @@ function renderPreview(schedule: Schedule): string {
       </div>
     </div>
   </div>`;
-}
-
-function stripDayPrefix(name: string): string {
-  return name.replace(/^יום\s+\d+\s+/, '').replace(/^D\d+\s+/, '');
 }
 
 // ─── Event wiring ───────────────────────────────────────────────────────────

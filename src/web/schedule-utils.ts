@@ -57,6 +57,17 @@ export function taskIntersectsDay(task: Task, dayIndex: number, dayStartHour?: n
 }
 
 /**
+ * The 1-based operational-day index a task's start falls within, relative to
+ * `baseDate + dayStartHour`. Derived from the timestamp (not parsed from the
+ * task's display name).
+ */
+export function taskDayIndex(task: Task, dayStartHour: number, baseDate: Date): number {
+  const anchor = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0);
+  const diffMs = task.timeBlock.start.getTime() - anchor.getTime();
+  return Math.floor(diffMs / 86400000) + 1;
+}
+
+/**
  * Does a task start before this day window (i.e. it's a continuation from
  * the previous day)?
  */

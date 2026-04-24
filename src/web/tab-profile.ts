@@ -12,7 +12,7 @@
 import { type Assignment, Level, type Participant, type Schedule, type Task } from '../models/types';
 import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
-import { certBadge, escHtml, fmt, groupBadge, LEVEL_COLORS, levelBadge, taskBadge } from './ui-helpers';
+import { certBadge, escHtml, fmt, groupBadge, LEVEL_COLORS, levelBadge, stripDayPrefix, taskBadge } from './ui-helpers';
 import { computeTaskBreakdown } from './workload-utils';
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ function renderTopBar(
 
   const groupTasks = myTasks.filter((x) => x.task.sameGroupRequired);
   if (groupTasks.length > 0) {
-    statusText = `משובץ ב${groupTasks[0].task.name.replace(/^D\d+\s*/, '')}`;
+    statusText = `משובץ ב${groupTasks[0].task.sourceName ?? stripDayPrefix(groupTasks[0].task.name)}`;
     statusClass = 'status-active';
   }
 

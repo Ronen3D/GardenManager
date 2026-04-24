@@ -20,7 +20,7 @@ import {
 import * as store from './config-store';
 import { isTouchDevice } from './responsive';
 import { violationLabel } from './schedule-utils';
-import { escHtml, fmt } from './ui-helpers';
+import { escHtml, fmt, stripDayPrefix } from './ui-helpers';
 
 // ─── Context injection ──────────────────────────────────────────────────────
 
@@ -261,14 +261,9 @@ function showRescueModal(): void {
   wireRescueModalEvents();
 }
 
-/** Strip D-prefix ("D1 שמש") and shift suffix ("שמש משמרת 3" → "שמש"). Time range disambiguates shifts. */
-function cleanTaskName(name: string): string {
-  return name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
-}
-
-/** Task label for swap steps: cleaned name + time range, e.g. "שמש 13:00–17:00". */
+/** Task label for swap steps: clean template name + time range, e.g. "שמש 13:00–17:00". */
 function taskLabel(task: Task | undefined, fallbackName: string): string {
-  const name = cleanTaskName(task?.name ?? fallbackName);
+  const name = task?.sourceName ?? stripDayPrefix(task?.name ?? fallbackName);
   if (!task) return name;
   return `${name} <span dir="ltr">${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}</span>`;
 }
@@ -388,7 +383,7 @@ function buildRescueParticipantTooltip(
       const timeStr = `<span dir="ltr">${fmt(t.start)} – ${fmt(t.end)}</span>`;
       const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
       const refMarker = t.isReference ? ' ◄' : '';
-      html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${cleanTaskName(t.taskName)}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
+      html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${stripDayPrefix(t.taskName)}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
     }
   }
   return html;

@@ -22,7 +22,8 @@
 import { jsPDF } from 'jspdf';
 import autoTable, { __createTable, __drawTable, type CellDef, type UserOptions } from 'jspdf-autotable';
 import type { Schedule, Task } from '../models/types';
-import { fmtTimeLabel, getNumDays, getTasksForDay, tint } from './export-utils';
+import { fmtTime } from '../utils/date-utils';
+import { getNumDays, getTasksForDay, tint } from './export-utils';
 import {
   assignRows,
   computeSectionMetrics,
@@ -355,7 +356,6 @@ function renderSectionTablePdf(
   if (columns.length === 0) return region.y;
 
   const uniqueTimes = getUniqueStartTimes(tasks);
-  const totalShifts = uniqueTimes.length;
 
   // Build header (data columns + time column rightmost)
   const head: CellDef[] = [
@@ -375,7 +375,7 @@ function renderSectionTablePdf(
       const { content, color: cellColor } = col.build(timeNum);
       return { content, styles: content === '—' ? emptyStyle : filledStyle(cellColor) };
     });
-    cells.push({ content: rtl(fmtTimeLabel(time, totalShifts)), styles: { halign: 'center' as const } });
+    cells.push({ content: fmtTime(time), styles: { halign: 'center' as const } });
     return cells;
   });
 

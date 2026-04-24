@@ -7,7 +7,7 @@
  */
 
 import { Level } from '../models/types';
-import { fmtTime } from '../utils/date-utils';
+import { fmtTime, stripTaskNameAffixes } from '../utils/date-utils';
 import { getCertColor, getCertificationById, getCertLabel, getTemplateVisualMap } from './config-store';
 
 // ─── SVG Icons ───────────────────────────────────────────────────────────────
@@ -120,10 +120,11 @@ export function taskBadge(task: { color?: string; sourceName?: string; name?: st
  * so the numeric shift adds noise without information. Descriptive shift
  * labels (e.g. `משמרת בוקר`) are preserved because the trailing token isn't
  * numeric.
+ *
+ * Prefer `task.sourceName` when you have a `Task` object — this helper is the
+ * fallback for transport objects that only carry the decorated `name` string.
  */
-export function stripDayPrefix(name: string): string {
-  return name.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+\s*$/, '');
-}
+export const stripDayPrefix = stripTaskNameAffixes;
 
 /**
  * Strip a trailing `HH:MM–HH:MM` range (hyphen, en-dash, or minus sign) from

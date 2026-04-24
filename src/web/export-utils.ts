@@ -9,7 +9,7 @@
 
 import { addDays } from 'date-fns';
 import type { Schedule, Task } from '../models/types';
-import { fmtTime, operationalDateKey } from '../utils/date-utils';
+import { operationalDateKey } from '../utils/date-utils';
 
 // ─── Day windowing ───────────────────────────────────────────────────────────
 
@@ -72,41 +72,4 @@ export function tint(hex: string, f = 0.82): [number, number, number] {
 export function rgbToArgb(rgb: [number, number, number]): string {
   const hex = (n: number) => n.toString(16).padStart(2, '0').toUpperCase();
   return `FF${hex(rgb[0])}${hex(rgb[1])}${hex(rgb[2])}`;
-}
-
-// ─── Shift labels ────────────────────────────────────────────────────────────
-
-/** Named Hebrew shift labels by start-hour. */
-export const SHIFT_NAMES: Record<number, string> = {
-  5: 'בוקר',
-  6: 'בוקר',
-  7: 'בוקר',
-  8: 'בוקר',
-  12: 'צהריים',
-  13: 'צהריים',
-  14: 'צהריים',
-  17: 'ערב',
-  18: 'ערב',
-  19: 'ערב',
-  20: 'ערב',
-  21: 'לילה',
-  22: 'לילה',
-  23: 'לילה',
-};
-
-/**
- * Format a task start time. When the category has ≤ 2 unique shifts, prefer
- * the named Hebrew label (בוקר/צהריים/ערב/לילה); otherwise fall back to HH:MM.
- */
-export function fmtTimeLabel(d: Date, totalShifts: number): string {
-  if (totalShifts <= 2) {
-    const name = SHIFT_NAMES[d.getHours()];
-    if (name) return name;
-  }
-  return fmtTime(d);
-}
-
-/** Return the named shift label for a given timestamp, or an empty string. */
-export function shiftName(d: Date): string {
-  return SHIFT_NAMES[d.getHours()] ?? '';
 }

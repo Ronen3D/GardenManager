@@ -10,6 +10,9 @@ import { escAttr, escHtml } from './ui-helpers';
 /** Cleanup callbacks for custom selects, keyed by select ID (stable across re-renders). */
 const _selectCleanups = new Map<string, () => void>();
 
+/** Currently-open custom select, if any. Used to auto-close when another opens. */
+let _openSelect: { close: () => void } | null = null;
+
 // ─── Modal Dialogs ──────────────────────────────────────────────────────────
 
 export interface AlertOptions {
@@ -491,66 +494,79 @@ export function wireCustomSelect(container: HTMLElement, selectId: string, onCha
   const dropdown = wrapper.querySelector('.gm-select-dropdown') as HTMLElement;
   const searchInput = wrapper.querySelector('.gm-select-search') as HTMLInputElement | null;
 
+  // Dropdown is portaled to <body> while open so its `position: fixed` is
+  // measured against the viewport — any ancestor with `backdrop-filter`,
+  // `transform`, `filter`, `contain`, or `will-change` would otherwise form a
+  // containing block and throw the positioning off-screen.
+  const close = () => {
+    wrapper.classList.remove('open');
+    dropdown.classList.remove('gm-select-dropdown--open');
+    if (dropdown.parentElement !== wrapper) wrapper.appendChild(dropdown);
+    dropdown.style.position = '';
+    dropdown.style.top = '';
+    dropdown.style.left = '';
+    dropdown.style.right = '';
+    dropdown.style.bottom = '';
+    dropdown.style.maxHeight = '';
+    dropdown.style.insetInlineStart = '';
+    dropdown.style.insetInlineEnd = '';
+    if (_openSelect?.close === close) _openSelect = null;
+  };
+
   // Toggle dropdown
   trigger.addEventListener('click', (e) => {
     e.stopPropagation();
     const wasOpen = wrapper.classList.contains('open');
-    // Close all other open selects first
-    document.querySelectorAll('.gm-select.open').forEach((el) => el.classList.remove('open'));
-    if (!wasOpen) {
-      // Measure trigger BEFORE opening (always accurate, no scroll offset issues)
-      const triggerRect = trigger.getBoundingClientRect();
-      // Reset any inline styles from a previous open cycle
-      dropdown.style.position = '';
-      dropdown.style.top = '';
-      dropdown.style.left = '';
-      dropdown.style.right = '';
-      dropdown.style.bottom = '';
-      dropdown.style.maxHeight = '';
-      dropdown.style.insetInlineStart = '';
-      dropdown.style.insetInlineEnd = '';
-      // Open so we can measure the dropdown's natural rendered size
-      wrapper.classList.add('open');
-      const dropW = dropdown.offsetWidth;
-      const dropH = dropdown.offsetHeight;
-      const vpW = window.innerWidth;
-      const vpH = window.innerHeight;
-      const gap = 4;
-      // Vertical: prefer opening downward; flip up if clipped; clamp height as last resort
-      const spaceBelow = vpH - triggerRect.bottom - gap;
-      const spaceAbove = triggerRect.top - gap;
-      let top: number;
-      if (dropH <= spaceBelow) {
-        top = triggerRect.bottom + gap;
-      } else if (dropH <= spaceAbove) {
-        top = triggerRect.top - dropH - gap;
-      } else {
-        // Neither direction fits fully — open downward and cap the height
-        top = triggerRect.bottom + gap;
-        dropdown.style.maxHeight = `${spaceBelow}px`;
-      }
-      // Horizontal: align to trigger left edge, then clamp inside viewport
-      let left = triggerRect.left;
-      if (left + dropW > vpW) left = vpW - dropW - 4;
-      if (left < 4) left = 4;
-      // fixed positioning so parent overflow/scroll can never clip the dropdown
-      dropdown.style.position = 'fixed';
-      dropdown.style.top = `${top}px`;
-      dropdown.style.left = `${left}px`;
-      dropdown.style.insetInlineStart = 'unset';
-      dropdown.style.insetInlineEnd = 'unset';
-      if (searchInput) {
-        searchInput.value = '';
-        searchInput.focus();
-        filterOptions('');
-      }
+    if (_openSelect && _openSelect.close !== close) _openSelect.close();
+    if (wasOpen) {
+      close();
+      return;
+    }
+    // Measure trigger BEFORE opening (always accurate, no scroll offset issues)
+    const triggerRect = trigger.getBoundingClientRect();
+    // Portal and show so we can measure the dropdown's natural rendered size.
+    document.body.appendChild(dropdown);
+    dropdown.classList.add('gm-select-dropdown--open');
+    wrapper.classList.add('open');
+    const dropW = dropdown.offsetWidth;
+    const dropH = dropdown.offsetHeight;
+    const vpW = window.innerWidth;
+    const vpH = window.innerHeight;
+    const gap = 4;
+    // Vertical: prefer opening downward; flip up if clipped; clamp height as last resort
+    const spaceBelow = vpH - triggerRect.bottom - gap;
+    const spaceAbove = triggerRect.top - gap;
+    let top: number;
+    if (dropH <= spaceBelow) {
+      top = triggerRect.bottom + gap;
+    } else if (dropH <= spaceAbove) {
+      top = triggerRect.top - dropH - gap;
+    } else {
+      // Neither direction fits fully — open downward and cap the height
+      top = triggerRect.bottom + gap;
+      dropdown.style.maxHeight = `${Math.max(0, spaceBelow)}px`;
+    }
+    // Horizontal: align to trigger left edge, then clamp inside viewport
+    let left = triggerRect.left;
+    if (left + dropW > vpW) left = vpW - dropW - 4;
+    if (left < 4) left = 4;
+    dropdown.style.position = 'fixed';
+    dropdown.style.top = `${top}px`;
+    dropdown.style.left = `${left}px`;
+    dropdown.style.insetInlineStart = 'unset';
+    dropdown.style.insetInlineEnd = 'unset';
+    _openSelect = { close };
+    if (searchInput) {
+      searchInput.value = '';
+      searchInput.focus();
+      filterOptions('');
     }
   });
 
   // Filter options on search input
   const filterOptions = (q: string) => {
     const lower = q.toLowerCase();
-    wrapper.querySelectorAll('.gm-select-option').forEach((btn) => {
+    dropdown.querySelectorAll('.gm-select-option').forEach((btn) => {
       const text = (btn as HTMLElement).textContent?.toLowerCase() || '';
       (btn as HTMLElement).style.display = !lower || text.includes(lower) ? '' : 'none';
     });
@@ -569,22 +585,26 @@ export function wireCustomSelect(container: HTMLElement, selectId: string, onCha
     wrapper.dataset.value = value;
     const label = wrapper.querySelector('.gm-select-label') as HTMLElement;
     if (label) label.textContent = btn.textContent?.trim() || '';
-    // Update selected class
-    wrapper.querySelectorAll('.gm-select-option').forEach((o) => o.classList.remove('selected'));
+    dropdown.querySelectorAll('.gm-select-option').forEach((o) => o.classList.remove('selected'));
     btn.classList.add('selected');
-    wrapper.classList.remove('open');
+    close();
     onChange(value);
   });
 
-  // Close on outside click (with cleanup support)
+  // Close on outside click (with cleanup support). Dropdown may be portaled
+  // to <body>, so `wrapper.contains` alone isn't enough.
   const closeOnOutside = (e: MouseEvent) => {
-    if (!wrapper.contains(e.target as Node)) {
-      wrapper.classList.remove('open');
-    }
+    const t = e.target as Node;
+    if (wrapper.contains(t) || dropdown.contains(t)) return;
+    close();
   };
   document.addEventListener('click', closeOnOutside);
   _selectCleanups.set(selectId, () => {
     document.removeEventListener('click', closeOnOutside);
+    // If the select is torn down (re-render) while open, restore the dropdown
+    // into the wrapper so it's cleaned up along with the rest of the subtree.
+    if (dropdown.parentElement !== wrapper) wrapper.appendChild(dropdown);
+    if (_openSelect?.close === close) _openSelect = null;
   });
 }
 

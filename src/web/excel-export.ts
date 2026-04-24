@@ -18,8 +18,9 @@
 import type { Fill, Worksheet } from 'exceljs';
 import { Workbook } from 'exceljs';
 import type { AssignmentStatus, Level, Participant, Schedule, SlotRequirement, Task } from '../models/types';
+import { fmtTime } from '../utils/date-utils';
 import { getCategoryColorMap } from './config-store';
-import { fmtTimeLabel, getDayWindow, getNumDays, getTasksForDay, rgbToArgb, shiftName, tint } from './export-utils';
+import { getDayWindow, getNumDays, getTasksForDay, rgbToArgb, tint } from './export-utils';
 import { computeSectionMetrics, getTaskAssignments, getUniqueStartTimes, inferColumnStrategy } from './layout-engine';
 
 // ─── Style constants ─────────────────────────────────────────────────────────
@@ -100,7 +101,6 @@ function buildDaySheet(ws: Worksheet, schedule: Schedule, dayIndex: number, dayS
     if (columns.length === 0) continue;
 
     const uniqueTimes = getUniqueStartTimes(section.tasks);
-    const totalShifts = uniqueTimes.length;
     const sectionColor = categoryColors[section.id] || section.tasks[0]?.color || DEFAULT_TASK_COLOR;
     const tintedHeader = rgbToArgb(tint(sectionColor, 0.55));
     const tintedCell = rgbToArgb(tint(sectionColor));
@@ -141,7 +141,7 @@ function buildDaySheet(ws: Worksheet, schedule: Schedule, dayIndex: number, dayS
 
       // Time cell
       const timeCell = row.getCell(1);
-      timeCell.value = fmtTimeLabel(time, totalShifts);
+      timeCell.value = fmtTime(time);
       timeCell.font = { bold: true };
       timeCell.alignment = { horizontal: 'center', vertical: 'middle' };
       timeCell.border = THIN_BORDER;
@@ -264,7 +264,6 @@ function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
     'יום',
     'התחלה',
     'סיום',
-    'משמרת',
     'קטגוריה',
     'משימה',
     'תת-צוות',
@@ -296,7 +295,6 @@ function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
           d,
           startDt,
           endDt,
-          shiftName(startDt),
           task.displayCategory ?? (task.sourceName || task.name).toLowerCase(),
           task.sourceName || task.name,
           slot.subTeamLabel || slot.subTeamId || '',
@@ -325,14 +323,14 @@ function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
   }
 
   // Column widths (roughly tuned for content)
-  const widths = [5, 12, 9, 9, 10, 14, 18, 14, 18, 14, 20, 18, 14, 7, 22, 12, 16, 16, 16];
+  const widths = [5, 12, 9, 10, 14, 18, 14, 18, 14, 20, 18, 14, 7, 22, 12, 16, 16, 16];
   for (let i = 0; i < headers.length; i++) {
     ws.getColumn(i + 1).width = widths[i] ?? 14;
   }
 
   // Number formats for time columns (התחלה, סיום)
+  ws.getColumn(2).numFmt = 'hh:mm';
   ws.getColumn(3).numFmt = 'hh:mm';
-  ws.getColumn(4).numFmt = 'hh:mm';
 
   // Alignment for data rows
   const lastRow = ws.rowCount;

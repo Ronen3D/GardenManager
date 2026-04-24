@@ -30,7 +30,7 @@ import { computeAllCapacities } from '../utils/capacity';
 import { renderParticipantCard } from './participant-card';
 import { isTouchDevice } from './responsive';
 import { violationLabel } from './schedule-utils';
-import { escHtml, fmt } from './ui-helpers';
+import { escHtml, fmt, stripDayPrefix } from './ui-helpers';
 import { showBottomSheet, showToast } from './ui-modal';
 import { computeWeeklyWorkloads, type WeeklyWorkload } from './workload-utils';
 
@@ -614,12 +614,7 @@ function wireEvents(
   });
 }
 
-function wireDeltaHover(
-  root: HTMLElement,
-  state: PickerState,
-  ctx: ResolvedContext,
-  deps: SwapPickerDeps,
-): void {
+function wireDeltaHover(root: HTMLElement, state: PickerState, ctx: ResolvedContext, deps: SwapPickerDeps): void {
   const triggers = root.querySelectorAll<HTMLElement>('.swap-delta-hover');
   if (triggers.length === 0) return;
 
@@ -874,7 +869,7 @@ function sortCandidates(
 }
 
 function cleanTaskName(task: Task): string {
-  return (task.sourceName || task.name).replace(/^D\d+\s+/, '');
+  return task.sourceName ?? stripDayPrefix(task.name);
 }
 
 function getAffectedParticipants(ctx: ResolvedContext, preview: SwapPreview): Participant[] {
@@ -956,7 +951,7 @@ function buildSwapParticipantTooltip(
       const timeStr = `<span dir="ltr">${fmt(t.start)} – ${fmt(t.end)}</span>`;
       const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
       const refMarker = t.isReference ? ' ◄' : '';
-      const cleanName = t.taskName.replace(/^D\d+\s+/, '').replace(/\s+משמרת\s+\d+$/, '');
+      const cleanName = stripDayPrefix(t.taskName);
       html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${escHtml(cleanName)}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
     }
   }

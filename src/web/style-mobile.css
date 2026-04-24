@@ -772,36 +772,22 @@
     display: none;
   }
 
+  /* Hide the desktop tab row on phones — replaced by .day-hero below */
   .day-navigator {
+    display: none;
+  }
+
+  /* Show the hero day selector on phones */
+  .day-hero {
+    display: block;
     position: relative;
     z-index: 10;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scroll-snap-type: x mandatory;
-    flex-wrap: nowrap;
-    scrollbar-width: none; /* hide scrollbar on mobile */
-  }
-  .day-navigator::-webkit-scrollbar {
-    display: none;
   }
 
-  .day-tab {
-    scroll-snap-align: start;
-    flex-shrink: 0;
-    min-height: 40px;
-    padding: 6px 10px 5px;
-  }
-
-  .day-tab-label {
-    display: none;
-  }
-
-  .day-tab-name {
-    font-size: 0.6rem;
-  }
-
-  .day-tab-count {
-    font-size: 0.5rem;
+  .day-hero-dots {
+    /* Dots + numbers fit 7 across a 320px screen with 6px gaps; larger
+       screens get a little extra breathing room. */
+    padding: 6px 2px 0;
   }
 
   /* ── Day window label — hidden ── */

@@ -2636,6 +2636,155 @@ select.input-sm {
   white-space: nowrap;
 }
 
+/* ─── Day Navigator wrap (tabs + hero share a container) ─────────────── */
+.day-nav-wrap {
+  margin-bottom: 12px;
+}
+
+/* ─── Phone-only hero day selector (hidden on desktop/tablet) ────────── */
+.day-hero {
+  display: none;
+}
+
+.day-hero-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.day-hero-step {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 1.6rem;
+  line-height: 1;
+  font-weight: 700;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background var(--transition-normal);
+}
+
+.day-hero-step:active {
+  background: var(--bg-hover);
+}
+
+.day-hero-step:disabled {
+  color: var(--text-muted);
+  opacity: 0.35;
+  cursor: default;
+}
+
+.day-hero-title {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.day-hero-label {
+  letter-spacing: 0.2px;
+}
+
+.day-hero-violation {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.day-hero-dots {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px 2px;
+}
+
+.day-hero-dot {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background var(--transition-normal),
+    color var(--transition-normal),
+    border-color var(--transition-normal),
+    transform var(--transition-normal);
+}
+
+.day-hero-dot-num {
+  display: block;
+}
+
+.day-hero-dot:active {
+  transform: scale(0.92);
+}
+
+.day-hero-dot-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  transform: scale(1.08);
+}
+
+.day-hero-dot-violation {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.day-hero-dot-active.day-hero-dot-violation {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.day-hero-dot.day-tab-frozen {
+  border-color: #7ec4ff;
+  color: #3b82c4;
+  background: rgba(126, 196, 255, 0.12);
+}
+
+.day-hero-dot.day-tab-partial-frozen {
+  border-color: #f0b459;
+  color: #a06a1c;
+  background: rgba(240, 180, 89, 0.14);
+}
+
 .availability-inline {
   display: flex;
   flex-wrap: wrap;
@@ -9060,7 +9209,8 @@ tr.now-row-animate > td.time-cell {
   padding: 4px;
 }
 
-.gm-select.open .gm-select-dropdown {
+.gm-select.open .gm-select-dropdown,
+.gm-select-dropdown.gm-select-dropdown--open {
   display: block;
   animation: gmSelectOpen 0.15s ease;
 }
@@ -12494,7 +12644,7 @@ tr.now-row-animate > td.time-cell {
   font-weight: 600;
 }
 
-/* ═══ BALTAM Inject Emergency Task Modal ═══════════════════════════════════ */
+/* ═══ Inject Emergency Task Modal ══════════════════════════════════════════ */
 
 .inject-backdrop {
   position: fixed;
@@ -12753,7 +12903,7 @@ tr.now-row-animate > td.time-cell {
   font-size: 0.9rem;
 }
 
-/* ── Toolbar button styling for the BALTAM trigger ── */
+/* ── Toolbar button styling for the emergency-task trigger ── */
 .btn-inject-task {
   border-color: var(--danger, #c0392b) !important;
   color: var(--danger, #c0392b) !important;
