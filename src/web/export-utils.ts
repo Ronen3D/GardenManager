@@ -13,19 +13,21 @@ import { fmtTime, operationalDateKey } from '../utils/date-utils';
 
 // ─── Day windowing ───────────────────────────────────────────────────────────
 
-/** Compute the [start, end) operational-day window for a given day index. */
+/**
+ * Compute the [start, end) operational-day window for a given day index.
+ *
+ * Anchored to the frozen `schedule.periodStart` + `dayStartHour` — NOT to
+ * `min(task.start)`. This keeps UI, export, and engine day-grouping in lock-step:
+ * whatever the user sees in the schedule grid is exactly what PDF/Excel print.
+ */
 export function getDayWindow(
   schedule: Schedule,
   dayIndex: number,
   dayStartHour: number = 5,
 ): { start: Date; end: Date } {
-  const allStarts = schedule.tasks.map((t) => new Date(t.timeBlock.start).getTime());
-  const scheduleStart = new Date(Math.min(...allStarts));
-  const dayAnchor = addDays(scheduleStart, dayIndex - 1);
-  const dayStart = new Date(dayAnchor);
-  if (dayStart.getHours() < dayStartHour) dayStart.setDate(dayStart.getDate() - 1);
-  dayStart.setHours(dayStartHour, 0, 0, 0);
-  return { start: dayStart, end: addDays(dayStart, 1) };
+  const base = schedule.periodStart;
+  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIndex - 1, dayStartHour, 0, 0, 0);
+  return { start, end: addDays(start, 1) };
 }
 
 /** Filter schedule tasks whose start time falls inside the given operational day. */

@@ -41,9 +41,8 @@ import {
   type Task,
   ViolationSeverity,
 } from '../index';
-import { generateShiftBlocks } from '../shared/utils/time-utils';
+import { generateShiftBlocks, hourInOpDay } from '../shared/utils/time-utils';
 import { scheduleToGantt } from '../ui/gantt-bridge';
-import { hebrewDayName } from '../utils/date-utils';
 import { runAutoTune, setAutoTunerTaskFactory, type TuneRecommendation } from './auto-tuner';
 import * as store from './config-store';
 import { exportDaySnapshot } from './continuity-export';
@@ -63,7 +62,6 @@ import { renderScheduleGrid } from './schedule-grid-view';
 import {
   computePerDayHours,
   filterVisibleViolations,
-  fmtDate,
   formatLiveClock,
   getDayWindow,
   operationalHourOrder,
@@ -365,10 +363,9 @@ function renderAvailabilityInspectorInline(): string {
   const makeDayOptions = (selectedDay: number) => {
     const opts: { value: string; label: string; selected: boolean }[] = [];
     for (let d = 1; d <= numDays; d++) {
-      const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
       opts.push({
         value: String(d),
-        label: `יום ${d} · ${hebrewDayName(date)}`,
+        label: `יום ${d}`,
         selected: d === selectedDay,
       });
     }
@@ -646,9 +643,6 @@ function renderDayNavigator(): string {
   let html = `<div class="day-navigator">`;
 
   for (let d = 1; d <= numDays; d++) {
-    const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-    const dayName = hebrewDayName(date);
-
     let violationCount = 0;
     if (currentSchedule) {
       const dsh = currentSchedule.algorithmSettings.dayStartHour;
@@ -677,7 +671,6 @@ function renderDayNavigator(): string {
     }
 
     html += `<button class="day-tab ${currentDay === d ? 'day-tab-active' : ''}${frozenClass}" data-day="${d}">
-      <span class="day-tab-name">${dayName}</span>
       <span class="day-tab-label">יום ${d}</span>
       ${violationDot}
       ${frozenTag}
@@ -822,7 +815,7 @@ function renderSidebarEntry(
         <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfPeriod.toFixed(1)}%)</span>
       </div>
       <span class="sidebar-today-tag" title="היום (יום ${currentDay}): ${todayHrs.toFixed(1)} שע'">
-        ${hebrewDayName(new Date(store.getScheduleDate().getFullYear(), store.getScheduleDate().getMonth(), store.getScheduleDate().getDate() + currentDay - 1))}: ${todayHrs.toFixed(1)} שע'
+        יום ${currentDay}: ${todayHrs.toFixed(1)} שע'
       </span>
     </div>
   </div>`;
@@ -948,8 +941,7 @@ function renderScheduleTab(): string {
     const baseDate = currentSchedule.periodStart;
     const daySelectOpts: { value: string; label: string; selected: boolean }[] = [];
     for (let d = 1; d <= displayNumDays; d++) {
-      const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-      const label = `יום ${hebrewDayName(date)}`;
+      const label = `יום ${d}`;
       let selected = false;
       if (liveMode.enabled) {
         const anchor = liveMode.currentTimestamp;
@@ -1838,7 +1830,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
 
     if (taskAssignments.length === 0) {
       html += `<tr class="row-warning"><td><strong>${task.name}</strong> ${crossDayTag}</td><td>${taskBadge(task)}</td>
-        <td><span dir="ltr">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</span></td>
+        <td><span dir="ltr">${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}</span></td>
         <td colspan="6"><em class="text-danger">⚠ אין שיבוצים</em></td></tr>`;
       continue;
     }
@@ -1854,7 +1846,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
           <strong>${task.name}</strong> ${crossDayTag}
           ${taskIsFrozen ? '<span class="frozen-label">🧊 מוקפא</span>' : ''}</td>
           <td rowspan="${taskAssignments.length}">${taskBadge(task)}</td>
-          <td rowspan="${taskAssignments.length}"><span dir="ltr">${fmtDate(task.timeBlock.start)}–${fmtDate(task.timeBlock.end)}</span></td>`;
+          <td rowspan="${taskAssignments.length}"><span dir="ltr">${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}</span></td>`;
       }
       html += `<td><small>${slot?.label || task.name}</small></td>
         <td><strong class="participant-hover" data-pid="${p?.id || ''}">${p?.name || '???'}</strong></td>
@@ -2602,11 +2594,9 @@ async function ensureLiveModeAnchor(taskGate?: Task | null): Promise<Date | null
   if (!currentSchedule) return null;
 
   const numDays = store.getScheduleDays();
-  const baseDate = store.getScheduleDate();
   const days: Array<{ value: string; label: string }> = [];
   for (let d = 1; d <= numDays; d++) {
-    const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-    days.push({ value: String(d), label: `יום ${hebrewDayName(date)}` });
+    days.push({ value: String(d), label: `יום ${d}` });
   }
   const dayStartHour = currentSchedule.algorithmSettings.dayStartHour;
   const hours: Array<{ value: string; label: string }> = operationalHourOrder(dayStartHour).map((h) => ({
@@ -2625,7 +2615,8 @@ async function ensureLiveModeAnchor(taskGate?: Task | null): Promise<Date | null
 
   const dayIdx = parseInt(result.day, 10);
   const hour = parseInt(result.hour, 10);
-  const ts = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dayIdx - 1, hour, 0);
+  const base = currentSchedule.periodStart;
+  const ts = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIdx - 1, hour, 0);
 
   if (taskGate && !isFutureTask(taskGate, ts)) {
     await showAlert('הזמן שנבחר הופך את המשימה למוקפאת (בעבר). לא ניתן להפעיל חילוץ על משימה שכבר חלפה.', {
@@ -2717,52 +2708,46 @@ function findPreExistingUnavailabilityOverlaps(
 
   const rules = participant.dateUnavailability ?? [];
   if (rules.length > 0) {
-    // Iterate operational days (Day 1..N) inside the schedule window, mirroring
-    // `isBlockedByDateUnavailability` so the UI pre-existing-overlap preview
-    // agrees with HC-3. Days outside the schedule window intentionally produce
-    // no overlap — weekly rules only bind to the operational days the user
-    // actually scheduled.
+    // Instantiate each rule once in op-day space — matches the engine's
+    // `isBlockedByDateUnavailability` so the UI preview agrees with HC-3.
     const baseDate = schedule.periodStart;
     const scheduleDays = schedule.periodDays;
     const hBoundary = schedule.algorithmSettings.dayStartHour;
     const baseY = baseDate.getFullYear();
     const baseM = baseDate.getMonth();
     const baseD = baseDate.getDate();
-    for (let dayIdx = 0; dayIdx < scheduleDays; dayIdx++) {
-      const opDayBase = new Date(baseY, baseM, baseD + dayIdx);
-      const opDayStartMs = new Date(baseY, baseM, baseD + dayIdx, hBoundary, 0).getTime();
-      const opDayEndMs = new Date(baseY, baseM, baseD + dayIdx + 1, hBoundary, 0).getTime();
-      if (opDayEndMs <= wStart || opDayStartMs >= wEnd) continue;
-      const dow = opDayBase.getDay();
-      for (const rule of rules) {
-        if (rule.dayOfWeek !== dow) continue;
-        let rStart: number;
-        let rEnd: number;
-        if (rule.allDay) {
-          rStart = opDayStartMs;
-          rEnd = opDayEndMs;
-        } else {
-          rStart = new Date(baseY, baseM, baseD + dayIdx, rule.startHour, 0).getTime();
-          rEnd =
-            rule.endHour <= rule.startHour
-              ? new Date(baseY, baseM, baseD + dayIdx + 1, rule.endHour, 0).getTime()
-              : new Date(baseY, baseM, baseD + dayIdx, rule.endHour, 0).getTime();
-        }
-        const oStart = Math.max(rStart, wStart);
-        const oEnd = Math.min(rEnd, wEnd);
-        if (oStart < oEnd) {
-          const dayName = hebrewDayName(opDayBase);
-          const timeLabel = rule.allDay
-            ? 'כל היום'
-            : `${String(rule.startHour).padStart(2, '0')}:00–${String(rule.endHour).padStart(2, '0')}:00`;
-          const reasonTail = rule.reason ? ` · ${rule.reason}` : '';
-          overlaps.push({
-            kind: 'date-unavailability',
-            label: `כלל שבועי: יום ${dayName} ${timeLabel}${reasonTail}`,
-            start: new Date(oStart),
-            end: new Date(oEnd),
-          });
-        }
+    for (const rule of rules) {
+      // Defensive guard — malformed rules must not corrupt the overlap preview.
+      if (!Number.isInteger(rule.dayIndex)) continue;
+      const startIdx = Math.max(1, rule.dayIndex);
+      const endIdx = Math.min(scheduleDays, rule.endDayIndex ?? rule.dayIndex);
+      if (endIdx < 1 || startIdx > scheduleDays || endIdx < startIdx) continue;
+
+      let rStart: number;
+      let rEnd: number;
+      if (rule.allDay) {
+        rStart = new Date(baseY, baseM, baseD + startIdx - 1, hBoundary, 0).getTime();
+        rEnd = new Date(baseY, baseM, baseD + endIdx, hBoundary, 0).getTime();
+      } else {
+        rStart = hourInOpDay(baseDate, hBoundary, startIdx, rule.startHour);
+        rEnd = hourInOpDay(baseDate, hBoundary, endIdx, rule.endHour);
+        if (rEnd <= rStart) rEnd += 24 * 3600 * 1000;
+      }
+
+      const oStart = Math.max(rStart, wStart);
+      const oEnd = Math.min(rEnd, wEnd);
+      if (oStart < oEnd) {
+        const dayLabel = startIdx === endIdx ? `יום ${startIdx}` : `יום ${startIdx}–יום ${endIdx}`;
+        const timeLabel = rule.allDay
+          ? 'כל היום'
+          : `${String(rule.startHour).padStart(2, '0')}:00–${String(rule.endHour).padStart(2, '0')}:00`;
+        const reasonTail = rule.reason ? ` · ${rule.reason}` : '';
+        overlaps.push({
+          kind: 'date-unavailability',
+          label: `כלל קבוע: ${dayLabel} ${timeLabel}${reasonTail}`,
+          start: new Date(oStart),
+          end: new Date(oEnd),
+        });
       }
     }
   }
@@ -2786,26 +2771,35 @@ function findPreExistingUnavailabilityOverlaps(
   return overlaps;
 }
 
-function formatOverlapRange(o: PreExistingUnavailabilityOverlap): string {
-  const startDay = hebrewDayName(o.start);
-  const endDay = hebrewDayName(o.end);
+function formatOverlapRange(o: PreExistingUnavailabilityOverlap, schedule: Schedule): string {
+  const base = schedule.periodStart;
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  const toDayIndex = (d: Date): number => {
+    const shifted = new Date(d.getTime());
+    if (shifted.getHours() < dsh) shifted.setDate(shifted.getDate() - 1);
+    shifted.setHours(0, 0, 0, 0);
+    const baseMidnight = new Date(base.getFullYear(), base.getMonth(), base.getDate()).getTime();
+    return Math.floor((shifted.getTime() - baseMidnight) / (24 * 3600 * 1000)) + 1;
+  };
+  const startDay = toDayIndex(o.start);
+  const endDay = toDayIndex(o.end);
   if (startDay === endDay) return `יום ${startDay} ${fmt(o.start)}–${fmt(o.end)}`;
   return `יום ${startDay} ${fmt(o.start)} → יום ${endDay} ${fmt(o.end)}`;
 }
 
 async function handleProfileFutureSos(participantId: string, entryOpts: FutureSosEntryOpts = {}): Promise<void> {
   if (!currentSchedule || !engine) return;
-  const participant = currentSchedule.participants.find((p) => p.id === participantId);
+  const schedule = currentSchedule;
+  const participant = schedule.participants.find((p) => p.id === participantId);
   if (!participant) return;
 
   const numDays = store.getScheduleDays();
   const baseDate = store.getScheduleDate();
-  const dayStartHour = currentSchedule.algorithmSettings.dayStartHour;
+  const dayStartHour = schedule.algorithmSettings.dayStartHour;
 
   const days: Array<{ value: string; label: string }> = [];
   for (let d = 1; d <= numDays; d++) {
-    const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-    days.push({ value: String(d), label: `יום ${hebrewDayName(date)}` });
+    days.push({ value: String(d), label: `יום ${d}` });
   }
   const hours: Array<{ value: string; label: string }> = operationalHourOrder(dayStartHour).map((h) => ({
     value: String(h),
@@ -2832,7 +2826,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
   const liveModeInitiallyOn = lm.enabled;
 
   // Smart default: use next modifiable upcoming assignment if no override provided.
-  const smartDefault = computeSmartDefaultWindow(currentSchedule, participantId, anchor, dayStartHour);
+  const smartDefault = computeSmartDefaultWindow(schedule, participantId, anchor, dayStartHour);
   const initial: RangePickerDefaults = {
     startDay: entryOpts.defaultStartDay ?? smartDefault.startDay,
     startHour: entryOpts.defaultStartHour ?? smartDefault.startHour,
@@ -2840,7 +2834,17 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
     endHour: entryOpts.defaultEndHour ?? smartDefault.endHour,
   };
 
-  const anchorLabel = (a: Date) => `יום ${hebrewDayName(a)} ${fmt(a)}`;
+  const anchorLabel = (a: Date) => {
+    const shifted = new Date(a.getTime());
+    if (shifted.getHours() < dayStartHour) shifted.setDate(shifted.getDate() - 1);
+    const baseMidnight = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate()).getTime();
+    const dIdx =
+      Math.floor(
+        (new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate()).getTime() - baseMidnight) /
+          (24 * 3600 * 1000),
+      ) + 1;
+    return `יום ${dIdx} ${fmt(a)}`;
+  };
 
   const range = await showRangePicker({
     title: `אי זמינות עתידית — חלון · ${participant.name}`,
@@ -2867,9 +2871,9 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
         // When live mode is already ON, persist the new anchor immediately so the
         // schedule's frozen/future split updates — matches the Live Mode panel
         // pattern. When OFF, persistence is deferred to the apply paths below.
-        if (liveModeInitiallyOn && currentSchedule) {
+        if (liveModeInitiallyOn) {
           store.setLiveModeTimestamp(ts);
-          freezeAssignments(currentSchedule, ts);
+          freezeAssignments(schedule, ts);
           requestAnimationFrame(() => renderAll());
         }
         return { label: anchorLabel(ts) };
@@ -2883,11 +2887,10 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
       return null;
     },
     onPreview: (v) => {
-      if (!currentSchedule) return '';
       const s = toDate(v.startDay, v.startHour);
       const e = toDate(v.endDay, v.endHour);
       if (e.getTime() <= s.getTime() || s.getTime() < anchor.getTime()) return '';
-      const { affected } = findAffectedAssignments(currentSchedule, participantId, { start: s, end: e }, anchor);
+      const { affected } = findAffectedAssignments(schedule, participantId, { start: s, end: e }, anchor);
       if (affected.length === 0) return 'אין שיבוצים בחלון זה.';
       const dayKeys = new Set(affected.map((a) => a.task.timeBlock.start.toDateString()));
       return `יעודכנו ${affected.length} שיבוצים ב־${dayKeys.size} ימים.`;
@@ -2902,12 +2905,12 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
   // (participant availability gap, recurring date-unavailability rule, or a
   // prior Future-SOS entry). Recording is still allowed — overlapping
   // scheduleUnavailability entries are merged by upsertScheduleUnavailability.
-  const preOverlaps = findPreExistingUnavailabilityOverlaps(participant, currentSchedule, {
+  const preOverlaps = findPreExistingUnavailabilityOverlaps(participant, schedule, {
     start: windowStart,
     end: windowEnd,
   });
   if (preOverlaps.length > 0) {
-    const lines = preOverlaps.map((o) => `• ${o.label}: ${formatOverlapRange(o)}`);
+    const lines = preOverlaps.map((o) => `• ${o.label}: ${formatOverlapRange(o, schedule)}`);
     const proceed = await showConfirm(
       `החלון שבחרת חופף לזמן שכבר סומן כלא־זמין עבור ${participant.name}:\n\n${lines.join('\n')}\n\nניתן להמשיך — חלון אי זמינות עתידית חדש יאוחד עם חלונות קיימים, וכללי אי־זמינות אחרים יישארו כפי שהם. להמשיך בכל זאת?`,
       { title: 'חפיפה עם אי־זמינות קיימת', confirmLabel: 'המשך', cancelLabel: 'ביטול' },
@@ -2916,7 +2919,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
   }
 
   const { affected, lockedInPast } = findAffectedAssignments(
-    currentSchedule,
+    schedule,
     participantId,
     { start: windowStart, end: windowEnd },
     anchor,
@@ -2928,6 +2931,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
     affected,
     lockedInPast,
     dayStartHour,
+    periodStart: schedule.periodStart,
   });
   if (!confirmResult.confirmed) return;
 
@@ -3350,7 +3354,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.2</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4491,13 +4495,11 @@ function openExportModal(): void {
   if (!currentSchedule) return;
 
   const numDays = store.getScheduleDays();
-  const baseDate = store.getScheduleDate();
 
   // Build day options for the daily picker
   const exportDayOpts: { value: string; label: string; selected: boolean }[] = [];
   for (let d = 1; d <= numDays; d++) {
-    const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
-    exportDayOpts.push({ value: String(d), label: `יום ${hebrewDayName(date)}`, selected: d === currentDay });
+    exportDayOpts.push({ value: String(d), label: `יום ${d}`, selected: d === currentDay });
   }
 
   const html = `
@@ -4882,11 +4884,8 @@ function buildAvailabilityPopoverContent(
 
   const startDate = new Date(startMs);
   const endDate = new Date(endMs);
-  const sameDay = hebrewDayName(startDate) === hebrewDayName(endDate);
-  const rangeLabel = sameDay
-    ? `${fmtDate(startDate)} — ${fmt(endDate)}`
-    : `${fmtDate(startDate)} — ${fmtDate(endDate)}`;
-  const subtitle = isRange ? rangeLabel : `נכון ל${fmtDate(startDate)}`;
+  const rangeLabel = `${fmt(startDate)} — ${fmt(endDate)}`;
+  const subtitle = isRange ? rangeLabel : `נכון ל${fmt(startDate)}`;
 
   return `
     <div class="availability-popover-header">

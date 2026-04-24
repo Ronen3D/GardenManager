@@ -32,7 +32,6 @@ import {
   type ParticipantSet,
   type ParticipantSnapshot,
 } from '../models/types';
-import { HEBREW_DAYS } from '../utils/date-utils';
 import { validateGroupName } from './group-name-rules';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -79,10 +78,14 @@ const HEADER_LESS_PREFERRED = 'משימה פחות מועדפת';
 // אי-זמינות headers.
 const UNAVAIL_HEADER_NAME = 'שם משתתף';
 const UNAVAIL_HEADER_DAY = 'יום';
+const UNAVAIL_HEADER_END_DAY = 'יום סיום';
 const UNAVAIL_HEADER_ALL_DAY = 'כל היום';
 const UNAVAIL_HEADER_START = 'שעת התחלה';
 const UNAVAIL_HEADER_END = 'שעת סיום';
 const UNAVAIL_HEADER_REASON = 'סיבה';
+
+/** Maximum schedule-day index stored in XLSX rules. Mirrors the store-level cap. */
+const XLSX_MAX_DAY_INDEX = 7;
 
 // Catalog headers.
 const CERT_HEADER_ID = 'מזהה';
@@ -194,17 +197,22 @@ function buildPakalHeader(def: PakalDefinition): string {
   return `${PAKAL_HEADER_PREFIX}${def.label}`;
 }
 
-function dayIndexToName(dow: number): string {
-  return HEBREW_DAYS[dow] ?? String(dow);
+/** Format a schedule day index (1..7) as "יום N" for XLSX output. */
+function scheduleDayLabel(dayIndex: number): string {
+  return `יום ${dayIndex}`;
 }
 
-function dayNameToIndex(raw: string): number | null {
-  let v = normStr(raw);
+/** Parse the `יום` column from an XLSX row. Accepts "יום N" or "N"
+ *  (1..XLSX_MAX_DAY_INDEX). Returns the schedule day index, or null on
+ *  invalid input. */
+function parseScheduleDayCell(raw: string): number | null {
+  const v = normStr(raw);
   if (!v) return null;
-  // Accept `יום X` prefix.
-  if (v.startsWith('יום ')) v = v.slice(4).trim();
-  const idx = HEBREW_DAYS.indexOf(v as (typeof HEBREW_DAYS)[number]);
-  return idx >= 0 ? idx : null;
+
+  const numeric = v.startsWith('יום ') ? v.slice(4).trim() : v;
+  if (!/^\d+$/.test(numeric)) return null;
+  const n = Number(numeric);
+  return Number.isInteger(n) && n >= 1 && n <= XLSX_MAX_DAY_INDEX ? n : null;
 }
 
 function coerceBoolean(raw: unknown): boolean {
@@ -395,15 +403,20 @@ function buildInstructionsSheet(wb: Workbook, templateMode: boolean): void {
     { text: R(`• ${HEADER_PREFERRED} / ${HEADER_LESS_PREFERRED} — שם משימה חופשי.`) },
     { text: '' },
     { text: R('גיליון אי-זמינות'), heading: true },
-    { text: R('• שורה אחת לכל חלון אי-זמינות שבועי חוזר.') },
+    { text: R('• שורה אחת לכל חלון אי-זמינות קבוע בשבצ״ק.') },
     { text: R(`• ${UNAVAIL_HEADER_NAME} — חייב להיות שם הקיים בגיליון משתתפים.`) },
     {
-      text: R(`• ${UNAVAIL_HEADER_DAY} — אחד מ: ${HEBREW_DAYS.join(', ')} (גם בצורת ״יום ראשון״ וכו׳).`),
+      text: R(`• ${UNAVAIL_HEADER_DAY} — יום בשבצ״ק (1..7) בצורת ״יום 1״ או ״1״.`),
+    },
+    {
+      text: R(
+        `• ${UNAVAIL_HEADER_END_DAY} — אופציונלי. ריק = חוק יום-יחיד. אחרת יום בשבצ״ק >= יום ההתחלה (טווח רב-יומי).`,
+      ),
     },
     { text: R(`• ${UNAVAIL_HEADER_ALL_DAY} — ״כן״ מתעלם משעות התחלה/סיום.`) },
     {
       text: R(
-        `• ${UNAVAIL_HEADER_START} / ${UNAVAIL_HEADER_END} — שלמים בטווח 0..23. הערה: ${UNAVAIL_HEADER_END} קטן מ-${UNAVAIL_HEADER_START} מבטא חציית חצות (מותר).`,
+        `• ${UNAVAIL_HEADER_START} / ${UNAVAIL_HEADER_END} — שלמים בטווח 0..23. הערה: ${UNAVAIL_HEADER_END} קטן מ-${UNAVAIL_HEADER_START} מבטא חציית חצות (מותר בחוק יום יחיד).`,
       ),
     },
     { text: R(`• ${UNAVAIL_HEADER_REASON} — טקסט חופשי, אופציונלי.`) },
@@ -516,6 +529,7 @@ function buildUnavailabilitySheet(wb: Workbook, pset: ParticipantSet, templateMo
   const headers = [
     UNAVAIL_HEADER_NAME,
     UNAVAIL_HEADER_DAY,
+    UNAVAIL_HEADER_END_DAY,
     UNAVAIL_HEADER_ALL_DAY,
     UNAVAIL_HEADER_START,
     UNAVAIL_HEADER_END,
@@ -526,17 +540,20 @@ function buildUnavailabilitySheet(wb: Workbook, pset: ParticipantSet, templateMo
   ws.getColumn(1).width = 22;
   ws.getColumn(2).width = 10;
   ws.getColumn(3).width = 10;
-  ws.getColumn(4).width = 12;
+  ws.getColumn(4).width = 10;
   ws.getColumn(5).width = 12;
-  ws.getColumn(6).width = 28;
+  ws.getColumn(6).width = 12;
+  ws.getColumn(7).width = 28;
   ws.getColumn(1).numFmt = '@';
 
   if (!templateMode) {
     for (const p of pset.participants) {
       for (const rule of p.dateUnavailability) {
+        const endIdx = rule.endDayIndex ?? rule.dayIndex;
         ws.addRow([
           escapeFormulaInjection(normStr(p.name)),
-          dayIndexToName(rule.dayOfWeek),
+          scheduleDayLabel(rule.dayIndex),
+          endIdx > rule.dayIndex ? scheduleDayLabel(endIdx) : '',
           rule.allDay ? 'כן' : '',
           rule.allDay ? '' : rule.startHour,
           rule.allDay ? '' : rule.endHour,
@@ -547,7 +564,8 @@ function buildUnavailabilitySheet(wb: Workbook, pset: ParticipantSet, templateMo
   }
 
   // Validations on a broad range.
-  const dayList = `"${HEBREW_DAYS.join(',')}"`;
+  const dayList = `"${Array.from({ length: XLSX_MAX_DAY_INDEX }, (_, i) => `יום ${i + 1}`).join(',')}"`;
+  const endDayList = `"${['', ...Array.from({ length: XLSX_MAX_DAY_INDEX }, (_, i) => `יום ${i + 1}`)].join(',')}"`;
   const allDayList = `"כן,"`;
   for (let r = 2; r <= MAX_UNAVAILABILITY_ROWS + 1; r++) {
     ws.getCell(r, 2).dataValidation = {
@@ -556,14 +574,22 @@ function buildUnavailabilitySheet(wb: Workbook, pset: ParticipantSet, templateMo
       formulae: [dayList],
       showErrorMessage: true,
       errorTitle: 'יום',
-      error: 'בחר יום מהרשימה',
+      error: 'בחר יום 1..7',
     };
     ws.getCell(r, 3).dataValidation = {
       type: 'list',
       allowBlank: true,
-      formulae: [allDayList],
+      formulae: [endDayList],
+      showErrorMessage: true,
+      errorTitle: 'יום סיום',
+      error: 'ריק (יום יחיד) או יום 1..7',
     };
     ws.getCell(r, 4).dataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: [allDayList],
+    };
+    ws.getCell(r, 5).dataValidation = {
       type: 'whole',
       operator: 'between',
       allowBlank: true,
@@ -572,7 +598,7 @@ function buildUnavailabilitySheet(wb: Workbook, pset: ParticipantSet, templateMo
       errorTitle: 'שעת התחלה',
       error: 'שלם בין 0 ל-23',
     };
-    ws.getCell(r, 5).dataValidation = {
+    ws.getCell(r, 6).dataValidation = {
       type: 'whole',
       operator: 'between',
       allowBlank: true,
@@ -1379,22 +1405,45 @@ function parseUnavailabilityRows(ws: Worksheet, snapshots: ParsedParticipantRow[
     }
 
     const dayRaw = readCellString(row.getCell(2));
-    const dow = dayNameToIndex(dayRaw);
-    if (dow === null) {
+    const dayIndex = parseScheduleDayCell(dayRaw);
+    if (dayIndex === null) {
       pushError(ctx, {
         sheet: SHEET_UNAVAILABILITY,
         rowNumber: r,
-        message: `שורה ${r}: יום לא תקין: '${dayRaw}'.`,
+        message: `שורה ${r}: יום לא תקין: '${dayRaw}'. נדרש יום 1..${XLSX_MAX_DAY_INDEX}.`,
       });
       continue;
     }
 
-    const allDay = coerceBoolean(row.getCell(3).value);
+    const endDayRaw = readCellString(row.getCell(3));
+    let endDayIndex: number | undefined;
+    if (endDayRaw) {
+      const parsed = parseScheduleDayCell(endDayRaw);
+      if (parsed === null) {
+        pushError(ctx, {
+          sheet: SHEET_UNAVAILABILITY,
+          rowNumber: r,
+          message: `שורה ${r}: יום סיום לא תקין: '${endDayRaw}'.`,
+        });
+        continue;
+      }
+      if (parsed < dayIndex) {
+        pushError(ctx, {
+          sheet: SHEET_UNAVAILABILITY,
+          rowNumber: r,
+          message: `שורה ${r}: יום סיום (${parsed}) קטן מיום ההתחלה (${dayIndex}).`,
+        });
+        continue;
+      }
+      if (parsed !== dayIndex) endDayIndex = parsed;
+    }
+
+    const allDay = coerceBoolean(row.getCell(4).value);
     let startHour = 0;
     let endHour = 0;
     if (!allDay) {
-      const sh = coerceHour(row.getCell(4).value);
-      const eh = coerceHour(row.getCell(5).value);
+      const sh = coerceHour(row.getCell(5).value);
+      const eh = coerceHour(row.getCell(6).value);
       if (sh === null || eh === null) {
         pushError(ctx, {
           sheet: SHEET_UNAVAILABILITY,
@@ -1414,19 +1463,21 @@ function parseUnavailabilityRows(ws: Worksheet, snapshots: ParsedParticipantRow[
       startHour = sh;
       endHour = eh;
     }
-    const reason = readCellString(row.getCell(6)) || undefined;
+    const reason = readCellString(row.getCell(7)) || undefined;
 
     const rule: Omit<DateUnavailability, 'id'> = {
-      dayOfWeek: dow,
+      dayIndex,
+      ...(endDayIndex !== undefined ? { endDayIndex } : {}),
       allDay,
       startHour,
       endHour,
       reason,
     };
     // Dedupe identical rules silently.
-    const signature = `${dow}|${allDay}|${startHour}|${endHour}|${reason ?? ''}`;
+    const sigEndIdx = endDayIndex ?? dayIndex;
+    const signature = `${dayIndex}|${sigEndIdx}|${allDay}|${startHour}|${endHour}|${reason ?? ''}`;
     const existingForParticipant = target.snapshot.dateUnavailability.map(
-      (x) => `${x.dayOfWeek}|${x.allDay}|${x.startHour}|${x.endHour}|${x.reason ?? ''}`,
+      (x) => `${x.dayIndex}|${x.endDayIndex ?? x.dayIndex}|${x.allDay}|${x.startHour}|${x.endHour}|${x.reason ?? ''}`,
     );
     if (existingForParticipant.includes(signature)) continue;
 

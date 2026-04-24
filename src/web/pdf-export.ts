@@ -22,8 +22,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable, { __createTable, __drawTable, type CellDef, type UserOptions } from 'jspdf-autotable';
 import type { Schedule, Task } from '../models/types';
-import { HEBREW_DAYS } from '../utils/date-utils';
-import { fmtTimeLabel, getDayWindow, getNumDays, getTasksForDay, tint } from './export-utils';
+import { fmtTimeLabel, getNumDays, getTasksForDay, tint } from './export-utils';
 import {
   assignRows,
   computeSectionMetrics,
@@ -450,11 +449,9 @@ function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
  * rows with proportional widths — the same algorithm as the on-screen grid.
  */
 function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStartHour: number = 5): void {
-  const { start } = getDayWindow(schedule, dayIndex, dayStartHour);
-  const dayName = HEBREW_DAYS[start.getDay()];
   const numDays = getNumDays(schedule, dayStartHour);
 
-  const topY = drawTitle(doc, `יום ${dayName}`, `יום ${dayIndex} / ${numDays}`);
+  const topY = drawTitle(doc, `יום ${dayIndex}`, `מתוך ${numDays}`);
 
   const dayTasks = getTasksForDay(schedule, dayIndex, dayStartHour);
   if (dayTasks.length === 0) {

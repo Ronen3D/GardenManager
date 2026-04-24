@@ -13,18 +13,18 @@ export function renderScheduleGrid(
 ): string {
   if (schedule.tasks.length === 0) return '<div class="alert alert-info">אין משימות בשבצ"ק.</div>';
 
-  // 1. Calculate Day Range
-  const allStarts = schedule.tasks.map((t) => new Date(t.timeBlock.start).getTime());
-  const minStart = Math.min(...allStarts);
-  const scheduleStart = new Date(minStart);
-
-  const dayAnchor = addDays(scheduleStart, currentDay - 1);
-
-  const dayStart = new Date(dayAnchor);
-  if (dayStart.getHours() < dayStartHour) {
-    dayStart.setDate(dayStart.getDate() - 1);
-  }
-  dayStart.setHours(dayStartHour, 0, 0, 0);
+  // Anchor on the frozen schedule.periodStart + dayStartHour — matches the
+  // engine's op-day grouping and the canonical getDayWindow used by exports.
+  const base = schedule.periodStart;
+  const dayStart = new Date(
+    base.getFullYear(),
+    base.getMonth(),
+    base.getDate() + currentDay - 1,
+    dayStartHour,
+    0,
+    0,
+    0,
+  );
   const dayEnd = addDays(dayStart, 1);
 
   const startTimeNum = dayStart.getTime();
@@ -37,6 +37,6 @@ export function renderScheduleGrid(
 
   if (dayTasks.length === 0) return '<div class="alert alert-info">אין משימות ביום זה.</div>';
 
-  // 2. Delegate to the smart layout engine
+  // Delegate to the smart layout engine
   return renderScheduleGridV2(dayTasks, schedule, liveMode, manualCtx);
 }

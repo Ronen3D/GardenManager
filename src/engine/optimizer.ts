@@ -2397,7 +2397,9 @@ export function optimizeMultiAttemptAsync(
       }
     }
 
-    // Start first batch
-    runBatch();
+    // Yield once before the first batch so callers awaiting this promise
+    // get a paint boundary — their loading UI becomes visible before the
+    // (synchronous) attempts start.
+    setTimeout(runBatch, 0);
   });
 }

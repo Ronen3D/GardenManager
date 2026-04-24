@@ -9,14 +9,11 @@ import {
   addHours,
   max as dateMax,
   min as dateMin,
-  differenceInHours,
   differenceInMinutes,
   format,
-  isAfter,
   isBefore,
   isEqual,
   isWithinInterval,
-  parseISO,
   startOfDay,
 } from 'date-fns';
 
@@ -104,14 +101,14 @@ export function isFullyCovered(taskBlock: TimeBlock, availability: AvailabilityW
 }
 
 /**
- * Schedule context needed to evaluate weekly `dateUnavailability` rules.
+ * Schedule context needed to evaluate recurring `dateUnavailability` rules.
  *
- * Rules are indexed by `dayOfWeek` (JS weekday). They are instantiated against
- * the **operational days** that fall inside the scheduling window, not against
- * arbitrary calendar days a task's timeBlock happens to touch. This prevents
- * cross-midnight false violations where a Day-N task spilling past calendar
- * midnight into Day N+1 triggers a rule for Day N+1's calendar weekday even
- * when Day N+1 is outside the schedule or operationally still the same day.
+ * Rules are addressed by schedule-relative day index (1..scheduleDays), the
+ * same concept the user sees in the UI. They are instantiated against the
+ * operational days inside the scheduling window — never against calendar
+ * weekdays. This keeps "day N is blocked" interpretation consistent across
+ * UI, validation, and export, regardless of the calendar date day 1 happens
+ * to fall on.
  */
 export interface ScheduleContext {
   /** Calendar date of operational Day 1 (the hour component is ignored). */
@@ -123,19 +120,41 @@ export interface ScheduleContext {
 }
 
 /**
- * Check whether a task's time block is blocked by any recurring dateUnavailability rule.
+ * Map a wall-clock hour on schedule day `dayIndex` into an absolute timestamp
+ * inside that op-day's window.
  *
- * Iterates the operational days inside the schedule window (Day 1..N). For each
- * op-day whose base calendar weekday matches a rule's `dayOfWeek`, the rule is
- * instantiated at that calendar date:
- *   - `allDay`: blackout spans the full operational day window
- *     `[baseDate(D) + dayStartHour, baseDate(D+1) + dayStartHour)`.
- *   - partial hours: wall-clock anchored to the op-day's base calendar date,
- *     with wrap-around when `endHour <= startHour`.
+ *   - If `hour >= dayStartHour`, the hour falls on the op-day's base calendar
+ *     date (the morning/day portion of the op-day).
+ *   - If `hour < dayStartHour`, the hour belongs to the op-day's post-midnight
+ *     tail, i.e. base calendar date + 1.
  *
- * Days outside the scheduling window never contribute a blackout — per user
- * semantics, weekly rules only apply to the operational days the user actually
- * scheduled.
+ * Example (dayStartHour = 5, op-day 1 base = Sunday):
+ *   hourInOpDay(baseDate, 5, 1, 10) → calendar Sunday 10:00  (daytime)
+ *   hourInOpDay(baseDate, 5, 1, 3)  → calendar Monday   03:00 (tail of op-day 1)
+ *   hourInOpDay(baseDate, 5, 1, 5)  → calendar Sunday 05:00  (op-day start)
+ */
+export function hourInOpDay(baseDate: Date, dayStartHour: number, dayIndex: number, hour: number): number {
+  const calOffset = hour >= dayStartHour ? dayIndex - 1 : dayIndex;
+  return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + calOffset, hour, 0).getTime();
+}
+
+/**
+ * Check whether a task's time block is blocked by any recurring
+ * `dateUnavailability` rule.
+ *
+ * Rules reference schedule days by index (`dayIndex`, optionally extended with
+ * `endDayIndex`). For each rule, the blackout is composed in op-day space:
+ *
+ *   - `allDay`: blackout spans `[opDayStart(dayIndex), opDayStart(endDayIndex+1))`,
+ *     i.e. from the operational-day start of the first day through the
+ *     operational-day start immediately after the last day in the range.
+ *   - partial hours: `[hourInOpDay(dayIndex, startHour), hourInOpDay(endDayIndex, endHour))`.
+ *     When the result is non-positive (end <= start on the same single day),
+ *     the end hour wraps by one calendar day — this handles the "22:00 → 04:00
+ *     same op-day" pattern.
+ *
+ * Rules whose range lies entirely outside 1..scheduleDays contribute nothing.
+ * Rules that partially overlap the window are clamped (no wrap around day N).
  */
 export function isBlockedByDateUnavailability(
   taskBlock: TimeBlock,
@@ -150,35 +169,36 @@ export function isBlockedByDateUnavailability(
   const baseY = ctx.baseDate.getFullYear();
   const baseM = ctx.baseDate.getMonth();
   const baseD = ctx.baseDate.getDate();
+  const dsh = ctx.dayStartHour;
 
-  for (let dayIdx = 0; dayIdx < ctx.scheduleDays; dayIdx++) {
-    const opDayBase = new Date(baseY, baseM, baseD + dayIdx);
-    const opDayStartMs = new Date(baseY, baseM, baseD + dayIdx, ctx.dayStartHour, 0).getTime();
-    const opDayEndMs = new Date(baseY, baseM, baseD + dayIdx + 1, ctx.dayStartHour, 0).getTime();
-    // Quick skip: op-day window doesn't overlap the task at all
-    if (opDayEndMs <= taskStartMs || opDayStartMs >= taskEndMs) continue;
+  // Schedule-window coarse bounds — if the task falls entirely outside the
+  // window, no rule can apply.
+  const winStartMs = new Date(baseY, baseM, baseD, dsh, 0).getTime();
+  const winEndMs = new Date(baseY, baseM, baseD + ctx.scheduleDays, dsh, 0).getTime();
+  if (taskEndMs <= winStartMs || taskStartMs >= winEndMs) return false;
 
-    const dow = opDayBase.getDay();
-    for (const rule of rules) {
-      if (rule.dayOfWeek !== dow) continue;
+  for (const rule of rules) {
+    // Defensive guard: malformed rules (e.g. missing dayIndex from stale
+    // persisted data) must be skipped rather than producing NaN blackouts.
+    if (!Number.isInteger(rule.dayIndex)) continue;
+    const startIdx = Math.max(1, rule.dayIndex);
+    const endIdx = Math.min(ctx.scheduleDays, rule.endDayIndex ?? rule.dayIndex);
+    if (endIdx < 1 || startIdx > ctx.scheduleDays || endIdx < startIdx) continue;
 
-      let blockStartMs: number;
-      let blockEndMs: number;
-      if (rule.allDay) {
-        blockStartMs = opDayStartMs;
-        blockEndMs = opDayEndMs;
-      } else {
-        blockStartMs = new Date(baseY, baseM, baseD + dayIdx, rule.startHour, 0).getTime();
-        blockEndMs =
-          rule.endHour <= rule.startHour
-            ? new Date(baseY, baseM, baseD + dayIdx + 1, rule.endHour, 0).getTime()
-            : new Date(baseY, baseM, baseD + dayIdx, rule.endHour, 0).getTime();
-      }
-
-      if (taskStartMs < blockEndMs && blockStartMs < taskEndMs) {
-        return true;
+    let blockStartMs: number;
+    let blockEndMs: number;
+    if (rule.allDay) {
+      blockStartMs = new Date(baseY, baseM, baseD + startIdx - 1, dsh, 0).getTime();
+      blockEndMs = new Date(baseY, baseM, baseD + endIdx, dsh, 0).getTime();
+    } else {
+      blockStartMs = hourInOpDay(ctx.baseDate, dsh, startIdx, rule.startHour);
+      blockEndMs = hourInOpDay(ctx.baseDate, dsh, endIdx, rule.endHour);
+      if (blockEndMs <= blockStartMs) {
+        blockEndMs = new Date(blockEndMs + 24 * 3600 * 1000).getTime();
       }
     }
+
+    if (taskStartMs < blockEndMs && blockStartMs < taskEndMs) return true;
   }
 
   return false;

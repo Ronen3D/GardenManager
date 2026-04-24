@@ -47,6 +47,7 @@ import {
   type Task,
 } from '../models/types';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import { hourInOpDay } from '../shared/utils/time-utils';
 import { operationalDateKey } from '../utils/date-utils';
 import type { SchedulingEngine } from './scheduler';
 import { assertInjectableTimeBlock } from './temporal';
@@ -222,9 +223,8 @@ export function buildInjectedTask(
   if (spec.durationHours <= 0) return null;
 
   const dsh = ((Math.trunc(dayStartHour) % 24) + 24) % 24;
-  const calOffset = spec.dayIndex - 1 + (spec.startHour < dsh ? 1 : 0);
-  const day = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() + calOffset);
-  const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), spec.startHour, spec.startMinute);
+  const hourMs = hourInOpDay(periodStart, dsh, spec.dayIndex, spec.startHour);
+  const start = new Date(hourMs + spec.startMinute * 60_000);
   const end = new Date(start.getTime() + spec.durationHours * 3600000);
 
   const slots: SlotRequirement[] = [];

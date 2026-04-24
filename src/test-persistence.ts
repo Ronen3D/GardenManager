@@ -711,7 +711,7 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     store.factoryReset();
     localStorage.clear();
     const p2 = store.addParticipant({ name: 'DU-User', level: Level.L2, certifications: [], group: 'B' });
-    store.addDateUnavailability(p2.id, { dayOfWeek: 3, startHour: 8, endHour: 16, allDay: false, reason: 'test' });
+    store.addDateUnavailability(p2.id, { dayIndex: 4, startHour: 8, endHour: 16, allDay: false, reason: 'test' });
     const dusBefore = store.getDateUnavailabilities(p2.id);
     const oldRuleId = dusBefore[0]?.id;
     store.saveToStorage();
@@ -721,7 +721,7 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     assert(loadedP !== undefined, 'I1.3: Participant with DU rules loaded');
     const dusAfter = store.getDateUnavailabilities(loadedP!.id);
     assert(dusAfter.length === 1, 'I1.3: dateUnavailability rule survived');
-    assert(dusAfter[0].dayOfWeek === 3, 'I1.3: dayOfWeek preserved');
+    assert(dusAfter[0].dayIndex === 4, 'I1.3: dayIndex preserved');
     assert(dusAfter[0].startHour === 8, 'I1.3: startHour preserved');
     assert(dusAfter[0].id !== oldRuleId, 'I1.4: dateUnavailability ID regenerated on load');
 
@@ -1023,7 +1023,7 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
       group: 'TeamX',
     });
     store.setTaskNamePreference(pFull.id, 'חממה', 'אדנית');
-    store.addDateUnavailability(pFull.id, { dayOfWeek: 5, startHour: 0, endHour: 24, allDay: true });
+    store.addDateUnavailability(pFull.id, { dayIndex: 6, startHour: 0, endHour: 24, allDay: true });
     // Capture state by doing another mutation
     store.addParticipant({ name: 'Temp', level: Level.L0, certifications: [], group: 'G' });
     // Now undo to remove Temp
@@ -1143,7 +1143,7 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     localStorage.clear();
     store.initStore();
     const syncP = store.addParticipant({ name: 'SyncP', level: Level.L0, certifications: [], group: 'G' });
-    store.addDateUnavailability(syncP.id, { dayOfWeek: 1, startHour: 9, endHour: 17, allDay: false });
+    store.addDateUnavailability(syncP.id, { dayIndex: 2, startHour: 9, endHour: 17, allDay: false });
     // Mutate then undo
     store.addParticipant({ name: 'Temp2', level: Level.L0, certifications: [], group: 'G' });
     store.undo();

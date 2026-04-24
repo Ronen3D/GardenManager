@@ -7,7 +7,7 @@
 
 import { checkTemplateEligibility, type TemplateEligibilityResult } from '../engine/validator';
 import { type CertificationDefinition, Level, type PakalDefinition, type Participant } from '../models/types';
-import { fmtTime, HEBREW_DAYS } from '../utils/date-utils';
+import { fmtTime } from '../utils/date-utils';
 import * as store from './config-store';
 import { openParticipantSetFormatSheet, openXlsxImportFlow } from './data-transfer-ui';
 import { getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
@@ -62,7 +62,17 @@ function renderNotWithBadges(pid: string): string {
     .join(' ');
 }
 
-const HEBREW_DAYS_SHORT = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'] as const;
+/** Format the day-range prefix of a DateUnavailability rule as "יום N" or "יום N–יום M". */
+function formatRuleDayRangeShort(r: { dayIndex: number; endDayIndex?: number }): string {
+  const start = r.dayIndex;
+  const end = r.endDayIndex ?? r.dayIndex;
+  return start === end ? `יום ${start}` : `יום ${start}–${end}`;
+}
+function formatRuleDayRangeLong(r: { dayIndex: number; endDayIndex?: number }): string {
+  const start = r.dayIndex;
+  const end = r.endDayIndex ?? r.dayIndex;
+  return start === end ? `יום ${start}` : `יום ${start}–יום ${end}`;
+}
 
 /** Compact unavailability chips rendered below participant name. */
 function renderUnavailChips(pid: string): string {
@@ -74,11 +84,14 @@ function renderUnavailChips(pid: string): string {
 
   const chips = visible
     .map((r) => {
-      const day = HEBREW_DAYS_SHORT[r.dayOfWeek];
+      const day = formatRuleDayRangeShort(r);
       const time = r.allDay
         ? 'כל היום'
         : `${String(r.startHour).padStart(2, '0')}-${String(r.endHour).padStart(2, '0')}`;
-      const tooltip = `${HEBREW_DAYS[r.dayOfWeek]} ${r.allDay ? 'כל היום' : `${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00`}${r.reason ? ` (${r.reason})` : ''}`;
+      const tooltipTime = r.allDay
+        ? 'כל היום'
+        : `${String(r.startHour).padStart(2, '0')}:00–${String(r.endHour).padStart(2, '0')}:00`;
+      const tooltip = `${formatRuleDayRangeLong(r)} ${tooltipTime}${r.reason ? ` (${r.reason})` : ''}`;
       return `<span class="unavail-chip" title="${escHtml(tooltip)}">${day} ${time}</span>`;
     })
     .join('');
@@ -786,7 +799,7 @@ function renderBlackoutRow(pid: string): string {
   } else {
     html += '<ul>';
     for (const r of dateRules) {
-      const label = `כל ${HEBREW_DAYS[r.dayOfWeek]}`;
+      const label = formatRuleDayRangeLong(r);
       const timeLabel = r.allDay
         ? 'כל היום'
         : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00</span>`;
@@ -800,11 +813,19 @@ function renderBlackoutRow(pid: string): string {
     html += '</ul>';
   }
 
+  const nDays = store.getScheduleDays();
+  const dayOptions = Array.from({ length: nDays }, (_, i) => `<option value="${i + 1}">יום ${i + 1}</option>`).join('');
+
   html += `</div>
     <h4 style="margin-top:16px">הוסף כלל אי-זמינות</h4>
     <div class="blackout-add unified-constraint-form">
-      <select class="input-sm" data-field="du-dow" style="width:120px;">
-        ${HEBREW_DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
+      <span class="time-label">מיום</span>
+      <select class="input-sm" data-field="du-day-start" style="width:90px;">
+        ${dayOptions}
+      </select>
+      <span class="time-label">עד יום</span>
+      <select class="input-sm" data-field="du-day-end" style="width:90px;">
+        ${dayOptions}
       </select>
 
       <div class="time-inputs-group">
@@ -816,7 +837,7 @@ function renderBlackoutRow(pid: string): string {
         <span class="time-label">עד שעה</span>
         <input type="text" class="input-sm time-24h" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="bo-end" value="12:00" />
       </div>
-      
+
       <input type="text" class="input-sm" data-field="bo-reason" placeholder="סיבה (אופציונלי)" />
       <button class="btn-sm btn-primary" data-action="add-unified-constraint" data-pid="${pid}">הוסף</button>
       <span class="du-validation-error" class="hidden" style="color:#e74c3c;font-size:0.85em;margin-inline-start:6px"></span>
@@ -881,15 +902,22 @@ function renderAddForm(groups: string[]): string {
 // ─── Bulk Unavailability Dialog ──────────────────────────────────────────────
 
 function renderBulkUnavailDialog(): string {
+  const nDays = store.getScheduleDays();
+  const dayOptions = Array.from({ length: nDays }, (_, i) => `<option value="${i + 1}">יום ${i + 1}</option>`).join('');
   return `<div class="bulk-dialog-backdrop" data-action="bulk-dialog-dismiss">
     <div class="bulk-dialog">
       <h3>הוסף חוסר זמינות עבור ${selectedIds.size} משתתפים</h3>
 
       <div class="bulk-dialog-body">
         <div class="form-row">
-          <label>יום
-            <select class="input-sm" data-field="bulk-dow">
-              ${HEBREW_DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}
+          <label>מיום
+            <select class="input-sm" data-field="bulk-day-start">
+              ${dayOptions}
+            </select>
+          </label>
+          <label>עד יום
+            <select class="input-sm" data-field="bulk-day-end">
+              ${dayOptions}
             </select>
           </label>
         </div>
@@ -1503,8 +1531,28 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
           return;
         }
 
-        const dow = parseInt((panel.querySelector('[data-field="du-dow"]') as HTMLSelectElement)?.value || '0');
-        store.addDateUnavailability(pid, { dayOfWeek: dow, allDay, startHour, endHour, reason });
+        const dayStart = parseInt(
+          (panel.querySelector('[data-field="du-day-start"]') as HTMLSelectElement)?.value || '1',
+        );
+        const dayEndRaw = parseInt(
+          (panel.querySelector('[data-field="du-day-end"]') as HTMLSelectElement)?.value || String(dayStart),
+        );
+        if (dayEndRaw < dayStart) {
+          if (errEl) {
+            errEl.textContent = 'יום סיום חייב להיות גדול או שווה ליום ההתחלה.';
+            errEl.classList.remove('hidden');
+          }
+          return;
+        }
+        const endDayIndex = dayEndRaw > dayStart ? dayEndRaw : undefined;
+        store.addDateUnavailability(pid, {
+          dayIndex: dayStart,
+          ...(endDayIndex !== undefined ? { endDayIndex } : {}),
+          allDay,
+          startHour,
+          endHour,
+          reason,
+        });
         rerender();
         break;
       }
@@ -1667,8 +1715,20 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const endHour = parseInt((dialog.querySelector('[data-field="bulk-end"]') as HTMLInputElement).value || '0');
         const reason = (dialog.querySelector('[data-field="bulk-reason"]') as HTMLInputElement).value || undefined;
 
+        const dayStart = parseInt(
+          (dialog.querySelector('[data-field="bulk-day-start"]') as HTMLSelectElement).value || '1',
+        );
+        const dayEndRaw = parseInt(
+          (dialog.querySelector('[data-field="bulk-day-end"]') as HTMLSelectElement).value || String(dayStart),
+        );
+        if (dayEndRaw < dayStart) {
+          showToast('יום סיום חייב להיות גדול או שווה ליום ההתחלה.', { type: 'error' });
+          break;
+        }
+        const endDayIndex = dayEndRaw > dayStart ? dayEndRaw : undefined;
         const rule: Omit<import('../models/types').DateUnavailability, 'id'> = {
-          dayOfWeek: parseInt((dialog.querySelector('[data-field="bulk-dow"]') as HTMLSelectElement).value),
+          dayIndex: dayStart,
+          ...(endDayIndex !== undefined ? { endDayIndex } : {}),
           allDay,
           startHour: allDay ? 0 : startHour,
           endHour: allDay ? 24 : endHour,

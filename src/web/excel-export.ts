@@ -18,7 +18,6 @@
 import type { Fill, Worksheet } from 'exceljs';
 import { Workbook } from 'exceljs';
 import type { AssignmentStatus, Level, Participant, Schedule, SlotRequirement, Task } from '../models/types';
-import { hebrewDayName } from '../utils/date-utils';
 import { getCategoryColorMap } from './config-store';
 import { fmtTimeLabel, getDayWindow, getNumDays, getTasksForDay, rgbToArgb, shiftName, tint } from './export-utils';
 import { computeSectionMetrics, getTaskAssignments, getUniqueStartTimes, inferColumnStrategy } from './layout-engine';
@@ -74,7 +73,7 @@ function buildDaySheet(ws: Worksheet, schedule: Schedule, dayIndex: number, dayS
 
   // Title row (merged later once we know the widest section)
   const titleCell = ws.getCell(1, 1);
-  titleCell.value = `יום ${hebrewDayName(dayStart)} (יום ${dayIndex})`;
+  titleCell.value = `יום ${dayIndex}`;
   titleCell.font = { bold: true, size: 14 };
   titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
   ws.getRow(1).height = 22;
@@ -208,7 +207,7 @@ function buildSummarySheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
   }
 
   // Header row
-  const headerValues = ['משתתף', ...dayDates.map((dd, i) => `יום ${i + 1} (${hebrewDayName(dd)})`)];
+  const headerValues = ['משתתף', ...dayDates.map((_, i) => `יום ${i + 1}`)];
   const headerRow = ws.addRow(headerValues);
   headerRow.font = { bold: true, color: { argb: HEADER_FONT_ARGB } };
   headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -255,15 +254,14 @@ function buildSummarySheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
  * Times are written as real `Date` values with `hh:mm` number format so
  * sort/filter/pivot work correctly. Includes AutoFilter.
  *
- * Note: calendar dates are intentionally omitted — schedules are day-index
- * based, so we expose `יום` (index) and `יום בשבוע` (Hebrew weekday) only.
+ * Note: calendar dates and weekdays are intentionally omitted — schedules are
+ * day-index based, so we expose `יום` (index 1..N) only.
  */
 function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: number): void {
   ws.views = [{ rightToLeft: true, state: 'frozen', ySplit: 1 }];
 
   const headers = [
     'יום',
-    'יום בשבוע',
     'התחלה',
     'סיום',
     'משמרת',
@@ -286,7 +284,6 @@ function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
 
   const numDays = getNumDays(schedule, dayStartHour);
   for (let d = 1; d <= numDays; d++) {
-    const { start: dayStart } = getDayWindow(schedule, d, dayStartHour);
     const dayTasks = getTasksForDay(schedule, d, dayStartHour);
     for (const task of dayTasks) {
       const assignedSlots = getTaskAssignments(task, schedule);
@@ -297,7 +294,6 @@ function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
         const endDt = new Date(task.timeBlock.end);
         ws.addRow([
           d,
-          hebrewDayName(dayStart),
           startDt,
           endDt,
           shiftName(startDt),
@@ -391,8 +387,7 @@ export async function exportWeeklyExcel(schedule: Schedule, dayStartHour: number
   // 2. One presentation sheet per day
   const numDays = getNumDays(schedule, dayStartHour);
   for (let d = 1; d <= numDays; d++) {
-    const { start } = getDayWindow(schedule, d, dayStartHour);
-    const sheetName = safeSheetName(`יום ${d} ${hebrewDayName(start)}`);
+    const sheetName = safeSheetName(`יום ${d}`);
     const ws = workbook.addWorksheet(sheetName);
     buildDaySheet(ws, schedule, d, dayStartHour);
   }
@@ -412,8 +407,7 @@ export async function exportDailyExcel(schedule: Schedule, dayIndex: number, day
   workbook.creator = 'Garden Manager';
   workbook.created = new Date();
 
-  const { start } = getDayWindow(schedule, dayIndex, dayStartHour);
-  const sheetName = safeSheetName(`יום ${dayIndex} ${hebrewDayName(start)}`);
+  const sheetName = safeSheetName(`יום ${dayIndex}`);
   const ws = workbook.addWorksheet(sheetName);
   buildDaySheet(ws, schedule, dayIndex, dayStartHour);
 

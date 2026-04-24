@@ -7,18 +7,11 @@
  */
 
 import type { Participant, Schedule, Task } from '../index';
-import { hebrewDayName } from '../utils/date-utils';
 import { isTouchDevice } from './responsive';
 import { computePerDayHours } from './schedule-utils';
 import { escHtml, groupBadge, levelBadge } from './ui-helpers';
 import { showBottomSheet } from './ui-modal';
 import { computeWeeklyWorkloads } from './workload-utils';
-
-/**
- * Short Hebrew weekday letters (א-ו + ש for Shabbat), indexed by JS getDay().
- * Using charAt(0) of the full name would collide (ר/ר, ש/ש/ש/ש).
- */
-const HEBREW_DAY_SHORT = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'] as const;
 
 // ─── Single desktop popover singleton ───────────────────────────────────────
 
@@ -79,35 +72,24 @@ function buildPopupHtml(ctx: PopupContext): string {
       const ratio = maxHrs > 0 ? hours / maxHrs : 0;
       // Min visible height for non-zero bars so they never disappear behind label.
       const heightPct = hours > 0 ? Math.max(ratio * 100, 12) : 0;
-      const date = new Date(
-        ctx.scheduleStart.getFullYear(),
-        ctx.scheduleStart.getMonth(),
-        ctx.scheduleStart.getDate() + day - 1,
-      );
-      const dayLetter = HEBREW_DAY_SHORT[date.getDay()];
       const classes = ['wp-spark-col'];
       if (day === ctx.currentDayIdx) classes.push('today');
       if (hours > 0 && avgHrs > 0 && hours >= peakThreshold) classes.push('peak');
       if (hours === 0) classes.push('zero');
       const valueHtml = hours > 0 ? `<span class="wp-spark-value">${hours.toFixed(1)}</span>` : '';
-      return `<div class="${classes.join(' ')}" title="${escHtml(hebrewDayName(date))}: ${hours.toFixed(1)} שע'">
+      return `<div class="${classes.join(' ')}" title="יום ${day}: ${hours.toFixed(1)} שע'">
         ${valueHtml}
         <div class="wp-spark-bar-wrap"><div class="wp-spark-bar" style="height:${heightPct}%"></div></div>
-        <span class="wp-spark-day">${escHtml(dayLetter)}</span>
+        <span class="wp-spark-day">${day}</span>
       </div>`;
     })
     .join('');
 
   const todayHrs = ctx.perDay.get(ctx.currentDayIdx) || 0;
-  const todayDate = new Date(
-    ctx.scheduleStart.getFullYear(),
-    ctx.scheduleStart.getMonth(),
-    ctx.scheduleStart.getDate() + ctx.currentDayIdx - 1,
-  );
   const todayLine =
     ctx.currentDayIdx >= 1 && ctx.currentDayIdx <= ctx.numDays
       ? `<div class="wp-today-line">
-          <span class="wp-today-label">יום ${ctx.currentDayIdx} · ${escHtml(hebrewDayName(todayDate))}</span>
+          <span class="wp-today-label">יום ${ctx.currentDayIdx}</span>
           <span class="wp-today-value">${todayHrs.toFixed(1)} שע'</span>
         </div>`
       : '';

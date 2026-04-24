@@ -72,16 +72,25 @@ export interface AvailabilityWindow {
   end: Date;
 }
 
-/** A recurring weekly unavailability rule for a participant */
+/** A recurring schedule-day unavailability rule for a participant.
+ *
+ *  Addresses days by schedule-relative index (1..periodDays), not by JS
+ *  weekday. The blackout spans from `startHour` on `dayIndex` to `endHour`
+ *  on `endDayIndex` (defaults to `dayIndex`), where hours < the schedule's
+ *  `dayStartHour` are mapped into the post-midnight tail of that same op-day.
+ */
 export interface DateUnavailability {
   id: string;
-  /** Day of week (0=Sunday … 6=Saturday). */
-  dayOfWeek: number;
-  /** Start hour (0-23). Ignored when allDay is true. */
+  /** Schedule day index where the blackout starts (1..periodDays). */
+  dayIndex: number;
+  /** Optional end schedule day index (1..periodDays). Absent or equal to
+   *  dayIndex means a single-day rule. Must be >= dayIndex (no wrap). */
+  endDayIndex?: number;
+  /** Wall-clock hour (0-23) applied on the start day. Ignored when allDay. */
   startHour: number;
-  /** End hour (0-23). Ignored when allDay is true. */
+  /** Wall-clock hour (0-23) applied on the end day. Ignored when allDay. */
   endHour: number;
-  /** If true, unavailable for the entire day. */
+  /** If true, unavailable for the entire day range (ignores hours). */
   allDay: boolean;
   /** Optional reason / note. */
   reason?: string;

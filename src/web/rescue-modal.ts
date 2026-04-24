@@ -17,7 +17,6 @@ import {
   type SchedulingEngine,
   type Task,
 } from '../index';
-import { hebrewDayName } from '../utils/date-utils';
 import * as store from './config-store';
 import { isTouchDevice } from './responsive';
 import { violationLabel } from './schedule-utils';
@@ -371,14 +370,21 @@ function computePostSwapTasks(
 function buildRescueParticipantTooltip(
   participantName: string,
   nextTasks: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }>,
+  periodStart: Date,
+  dayStartHour: number,
 ): string {
   let html = `<div class="rescue-hover-tt-header">${participantName} — משימות סביב המשבצת אם יוחל</div>`;
   if (nextTasks.length === 0) {
     html += `<div class="rescue-hover-tt-empty">אין משימות קרובות</div>`;
   } else {
+    const baseMidnight = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()).getTime();
     for (let i = 0; i < nextTasks.length; i++) {
       const t = nextTasks[i];
-      const dayStr = 'יום ' + hebrewDayName(t.start);
+      const shifted = new Date(t.start.getTime());
+      if (shifted.getHours() < dayStartHour) shifted.setDate(shifted.getDate() - 1);
+      const shiftedMidnight = new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate()).getTime();
+      const dIdx = Math.floor((shiftedMidnight - baseMidnight) / (24 * 3600 * 1000)) + 1;
+      const dayStr = `יום ${dIdx}`;
       const timeStr = `<span dir="ltr">${fmt(t.start)} – ${fmt(t.end)}</span>`;
       const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
       const refMarker = t.isReference ? ' ◄' : '';
@@ -486,7 +492,12 @@ function wireRescueModalEvents(): void {
       const nextTasks = computePostSwapTasks(pid, plan, schedule, _rescueResult.request.taskId);
       const detail = document.createElement('div');
       detail.className = 'rescue-inline-preview task-inline-detail';
-      detail.innerHTML = buildRescueParticipantTooltip(participant.name, nextTasks);
+      detail.innerHTML = buildRescueParticipantTooltip(
+        participant.name,
+        nextTasks,
+        schedule.periodStart,
+        schedule.algorithmSettings.dayStartHour,
+      );
       target.insertAdjacentElement('afterend', detail);
     });
   } else {
@@ -511,7 +522,12 @@ function wireRescueModalEvents(): void {
 
       const nextTasks = computePostSwapTasks(pid, plan, schedule, _rescueResult.request.taskId);
       const tooltip = getRescueTooltipEl();
-      tooltip.innerHTML = buildRescueParticipantTooltip(participant.name, nextTasks);
+      tooltip.innerHTML = buildRescueParticipantTooltip(
+        participant.name,
+        nextTasks,
+        schedule.periodStart,
+        schedule.algorithmSettings.dayStartHour,
+      );
       tooltip.style.display = 'block';
 
       // Position near the target element

@@ -17,7 +17,7 @@
 
 import type { AffectedAssignment, BatchRescuePlan, BatchRescueResult } from '../engine/future-sos';
 import type { Participant, Schedule, Task } from '../models/types';
-import { hebrewDayName, operationalDateKey } from '../utils/date-utils';
+import { operationalDateKey } from '../utils/date-utils';
 import { cleanSlotLabel, escAttr, escHtml, fmt, stripDayPrefix } from './ui-helpers';
 import { lockBodyScroll, unlockBodyScroll } from './ui-modal';
 
@@ -29,6 +29,17 @@ export interface ConfirmContext {
   affected: AffectedAssignment[];
   lockedInPast: AffectedAssignment[];
   dayStartHour: number;
+  periodStart: Date;
+}
+
+/** Convert an absolute timestamp to its schedule-day index (1..periodDays),
+ *  relative to the schedule's frozen `periodStart` + `dayStartHour`. */
+function toDayIndex(d: Date, periodStart: Date, dayStartHour: number): number {
+  const shifted = new Date(d.getTime());
+  if (shifted.getHours() < dayStartHour) shifted.setDate(shifted.getDate() - 1);
+  const baseMidnight = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()).getTime();
+  const shiftedMidnight = new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate()).getTime();
+  return Math.floor((shiftedMidnight - baseMidnight) / (24 * 3600 * 1000)) + 1;
 }
 
 export interface ConfirmResult {
@@ -44,10 +55,12 @@ export function openConfirmModal(ctx: ConfirmContext): Promise<ConfirmResult> {
 
     const excludedIds = new Set<string>();
 
-    const affectedHtml = ctx.affected.length > 0 ? renderAffectedChecklist(ctx.affected, ctx.dayStartHour) : '';
-    const lockedHtml = ctx.lockedInPast.length > 0 ? renderLockedChip(ctx.lockedInPast, ctx.dayStartHour) : '';
+    const affectedHtml =
+      ctx.affected.length > 0 ? renderAffectedChecklist(ctx.affected, ctx.dayStartHour, ctx.periodStart) : '';
+    const lockedHtml =
+      ctx.lockedInPast.length > 0 ? renderLockedChip(ctx.lockedInPast, ctx.dayStartHour, ctx.periodStart) : '';
 
-    const windowSentence = renderWindowSentence(ctx.window);
+    const windowSentence = renderWindowSentence(ctx.window, ctx.periodStart, ctx.dayStartHour);
 
     backdrop.innerHTML = `
       <div class="gm-modal-dialog fsos-modal fsos-confirm-v2" role="dialog" aria-modal="true">
@@ -138,25 +151,26 @@ export function openConfirmModal(ctx: ConfirmContext): Promise<ConfirmResult> {
   });
 }
 
-function renderWindowSentence(window: { start: Date; end: Date }): string {
-  const sameDay = fmtDayLabel(window.start) === fmtDayLabel(window.end);
-  if (sameDay) {
-    return `החלון: <strong>${escHtml(fmtDayLabel(window.start))}</strong> <span dir="ltr" class="fsos-ltr">${fmt(window.start)}–${fmt(window.end)}</span>`;
+function renderWindowSentence(window: { start: Date; end: Date }, periodStart: Date, dayStartHour: number): string {
+  const startLabel = fmtDayLabel(window.start, periodStart, dayStartHour);
+  const endLabel = fmtDayLabel(window.end, periodStart, dayStartHour);
+  if (startLabel === endLabel) {
+    return `החלון: <strong>${escHtml(startLabel)}</strong> <span dir="ltr" class="fsos-ltr">${fmt(window.start)}–${fmt(window.end)}</span>`;
   }
-  return `החלון: <strong>${escHtml(fmtDayLabel(window.start))}</strong> <span dir="ltr" class="fsos-ltr">${fmt(window.start)}</span> → <strong>${escHtml(fmtDayLabel(window.end))}</strong> <span dir="ltr" class="fsos-ltr">${fmt(window.end)}</span>`;
+  return `החלון: <strong>${escHtml(startLabel)}</strong> <span dir="ltr" class="fsos-ltr">${fmt(window.start)}</span> → <strong>${escHtml(endLabel)}</strong> <span dir="ltr" class="fsos-ltr">${fmt(window.end)}</span>`;
 }
 
-function fmtDayLabel(d: Date): string {
-  return `יום ${hebrewDayName(d)}`;
+function fmtDayLabel(d: Date, periodStart: Date, dayStartHour: number): string {
+  return `יום ${toDayIndex(d, periodStart, dayStartHour)}`;
 }
 
-function renderAffectedChecklist(items: AffectedAssignment[], dayStartHour: number): string {
+function renderAffectedChecklist(items: AffectedAssignment[], dayStartHour: number, periodStart: Date): string {
   const byDay = groupByOperationalDay(items, dayStartHour);
   let html = '<div class="fsos-confirm-groups">';
   for (const [_key, dayItems] of byDay) {
     if (dayItems.length === 0) continue;
     const anchor = dayItems[0].task.timeBlock.start;
-    html += `<div class="fsos-affected-day-group"><div class="fsos-affected-day-header">${escHtml(fmtDayLabel(anchor))}</div><ul class="fsos-confirm-list">`;
+    html += `<div class="fsos-affected-day-group"><div class="fsos-affected-day-header">${escHtml(fmtDayLabel(anchor, periodStart, dayStartHour))}</div><ul class="fsos-confirm-list">`;
     for (const it of dayItems) {
       const time = `<span dir="ltr" class="fsos-ltr">${fmt(it.task.timeBlock.start)}–${fmt(it.task.timeBlock.end)}</span>`;
       const cleaned = it.slot.label ? cleanSlotLabel(it.slot.label) : '';
@@ -175,13 +189,13 @@ function renderAffectedChecklist(items: AffectedAssignment[], dayStartHour: numb
   return html;
 }
 
-function renderLockedChip(items: AffectedAssignment[], dayStartHour: number): string {
+function renderLockedChip(items: AffectedAssignment[], dayStartHour: number, periodStart: Date): string {
   const byDay = groupByOperationalDay(items, dayStartHour);
   let panelHtml = '<div class="fsos-locked-panel" hidden>';
   for (const [_key, dayItems] of byDay) {
     if (dayItems.length === 0) continue;
     const anchor = dayItems[0].task.timeBlock.start;
-    panelHtml += `<div class="fsos-affected-day-header">${escHtml(fmtDayLabel(anchor))}</div><ul class="fsos-locked-list">`;
+    panelHtml += `<div class="fsos-affected-day-header">${escHtml(fmtDayLabel(anchor, periodStart, dayStartHour))}</div><ul class="fsos-locked-list">`;
     for (const it of dayItems) {
       const time = `<span dir="ltr" class="fsos-ltr">${fmt(it.task.timeBlock.start)}–${fmt(it.task.timeBlock.end)}</span>`;
       const cleaned = it.slot.label ? cleanSlotLabel(it.slot.label) : '';
@@ -269,14 +283,22 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
   } else if (isTouch) {
     // Carousel layout: all plans expanded, horizontally scrollable with snap points.
     const cards = ctx.result.plans
-      .map((p) => renderBatchPlanCard(p, pMap, taskMap, dayStartHour, hasInfeasible, { expanded: true }))
+      .map((p) =>
+        renderBatchPlanCard(p, pMap, taskMap, dayStartHour, ctx.schedule.periodStart, hasInfeasible, {
+          expanded: true,
+        }),
+      )
       .join('');
     plansHtml = `<div class="fsos-carousel" role="region" aria-label="תוכניות החלפה">${cards}</div>`;
     pagerHtml = renderCarouselPager(ctx.result.plans);
   } else {
     // Stacked layout: rank #1 expanded, others collapsed to a verdict summary.
     const cards = ctx.result.plans
-      .map((p) => renderBatchPlanCard(p, pMap, taskMap, dayStartHour, hasInfeasible, { expanded: p.rank === 1 }))
+      .map((p) =>
+        renderBatchPlanCard(p, pMap, taskMap, dayStartHour, ctx.schedule.periodStart, hasInfeasible, {
+          expanded: p.rank === 1,
+        }),
+      )
       .join('');
     plansHtml = `<div class="fsos-plans-stack">${cards}</div>`;
   }
@@ -522,12 +544,13 @@ function renderBatchPlanCard(
   pMap: Map<string, Participant>,
   taskMap: Map<string, Task>,
   dayStartHour: number,
+  periodStart: Date,
   infeasible: boolean,
   opts: { expanded: boolean },
 ): string {
   const verdict = computeVerdict(plan);
 
-  const swapsGrouped = renderSwapsGroupedByDay(plan, pMap, taskMap, dayStartHour);
+  const swapsGrouped = renderSwapsGroupedByDay(plan, pMap, taskMap, dayStartHour, periodStart);
 
   const detailsHtml = renderPlanDetails(plan, pMap);
 
@@ -573,6 +596,7 @@ function renderSwapsGroupedByDay(
   pMap: Map<string, Participant>,
   taskMap: Map<string, Task>,
   dayStartHour: number,
+  periodStart: Date,
 ): string {
   interface RenderedSwap {
     timeStart: string;
@@ -593,7 +617,7 @@ function renderSwapsGroupedByDay(
     const taskStart = task?.timeBlock.start ?? null;
     const taskEnd = task?.timeBlock.end ?? null;
     const dayKey = taskStart ? operationalDateKey(taskStart, dayStartHour) : sw.assignmentId;
-    const dayLabel = taskStart ? fmtDayLabel(taskStart) : '';
+    const dayLabel = taskStart ? fmtDayLabel(taskStart, periodStart, dayStartHour) : '';
     let list = bySwapDayKey.get(dayKey);
     if (!list) {
       list = [];

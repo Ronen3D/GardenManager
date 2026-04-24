@@ -56,8 +56,8 @@ function buildSamplePset(overrides: Partial<ParticipantSet> = {}): ParticipantSe
       certifications: ['Nitzan', 'Salsala'],
       group: 'קבוצה א',
       dateUnavailability: [
-        { dayOfWeek: 5, allDay: true, startHour: 0, endHour: 0, reason: 'שבת' },
-        { dayOfWeek: 2, allDay: false, startHour: 8, endHour: 12, reason: 'קורס' },
+        { dayIndex: 6, allDay: true, startHour: 0, endHour: 0, reason: 'שבת' },
+        { dayIndex: 3, allDay: false, startHour: 8, endHour: 12, reason: 'קורס' },
       ],
       pakalIds: ['pakal-sq'],
       notWithIds: ['דנה'],
@@ -67,7 +67,7 @@ function buildSamplePset(overrides: Partial<ParticipantSet> = {}): ParticipantSe
       level: Level.L2,
       certifications: ['Hamama'],
       group: 'קבוצה ב',
-      dateUnavailability: [{ dayOfWeek: 1, allDay: false, startHour: 22, endHour: 6, reason: 'משמרת לילה' }],
+      dateUnavailability: [{ dayIndex: 2, allDay: false, startHour: 22, endHour: 6, reason: 'משמרת לילה' }],
       pakalIds: [],
       notWithIds: ['אורן'],
     },
@@ -93,7 +93,7 @@ function buildSamplePset(overrides: Partial<ParticipantSet> = {}): ParticipantSe
       level: Level.L2,
       certifications: ['Salsala', 'Hamama', 'Horesh'],
       group: 'קבוצה ג',
-      dateUnavailability: [{ dayOfWeek: 0, allDay: false, startHour: 13, endHour: 17 }],
+      dateUnavailability: [{ dayIndex: 1, allDay: false, startHour: 13, endHour: 17 }],
     },
   ];
 
@@ -136,7 +136,7 @@ function normalizeSnapshots(snaps: ParticipantSnapshot[]): Array<Record<string, 
       const pakals = p.pakalIds && p.pakalIds.length > 0 ? [...p.pakalIds].sort() : undefined;
       const notWith = p.notWithIds && p.notWithIds.length > 0 ? [...p.notWithIds].sort() : undefined;
       const rules = [...p.dateUnavailability].sort((a, b) => {
-        if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+        if (a.dayIndex !== b.dayIndex) return a.dayIndex - b.dayIndex;
         return (a.startHour ?? 0) - (b.startHour ?? 0);
       });
       const canonical: Record<string, unknown> = {
@@ -342,15 +342,16 @@ export async function runParticipantSetXlsxTests(assert: AssertFn): Promise<void
   }
 
   // ── Negative: hour out of range ──────────────────────────────────────
+  // Columns after the schema update: A=name, B=day, C=endDay, D=allDay,
+  // E=startHour, F=endHour, G=reason. Corrupt startHour on a non-allDay row.
   {
     const blob = await generateParticipantSetXlsx(buildSamplePset());
     const wb = await loadWorkbook(blob);
     const ws = wb.getWorksheet(SHEET_UNAVAILABILITY)!;
-    // Find a non-allDay row to corrupt. The sample has a non-allDay rule at some row.
     for (let r = 2; r <= ws.actualRowCount; r++) {
-      const allDayVal = ws.getCell(`C${r}`).value;
+      const allDayVal = ws.getCell(`D${r}`).value;
       if (allDayVal !== 'כן') {
-        ws.getCell(`D${r}`).value = 25;
+        ws.getCell(`E${r}`).value = 25;
         break;
       }
     }

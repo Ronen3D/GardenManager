@@ -45,21 +45,21 @@ const allParticipants = store.getAllParticipants();
 console.log(`Participants after seed: ${allParticipants.length}`);
 
 // Add recurring weekday rules to stress the clone
-console.log('Adding recurring weekday unavailability rules...');
+console.log('Adding recurring schedule-day unavailability rules...');
 let dateRuleCount = 0;
 for (const p of allParticipants) {
   for (let i = 0; i < 3; i++) {
     store.addDateUnavailability(p.id, {
-      dayOfWeek: (5 + i) % 7,
+      dayIndex: ((5 + i) % 7) + 1,
       allDay: i === 2,
       startHour: i === 2 ? 0 : 8 + i * 2,
       endHour: i === 2 ? 24 : 12 + i * 2,
-      reason: `Weekly rule ${i + 1}`,
+      reason: `Schedule-day rule ${i + 1}`,
     });
     dateRuleCount++;
   }
 }
-console.log(`Added ${dateRuleCount} recurring weekday rules`);
+console.log(`Added ${dateRuleCount} recurring schedule-day rules`);
 
 // Build a fake schedule with 200 assignments spread across participants
 console.log('Building synthetic schedule with 200 assignments...\n');

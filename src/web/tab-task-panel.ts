@@ -11,7 +11,6 @@
  */
 
 import type { Assignment, LoadWindow, Participant, Schedule, SlotRequirement, Task } from '../models/types';
-import { hebrewDayName } from '../utils/date-utils';
 import { certBadge, escHtml, fmt, groupColor, LEVEL_COLORS, levelBadge, taskBadge } from './ui-helpers';
 
 // ─── Context ─────────────────────────────────────────────────────────────────
@@ -34,10 +33,6 @@ export interface TaskPanelContext {
 export const TASK_PANEL_EMPTY = '__TASK_PANEL_EMPTY__';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function fmtDayLabel(d: Date): string {
-  return 'יום ' + hebrewDayName(d);
-}
 
 function pad2(n: number): string {
   return n < 10 ? '0' + n : String(n);
@@ -324,7 +319,7 @@ function renderWeekTimeline(
     }
 
     html += `<div class="tp-lane">
-      <div class="tp-lane-header">${fmtDayLabel(dayDate)}</div>
+      <div class="tp-lane-header">יום ${d}</div>
       <div class="tp-lane-body" style="height:${laneHeight}px">${laneContent}</div>
     </div>`;
   }
@@ -498,7 +493,6 @@ function renderDayStack(
 
   for (let d = 1; d <= numDays; d++) {
     const dayTasks = byDay.get(d) || [];
-    const dayDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);
     const dayHasUnfilled = dayTasks.some((task) => {
       const filled = new Set((assignmentsByTask.get(task.id) || []).map((a) => a.slotId));
       return task.slots.some((s) => !filled.has(s.slotId));
@@ -535,7 +529,7 @@ function renderDayStack(
 
     dayCards.push(`<details class="tp-day-card" ${open ? 'open' : ''}>
       <summary class="tp-day-card-summary">
-        <span class="tp-day-card-title">${fmtDayLabel(dayDate)}</span>
+        <span class="tp-day-card-title">יום ${d}</span>
         <span class="tp-day-card-count">${dayTasks.length} משמרות</span>
       </summary>
       <div class="tp-day-card-body">${shiftsHtml}</div>

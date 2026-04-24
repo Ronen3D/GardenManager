@@ -8,19 +8,7 @@
 
 import type { AssignmentStatus, ConstraintViolation, Schedule, Task } from '../index';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
-import { hebrewDayName } from '../utils/date-utils';
 import * as store from './config-store';
-import { fmt } from './ui-helpers';
-
-// ─── Formatting Helpers ─────────────────────────────────────────────────────
-
-export function fmtDate(d: Date): string {
-  return hebrewDayName(d) + ' ' + fmt(d);
-}
-
-export function fmtDayShort(d: Date): string {
-  return 'יום ' + hebrewDayName(d);
-}
 
 // ─── Time Parsing ───────────────────────────────────────────────────────────
 

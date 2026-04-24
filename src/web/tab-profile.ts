@@ -10,19 +10,10 @@
  */
 
 import { type Assignment, Level, type Participant, type Schedule, type Task } from '../models/types';
-import { hebrewDayName } from '../utils/date-utils';
 import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
 import { certBadge, escHtml, fmt, groupBadge, LEVEL_COLORS, levelBadge, taskBadge } from './ui-helpers';
 import { computeTaskBreakdown } from './workload-utils';
-
-// ─── Constants ───────────────────────────────────────────────────────────────
-
-// ─── Local Formatting Helpers ────────────────────────────────────────────────
-
-function fmtDayLabel(d: Date): string {
-  return 'יום ' + hebrewDayName(d);
-}
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
 
@@ -208,7 +199,7 @@ function renderPersonalAgenda(
       )
       .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
 
-    const dayLabel = fmtDayLabel(dayDate);
+    const dayLabel = `יום ${d}`;
     const isToday = d === 1; // Day 1 is "today" in context
 
     html += `<div class="agenda-day ${isToday ? 'agenda-day-current' : ''}">
@@ -283,9 +274,18 @@ function renderUnavailabilitySection(
 
   if (fsos.length > 0) {
     html += '<h4 class="profile-sub-title">אי זמינות עתידית (על השבצ"ק הזה בלבד)</h4><ul class="profile-fsos-list">';
+    const base = schedule.periodStart;
+    const dsh = schedule.algorithmSettings.dayStartHour;
+    const baseMidnight = new Date(base.getFullYear(), base.getMonth(), base.getDate()).getTime();
+    const toDayIdx = (d: Date): number => {
+      const shifted = new Date(d.getTime());
+      if (shifted.getHours() < dsh) shifted.setDate(shifted.getDate() - 1);
+      const shiftedMidnight = new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate()).getTime();
+      return Math.floor((shiftedMidnight - baseMidnight) / (24 * 3600 * 1000)) + 1;
+    };
     for (const entry of fsos) {
-      const startLabel = `יום ${hebrewDayName(entry.start)}`;
-      const endLabel = `יום ${hebrewDayName(entry.end)}`;
+      const startLabel = `יום ${toDayIdx(entry.start)}`;
+      const endLabel = `יום ${toDayIdx(entry.end)}`;
       const timeLabel = `${startLabel} <span dir="ltr">${fmt(entry.start)}</span> – ${endLabel} <span dir="ltr">${fmt(entry.end)}</span>`;
       const reason = entry.reason ? `<span class="text-muted"> · ${escHtml(entry.reason)}</span>` : '';
       html += `<li>
@@ -297,9 +297,11 @@ function renderUnavailabilitySection(
   }
 
   if (dateRules.length > 0) {
-    html += '<h4 class="profile-sub-title">כללים לפי יום בשבוע</h4><ul class="profile-list">';
+    html += '<h4 class="profile-sub-title">כללים קבועים לפי יום בשבצ״ק</h4><ul class="profile-list">';
     for (const r of dateRules) {
-      const label = `כל ${hebrewDayName(new Date(2026, 0, 4 + r.dayOfWeek))}`;
+      const start = r.dayIndex;
+      const end = r.endDayIndex ?? r.dayIndex;
+      const label = start === end ? `יום ${start}` : `יום ${start}–יום ${end}`;
       const timeLabel = r.allDay
         ? 'כל היום'
         : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00</span>`;
