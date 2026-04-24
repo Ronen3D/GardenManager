@@ -75,22 +75,10 @@ function buildTasks(numDays: number, baseDate: Date): Task[] {
       if (tpl.shiftsPerDay < 1 || tpl.durationHours <= 0) continue;
       const startDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tpl.startHour, 0);
 
-      let shifts: { start: Date; end: Date }[];
-      if (tpl.eveningStartHour !== undefined && tpl.shiftsPerDay === 2) {
-        const morningStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tpl.startHour, 0);
-        const morningEnd = new Date(morningStart.getTime() + tpl.durationHours * 3600000);
-        const eveHour = tpl.eveningStartHour;
-        const eveningStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), eveHour, 0);
-        const eveningEnd = new Date(eveningStart.getTime() + tpl.durationHours * 3600000);
-        shifts = [
-          { start: morningStart, end: morningEnd },
-          { start: eveningStart, end: eveningEnd },
-        ];
-      } else if (tpl.shiftsPerDay === 1) {
-        shifts = [{ start: startDate, end: new Date(startDate.getTime() + tpl.durationHours * 3600000) }];
-      } else {
-        shifts = generateShiftBlocks(startDate, tpl.durationHours, tpl.shiftsPerDay);
-      }
+      const shifts: { start: Date; end: Date }[] =
+        tpl.shiftsPerDay === 1
+          ? [{ start: startDate, end: new Date(startDate.getTime() + tpl.durationHours * 3600000) }]
+          : generateShiftBlocks(startDate, tpl.durationHours, tpl.shiftsPerDay);
 
       for (let si = 0; si < shifts.length; si++) {
         const block = shifts[si];

@@ -83,7 +83,7 @@ function resolveDisplayOrder(cat: string): number {
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface SectionMetrics {
-  id: string; // displayCategory value
+  id: string; // structural sectionKey
   title: string; // human-readable label
   tasks: Task[];
   columnCount: number; // data columns the table needs
@@ -92,7 +92,6 @@ export interface SectionMetrics {
   maxSlotsPerCell: number;
   weight: number; // computed layout weight
   displayOrder: number; // sort priority
-  wrapperClass: string; // CSS class for type-specific tinting
 }
 
 export interface ColumnDefinition {
@@ -122,18 +121,16 @@ export interface GridTemplate {
   placements: SectionPlacement[];
 }
 
-// ─── Display Category Helper ────────────────────────────────────────────────
+// ─── Section Key ────────────────────────────────────────────────────────────
 
-function getDisplayCategory(task: Task): string {
-  if (task.displayCategory) return task.displayCategory;
-  return (task.sourceName || task.name || 'custom').toLowerCase();
-}
-
-// ─── Wrapper class for type-specific tinting ────────────────────────────────
-
-/** Compute wrapper CSS class from category name. Convention: `${category}-wrapper`. */
-function resolveWrapperClass(cat: string): string {
-  return cat ? `${cat}-wrapper` : '';
+/**
+ * Structural grouping key for a task. Always read from `task.sectionKey`
+ * (frozen at generation time — see `src/shared/layout-key.ts`). The
+ * sourceName/name fallbacks exist only for schedule snapshots that predate
+ * this field — each such task will render as its own single-source section.
+ */
+function getSectionKey(task: Task): string {
+  return task.sectionKey || task.sourceName || task.name || 'custom';
 }
 
 // ─── Column Strategies ──────────────────────────────────────────────────────
@@ -270,10 +267,10 @@ export function inferColumnStrategy(tasks: Task[]): ColumnStrategy {
  * given tasks. These metrics drive all layout decisions.
  */
 export function computeSectionMetrics(dayTasks: Task[]): SectionMetrics[] {
-  // Group tasks by display category
+  // Group tasks by structural section key
   const groups = new Map<string, Task[]>();
   for (const t of dayTasks) {
-    const cat = getDisplayCategory(t);
+    const cat = getSectionKey(t);
     if (!groups.has(cat)) groups.set(cat, []);
     groups.get(cat)!.push(t);
   }
@@ -335,7 +332,6 @@ export function computeSectionMetrics(dayTasks: Task[]): SectionMetrics[] {
       maxSlotsPerCell,
       weight,
       displayOrder: resolveDisplayOrder(cat),
-      wrapperClass: resolveWrapperClass(cat),
     });
   }
 
@@ -614,9 +610,6 @@ export function renderSectionTable(
     .join('');
 
   const headerCells = columns.map((c) => `<th>${escHtml(c.header)}</th>`).join('');
-  const wrapperClass = section.wrapperClass
-    ? `schedule-table-wrapper ${section.wrapperClass}`
-    : 'schedule-table-wrapper';
 
   // Resolve section color for CSS variable tinting
   const catColors = getCategoryColorMap();
@@ -632,7 +625,7 @@ export function renderSectionTable(
     .join('');
 
   return `
-    <div class="${wrapperClass}" data-section="${section.id}" data-columns="${columns.length}" style="--section-color: ${sectionColor}; --col-count: ${columns.length}">
+    <div class="schedule-table-wrapper" data-section="${escHtml(section.id)}" data-columns="${columns.length}" style="--section-color: ${sectionColor}; --col-count: ${columns.length}">
       <h3 class="table-title">${escHtml(section.title)}</h3>
       ${titleChips ? `<div class="table-title-chips">${titleChips}</div>` : ''}
       <table class="table schedule-grid-table">

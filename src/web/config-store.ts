@@ -33,6 +33,7 @@ import {
   type TaskSet,
   type TaskTemplate,
 } from '../models/types';
+import { computeTemplateSectionKey } from '../shared/layout-key';
 import { buildFormula } from '../shared/utils/load-formula';
 import { hourInOpDay } from '../shared/utils/time-utils';
 import { normalizeCertificationDefinitions, sanitizeCertificationIds } from './certification-utils';
@@ -1238,10 +1239,9 @@ const taskTemplates: Map<string, TaskTemplate> = new Map();
  *   durationHours  → 0.5 … 24   (NaN → 8)
  *   shiftsPerDay   → 1 … 12     (NaN → 1, rounded to integer)
  *   startHour      → 0 … 23     (NaN → 6, rounded to integer)
- *   eveningStartHour → 0 … 23   (NaN → 17, rounded to integer)
  */
 export function sanitizeTemplateNumericFields<
-  T extends Partial<Pick<TaskTemplate, 'durationHours' | 'shiftsPerDay' | 'startHour' | 'eveningStartHour'>>,
+  T extends Partial<Pick<TaskTemplate, 'durationHours' | 'shiftsPerDay' | 'startHour'>>,
 >(raw: T): T {
   const out = { ...raw };
   if (out.durationHours !== undefined) {
@@ -1258,11 +1258,6 @@ export function sanitizeTemplateNumericFields<
     let v = Number(out.startHour);
     if (Number.isNaN(v)) v = 6;
     out.startHour = Math.max(0, Math.min(23, Math.round(v)));
-  }
-  if (out.eveningStartHour !== undefined) {
-    let v = Number(out.eveningStartHour);
-    if (Number.isNaN(v)) v = 17;
-    out.eveningStartHour = Math.max(0, Math.min(23, Math.round(v)));
   }
   return out;
 }
@@ -1436,53 +1431,58 @@ function hslToHex(h: number, s: number, l: number): string {
 }
 
 /**
- * Build a displayCategory → displayOrder map from current templates.
- * Takes the minimum displayOrder among templates sharing a category.
+ * Build structural-key → {color, displayOrder} maps from current templates.
+ *
+ * Templates sharing a structural key (same durationHours / shiftsPerDay /
+ * startHour — see `src/shared/layout-key.ts`) render in
+ * one schedule section. The representative attributes come from the template
+ * with the lowest `displayOrder` (tie-broken by name) — deterministic, stable
+ * against insertion order.
  */
-export function getDisplayOrderMap(): Record<string, number> {
-  const map: Record<string, number> = {};
+function buildSectionMaps(): {
+  color: Record<string, string>;
+  displayOrder: Record<string, number>;
+} {
+  const byKey = new Map<string, TaskTemplate[]>();
   for (const tpl of taskTemplates.values()) {
-    const cat = tpl.displayCategory;
-    if (cat && tpl.displayOrder != null) {
-      map[cat] = Math.min(map[cat] ?? Infinity, tpl.displayOrder);
-    }
+    const k = computeTemplateSectionKey(tpl);
+    const bucket = byKey.get(k);
+    if (bucket) bucket.push(tpl);
+    else byKey.set(k, [tpl]);
   }
-  return map;
+  const color: Record<string, string> = {};
+  const displayOrder: Record<string, number> = {};
+  let autoIdx = 0;
+  for (const [key, tpls] of byKey) {
+    tpls.sort((a, b) => (a.displayOrder ?? 100) - (b.displayOrder ?? 100) || a.name.localeCompare(b.name));
+    const rep = tpls[0];
+    color[key] = rep.color || AUTO_PALETTE[autoIdx++ % AUTO_PALETTE.length];
+    displayOrder[key] = rep.displayOrder ?? 100;
+  }
+  return { color, displayOrder };
 }
 
-/**
- * Build a displayCategory → color map from current templates.
- * Takes the first color found for each category.
- */
+export function getDisplayOrderMap(): Record<string, number> {
+  return buildSectionMaps().displayOrder;
+}
+
 export function getCategoryColorMap(): Record<string, string> {
-  const map: Record<string, string> = {};
-  let autoIdx = 0;
-  for (const tpl of taskTemplates.values()) {
-    const cat = tpl.displayCategory;
-    if (cat && !map[cat]) {
-      map[cat] = tpl.color || AUTO_PALETTE[autoIdx++ % AUTO_PALETTE.length];
-    }
-  }
-  return map;
+  return buildSectionMaps().color;
 }
 
 /**
  * Build a template-name → visual attributes map.
- * Keyed by template `name` (= `sourceName` on Task), not by taskType.
- * Replaces all type-keyed map functions.
+ * Keyed by template `name` (= `sourceName` on Task). Used by ui-helpers /
+ * tab-profile for per-template badge rendering — unrelated to section grouping.
  */
-export function getTemplateVisualMap(): Record<
-  string,
-  { color: string; displayOrder: number; displayCategory: string }
-> {
-  const map: Record<string, { color: string; displayOrder: number; displayCategory: string }> = {};
+export function getTemplateVisualMap(): Record<string, { color: string; displayOrder: number }> {
+  const map: Record<string, { color: string; displayOrder: number }> = {};
   let autoIdx = 0;
   for (const tpl of taskTemplates.values()) {
     if (!map[tpl.name]) {
       map[tpl.name] = {
         color: tpl.color || AUTO_PALETTE[autoIdx++ % AUTO_PALETTE.length],
         displayOrder: tpl.displayOrder ?? 100,
-        displayCategory: tpl.displayCategory || tpl.name.toLowerCase(),
       };
     }
   }
@@ -2123,7 +2123,6 @@ export function seedDefaultTaskTemplates(): void {
     slots: [],
     restRuleId: defaultRestRule.id,
     sleepRecovery: { rangeStartHour: 3, rangeEndHour: 8, recoveryHours: 5 },
-    displayCategory: 'patrol',
     color: '#4A90D9',
     displayOrder: 0,
   });
@@ -2149,7 +2148,6 @@ export function seedDefaultTaskTemplates(): void {
         requiredCertifications: ['Hamama'],
       },
     ],
-    displayCategory: 'hamama',
     color: '#E74C3C',
     displayOrder: 1,
   });
@@ -2182,7 +2180,6 @@ export function seedDefaultTaskTemplates(): void {
     ],
     restRuleId: defaultRestRule.id,
     sleepRecovery: { rangeStartHour: 4, rangeEndHour: 6, recoveryHours: 5 },
-    displayCategory: 'shemesh',
     color: '#F39C12',
     displayOrder: 4,
   });
@@ -2225,7 +2222,6 @@ export function seedDefaultTaskTemplates(): void {
         forbiddenCertifications: ['Horesh'],
       },
     ],
-    displayCategory: 'mamtera',
     color: '#27AE60',
     displayOrder: 3,
   });
@@ -2287,7 +2283,6 @@ export function seedDefaultTaskTemplates(): void {
         requiredCertifications: ['Nitzan'],
       },
     ],
-    displayCategory: 'patrol',
     color: '#8E44AD',
     displayOrder: 0,
   });
@@ -2330,7 +2325,6 @@ export function seedDefaultTaskTemplates(): void {
         requiredCertifications: ['Nitzan'],
       },
     ],
-    displayCategory: 'patrol',
     color: '#BDC3C7',
     displayOrder: 0,
   });
@@ -2361,7 +2355,6 @@ export function seedDefaultTaskTemplates(): void {
         requiredCertifications: ['Nitzan'],
       },
     ],
-    displayCategory: 'aruga',
     color: '#1ABC9C',
     displayOrder: 2,
   });
@@ -2392,7 +2385,6 @@ export function seedDefaultTaskTemplates(): void {
         requiredCertifications: ['Nitzan'],
       },
     ],
-    displayCategory: 'aruga',
     color: '#1ABC9C',
     displayOrder: 2,
   });

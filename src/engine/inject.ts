@@ -46,6 +46,7 @@ import {
   type SubTeamTemplate,
   type Task,
 } from '../models/types';
+import { injectSectionKey } from '../shared/layout-key';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import { hourInOpDay } from '../shared/utils/time-utils';
 import { operationalDateKey } from '../utils/date-utils';
@@ -72,7 +73,6 @@ export interface InjectedTaskSpec {
   schedulingPriority?: number;
   togethernessRelevant?: boolean;
   restRuleId?: string;
-  displayCategory?: string;
   color?: string;
   description?: string;
 }
@@ -255,8 +255,9 @@ export function buildInjectedTask(
 
   if (slots.length === 0) return null;
 
+  const id = nextInjTaskId(spec.name);
   const task: Task = {
-    id: nextInjTaskId(spec.name),
+    id,
     name: `יום ${spec.dayIndex} ${spec.name}`,
     sourceName: spec.name,
     timeBlock: { start, end },
@@ -269,7 +270,7 @@ export function buildInjectedTask(
     schedulingPriority: spec.schedulingPriority,
     togethernessRelevant: spec.togethernessRelevant,
     restRuleId: spec.restRuleId,
-    displayCategory: spec.displayCategory,
+    sectionKey: injectSectionKey(id),
     color: spec.color || '#c0392b',
     injectedPostGeneration: true,
   };

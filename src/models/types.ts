@@ -192,12 +192,20 @@ export interface Task {
   restRuleId?: string;
   /** HC-15: Sleep & Recovery rule propagated from the template. When set and the task's end hour falls inside the rule's range, a recovery window begins at task end. */
   sleepRecovery?: SleepRecoveryRule;
-  /** Display section for schedule grid/PDF layout. */
-  displayCategory?: string;
+  /**
+   * Structural grouping key for the schedule board. Tasks sharing a key
+   * render as one section (side-by-side columns). Computed at generation
+   * time from the originating template's time footprint (or a unique key
+   * for one-time / injected tasks so they never merge). See
+   * `src/shared/layout-key.ts`. Optional for backward compatibility with
+   * pre-schema snapshots and CLI fixtures; layout-engine falls back to
+   * `sourceName` / `name` when absent.
+   */
+  sectionKey?: string;
   /** Display color propagated from template (hex, e.g. '#4A90D9'). */
   color?: string;
   /**
-   * True for tasks injected post-generation (BALTAM) — not backed by a live
+   * True for tasks injected post-generation — not backed by a live
    * template or OneTimeTask. Snapshot-only unless the user also saved it to
    * the store. Excluded from orphan detection.
    */
@@ -726,8 +734,6 @@ export interface TaskTemplate {
   shiftsPerDay: number;
   /** First shift start hour */
   startHour: number;
-  /** Evening shift start hour (Aruga dual-shift tasks). Defaults to 17. */
-  eveningStartHour?: number;
   /** Whether all participants must be from the same group */
   sameGroupRequired: boolean;
   /** Base load weight outside hot windows (0..1). */
@@ -754,8 +760,6 @@ export interface TaskTemplate {
   restRuleId?: string;
   /** HC-15: Sleep & Recovery rule. At most one per template. */
   sleepRecovery?: SleepRecoveryRule;
-  /** Display section for schedule grid/PDF layout. */
-  displayCategory?: string;
   /** Display color for UI rendering (hex, e.g. '#4A90D9'). Auto-assigned if unset. */
   color?: string;
   /** Display ordering within the schedule grid. Lower = earlier (rightmost in RTL). */
@@ -796,8 +800,6 @@ export interface OneTimeTask {
   restRuleId?: string;
   /** HC-15: Sleep & Recovery rule. At most one per one-time task. */
   sleepRecovery?: SleepRecoveryRule;
-  /** Display section for schedule grid/PDF layout. */
-  displayCategory?: string;
   /** Display color for UI rendering (hex, e.g. '#4A90D9'). Auto-assigned if unset. */
   color?: string;
   /** Display ordering within the schedule grid. Lower = earlier (rightmost in RTL). */

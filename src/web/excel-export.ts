@@ -295,7 +295,7 @@ function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
           d,
           startDt,
           endDt,
-          task.displayCategory ?? (task.sourceName || task.name).toLowerCase(),
+          task.sectionKey || (task.sourceName || task.name).toLowerCase(),
           task.sourceName || task.name,
           slot.subTeamLabel || slot.subTeamId || '',
           slot.label || '',

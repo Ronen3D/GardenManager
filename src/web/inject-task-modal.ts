@@ -722,7 +722,6 @@ function draftToSpec(d: DraftState): InjectedTaskSpec {
     baseLoadWeight: Math.max(0, Math.min(1, d.baseLoadWeight)),
     restRuleId: d.restRuleId || undefined,
     description: d.description || undefined,
-    displayCategory: d.name.trim().toLowerCase(),
   };
 }
 

@@ -35,10 +35,12 @@ import {
 } from './layout-engine';
 import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';
 
-/** Resolve a task's display category. */
+/**
+ * Resolve a task's structural section key. Mirrors `getSectionKey` in
+ * `layout-engine.ts` so PDF section grouping matches the on-screen grid.
+ */
 function getDisplayCategory(task: Task): string {
-  if (task.displayCategory) return task.displayCategory;
-  return (task.sourceName || task.name || 'custom').toLowerCase();
+  return task.sectionKey || task.sourceName || task.name || 'custom';
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────

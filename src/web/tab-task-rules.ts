@@ -54,7 +54,6 @@ const FIELD_LABELS: Record<string, string> = {
   shiftsPerDay: 'משמרות/יום',
   startHour: 'שעת התחלה',
   startMinute: 'דקת התחלה',
-  eveningStartHour: 'שעת ערב',
 };
 
 /** Show a warning toast if any numeric field was clamped by sanitization. */
@@ -1453,7 +1452,6 @@ function _commitOneTimeProps(body: HTMLElement, otId: string): boolean {
     restRuleId: otRestRuleId,
     ...(otSleepRecovery.kind === 'set' ? { sleepRecovery: otSleepRecovery.value } : {}),
     description: desc || undefined,
-    displayCategory: name.toLowerCase(),
   });
   return true;
 }
@@ -2255,7 +2253,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         });
         notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
 
-        const displayCategory = name.toLowerCase();
         const clampedBaseLoad = Math.max(0, Math.min(1, baseLoad));
         // Drop pending formula if user manually edited the input away from the computed value.
         const keepFormula =
@@ -2274,7 +2271,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           blocksConsecutive,
           togethernessRelevant: false,
           restRuleId: undefined,
-          displayCategory,
           subTeams: [],
           slots: [],
         });
@@ -2332,7 +2328,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const desc = (form.querySelector('[data-field="ot-desc"]') as HTMLInputElement)?.value.trim();
         const otRestRuleId =
           (form.querySelector('[data-field="ot-rest-rule"]') as HTMLSelectElement)?.value || undefined;
-        const displayCategory = name.toLowerCase();
 
         const otSanitized = store.sanitizeTemplateNumericFields({ durationHours: rawDur, startHour: rawStartHour });
         const startMinute = Math.max(0, Math.min(59, Math.round(Number.isNaN(rawStartMinute) ? 0 : rawStartMinute)));
@@ -2353,7 +2348,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           blocksConsecutive,
           togethernessRelevant: false,
           restRuleId: otRestRuleId,
-          displayCategory,
           subTeams: [],
           slots: [],
           description: desc || undefined,

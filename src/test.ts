@@ -34,8 +34,8 @@ import {
   ViolationSeverity,
   validateHardConstraints,
 } from './index';
-import type { DateUnavailability } from './models/types';
 import { allowedLevels, hasAnyLowPriority, isAcceptedLevel, isLowPriority } from './models/level-utils';
+import type { DateUnavailability } from './models/types';
 import {
   type CertificationDefinition,
   DEFAULT_CERTIFICATION_DEFINITIONS,
@@ -2061,7 +2061,6 @@ console.log('\n── One-Time Task Integration ──────────�
     restRuleId: 'test-rest-rule',
     sameGroupRequired: true,
     schedulingPriority: 5,
-    displayCategory: 'patrol',
     togethernessRelevant: true,
     baseLoadWeight: 0.5,
   });
@@ -2069,7 +2068,7 @@ console.log('\n── One-Time Task Integration ──────────�
   assert(heavyOt.restRuleId === 'test-rest-rule', 'Constraint: restRuleId');
   assert(heavyOt.sameGroupRequired === true, 'Constraint: sameGroupRequired');
   assert(heavyOt.schedulingPriority === 5, 'Constraint: schedulingPriority');
-  assert(heavyOt.displayCategory === 'patrol', 'Constraint: displayCategory');
+  assert(heavyOt.togethernessRelevant === true, 'Constraint: togethernessRelevant');
   assert(heavyOt.baseLoadWeight === 0.5, 'Constraint: baseLoadWeight');
 
   // Test 4: HC-5 overlap detection — one-time task overlaps with a template-generated task
@@ -11463,7 +11462,6 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
       sameGroupRequired: true,
       blocksConsecutive: true,
       baseLoadWeight: 1,
-      displayCategory: 'baltam',
       ...overrides,
     };
     return spec;
@@ -11893,6 +11891,60 @@ console.log('\n── Temporal mutation gates ───────────�
       'gate-F3: startHour = dsh does not roll',
     );
   }
+}
+
+// ─── Structural section-key (layout grouping) ───────────────────────────────
+// The schedule board groups tasks into sections by a structural key derived
+// from template time-footprint fields. Pure function, extensive coverage:
+// field-by-field independence + one-time / injected isolation.
+
+import { computeTemplateSectionKey, injectSectionKey, oneTimeSectionKey } from './shared/layout-key';
+
+console.log('\n── Structural section-key (layout) ─────');
+{
+  // Base template fields for the tests below.
+  const base = { durationHours: 8, shiftsPerDay: 3, startHour: 5 };
+
+  // Determinism: same inputs → same key.
+  const k1 = computeTemplateSectionKey(base);
+  const k2 = computeTemplateSectionKey({ ...base });
+  assert(k1 === k2, 'section-key: same inputs produce same key');
+
+  // Field independence: each of the 3 fields changes the key.
+  assert(computeTemplateSectionKey({ ...base, durationHours: 12 }) !== k1, 'section-key: durationHours changes key');
+  assert(computeTemplateSectionKey({ ...base, shiftsPerDay: 2 }) !== k1, 'section-key: shiftsPerDay changes key');
+  assert(computeTemplateSectionKey({ ...base, startHour: 6 }) !== k1, 'section-key: startHour changes key');
+
+  // Seeded-default modelling: Adanit/Karov/Karovit all share the same time
+  // footprint (8h × 3 shifts × start 05:00) and therefore map to one
+  // structural key. This is the user-visible grouping contract.
+  const adanitKey = computeTemplateSectionKey({ durationHours: 8, shiftsPerDay: 3, startHour: 5 });
+  const karovKey = computeTemplateSectionKey({ durationHours: 8, shiftsPerDay: 3, startHour: 5 });
+  const karovitKey = computeTemplateSectionKey({ durationHours: 8, shiftsPerDay: 3, startHour: 5 });
+  assert(adanitKey === karovKey && karovKey === karovitKey, 'section-key: Adanit/Karov/Karovit share one key');
+
+  // Hamama has a different time footprint (12h × 2 shifts × start 06:00) so
+  // it must NOT collide with the Adanit bucket — strictly safer than the old
+  // hardcoded `displayCategory` scheme.
+  const hamamaKey = computeTemplateSectionKey({
+    durationHours: 12,
+    shiftsPerDay: 2,
+    startHour: 6,
+  });
+  assert(hamamaKey !== adanitKey, 'section-key: Hamama does not collide with Adanit');
+
+  // One-time and injected tasks always get unique keys that never collide
+  // with any template key — enforcing "OT/injected keep their own sections".
+  const ot = oneTimeSectionKey('ot-abc');
+  const inj = injectSectionKey('task-42');
+  assert(ot !== adanitKey && ot !== hamamaKey, 'section-key: OT key distinct from templates');
+  assert(inj !== adanitKey && inj !== hamamaKey, 'section-key: inject key distinct from templates');
+  assert(ot !== inj, 'section-key: OT vs inject keys distinct');
+  assert(oneTimeSectionKey('a') !== oneTimeSectionKey('b'), 'section-key: OT keys unique per id');
+  assert(injectSectionKey('a') !== injectSectionKey('b'), 'section-key: inject keys unique per id');
+  assert(ot.startsWith('ot:'), 'section-key: OT namespace prefix');
+  assert(inj.startsWith('inject:'), 'section-key: inject namespace prefix');
+  assert(adanitKey.startsWith('tpl:'), 'section-key: template namespace prefix');
 }
 
 // ─── Async test blocks + Summary ─────────────────────────────────────────────
