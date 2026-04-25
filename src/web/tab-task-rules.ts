@@ -179,28 +179,45 @@ function fmtHm(h: number, m: number): string {
 }
 
 /**
- * Read back the HC-15 "Sleep & Recovery" fields from the given container.
+ * Read back the HC-15 "Sleep & Recovery" fields from the editable body.
  *
- * The 💤 editor body is conditionally rendered — when the section is
- * collapsed its inputs are absent from the DOM. We must distinguish:
- *  - 'preserve': section collapsed, inputs absent → keep the stored rule
- *  - 'set' (undefined value): toggle unchecked → deliberately clear the rule
- *  - 'set' (rule): toggle checked with valid inputs → persist new rule
- *  - 'invalid': toggle checked but inputs are out of range → refuse to save
- *    (do NOT silently wipe the rule; caller shows an error toast and bails)
+ * Enable/disable is controlled by the header switch and goes through the
+ * `toggle-sleep-recovery-switch` action — never through this parser. So this
+ * parser only sees one of:
+ *  - 'preserve': body is not rendered (rule is off, or section is collapsed).
+ *    The auto-save path leaves the stored rule untouched.
+ *  - 'set' (rule): body is rendered with valid inputs → persist updated rule.
+ *  - 'invalid': body is rendered but inputs are out of range → caller shows
+ *    an error toast and bails (no silent wipe).
+ *
+ * `endHour < startHour` is interpreted as a midnight-crossing range; the
+ * constraint engine handles the wrap automatically and the user does not
+ * need to confirm it.
  */
-type ParsedSleepRecovery =
-  | { kind: 'preserve' }
-  | { kind: 'set'; value: SleepRecoveryRule | undefined }
-  | { kind: 'invalid'; reason: string };
+type ParsedSleepRecovery = { kind: 'preserve' } | { kind: 'set'; value: SleepRecoveryRule } | { kind: 'invalid'; reason: string };
 
 const SLEEP_RECOVERY_MAX_HOURS = 24;
 
+const DEFAULT_SLEEP_RECOVERY_RULE: SleepRecoveryRule = {
+  rangeStartHour: 22,
+  rangeEndHour: 6,
+  recoveryHours: 5,
+};
+
+/**
+ * Cache last-known rule values per template/one-time task so that toggling
+ * the switch off → on restores what the user previously had instead of
+ * snapping back to the global defaults. Cleared on disable, populated on
+ * disable so the next enable pulls from here.
+ */
+const lastSleepRecoveryValues = new Map<string, SleepRecoveryRule>();
+
 function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): ParsedSleepRecovery {
   const attr = target === 'tpl' ? 'tpl' : 'ot';
-  const checkboxEl = scope.querySelector(`[data-${attr}-field="sleepRecoveryEnabled"]`) as HTMLInputElement | null;
-  if (!checkboxEl) return { kind: 'preserve' };
-  if (!checkboxEl.checked) return { kind: 'set', value: undefined };
+  const startBlock = scope.querySelector(`[data-${attr}-field="sleepRecoveryStartBlock"]`);
+  if (!startBlock) {
+    return { kind: 'preserve' };
+  }
 
   const readHourFromSelectBlock = (blockField: string): number | null => {
     const block = scope.querySelector(`[data-${attr}-field="${blockField}"]`) as HTMLElement | null;
@@ -215,23 +232,6 @@ function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): Pars
   const endHour = readHourFromSelectBlock('sleepRecoveryEndBlock');
   if (startHour === null || endHour === null) {
     return { kind: 'invalid', reason: 'שעת טווח ההפעלה לא תקינה' };
-  }
-
-  const crossesEl = scope.querySelector(
-    `[data-${attr}-field="sleepRecoveryCrossesMidnight"]`,
-  ) as HTMLInputElement | null;
-  const crossesMidnight = !!crossesEl?.checked;
-  if (!crossesMidnight && endHour < startHour) {
-    return {
-      kind: 'invalid',
-      reason: 'שעת הסיום לפני שעת ההתחלה. סמנו "חוצה חצות" אם הטווח אמור לעבור חצות.',
-    };
-  }
-  if (crossesMidnight && endHour >= startHour) {
-    return {
-      kind: 'invalid',
-      reason: 'סומן "חוצה חצות" אבל הטווח לא עובר חצות. שעת הסיום חייבת להיות לפני שעת ההתחלה, או שיש להסיר את הסימון.',
-    };
   }
 
   const hoursRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryHours"]`) as HTMLInputElement | null)?.value;
@@ -253,26 +253,31 @@ function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): Pars
  * Render the HC-15 "Sleep & Recovery" editor section. Used by both
  * TaskTemplate and OneTimeTask editors.
  *
- * Collapsed by default — clicking the header toggles the full editor open.
- * When collapsed we show a compact summary badge (range + hours) if a rule
- * is configured, or a muted "לא פעיל" label when disabled. Layout stacks
- * vertically on narrow viewports (mobile) and avoids packed inline text that
- * wraps awkwardly.
+ * Layout: a single header row with three logical zones:
+ *  - the title block (clickable to expand/collapse the editor body);
+ *  - a summary chip showing the configured range + recovery hours, or a muted
+ *    "לא פעיל" label;
+ *  - an iOS-style switch that toggles the rule on/off in one click.
+ *
+ * The body renders only when the rule is on AND the section is expanded —
+ * there is intentionally no dimmed/disabled middle state. Disabling via the
+ * switch caches the user's last values; re-enabling restores them so the
+ * common "toggle off, toggle on" round-trip is non-destructive.
+ *
+ * Midnight crossing is inferred from `endHour < startHour` (the constraint
+ * engine handles the wrap automatically) and surfaced as a small "חוצה חצות"
+ * pill — there is no checkbox for it.
  */
 function renderSleepRecoveryEditor(rule: SleepRecoveryRule | undefined, target: 'tpl' | 'ot', id: string): string {
   const enabled = !!rule;
-  const start = rule?.rangeStartHour ?? 22;
-  const end = rule?.rangeEndHour ?? 6;
-  const hours = rule?.recoveryHours ?? 5;
+  const start = rule?.rangeStartHour ?? DEFAULT_SLEEP_RECOVERY_RULE.rangeStartHour;
+  const end = rule?.rangeEndHour ?? DEFAULT_SLEEP_RECOVERY_RULE.rangeEndHour;
+  const hours = rule?.recoveryHours ?? DEFAULT_SLEEP_RECOVERY_RULE.recoveryHours;
   const attr = target === 'tpl' ? 'tpl' : 'ot';
   const idAttr = target === 'tpl' ? 'tid' : 'ot-id';
   const expandKey = `${target}:${id}`;
   const isExpanded = expandedSleepRecovery.has(expandKey);
-  // Checkbox state tracks the displayed values, not the enabled flag — so when a
-  // disabled rule is rendered with crossing defaults (e.g. 22→6), the box is
-  // pre-checked and enabling the rule passes validation without a round-trip.
-  const crossesMidnight = end < start;
-  const summaryShowsCrossing = enabled && crossesMidnight;
+  const showBody = isExpanded && enabled;
   const fmtHh = (h: number) => `${String(h).padStart(2, '0')}:00`;
 
   const hourOptions = (selectedHour: number) =>
@@ -282,20 +287,21 @@ function renderSleepRecoveryEditor(rule: SleepRecoveryRule | undefined, target: 
       selected: h === selectedHour,
     }));
 
-  const summary = enabled
-    ? `<span class="sr-summary-chip">מ־${fmtHh(start)} עד ${fmtHh(end)}${summaryShowsCrossing ? ' (חוצה חצות)' : ''} · ${hours} שע׳</span>`
-    : `<span class="sr-summary-off">לא פעיל</span>`;
+  // When the body is open, the values below already show the configured range
+  // and recovery hours — duplicating them in a header chip just crowds the row
+  // and forces the title to wrap. Show the chip only when collapsed.
+  const summary = !enabled
+    ? `<span class="sr-summary-off">לא פעיל</span>`
+    : showBody
+      ? ''
+      : `<span class="sr-summary-chip">מ־${fmtHh(start)} עד ${fmtHh(end)} · ${hours} שע׳</span>`;
 
   const startSelectId = `sr-start-${attr}-${id}`;
   const endSelectId = `sr-end-${attr}-${id}`;
 
-  const body = isExpanded
+  const body = showBody
     ? `
       <div class="sr-body">
-        <label class="sr-toggle">
-          <input type="checkbox" data-${attr}-field="sleepRecoveryEnabled" data-${idAttr}="${id}" ${enabled ? 'checked' : ''} />
-          <span>הפעל כלל</span>
-        </label>
         <div class="sr-field-group">
           <div class="sr-field">
             <label class="sr-field-label">טווח שעות סיום המשימה שמפעיל את הכלל</label>
@@ -309,10 +315,6 @@ function renderSleepRecoveryEditor(rule: SleepRecoveryRule | undefined, target: 
                 ${renderCustomSelect({ id: endSelectId, options: hourOptions(end), className: 'sr-select' })}
               </div>
             </div>
-            <label class="sr-toggle sr-toggle--inline">
-              <input type="checkbox" data-${attr}-field="sleepRecoveryCrossesMidnight" data-${idAttr}="${id}" ${crossesMidnight ? 'checked' : ''} />
-              <span>חוצה חצות — שעת הסיום נופלת ביום שלמחרת</span>
-            </label>
             <div class="sr-field-hint">כולל שני הקצוות</div>
           </div>
           <div class="sr-field">
@@ -328,20 +330,35 @@ function renderSleepRecoveryEditor(rule: SleepRecoveryRule | undefined, target: 
       </div>`
     : '';
 
+  const switchTitle = enabled ? 'הכלל פעיל. לחיצה תכבה אותו.' : 'הכלל כבוי. לחיצה תפעיל אותו.';
+  const switchAriaLabel = enabled
+    ? 'כבה כלל השלמות שינה והתאוששות'
+    : 'הפעל כלל השלמות שינה והתאוששות';
+
   return `
-    <section class="tprop-section tprop-section--sleep-recovery sr-collapsible${enabled ? ' sr-enabled' : ''}${isExpanded ? ' sr-open' : ''}">
-      <button type="button" class="sr-header"
-              data-action="toggle-sleep-recovery" data-sr-target="${target}" data-sr-id="${id}"
-              aria-expanded="${isExpanded}">
-        <span class="sr-title">
-          <span class="sr-icon" aria-hidden="true">💤</span>
-          <span>השלמות שינה והתאוששות</span>
-        </span>
-        <span class="sr-header-right">
-          ${summary}
-          <span class="sr-arrow" aria-hidden="true">${isExpanded ? '▾' : '◂'}</span>
-        </span>
-      </button>
+    <section class="tprop-section tprop-section--sleep-recovery sr-collapsible${enabled ? ' sr-enabled' : ''}${showBody ? ' sr-open' : ''}">
+      <div class="sr-header-row">
+        <button type="button" class="sr-header"
+                data-action="toggle-sleep-recovery" data-sr-target="${target}" data-sr-id="${id}"
+                aria-expanded="${showBody}"${enabled ? '' : ' aria-disabled="true"'}>
+          <span class="sr-title">
+            <span class="sr-icon" aria-hidden="true">💤</span>
+            <span class="sr-title-full">השלמות שינה והתאוששות</span>
+            <span class="sr-title-short" aria-hidden="true">השלמות שינה</span>
+          </span>
+          <span class="sr-header-right">
+            ${summary}
+            ${enabled ? `<span class="sr-arrow" aria-hidden="true">${showBody ? '▾' : '◂'}</span>` : ''}
+          </span>
+        </button>
+        <button type="button" class="sr-switch${enabled ? ' is-on' : ''}"
+                data-action="toggle-sleep-recovery-switch" data-sr-target="${target}" data-sr-id="${id}"
+                role="switch" aria-checked="${enabled}" title="${switchTitle}" aria-label="${switchAriaLabel}">
+          <span class="sr-switch-track" aria-hidden="true">
+            <span class="sr-switch-thumb"></span>
+          </span>
+        </button>
+      </div>
       ${body}
     </section>`;
 }
@@ -1827,9 +1844,50 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const srTarget = actionButton?.dataset.srTarget;
         const srId = actionButton?.dataset.srId;
         if (!srTarget || !srId) break;
+        const isEnabled =
+          srTarget === 'tpl'
+            ? !!store.getTaskTemplate(srId)?.sleepRecovery
+            : !!store.getOneTimeTask(srId)?.sleepRecovery;
+        // Only enabled rules have an editable body to expand. When disabled,
+        // the header click is a no-op — the user must flip the switch first.
+        if (!isEnabled) break;
         const key = `${srTarget}:${srId}`;
         if (expandedSleepRecovery.has(key)) expandedSleepRecovery.delete(key);
         else expandedSleepRecovery.add(key);
+        rerender();
+        break;
+      }
+      case 'toggle-sleep-recovery-switch': {
+        const srTarget = actionButton?.dataset.srTarget;
+        const srId = actionButton?.dataset.srId;
+        if (!srTarget || !srId) break;
+        const key = `${srTarget}:${srId}`;
+        const cacheKey = key;
+        if (srTarget === 'tpl') {
+          const tpl = store.getTaskTemplate(srId);
+          if (!tpl) break;
+          if (tpl.sleepRecovery) {
+            lastSleepRecoveryValues.set(cacheKey, { ...tpl.sleepRecovery });
+            store.updateTaskTemplate(srId, { sleepRecovery: undefined });
+            expandedSleepRecovery.delete(key);
+          } else {
+            const restored = lastSleepRecoveryValues.get(cacheKey) ?? DEFAULT_SLEEP_RECOVERY_RULE;
+            store.updateTaskTemplate(srId, { sleepRecovery: { ...restored } });
+            expandedSleepRecovery.add(key);
+          }
+        } else {
+          const ot = store.getOneTimeTask(srId);
+          if (!ot) break;
+          if (ot.sleepRecovery) {
+            lastSleepRecoveryValues.set(cacheKey, { ...ot.sleepRecovery });
+            store.updateOneTimeTask(srId, { sleepRecovery: undefined });
+            expandedSleepRecovery.delete(key);
+          } else {
+            const restored = lastSleepRecoveryValues.get(cacheKey) ?? DEFAULT_SLEEP_RECOVERY_RULE;
+            store.updateOneTimeTask(srId, { sleepRecovery: { ...restored } });
+            expandedSleepRecovery.add(key);
+          }
+        }
         rerender();
         break;
       }
@@ -1923,30 +1981,43 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         wrap.setAttribute('data-anchor-key', `${tid}:${kind}:${lwid ?? ''}`);
         wrap.innerHTML = html;
         document.body.appendChild(wrap);
-        const btnRect = actionButton!.getBoundingClientRect();
         wrap.style.position = 'fixed';
-        wrap.style.top = `${btnRect.bottom + 6}px`;
-        wrap.style.left = `${Math.max(8, btnRect.left - 220)}px`;
-        wrap.style.zIndex = '100';
+        wrap.style.zIndex = '9990';
+        const anchorBtn = actionButton!;
+        const close = () => {
+          wrap.remove();
+          document.removeEventListener('click', offClick, true);
+          document.removeEventListener('keydown', offKey);
+          window.removeEventListener('scroll', reposition, true);
+          window.removeEventListener('resize', reposition);
+        };
+        const reposition = () => {
+          const btnRect = anchorBtn.getBoundingClientRect();
+          // Close if the anchor scrolled fully out of the viewport.
+          if (btnRect.bottom < 0 || btnRect.top > window.innerHeight) {
+            close();
+            return;
+          }
+          wrap.style.top = `${btnRect.bottom + 6}px`;
+          wrap.style.left = `${Math.max(8, btnRect.left - 220)}px`;
+        };
         // Dismiss when clicking outside.
         const offClick = (ev: MouseEvent) => {
           if (wrap.contains(ev.target as Node)) return;
           if ((ev.target as HTMLElement).closest('[data-action="toggle-load-formula-info"]')) return;
-          wrap.remove();
-          document.removeEventListener('click', offClick, true);
-          document.removeEventListener('keydown', offKey);
+          close();
         };
         const offKey = (ev: KeyboardEvent) => {
-          if (ev.key === 'Escape') {
-            wrap.remove();
-            document.removeEventListener('click', offClick, true);
-            document.removeEventListener('keydown', offKey);
-          }
+          if (ev.key === 'Escape') close();
         };
+        reposition();
         setTimeout(() => {
           document.addEventListener('click', offClick, true);
           document.addEventListener('keydown', offKey);
         }, 0);
+        // Capture-phase scroll so we catch any scrolling ancestor, not just window.
+        window.addEventListener('scroll', reposition, true);
+        window.addEventListener('resize', reposition);
         break;
       }
       case 'add-load-window':

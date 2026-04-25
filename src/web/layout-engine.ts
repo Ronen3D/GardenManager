@@ -615,19 +615,27 @@ export function renderSectionTable(
   const catColors = getCategoryColorMap();
   const sectionColor = catColors[section.id] || '#999';
 
-  // Clickable chips per unique sourceName — opens the per-task panel.
+  // Per-task-panel entry point: a trigger button at the inline-end of the title bar.
+  // - 1 source → trigger navigates straight to its panel.
+  // - >1 sources → trigger opens a popover panel listing all source names as chips.
   const uniqueSources = [...new Set(section.tasks.map((t) => t.sourceName).filter((s): s is string => !!s))];
-  const titleChips = uniqueSources
-    .map(
-      (sn) =>
-        `<span class="task-panel-hover" role="button" tabindex="0" data-source-name="${escHtml(sn)}" title="פתח חלונית משימה: ${escHtml(sn)}">${escHtml(sn)}</span>`,
-    )
-    .join('');
+  let titleAction = '';
+  if (uniqueSources.length === 1) {
+    const sn = uniqueSources[0];
+    titleAction = `<button type="button" class="task-panel-trigger task-panel-hover" data-source-name="${escHtml(sn)}" title="פתח חלונית משימה: ${escHtml(sn)}" aria-label="פתח חלונית משימה: ${escHtml(sn)}">📋</button>`;
+  } else if (uniqueSources.length > 1) {
+    const items = uniqueSources
+      .map(
+        (sn) =>
+          `<button type="button" class="task-panel-hover task-panel-menu-item" role="menuitem" tabindex="-1" data-source-name="${escHtml(sn)}">${escHtml(sn)}</button>`,
+      )
+      .join('');
+    titleAction = `<span class="task-panel-menu-wrap"><button type="button" class="task-panel-trigger" data-task-panel-menu="true" title="פתח חלונית משימה" aria-label="פתח חלונית משימה" aria-haspopup="menu" aria-expanded="false">📋</button><span class="task-panel-menu" role="menu" hidden>${items}</span></span>`;
+  }
 
   return `
     <div class="schedule-table-wrapper" data-section="${escHtml(section.id)}" data-columns="${columns.length}" style="--section-color: ${sectionColor}; --col-count: ${columns.length}">
-      <h3 class="table-title">${escHtml(section.title)}</h3>
-      ${titleChips ? `<div class="table-title-chips">${titleChips}</div>` : ''}
+      <h3 class="table-title"><span class="table-title-text">${escHtml(section.title)}</span>${titleAction}</h3>
       <table class="table schedule-grid-table">
         <thead><tr><th class="col-time">זמן</th>${headerCells}</tr></thead>
         <tbody>${rows}</tbody>

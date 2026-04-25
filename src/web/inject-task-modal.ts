@@ -1065,6 +1065,15 @@ function confirmAndApply(): void {
 function validateDraft(d: DraftState, schedule: Schedule, anchor: Date | null): string | null {
   if (!d.name.trim()) return 'שם המשימה חסר';
   if (d.name.trim().length > 40) return 'שם המשימה ארוך מדי (מקסימום 40 תווים)';
+  const nameNorm = d.name.trim().toLowerCase();
+  const taken = new Set<string>();
+  for (const t of schedule.tasks) {
+    const src = (t.sourceName ?? stripDayPrefix(t.name)).trim().toLowerCase();
+    if (src) taken.add(src);
+  }
+  for (const tpl of store.getAllTaskTemplates()) taken.add(tpl.name.trim().toLowerCase());
+  for (const ot of store.getAllOneTimeTasks()) taken.add(ot.name.trim().toLowerCase());
+  if (taken.has(nameNorm)) return `כבר קיימת משימה בשם "${d.name.trim()}". בחר שם אחר.`;
   if (d.startHour < 0 || d.startHour > 23) return 'שעת התחלה לא תקינה';
   if (d.startMinute < 0 || d.startMinute > 59) return 'דקה לא תקינה';
   if (d.durationHours <= 0) return 'משך המשימה חייב להיות חיובי';

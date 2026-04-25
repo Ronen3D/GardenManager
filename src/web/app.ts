@@ -3586,7 +3586,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.1</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4140,6 +4140,74 @@ function wireSnapshotEvents(container: HTMLElement): void {
   });
 }
 
+function closeOpenTaskPanelMenus(_root: ParentNode = document): void {
+  // Menus are portaled to <body> on open, so query at document level.
+  document.querySelectorAll<HTMLElement>('body > .task-panel-menu:not([hidden])').forEach((menu) => {
+    menu.hidden = true;
+    const triggerId = menu.dataset.triggerId;
+    const trigger = triggerId ? document.getElementById(triggerId) : null;
+    trigger?.setAttribute('aria-expanded', 'false');
+    // Restore the menu to its original wrap so layout-engine re-renders don't lose it.
+    const wrapId = menu.dataset.wrapId;
+    const wrap = wrapId ? document.getElementById(wrapId) : null;
+    if (wrap) wrap.appendChild(menu);
+  });
+}
+
+function openTaskPanelMenu(menu: HTMLElement, trigger: HTMLElement): void {
+  // Portal the menu to <body> so its `position: fixed` escapes any ancestor
+  // stacking context (e.g. the schedule section's sticky/transform parents
+  // would otherwise render TH/TD cells on top of the popover).
+  const wrap = menu.parentElement as HTMLElement | null;
+  if (wrap && wrap !== document.body) {
+    if (!wrap.id) wrap.id = `task-panel-wrap-${Math.random().toString(36).slice(2, 9)}`;
+    if (!trigger.id) trigger.id = `task-panel-trigger-${Math.random().toString(36).slice(2, 9)}`;
+    menu.dataset.wrapId = wrap.id;
+    menu.dataset.triggerId = trigger.id;
+    document.body.appendChild(menu);
+  }
+
+  // Set visibility:hidden BEFORE unhiding so we can measure without flicker.
+  menu.style.visibility = 'hidden';
+  menu.style.left = '0px';
+  menu.style.top = '0px';
+  menu.style.width = '';
+  menu.hidden = false;
+  trigger.setAttribute('aria-expanded', 'true');
+
+  const margin = 4;
+  const viewportW = window.innerWidth;
+  const viewportH = window.innerHeight;
+
+  const triggerRect = trigger.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+
+  // Vertical: prefer below; flip above if not enough room and there's more above.
+  const spaceBelow = viewportH - triggerRect.bottom;
+  const spaceAbove = triggerRect.top;
+  const flipUp = spaceBelow < menuRect.height + margin && spaceAbove > spaceBelow;
+  let top: number;
+  if (flipUp) {
+    top = Math.max(4, triggerRect.top - margin - menuRect.height);
+  } else {
+    top = triggerRect.bottom + margin;
+    if (top + menuRect.height > viewportH - 4) {
+      top = Math.max(4, viewportH - menuRect.height - 4);
+    }
+  }
+
+  // Horizontal: align inline-end of menu to inline-end of trigger.
+  // RTL → inline-end is the left side; LTR → right side.
+  const isRTL = getComputedStyle(trigger).direction === 'rtl';
+  let left = isRTL ? triggerRect.left : triggerRect.right - menuRect.width;
+  if (left + menuRect.width > viewportW - 4) left = viewportW - menuRect.width - 4;
+  if (left < 4) left = 4;
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.style.visibility = '';
+}
+
 function wireScheduleEvents(container: HTMLElement): void {
   const genBtn = container.querySelector('#btn-generate');
   if (genBtn) genBtn.addEventListener('click', doGenerate);
@@ -4419,18 +4487,57 @@ function wireScheduleEvents(container: HTMLElement): void {
   }
 
   // ── Task source chip → Task Panel View (desktop + touch) ──
-  container.addEventListener('click', (e) => {
+  // Uses document-level delegation because multi-source popover menus are
+  // portaled to <body> on open (to escape ancestor stacking contexts), so
+  // their chip clicks would not bubble back to `container`.
+  document.addEventListener('click', (e) => {
     const chip = (e.target as HTMLElement).closest('.task-panel-hover[data-source-name]') as HTMLElement | null;
     if (!chip?.dataset.sourceName) return;
     navigateToTaskPanel(chip.dataset.sourceName);
   });
-  container.addEventListener('keydown', (e) => {
+  document.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const chip = (e.target as HTMLElement).closest('.task-panel-hover[data-source-name]') as HTMLElement | null;
     if (!chip?.dataset.sourceName) return;
     e.preventDefault();
     navigateToTaskPanel(chip.dataset.sourceName);
   });
+
+  // ── Multi-source title trigger → toggle dropdown menu ──
+  container.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('.task-panel-menu')) return;
+    const trigger = target.closest('[data-task-panel-menu="true"]') as HTMLButtonElement | null;
+    if (!trigger) {
+      closeOpenTaskPanelMenus(container);
+      return;
+    }
+    const wrap = trigger.closest('.task-panel-menu-wrap');
+    const menu = wrap?.querySelector<HTMLElement>(':scope > .task-panel-menu') ?? null;
+    if (!menu) return;
+    const wasOpen = trigger.getAttribute('aria-expanded') === 'true';
+    closeOpenTaskPanelMenus(container);
+    if (!wasOpen) openTaskPanelMenu(menu, trigger);
+  });
+  container.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeOpenTaskPanelMenus(container);
+  });
+  document.addEventListener(
+    'click',
+    (e) => {
+      const target = e.target as Node;
+      if (container.contains(target)) return;
+      // Portaled menus live on <body> — keep them open when clicking inside.
+      if ((target as HTMLElement).closest?.('.task-panel-menu')) return;
+      closeOpenTaskPanelMenus(container);
+    },
+    true,
+  );
+  // Fixed-positioned popover anchors to the trigger rect at open time; close on
+  // scroll/resize rather than recompute (anchor would otherwise drift).
+  window.addEventListener('scroll', () => closeOpenTaskPanelMenus(container), true);
+  window.addEventListener('resize', () => closeOpenTaskPanelMenus(container));
+
 
   // ── Time-cell two-click range selection ──
   const handleTimeCellSelect = (target: HTMLElement) => {

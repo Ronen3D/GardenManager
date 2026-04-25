@@ -1539,12 +1539,23 @@ select.input-sm {
   background: var(--accent-glow);
 }
 
+/* Header row: clickable title (expand/collapse) on the start side, switch on the end side. */
+.sr-header-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+.tprop-section--sleep-recovery.sr-open .sr-header-row {
+  border-bottom: 1px solid var(--border);
+}
+
 .sr-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 10px 12px;
   background: transparent;
   border: 0;
@@ -1556,13 +1567,13 @@ select.input-sm {
   min-height: 44px; /* iOS tap target */
   box-sizing: border-box;
 }
-.sr-header:hover,
-.sr-header:focus-visible {
+.sr-header[aria-disabled="true"] {
+  cursor: default;
+}
+.sr-header:not([aria-disabled="true"]):hover,
+.sr-header:not([aria-disabled="true"]):focus-visible {
   background: var(--bg-hover);
   outline: none;
-}
-.tprop-section--sleep-recovery.sr-open .sr-header {
-  border-bottom: 1px solid var(--border);
 }
 
 .sr-title {
@@ -1570,17 +1581,34 @@ select.input-sm {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex: 1 1 auto;
+}
+.sr-title > span:not(.sr-icon) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* Short variant kicks in on phone widths where "השלמות שינה והתאוששות" doesn't
+   fit alongside the switch and ellipsizes to "השלמות שינה ו…". The long form
+   stays the accessible label (sr-title-short is aria-hidden). */
+.sr-title-short {
+  display: none;
 }
 .sr-icon {
   font-size: 1rem;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .sr-header-right {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  /* Allow the chip to shrink and ellipsize when the title competes for room
+     instead of pushing past the edge of the section card. */
+  min-width: 0;
+  flex-shrink: 1;
 }
 .sr-summary-chip {
   display: inline-block;
@@ -1592,6 +1620,12 @@ select.input-sm {
   font-weight: 600;
   white-space: nowrap;
   letter-spacing: 0.2px;
+  /* Safety net: if a translation or future content makes the chip too long for
+     a narrow modal column, shrink and ellipsize instead of overflowing. */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sr-summary-off {
   color: var(--text-muted);
@@ -1605,6 +1639,52 @@ select.input-sm {
   text-align: center;
 }
 
+/* iOS-style switch — primary on/off control for the rule. Clicking flips the
+   rule between enabled (with restored or default values) and disabled. */
+.sr-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  min-height: 44px; /* iOS tap target */
+  box-sizing: border-box;
+}
+.sr-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+.sr-switch-track {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background var(--transition-normal);
+}
+.sr-switch.is-on .sr-switch-track {
+  background: var(--accent);
+}
+.sr-switch-thumb {
+  position: absolute;
+  top: 2px;
+  inset-inline-start: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: inset-inline-start var(--transition-normal);
+}
+.sr-switch.is-on .sr-switch-thumb {
+  inset-inline-start: 18px;
+}
+
 .sr-body {
   display: flex;
   flex-direction: column;
@@ -1612,37 +1692,10 @@ select.input-sm {
   padding: 10px 12px 12px;
 }
 
-.sr-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
-  font-size: 0.85rem;
-  cursor: pointer;
-  min-height: 40px;
-  box-sizing: border-box;
-}
-.sr-toggle input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-}
-.sr-toggle:has(input:checked) {
-  background: var(--accent-glow);
-  border-color: var(--accent);
-}
-
 .sr-field-group {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-/* Dim fields when rule is disabled — purely visual, values remain saved on submit */
-.sr-body:has(.sr-toggle input:not(:checked)) .sr-field-group {
-  opacity: 0.45;
 }
 
 .sr-field {
@@ -1662,15 +1715,33 @@ select.input-sm {
   flex-wrap: wrap;
 }
 .sr-field-row--times {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 14px;
   align-items: stretch;
+}
+.sr-field-row--times > .sr-time-block {
+  /* Allow shrinking, but keep enough room for the "HH:00" value + chevron so the
+     two pickers stay side-by-side on typical widths. */
+  flex: 1 1 130px;
 }
 .sr-time-block {
   display: flex;
   flex-direction: column;
   gap: 4px;
   flex: 1 1 0;
+  min-width: 0;
+}
+/* Default `.gm-select { min-width: 160px }` is defined later in this stylesheet,
+   so plain `.sr-select` loses the cascade. Scope-qualify here so the dropdown
+   actually shrinks to fit narrow modal panels — otherwise the two pickers
+   overflow and visually collide. */
+.sr-time-block .gm-select {
+  min-width: 0;
+  width: 100%;
+  display: block;
+}
+.sr-time-block .gm-select-trigger {
+  width: 100%;
   min-width: 0;
 }
 .sr-input-label {
@@ -1682,16 +1753,6 @@ select.input-sm {
 .sr-select {
   width: 100%;
   min-width: 0;
-}
-.sr-toggle--inline {
-  font-size: 0.78rem;
-  padding: 6px 10px;
-  min-height: 34px;
-  width: fit-content;
-}
-.sr-toggle--inline input[type="checkbox"] {
-  width: 15px;
-  height: 15px;
 }
 .sr-time {
   flex: 1 1 0;
@@ -1725,6 +1786,14 @@ select.input-sm {
     padding: 12px;
     font-size: 0.92rem;
   }
+  /* On phone widths the full title "השלמות שינה והתאוששות" doesn't fit
+     alongside the switch — swap to "השלמות שינה" instead of ellipsizing. */
+  .sr-title-full {
+    display: none;
+  }
+  .sr-title-short {
+    display: inline;
+  }
   .sr-summary-chip {
     font-size: 0.7rem;
     padding: 3px 7px;
@@ -1733,14 +1802,20 @@ select.input-sm {
     padding: 12px;
     gap: 14px;
   }
-  .sr-toggle {
-    width: 100%;
+  .sr-switch {
     min-height: 48px;
-    font-size: 0.95rem;
+    padding: 0 14px;
   }
-  .sr-toggle--inline {
-    min-height: 42px;
-    font-size: 0.88rem;
+  .sr-switch-track {
+    width: 44px;
+    height: 26px;
+  }
+  .sr-switch-thumb {
+    width: 22px;
+    height: 22px;
+  }
+  .sr-switch.is-on .sr-switch-thumb {
+    inset-inline-start: 20px;
   }
   .sr-field-row {
     gap: 10px;
@@ -5184,6 +5259,16 @@ tr.row-selected:hover {
   border-bottom: 1px solid var(--border);
   margin: 0;
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.table-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .schedule-grid-table {
@@ -10803,31 +10888,42 @@ tr.now-row-animate > td.time-cell {
   user-select: none;
 }
 
+/* Logo treated as a watermark: the rectangular tile edges are dissolved
+   into a circular vignette via radial mask, the body is held back at
+   reduced opacity, and an accent-tinted glow lets it sit *inside* the
+   header surface instead of being stamped on top. */
 .app-logo-img {
   display: inline-block;
   width: 1.55em;
   height: 1.55em;
-  vertical-align: -0.38em;
+  vertical-align: -0.34em;
   margin-inline-end: 0.5em;
+  flex-shrink: 0;
   object-fit: contain;
+  opacity: 0.85;
+  -webkit-mask: radial-gradient(circle at 50% 50%, #000 48%, transparent 72%);
+  mask: radial-gradient(circle at 50% 50%, #000 48%, transparent 72%);
   -webkit-user-select: none;
   user-select: none;
   transform-origin: center;
   transition:
     transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1),
-    filter 0.3s ease;
-  filter: drop-shadow(0 2px 4px rgba(30, 90, 122, 0.35)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.15));
+    filter 0.3s ease,
+    opacity 0.3s ease;
+  filter: drop-shadow(0 0 6px rgba(91, 160, 232, 0.35));
 }
 [data-theme="light"] .app-logo-img {
-  filter: drop-shadow(0 2px 5px rgba(30, 90, 122, 0.25)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.08));
+  opacity: 0.78;
+  filter: drop-shadow(0 0 5px rgba(45, 104, 184, 0.28));
 }
 #app-title:hover .app-logo-img {
+  opacity: 1;
   transform: rotate(-6deg) scale(1.08);
-  filter: drop-shadow(0 4px 9px rgba(30, 90, 122, 0.45)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.18));
+  filter: drop-shadow(0 0 9px rgba(103, 184, 247, 0.55));
 }
 @media (prefers-reduced-motion: reduce) {
   .app-logo-img {
-    transition: none;
+    transition: opacity 0.2s ease;
   }
   #app-title:hover .app-logo-img {
     transform: none;
@@ -11543,45 +11639,143 @@ tr.now-row-animate > td.time-cell {
   animation: fadeIn 0.25s ease;
 }
 
-/* Section-title chips — entry point from schedule grid */
-.table-title-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 8px 6px;
-  background: var(--bg-hover);
-  border-bottom: 1px solid var(--border);
-}
-.task-panel-hover {
+/* Section-title task-panel entry point — icon button (top-inline-end of title bar)
+   plus a popover panel listing source-name chips for multi-source sections. */
+.task-panel-trigger {
+  -webkit-appearance: none;
+  appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 10px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--text);
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1;
   cursor: pointer;
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast),
     color var(--transition-fast);
 }
-.task-panel-hover::before {
-  content: "📋";
-  font-size: 0.78rem;
-  line-height: 1;
-}
-.task-panel-hover:hover {
+.task-panel-trigger:hover,
+.task-panel-trigger:focus-visible,
+.task-panel-trigger[aria-expanded="true"] {
   background: var(--accent-glow);
   border-color: var(--accent);
   color: var(--accent);
+  outline: none;
 }
-.task-panel-hover:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+
+.task-panel-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.task-panel-menu {
+  /* Fixed-positioned popover — coords set by JS at open time so it can escape
+     the schedule-table-wrapper's overflow-x clipping. Opaque white card so
+     nothing from the schedule grid behind shows through. */
+  position: fixed;
+  left: 0;
+  top: 0;
+  min-width: 160px;
+  max-width: min(240px, calc(100vw - 16px));
+  max-height: 320px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #c5c8d0;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1000;
+  /* Reset h3 inheritance — popover reads as a panel, not a heading. */
+  text-transform: none;
+  font-weight: 500;
+  font-size: 0.78rem;
+  color: #1a1d27;
+}
+.task-panel-menu .task-panel-menu-item {
+  /* Each chip stretches full-width inside the vertically-stacked popover so
+     the click target is large and the names align cleanly. The opaque white
+     fill (in both themes) guarantees nothing from the schedule grid behind
+     bleeds through visually. */
+  width: 100%;
+  justify-content: center;
+  padding: 8px 12px;
+  background: #ffffff;
+  border: 1px solid #d5d8e0;
+  color: #1a1d27;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.task-panel-menu .task-panel-menu-item:hover,
+.task-panel-menu .task-panel-menu-item:focus-visible {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+.task-panel-menu[hidden] {
+  display: none;
+}
+
+/* Source-name chips: used both inside the popover and as the single-source trigger.
+   Each chip has a solid white (card) background so the name reads cleanly against
+   the slightly-tinted popover container behind it. */
+.task-panel-hover {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+.task-panel-hover:hover,
+.task-panel-hover:focus-visible,
+.task-panel-hover:active {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+/* The single-source trigger is also a `.task-panel-hover` (so the existing chip
+   click handler navigates). Reset its chip-pill look to the icon-button shape. */
+.task-panel-hover.task-panel-trigger {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0;
+  width: 22px;
+  height: 22px;
+  justify-content: center;
+}
+.task-panel-hover.task-panel-trigger:hover,
+.task-panel-hover.task-panel-trigger:focus-visible,
+.task-panel-hover.task-panel-trigger:active {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Top bar */
