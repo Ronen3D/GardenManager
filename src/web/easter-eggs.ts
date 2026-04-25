@@ -1,6 +1,7 @@
 /**
- * Easter eggs — magical effects when a Harry Potter character name is added
- * (or removed) as a participant. Pure CSS + tiny particle/SVG spawner.
+ * Easter eggs — magical effects when a Harry Potter (or Star Wars) character
+ * name is added (or removed) as a participant. Pure CSS + tiny particle/SVG
+ * spawner.
  *
  * Variants:
  *   - trio       : Harry, Hermione, Ron — gold Gryffindor sparkles
@@ -8,12 +9,13 @@
  *   - darkwizard : Voldemort, Tom Riddle, Draco — green Slytherin smoke + dark
  *                  Voldemort & Tom Riddle additionally summon a Dark Mark.
  *   - professor  : McGonagall, Hagrid, Snape, Flitwick, Slughorn — warm gold
+ *   - sith       : Darth Vader — red vignette + Vader helmet summons in.
  *
  * Removal triggers a gentler farewell effect — same color family but quieter.
  * Dumbledore's farewell drifts phoenix feathers down the screen.
  */
 
-type Variant = 'trio' | 'dumbledore' | 'darkwizard' | 'professor';
+type Variant = 'trio' | 'dumbledore' | 'darkwizard' | 'professor' | 'sith';
 
 interface Preset {
   variant: Variant;
@@ -137,6 +139,24 @@ const CHARACTERS: CharacterEntry[] = [
       farewell: 'Class dismissed.',
     },
   },
+
+  // — Sith Lord (Star Wars crossover) —
+  {
+    names: [
+      'darth vader',
+      'vader',
+      'דארת ווידר',
+      'דארת ויידר',
+      "דארת' ויידר",
+      'דארת וויידר',
+      'דארת ואדר',
+    ],
+    preset: {
+      variant: 'sith',
+      spell: 'I am your father',
+      farewell: 'Join the dark side',
+    },
+  },
 ];
 
 function normalize(s: string): string {
@@ -202,6 +222,20 @@ function runMainCast(preset: Preset, anchor: AnchorPoint, rowEl: Element | null)
     setTimeout(() => mark.remove(), 3500);
   }
 
+  // Darth Vader — red vignette closing in + helmet materializes from blur.
+  if (variant === 'sith') {
+    const vignette = document.createElement('div');
+    vignette.className = 'ee-sith-vignette';
+    document.body.appendChild(vignette);
+    setTimeout(() => vignette.remove(), 3500);
+
+    const helmet = document.createElement('div');
+    helmet.className = 'ee-vader-helmet';
+    helmet.innerHTML = VADER_HELMET_SVG;
+    document.body.appendChild(helmet);
+    setTimeout(() => helmet.remove(), 3500);
+  }
+
   // Dumbledore: expanding ripple ring from the click point
   if (variant === 'dumbledore') {
     const ring = document.createElement('div');
@@ -213,7 +247,8 @@ function runMainCast(preset: Preset, anchor: AnchorPoint, rowEl: Element | null)
   }
 
   // Particle burst
-  const particleCount = variant === 'dumbledore' ? 40 : variant === 'darkwizard' ? 24 : 28;
+  const particleCount =
+    variant === 'dumbledore' ? 40 : variant === 'darkwizard' ? 24 : variant === 'sith' ? 22 : 28;
   const particleClass =
     variant === 'dumbledore'
       ? 'ee-particle--gold-large'
@@ -221,7 +256,9 @@ function runMainCast(preset: Preset, anchor: AnchorPoint, rowEl: Element | null)
         ? 'ee-particle--green'
         : variant === 'professor'
           ? 'ee-particle--warm'
-          : 'ee-particle--gold';
+          : variant === 'sith'
+            ? 'ee-particle--red'
+            : 'ee-particle--gold';
 
   for (let i = 0; i < particleCount; i++) {
     const p = document.createElement('span');
@@ -232,6 +269,7 @@ function runMainCast(preset: Preset, anchor: AnchorPoint, rowEl: Element | null)
     let dy = Math.sin(angle) * dist;
     if (variant === 'darkwizard') dy -= 100 + Math.random() * 60;
     if (variant === 'professor') dy -= 30 + Math.random() * 30;
+    if (variant === 'sith') dy += 30 + Math.random() * 50; // sparks fall like embers
     p.style.left = `${cx}px`;
     p.style.top = `${cy}px`;
     p.style.setProperty('--ee-dx', `${dx}px`);
@@ -242,10 +280,10 @@ function runMainCast(preset: Preset, anchor: AnchorPoint, rowEl: Element | null)
   }
 
   // Spell text overlay — duration scales with text length. For Dark Mark
-  // casts, hold the text back ~900ms so it lands once the Mark has
-  // materialized rather than fighting the summon for attention.
+  // and Sith casts, hold the text back ~900ms so it lands once the iconic
+  // figure has materialized rather than fighting the summon for attention.
   const spellDurationMs = Math.min(4200, 1200 + preset.spell.length * 90);
-  const spellDelayMs = preset.darkMark ? 900 : 0;
+  const spellDelayMs = preset.darkMark || variant === 'sith' ? 900 : 0;
   setTimeout(() => {
     const text = document.createElement('div');
     text.className = `ee-spell-text ee-spell-text--${variant}`;
@@ -286,6 +324,15 @@ function runFarewell(preset: Preset, anchor: AnchorPoint): void {
     setTimeout(() => mark.remove(), 2200);
   }
 
+  // Vader: faint helmet dissolves slowly.
+  if (variant === 'sith') {
+    const helmet = document.createElement('div');
+    helmet.className = 'ee-vader-helmet ee-vader-helmet--farewell';
+    helmet.innerHTML = VADER_HELMET_SVG;
+    document.body.appendChild(helmet);
+    setTimeout(() => helmet.remove(), 2200);
+  }
+
   // Gentle particle puff (fewer, slower than the cast).
   const particleClass =
     variant === 'dumbledore'
@@ -294,7 +341,9 @@ function runFarewell(preset: Preset, anchor: AnchorPoint): void {
         ? 'ee-particle--green'
         : variant === 'professor'
           ? 'ee-particle--warm'
-          : 'ee-particle--gold';
+          : variant === 'sith'
+            ? 'ee-particle--red'
+            : 'ee-particle--gold';
   const count = 10;
   for (let i = 0; i < count; i++) {
     const p = document.createElement('span');
@@ -340,25 +389,87 @@ function spawnPhoenixFeathers(): void {
 
 // ─── Inline SVGs ───────────────────────────────────────────────────────────
 
-const SORTING_HAT_SVG = `
-<svg viewBox="0 0 100 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+const VADER_HELMET_SVG = `
+<svg viewBox="0 0 200 240" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
   <defs>
-    <radialGradient id="ee-hat-grad" cx="50%" cy="60%" r="65%">
-      <stop offset="0%" stop-color="#9c7c45"/>
-      <stop offset="60%" stop-color="#5a3f1c"/>
-      <stop offset="100%" stop-color="#2a1808"/>
+    <radialGradient id="ee-vader-aura" cx="50%" cy="40%" r="62%">
+      <stop offset="0%" stop-color="#ff5060" stop-opacity="0.42"/>
+      <stop offset="55%" stop-color="#5a0a14" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0"/>
     </radialGradient>
+    <linearGradient id="ee-vader-fill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#262626"/>
+      <stop offset="50%" stop-color="#0d0d0d"/>
+      <stop offset="100%" stop-color="#000"/>
+    </linearGradient>
   </defs>
-  <ellipse cx="50" cy="105" rx="46" ry="9" fill="#1a0e05"/>
-  <ellipse cx="50" cy="103" rx="42" ry="6" fill="#3a2a14"/>
-  <path d="M 50 8 Q 28 32 22 65 Q 18 88 14 102 Q 50 92 86 102 Q 82 88 78 65 Q 72 32 50 8 Z"
-        fill="url(#ee-hat-grad)" stroke="#1a0e05" stroke-width="1.2"/>
-  <path d="M 32 78 Q 50 82 68 78 Q 50 86 32 78 Z" fill="#1a0e05"/>
-  <ellipse cx="40" cy="58" rx="3.5" ry="2" fill="#1a0e05"/>
-  <ellipse cx="60" cy="58" rx="3.5" ry="2" fill="#1a0e05"/>
-  <path d="M 50 8 Q 56 5 60 12 Q 58 20 53 22" stroke="#3a2a14" stroke-width="2.5" fill="#5a4520"/>
-  <path d="M 28 68 Q 36 70 38 76" stroke="#1a0e05" stroke-width="0.8" fill="none"/>
-  <path d="M 72 68 Q 64 70 62 76" stroke="#1a0e05" stroke-width="0.8" fill="none"/>
+
+  <ellipse cx="100" cy="115" rx="96" ry="125" fill="url(#ee-vader-aura)"/>
+
+  <!-- Helmet silhouette: dome + side flares + chin guard -->
+  <path d="M 100 12
+           C 70 12, 48 38, 44 70
+           C 42 92, 46 110, 52 124
+           L 56 138
+           Q 50 150, 52 162
+           L 62 178
+           C 64 192, 76 204, 92 208
+           L 108 208
+           C 124 204, 136 192, 138 178
+           L 148 162
+           Q 150 150, 144 138
+           L 148 124
+           C 154 110, 158 92, 156 70
+           C 152 38, 130 12, 100 12 Z"
+        fill="url(#ee-vader-fill)" stroke="#3a3a3a" stroke-width="1.6" stroke-linejoin="round"/>
+
+  <!-- Dome highlights (subtle catch on top-left) -->
+  <path d="M 64 32 Q 80 18, 100 18" stroke="#5a5a5a" stroke-width="1.5" fill="none" opacity="0.5"/>
+  <path d="M 50 64 Q 56 50, 68 42" stroke="#4a4a4a" stroke-width="1" fill="none" opacity="0.4"/>
+
+  <!-- Eye lenses: trapezoidal, angled into a menacing inverse-V -->
+  <path d="M 56 88 L 92 78 L 92 100 L 58 108 Z"
+        fill="#000" stroke="#3a3a3a" stroke-width="1.2"/>
+  <path d="M 144 88 L 108 78 L 108 100 L 142 108 Z"
+        fill="#000" stroke="#3a3a3a" stroke-width="1.2"/>
+
+  <!-- Eye lens red glints (subtle reflection) -->
+  <path d="M 60 92 L 86 86" stroke="#ff3b50" stroke-width="0.9" opacity="0.55"/>
+  <path d="M 140 92 L 114 86" stroke="#ff3b50" stroke-width="0.9" opacity="0.55"/>
+
+  <!-- Nose ridge between eye lenses -->
+  <path d="M 100 84 L 94 122 L 100 128 L 106 122 Z"
+        fill="#1a1a1a" stroke="#3a3a3a" stroke-width="0.8"/>
+
+  <!-- Mouth grille backdrop -->
+  <rect x="78" y="138" width="44" height="32" rx="2"
+        fill="#0a0a0a" stroke="#3a3a3a" stroke-width="1.2"/>
+
+  <!-- Grille vertical bars -->
+  <g stroke="#3a3a3a" stroke-width="1" fill="none">
+    <line x1="84" y1="140" x2="84" y2="168"/>
+    <line x1="92" y1="140" x2="92" y2="168"/>
+    <line x1="100" y1="140" x2="100" y2="168"/>
+    <line x1="108" y1="140" x2="108" y2="168"/>
+    <line x1="116" y1="140" x2="116" y2="168"/>
+  </g>
+
+  <!-- Side temple intake vents -->
+  <rect x="46" y="124" width="10" height="14" rx="1.5"
+        fill="#0a0a0a" stroke="#3a3a3a" stroke-width="0.8"/>
+  <rect x="144" y="124" width="10" height="14" rx="1.5"
+        fill="#0a0a0a" stroke="#3a3a3a" stroke-width="0.8"/>
+
+  <!-- Side red status lights -->
+  <circle cx="51" cy="148" r="2" fill="#ff3b50" opacity="0.85"/>
+  <circle cx="149" cy="148" r="2" fill="#ff3b50" opacity="0.85"/>
+
+  <!-- Chin guard -->
+  <path d="M 78 170 L 122 170 L 118 196 L 100 208 L 82 196 Z"
+        fill="#0a0a0a" stroke="#3a3a3a" stroke-width="1.4"/>
+
+  <!-- Chin highlight seam -->
+  <path d="M 88 178 L 112 178" stroke="#3a3a3a" stroke-width="0.6" opacity="0.6"/>
 </svg>`;
 
 const DARK_MARK_SVG = `

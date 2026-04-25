@@ -179,11 +179,13 @@ export interface InjectStaffOptions {
   /** Allow the staffer to consider `lowPriority` level placements. Default true. */
   allowLowPriority?: boolean;
   /**
-   * Live Mode temporal anchor. When provided, the injection is rejected if
-   * the resolved task start is strictly before the anchor — the "past is
-   * closed" contract. Omit for non-Live-Mode callers (CLI, tests).
+   * Live Mode temporal anchor. The injection is rejected if the resolved
+   * task start is strictly before the anchor — the "past is closed" contract.
+   * Required: BALTAM injection is a Live-Mode-only operation. Pass a
+   * past-of-period sentinel (e.g. epoch) explicitly if you genuinely want
+   * every assignment treated as future.
    */
-  anchor?: Date;
+  anchor: Date;
   /** How many alternative plans to keep at most. Default 3. */
   maxPlans?: number;
   /** DFS composition wall-clock budget per stage. Default 500ms (1500ms for ≥5 slots). */
@@ -1273,7 +1275,7 @@ function buildEmptyPlan(
 export function searchInjectionPlans(
   engine: SchedulingEngine,
   spec: InjectedTaskSpec,
-  opts: InjectStaffOptions = {},
+  opts: InjectStaffOptions,
 ): { result: InjectionResult | null; error?: 'no-schedule' | 'invalid-spec' | 'past-time' } {
   const schedule = engine.getSchedule();
   if (!schedule) return { result: null, error: 'no-schedule' };
@@ -1281,10 +1283,8 @@ export function searchInjectionPlans(
   const task = buildInjectedTask(spec, schedule.periodStart, schedule.periodDays, engine.getDayStartHour());
   if (!task) return { result: null, error: 'invalid-spec' };
 
-  if (opts.anchor) {
-    const gate = assertInjectableTimeBlock(task.timeBlock, opts.anchor);
-    if (!gate.ok) return { result: null, error: gate.reason };
-  }
+  const gate = assertInjectableTimeBlock(task.timeBlock, opts.anchor);
+  if (!gate.ok) return { result: null, error: gate.reason };
 
   // Add task + placeholders to the schedule (always cleaned up via rollback).
   engine.addTask(task);
@@ -1353,10 +1353,7 @@ export function searchInjectionPlans(
     participantMap,
     assignmentsByParticipant,
     assignmentsByTask,
-    // For non-Live-Mode callers (CLI/tests) we use the epoch so every task is
-    // "future" and every assignment "modifiable" (matching the legacy
-    // injection behaviour, which had no temporal gate beyond `assertInjectableTimeBlock`).
-    anchor: opts.anchor ?? new Date(0),
+    anchor: opts.anchor,
     disabledHC,
     restRuleMap: engine.getRestRuleMap(),
     scheduleContext: engine.getScheduleContext(),
@@ -1450,7 +1447,7 @@ export function searchInjectionPlans(
 export function injectAndStaff(
   engine: SchedulingEngine,
   spec: InjectedTaskSpec,
-  opts: InjectStaffOptions = {},
+  opts: InjectStaffOptions,
 ): { report: StaffingReport | null; error?: string } {
   const { result, error } = searchInjectionPlans(engine, spec, opts);
   if (!result) return { report: null, error };

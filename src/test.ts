@@ -11478,7 +11478,10 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
     const sched = mkInjSchedule([pA1, pA2, pB1, pB2]);
     const engine = mkEngine(sched);
 
-    const { report, error } = injectAndStaff(engine, mkInjSpec(), { allowLowPriority: true });
+    const { report, error } = injectAndStaff(engine, mkInjSpec(), {
+      allowLowPriority: true,
+      anchor: new Date(2026, 4, 20, 0, 0),
+    });
     assert(!error && report !== null, 'inject-G1: injectAndStaff returns a report');
     if (report) {
       assert(report.fullyStaffed === true, 'inject-G1: fullyStaffed === true');
@@ -11511,7 +11514,7 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
     const sched = mkInjSchedule([pA1, pB1]);
     const engine = mkEngine(sched);
 
-    const { report } = injectAndStaff(engine, mkInjSpec());
+    const { report } = injectAndStaff(engine, mkInjSpec(), { anchor: new Date(2026, 4, 20, 0, 0) });
     assert(report !== null, 'inject-G2: report returned');
     if (report) {
       assert(
@@ -11562,7 +11565,7 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
         },
       ],
     });
-    const { report } = injectAndStaff(engine, spec);
+    const { report } = injectAndStaff(engine, spec, { anchor: new Date(2026, 4, 20, 0, 0) });
     assert(report !== null, 'inject-G3: report returned');
     if (report) {
       const filled = report.outcomes.filter((o) => o.filled);
@@ -11583,7 +11586,9 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
     const sched = mkInjSchedule([pA, pB]);
     const engine = mkEngine(sched);
 
-    const { report } = injectAndStaff(engine, mkInjSpec({ sameGroupRequired: false }));
+    const { report } = injectAndStaff(engine, mkInjSpec({ sameGroupRequired: false }), {
+      anchor: new Date(2026, 4, 20, 0, 0),
+    });
     assert(report !== null, 'inject-G4: report returned');
     if (report) {
       assert(report.fullyStaffed === true, 'inject-G4: non-same-group slot filled');
@@ -11600,7 +11605,7 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
     const sched = mkInjSchedule([pA, pB]);
     const engine = mkEngine(sched);
 
-    const { report } = injectAndStaff(engine, mkInjSpec());
+    const { report } = injectAndStaff(engine, mkInjSpec(), { anchor: new Date(2026, 4, 20, 0, 0) });
     assert(report !== null, 'inject-G5: report returned even when unstaffable');
     if (report) {
       assert(report.fullyStaffed === false, 'inject-G5: not fully staffed');
@@ -11634,7 +11639,7 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
         },
       ],
     });
-    const { report } = injectAndStaff(engine, spec);
+    const { report } = injectAndStaff(engine, spec, { anchor: new Date(2026, 4, 20, 0, 0) });
     assert(report !== null, 'inject-G5b: report returned');
     if (report) {
       assert(report.outcomes[0].filled === false, 'inject-G5b: slot unfilled');
@@ -11664,7 +11669,7 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
         },
       ],
     });
-    const { report } = injectAndStaff(engine, spec);
+    const { report } = injectAndStaff(engine, spec, { anchor: new Date(2026, 4, 20, 0, 0) });
     assert(report !== null, 'inject-G5c: report returned');
     if (report) {
       assert(report.outcomes[0].filled === false, 'inject-G5c: slot unfilled');
@@ -11710,18 +11715,6 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
     assert(error === undefined, 'inject-G7: no error returned');
   }
 
-  // ── Test 8: regression — without anchor, past-day spec still succeeds
-  //    (non-Live-Mode callers unaffected). ──
-  {
-    const pA = mkP('inj8-A', 'A');
-    const pB = mkP('inj8-B', 'A');
-    const sched = mkInjSchedule([pA, pB]);
-    const engine = mkEngine(sched);
-
-    const { report, error } = injectAndStaff(engine, mkInjSpec({ dayIndex: 1 }));
-    assert(report !== null, 'inject-G8: past-day spec succeeds when anchor is omitted');
-    assert(error === undefined, 'inject-G8: no error without anchor');
-  }
 }
 
 // ─── Temporal mutation-gate helpers (operational-day based) ─────────────────

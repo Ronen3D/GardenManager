@@ -11648,28 +11648,36 @@ tr.now-row-animate > td.time-cell {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 7px;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   line-height: 1;
   cursor: pointer;
   transition:
-    background var(--transition-fast),
-    border-color var(--transition-fast),
-    color var(--transition-fast);
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease;
 }
 .task-panel-trigger:hover,
-.task-panel-trigger:focus-visible,
-.task-panel-trigger[aria-expanded="true"] {
+.task-panel-trigger:focus-visible {
   background: var(--accent-glow);
   border-color: var(--accent);
   color: var(--accent);
   outline: none;
+  transform: translateY(-1px);
+}
+.task-panel-trigger[aria-expanded="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(13, 18, 32, 0.25);
 }
 
 .task-panel-menu-wrap {
@@ -11677,51 +11685,104 @@ tr.now-row-animate > td.time-cell {
   display: inline-flex;
 }
 .task-panel-menu {
-  /* Fixed-positioned popover — coords set by JS at open time so it can escape
-     the schedule-table-wrapper's overflow-x clipping. Opaque white card so
-     nothing from the schedule grid behind shows through. */
+  /* Fixed-positioned popover — coords set by JS at open time. Portaled to <body>
+     on open so its `position: fixed` escapes any ancestor stacking context.
+     Opaque white card with subtle gradient + entrance animation. */
   position: fixed;
   left: 0;
   top: 0;
-  min-width: 160px;
+  min-width: 168px;
   max-width: min(240px, calc(100vw - 16px));
   max-height: 320px;
   overflow-y: auto;
-  background: #ffffff;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f7fb 100%);
   border: 1px solid #c5c8d0;
-  border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
-  padding: 10px;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 14px 36px rgba(13, 18, 32, 0.32),
+    0 4px 10px rgba(13, 18, 32, 0.18);
+  padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   z-index: 1000;
   /* Reset h3 inheritance — popover reads as a panel, not a heading. */
   text-transform: none;
   font-weight: 500;
   font-size: 0.78rem;
   color: #1a1d27;
+  transform-origin: top right;
+  animation: taskPanelMenuOpen 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes taskPanelMenuOpen {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 .task-panel-menu .task-panel-menu-item {
   /* Each chip stretches full-width inside the vertically-stacked popover so
-     the click target is large and the names align cleanly. The opaque white
-     fill (in both themes) guarantees nothing from the schedule grid behind
+     the click target is large and the names align cleanly. Opaque white fill
+     (theme-independent) guarantees nothing from the schedule grid behind
      bleeds through visually. */
+  position: relative;
   width: 100%;
-  justify-content: center;
-  padding: 8px 12px;
+  justify-content: flex-start;
+  padding: 9px 14px 9px 32px;
   background: #ffffff;
-  border: 1px solid #d5d8e0;
+  border: 1px solid #dde0e8;
+  border-radius: 10px;
   color: #1a1d27;
   font-weight: 700;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  font-size: 0.82rem;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 1px 3px rgba(13, 18, 32, 0.08);
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease;
+}
+.task-panel-menu .task-panel-menu-item::after {
+  /* Affordance arrow on the inline-end (RTL → left) — signals "navigates away". */
+  content: "←";
+  position: absolute;
+  inset-inline-end: 12px;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #9aa1ae;
+  transition:
+    color 140ms ease,
+    transform 140ms ease;
 }
 .task-panel-menu .task-panel-menu-item:hover,
 .task-panel-menu .task-panel-menu-item:focus-visible {
   background: var(--accent-glow);
   border-color: var(--accent);
   color: var(--accent);
+  transform: translateX(2px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 4px 10px rgba(13, 18, 32, 0.14);
   outline: none;
+}
+.task-panel-menu .task-panel-menu-item:hover::after,
+.task-panel-menu .task-panel-menu-item:focus-visible::after {
+  color: var(--accent);
+  transform: translateY(-50%) translateX(-3px);
+}
+.task-panel-menu .task-panel-menu-item:active {
+  transform: translateX(2px) scale(0.98);
 }
 .task-panel-menu[hidden] {
   display: none;
@@ -13316,6 +13377,16 @@ tr.now-row-animate > td.time-cell {
     0 0 14px 4px rgba(201, 160, 90, 0.55);
 }
 
+.ee-particle--red {
+  width: 12px;
+  height: 12px;
+  background: radial-gradient(circle, #ff5060 0%, #c8112a 60%, transparent 100%);
+  box-shadow:
+    0 0 12px 3px #ff3b50,
+    0 0 22px 6px rgba(200, 17, 42, 0.5);
+  animation-duration: 1.7s;
+}
+
 /* Full-screen flash overlays */
 @keyframes ee-flash-white {
   0% {
@@ -13452,6 +13523,13 @@ tr.now-row-animate > td.time-cell {
   color: #c9a05a;
   font-style: italic;
 }
+.ee-spell-text--sith {
+  color: #ff5060;
+  text-shadow:
+    0 0 16px #ff3b50,
+    0 0 30px rgba(180, 30, 50, 0.7),
+    0 2px 8px #000;
+}
 
 /* New-row glow (briefly highlights the freshly-added participant row) */
 @keyframes ee-row-glow-pulse {
@@ -13483,6 +13561,10 @@ tr.now-row-animate > td.time-cell {
 .ee-row-glow--professor {
   --ee-glow-mid: inset 0 0 28px rgba(201, 160, 90, 0.55);
   background: rgba(201, 160, 90, 0.1) !important;
+}
+.ee-row-glow--sith {
+  --ee-glow-mid: inset 0 0 30px rgba(255, 60, 80, 0.55), inset 0 0 55px rgba(120, 20, 30, 0.4);
+  background: rgba(120, 20, 30, 0.12) !important;
 }
 
 /* ── Dark Mark (Voldemort / Tom Riddle) ── */
@@ -13585,6 +13667,50 @@ tr.now-row-animate > td.time-cell {
   animation: ee-mark-vignette 3.4s ease-in-out forwards;
 }
 
+/* ── Vader helmet (Darth Vader) — reuses dark-mark keyframes ── */
+.ee-vader-helmet {
+  position: fixed;
+  left: 50%;
+  top: 42%;
+  aspect-ratio: 5 / 6;
+  width: clamp(260px, 36vw, 420px);
+  pointer-events: none;
+  z-index: 9999;
+  transform: translate(-50%, -50%);
+  filter:
+    drop-shadow(0 0 14px rgba(255, 60, 80, 0.55))
+    drop-shadow(0 0 38px rgba(180, 30, 50, 0.4))
+    drop-shadow(0 6px 18px rgba(0, 0, 0, 0.7));
+  animation: ee-dark-mark-summon 3.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.ee-vader-helmet--farewell {
+  animation: ee-dark-mark-dissolve 2.2s ease-out forwards;
+  filter:
+    drop-shadow(0 0 12px rgba(255, 60, 80, 0.4))
+    drop-shadow(0 0 22px rgba(120, 20, 30, 0.25));
+}
+.ee-vader-helmet svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Red vignette for sith casts — reuses ee-mark-vignette keyframe. */
+.ee-sith-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9997;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(20, 4, 6, 0) 0%,
+    rgba(20, 4, 6, 0) 28%,
+    rgba(40, 8, 12, 0.55) 65%,
+    rgba(8, 0, 2, 0.92) 100%
+  );
+  animation: ee-mark-vignette 3.4s ease-in-out forwards;
+}
+
 /* ── Phoenix feathers (Dumbledore farewell) ── */
 @keyframes ee-feather-fall {
   0% {
@@ -13683,6 +13809,13 @@ tr.now-row-animate > td.time-cell {
 .ee-farewell-text--professor {
   color: #c9a05a;
 }
+.ee-farewell-text--sith {
+  color: #d8a0a8;
+  text-shadow:
+    0 0 14px #ff3b50,
+    0 0 24px rgba(120, 20, 30, 0.7),
+    0 2px 6px #000;
+}
 
 /* Farewell particles drift slower and fade quicker than cast particles. */
 .ee-particle--farewell {
@@ -13698,6 +13831,8 @@ tr.now-row-animate > td.time-cell {
   .ee-row-glow,
   .ee-dark-mark,
   .ee-mark-vignette,
+  .ee-vader-helmet,
+  .ee-sith-vignette,
   .ee-feather,
   .ee-farewell-text {
     animation: none !important;

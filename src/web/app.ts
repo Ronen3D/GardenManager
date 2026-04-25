@@ -1127,7 +1127,7 @@ function renderScheduleTab(): string {
         ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="חיבור לשבצ"ק קודם — ייבוא נתוני המשכיות">📋 חיבור לשבצ"ק קודם</button>` : ''}
       </span>
       <span class="toolbar-group toolbar-group--day-actions">
-        ${currentSchedule ? `<button class="btn-sm btn-outline btn-inject-task" id="btn-inject-task" title="הוספת משימת חירום לתמונת המצב הנוכחית" ${_isOptimizing ? 'disabled' : ''}>🚨 הוסף משימת חירום</button>` : ''}
+        ${currentSchedule && liveMode.enabled ? `<button class="btn-sm btn-outline btn-inject-task" id="btn-inject-task" title="הוספת משימת חירום לתמונת המצב הנוכחית" ${_isOptimizing ? 'disabled' : ''}>🚨 הוסף משימת חירום</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא">📤 ייצוא</button>` : ''}
@@ -3586,7 +3586,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.2</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

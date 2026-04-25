@@ -1002,6 +1002,7 @@ async function runStaffing(): Promise<void> {
   if (!engine || !schedule || !_draft) return;
 
   const anchor = getAnchor();
+  if (!anchor) return;
   const err = validateDraft(_draft, schedule, anchor);
   if (err) {
     showInlineError(err);
@@ -1014,7 +1015,7 @@ async function runStaffing(): Promise<void> {
   try {
     searchOutput = searchInjectionPlans(engine, spec, {
       allowLowPriority: true,
-      anchor: anchor ?? undefined,
+      anchor,
     });
   } finally {
     closeInjectLoadingOverlay();
