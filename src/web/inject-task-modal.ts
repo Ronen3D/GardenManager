@@ -316,7 +316,6 @@ function renderForm(schedule: Schedule): string {
         <button class="inject-close" id="btn-inject-close" aria-label="סגור">✕</button>
       </div>
       <div class="inject-body">
-        <p class="inject-intro">המשימה תתווסף לתמונת המצב הנוכחית והמערכת תחפש מספר תוכניות שיבוץ אפשריות. לאחר "צור שבצ״ק" חדש היא תימחק — אלא אם סימנת את התיבה להוסיף גם למסך המשימות.</p>
         ${pastTimeBanner}
         <section class="inject-section">
           <h4>פרטי משימה</h4>
@@ -714,7 +713,7 @@ function wireFormEvents(backdrop: HTMLElement): void {
   });
 
   backdrop.querySelector('#btn-inject-run')?.addEventListener('click', () => {
-    runStaffing();
+    void runStaffing();
   });
 }
 
@@ -956,7 +955,48 @@ function wireParticipantHover(backdrop: HTMLElement): void {
 
 // ─── Search ─────────────────────────────────────────────────────────────────
 
-function runStaffing(): void {
+const INJECT_LOADER_ID = 'inject-loading-overlay';
+
+/**
+ * Show a loading overlay over the inject form while the (synchronous) plan
+ * search runs. Uses inline `z-index: 10000` to layer above the inject
+ * backdrop (`z-index: 9999`). Yields a double-RAF so the overlay actually
+ * paints before the main thread blocks on plan computation.
+ */
+async function openInjectLoadingOverlay(): Promise<void> {
+  closeInjectLoadingOverlay();
+  const overlay = document.createElement('div');
+  overlay.id = INJECT_LOADER_ID;
+  overlay.className = 'optim-overlay';
+  overlay.style.zIndex = '10000';
+  overlay.innerHTML = `
+    <div class="optim-card">
+      <div class="cube-loader-wrapper optim-cube">
+        <div class="cube-loader">
+          <div class="cube-cell" style="--cell-color:#4A90D9"></div>
+          <div class="cube-cell" style="--cell-color:#E74C3C"></div>
+          <div class="cube-cell" style="--cell-color:#F39C12"></div>
+          <div class="cube-cell" style="--cell-color:#27AE60"></div>
+          <div class="cube-cell" style="--cell-color:#8E44AD"></div>
+          <div class="cube-cell" style="--cell-color:#1ABC9C"></div>
+          <div class="cube-cell" style="--cell-color:#3498db"></div>
+          <div class="cube-cell" style="--cell-color:#e67e22"></div>
+          <div class="cube-cell" style="--cell-color:#2ecc71"></div>
+        </div>
+      </div>
+      <h3>מחפש תוכניות שיבוץ…</h3>
+    </div>`;
+  document.body.appendChild(overlay);
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
+function closeInjectLoadingOverlay(): void {
+  document.getElementById(INJECT_LOADER_ID)?.remove();
+}
+
+async function runStaffing(): Promise<void> {
   const engine = _ctx?.getEngine();
   const schedule = _ctx?.getSchedule();
   if (!engine || !schedule || !_draft) return;
@@ -969,10 +1009,17 @@ function runStaffing(): void {
   }
 
   const spec = draftToSpec(_draft);
-  const { result, error } = searchInjectionPlans(engine, spec, {
-    allowLowPriority: true,
-    anchor: anchor ?? undefined,
-  });
+  await openInjectLoadingOverlay();
+  let searchOutput: ReturnType<typeof searchInjectionPlans>;
+  try {
+    searchOutput = searchInjectionPlans(engine, spec, {
+      allowLowPriority: true,
+      anchor: anchor ?? undefined,
+    });
+  } finally {
+    closeInjectLoadingOverlay();
+  }
+  const { result, error } = searchOutput;
   if (!result) {
     if (error === 'past-time') {
       showInlineError('הזמן שנבחר כבר בעבר — בחר יום/שעה אחרים.');

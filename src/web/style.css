@@ -2310,7 +2310,7 @@ select.input-sm {
 
 .dashboard-row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr;
   align-items: stretch;
   gap: 16px;
 }
@@ -2388,14 +2388,6 @@ select.input-sm {
   letter-spacing: 0.4px;
 }
 
-/* ── Clean-mode grid: hero on one side, week strip on the other ── */
-.dashboard-clean .dashboard-row {
-  grid-template-columns: auto 1fr;
-}
-.dashboard-clean .week-strip {
-  justify-self: end;
-}
-
 /* ── KPI strip: score / violations / warnings ──────── */
 .kpi-strip {
   display: flex;
@@ -2444,58 +2436,32 @@ select.input-sm {
 .kpi-cell.kpi-warn .kpi-value {
   color: var(--warn, #e0a000);
 }
-
-/* ── Week strip ─────────────────────────────────── */
-.week-strip {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
-  min-width: 0;
+.kpi-cell-clickable {
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 120ms ease, transform 120ms ease;
 }
-.week-strip-dots {
-  display: flex;
-  gap: 6px;
+.kpi-cell-clickable:hover {
+  background: rgba(255, 255, 255, 0.05);
+  transform: translateY(-1px);
 }
-.week-strip-nums {
-  display: flex;
-  gap: 6px;
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
+.kpi-cell-clickable:focus-visible {
+  outline: 2px solid var(--warn, #e0a000);
+  outline-offset: 2px;
 }
-.week-strip-nums .week-num {
-  width: 14px;
-  text-align: center;
-  line-height: 1;
-}
-.week-strip-nums .num-error {
-  color: var(--danger);
-  font-weight: 700;
-}
-.week-strip-caption {
-  font-size: 0.6rem;
-  color: var(--text-muted);
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  margin-top: 2px;
+.kpi-cell-clickable:active {
+  transform: translateY(0);
 }
 
-.week-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-  display: inline-block;
+/* Brief highlight when the user jumps to the violations section */
+@keyframes violations-section-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(224, 160, 0, 0.55); }
+  60%  { box-shadow: 0 0 0 10px rgba(224, 160, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(224, 160, 0, 0); }
 }
-.dot-ok {
-  background: var(--success);
-}
-.dot-error {
-  background: var(--danger);
-}
-.dot-empty {
-  background: var(--border);
+.violations-section-pulse {
+  animation: violations-section-pulse 1.4s ease-out 1;
+  border-radius: 8px;
 }
 
 /* ── Meta row ──────────────────────────────────── */
@@ -2530,36 +2496,6 @@ select.input-sm {
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-/* ── Tablet / narrow viewport: stack KPI strip + week strip ── */
-@media (max-width: 767px) {
-  .dashboard-row {
-    grid-template-columns: auto 1fr;
-    grid-template-areas:
-      "hero kpi"
-      "hero week";
-    row-gap: 10px;
-  }
-  .kpi-hero {
-    grid-area: hero;
-  }
-  .kpi-strip {
-    grid-area: kpi;
-  }
-  .week-strip {
-    grid-area: week;
-    flex-direction: row;
-    gap: 8px;
-    align-items: center;
-    justify-content: flex-start;
-  }
-  .week-strip-nums {
-    font-size: 0.65rem;
-  }
-  .week-strip-caption {
-    display: none;
   }
 }
 
@@ -12713,13 +12649,6 @@ tr.now-row-animate > td.time-cell {
 .inject-body {
   padding: 16px 20px;
   overflow-y: auto;
-}
-
-.inject-intro {
-  margin: 0 0 14px;
-  font-size: 0.92rem;
-  color: var(--text-muted, #666);
-  line-height: 1.5;
 }
 
 .inject-section {

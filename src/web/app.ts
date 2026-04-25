@@ -814,30 +814,11 @@ function wireScheduleSwipe(container: HTMLElement): void {
 /** Render the sticky weekly performance dashboard that stays visible across day tabs */
 function renderWeeklyDashboard(schedule: Schedule): string {
   const score = schedule.score;
-  const numDays = schedule.periodDays;
-  const dsh = schedule.algorithmSettings.dayStartHour;
-  const base = schedule.periodStart;
   const frozenDisabled = new Set(schedule.algorithmSettings.disabledHardConstraints);
   const visibleViolations = filterVisibleViolations(schedule.violations, frozenDisabled);
   const totalViolations = visibleViolations.filter((v) => v.severity === ViolationSeverity.Error).length;
   const warnings = visibleViolations.filter((v) => v.severity === ViolationSeverity.Warning).length;
   const feasibleClass = schedule.feasible ? 'kpi-ok' : 'kpi-error';
-
-  // Per-day task counts — parallel dot + numeric-label rows
-  let dayDots = '';
-  let dayNums = '';
-  for (let d = 1; d <= numDays; d++) {
-    const count = schedule.tasks.filter((t) => taskIntersectsDay(t, d, dsh, base)).length;
-    const dayViolations = visibleViolations.filter((v) => {
-      if (v.severity !== ViolationSeverity.Error || !v.taskId) return false;
-      const task = schedule.tasks.find((t) => t.id === v.taskId);
-      return task ? taskIntersectsDay(task, d, dsh, base) : false;
-    }).length;
-    const dotClass = dayViolations > 0 ? 'dot-error' : count > 0 ? 'dot-ok' : 'dot-empty';
-    const title = `יום ${d}: ${count} משימות, ${dayViolations} הפרות`;
-    dayDots += `<span class="week-dot ${dotClass}" title="${title}"></span>`;
-    dayNums += `<span class="week-num ${dayViolations > 0 ? 'num-error' : ''}" title="${title}">${d}</span>`;
-  }
 
   const heroIcon = schedule.feasible ? '✓' : '✗';
   const heroLabel = schedule.feasible ? 'ישים' : 'לא ישים';
@@ -853,7 +834,7 @@ function renderWeeklyDashboard(schedule: Schedule): string {
       : '';
   const warningsCell =
     warnings > 0
-      ? `<div class="kpi-cell kpi-warn">
+      ? `<div class="kpi-cell kpi-warn kpi-cell-clickable" data-action="jump-to-violations" role="button" tabindex="0" title="עבור לאזהרות והפרות" aria-label="עבור לאזהרות והפרות">
           <span class="kpi-value" id="kpi-warnings" data-target="${warnings}">${warnings}</span>
           <span class="kpi-label">אזהרות</span>
         </div>`
@@ -887,17 +868,11 @@ function renderWeeklyDashboard(schedule: Schedule): string {
         ${warningsCell}
       </div>`;
 
-  return `<div class="weekly-dashboard${isClean ? ' dashboard-clean' : ''}">
+  return `<div class="weekly-dashboard">
     <div class="dashboard-row">
       ${heroBlock}
 
       ${kpiStrip}
-
-      <div class="week-strip" aria-label="ימי השבוע">
-        <div class="week-strip-dots">${dayDots}</div>
-        <div class="week-strip-nums">${dayNums}</div>
-        <span class="week-strip-caption">ימי השבוע</span>
-      </div>
     </div>
     <div class="dashboard-meta">
       ${
@@ -1255,14 +1230,14 @@ function renderScheduleTab(): string {
     new Set(s.algorithmSettings.disabledHardConstraints),
   ).length;
   if (_manualBuildActive) {
-    html += `<section class="violations-section violations-collapsed">
+    html += `<section id="violations-section" class="violations-section violations-collapsed">
       <button class="violations-toggle" data-action="toggle-violations" aria-expanded="false">
         <h2>אזהרות והפרות <span class="count">${violationCount}</span></h2>
         <span class="violations-toggle-icon">▸</span>
       </button>
     </section>`;
   } else {
-    html += `<section><h2>אזהרות והפרות <span class="count">${violationCount}</span></h2>${renderViolations(s)}</section>`;
+    html += `<section id="violations-section"><h2>אזהרות והפרות <span class="count">${violationCount}</span></h2>${renderViolations(s)}</section>`;
   }
   html += `</div>`;
   html += renderParticipantSidebar(s);
@@ -3611,7 +3586,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.0</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4346,6 +4321,36 @@ function wireScheduleEvents(container: HTMLElement): void {
       swimlaneToggle.setAttribute('aria-expanded', _swimlaneCollapsed ? 'false' : 'true');
     });
   }
+
+  // ── Jump-to-violations (clicking the warnings KPI tile scrolls to the violations section) ──
+  const jumpToViolations = (target: HTMLElement) => {
+    const section = container.querySelector('#violations-section') as HTMLElement | null;
+    if (!section) return;
+    // If we're in manual-build mode the section is collapsed by default — expand it first
+    // so the user lands on actual content rather than a closed header.
+    const collapsedToggle = section.querySelector<HTMLElement>(
+      '.violations-toggle[aria-expanded="false"]',
+    );
+    if (collapsedToggle) collapsedToggle.click();
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Brief highlight pulse so the user sees where they landed.
+    section.classList.add('violations-section-pulse');
+    setTimeout(() => section.classList.remove('violations-section-pulse'), 1500);
+    target.blur();
+  };
+  container.addEventListener('click', (e) => {
+    const tile = (e.target as HTMLElement).closest<HTMLElement>('[data-action="jump-to-violations"]');
+    if (!tile) return;
+    e.preventDefault();
+    jumpToViolations(tile);
+  });
+  container.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const tile = (e.target as HTMLElement).closest<HTMLElement>('[data-action="jump-to-violations"]');
+    if (!tile) return;
+    e.preventDefault();
+    jumpToViolations(tile);
+  });
 
   // ── Violations toggle (manual build mode) ──
   const violationsToggle = container.querySelector('[data-action="toggle-violations"]');
