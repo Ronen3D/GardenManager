@@ -93,7 +93,11 @@
   pointer-events: none;
 }
 
-.swimlane-axis-tick:hover::before,
+@media (hover: hover) {
+  .swimlane-axis-tick:hover::before {
+    background: linear-gradient(to bottom, transparent, var(--accent) 30%, var(--accent) 70%, transparent);
+  }
+}
 .swimlane-axis-tick:focus-visible::before {
   background: linear-gradient(to bottom, transparent, var(--accent) 30%, var(--accent) 70%, transparent);
 }
@@ -126,7 +130,11 @@
   pointer-events: none;
 }
 
-.swimlane-axis-tick:hover .swimlane-axis-label,
+@media (hover: hover) {
+  .swimlane-axis-tick:hover .swimlane-axis-label {
+    color: var(--accent);
+  }
+}
 .swimlane-axis-tick:focus-visible .swimlane-axis-label {
   color: var(--accent);
 }
@@ -183,8 +191,10 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.swimlane-group-header:hover {
-  filter: brightness(1.1);
+@media (hover: hover) {
+  .swimlane-group-header:hover {
+    filter: brightness(1.1);
+  }
 }
 
 .swimlane-group-chevron {
@@ -255,8 +265,10 @@
   border-bottom: none;
 }
 
-.swimlane-lane:hover {
-  background: var(--bg-hover);
+@media (hover: hover) {
+  .swimlane-lane:hover {
+    background: var(--bg-hover);
+  }
 }
 
 /* When the participant is fully out for the day, soften the whole row so it
@@ -436,9 +448,11 @@
     transform 0.12s ease;
 }
 
-.swimlane-block:hover {
-  filter: brightness(1.1);
-  transform: translateY(-50%) scale(1.02);
+@media (hover: hover) {
+  .swimlane-block:hover {
+    filter: brightness(1.1);
+    transform: translateY(-50%) scale(1.02);
+  }
 }
 
 .swimlane-block-label {
@@ -542,6 +556,46 @@
     border-top: 1px solid var(--border);
     padding-top: 12px;
   }
+}
+
+/* ── Section header toggle (collapse the whole "תצוגה כללית" view) ──── */
+
+.swimlane-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: start;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.swimlane-section-toggle h2 {
+  margin: 0;
+  flex: 1;
+}
+
+.swimlane-section-chevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+  transition: transform 0.18s ease;
+}
+
+.swimlane-section--collapsed .swimlane-section-chevron {
+  transform: rotate(-90deg);
+}
+
+.swimlane-section--collapsed .swimlane-section-body {
+  display: none;
 }
 
 /* ── Bottom sheet content (block / participant / axis-hour) ───────────── */
@@ -724,8 +778,10 @@
   transition: background 0.12s ease;
 }
 
-.swimlane-bs-chip:hover {
-  background: var(--bg-card-end);
+@media (hover: hover) {
+  .swimlane-bs-chip:hover {
+    background: var(--bg-card-end);
+  }
 }
 
 .swimlane-bs-chip-dot {

@@ -299,6 +299,8 @@ let _optimProgress: {
 // ─── Manual Build Mode State ────────────────────────────────────────────────
 
 let _manualBuildActive = false;
+/** Swimlane "תצוגה כללית" section collapsed state — persists across re-renders. */
+let _swimlaneCollapsed = false;
 /** Currently selected slot in manual-build mode */
 let _manualSelectedTaskId: string | null = null;
 let _manualSelectedSlotId: string | null = null;
@@ -1225,11 +1227,18 @@ function renderScheduleTab(): string {
   // Availability inspector strip — between schedule grid and gantt
   html += renderAvailabilityStrip();
 
-  // "מערכת שעות כללית" — swimlane view, person-first timeline. Always visible
-  // (no accordion) so the user lands on it directly on mobile.
+  // "תצוגה כללית" — swimlane view, person-first timeline. Whole section is
+  // collapsible (click the heading); expanded by default.
   if (!_manualBuildActive) {
     const swimlaneHtml = renderSwimlaneView(s, currentDay, store.getLiveModeState());
-    html += `<section class="swimlane-section"><h2>מערכת שעות כללית</h2>${swimlaneHtml}</section>`;
+    const collapsed = _swimlaneCollapsed;
+    html += `<section class="swimlane-section${collapsed ? ' swimlane-section--collapsed' : ''}">
+      <button class="swimlane-section-toggle" data-action="toggle-swimlane" aria-expanded="${collapsed ? 'false' : 'true'}">
+        <h2>תצוגה כללית</h2>
+        <span class="swimlane-section-chevron">${SVG_ICONS.chevronDown}</span>
+      </button>
+      <div class="swimlane-section-body">${swimlaneHtml}</div>
+    </section>`;
   }
   // Gantt chart — desktop-only secondary view. Hidden on mobile, where the
   // swimlane replaces it entirely.
@@ -3602,7 +3611,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.9</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.0</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4323,6 +4332,18 @@ function wireScheduleEvents(container: HTMLElement): void {
       const expanded = ganttToggle.getAttribute('aria-expanded') === 'true';
       ganttToggle.setAttribute('aria-expanded', String(!expanded));
       ganttContent.style.display = expanded ? 'none' : '';
+    });
+  }
+
+  // ── Swimlane "תצוגה כללית" section toggle ──
+  const swimlaneToggle = container.querySelector('[data-action="toggle-swimlane"]');
+  if (swimlaneToggle) {
+    swimlaneToggle.addEventListener('click', () => {
+      const section = swimlaneToggle.closest('.swimlane-section');
+      if (!section) return;
+      _swimlaneCollapsed = !_swimlaneCollapsed;
+      section.classList.toggle('swimlane-section--collapsed', _swimlaneCollapsed);
+      swimlaneToggle.setAttribute('aria-expanded', _swimlaneCollapsed ? 'false' : 'true');
     });
   }
 

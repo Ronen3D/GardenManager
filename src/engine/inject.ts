@@ -1,44 +1,60 @@
 /**
- * BALTAM — Post-generation task injection & staffing.
+ * BALTAM — Post-generation task injection & multi-plan staffing.
  *
- * Injects a new one-time task into an existing schedule snapshot and aggressively
- * tries to staff each slot from the current participant pool.
+ * Injects a new one-time task into an existing schedule snapshot and produces
+ * a ranked pool of staffing plans. Each plan tells how to fill every slot of
+ * the task, possibly via cross-task swap chains that displace existing
+ * assignments and backfill them.
  *
- * Algorithm:
+ * Architecture:
  *
- *   0. **Slot ordering** — process slots by *tightness* (fewest level+cert-
- *      compatible candidates first). Prevents the "easy slot grabs the only
- *      participant qualified for a hard slot" greedy failure.
+ *   1. **Insert task + placeholder assignments.** The injected task is added
+ *      to the schedule along with one synthetic placeholder assignment per
+ *      slot. The placeholder participantId never resolves to a real
+ *      participant, so HC-4/HC-5/HC-7 silently skip it during enumeration.
  *
- *   1. **Direct fill** — any currently-eligible participant, scored on per-day
- *      effective load (primary), non-lowPriority first, then total load.
+ *   2. **Per-slot chain enumeration.** Each placeholder is treated as a
+ *      vacated slot and fed into the shared `enumerateChainsForSlot()` from
+ *      rescue-primitives.ts. We get depth-1/2/3 chains by default, with
+ *      depth-4 and depth-5 fallbacks unlocked by a cascading retry.
  *
- *   2. **Depth-2 chain** — displace one of p's existing assignments A to a
- *      backfill q who is directly eligible for A.
+ *   3. **Joint composition.** Per-slot candidate chains are composed via
+ *      `dfsCompose()` with admissible upper-bound pruning, conflict
+ *      detection (touched assignments + (participant, task) pairs), and a
+ *      time budget. This produces the top-K compositions globally.
  *
- *   3. **Depth-3 chain** — p→slot, p's A → q, q's B → r. Used only when
- *      depth-1/2 both fail. Pruned with top-K candidate caps to keep runtime
- *      bounded.
+ *   4. **Ranking.** Each composition is hard-constraint-validated on its
+ *      post-mutation state and scored by full composite score delta. Plans
+ *      are sorted by composite delta, with disruption-minimising tiebreaks
+ *      (fewer touched participants, shorter swap chain, shallower depth
+ *      histogram, no fallback-depth penalty). MMR diversity selects the
+ *      final top-N alternatives.
  *
- *   4. **Group backtracking for `sameGroupRequired`** — the whole pipeline
- *      runs once per candidate group and the trial filling the most slots
- *      (tie-broken by lowest total impact) wins.
+ *   5. **Group backtracking** for `sameGroupRequired` tasks runs the same
+ *      search per candidate group, then merges all valid plans into one
+ *      ranked pool — the user (or the auto-pick) picks the global best,
+ *      not a forced first-success.
  *
- * Every eligibility check funnels through `isEligible()` from validator.ts,
- * with `extraUnavailability` from the schedule's Future-SOS windows included.
- * All active hard constraints (HC-1..HC-8, HC-11, HC-12, HC-14) are enforced.
+ *   6. **Apply** mutates the placeholders to real participants and applies
+ *      donor swaps; unfilled placeholders are removed. **Cancel** removes
+ *      the task and every placeholder/donor mutation atomically.
  *
- * The new task is marked `injectedPostGeneration = true` so orphan detection
- * (app.ts:scheduleHasOrphans) ignores it. Callers are responsible for
- * committing (revalidateFull + persistence) or rolling back via the returned
- * rollback helper.
+ * Backwards-compat: `injectAndStaff()` still returns `{ report, error }`.
+ * The report represents the auto-applied top-ranked plan (or the best
+ * partial plan when no full plan exists). New callers should prefer
+ * `searchInjectionPlans()` which returns the multi-plan result without
+ * applying anything, so the UI can present alternatives.
  */
 
+import { validateHardConstraints } from '../constraints/hard-constraints';
+import { computeScheduleScore } from '../constraints/soft-constraints';
 import {
   type Assignment,
   AssignmentStatus,
+  type ConstraintViolation,
   type LoadWindow,
   type Participant,
+  type RescueSwap,
   type Schedule,
   type ScheduleUnavailability,
   type SlotRequirement,
@@ -47,12 +63,19 @@ import {
   type Task,
 } from '../models/types';
 import { injectSectionKey } from '../shared/layout-key';
-import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import { hourInOpDay } from '../shared/utils/time-utils';
 import { operationalDateKey } from '../utils/date-utils';
+import {
+  type CandidateChain,
+  type ChainEnumerationCaps,
+  DEFAULT_CAPS,
+  enumerateChainsForSlot,
+  type FallbackLevel,
+  type SlotEnumerationContext,
+} from './rescue-primitives';
 import type { SchedulingEngine } from './scheduler';
 import { assertInjectableTimeBlock } from './temporal';
-import { getRejectionReason, isEligible, REJECTION_REASONS_HE, type RejectionCode } from './validator';
+import { getRejectionReason, REJECTION_REASONS_HE, type RejectionCode } from './validator';
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -77,7 +100,7 @@ export interface InjectedTaskSpec {
   description?: string;
 }
 
-/** One step in a displace-and-backfill chain. */
+/** One step in a displace-and-backfill chain (preserved for UI back-compat). */
 export interface StaffingSwapStep {
   assignmentId: string;
   fromParticipantId: string;
@@ -97,16 +120,58 @@ export interface SlotStaffingOutcome {
   reason?: string;
 }
 
+export interface PerParticipantChange {
+  participantId: string;
+  added: Assignment[];
+  removed: Assignment[];
+}
+
+/** A full multi-slot staffing plan produced by the search stage. */
+export interface InjectionPlan {
+  id: string;
+  rank: number;
+  /** Composite score delta vs baseline. Positive = improvement. */
+  compositeDelta: number;
+  /** { 1: n1, 2: n2, ... } — chain depths used across all slots. */
+  depthHistogram: Record<1 | 2 | 3 | 4 | 5, number>;
+  perParticipantChanges: PerParticipantChange[];
+  /** Hard-constraint violations on the post-mutation state. Empty for valid plans. */
+  violations: ConstraintViolation[];
+  /** True when at least one slot has no chain (left empty by this plan). */
+  isPartial: boolean;
+  /** When the plan needed depth 4 or 5 to find a chain anywhere. */
+  fallbackDepthUsed?: 4 | 5;
+  /** Per-slot outcomes (filled or not + swap chain detail), in task.slots order. */
+  outcomes: SlotStaffingOutcome[];
+  filledCount: number;
+  totalSlotCount: number;
+  /** For sameGroupRequired tasks: the group this plan locks. Null otherwise. */
+  groupLock: string | null;
+  /** Internal: chains per slot, used to materialise mutations on apply. */
+  _chainBySlotId: Map<string, CandidateChain | null>;
+}
+
+export interface InjectionResult {
+  task: Task;
+  /** Top-N plans ranked & MMR-diversified. May include partial plans. */
+  plans: InjectionPlan[];
+  /** Slot IDs that had ZERO candidate chains at any tried fallback level. */
+  unsolvableSlotIds: string[];
+  /** Whether the DFS composition hit its wall-clock budget. */
+  timedOut: boolean;
+  /** Apply the chosen plan to the schedule. Returns a report with rollback. */
+  apply: (planId: string) => StaffingReport | null;
+  /** Hard-rollback: discard task + placeholders without applying any plan. */
+  cancel: () => void;
+}
+
 export interface StaffingReport {
   task: Task;
   outcomes: SlotStaffingOutcome[];
   fullyStaffed: boolean;
-  /**
-   * Restore the schedule to the pre-injection state. Removes the injected
-   * task, deletes every assignment created by this injection, and reverts
-   * every modified pre-existing assignment. Safe to call exactly once; after
-   * calling, the caller should run revalidateFull().
-   */
+  /** Composite score delta vs baseline (when an applied plan was scored). */
+  compositeDelta?: number;
+  /** Restore the schedule to the pre-injection state. Idempotent in practice. */
   rollback: () => void;
 }
 
@@ -119,6 +184,12 @@ export interface InjectStaffOptions {
    * closed" contract. Omit for non-Live-Mode callers (CLI, tests).
    */
   anchor?: Date;
+  /** How many alternative plans to keep at most. Default 3. */
+  maxPlans?: number;
+  /** DFS composition wall-clock budget per stage. Default 500ms (1500ms for ≥5 slots). */
+  timeBudgetMs?: number;
+  /** Per-depth caps for chain enumeration. Defaults to DEFAULT_CAPS from rescue-primitives. */
+  caps?: ChainEnumerationCaps;
 }
 
 // ─── ID generation ──────────────────────────────────────────────────────────
@@ -134,47 +205,15 @@ function nextInjSlotId(): string {
   return `inj-slot-${Date.now()}-${++_injCounter}`;
 }
 
+const PLACEHOLDER_PREFIX = '__inject_placeholder__';
+function makePlaceholderParticipantId(slotId: string): string {
+  return `${PLACEHOLDER_PREFIX}-${slotId}`;
+}
+function isPlaceholderParticipantId(pid: string): boolean {
+  return pid.startsWith(PLACEHOLDER_PREFIX);
+}
+
 // ─── Small helpers ──────────────────────────────────────────────────────────
-
-function participantAssignments(pId: string, assignments: Assignment[]): Assignment[] {
-  const out: Assignment[] = [];
-  for (const a of assignments) if (a.participantId === pId) out.push(a);
-  return out;
-}
-
-function taskAssignments(tId: string, assignments: Assignment[]): Assignment[] {
-  const out: Assignment[] = [];
-  for (const a of assignments) if (a.taskId === tId) out.push(a);
-  return out;
-}
-
-function totalEffectiveLoad(pId: string, assignments: Assignment[], taskMap: Map<string, Task>): number {
-  let total = 0;
-  for (const a of assignments) {
-    if (a.participantId !== pId) continue;
-    const t = taskMap.get(a.taskId);
-    if (t) total += computeTaskEffectiveHours(t);
-  }
-  return total;
-}
-
-function dayEffectiveLoad(
-  pId: string,
-  dayKey: string,
-  dayStartHour: number,
-  assignments: Assignment[],
-  taskMap: Map<string, Task>,
-): number {
-  let total = 0;
-  for (const a of assignments) {
-    if (a.participantId !== pId) continue;
-    const t = taskMap.get(a.taskId);
-    if (!t) continue;
-    if (operationalDateKey(t.timeBlock.start, dayStartHour) !== dayKey) continue;
-    total += computeTaskEffectiveHours(t);
-  }
-  return total;
-}
 
 function slotLabel(slot: SlotRequirement, ownerTask: Task): string {
   if (slot.subTeamLabel && slot.label) return `${slot.subTeamLabel} / ${slot.label}`;
@@ -191,8 +230,7 @@ function isLowPriorityOnly(participant: Participant, slot: SlotRequirement): boo
 
 /**
  * Coarse pre-filter: level + certs compatible with the slot, honoring
- * disabledHC. Used to narrow the candidate pool before expensive conflict
- * checks; always a superset of isEligible's verdict.
+ * disabledHC. Always a superset of isEligible's verdict.
  */
 function levelCertCompatible(p: Participant, slot: SlotRequirement, disabledHC?: Set<string>): boolean {
   if (!disabledHC?.has('HC-11') && slot.forbiddenCertifications?.some((c) => p.certifications.includes(c)))
@@ -202,12 +240,11 @@ function levelCertCompatible(p: Participant, slot: SlotRequirement, disabledHC?:
   return true;
 }
 
-// ─── Task construction ──────────────────────────────────────────────────────
+// ─── Task construction (preserved as-is) ────────────────────────────────────
 
 /**
  * Build the Task object from a spec. Mirrors the one-time-task expansion
- * path in app.ts:generateTasksFromTemplates — kept in lock-step manually
- * rather than imported to avoid coupling the engine to web-layer code.
+ * path in app.ts:generateTasksFromTemplates.
  *
  * `spec.dayIndex` is the **operational** day (1-based). When `startHour` is
  * below `dayStartHour` the composed calendar date rolls forward by one day,
@@ -277,439 +314,742 @@ export function buildInjectedTask(
   return task;
 }
 
-// ─── Staffing context ───────────────────────────────────────────────────────
+// ─── Placeholder lifecycle ──────────────────────────────────────────────────
 
-interface StaffingCtx {
-  task: Task;
-  engine: SchedulingEngine;
-  schedule: Schedule;
-  taskMap: Map<string, Task>;
-  participantMap: Map<string, Participant>;
-  disabledHC?: Set<string>;
-  restRuleMap?: Map<string, number>;
-  /** Schedule window context for HC-3 operational-day rule evaluation. */
-  scheduleContext?: import('../shared/utils/time-utils').ScheduleContext;
-  extraUnavailability: Array<{ participantId: string; start: Date; end: Date }>;
-  allowLowPriority: boolean;
-  dayStartHour: number;
-  /** Operational-day key for the injected task, used to score by per-day load. */
-  injectedDayKey: string;
-  /** Group locked in for sameGroupRequired tasks (null = not yet locked). */
-  groupLock: string | null;
-  /** Created assignment IDs so we can roll back. */
-  createdAssignmentIds: string[];
-  /** Snapshot of mutated pre-existing assignments keyed by id. */
-  mutatedAssignmentSnapshots: Map<string, { participantId: string; status: AssignmentStatus; updatedAt: Date }>;
+interface PlaceholderInfo {
+  /** All placeholder assignments (one per slot). */
+  bySlot: Map<string, Assignment>;
+  /** All placeholder assignment IDs. */
+  ids: Set<string>;
 }
 
-/** Standard EligibilityOpts for checks against schedule state. */
-function eligOpts(ctx: StaffingCtx, taskAssignmentsForCheck: Assignment[]) {
-  return {
-    checkSameGroup: true,
-    taskAssignments: taskAssignmentsForCheck,
-    participantMap: ctx.participantMap,
-    disabledHC: ctx.disabledHC,
-    restRuleMap: ctx.restRuleMap,
-    scheduleContext: ctx.scheduleContext,
-    extraUnavailability: ctx.extraUnavailability,
-  };
+function installPlaceholders(schedule: Schedule, task: Task): PlaceholderInfo {
+  const bySlot = new Map<string, Assignment>();
+  const ids = new Set<string>();
+  for (const slot of task.slots) {
+    const a: Assignment = {
+      id: nextInjAssignmentId(),
+      taskId: task.id,
+      slotId: slot.slotId,
+      participantId: makePlaceholderParticipantId(slot.slotId),
+      status: AssignmentStatus.Manual,
+      updatedAt: new Date(),
+    };
+    schedule.assignments.push(a);
+    bySlot.set(slot.slotId, a);
+    ids.add(a.id);
+  }
+  return { bySlot, ids };
 }
 
-// ─── Slot ordering by tightness ─────────────────────────────────────────────
+// ─── Per-slot enumeration with group + lowPriority filters ──────────────────
 
 /**
- * Count coarse (level+cert+group) candidates for a slot. Lower count = tighter.
- * We do NOT include conflict checks here — that would change as slots fill and
- * we want a stable initial ordering.
+ * Filter a chain so it only fills the placeholder slot with a participant
+ * matching `groupLock` (when set) and respecting `allowLowPriority`. The
+ * "fill" participant is the `toParticipantId` of the chain's first swap —
+ * by construction, that's the swap that targets the placeholder.
  */
-function tightnessScore(ctx: StaffingCtx, slot: SlotRequirement, groupLock: string | null): number {
-  let count = 0;
-  for (const p of ctx.schedule.participants) {
-    if (groupLock !== null && p.group !== groupLock) continue;
-    if (!levelCertCompatible(p, slot, ctx.disabledHC)) continue;
-    if (!ctx.allowLowPriority && isLowPriorityOnly(p, slot)) continue;
-    count++;
-  }
-  return count;
-}
-
-function orderSlotsByTightness(ctx: StaffingCtx, slots: SlotRequirement[]): SlotRequirement[] {
-  return [...slots].sort((a, b) => tightnessScore(ctx, a, ctx.groupLock) - tightnessScore(ctx, b, ctx.groupLock));
-}
-
-// ─── Phase 1: Direct fill ───────────────────────────────────────────────────
-
-function pickDirectCandidate(ctx: StaffingCtx, slot: SlotRequirement): Participant | null {
-  const task = ctx.task;
-  const schedule = ctx.schedule;
-  const thisTaskAssignments = taskAssignments(task.id, schedule.assignments);
-
-  const candidates: { p: Participant; lowPrio: boolean; dayLoad: number; totalLoad: number }[] = [];
-
-  for (const p of schedule.participants) {
-    if (task.sameGroupRequired && ctx.groupLock !== null && p.group !== ctx.groupLock) continue;
-    const lowPrio = isLowPriorityOnly(p, slot);
-    if (lowPrio && !ctx.allowLowPriority) continue;
-    if (!levelCertCompatible(p, slot, ctx.disabledHC)) continue;
-
-    const pAssignments = participantAssignments(p.id, schedule.assignments);
-    if (!isEligible(p, task, slot, pAssignments, ctx.taskMap, eligOpts(ctx, thisTaskAssignments))) continue;
-
-    candidates.push({
-      p,
-      lowPrio,
-      dayLoad: dayEffectiveLoad(p.id, ctx.injectedDayKey, ctx.dayStartHour, schedule.assignments, ctx.taskMap),
-      totalLoad: totalEffectiveLoad(p.id, schedule.assignments, ctx.taskMap),
-    });
-  }
-
-  if (candidates.length === 0) return null;
-
-  candidates.sort((a, b) => {
-    if (a.lowPrio !== b.lowPrio) return a.lowPrio ? 1 : -1;
-    if (a.dayLoad !== b.dayLoad) return a.dayLoad - b.dayLoad;
-    return a.totalLoad - b.totalLoad;
-  });
-  return candidates[0].p;
-}
-
-// ─── Candidate ranking for displacement phases ──────────────────────────────
-
-interface RankedCandidate {
-  p: Participant;
-  lowPrio: boolean;
-  dayLoad: number;
-  totalLoad: number;
-}
-
-function rankedCandidatesForSlot(
-  ctx: StaffingCtx,
+function chainAcceptsFill(
+  chain: CandidateChain,
   slot: SlotRequirement,
-  dayKeyForLoad: string,
-  respectGroupLock: boolean,
-): RankedCandidate[] {
-  const out: RankedCandidate[] = [];
-  for (const p of ctx.schedule.participants) {
-    if (respectGroupLock && ctx.task.sameGroupRequired && ctx.groupLock !== null && p.group !== ctx.groupLock) continue;
-    if (!levelCertCompatible(p, slot, ctx.disabledHC)) continue;
-    const lowPrio = isLowPriorityOnly(p, slot);
-    if (lowPrio && !ctx.allowLowPriority) continue;
-    out.push({
-      p,
-      lowPrio,
-      dayLoad: dayEffectiveLoad(p.id, dayKeyForLoad, ctx.dayStartHour, ctx.schedule.assignments, ctx.taskMap),
-      totalLoad: totalEffectiveLoad(p.id, ctx.schedule.assignments, ctx.taskMap),
-    });
-  }
-  out.sort((a, b) => {
-    if (a.lowPrio !== b.lowPrio) return a.lowPrio ? 1 : -1;
-    if (a.dayLoad !== b.dayLoad) return a.dayLoad - b.dayLoad;
-    return a.totalLoad - b.totalLoad;
-  });
-  return out;
+  participantMap: Map<string, Participant>,
+  groupLock: string | null,
+  allowLowPriority: boolean,
+): boolean {
+  if (chain.swaps.length === 0) return false;
+  const fillP = participantMap.get(chain.swaps[0].toParticipantId);
+  if (!fillP) return false;
+  if (groupLock !== null && fillP.group !== groupLock) return false;
+  if (!allowLowPriority && isLowPriorityOnly(fillP, slot)) return false;
+  return true;
 }
+
+// ─── Composition helpers (forked from future-sos.ts, slightly adapted) ──────
+
+type Composition = { chains: CandidateChain[]; deltaSum: number; slotIndex: number[] };
 
 /**
- * Return p's existing assignments that are plausible displacement candidates
- * to resolve their conflict with the target slot. We iterate the
- * participant's assignments and keep those that — when removed — would make
- * p eligible for (task, slot). This is exact: depth-2 with any of these
- * assignments as `displaced` will succeed for p's eligibility.
+ * 32-bit non-cryptographic hash over a plan's swap list. Same algorithm as
+ * future-sos so plan IDs hash-stably across modules.
  */
-function resolvingDisplacements(
-  ctx: StaffingCtx,
-  p: Participant,
-  pAssignments: Assignment[],
-  task: Task,
-  slot: SlotRequirement,
-  thisTaskAssignments: Assignment[],
-  maxResults: number,
+function hashSwaps(swaps: RescueSwap[]): string {
+  let h = 2166136261;
+  const key = swaps
+    .map((s) => `${s.assignmentId}>${s.toParticipantId}`)
+    .sort()
+    .join('|');
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
+function applyCompositionToAssignments(
+  schedule: Schedule,
+  chains: CandidateChain[],
+  /** Placeholder assignment IDs that this composition does NOT fill — drop them. */
+  unfilledPlaceholderIds: Set<string>,
 ): Assignment[] {
+  const swapMap = new Map<string, string>();
+  for (const c of chains) {
+    for (const s of c.swaps) swapMap.set(s.assignmentId, s.toParticipantId);
+  }
   const out: Assignment[] = [];
-  for (const a of pAssignments) {
-    if (out.length >= maxResults) break;
-    const aTask = ctx.taskMap.get(a.taskId);
-    if (!aTask || aTask.id === task.id) continue; // don't displace own-task slots
-    if (a.status === AssignmentStatus.Frozen) continue;
-    const pMinus = pAssignments.filter((x) => x.id !== a.id);
-    if (isEligible(p, task, slot, pMinus, ctx.taskMap, eligOpts(ctx, thisTaskAssignments))) {
-      out.push(a);
-    }
+  for (const a of schedule.assignments) {
+    if (unfilledPlaceholderIds.has(a.id)) continue;
+    const pid = swapMap.get(a.id);
+    out.push(pid ? { ...a, participantId: pid } : a);
   }
   return out;
 }
 
-// ─── Phase 2: Depth-2 chain ─────────────────────────────────────────────────
-
-interface Depth2Chain {
-  fill: Participant;
-  displaced: Assignment;
-  displacedTask: Task;
-  displacedSlot: SlotRequirement;
-  backfill: Participant;
-  impact: number;
+function mergeSwaps(chains: CandidateChain[]): RescueSwap[] {
+  const merged: RescueSwap[] = [];
+  const seen = new Set<string>();
+  for (const c of chains) {
+    for (const s of c.swaps) {
+      if (seen.has(s.assignmentId)) continue;
+      seen.add(s.assignmentId);
+      merged.push(s);
+    }
+  }
+  return merged;
 }
 
-// Caps (tunable) — bound the combinatorial explosion of displacement search.
-const MAX_FILL_CANDIDATES = 15;
-const MAX_DISPLACEMENTS_PER_P = 3;
-const MAX_Q_CANDIDATES = 15;
-const MAX_DISPLACEMENTS_PER_Q = 3;
+function buildPerParticipantChanges(
+  baseline: Assignment[],
+  candidate: Assignment[],
+  touchedAssignmentIds: Set<string>,
+  unfilledPlaceholderIds: Set<string>,
+  isPlaceholderId: (id: string) => boolean,
+): PerParticipantChange[] {
+  const baseById = new Map<string, Assignment>();
+  for (const a of baseline) baseById.set(a.id, a);
+  const candById = new Map<string, Assignment>();
+  for (const a of candidate) candById.set(a.id, a);
 
-function pickDisplaceChainDepth2(ctx: StaffingCtx, slot: SlotRequirement): Depth2Chain | null {
-  const task = ctx.task;
-  const schedule = ctx.schedule;
-  const thisTaskAssignments = taskAssignments(task.id, schedule.assignments);
+  const byParticipant = new Map<string, { added: Assignment[]; removed: Assignment[] }>();
+  const ensure = (pid: string) => {
+    let entry = byParticipant.get(pid);
+    if (!entry) {
+      entry = { added: [], removed: [] };
+      byParticipant.set(pid, entry);
+    }
+    return entry;
+  };
 
-  let best: Depth2Chain | null = null;
+  for (const id of touchedAssignmentIds) {
+    const before = baseById.get(id);
+    const after = candById.get(id);
+    // Placeholder swaps: `before` has the synthetic placeholder participant
+    // (no real "removed" participant). Show only the "added" side.
+    if (after && (!before || isPlaceholderParticipantId(before.participantId))) {
+      ensure(after.participantId).added.push(after);
+      continue;
+    }
+    if (!before || !after) continue;
+    if (before.participantId === after.participantId) continue;
+    ensure(before.participantId).removed.push(before);
+    ensure(after.participantId).added.push(after);
+  }
 
-  const pCandidates = rankedCandidatesForSlot(ctx, slot, ctx.injectedDayKey, true).slice(0, MAX_FILL_CANDIDATES);
+  // Unfilled placeholders represent slots that nobody fills — no participant
+  // gain or loss to report here.
+  void unfilledPlaceholderIds;
+  void isPlaceholderId;
 
-  for (const pc of pCandidates) {
-    const p = pc.p;
-    const pAssignments = participantAssignments(p.id, schedule.assignments);
+  const result: PerParticipantChange[] = [];
+  for (const [pid, v] of byParticipant) {
+    result.push({ participantId: pid, added: v.added, removed: v.removed });
+  }
+  return result;
+}
 
-    const displaceableAs = resolvingDisplacements(
-      ctx,
-      p,
-      pAssignments,
-      task,
-      slot,
-      thisTaskAssignments,
-      MAX_DISPLACEMENTS_PER_P,
-    );
+// ─── DFS composition with branch-and-bound ──────────────────────────────────
 
-    for (const displaced of displaceableAs) {
-      const displacedTask = ctx.taskMap.get(displaced.taskId);
-      if (!displacedTask) continue;
-      const displacedSlot = displacedTask.slots.find((s) => s.slotId === displaced.slotId);
-      if (!displacedSlot) continue;
+interface DfsState {
+  chosen: (CandidateChain | null)[];
+  usedAssignmentIds: Set<string>;
+  usedPairs: Set<string>;
+  sumSoloDelta: number;
+}
 
-      const displacedTaskAssignmentsMinus = taskAssignments(displacedTask.id, schedule.assignments).filter(
-        (a) => a.id !== displaced.id,
-      );
-      const displacedDayKey = operationalDateKey(displacedTask.timeBlock.start, ctx.dayStartHour);
+function pairKey(participantId: string, taskId: string): string {
+  return `${participantId}|${taskId}`;
+}
 
-      // Find best backfill q directly eligible for the displaced slot.
-      let bestQ: RankedCandidate | null = null;
-      for (const qc of rankedCandidatesForSlot(ctx, displacedSlot, displacedDayKey, false)) {
-        if (qc.p.id === p.id) continue;
-        const qAssignments = participantAssignments(qc.p.id, schedule.assignments);
-        if (
-          !isEligible(
-            qc.p,
-            displacedTask,
-            displacedSlot,
-            qAssignments,
-            ctx.taskMap,
-            eligOpts(ctx, displacedTaskAssignmentsMinus),
-          )
-        )
-          continue;
-        // Pre-sorted: first hit is optimal.
-        bestQ = qc;
-        break;
-      }
-      if (!bestQ) continue;
+interface DfsOutcome {
+  /** Each composition stores chosen chains AND original slot indices so we
+   *  can map results back to the task's slot order after the search. */
+  compositions: Composition[];
+  timedOut: boolean;
+}
 
-      const lowPrioPenalty = (pc.lowPrio ? 1000 : 0) + (bestQ.lowPrio ? 500 : 0);
-      // Chain-length penalty keeps depth-2 plans preferred over depth-3 at equal day loads.
-      const impact = pc.dayLoad + bestQ.dayLoad + lowPrioPenalty + 10;
-      if (best === null || impact < best.impact) {
-        best = { fill: p, displaced, displacedTask, displacedSlot, backfill: bestQ.p, impact };
-      }
+function dfsCompose(
+  candidatesPerSlot: CandidateChain[][],
+  /** Original slot index of each entry in `candidatesPerSlot` (it gets reordered for fail-fast DFS). */
+  originalIndex: number[],
+  topK: number,
+  deadline: number,
+): DfsOutcome {
+  const suffixBest: number[] = new Array(candidatesPerSlot.length + 1).fill(0);
+  for (let i = candidatesPerSlot.length - 1; i >= 0; i--) {
+    const best = candidatesPerSlot[i].length > 0 ? candidatesPerSlot[i][0].soloCompositeDelta : -Infinity;
+    suffixBest[i] = suffixBest[i + 1] + (Number.isFinite(best) ? best : 0);
+  }
+
+  const best: Composition[] = [];
+  let timedOut = false;
+  const state: DfsState = {
+    chosen: new Array(candidatesPerSlot.length).fill(null),
+    usedAssignmentIds: new Set(),
+    usedPairs: new Set(),
+    sumSoloDelta: 0,
+  };
+
+  function tryInsert(comp: Composition) {
+    if (best.length < topK) {
+      best.push(comp);
+      best.sort((a, b) => b.deltaSum - a.deltaSum);
+      return;
+    }
+    if (comp.deltaSum > best[best.length - 1].deltaSum) {
+      best[best.length - 1] = comp;
+      best.sort((a, b) => b.deltaSum - a.deltaSum);
     }
   }
 
-  return best;
-}
+  function worstKeptDelta(): number {
+    return best.length < topK ? -Infinity : best[best.length - 1].deltaSum;
+  }
 
-// ─── Phase 3: Depth-3 chain ─────────────────────────────────────────────────
+  function recurse(i: number) {
+    if (Date.now() > deadline) {
+      timedOut = true;
+      return;
+    }
+    if (i === candidatesPerSlot.length) {
+      const chains = state.chosen.filter((c): c is CandidateChain => c !== null);
+      tryInsert({ chains, deltaSum: state.sumSoloDelta, slotIndex: [...originalIndex] });
+      return;
+    }
+    // Admissible upper-bound prune.
+    const upperBound = state.sumSoloDelta + suffixBest[i];
+    if (upperBound <= worstKeptDelta()) return;
 
-interface Depth3Chain {
-  fill: Participant;
-  displacedA: Assignment;
-  displacedATask: Task;
-  displacedASlot: SlotRequirement;
-  backfillQ: Participant;
-  displacedB: Assignment;
-  displacedBTask: Task;
-  displacedBSlot: SlotRequirement;
-  backfillR: Participant;
-  impact: number;
-}
-
-function pickDisplaceChainDepth3(ctx: StaffingCtx, slot: SlotRequirement): Depth3Chain | null {
-  const task = ctx.task;
-  const schedule = ctx.schedule;
-  const thisTaskAssignments = taskAssignments(task.id, schedule.assignments);
-
-  let best: Depth3Chain | null = null;
-
-  const pCandidates = rankedCandidatesForSlot(ctx, slot, ctx.injectedDayKey, true).slice(0, MAX_FILL_CANDIDATES);
-
-  for (const pc of pCandidates) {
-    const p = pc.p;
-    const pAssignments = participantAssignments(p.id, schedule.assignments);
-
-    const displaceableAs = resolvingDisplacements(
-      ctx,
-      p,
-      pAssignments,
-      task,
-      slot,
-      thisTaskAssignments,
-      MAX_DISPLACEMENTS_PER_P,
-    );
-
-    for (const displacedA of displaceableAs) {
-      const aTask = ctx.taskMap.get(displacedA.taskId);
-      if (!aTask) continue;
-      const aSlot = aTask.slots.find((s) => s.slotId === displacedA.slotId);
-      if (!aSlot) continue;
-
-      const aTaskAssignmentsMinus = taskAssignments(aTask.id, schedule.assignments).filter(
-        (x) => x.id !== displacedA.id,
-      );
-      const aDayKey = operationalDateKey(aTask.timeBlock.start, ctx.dayStartHour);
-
-      const qCandidates = rankedCandidatesForSlot(ctx, aSlot, aDayKey, false).slice(0, MAX_Q_CANDIDATES);
-
-      for (const qc of qCandidates) {
-        const q = qc.p;
-        if (q.id === p.id) continue;
-        const qAssignments = participantAssignments(q.id, schedule.assignments);
-
-        // If q is directly eligible for A, this would have been a depth-2 solution;
-        // skip so depth-3 only catches the cases depth-2 misses.
-        if (isEligible(q, aTask, aSlot, qAssignments, ctx.taskMap, eligOpts(ctx, aTaskAssignmentsMinus))) continue;
-
-        const displaceableBs = resolvingDisplacements(
-          ctx,
-          q,
-          qAssignments,
-          aTask,
-          aSlot,
-          aTaskAssignmentsMinus,
-          MAX_DISPLACEMENTS_PER_Q,
-        );
-
-        for (const displacedB of displaceableBs) {
-          const bTask = ctx.taskMap.get(displacedB.taskId);
-          if (!bTask) continue;
-          // Never chain through the injected task or back through A's task.
-          if (bTask.id === task.id) continue;
-          if (displacedB.id === displacedA.id) continue;
-          const bSlot = bTask.slots.find((s) => s.slotId === displacedB.slotId);
-          if (!bSlot) continue;
-
-          const bTaskAssignmentsMinus = taskAssignments(bTask.id, schedule.assignments).filter(
-            (x) => x.id !== displacedB.id,
-          );
-          const bDayKey = operationalDateKey(bTask.timeBlock.start, ctx.dayStartHour);
-
-          // Find best r directly eligible for B's slot.
-          let bestR: RankedCandidate | null = null;
-          for (const rc of rankedCandidatesForSlot(ctx, bSlot, bDayKey, false)) {
-            if (rc.p.id === p.id || rc.p.id === q.id) continue;
-            const rAssignments = participantAssignments(rc.p.id, schedule.assignments);
-            if (!isEligible(rc.p, bTask, bSlot, rAssignments, ctx.taskMap, eligOpts(ctx, bTaskAssignmentsMinus)))
-              continue;
-            bestR = rc;
-            break;
-          }
-          if (!bestR) continue;
-
-          const lowPrioPenalty = (pc.lowPrio ? 1000 : 0) + (qc.lowPrio ? 500 : 0) + (bestR.lowPrio ? 250 : 0);
-          // +20 chain penalty > depth-2's +10, keeping d2 preferred at equal day loads.
-          const impact = pc.dayLoad + qc.dayLoad + bestR.dayLoad + lowPrioPenalty + 20;
-          if (best === null || impact < best.impact) {
-            best = {
-              fill: p,
-              displacedA,
-              displacedATask: aTask,
-              displacedASlot: aSlot,
-              backfillQ: q,
-              displacedB,
-              displacedBTask: bTask,
-              displacedBSlot: bSlot,
-              backfillR: bestR.p,
-              impact,
-            };
-          }
+    const cands = candidatesPerSlot[i];
+    for (const cand of cands) {
+      if (Date.now() > deadline) {
+        timedOut = true;
+        return;
+      }
+      let conflict = false;
+      for (const id of cand.touchedAssignmentIds) {
+        if (state.usedAssignmentIds.has(id)) {
+          conflict = true;
+          break;
         }
       }
+      if (conflict) continue;
+      for (const pair of cand.participantTaskPairs) {
+        if (state.usedPairs.has(pairKey(pair.participantId, pair.taskId))) {
+          conflict = true;
+          break;
+        }
+      }
+      if (conflict) continue;
+
+      const addedAssn: string[] = [];
+      const addedPairs: string[] = [];
+      for (const id of cand.touchedAssignmentIds) {
+        state.usedAssignmentIds.add(id);
+        addedAssn.push(id);
+      }
+      for (const pair of cand.participantTaskPairs) {
+        const k = pairKey(pair.participantId, pair.taskId);
+        state.usedPairs.add(k);
+        addedPairs.push(k);
+      }
+      state.chosen[i] = cand;
+      state.sumSoloDelta += cand.soloCompositeDelta;
+
+      recurse(i + 1);
+
+      state.sumSoloDelta -= cand.soloCompositeDelta;
+      state.chosen[i] = null;
+      for (const id of addedAssn) state.usedAssignmentIds.delete(id);
+      for (const k of addedPairs) state.usedPairs.delete(k);
     }
   }
 
-  return best;
+  recurse(0);
+  return { compositions: best, timedOut };
 }
 
-// ─── Mutations & rollback ───────────────────────────────────────────────────
+// ─── MMR diversity (forked from future-sos for module independence) ─────────
 
-function createAssignment(ctx: StaffingCtx, slot: SlotRequirement, participantId: string): Assignment {
-  const a: Assignment = {
-    id: nextInjAssignmentId(),
-    taskId: ctx.task.id,
-    slotId: slot.slotId,
-    participantId,
-    status: AssignmentStatus.Manual,
-    updatedAt: new Date(),
+function selectDiversePlans(ranked: InjectionPlan[], k: number, lambda = 0.3): InjectionPlan[] {
+  if (ranked.length <= k) return ranked;
+  const keys = ranked.map((p) => {
+    const set = new Set<string>();
+    for (const o of p.outcomes) {
+      if (o.filled && o.participantId) set.add(`${o.participantId}|${o.slotId}`);
+    }
+    return set;
+  });
+  const picked: number[] = [0];
+  while (picked.length < k && picked.length < ranked.length) {
+    let bestIdx = -1;
+    let bestScore = -Infinity;
+    for (let i = 0; i < ranked.length; i++) {
+      if (picked.includes(i)) continue;
+      let maxSim = 0;
+      for (const j of picked) {
+        const a = keys[i];
+        const b = keys[j];
+        if (a.size === 0 && b.size === 0) continue;
+        let inter = 0;
+        for (const x of a) if (b.has(x)) inter++;
+        const union = a.size + b.size - inter;
+        const sim = union === 0 ? 0 : inter / union;
+        if (sim > maxSim) maxSim = sim;
+      }
+      const refDelta = Math.max(1, Math.abs(ranked[0].compositeDelta));
+      const s = ranked[i].compositeDelta - lambda * maxSim * refDelta;
+      if (s > bestScore) {
+        bestScore = s;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx === -1) break;
+    picked.push(bestIdx);
+  }
+  return picked.map((i) => ranked[i]);
+}
+
+// ─── Stage runner: enumerate + compose + validate + score ───────────────────
+
+interface StageOpts {
+  task: Task;
+  placeholders: PlaceholderInfo;
+  slotCtx: SlotEnumerationContext;
+  baselineComposite: number;
+  caps: ChainEnumerationCaps;
+  allowLowPriority: boolean;
+  groupLock: string | null;
+  maxPlans: number;
+  budgetMs: number;
+  fallbackLevel: FallbackLevel;
+}
+
+interface StageOutput {
+  validPlans: InjectionPlan[];
+  invalidPlans: InjectionPlan[];
+  unsolvableSlotIds: string[];
+  timedOut: boolean;
+  /** False iff EVERY slot had zero candidate chains at this fallback level. */
+  anySolvable: boolean;
+}
+
+function runStage(opts: StageOpts): StageOutput {
+  const {
+    task,
+    placeholders,
+    slotCtx,
+    baselineComposite,
+    caps,
+    allowLowPriority,
+    groupLock,
+    maxPlans,
+    budgetMs,
+    fallbackLevel,
+  } = opts;
+
+  const candidatesPerSlot: CandidateChain[][] = [];
+  const unsolvableSlotIds: string[] = [];
+  const slotByIndex: SlotRequirement[] = [];
+
+  for (const slot of task.slots) {
+    const placeholder = placeholders.bySlot.get(slot.slotId);
+    if (!placeholder) {
+      candidatesPerSlot.push([]);
+      slotByIndex.push(slot);
+      unsolvableSlotIds.push(slot.slotId);
+      continue;
+    }
+    const allChains = enumerateChainsForSlot(slotCtx, placeholder, caps, fallbackLevel);
+    const filtered = allChains.filter((c) =>
+      chainAcceptsFill(c, slot, slotCtx.participantMap, groupLock, allowLowPriority),
+    );
+    candidatesPerSlot.push(filtered);
+    slotByIndex.push(slot);
+    if (filtered.length === 0) unsolvableSlotIds.push(slot.slotId);
+  }
+
+  // Drop slots with zero candidates from the DFS — they'll be marked unfilled.
+  const solvableIdx: number[] = [];
+  for (let i = 0; i < candidatesPerSlot.length; i++) {
+    if (candidatesPerSlot[i].length > 0) solvableIdx.push(i);
+  }
+  if (solvableIdx.length === 0) {
+    return { validPlans: [], invalidPlans: [], unsolvableSlotIds, timedOut: false, anySolvable: false };
+  }
+
+  // Order by ascending candidate count (fail-fast DFS).
+  const orderedSolvable = [...solvableIdx].sort((a, b) => candidatesPerSlot[a].length - candidatesPerSlot[b].length);
+  const orderedCandidates = orderedSolvable.map((i) => candidatesPerSlot[i]);
+
+  const deadline = Date.now() + budgetMs;
+  const { compositions, timedOut } = dfsCompose(
+    orderedCandidates,
+    orderedSolvable,
+    Math.max(maxPlans * 4, 8),
+    deadline,
+  );
+  if (compositions.length === 0) {
+    return { validPlans: [], invalidPlans: [], unsolvableSlotIds, timedOut, anySolvable: true };
+  }
+
+  const isPartial = unsolvableSlotIds.length > 0;
+  const computeFallbackDepthUsed = (chains: CandidateChain[]): 4 | 5 | undefined => {
+    let max: 1 | 2 | 3 | 4 | 5 = 1;
+    for (const c of chains) if (c.depth > max) max = c.depth;
+    return max === 4 || max === 5 ? max : undefined;
   };
-  ctx.schedule.assignments.push(a);
-  ctx.createdAssignmentIds.push(a.id);
-  return a;
-}
 
-function mutateAssignment(ctx: StaffingCtx, assignmentId: string, newParticipantId: string): void {
-  const a = ctx.schedule.assignments.find((x) => x.id === assignmentId);
-  if (!a) return;
-  if (!ctx.mutatedAssignmentSnapshots.has(a.id)) {
-    ctx.mutatedAssignmentSnapshots.set(a.id, {
-      participantId: a.participantId,
-      status: a.status,
-      updatedAt: a.updatedAt,
+  // Map a composition to an InjectionPlan, including per-slot outcomes.
+  const composeToPlan = (comp: Composition, idx: number): InjectionPlan => {
+    const chainBySlotId = new Map<string, CandidateChain | null>();
+    for (const slot of task.slots) chainBySlotId.set(slot.slotId, null);
+    for (let k = 0; k < comp.chains.length; k++) {
+      const slotIdx = comp.slotIndex[k];
+      const slot = slotByIndex[slotIdx];
+      chainBySlotId.set(slot.slotId, comp.chains[k]);
+    }
+
+    const unfilledPlaceholderIds = new Set<string>();
+    for (const slot of task.slots) {
+      if (chainBySlotId.get(slot.slotId) === null) {
+        const ph = placeholders.bySlot.get(slot.slotId);
+        if (ph) unfilledPlaceholderIds.add(ph.id);
+      }
+    }
+
+    const tempAssignments = applyCompositionToAssignments(slotCtx.schedule, comp.chains, unfilledPlaceholderIds);
+    const validation = validateHardConstraints(
+      slotCtx.schedule.tasks,
+      slotCtx.schedule.participants,
+      tempAssignments,
+      slotCtx.disabledHC,
+      slotCtx.restRuleMap,
+      undefined,
+      slotCtx.extraUnavailability,
+      slotCtx.scheduleContext,
+    );
+
+    const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    for (const c of comp.chains) depthHistogram[c.depth]++;
+
+    let compositeDelta: number;
+    if (validation.violations.length > 0) {
+      // Invalid plans are kept as a last-resort bucket; we still need a
+      // composite delta for ranking within that bucket.
+      const candScore = computeScheduleScore(
+        slotCtx.schedule.tasks,
+        slotCtx.schedule.participants,
+        tempAssignments,
+        slotCtx.config,
+        slotCtx.scoreCtx,
+      );
+      compositeDelta = candScore.compositeScore - baselineComposite;
+    } else {
+      const candScore = computeScheduleScore(
+        slotCtx.schedule.tasks,
+        slotCtx.schedule.participants,
+        tempAssignments,
+        slotCtx.config,
+        slotCtx.scoreCtx,
+      );
+      compositeDelta = candScore.compositeScore - baselineComposite;
+    }
+
+    const touched = new Set<string>();
+    for (const c of comp.chains) for (const id of c.touchedAssignmentIds) touched.add(id);
+
+    // Build per-slot outcomes in the task's original slot order.
+    const outcomes: SlotStaffingOutcome[] = task.slots.map((slot) => {
+      const chain = chainBySlotId.get(slot.slotId) ?? null;
+      const label = slotLabel(slot, task);
+      if (!chain || chain.swaps.length === 0) {
+        return {
+          slotId: slot.slotId,
+          slotLabel: label,
+          filled: false,
+          reason: diagnoseUnfillableSlotAtFinalState(slotCtx, task, slot, tempAssignments, groupLock),
+        };
+      }
+      // chain.swaps[0] is the placeholder→fill swap. Subsequent swaps are
+      // donor backfills.
+      const fillSwap = chain.swaps[0];
+      const swapChain: StaffingSwapStep[] | undefined =
+        chain.swaps.length > 1
+          ? chain.swaps.slice(1).map((s) => ({
+              assignmentId: s.assignmentId,
+              fromParticipantId: s.fromParticipantId ?? '',
+              toParticipantId: s.toParticipantId,
+              taskId: s.taskId,
+              taskName: s.taskName,
+              slotLabel: s.slotLabel,
+            }))
+          : undefined;
+      return {
+        slotId: slot.slotId,
+        slotLabel: label,
+        filled: true,
+        participantId: fillSwap.toParticipantId,
+        swapChain,
+      };
     });
-  }
-  a.participantId = newParticipantId;
-  a.status = AssignmentStatus.Manual;
-  a.updatedAt = new Date();
-}
 
-/** Roll back only the assignment-level mutations recorded on ctx (not the task). */
-function rollbackAssignments(ctx: StaffingCtx): void {
-  if (ctx.createdAssignmentIds.length > 0) {
-    const ids = new Set(ctx.createdAssignmentIds);
-    for (let i = ctx.schedule.assignments.length - 1; i >= 0; i--) {
-      if (ids.has(ctx.schedule.assignments[i].id)) ctx.schedule.assignments.splice(i, 1);
-    }
-    ctx.createdAssignmentIds.length = 0;
-  }
-  for (const [id, snap] of ctx.mutatedAssignmentSnapshots) {
-    const a = ctx.schedule.assignments.find((x) => x.id === id);
-    if (!a) continue;
-    a.participantId = snap.participantId;
-    a.status = snap.status;
-    a.updatedAt = snap.updatedAt;
-  }
-  ctx.mutatedAssignmentSnapshots.clear();
-}
+    const filledCount = outcomes.filter((o) => o.filled).length;
+    const merged = mergeSwaps(comp.chains);
 
-/** Full rollback: assignment state + remove the task. */
-function buildFullRollback(ctx: StaffingCtx): () => void {
-  return () => {
-    rollbackAssignments(ctx);
-    const tId = ctx.task.id;
-    const idx = ctx.schedule.tasks.findIndex((t) => t.id === tId);
-    if (idx >= 0) ctx.schedule.tasks.splice(idx, 1);
-    ctx.engine.removeTask(tId);
+    return {
+      id: `inj-${hashSwaps(merged)}-${idx}`,
+      rank: 0,
+      compositeDelta,
+      depthHistogram,
+      perParticipantChanges: buildPerParticipantChanges(
+        slotCtx.schedule.assignments,
+        tempAssignments,
+        touched,
+        unfilledPlaceholderIds,
+        (id) => placeholders.ids.has(id),
+      ),
+      violations: validation.violations,
+      isPartial,
+      fallbackDepthUsed: computeFallbackDepthUsed(comp.chains),
+      outcomes,
+      filledCount,
+      totalSlotCount: task.slots.length,
+      groupLock,
+      _chainBySlotId: chainBySlotId,
+    };
   };
+
+  const valid: InjectionPlan[] = [];
+  const invalid: InjectionPlan[] = [];
+  for (let i = 0; i < compositions.length; i++) {
+    const plan = composeToPlan(compositions[i], i);
+    if (plan.violations.length > 0) invalid.push(plan);
+    else valid.push(plan);
+  }
+
+  return { validPlans: valid, invalidPlans: invalid, unsolvableSlotIds, timedOut, anySolvable: true };
 }
 
-// ─── Per-slot staffing pipeline ─────────────────────────────────────────────
+/**
+ * Cascade depths 1-3 → 4 → 5 for a single (group-locked) search. Returns
+ * the deepest stage with valid plans, or the deepest stage's invalid bucket
+ * as a last-resort.
+ */
+function searchOneGroup(
+  task: Task,
+  placeholders: PlaceholderInfo,
+  slotCtx: SlotEnumerationContext,
+  baselineComposite: number,
+  caps: ChainEnumerationCaps,
+  allowLowPriority: boolean,
+  groupLock: string | null,
+  maxPlans: number,
+  baseBudgetMs: number,
+): { plans: InjectionPlan[]; unsolvableSlotIds: string[]; timedOut: boolean } {
+  const FALLBACK_MAX = 10_000;
+  const fallbackBudget = Math.min(FALLBACK_MAX, baseBudgetMs * 4);
 
-// Highest-listed code wins: context blockers trump structural ones — if anyone
-// is structurally qualified, their context rejection is the real story.
+  const stage1 = runStage({
+    task,
+    placeholders,
+    slotCtx,
+    baselineComposite,
+    caps,
+    allowLowPriority,
+    groupLock,
+    maxPlans,
+    budgetMs: baseBudgetMs,
+    fallbackLevel: 'none',
+  });
+  if (stage1.validPlans.length > 0) {
+    return { plans: stage1.validPlans, unsolvableSlotIds: stage1.unsolvableSlotIds, timedOut: stage1.timedOut };
+  }
+
+  if (stage1.anySolvable || stage1.unsolvableSlotIds.length > 0) {
+    console.warn(
+      `[inject] depth-4 fallback fired for task ${task.id} (group=${groupLock ?? '∅'}, unsolvable=${stage1.unsolvableSlotIds.length}/${task.slots.length})`,
+    );
+    const stage2 = runStage({
+      task,
+      placeholders,
+      slotCtx,
+      baselineComposite,
+      caps,
+      allowLowPriority,
+      groupLock,
+      maxPlans,
+      budgetMs: fallbackBudget,
+      fallbackLevel: 'depth4',
+    });
+    if (stage2.validPlans.length > 0) {
+      return { plans: stage2.validPlans, unsolvableSlotIds: stage2.unsolvableSlotIds, timedOut: stage2.timedOut };
+    }
+    if (stage2.anySolvable || stage2.unsolvableSlotIds.length > 0) {
+      console.warn(
+        `[inject] depth-5 fallback fired for task ${task.id} (group=${groupLock ?? '∅'}, unsolvable=${stage2.unsolvableSlotIds.length}/${task.slots.length})`,
+      );
+      const stage3 = runStage({
+        task,
+        placeholders,
+        slotCtx,
+        baselineComposite,
+        caps,
+        allowLowPriority,
+        groupLock,
+        maxPlans,
+        budgetMs: fallbackBudget,
+        fallbackLevel: 'depth5',
+      });
+      if (stage3.validPlans.length > 0) {
+        return { plans: stage3.validPlans, unsolvableSlotIds: stage3.unsolvableSlotIds, timedOut: stage3.timedOut };
+      }
+      // Last-resort: surface the deepest invalid bucket.
+      const lastInvalid =
+        stage3.invalidPlans.length > 0
+          ? stage3.invalidPlans
+          : stage2.invalidPlans.length > 0
+            ? stage2.invalidPlans
+            : stage1.invalidPlans;
+      return {
+        plans: lastInvalid,
+        unsolvableSlotIds: stage3.unsolvableSlotIds,
+        timedOut: stage1.timedOut || stage2.timedOut || stage3.timedOut,
+      };
+    }
+    // Stage 2 had no candidates anywhere — fall through to last-resort below.
+  }
+
+  // Nothing solvable at any depth.
+  return { plans: stage1.invalidPlans, unsolvableSlotIds: stage1.unsolvableSlotIds, timedOut: stage1.timedOut };
+}
+
+/**
+ * Cross-group search for `sameGroupRequired` tasks. Runs `searchOneGroup`
+ * per candidate group and merges all valid plans into one ranked pool.
+ *
+ * Why pool-and-merge instead of pick-the-best-group: a 2/3 fill in group X
+ * may have a much better composite delta than a 3/3 fill in group Y; and
+ * the user gets to see alternatives across groups. The auto-pick still
+ * favours full fills via the disruption tiebreaks (more participants
+ * changed in a 3/3 plan only beats fewer-changed 2/3 when score difference
+ * is below epsilon).
+ */
+function searchAcrossGroups(
+  task: Task,
+  placeholders: PlaceholderInfo,
+  slotCtx: SlotEnumerationContext,
+  baselineComposite: number,
+  caps: ChainEnumerationCaps,
+  allowLowPriority: boolean,
+  maxPlans: number,
+  baseBudgetMs: number,
+): { plans: InjectionPlan[]; unsolvableSlotIds: string[]; timedOut: boolean } {
+  const groups = new Set<string>();
+  for (const p of slotCtx.schedule.participants) {
+    for (const slot of task.slots) {
+      if (levelCertCompatible(p, slot, slotCtx.disabledHC)) {
+        groups.add(p.group);
+        break;
+      }
+    }
+  }
+  if (groups.size === 0) {
+    return { plans: [], unsolvableSlotIds: task.slots.map((s) => s.slotId), timedOut: false };
+  }
+
+  const allPlans: InjectionPlan[] = [];
+  // Track per-slot solvability across all groups: a slot is unsolvable only
+  // if NO group could produce a chain for it.
+  const perSlotAnySolvable = new Map<string, boolean>();
+  for (const s of task.slots) perSlotAnySolvable.set(s.slotId, false);
+  let timedOut = false;
+
+  for (const g of groups) {
+    const r = searchOneGroup(
+      task,
+      placeholders,
+      slotCtx,
+      baselineComposite,
+      caps,
+      allowLowPriority,
+      g,
+      maxPlans,
+      baseBudgetMs,
+    );
+    timedOut = timedOut || r.timedOut;
+    for (const p of r.plans) allPlans.push(p);
+    // A slot is solvable in this group if it's NOT in r.unsolvableSlotIds.
+    const unsolvableSet = new Set(r.unsolvableSlotIds);
+    for (const s of task.slots) {
+      if (!unsolvableSet.has(s.slotId)) perSlotAnySolvable.set(s.slotId, true);
+    }
+  }
+
+  const unsolvableSlotIds = task.slots.filter((s) => !perSlotAnySolvable.get(s.slotId)).map((s) => s.slotId);
+  return { plans: allPlans, unsolvableSlotIds, timedOut };
+}
+
+// ─── Plan ranking ───────────────────────────────────────────────────────────
+
+/**
+ * Sort plans by composite delta with disruption-minimising tiebreaks. Mirrors
+ * the FSOS ranking pattern; for injection we add additional tiebreaks to
+ * prefer shallower chain distributions and avoid fallback-depth plans when
+ * shallower ones are equally good.
+ */
+function sortPlans(plans: InjectionPlan[]): InjectionPlan[] {
+  const EPS = 0.1;
+  const out = [...plans];
+  out.sort((a, b) => {
+    // Primary: prefer fully-staffed plans over partial.
+    if (a.isPartial !== b.isPartial) return a.isPartial ? 1 : -1;
+    if (a.filledCount !== b.filledCount) return b.filledCount - a.filledCount;
+    // Score: composite delta (higher = better).
+    const delta = b.compositeDelta - a.compositeDelta;
+    if (Math.abs(delta) > EPS) return delta;
+    // Disruption: fewer participants changed.
+    if (a.perParticipantChanges.length !== b.perParticipantChanges.length) {
+      return a.perParticipantChanges.length - b.perParticipantChanges.length;
+    }
+    // Chain length: shorter = less disruption.
+    const aSwaps = a.outcomes.reduce((n, o) => n + 1 + (o.swapChain?.length ?? 0), 0);
+    const bSwaps = b.outcomes.reduce((n, o) => n + 1 + (o.swapChain?.length ?? 0), 0);
+    if (aSwaps !== bSwaps) return aSwaps - bSwaps;
+    // Depth distribution: prefer shallower (more depth-1 chains).
+    const aShallow = a.depthHistogram[1] * 4 + a.depthHistogram[2] * 2 + a.depthHistogram[3];
+    const bShallow = b.depthHistogram[1] * 4 + b.depthHistogram[2] * 2 + b.depthHistogram[3];
+    if (aShallow !== bShallow) return bShallow - aShallow;
+    // Last tiebreak: avoid fallback-depth plans when an equal alternative exists.
+    const aFb = a.fallbackDepthUsed ?? 0;
+    const bFb = b.fallbackDepthUsed ?? 0;
+    return aFb - bFb;
+  });
+  return out;
+}
+
+// ─── Diagnose unfillable slots (final state) ───────────────────────────────
+
+/** Highest-listed code wins. Same priority as the legacy diagnose path. */
 const UNFILLABLE_PRIORITY: RejectionCode[] = [
   'HC-5',
   'HC-7',
@@ -723,14 +1063,28 @@ const UNFILLABLE_PRIORITY: RejectionCode[] = [
   'HC-1',
 ];
 
-function diagnoseUnfillableSlot(ctx: StaffingCtx, slot: SlotRequirement): string {
+/**
+ * Diagnose why no participant could fill a slot, given the FINAL composed
+ * state (so HC-5/HC-7 reflect what would block a fill in this plan).
+ *
+ * Walks every real participant and tallies the first failing HC. Returns
+ * the highest-priority rejection in Hebrew.
+ */
+function diagnoseUnfillableSlotAtFinalState(
+  slotCtx: SlotEnumerationContext,
+  task: Task,
+  slot: SlotRequirement,
+  finalAssignments: Assignment[],
+  groupLock: string | null,
+): string {
   const tally = new Map<RejectionCode, number>();
   const bump = (code: RejectionCode) => tally.set(code, (tally.get(code) ?? 0) + 1);
-  const disabled = ctx.disabledHC;
-  const thisTaskAssignments = taskAssignments(ctx.task.id, ctx.schedule.assignments);
+  const disabled = slotCtx.disabledHC;
+  const taskMap = slotCtx.taskMap;
+  const finalTaskAssignments = finalAssignments.filter((a) => a.taskId === task.id);
 
-  for (const p of ctx.schedule.participants) {
-    if (ctx.task.sameGroupRequired && ctx.groupLock !== null && p.group !== ctx.groupLock) {
+  for (const p of slotCtx.schedule.participants) {
+    if (groupLock !== null && p.group !== groupLock) {
       bump('HC-4');
       continue;
     }
@@ -746,8 +1100,16 @@ function diagnoseUnfillableSlot(ctx: StaffingCtx, slot: SlotRequirement): string
       bump('HC-2');
       continue;
     }
-    const pAssignments = participantAssignments(p.id, ctx.schedule.assignments);
-    const code = getRejectionReason(p, ctx.task, slot, pAssignments, ctx.taskMap, eligOpts(ctx, thisTaskAssignments));
+    const pAssignments = finalAssignments.filter((a) => a.participantId === p.id);
+    const code = getRejectionReason(p, task, slot, pAssignments, taskMap, {
+      checkSameGroup: true,
+      taskAssignments: finalTaskAssignments,
+      participantMap: slotCtx.participantMap,
+      disabledHC: disabled,
+      restRuleMap: slotCtx.restRuleMap,
+      scheduleContext: slotCtx.scheduleContext,
+      extraUnavailability: slotCtx.extraUnavailability,
+    });
     if (code) bump(code);
   }
 
@@ -757,231 +1119,219 @@ function diagnoseUnfillableSlot(ctx: StaffingCtx, slot: SlotRequirement): string
   return 'אין מועמד כשיר';
 }
 
-function staffSlot(ctx: StaffingCtx, slot: SlotRequirement): SlotStaffingOutcome {
-  const label = slotLabel(slot, ctx.task);
+// ─── Apply / rollback ───────────────────────────────────────────────────────
 
-  // Phase 1: direct fill.
-  const direct = pickDirectCandidate(ctx, slot);
-  if (direct) {
-    createAssignment(ctx, slot, direct.id);
-    if (ctx.task.sameGroupRequired && ctx.groupLock === null) ctx.groupLock = direct.group;
-    return { slotId: slot.slotId, slotLabel: label, filled: true, participantId: direct.id };
-  }
-
-  // Phase 2: depth-2 displacement.
-  const d2 = pickDisplaceChainDepth2(ctx, slot);
-  if (d2) {
-    mutateAssignment(ctx, d2.displaced.id, d2.backfill.id);
-    createAssignment(ctx, slot, d2.fill.id);
-    if (ctx.task.sameGroupRequired && ctx.groupLock === null) ctx.groupLock = d2.fill.group;
-    return {
-      slotId: slot.slotId,
-      slotLabel: label,
-      filled: true,
-      participantId: d2.fill.id,
-      swapChain: [
-        {
-          assignmentId: d2.displaced.id,
-          fromParticipantId: d2.fill.id,
-          toParticipantId: d2.backfill.id,
-          taskId: d2.displacedTask.id,
-          taskName: d2.displacedTask.name,
-          slotLabel: slotLabel(d2.displacedSlot, d2.displacedTask),
-        },
-      ],
-    };
-  }
-
-  // Phase 3: depth-3 displacement.
-  const d3 = pickDisplaceChainDepth3(ctx, slot);
-  if (d3) {
-    // Apply in order: move B to r first, then A to q, then create p's new assignment.
-    // This is only correctness-neutral because we already validated each link; order
-    // within the chain doesn't change final state, but applying leaf-first keeps
-    // intermediate state valid if any later code were to inspect it.
-    mutateAssignment(ctx, d3.displacedB.id, d3.backfillR.id);
-    mutateAssignment(ctx, d3.displacedA.id, d3.backfillQ.id);
-    createAssignment(ctx, slot, d3.fill.id);
-    if (ctx.task.sameGroupRequired && ctx.groupLock === null) ctx.groupLock = d3.fill.group;
-    return {
-      slotId: slot.slotId,
-      slotLabel: label,
-      filled: true,
-      participantId: d3.fill.id,
-      swapChain: [
-        {
-          assignmentId: d3.displacedA.id,
-          fromParticipantId: d3.fill.id,
-          toParticipantId: d3.backfillQ.id,
-          taskId: d3.displacedATask.id,
-          taskName: d3.displacedATask.name,
-          slotLabel: slotLabel(d3.displacedASlot, d3.displacedATask),
-        },
-        {
-          assignmentId: d3.displacedB.id,
-          fromParticipantId: d3.backfillQ.id,
-          toParticipantId: d3.backfillR.id,
-          taskId: d3.displacedBTask.id,
-          taskName: d3.displacedBTask.name,
-          slotLabel: slotLabel(d3.displacedBSlot, d3.displacedBTask),
-        },
-      ],
-    };
-  }
-
-  // All phases failed.
-  return { slotId: slot.slotId, slotLabel: label, filled: false, reason: diagnoseUnfillableSlot(ctx, slot) };
+interface ApplyCtx {
+  schedule: Schedule;
+  engine: SchedulingEngine;
+  task: Task;
+  placeholders: PlaceholderInfo;
+  /** All assignments created by this injection (placeholders). Used for full rollback. */
+  createdAssignmentIds: string[];
+  /** Pre-mutation snapshots for any donor assignments touched by an applied plan. */
+  mutatedSnapshots: Map<string, { participantId: string; status: AssignmentStatus; updatedAt: Date }>;
+  /** True once apply() succeeded; rollback after this preserves the apply's commit semantics. */
+  applied: boolean;
+  /** Track which placeholders were removed during apply (for partial plans) so re-apply doesn't double-remove. */
+  removedPlaceholderIds: Set<string>;
 }
 
-// ─── Full-task trials (shared by the simple and group-backtracking paths) ──
-
-interface TrialOutcome {
-  outcomes: SlotStaffingOutcome[];
-  filledCount: number;
-  impactSum: number;
+function snapshotIfUnseen(ctx: ApplyCtx, a: Assignment): void {
+  if (ctx.mutatedSnapshots.has(a.id)) return;
+  ctx.mutatedSnapshots.set(a.id, {
+    participantId: a.participantId,
+    status: a.status,
+    updatedAt: a.updatedAt,
+  });
 }
 
-function runTrial(ctx: StaffingCtx): TrialOutcome {
-  const ordered = orderSlotsByTightness(ctx, ctx.task.slots);
-  const outcomes: SlotStaffingOutcome[] = [];
-  let impactSum = 0;
-  for (const slot of ordered) {
-    const outcome = staffSlot(ctx, slot);
-    outcomes.push(outcome);
-    // Implicit impact by chain length: unfilled 0, direct 1, d2 2, d3 3.
-    if (!outcome.filled) impactSum += 0;
-    else impactSum += 1 + (outcome.swapChain?.length ?? 0);
+function applyInjectionPlan(ctx: ApplyCtx, plan: InjectionPlan): StaffingReport {
+  const now = new Date();
+
+  // Apply all swaps in the chosen plan.
+  const seenAssignments = new Set<string>();
+  for (const slot of ctx.task.slots) {
+    const chain = plan._chainBySlotId.get(slot.slotId);
+    if (!chain) continue;
+    for (const sw of chain.swaps) {
+      if (seenAssignments.has(sw.assignmentId)) continue;
+      seenAssignments.add(sw.assignmentId);
+      const a = ctx.schedule.assignments.find((x) => x.id === sw.assignmentId);
+      if (!a) continue;
+      snapshotIfUnseen(ctx, a);
+      a.participantId = sw.toParticipantId;
+      a.status = AssignmentStatus.Manual;
+      a.updatedAt = now;
+    }
   }
-  // Re-map outcomes to the task's original slot order so the UI matches the spec.
-  const byId = new Map(outcomes.map((o) => [o.slotId, o]));
-  // biome-ignore lint/style/noNonNullAssertion: every slot processed in the loop
-  const ordered2 = ctx.task.slots.map((s) => byId.get(s.slotId)!);
-  return { outcomes: ordered2, filledCount: outcomes.filter((o) => o.filled).length, impactSum };
+
+  // Remove unfilled placeholders so the schedule doesn't carry synthetic
+  // participants. Fully-rolled-back schedules will re-add nothing — that's
+  // correct: those slots were never staffed.
+  const filledPlaceholderIds = new Set<string>();
+  for (const slot of ctx.task.slots) {
+    const chain = plan._chainBySlotId.get(slot.slotId);
+    if (!chain) continue;
+    const ph = ctx.placeholders.bySlot.get(slot.slotId);
+    if (ph) filledPlaceholderIds.add(ph.id);
+  }
+  for (const phId of ctx.placeholders.ids) {
+    if (filledPlaceholderIds.has(phId)) continue;
+    if (ctx.removedPlaceholderIds.has(phId)) continue;
+    const idx = ctx.schedule.assignments.findIndex((a) => a.id === phId);
+    if (idx >= 0) ctx.schedule.assignments.splice(idx, 1);
+    ctx.removedPlaceholderIds.add(phId);
+  }
+
+  ctx.applied = true;
+
+  return {
+    task: ctx.task,
+    outcomes: plan.outcomes,
+    fullyStaffed: plan.outcomes.every((o) => o.filled),
+    compositeDelta: plan.compositeDelta,
+    rollback: () => rollbackAll(ctx),
+  };
 }
 
-// ─── Group backtracking for sameGroupRequired tasks ─────────────────────────
+function rollbackAll(ctx: ApplyCtx): void {
+  // Revert any donor / placeholder mutations.
+  for (const [id, snap] of ctx.mutatedSnapshots) {
+    const a = ctx.schedule.assignments.find((x) => x.id === id);
+    if (!a) continue;
+    a.participantId = snap.participantId;
+    a.status = snap.status;
+    a.updatedAt = snap.updatedAt;
+  }
+  ctx.mutatedSnapshots.clear();
 
-/**
- * Candidate groups: those with at least one participant level+cert-compatible
- * with at least one slot. Filters wildly-unqualified groups early to keep
- * the backtracking loop bounded.
- */
-function candidateGroups(ctx: StaffingCtx): string[] {
-  const groups = new Set<string>();
-  for (const p of ctx.schedule.participants) {
-    for (const slot of ctx.task.slots) {
-      if (levelCertCompatible(p, slot, ctx.disabledHC)) {
-        groups.add(p.group);
-        break;
+  // Remove every placeholder assignment (whether mutated, removed, or still
+  // synthetic) — the entire injection unwinds back to pre-call state.
+  if (ctx.placeholders.ids.size > 0) {
+    for (let i = ctx.schedule.assignments.length - 1; i >= 0; i--) {
+      if (ctx.placeholders.ids.has(ctx.schedule.assignments[i].id)) {
+        ctx.schedule.assignments.splice(i, 1);
       }
     }
   }
-  return [...groups];
+  ctx.removedPlaceholderIds.clear();
+
+  // Remove the injected task itself.
+  const tIdx = ctx.schedule.tasks.findIndex((t) => t.id === ctx.task.id);
+  if (tIdx >= 0) ctx.schedule.tasks.splice(tIdx, 1);
+  ctx.engine.removeTask(ctx.task.id);
 }
+
+// ─── Build the empty/all-unfilled report fallback ───────────────────────────
 
 /**
- * Run one trial per candidate group against the same clean baseline, record
- * only the `TrialOutcome` data for each, then replay the winner so its
- * mutations end up materialized on the schedule.
- *
- * Why dry-run + replay rather than keep-the-best in place:
- *   - `ctx.createdAssignmentIds` is a single shared log; scoping it per trial
- *     would complicate every caller of createAssignment/mutateAssignment.
- *   - More importantly, if trial N's assignments are left in place while
- *     trial N+1 runs, HC-4 (sameGroupRequired) rejects every candidate from
- *     a different group, so later trials are evaluated against a polluted
- *     baseline and score 0 by construction. Running each trial from the
- *     same clean state is the only way to compare groups fairly.
- *
- * `runTrial` is deterministic over `ctx.schedule` state (stable participant
- * iteration, stable sort, no RNG in placement decisions), so replaying the
- * winning group produces the same outcomes we recorded. A dev-mode sanity
- * check asserts this; if it ever diverges we want to know loudly.
+ * Build a "no plan available" report. Used when search returns zero plans
+ * — the task is committed empty and the report explains per slot why no
+ * candidate could fill it. The caller can choose to rollback (cancel) or
+ * commit (accept the empty task).
  */
-function runWithGroupBacktracking(ctx: StaffingCtx): TrialOutcome {
-  const groups = candidateGroups(ctx);
-  if (groups.length === 0) {
-    // Nothing to try — return an all-unfilled trial.
-    return runTrial(ctx);
-  }
-
-  let bestOutcome: TrialOutcome | null = null;
-  let bestGroup: string | null = null;
-
-  for (const g of groups) {
-    ctx.groupLock = g;
-    const trial = runTrial(ctx);
-    const isBetter =
-      bestOutcome === null ||
-      trial.filledCount > bestOutcome.filledCount ||
-      (trial.filledCount === bestOutcome.filledCount && trial.impactSum < bestOutcome.impactSum);
-
-    // Always roll this trial back so the next group is evaluated from the
-    // same clean baseline. The winner is materialized by a replay below.
-    rollbackAssignments(ctx);
-    if (isBetter) {
-      bestOutcome = trial;
-      bestGroup = g;
-    }
-  }
-
-  if (bestGroup === null) return runTrial(ctx);
-
-  // Replay the winner to materialize its mutations on the schedule.
-  ctx.groupLock = bestGroup;
-  const replay = runTrial(ctx);
-
-  if (
-    bestOutcome !== null &&
-    (replay.filledCount !== bestOutcome.filledCount || replay.impactSum !== bestOutcome.impactSum)
-  ) {
-    // Determinism broken: `runTrial` produced a different result for the
-    // same inputs. Surface loudly rather than silently ship a preview that
-    // doesn't match the schedule state.
-    console.warn('injectAndStaff: replay diverged from recorded outcome', {
-      group: bestGroup,
-      recorded: bestOutcome,
-      replay,
-    });
-  }
-  return replay;
+function buildEmptyPlan(
+  task: Task,
+  slotCtx: SlotEnumerationContext,
+  groupLock: string | null,
+  finalAssignments: Assignment[],
+): InjectionPlan {
+  const outcomes: SlotStaffingOutcome[] = task.slots.map((slot) => ({
+    slotId: slot.slotId,
+    slotLabel: slotLabel(slot, task),
+    filled: false,
+    reason: diagnoseUnfillableSlotAtFinalState(slotCtx, task, slot, finalAssignments, groupLock),
+  }));
+  const chainBySlotId = new Map<string, CandidateChain | null>();
+  for (const slot of task.slots) chainBySlotId.set(slot.slotId, null);
+  return {
+    id: `inj-empty-${Date.now()}`,
+    rank: 1,
+    compositeDelta: 0,
+    depthHistogram: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+    perParticipantChanges: [],
+    violations: [],
+    isPartial: true,
+    outcomes,
+    filledCount: 0,
+    totalSlotCount: task.slots.length,
+    groupLock,
+    _chainBySlotId: chainBySlotId,
+  };
 }
 
-// ─── Entry point ────────────────────────────────────────────────────────────
+// ─── Public entry: searchInjectionPlans (multi-plan) ────────────────────────
 
-export function injectAndStaff(
+/**
+ * Search for staffing plans for a new task. Inserts the task + placeholder
+ * assignments into the schedule, enumerates per-slot chains via
+ * `enumerateChainsForSlot`, joins them via DFS composition, and returns a
+ * ranked + diversified pool of plans. Nothing is applied until the caller
+ * invokes `result.apply(planId)`. Calling `result.cancel()` removes the
+ * injected task without applying any plan.
+ */
+export function searchInjectionPlans(
   engine: SchedulingEngine,
   spec: InjectedTaskSpec,
   opts: InjectStaffOptions = {},
-): { report: StaffingReport | null; error?: string } {
+): { result: InjectionResult | null; error?: 'no-schedule' | 'invalid-spec' | 'past-time' } {
   const schedule = engine.getSchedule();
-  if (!schedule) return { report: null, error: 'no-schedule' };
+  if (!schedule) return { result: null, error: 'no-schedule' };
 
   const task = buildInjectedTask(spec, schedule.periodStart, schedule.periodDays, engine.getDayStartHour());
-  if (!task) return { report: null, error: 'invalid-spec' };
+  if (!task) return { result: null, error: 'invalid-spec' };
 
-  // Live Mode gate: refuse to touch engine/schedule if the resolved start
-  // is before the anchor. Defense-in-depth for the UI's day/hour blocking.
   if (opts.anchor) {
     const gate = assertInjectableTimeBlock(task.timeBlock, opts.anchor);
-    if (!gate.ok) return { report: null, error: gate.reason };
+    if (!gate.ok) return { result: null, error: gate.reason };
   }
 
-  // Commit the task to engine + snapshot. All mutations below are reverted
-  // by the returned rollback() if the caller cancels.
+  // Add task + placeholders to the schedule (always cleaned up via rollback).
   engine.addTask(task);
   schedule.tasks.push(task);
+  const placeholders = installPlaceholders(schedule, task);
+
+  // Build search infrastructure.
+  const dayStartHour = engine.getDayStartHour();
+  const config = engine.getConfig();
+  const scoreCtx = engine.buildScoreContext();
+  if (!scoreCtx) {
+    // Should never happen post-importSchedule. Defensive cleanup.
+    for (let i = schedule.assignments.length - 1; i >= 0; i--) {
+      if (placeholders.ids.has(schedule.assignments[i].id)) schedule.assignments.splice(i, 1);
+    }
+    const tIdx = schedule.tasks.findIndex((t) => t.id === task.id);
+    if (tIdx >= 0) schedule.tasks.splice(tIdx, 1);
+    engine.removeTask(task.id);
+    return { result: null, error: 'invalid-spec' };
+  }
 
   const taskMap = new Map<string, Task>();
   for (const t of schedule.tasks) taskMap.set(t.id, t);
   const participantMap = new Map<string, Participant>();
   for (const p of schedule.participants) participantMap.set(p.id, p);
 
-  const dayStartHour = engine.getDayStartHour();
-  const injectedDayKey = operationalDateKey(task.timeBlock.start, dayStartHour);
+  const assignmentsByParticipant = new Map<string, Assignment[]>();
+  const assignmentsByTask = new Map<string, Assignment[]>();
+  for (const a of schedule.assignments) {
+    let l = assignmentsByParticipant.get(a.participantId);
+    if (!l) {
+      l = [];
+      assignmentsByParticipant.set(a.participantId, l);
+    }
+    l.push(a);
+    let tl = assignmentsByTask.get(a.taskId);
+    if (!tl) {
+      tl = [];
+      assignmentsByTask.set(a.taskId, tl);
+    }
+    tl.push(a);
+  }
 
-  // HC-3 layers schedule-scoped unavailability on top of master availability.
-  // Pull the frozen snapshot — this is what the engine validates against.
+  // Use the engine's frozen disabled-HC set as-is. Per-injection relaxation
+  // is intentionally not supported — HC enable/disable is global config only.
+  const disabledHC = engine.getDisabledHC();
+
   const scheduleUnavail: ScheduleUnavailability[] = schedule.scheduleUnavailability ?? [];
   const extraUnavailability = scheduleUnavail.map((u) => ({
     participantId: u.participantId,
@@ -989,54 +1339,143 @@ export function injectAndStaff(
     end: u.end,
   }));
 
-  const ctx: StaffingCtx = {
-    task,
-    engine,
+  const baselineScore = computeScheduleScore(
+    schedule.tasks,
+    schedule.participants,
+    schedule.assignments,
+    config,
+    scoreCtx,
+  );
+
+  const slotCtx: SlotEnumerationContext = {
     schedule,
     taskMap,
     participantMap,
-    disabledHC: engine.getDisabledHC(),
+    assignmentsByParticipant,
+    assignmentsByTask,
+    // For non-Live-Mode callers (CLI/tests) we use the epoch so every task is
+    // "future" and every assignment "modifiable" (matching the legacy
+    // injection behaviour, which had no temporal gate beyond `assertInjectableTimeBlock`).
+    anchor: opts.anchor ?? new Date(0),
+    disabledHC,
     restRuleMap: engine.getRestRuleMap(),
     scheduleContext: engine.getScheduleContext(),
+    config,
+    scoreCtx,
+    baselineComposite: baselineScore.compositeScore,
     extraUnavailability,
-    allowLowPriority: opts.allowLowPriority ?? true,
-    dayStartHour,
-    injectedDayKey,
-    groupLock: null,
-    createdAssignmentIds: [],
-    mutatedAssignmentSnapshots: new Map(),
+    excludeParticipantIds: new Set(),
   };
 
-  const trial = task.sameGroupRequired ? runWithGroupBacktracking(ctx) : runTrial(ctx);
+  const allowLowPriority = opts.allowLowPriority ?? true;
+  const maxPlans = opts.maxPlans ?? 3;
+  const baseBudgetMs = opts.timeBudgetMs ?? (task.slots.length >= 5 ? 1500 : 500);
+  const caps = opts.caps ?? DEFAULT_CAPS;
 
-  // Reconcile outcomes against actual schedule state. Guards against any
-  // future regression that lets the two diverge (as previously happened
-  // when sameGroup backtracking rolled back the winning trial's state).
-  // If a filled outcome has no matching assignment, we flip it to unfilled
-  // so the preview never claims staffing that doesn't exist on the schedule.
-  const injectedTaskAssignments = taskAssignments(task.id, schedule.assignments);
-  const assignedByKey = new Map<string, Assignment>();
-  for (const a of injectedTaskAssignments) assignedByKey.set(`${a.slotId}|${a.participantId}`, a);
-  for (const o of trial.outcomes) {
-    if (!o.filled || !o.participantId) continue;
-    if (!assignedByKey.has(`${o.slotId}|${o.participantId}`)) {
-      console.warn('injectAndStaff: outcome claims filled but no assignment exists', {
-        taskId: task.id,
-        slotId: o.slotId,
-        participantId: o.participantId,
-      });
-      o.filled = false;
-      o.participantId = undefined;
-      o.swapChain = undefined;
-      o.reason = 'inconsistent';
-    }
+  const searchResult = task.sameGroupRequired
+    ? searchAcrossGroups(
+        task,
+        placeholders,
+        slotCtx,
+        baselineScore.compositeScore,
+        caps,
+        allowLowPriority,
+        maxPlans,
+        baseBudgetMs,
+      )
+    : searchOneGroup(
+        task,
+        placeholders,
+        slotCtx,
+        baselineScore.compositeScore,
+        caps,
+        allowLowPriority,
+        null,
+        maxPlans,
+        baseBudgetMs,
+      );
+
+  // Rank and diversify.
+  let ranked: InjectionPlan[];
+  if (searchResult.plans.length === 0) {
+    // Last-resort: fabricate a single all-unfilled plan so the UI has something
+    // coherent to display ("no candidate available, here's why per slot").
+    ranked = [buildEmptyPlan(task, slotCtx, null, schedule.assignments)];
+  } else {
+    const sorted = sortPlans(searchResult.plans);
+    ranked = selectDiversePlans(sorted, maxPlans);
+    for (let i = 0; i < ranked.length; i++) ranked[i].rank = i + 1;
   }
 
-  const report: StaffingReport = {
+  const ctx: ApplyCtx = {
+    schedule,
+    engine,
     task,
-    outcomes: trial.outcomes,
-    fullyStaffed: trial.outcomes.every((o) => o.filled),
-    rollback: buildFullRollback(ctx),
+    placeholders,
+    createdAssignmentIds: [...placeholders.ids],
+    mutatedSnapshots: new Map(),
+    applied: false,
+    removedPlaceholderIds: new Set(),
   };
+
+  return {
+    result: {
+      task,
+      plans: ranked,
+      unsolvableSlotIds: searchResult.unsolvableSlotIds,
+      timedOut: searchResult.timedOut,
+      apply: (planId: string) => {
+        const plan = ranked.find((p) => p.id === planId);
+        if (!plan) return null;
+        return applyInjectionPlan(ctx, plan);
+      },
+      cancel: () => rollbackAll(ctx),
+    },
+  };
+}
+
+// ─── Public entry: injectAndStaff (back-compat: auto-apply top plan) ────────
+
+/**
+ * Backwards-compatible entry: search + auto-apply the top-ranked plan.
+ *
+ * Returns `{ report, error }` where `report` represents the applied plan
+ * (or, when no plan is found, an all-unfilled report). Existing callers
+ * (legacy CLI scripts, tests) keep working unchanged. New UI callers should
+ * use `searchInjectionPlans()` to present alternatives.
+ *
+ * The returned `report.rollback()` removes the entire injection (task +
+ * mutations + placeholders), exactly like before.
+ */
+export function injectAndStaff(
+  engine: SchedulingEngine,
+  spec: InjectedTaskSpec,
+  opts: InjectStaffOptions = {},
+): { report: StaffingReport | null; error?: string } {
+  const { result, error } = searchInjectionPlans(engine, spec, opts);
+  if (!result) return { report: null, error };
+  const top = result.plans[0];
+  if (!top) {
+    // Should never happen: searchInjectionPlans always returns at least the
+    // empty-plan fallback. Defensive: surface a no-staff report.
+    const cancelReport: StaffingReport = {
+      task: result.task,
+      outcomes: result.task.slots.map((s) => ({
+        slotId: s.slotId,
+        slotLabel: slotLabel(s, result.task),
+        filled: false,
+        reason: 'אין מועמד כשיר',
+      })),
+      fullyStaffed: false,
+      rollback: result.cancel,
+    };
+    return { report: cancelReport };
+  }
+  const report = result.apply(top.id);
+  if (!report) {
+    // Shouldn't happen — apply only fails on unknown planId.
+    result.cancel();
+    return { report: null, error: 'invalid-spec' };
+  }
   return { report };
 }

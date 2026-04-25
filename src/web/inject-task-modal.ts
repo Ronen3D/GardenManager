@@ -5,17 +5,34 @@
  *
  * Flow:
  *   1. User fills a form (name, day/time/duration, slot levels + certs, flags).
- *   2. User clicks "הוסף ושבץ" → we call `injectAndStaff()`.
- *   3. A preview shows per-slot staffing outcomes.
- *   4. User clicks "אשר" → revalidate + persist; optionally also save as an
- *      OT in the live store (so it survives regeneration).
- *      User clicks "בטל" → rollback via the report helper.
+ *   2. User clicks "הוסף ושבץ" → we call `searchInjectionPlans()`.
+ *   3. A "plans" view shows the top-ranked plan with alternatives and the
+ *      composite-score delta vs the current schedule. The user can switch
+ *      between alternatives and apply.
+ *   4. User clicks "אשר" → `result.apply(planId)` materialises the swaps and
+ *      onCommit handles persistence + revalidation.
+ *      User clicks "בטל" → `result.cancel()` removes task + placeholders.
  */
 
-import { type InjectedTaskSpec, injectAndStaff, type StaffingReport } from '../engine/inject';
+import {
+  type InjectedTaskSpec,
+  type InjectionPlan,
+  type InjectionResult,
+  type StaffingReport,
+  searchInjectionPlans,
+} from '../engine/inject';
 import { getInjectStartFloor, isDayModifiable } from '../engine/temporal';
-import { Level, type Schedule, type SchedulingEngine, type SlotTemplate, type SubTeamTemplate } from '../index';
+import {
+  Level,
+  type Participant,
+  type Schedule,
+  type SchedulingEngine,
+  type SlotTemplate,
+  type SubTeamTemplate,
+  type Task,
+} from '../index';
 import * as store from './config-store';
+import { isTouchDevice } from './responsive';
 import { operationalHourOrder } from './schedule-utils';
 import { escHtml, stripDayPrefix } from './ui-helpers';
 
@@ -49,7 +66,6 @@ export function initInjectTaskModal(ctx: InjectTaskContext): void {
 
 // ─── Modal state ────────────────────────────────────────────────────────────
 
-/** Draft form state while the user is composing. */
 interface DraftState {
   name: string;
   dayIndex: number;
@@ -74,10 +90,14 @@ interface DraftSlot {
 }
 
 let _draft: DraftState | null = null;
-let _phase: 'form' | 'preview' = 'form';
-let _lastReport: StaffingReport | null = null;
+let _phase: 'form' | 'plans' = 'form';
+let _searchResult: InjectionResult | null = null;
+let _selectedPlanId: string | null = null;
 let _lastSpec: InjectedTaskSpec | null = null;
 let _escHandler: ((e: KeyboardEvent) => void) | null = null;
+
+/** Whether we've already called onCommit (so the close handler doesn't rollback). */
+let _committed = false;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -86,8 +106,10 @@ export function openInjectTaskModal(): void {
   if (!schedule) return;
   _draft = makeDefaultDraft(schedule, getAnchor());
   _phase = 'form';
-  _lastReport = null;
+  _searchResult = null;
+  _selectedPlanId = null;
   _lastSpec = null;
+  _committed = false;
   render();
 }
 
@@ -98,17 +120,19 @@ function getAnchor(): Date | null {
 }
 
 export function closeInjectTaskModal(): void {
-  // If a report exists but was not committed, roll back before closing.
-  if (_phase === 'preview' && _lastReport) {
-    _lastReport.rollback();
+  // If a search produced a result but we never applied/committed, roll back.
+  if (_phase === 'plans' && _searchResult && !_committed) {
+    _searchResult.cancel();
     const engine = _ctx?.getEngine();
     engine?.revalidateFull();
   }
   document.getElementById('inject-modal-backdrop')?.remove();
   _draft = null;
   _phase = 'form';
-  _lastReport = null;
+  _searchResult = null;
+  _selectedPlanId = null;
   _lastSpec = null;
+  _committed = false;
   if (_escHandler) {
     document.removeEventListener('keydown', _escHandler);
     _escHandler = null;
@@ -120,8 +144,6 @@ export function closeInjectTaskModal(): void {
 function makeDefaultDraft(schedule: Schedule, anchor: Date | null): DraftState {
   const dsh = schedule.algorithmSettings.dayStartHour;
 
-  // Pick the first operational day that still has at least one future minute.
-  // In non-Live-Mode this is always day 1; in Live Mode it skips past days.
   let dayIndex = 1;
   if (anchor) {
     for (let d = 1; d <= schedule.periodDays; d++) {
@@ -132,14 +154,11 @@ function makeDefaultDraft(schedule: Schedule, anchor: Date | null): DraftState {
     }
   }
 
-  // Default to the first operational hour of the chosen day.
   let startHour = dsh;
   let startMinute = 0;
   if (anchor) {
     const floor = getInjectStartFloor(dayIndex, schedule.periodStart, anchor, dsh);
     if (floor) {
-      // Round the floor up to the next 10-minute step so the default lands on
-      // a value the minute dropdown actually exposes.
       startHour = floor.hourMin;
       startMinute = Math.ceil(floor.minuteMin / 10) * 10;
       if (startMinute >= 60) {
@@ -184,8 +203,6 @@ function makeDefaultSlot(): DraftSlot {
 // ─── Rendering ──────────────────────────────────────────────────────────────
 
 function render(): void {
-  // Preserve body scroll so in-form re-renders (toggling a level, adding a
-  // slot) don't bounce the user back to the top.
   const prev = document.getElementById('inject-modal-backdrop');
   const prevScroll = prev?.querySelector<HTMLElement>('.inject-body')?.scrollTop ?? 0;
   prev?.remove();
@@ -193,7 +210,7 @@ function render(): void {
   const schedule = _ctx?.getSchedule();
   if (!schedule || !_draft) return;
 
-  const html = _phase === 'form' ? renderForm(schedule) : renderPreview(schedule);
+  const html = _phase === 'form' ? renderForm(schedule) : renderPlans(schedule);
   document.body.insertAdjacentHTML('beforeend', html);
   wireEvents();
 
@@ -208,9 +225,6 @@ function renderForm(schedule: Schedule): string {
   const anchor = getAnchor();
   const dsh = schedule.algorithmSettings.dayStartHour;
 
-  // Live Mode clamps: `hourMin`/`minuteMin` mark the first legal (hour, minute)
-  // on the operational ring for the selected day. Ordering is relative to
-  // `dsh`, not raw numeric — compare via `opIndex`.
   const floor = anchor ? getInjectStartFloor(d.dayIndex, schedule.periodStart, anchor, dsh) : null;
   const dayIsInjectable = anchor ? isDayModifiable(d.dayIndex, schedule.periodStart, anchor, dsh) : true;
   let hourMin = dsh;
@@ -224,8 +238,6 @@ function renderForm(schedule: Schedule): string {
     } else if (d.startHour === hourMin && d.startMinute < floor.minuteMin) {
       d.startMinute = floor.minuteMin;
     }
-    // Snap draft minute up to the next 10-minute step so the dropdown's
-    // selected option always matches a real <option value>.
     if (d.startMinute % 10 !== 0) {
       const snapped = Math.ceil(d.startMinute / 10) * 10;
       if (snapped >= 60) {
@@ -249,7 +261,6 @@ function renderForm(schedule: Schedule): string {
     if (!isDayModifiable(idx, schedule.periodStart, anchor, dsh)) {
       return `<option value="${idx}" disabled title="יום בעבר — לא ניתן להוסיף משימת חירום">יום ${idx} 🧊</option>`;
     }
-    // ⏳ when the anchor is inside this operational day — hour will be clamped.
     const opStart = new Date(
       schedule.periodStart.getFullYear(),
       schedule.periodStart.getMonth(),
@@ -283,8 +294,6 @@ function renderForm(schedule: Schedule): string {
       ? `<div class="inject-past-banner" role="alert">היום שנבחר בעבר — בחר יום עתידי.</div>`
       : '';
 
-  // Frozen map stores milliseconds; live store owns the human label. Prefer
-  // the live label when it still exists, fall back to the id otherwise.
   const restRuleOptions = [
     `<option value="">ללא</option>`,
     ...Object.entries(schedule.restRuleSnapshot).map(([id, ms]) => {
@@ -307,7 +316,7 @@ function renderForm(schedule: Schedule): string {
         <button class="inject-close" id="btn-inject-close" aria-label="סגור">✕</button>
       </div>
       <div class="inject-body">
-        <p class="inject-intro">המשימה תתווסף לתמונת המצב הנוכחית והמערכת תנסה לשבץ אליה משתתפים מהצוות הקיים. לאחר "צור שבצ״ק" חדש היא תימחק — אלא אם סימנת את התיבה להוסיף גם למסך המשימות.</p>
+        <p class="inject-intro">המשימה תתווסף לתמונת המצב הנוכחית והמערכת תחפש מספר תוכניות שיבוץ אפשריות. לאחר "צור שבצ״ק" חדש היא תימחק — אלא אם סימנת את התיבה להוסיף גם למסך המשימות.</p>
         ${pastTimeBanner}
         <section class="inject-section">
           <h4>פרטי משימה</h4>
@@ -356,7 +365,6 @@ function renderForm(schedule: Schedule): string {
 
 function renderSlotRow(slot: DraftSlot, idx: number, schedule: Schedule): string {
   const certDefs = store.getCertificationDefinitions().filter((c) => !c.deleted);
-  // Use the schedule's cert label snapshot so we show labels frozen at generation.
   const certLabel = (id: string): string => schedule.certLabelSnapshot[id] ?? id;
 
   const levelButtons = slot.levels
@@ -398,21 +406,104 @@ function renderSlotRow(slot: DraftSlot, idx: number, schedule: Schedule): string
   </div>`;
 }
 
-function renderPreview(schedule: Schedule): string {
-  const report = _lastReport!;
-  const pMap = new Map(schedule.participants.map((p) => [p.id, p]));
-  const ok = report.fullyStaffed;
+// ─── Plans phase rendering ──────────────────────────────────────────────────
 
+function renderPlans(schedule: Schedule): string {
+  const result = _searchResult!;
+  const selected = result.plans.find((p) => p.id === _selectedPlanId) ?? result.plans[0];
+  const pMap = new Map(schedule.participants.map((p) => [p.id, p]));
+
+  const summary = renderPlanSummaryBanner(selected, result);
+  const outcomesHtml = renderPlanOutcomes(selected, pMap);
+  const alternativesHtml = result.plans.length > 1 ? renderAlternatives(result.plans, selected.id, pMap) : '';
+  const triageHtml = renderTriagePanel(selected, result, schedule);
+
+  const canApply = selected.filledCount > 0;
+  const applyDisabled = !canApply ? 'disabled' : '';
+  const applyLabel = selected.isPartial ? 'אשר תוכנית חלקית' : 'אשר והוסף';
+
+  return `<div id="inject-modal-backdrop" class="inject-backdrop">
+    <div class="inject-modal">
+      <div class="inject-header">
+        <h3>תוכניות שיבוץ</h3>
+        <button class="inject-close" id="btn-inject-close" aria-label="סגור">✕</button>
+      </div>
+      <div class="inject-body">
+        ${summary}
+        ${triageHtml}
+        <div class="inject-outcomes">${outcomesHtml}</div>
+        ${alternativesHtml}
+      </div>
+      <div class="inject-footer">
+        <button class="btn-primary" id="btn-inject-confirm" ${applyDisabled}>${applyLabel}</button>
+        <button class="btn-outline" id="btn-inject-back">חזרה לעריכה</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderPlanSummaryBanner(plan: InjectionPlan, result: InjectionResult): string {
+  const deltaSign = plan.compositeDelta > 0.05 ? '+' : '';
+  const deltaClass =
+    plan.compositeDelta > 0.05
+      ? 'inject-delta--good'
+      : plan.compositeDelta < -0.05
+        ? 'inject-delta--bad'
+        : 'inject-delta--neutral';
+  const deltaText = `${deltaSign}${plan.compositeDelta.toFixed(1)}`;
+  const deltaLabel =
+    plan.compositeDelta > 0.05
+      ? 'שיפור בציון הכולל'
+      : plan.compositeDelta < -0.05
+        ? 'הרעה בציון הכולל'
+        : 'שינוי זניח בציון';
+
+  const fillPct = plan.totalSlotCount > 0 ? Math.round((plan.filledCount / plan.totalSlotCount) * 100) : 0;
+
+  let banners = '';
+  if (plan.fallbackDepthUsed) {
+    banners += `<div class="inject-banner inject-banner--warn">⚠️ נדרשה שרשרת מעמיקה (עומק ${plan.fallbackDepthUsed}) — אין חלופה קצרה יותר.</div>`;
+  }
+  if (plan.isPartial) {
+    banners += `<div class="inject-banner inject-banner--warn">⚠️ תוכנית חלקית — ${plan.totalSlotCount - plan.filledCount} משבצות נותרו ללא משתתף.</div>`;
+  }
+  if (plan.violations.length > 0) {
+    banners += `<div class="inject-banner inject-banner--err">⛔ התוכנית מפרה ${plan.violations.length} אילוצים קשיחים. שימוש זהיר.</div>`;
+  }
+  if (result.timedOut) {
+    banners += `<div class="inject-banner inject-banner--info">⏱ החיפוש הגיע למגבלת הזמן — ייתכנו תוכניות נוספות שלא נמצאו.</div>`;
+  }
+
+  // Group lock indicator (sameGroupRequired only).
+  const groupHtml = plan.groupLock ? `<span class="inject-summary-group">${escHtml(plan.groupLock)}</span>` : '';
+
+  return `<div class="inject-summary-banner">
+    <div class="inject-summary-row">
+      <span class="inject-summary-rank">תוכנית #${plan.rank}</span>
+      <span class="inject-summary-fill">${plan.filledCount}/${plan.totalSlotCount} משבצות (${fillPct}%)</span>
+      <span class="inject-summary-delta ${deltaClass}" title="${escHtml(deltaLabel)}">ציון: ${deltaText}</span>
+      ${groupHtml}
+    </div>
+    ${banners}
+  </div>`;
+}
+
+function renderPlanOutcomes(plan: InjectionPlan, pMap: Map<string, { name: string }>): string {
   let rows = '';
-  for (const o of report.outcomes) {
-    const pName = o.participantId ? (pMap.get(o.participantId)?.name ?? o.participantId) : '';
+  // Render participant names as hover-spans matching the rescue/quick-swap pattern.
+  // The data-pid + data-plan-id pair is what wirePlansEvents binds the tooltip to.
+  const pHover = (pid: string | undefined): string => {
+    if (!pid) return '';
+    const name = pMap.get(pid)?.name ?? pid;
+    return `<span class="rescue-participant-hover" data-pid="${escHtml(pid)}" data-plan-id="${escHtml(plan.id)}">${escHtml(name)}</span>`;
+  };
+  for (const o of plan.outcomes) {
     const chainHtml = o.swapChain?.length
       ? `<div class="inject-outcome-chain">↳ ${o.swapChain
-          .map((s) => {
-            const fromP = pMap.get(s.fromParticipantId)?.name ?? s.fromParticipantId;
-            const toP = pMap.get(s.toParticipantId)?.name ?? s.toParticipantId;
-            return `${escHtml(toP)} מחליף את ${escHtml(fromP)} ב-<strong>${escHtml(stripDayPrefix(s.taskName))}</strong> (${escHtml(s.slotLabel)})`;
-          })
+          .map(
+            (s) =>
+              `${pHover(s.toParticipantId)} מחליף את ${pHover(s.fromParticipantId)} ב-<strong>${escHtml(stripDayPrefix(s.taskName))}</strong> (${escHtml(s.slotLabel)})`,
+          )
           .join(' · ')}</div>`
       : '';
     if (o.filled) {
@@ -420,7 +511,7 @@ function renderPreview(schedule: Schedule): string {
         <span class="inject-outcome-badge">✓</span>
         <span class="inject-outcome-slot">${escHtml(o.slotLabel)}</span>
         <span class="inject-outcome-arrow">←</span>
-        <strong>${escHtml(pName)}</strong>
+        <strong>${pHover(o.participantId)}</strong>
         ${chainHtml}
       </div>`;
     } else {
@@ -431,26 +522,72 @@ function renderPreview(schedule: Schedule): string {
       </div>`;
     }
   }
+  return rows;
+}
 
-  const summaryClass = ok ? 'inject-summary--ok' : 'inject-summary--warn';
-  const summary = ok
-    ? `כל ${report.outcomes.length} המשבצות אוישו בהצלחה.`
-    : `${report.outcomes.filter((o) => o.filled).length} מתוך ${report.outcomes.length} משבצות אוישו. המשימה תתווסף עם משבצות ריקות — ניתן לסגור אותן ידנית בהמשך.`;
+function renderAlternatives(plans: InjectionPlan[], selectedId: string, pMap: Map<string, { name: string }>): string {
+  if (plans.length <= 1) return '';
+  const cards = plans
+    .map((p) => {
+      const isSelected = p.id === selectedId;
+      const deltaSign = p.compositeDelta > 0.05 ? '+' : '';
+      const deltaClass =
+        p.compositeDelta > 0.05
+          ? 'inject-delta--good'
+          : p.compositeDelta < -0.05
+            ? 'inject-delta--bad'
+            : 'inject-delta--neutral';
+      const totalSwaps = p.outcomes.reduce((n, o) => n + 1 + (o.swapChain?.length ?? 0), 0);
+      const fillNames = p.outcomes
+        .filter((o) => o.filled && o.participantId)
+        .map((o) => pMap.get(o.participantId!)?.name ?? o.participantId)
+        .join(', ');
+      const groupHtml = p.groupLock ? `<span class="inject-alt-group">${escHtml(p.groupLock)}</span>` : '';
+      const fbHtml = p.fallbackDepthUsed ? `<span class="inject-alt-fb">⚠ עומק ${p.fallbackDepthUsed}</span>` : '';
+      const partialHtml = p.isPartial ? `<span class="inject-alt-partial">⚠ חלקית</span>` : '';
+      return `<button type="button" class="inject-alt-card ${isSelected ? 'inject-alt-card--selected' : ''}" data-inj-action="select-plan" data-plan-id="${escHtml(p.id)}" ${isSelected ? 'aria-pressed="true"' : ''}>
+        <div class="inject-alt-head">
+          <span class="inject-alt-rank">#${p.rank}</span>
+          <span class="inject-alt-fill">${p.filledCount}/${p.totalSlotCount}</span>
+          <span class="inject-alt-delta ${deltaClass}">${deltaSign}${p.compositeDelta.toFixed(1)}</span>
+          ${groupHtml}
+          ${fbHtml}
+          ${partialHtml}
+        </div>
+        <div class="inject-alt-detail">${totalSwaps} צעדי שיבוץ${fillNames ? ` · ${escHtml(fillNames)}` : ''}</div>
+      </button>`;
+    })
+    .join('');
 
-  return `<div id="inject-modal-backdrop" class="inject-backdrop">
-    <div class="inject-modal">
-      <div class="inject-header">
-        <h3>תצוגת שיבוץ</h3>
-        <button class="inject-close" id="btn-inject-close" aria-label="סגור">✕</button>
-      </div>
-      <div class="inject-body">
-        <div class="inject-summary ${summaryClass}">${summary}</div>
-        <div class="inject-outcomes">${rows}</div>
-      </div>
-      <div class="inject-footer">
-        <button class="btn-primary" id="btn-inject-confirm">אשר והוסף</button>
-        <button class="btn-outline" id="btn-inject-back">חזרה לעריכה</button>
-      </div>
+  return `<details class="inject-alternatives" ${plans.length > 1 ? 'open' : ''}>
+    <summary>💡 ${plans.length - 1} תוכניות נוספות</summary>
+    <div class="inject-alt-list">${cards}</div>
+    <div class="text-muted inject-alt-hint">לחץ על תוכנית כדי לעבור אליה. "אשר והוסף" יחיל את התוכנית הנבחרת.</div>
+  </details>`;
+}
+
+function renderTriagePanel(plan: InjectionPlan, result: InjectionResult, schedule: Schedule): string {
+  // Show triage only when the BEST plan is partial AND there are unsolvable
+  // slots (i.e. nothing across all groups + depths can fill them).
+  if (!plan.isPartial || result.unsolvableSlotIds.length === 0) return '';
+  const task = result.task;
+  const unsolvableSlots = task.slots.filter((s) => result.unsolvableSlotIds.includes(s.slotId));
+  if (unsolvableSlots.length === 0) return '';
+
+  const slotList = unsolvableSlots
+    .map((s) => {
+      const lbl = s.label || `משבצת ${task.slots.findIndex((x) => x.slotId === s.slotId) + 1}`;
+      return `<li>${escHtml(lbl)}</li>`;
+    })
+    .join('');
+
+  void schedule;
+
+  return `<div class="inject-triage">
+    <div class="inject-triage-title">⚠ ${unsolvableSlots.length} משבצות לא ניתנות לאיוש בכלל</div>
+    <div class="inject-triage-body">
+      <ul class="inject-triage-list">${slotList}</ul>
+      <div class="text-muted">לא קיימות שרשראות שיבוץ אפילו בעומק 5. חזור לעריכה כדי להוריד את דרישת הקבוצה האחידה או להקטין את היקף המשימה. לשינוי אילוצים קשיחים יש לעבור למסך ההגדרות.</div>
     </div>
   </div>`;
 }
@@ -464,12 +601,10 @@ function wireEvents(): void {
   backdrop.querySelector('#btn-inject-close')?.addEventListener('click', closeInjectTaskModal);
   backdrop.querySelector('#btn-inject-cancel')?.addEventListener('click', closeInjectTaskModal);
 
-  // Click backdrop → close (only when clicking the backdrop itself).
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) closeInjectTaskModal();
   });
 
-  // Escape key.
   if (_escHandler) document.removeEventListener('keydown', _escHandler);
   _escHandler = (e: KeyboardEvent) => {
     if (e.key === 'Escape') closeInjectTaskModal();
@@ -479,20 +614,16 @@ function wireEvents(): void {
   if (_phase === 'form') {
     wireFormEvents(backdrop);
   } else {
-    wirePreviewEvents(backdrop);
+    wirePlansEvents(backdrop);
   }
 }
 
 function wireFormEvents(backdrop: HTMLElement): void {
-  // Text/number/select top-level fields.
   backdrop.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-inj]').forEach((el) => {
     const field = el.dataset.inj;
     if (!field) return;
     const commit = () => {
       if (!_draft) return;
-      // DraftState is a closed shape; using a typed bag here is intentional —
-      // the data-inj attribute is authored by this module and every value is
-      // known to match its target field's type.
       const bag = _draft as unknown as Record<string, unknown>;
       if (el instanceof HTMLInputElement && el.type === 'checkbox') {
         bag[field] = el.checked;
@@ -507,14 +638,11 @@ function wireFormEvents(backdrop: HTMLElement): void {
     };
     el.addEventListener('change', commit);
     el.addEventListener('input', commit);
-    // Day / hour change can shift the active floor — re-render so the
-    // dependent minute options refresh their disabled state.
     if ((el.dataset.inj === 'dayIndex' || el.dataset.inj === 'startHour') && el instanceof HTMLSelectElement) {
       el.addEventListener('change', () => render());
     }
   });
 
-  // Slot actions.
   backdrop.querySelectorAll<HTMLElement>('[data-inj-action]').forEach((el) => {
     const action = el.dataset.injAction;
     if (!action) return;
@@ -542,7 +670,6 @@ function wireFormEvents(backdrop: HTMLElement): void {
         if (!slot) return;
         const lv = slot.levels.find((x) => x.level === level);
         if (!lv) return;
-        // Cycle: off → on → low → off
         if (!lv.enabled) {
           lv.enabled = true;
           lv.lowPriority = false;
@@ -586,42 +713,248 @@ function wireFormEvents(backdrop: HTMLElement): void {
     }
   });
 
-  // Run the staffing.
   backdrop.querySelector('#btn-inject-run')?.addEventListener('click', () => {
     runStaffing();
   });
 }
 
-function wirePreviewEvents(backdrop: HTMLElement): void {
+function wirePlansEvents(backdrop: HTMLElement): void {
   backdrop.querySelector('#btn-inject-back')?.addEventListener('click', () => {
-    // Roll back mutations made by the current preview so the user can edit.
-    _lastReport?.rollback();
+    // Tear down the search (removes task + placeholders) and return to the form.
+    _searchResult?.cancel();
     _ctx?.getEngine()?.revalidateFull();
-    _lastReport = null;
+    _searchResult = null;
+    _selectedPlanId = null;
     _phase = 'form';
     render();
   });
 
+  backdrop.querySelectorAll<HTMLElement>('[data-inj-action="select-plan"]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.planId;
+      if (!id) return;
+      _selectedPlanId = id;
+      render();
+    });
+  });
+
   backdrop.querySelector('#btn-inject-confirm')?.addEventListener('click', () => {
-    const schedule = _ctx?.getSchedule();
-    if (!schedule || !_lastReport || !_lastSpec || !_draft || !_ctx) return;
-    // Callbacks handle revalidateFull, persistence, store write, and re-render.
-    _ctx.onCommit(schedule, _lastReport, _draft.saveToStore, _lastSpec);
-    // The modal is closed by the caller after onCommit; but to be safe, also
-    // detach the backdrop here without triggering rollback.
-    document.getElementById('inject-modal-backdrop')?.remove();
-    _draft = null;
-    _phase = 'form';
-    _lastReport = null;
-    _lastSpec = null;
-    if (_escHandler) {
-      document.removeEventListener('keydown', _escHandler);
-      _escHandler = null;
+    confirmAndApply();
+  });
+
+  wireParticipantHover(backdrop);
+}
+
+// ─── Participant hover/tap (shared with rescue's CSS classes) ───────────────
+
+/**
+ * Compute the tasks the participant would hold if the given plan were applied,
+ * tagging the injected task as the reference. Returns the 2 nearest tasks
+ * before + the reference + 2 after, sorted chronologically.
+ *
+ * Mirrors `computePostSwapTasks` from rescue-modal.ts but uses the injected
+ * task's id as the reference. The plan's swaps already include the
+ * placeholder→fill swap, so applying the swap deltas to the participant's
+ * current assignment list correctly reflects the injected slot too.
+ */
+function computePostInjectTasks(
+  participantId: string,
+  plan: InjectionPlan,
+  schedule: Schedule,
+  injectedTaskId: string,
+): Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> {
+  const taskMap = new Map<string, Task>();
+  for (const t of schedule.tasks) taskMap.set(t.id, t);
+
+  const myAssignmentTaskIds = new Map<string, string>();
+  for (const a of schedule.assignments) {
+    if (a.participantId === participantId) myAssignmentTaskIds.set(a.id, a.taskId);
+  }
+
+  // Apply the plan's per-slot fill + donor swaps to the participant's view.
+  // The fill is reflected as the participant gaining the injected task; donor
+  // swaps move the participant in/out of existing assignments.
+  for (const o of plan.outcomes) {
+    if (!o.filled || !o.participantId) continue;
+    // The "fill" swap is reflected as participant gaining the injected task slot.
+    if (o.participantId === participantId) {
+      // Synthesise the placeholder assignment id key — we don't have direct
+      // access; use the slotId as a stable proxy since the post-state cares
+      // only about which tasks the participant holds.
+      myAssignmentTaskIds.set(`__fill__-${o.slotId}`, injectedTaskId);
     }
+    if (o.swapChain) {
+      for (const sw of o.swapChain) {
+        if (sw.fromParticipantId === participantId) myAssignmentTaskIds.delete(sw.assignmentId);
+        if (sw.toParticipantId === participantId) myAssignmentTaskIds.set(sw.assignmentId, sw.taskId);
+      }
+    }
+  }
+
+  const tasks: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> = [];
+  for (const [, taskId] of myAssignmentTaskIds) {
+    const task = taskMap.get(taskId);
+    if (!task) continue;
+    tasks.push({
+      taskName: task.name,
+      start: task.timeBlock.start,
+      end: task.timeBlock.end,
+      isReference: taskId === injectedTaskId,
+    });
+  }
+  tasks.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  let refIdx = tasks.findIndex((t) => t.isReference);
+  if (refIdx === -1) refIdx = 0;
+  const startIdx = Math.max(0, refIdx - 2);
+  const endIdx = Math.min(tasks.length, refIdx + 3);
+  return tasks.slice(startIdx, endIdx);
+}
+
+function fmtTime(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function buildInjectParticipantTooltip(
+  participantName: string,
+  nextTasks: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }>,
+  periodStart: Date,
+  dayStartHour: number,
+): string {
+  let html = `<div class="rescue-hover-tt-header">${escHtml(participantName)} — משימות סביב ההזרקה אם תוחל</div>`;
+  if (nextTasks.length === 0) {
+    html += `<div class="rescue-hover-tt-empty">אין משימות קרובות</div>`;
+    return html;
+  }
+  const baseMidnight = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()).getTime();
+  for (let i = 0; i < nextTasks.length; i++) {
+    const t = nextTasks[i];
+    const shifted = new Date(t.start.getTime());
+    if (shifted.getHours() < dayStartHour) shifted.setDate(shifted.getDate() - 1);
+    const shiftedMidnight = new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate()).getTime();
+    const dIdx = Math.floor((shiftedMidnight - baseMidnight) / (24 * 3600 * 1000)) + 1;
+    const dayStr = `יום ${dIdx}`;
+    const timeStr = `<span dir="ltr">${fmtTime(t.start)} – ${fmtTime(t.end)}</span>`;
+    const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
+    const refMarker = t.isReference ? ' ◄' : '';
+    html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${escHtml(stripDayPrefix(t.taskName))}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
+  }
+  return html;
+}
+
+let _injectTooltipEl: HTMLElement | null = null;
+let _injectTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+function getInjectTooltipEl(): HTMLElement {
+  if (_injectTooltipEl && document.body.contains(_injectTooltipEl)) return _injectTooltipEl;
+  const el = document.createElement('div');
+  el.className = 'rescue-hover-tt';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  el.addEventListener('mouseenter', () => {
+    if (_injectTooltipHideTimer) {
+      clearTimeout(_injectTooltipHideTimer);
+      _injectTooltipHideTimer = null;
+    }
+  });
+  el.addEventListener('mouseleave', () => {
+    el.style.display = 'none';
+  });
+  _injectTooltipEl = el;
+  return el;
+}
+
+function hideInjectTooltip(): void {
+  if (_injectTooltipEl) _injectTooltipEl.style.display = 'none';
+}
+
+function wireParticipantHover(backdrop: HTMLElement): void {
+  const schedule = _ctx?.getSchedule();
+  if (!schedule || !_searchResult) return;
+  const result = _searchResult;
+  const pMap = new Map<string, Participant>();
+  for (const p of schedule.participants) pMap.set(p.id, p);
+
+  if (isTouchDevice) {
+    // Touch: tap toggles inline preview under the tapped name.
+    let _expandedKey: string | null = null;
+    backdrop.addEventListener('click', (e) => {
+      const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
+      if (!target) return;
+      const pid = target.dataset.pid;
+      const planId = target.dataset.planId;
+      if (!pid || !planId) return;
+
+      const existing = backdrop.querySelector('.rescue-inline-preview');
+      if (existing) existing.remove();
+      const key = `${planId}|${pid}`;
+      if (_expandedKey === key) {
+        _expandedKey = null;
+        return;
+      }
+      const plan = result.plans.find((p) => p.id === planId);
+      const participant = pMap.get(pid);
+      if (!plan || !participant) return;
+      _expandedKey = key;
+      const nextTasks = computePostInjectTasks(pid, plan, schedule, result.task.id);
+      const detail = document.createElement('div');
+      detail.className = 'rescue-inline-preview task-inline-detail';
+      detail.innerHTML = buildInjectParticipantTooltip(
+        participant.name,
+        nextTasks,
+        schedule.periodStart,
+        schedule.algorithmSettings.dayStartHour,
+      );
+      target.insertAdjacentElement('afterend', detail);
+    });
+    return;
+  }
+
+  // Desktop: hover shows fixed tooltip (same CSS as rescue).
+  backdrop.addEventListener('mouseover', (e) => {
+    const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
+    if (!target) return;
+    const pid = target.dataset.pid;
+    const planId = target.dataset.planId;
+    if (!pid || !planId) return;
+    const plan = result.plans.find((p) => p.id === planId);
+    const participant = pMap.get(pid);
+    if (!plan || !participant) return;
+
+    if (_injectTooltipHideTimer) {
+      clearTimeout(_injectTooltipHideTimer);
+      _injectTooltipHideTimer = null;
+    }
+    const nextTasks = computePostInjectTasks(pid, plan, schedule, result.task.id);
+    const tooltip = getInjectTooltipEl();
+    tooltip.innerHTML = buildInjectParticipantTooltip(
+      participant.name,
+      nextTasks,
+      schedule.periodStart,
+      schedule.algorithmSettings.dayStartHour,
+    );
+    tooltip.style.display = 'block';
+
+    const rect = target.getBoundingClientRect();
+    let left = rect.right + 8;
+    let top = rect.top - 4;
+    const ttWidth = 260;
+    const ttHeight = tooltip.offsetHeight || 140;
+    if (left + ttWidth > window.innerWidth) left = rect.left - ttWidth - 8;
+    if (top + ttHeight > window.innerHeight) top = window.innerHeight - ttHeight - 8;
+    if (top < 4) top = 4;
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  });
+
+  backdrop.addEventListener('mouseout', (e) => {
+    const target = (e.target as HTMLElement).closest('.rescue-participant-hover') as HTMLElement | null;
+    if (!target) return;
+    _injectTooltipHideTimer = setTimeout(hideInjectTooltip, 120);
   });
 }
 
-// ─── Run staffing ───────────────────────────────────────────────────────────
+// ─── Search ─────────────────────────────────────────────────────────────────
 
 function runStaffing(): void {
   const engine = _ctx?.getEngine();
@@ -636,14 +969,12 @@ function runStaffing(): void {
   }
 
   const spec = draftToSpec(_draft);
-  const { report, error } = injectAndStaff(engine, spec, {
+  const { result, error } = searchInjectionPlans(engine, spec, {
     allowLowPriority: true,
     anchor: anchor ?? undefined,
   });
-  if (!report) {
+  if (!result) {
     if (error === 'past-time') {
-      // Anchor raced ahead of the selected start while the modal was open.
-      // Refresh the form so day/hour options reflect the new anchor.
       showInlineError('הזמן שנבחר כבר בעבר — בחר יום/שעה אחרים.');
       render();
       return;
@@ -652,10 +983,36 @@ function runStaffing(): void {
     return;
   }
 
-  _lastReport = report;
+  _searchResult = result;
+  _selectedPlanId = result.plans[0]?.id ?? null;
   _lastSpec = spec;
-  _phase = 'preview';
+  _phase = 'plans';
   render();
+}
+
+function confirmAndApply(): void {
+  const result = _searchResult;
+  if (!result || !_selectedPlanId || !_draft || !_lastSpec || !_ctx) return;
+  const report = result.apply(_selectedPlanId);
+  if (!report) {
+    showInlineError('שגיאה בהחלת התוכנית. נסה שוב.');
+    return;
+  }
+  const schedule = _ctx.getSchedule();
+  if (!schedule) return;
+  _committed = true;
+  _ctx.onCommit(schedule, report, _draft.saveToStore, _lastSpec);
+  // Detach modal without rolling back (committed already).
+  document.getElementById('inject-modal-backdrop')?.remove();
+  _draft = null;
+  _phase = 'form';
+  _searchResult = null;
+  _selectedPlanId = null;
+  _lastSpec = null;
+  if (_escHandler) {
+    document.removeEventListener('keydown', _escHandler);
+    _escHandler = null;
+  }
 }
 
 function validateDraft(d: DraftState, schedule: Schedule, anchor: Date | null): string | null {

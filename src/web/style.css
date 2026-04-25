@@ -12916,6 +12916,195 @@ tr.now-row-animate > td.time-cell {
   font-size: 0.9rem;
 }
 
+/* ── Plans phase: summary banner ── */
+.inject-summary-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border-radius: 8px;
+  background: var(--bg-soft, #f6f8fa);
+  border: 1px solid var(--border-light, #e0e0e0);
+}
+.inject-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.inject-summary-rank {
+  font-weight: 700;
+  color: var(--text-strong, #222);
+  font-size: 1.05rem;
+}
+.inject-summary-fill {
+  font-weight: 500;
+  color: var(--text, #444);
+}
+.inject-summary-delta {
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.inject-delta--good {
+  background: #e8f7ec;
+  color: #1e7e34;
+}
+.inject-delta--bad {
+  background: #fde9e7;
+  color: #b03c2e;
+}
+.inject-delta--neutral {
+  background: #ececec;
+  color: #555;
+}
+.inject-summary-group {
+  background: #eef3ff;
+  color: #2c4ea0;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+.inject-banner {
+  padding: 7px 11px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+.inject-banner--warn {
+  background: #fff3cd;
+  color: #6d5300;
+  border: 1px solid #e6ac00;
+}
+.inject-banner--err {
+  background: #fde9e7;
+  color: #b03c2e;
+  border: 1px solid #e6948a;
+}
+.inject-banner--info {
+  background: #eef3ff;
+  color: #2c4ea0;
+  border: 1px solid #b6c8ee;
+}
+
+/* ── Plans phase: alternative plan cards ── */
+.inject-alternatives {
+  margin-top: 14px;
+  border: 1px solid var(--border-light, #e0e0e0);
+  border-radius: 8px;
+  background: var(--bg-soft, #fafafa);
+}
+.inject-alternatives > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-weight: 600;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.inject-alt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px 8px 12px;
+}
+.inject-alt-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-light, #e0e0e0);
+  border-radius: 6px;
+  background: #fff;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+  font-family: inherit;
+}
+.inject-alt-card:hover {
+  border-color: var(--accent, #4a72c8);
+  background: #fbfcff;
+}
+.inject-alt-card--selected {
+  border-color: var(--accent, #4a72c8);
+  background: #eef3ff;
+  box-shadow: 0 0 0 1px var(--accent, #4a72c8) inset;
+}
+.inject-alt-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.inject-alt-rank {
+  font-weight: 700;
+  color: var(--text-strong, #222);
+}
+.inject-alt-fill {
+  font-weight: 500;
+  color: var(--text, #444);
+}
+.inject-alt-delta {
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+}
+.inject-alt-group {
+  background: #eef3ff;
+  color: #2c4ea0;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+.inject-alt-fb {
+  background: #ffe7d6;
+  color: #a04500;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+.inject-alt-partial {
+  background: #fff3cd;
+  color: #6d5300;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+.inject-alt-detail {
+  font-size: 0.83rem;
+  color: var(--text-muted, #666);
+}
+.inject-alt-hint {
+  padding: 4px 14px 12px 14px;
+  font-size: 0.83rem;
+}
+
+/* ── Plans phase: triage panel ── */
+.inject-triage {
+  margin-bottom: 12px;
+  padding: 11px 13px;
+  background: #fde9e7;
+  border: 1px solid #e6948a;
+  border-radius: 8px;
+  color: #6c1a13;
+}
+.inject-triage-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.inject-triage-body {
+  font-size: 0.9rem;
+}
+.inject-triage-list {
+  margin: 4px 0 6px 0;
+  padding-inline-start: 22px;
+}
+
 /* ── Toolbar button styling for the emergency-task trigger ── */
 .btn-inject-task {
   border-color: var(--danger, #c0392b) !important;
@@ -13228,17 +13417,13 @@ tr.now-row-animate > td.time-cell {
   pointer-events: none;
   z-index: 9999;
   transform: translate(-50%, -50%);
-  filter:
-    drop-shadow(0 0 14px rgba(154, 214, 184, 0.55))
-    drop-shadow(0 0 38px rgba(74, 140, 100, 0.4))
+  filter: drop-shadow(0 0 14px rgba(154, 214, 184, 0.55)) drop-shadow(0 0 38px rgba(74, 140, 100, 0.4))
     drop-shadow(0 6px 18px rgba(0, 0, 0, 0.7));
   animation: ee-dark-mark-summon 3.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 .ee-dark-mark--farewell {
   animation: ee-dark-mark-dissolve 2.2s ease-out forwards;
-  filter:
-    drop-shadow(0 0 12px rgba(154, 214, 184, 0.4))
-    drop-shadow(0 0 22px rgba(74, 140, 100, 0.25));
+  filter: drop-shadow(0 0 12px rgba(154, 214, 184, 0.4)) drop-shadow(0 0 22px rgba(74, 140, 100, 0.25));
 }
 .ee-dark-mark svg {
   width: 100%;
