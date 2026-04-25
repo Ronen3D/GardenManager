@@ -10,6 +10,7 @@ import { type CertificationDefinition, Level, type PakalDefinition, type Partici
 import { fmtTime } from '../utils/date-utils';
 import * as store from './config-store';
 import { openParticipantSetFormatSheet, openXlsxImportFlow } from './data-transfer-ui';
+import { triggerCharacterEffect, triggerCharacterFarewell } from './easter-eggs';
 import { getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
 import {
   canLeaveTableEdit,
@@ -1366,8 +1367,19 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         if (newPref || newLess) {
           store.setTaskNamePreference(newP.id, newPref || undefined, newLess || undefined);
         }
+
+        // Capture click anchor before rerender detaches the button DOM node.
+        let eeAnchor = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        if (actionButton) {
+          const r = actionButton.getBoundingClientRect();
+          eeAnchor = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }
+
         rerender();
         showToast(`${name} נוסף/ה`, { type: 'success' });
+
+        const newRow = container.querySelector(`tr[data-participant-id="${newP.id}"]`);
+        triggerCharacterEffect(name, eeAnchor, newRow);
         break;
       }
       case 'cancel-add-participant': {
@@ -1471,6 +1483,14 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
             confirmLabel: 'הסר',
           });
           if (okRm) {
+            // Capture row anchor before rerender — the row is about to vanish.
+            let farewellAnchor = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+            const row = container.querySelector(`tr[data-participant-id="${pid}"]`);
+            if (row) {
+              const r = row.getBoundingClientRect();
+              farewellAnchor = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+            }
+
             store.removeParticipant(pid);
             showToast(`${p.name} הוסר/ה`, {
               type: 'success',
@@ -1484,6 +1504,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
               },
             });
             rerender();
+            triggerCharacterFarewell(p.name, farewellAnchor);
           }
         }
         break;

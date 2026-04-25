@@ -12,6 +12,7 @@
 
 import './style.css';
 import './style-mobile.css';
+import './style-swimlane.css';
 import { getRecoveryWindow } from '../constraints/sleep-recovery';
 import {
   computeEffectiveUnavailabilityWindows,
@@ -65,8 +66,9 @@ import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
 import { runPreflight } from './preflight';
 import { showRangePicker } from './range-picker-modal';
 import { closeRescueModal, initRescue, openRescueModal, type RescueSwapLabel } from './rescue-modal';
-import { initResponsive, isSmallScreen, isTouchDevice } from './responsive';
+import { initResponsive, isSmallScreen, isTouchDevice, onSmallScreenChange } from './responsive';
 import { renderScheduleGrid } from './schedule-grid-view';
+import { initSwimlane, renderSwimlaneView, wireSwimlaneEvents } from './swimlane-view';
 import {
   computePerDayHours,
   filterVisibleViolations,
@@ -1223,12 +1225,21 @@ function renderScheduleTab(): string {
   // Availability inspector strip — between schedule grid and gantt
   html += renderAvailabilityStrip();
 
-  // Gantt chart: wrapped in mobile-toggleable accordion
-  const ganttExpanded = !_manualBuildActive;
-  html += `<section class="gantt-section">`;
-  html += `<button class="gantt-mobile-toggle" aria-expanded="${ganttExpanded}" data-action="toggle-gantt">${SVG_ICONS.chart} מערכת שעות כללית</button>`;
-  html += `<div class="gantt-section-content"${_manualBuildActive ? ' style="display:none"' : ''}><h2 class="gantt-desktop-title">מערכת שעות כללית</h2>${renderGanttChart(s)}</div>`;
-  html += `</section>`;
+  // "מערכת שעות כללית" — swimlane view, person-first timeline. Always visible
+  // (no accordion) so the user lands on it directly on mobile.
+  if (!_manualBuildActive) {
+    const swimlaneHtml = renderSwimlaneView(s, currentDay, store.getLiveModeState());
+    html += `<section class="swimlane-section"><h2>מערכת שעות כללית</h2>${swimlaneHtml}</section>`;
+  }
+  // Gantt chart — desktop-only secondary view. Hidden on mobile, where the
+  // swimlane replaces it entirely.
+  if (!isSmallScreen) {
+    const ganttExpanded = !_manualBuildActive;
+    html += `<section class="gantt-section">`;
+    html += `<button class="gantt-mobile-toggle" aria-expanded="${ganttExpanded}" data-action="toggle-gantt">${SVG_ICONS.chart} תצוגת גאנט</button>`;
+    html += `<div class="gantt-section-content"${_manualBuildActive ? ' style="display:none"' : ''}><h2 class="gantt-desktop-title">תצוגת גאנט</h2>${renderGanttChart(s)}</div>`;
+    html += `</section>`;
+  }
   // In manual build mode, collapse violations by default (empty schedule generates hundreds)
   const violationCount = filterVisibleViolations(
     s.violations,
@@ -3591,7 +3602,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.8</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -3679,6 +3690,8 @@ function renderAll(): void {
     wireTaskRulesEvents(content, renderAll);
   } else if (currentTab === 'schedule') {
     wireScheduleEvents(content);
+    const swimlane = content.querySelector('.swimlane-view') as HTMLElement | null;
+    if (swimlane) wireSwimlaneEvents(swimlane);
   } else if (currentTab === 'algorithm') {
     wireAlgorithmEvents(content, renderAll);
     wireDataTransferEvents(content);
@@ -5242,6 +5255,22 @@ function init(): void {
   try {
     // Set .touch-device / .pointer-device on <html> before first render
     initResponsive();
+
+    // Re-render when crossing the phone breakpoint so the schedule swaps
+    // between mobile (swimlane-only) and desktop (swimlane + Gantt) layouts.
+    onSmallScreenChange(() => renderAll());
+
+    // Swimlane callbacks — same handlers the schedule grid uses, so taps in
+    // the swimlane invoke identical flows (rescue, swap, profile, task panel).
+    initSwimlane({
+      onSwap: handleSwap,
+      onRescue: openRescueModal,
+      onNavigateToProfile: navigateToProfile,
+      onNavigateToTaskPanel: navigateToTaskPanel,
+      getSchedule: () => currentSchedule,
+      getDayIndex: () => currentDay,
+      getLiveMode: () => store.getLiveModeState(),
+    });
 
     // Initialize tooltip callbacks before first render
     initTooltips({

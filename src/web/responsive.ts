@@ -16,6 +16,22 @@ export let isTouchDevice = coarseQuery.matches;
 /** True when the viewport is at or below the phone breakpoint. */
 export let isSmallScreen = smallQuery.matches;
 
+const smallScreenChangeListeners = new Set<() => void>();
+
+/**
+ * Subscribe to viewport breakpoint crossings (≤767px ↔ ≥768px). Fires after
+ * `isSmallScreen` has been updated so handlers can read the new value
+ * synchronously. Returns an unsubscribe function.
+ *
+ * Used by the schedule renderer to swap between the mobile swimlane-only
+ * layout and the desktop swimlane+grid layout when a user rotates a phone or
+ * resizes a desktop window across the breakpoint.
+ */
+export function onSmallScreenChange(handler: () => void): () => void {
+  smallScreenChangeListeners.add(handler);
+  return () => smallScreenChangeListeners.delete(handler);
+}
+
 // ─── Init ───────────────────────────────────────────────────────────────────
 
 /** Call once at app startup (before first render). */
@@ -33,6 +49,13 @@ export function initResponsive(): void {
 
   smallQuery.addEventListener('change', (e) => {
     isSmallScreen = e.matches;
+    for (const fn of smallScreenChangeListeners) {
+      try {
+        fn();
+      } catch (err) {
+        console.warn('[responsive] onSmallScreenChange handler threw:', err);
+      }
+    }
   });
 }
 

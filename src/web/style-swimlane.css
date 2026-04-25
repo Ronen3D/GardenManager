@@ -1,0 +1,759 @@
+/* ─── Swimlane View ────────────────────────────────────────────────────────
+ *
+ * Person-first timeline replacing the Gantt chart on mobile (and rendered
+ * alongside it on desktop). Layout flows right-to-left (RTL Hebrew):
+ * earlier-in-the-day → right edge, later-in-the-day → left edge. All block
+ * positioning uses the `right` property + percentage widths so this stays
+ * stable across viewport widths.
+ *
+ * The "now" line is driven by --swimlane-now-x set on .swimlane-view; tracks
+ * paint the line via a ::before pseudo-element so we don't repeat per-lane
+ * markup.
+ * ────────────────────────────────────────────────────────────────────── */
+
+.swimlane-view {
+  --swimlane-gutter: 168px;
+  --swimlane-track-bg: rgba(255, 255, 255, 0.025);
+  --swimlane-band-color: rgba(255, 90, 90, 0.16);
+  --swimlane-now-color: #ffd166;
+  --swimlane-row-h: 56px;
+  --swimlane-block-h: 30px;
+  --swimlane-axis-h: 32px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  direction: rtl;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+[data-theme="light"] .swimlane-view {
+  --swimlane-track-bg: rgba(0, 0, 0, 0.03);
+  --swimlane-band-color: rgba(231, 76, 60, 0.14);
+  --swimlane-now-color: #d97706;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────── */
+
+.swimlane-empty {
+  padding: 32px 12px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* ── Time axis ────────────────────────────────────────────────────────── */
+
+.swimlane-axis {
+  display: flex;
+  align-items: stretch;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  height: var(--swimlane-axis-h);
+  border-radius: 8px 8px 0 0;
+}
+
+.swimlane-axis-gutter {
+  width: var(--swimlane-gutter);
+  flex: 0 0 var(--swimlane-gutter);
+  border-inline-start: 1px solid var(--border);
+}
+
+.swimlane-axis-track {
+  flex: 1;
+  position: relative;
+}
+
+.swimlane-axis-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 36px;
+  margin-right: -18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.swimlane-axis-tick::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 18px;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, var(--border) 30%, var(--border) 70%, transparent);
+  pointer-events: none;
+}
+
+.swimlane-axis-tick:hover::before,
+.swimlane-axis-tick:focus-visible::before {
+  background: linear-gradient(to bottom, transparent, var(--accent) 30%, var(--accent) 70%, transparent);
+}
+
+.swimlane-axis-tick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.swimlane-axis-tick--end {
+  margin-right: 0;
+  width: 18px;
+}
+
+.swimlane-axis-tick--end::before {
+  right: 0;
+}
+
+.swimlane-axis-label {
+  position: absolute;
+  top: 4px;
+  /* Inside (visual-left of) the tick line in RTL — sits in the 18px wing. */
+  right: 22px;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.swimlane-axis-tick:hover .swimlane-axis-label,
+.swimlane-axis-tick:focus-visible .swimlane-axis-label {
+  color: var(--accent);
+}
+
+.swimlane-axis-tick--end .swimlane-axis-label {
+  right: auto;
+  left: 4px;
+}
+
+.swimlane-axis-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-inline-end: 2px solid var(--swimlane-now-color);
+  pointer-events: none;
+}
+
+.swimlane-axis-now-pill {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  background: var(--swimlane-now-color);
+  color: #1a1d27;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+  box-shadow: 0 0 0 2px var(--bg-card);
+}
+
+/* ── Group section ───────────────────────────────────────────────────── */
+
+.swimlane-group {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.swimlane-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(to bottom, var(--bg-hover), var(--bg-card));
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.swimlane-group-header:hover {
+  filter: brightness(1.1);
+}
+
+.swimlane-group-chevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  transition: transform 0.18s ease;
+}
+
+.swimlane-group--collapsed .swimlane-group-chevron {
+  transform: rotate(-90deg);
+}
+
+.swimlane-group--collapsed .swimlane-lanes {
+  display: none;
+}
+
+.swimlane-group--collapsed .swimlane-group-header {
+  border-bottom: none;
+}
+
+.swimlane-group-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.swimlane-group-name {
+  flex: 1;
+  font-size: 0.95rem;
+}
+
+.swimlane-group-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-theme="light"] .swimlane-group-count {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.swimlane-lanes {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Lane ────────────────────────────────────────────────────────────── */
+
+.swimlane-lane {
+  display: flex;
+  align-items: stretch;
+  min-height: var(--swimlane-row-h);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  transition: background 0.12s ease;
+}
+
+.swimlane-lane:last-child {
+  border-bottom: none;
+}
+
+.swimlane-lane:hover {
+  background: var(--bg-hover);
+}
+
+/* When the participant is fully out for the day, soften the whole row so it
+ * recedes visually. */
+.swimlane-lane--out {
+  opacity: 0.7;
+}
+
+/* Free-all-day lane: nothing else needed — emptiness is the signal. */
+
+/* Conflict marker: a thin red pip on the right edge of the identity column. */
+.swimlane-lane--has-conflict .swimlane-identity::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  background: #e74c3c;
+  border-radius: 0 2px 2px 0;
+}
+
+/* Identity (left column on desktop, top line on mobile) */
+.swimlane-identity {
+  flex: 0 0 var(--swimlane-gutter);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 6px 8px;
+  border-inline-start: 1px solid var(--border);
+  position: relative;
+  font-size: 0.82rem;
+  min-width: 0;
+}
+
+.swimlane-id-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.swimlane-id-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.swimlane-id-level {
+  flex: 0 0 auto;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.swimlane-id-hours {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 22px;
+  text-align: end;
+}
+
+.swimlane-id-icons {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.swimlane-id-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.swimlane-id-icon--conflict {
+  color: #e74c3c;
+}
+
+.swimlane-id-icon--frozen {
+  color: #5dade2;
+}
+
+.swimlane-id-icon--out {
+  color: var(--text-muted);
+}
+
+.swimlane-id-out-chip {
+  flex: 0 0 auto;
+  font-size: 0.65rem;
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+/* ── Track (the timeline strip) ───────────────────────────────────────── */
+
+.swimlane-track {
+  flex: 1;
+  position: relative;
+  background:
+    linear-gradient(to left, var(--swimlane-track-bg) 0 1px, transparent 1px) 0 0 / calc(100% / 6) 100%,
+    var(--swimlane-track-bg);
+  min-height: var(--swimlane-row-h);
+}
+
+/* Now-line painted across every track via shared CSS variable. */
+.swimlane-view.has-now .swimlane-track::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--swimlane-now-x);
+  width: 0;
+  border-inline-end: 2px solid var(--swimlane-now-color);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* ── Unavailability bands ─────────────────────────────────────────────── */
+
+.swimlane-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--swimlane-band-color),
+    var(--swimlane-band-color) 4px,
+    transparent 4px,
+    transparent 9px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ── Block ───────────────────────────────────────────────────────────── */
+
+.swimlane-block {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: var(--swimlane-block-h);
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  font-size: 0.7rem;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  white-space: nowrap;
+  z-index: 2;
+  cursor: pointer;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition:
+    filter 0.12s ease,
+    transform 0.12s ease;
+}
+
+.swimlane-block:hover {
+  filter: brightness(1.1);
+  transform: translateY(-50%) scale(1.02);
+}
+
+.swimlane-block-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+
+.swimlane-block-frozen {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+  align-items: center;
+  justify-content: center;
+  margin-inline-start: 4px;
+  opacity: 0.85;
+}
+
+.swimlane-block-frozen svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Frozen blocks: desaturated, lower contrast. */
+.swimlane-block--frozen {
+  filter: saturate(0.4) brightness(0.85);
+  box-shadow:
+    inset 0 0 0 1px rgba(93, 173, 226, 0.35),
+    0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* Conflict: red top border. */
+.swimlane-block--conflict {
+  box-shadow:
+    inset 0 2px 0 #e74c3c,
+    0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+/* Injected (BALTAM): dashed leading edge (right edge in RTL). */
+.swimlane-block--injected {
+  border-inline-end: 2px dashed rgba(255, 255, 255, 0.6);
+}
+
+/* ── Mobile (≤767px): stack identity above track ──────────────────────── */
+
+@media (max-width: 767px) {
+  .swimlane-view {
+    --swimlane-row-h: 56px;
+    --swimlane-block-h: 22px;
+    --swimlane-axis-h: 30px;
+    font-size: 0.85rem;
+  }
+
+  .swimlane-axis {
+    border-radius: 6px 6px 0 0;
+  }
+
+  .swimlane-axis-gutter {
+    display: none;
+  }
+
+  .swimlane-lane {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .swimlane-identity {
+    flex: 0 0 auto;
+    border-inline-start: none;
+    padding: 6px 10px 4px 10px;
+    font-size: 0.85rem;
+  }
+
+  .swimlane-track {
+    min-height: 32px;
+    margin-bottom: 8px;
+  }
+
+  /* Conflict pip moves to the bottom of the identity row on mobile. */
+  .swimlane-lane--has-conflict .swimlane-identity::after {
+    top: auto;
+    bottom: 0;
+    right: 8px;
+    transform: none;
+    width: 24px;
+    height: 2px;
+    border-radius: 0;
+  }
+}
+
+/* ── Desktop integration: when shown alongside the gantt, add spacing ──── */
+
+@media (min-width: 768px) {
+  .gantt-section-content > .swimlane-view {
+    margin-bottom: 16px;
+  }
+  .gantt-section-content > .swimlane-view + .gantt-chart {
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+}
+
+/* ── Bottom sheet content (block / participant / axis-hour) ───────────── */
+
+.swimlane-bs-task-summary {
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  background: var(--bg-hover);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.swimlane-bs-task-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.swimlane-bs-task-subteam {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.swimlane-bs-task-certs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.swimlane-bs-task-flag {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.swimlane-bs-task-flag svg {
+  width: 12px;
+  height: 12px;
+}
+
+.swimlane-bs-violations {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: rgba(231, 76, 60, 0.08);
+  border-inline-start: 3px solid #e74c3c;
+  border-radius: 4px;
+}
+
+.swimlane-bs-violation {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.swimlane-bs-violation-code {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #e74c3c;
+}
+
+.swimlane-bs-violation-msg {
+  font-size: 0.78rem;
+  color: var(--text);
+}
+
+.swimlane-bs-participant {
+  margin-top: 4px;
+}
+
+.swimlane-bs-today {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.swimlane-bs-today-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.swimlane-bs-today-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  background: var(--bg-hover);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.swimlane-bs-today-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.swimlane-bs-today-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.swimlane-bs-today-time {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Axis-hour cross-section */
+
+.swimlane-bs-axis-section {
+  margin-bottom: 12px;
+}
+
+.swimlane-bs-axis-section:last-child {
+  margin-bottom: 0;
+}
+
+.swimlane-bs-axis-section-title {
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swimlane-bs-axis-free .swimlane-bs-axis-section-title {
+  color: #2ecc71;
+}
+
+.swimlane-bs-axis-busy .swimlane-bs-axis-section-title {
+  color: var(--text-secondary);
+}
+
+.swimlane-bs-axis-out .swimlane-bs-axis-section-title {
+  color: var(--text-muted);
+}
+
+.swimlane-bs-axis-count {
+  font-size: 0.72rem;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+[data-theme="light"] .swimlane-bs-axis-count {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.swimlane-bs-axis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.swimlane-bs-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-hover);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s ease;
+}
+
+.swimlane-bs-chip:hover {
+  background: var(--bg-card-end);
+}
+
+.swimlane-bs-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.swimlane-bs-chip-name {
+  flex: 1 1 auto;
+  font-weight: 500;
+}
+
+.swimlane-bs-chip-level {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.swimlane-bs-chip-sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
