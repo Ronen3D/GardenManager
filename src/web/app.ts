@@ -51,7 +51,13 @@ import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
 import { wireDataTransferEvents } from './data-transfer-ui';
 import { exportDailyExcel, exportWeeklyExcel } from './excel-export';
-import { openBatchPlansModal, openConfirmModal } from './future-sos-modal';
+import {
+  closeLoadingOverlay,
+  openBatchPlansModal,
+  openConfirmModal,
+  openInfeasibleModal,
+  openLoadingOverlay,
+} from './future-sos-modal';
 import { closeInjectTaskModal, initInjectTaskModal, openInjectTaskModal } from './inject-task-modal';
 import { getEffectivePakalDefinitions } from './pakal-utils';
 import { renderParticipantCard } from './participant-card';
@@ -3110,69 +3116,115 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
     anchor,
   );
 
-  const confirmResult = await openConfirmModal({
-    participantName: participant.name,
-    window: { start: windowStart, end: windowEnd },
-    affected,
-    lockedInPast,
-    dayStartHour,
-    periodStart: schedule.periodStart,
-  });
-  if (!confirmResult.confirmed) return;
-
-  const excludedIds = new Set(confirmResult.excludedIds);
-  const effectiveAffected = affected.filter((a) => !excludedIds.has(a.assignment.id));
-
-  // If nothing to rescue (either no overlap or user opted out of everything),
-  // just record the unavailability entry and return. Activate live mode now
-  // so the anchor is persisted with the entry.
-  if (effectiveAffected.length === 0) {
-    if (!liveModeInitiallyOn) activateLiveModeWithAnchor(anchor);
-    // Punch holes around any kept in-window assignments — those remain "available"
-    // so HC-3 doesn't fire on them. If the user opted out of literally everything
-    // and the kept tasks cover the whole window, effective is [] and no entry is
-    // persisted (the window is effectively a no-op, matching opt-out intent).
-    const keptBlocks = affected.filter((a) => excludedIds.has(a.assignment.id)).map((a) => a.task.timeBlock);
-    const effectiveWindows = computeEffectiveUnavailabilityWindows({ start: windowStart, end: windowEnd }, keptBlocks);
-    let updated = currentSchedule.scheduleUnavailability;
-    const baseId = `fsos-${Date.now()}`;
-    for (let i = 0; i < effectiveWindows.length; i++) {
-      const w = effectiveWindows[i];
-      updated = upsertScheduleUnavailability(updated, {
-        id: effectiveWindows.length === 1 ? baseId : `${baseId}-${i}`,
-        participantId,
-        start: w.start,
-        end: w.end,
-        createdAt: new Date(),
-        anchorAtCreation: anchor,
-        appliedSwapCount: 0,
-      });
-    }
-    currentSchedule.scheduleUnavailability = updated;
-    store.saveSchedule(currentSchedule);
-    renderAll();
-    showToast('חלון אי־זמינות נרשם (אין שיבוצים להחלפה).', { type: 'info', duration: 4000 });
-    return;
-  }
-
   const config = engine.getConfig();
   const scoreCtx = engine.buildScoreContext();
   if (!scoreCtx) return;
-  const result = generateBatchRescuePlans(
-    currentSchedule,
-    { participantId, window: { start: windowStart, end: windowEnd } },
-    anchor,
-    {
-      config,
-      scoreCtx,
-      disabledHC: engine.getDisabledHC(),
-      restRuleMap: engine.getRestRuleMap(),
-      certLabelResolver: engine.getCertLabelResolver(),
-      maxPlans: 3,
-      excludedAssignmentIds: excludedIds,
-      scheduleContext: engine.getScheduleContext(),
-    },
-  );
+
+  // Confirm → plan loop. When no plan is HC-clean and complete, the
+  // infeasibility modal can send the user back to the confirm step with the
+  // unsolvable assignments pre-unchecked.
+  let preExcluded: ReadonlySet<string> = new Set();
+  let excludedIds: Set<string>;
+  let result: ReturnType<typeof generateBatchRescuePlans>;
+  // biome-ignore lint/correctness/noConstantCondition: loop exits via return / break
+  while (true) {
+    const confirmResult = await openConfirmModal({
+      participantName: participant.name,
+      window: { start: windowStart, end: windowEnd },
+      affected,
+      lockedInPast,
+      dayStartHour,
+      periodStart: schedule.periodStart,
+      preExcludedIds: preExcluded,
+    });
+    if (!confirmResult.confirmed) return;
+
+    excludedIds = new Set(confirmResult.excludedIds);
+    const effectiveAffected = affected.filter((a) => !excludedIds.has(a.assignment.id));
+
+    // If nothing to rescue (either no overlap or user opted out of everything),
+    // just record the unavailability entry and return. Activate live mode now
+    // so the anchor is persisted with the entry.
+    if (effectiveAffected.length === 0) {
+      if (!liveModeInitiallyOn) activateLiveModeWithAnchor(anchor);
+      // Punch holes around any kept in-window assignments — those remain "available"
+      // so HC-3 doesn't fire on them. If the user opted out of literally everything
+      // and the kept tasks cover the whole window, effective is [] and no entry is
+      // persisted (the window is effectively a no-op, matching opt-out intent).
+      const keptBlocks = affected.filter((a) => excludedIds.has(a.assignment.id)).map((a) => a.task.timeBlock);
+      const effectiveWindows = computeEffectiveUnavailabilityWindows(
+        { start: windowStart, end: windowEnd },
+        keptBlocks,
+      );
+      let updated = currentSchedule.scheduleUnavailability;
+      const baseId = `fsos-${Date.now()}`;
+      for (let i = 0; i < effectiveWindows.length; i++) {
+        const w = effectiveWindows[i];
+        updated = upsertScheduleUnavailability(updated, {
+          id: effectiveWindows.length === 1 ? baseId : `${baseId}-${i}`,
+          participantId,
+          start: w.start,
+          end: w.end,
+          createdAt: new Date(),
+          anchorAtCreation: anchor,
+          appliedSwapCount: 0,
+        });
+      }
+      currentSchedule.scheduleUnavailability = updated;
+      store.saveSchedule(currentSchedule);
+      renderAll();
+      showToast('חלון אי־זמינות נרשם (אין שיבוצים להחלפה).', { type: 'info', duration: 4000 });
+      return;
+    }
+
+    await openLoadingOverlay();
+    try {
+      result = generateBatchRescuePlans(
+        currentSchedule,
+        { participantId, window: { start: windowStart, end: windowEnd } },
+        anchor,
+        {
+          config,
+          scoreCtx,
+          disabledHC: engine.getDisabledHC(),
+          restRuleMap: engine.getRestRuleMap(),
+          certLabelResolver: engine.getCertLabelResolver(),
+          maxPlans: 3,
+          excludedAssignmentIds: excludedIds,
+          scheduleContext: engine.getScheduleContext(),
+        },
+      );
+    } finally {
+      closeLoadingOverlay();
+    }
+
+    const hasApplicablePlan = result.plans.some((p) => p.violations.length === 0 && !p.isPartial);
+    if (hasApplicablePlan) break;
+
+    const infeasibleSet = new Set(result.infeasibleAssignmentIds);
+    const unsolvable = result.affected.filter((a) => infeasibleSet.has(a.assignment.id));
+    const decision = await openInfeasibleModal({
+      participantName: participant.name,
+      affected: result.affected,
+      unsolvable,
+      timedOut: result.timedOut,
+      dayStartHour,
+      periodStart: schedule.periodStart,
+    });
+    if (decision === 'cancel') return;
+    if (decision === 'narrow-window') {
+      void handleProfileFutureSos(participantId, {
+        defaultStartDay: range.startDay,
+        defaultStartHour: range.startHour,
+        defaultEndDay: range.endDay,
+        defaultEndHour: range.endHour,
+      });
+      return;
+    }
+    // 'remove-and-retry': pre-uncheck unsolvables (additive to current
+    // exclusions) and loop back to the confirm modal so the user can adjust.
+    preExcluded = new Set([...excludedIds, ...result.infeasibleAssignmentIds]);
+  }
 
   openBatchPlansModal({
     result,
@@ -3539,7 +3591,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.7</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.7.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

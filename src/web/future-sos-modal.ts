@@ -30,6 +30,8 @@ export interface ConfirmContext {
   lockedInPast: AffectedAssignment[];
   dayStartHour: number;
   periodStart: Date;
+  /** Assignment IDs to start unchecked (e.g. carried over from a prior infeasible attempt). */
+  preExcludedIds?: ReadonlySet<string>;
 }
 
 /** Convert an absolute timestamp to its schedule-day index (1..periodDays),
@@ -53,10 +55,12 @@ export function openConfirmModal(ctx: ConfirmContext): Promise<ConfirmResult> {
     const backdrop = document.createElement('div');
     backdrop.className = 'gm-modal-backdrop';
 
-    const excludedIds = new Set<string>();
+    const excludedIds = new Set<string>(ctx.preExcludedIds ?? []);
 
     const affectedHtml =
-      ctx.affected.length > 0 ? renderAffectedChecklist(ctx.affected, ctx.dayStartHour, ctx.periodStart) : '';
+      ctx.affected.length > 0
+        ? renderAffectedChecklist(ctx.affected, ctx.dayStartHour, ctx.periodStart, excludedIds)
+        : '';
     const lockedHtml =
       ctx.lockedInPast.length > 0 ? renderLockedChip(ctx.lockedInPast, ctx.dayStartHour, ctx.periodStart) : '';
 
@@ -164,7 +168,12 @@ function fmtDayLabel(d: Date, periodStart: Date, dayStartHour: number): string {
   return `יום ${toDayIndex(d, periodStart, dayStartHour)}`;
 }
 
-function renderAffectedChecklist(items: AffectedAssignment[], dayStartHour: number, periodStart: Date): string {
+function renderAffectedChecklist(
+  items: AffectedAssignment[],
+  dayStartHour: number,
+  periodStart: Date,
+  excludedIds: ReadonlySet<string>,
+): string {
   const byDay = groupByOperationalDay(items, dayStartHour);
   let html = '<div class="fsos-confirm-groups">';
   for (const [_key, dayItems] of byDay) {
@@ -175,9 +184,10 @@ function renderAffectedChecklist(items: AffectedAssignment[], dayStartHour: numb
       const time = `<span dir="ltr" class="fsos-ltr">${fmt(it.task.timeBlock.start)}–${fmt(it.task.timeBlock.end)}</span>`;
       const cleaned = it.slot.label ? cleanSlotLabel(it.slot.label) : '';
       const slotLabel = cleaned ? ` · ${escHtml(cleaned)}` : '';
+      const checkedAttr = excludedIds.has(it.assignment.id) ? '' : ' checked';
       html += `<li>
         <label class="fsos-affected-check">
-          <input type="checkbox" class="fsos-affected-checkbox" data-assignment-id="${escAttr(it.assignment.id)}" checked>
+          <input type="checkbox" class="fsos-affected-checkbox" data-assignment-id="${escAttr(it.assignment.id)}"${checkedAttr}>
           <span class="fsos-affected-name">${escHtml(stripDayPrefix(it.task.name))}${slotLabel}</span>
         </label>
         ${time}
@@ -229,6 +239,195 @@ function groupByOperationalDay<T extends AffectedAssignment>(items: T[], dayStar
   const ordered = new Map<string, T[]>();
   for (const k of sortedKeys) ordered.set(k, byDay.get(k)!);
   return ordered;
+}
+
+// ─── Loading overlay ─────────────────────────────────────────────────────────
+
+const FSOS_LOADER_ID = 'fsos-loading-overlay';
+
+/**
+ * Show a brief loading overlay while the (synchronous) batch planner runs.
+ * Yields a microtask so the overlay actually paints before the main thread
+ * blocks on plan computation. Caller must await `closeLoadingOverlay`.
+ */
+export async function openLoadingOverlay(): Promise<void> {
+  closeLoadingOverlay();
+  const overlay = document.createElement('div');
+  overlay.id = FSOS_LOADER_ID;
+  overlay.className = 'optim-overlay fsos-loading-overlay';
+  overlay.innerHTML = `
+    <div class="optim-card">
+      <div class="cube-loader-wrapper optim-cube">
+        <div class="cube-loader">
+          <div class="cube-cell" style="--cell-color:#4A90D9"></div>
+          <div class="cube-cell" style="--cell-color:#E74C3C"></div>
+          <div class="cube-cell" style="--cell-color:#F39C12"></div>
+          <div class="cube-cell" style="--cell-color:#27AE60"></div>
+          <div class="cube-cell" style="--cell-color:#8E44AD"></div>
+          <div class="cube-cell" style="--cell-color:#1ABC9C"></div>
+          <div class="cube-cell" style="--cell-color:#3498db"></div>
+          <div class="cube-cell" style="--cell-color:#e67e22"></div>
+          <div class="cube-cell" style="--cell-color:#2ecc71"></div>
+        </div>
+      </div>
+      <h3>מחפש תוכניות החלפה…</h3>
+    </div>`;
+  document.body.appendChild(overlay);
+  // Double-RAF: wait for layout + paint before returning so the synchronous
+  // computation that follows doesn't block the loader from ever rendering.
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
+export function closeLoadingOverlay(): void {
+  document.getElementById(FSOS_LOADER_ID)?.remove();
+}
+
+// ─── Infeasibility ───────────────────────────────────────────────────────────
+
+export type InfeasibleDecision = 'remove-and-retry' | 'narrow-window' | 'cancel';
+
+export interface InfeasibleContext {
+  participantName: string;
+  affected: AffectedAssignment[];
+  /** Subset of `affected` for which no candidate chain was found at all. */
+  unsolvable: AffectedAssignment[];
+  /**
+   * True when the planner returned best-so-far due to a wall-clock budget
+   * cap. In that case "no plan" may not be a true infeasibility — the search
+   * just ran out of time. Surface it so the user can choose to narrow rather
+   * than assume the batch is unsolvable.
+   */
+  timedOut: boolean;
+  dayStartHour: number;
+  periodStart: Date;
+}
+
+/**
+ * Shown instead of the plans modal when no plan is both HC-clean and complete
+ * (i.e. every returned plan either violates HC or leaves slots unfilled).
+ *
+ * Two distinct failure shapes feed this modal:
+ *   - **No-chain slots**: assignments in `unsolvable` had zero candidate
+ *     chains at any depth — they cannot be filled regardless of the rest.
+ *   - **Composition-only failure**: every slot has individual chains, but no
+ *     joint composition passes hard constraints. These slots get an amber
+ *     "candidate exists but no working combination" treatment — *not* a
+ *     green checkmark, because nothing in this modal is actually applyable.
+ *
+ * Three actions: remove the no-chain items and retry (preferred when any
+ * exist), narrow the window, or cancel.
+ */
+export function openInfeasibleModal(ctx: InfeasibleContext): Promise<InfeasibleDecision> {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'gm-modal-backdrop';
+
+    const unsolvableSet = new Set(ctx.unsolvable.map((a) => a.assignment.id));
+    const candidateOnly = ctx.affected.filter((a) => !unsolvableSet.has(a.assignment.id));
+
+    const hasUnsolvable = ctx.unsolvable.length > 0;
+    const hasCandidateOnly = candidateOnly.length > 0;
+
+    const timeoutHtml = ctx.timedOut
+      ? `<div class="fsos-warning-banner fsos-warning-banner--timeout">
+          <strong>⏱ החיפוש נקטע בגלל מגבלת זמן.</strong>
+          <span>ייתכן שיש תוכנית טובה יותר שלא נבדקה — מומלץ לצמצם את החלון ולנסות שוב.</span>
+        </div>`
+      : '';
+
+    let explainText: string;
+    if (hasUnsolvable && hasCandidateOnly) {
+      explainText =
+        'לחלק מהשיבוצים לא נמצאה תוכנית החלפה כלל, ושאר השיבוצים — אף שקיימים להם מועמדים בנפרד — לא ניתן לשלב לתוכנית שעומדת באילוצים הקשיחים. ניתן להוציא את הבלתי־פתירים ולנסות שוב; אם גם אחר כך לא יימצא שילוב, יש לצמצם ידנית את האצווה.';
+    } else if (hasUnsolvable) {
+      explainText =
+        'לחלק מהשיבוצים לא נמצאה תוכנית החלפה כלל. ניתן להוציא אותם מהאצווה ולנסות שוב.';
+    } else {
+      explainText =
+        'לכל שיבוץ נמצאו מועמדים בנפרד, אך לא נמצא שילוב ביניהם שעומד באילוצים הקשיחים. נסה להוציא חלק מהשיבוצים מהאצווה ידנית כדי לאפשר תוכנית.';
+    }
+    const explainHtml = `<p class="fsos-infeasible-explain">${escHtml(explainText)}</p>`;
+
+    const unsolvableHtml = hasUnsolvable
+      ? `<section class="fsos-infeasible-section fsos-infeasible-section--missing">
+          <h4 class="fsos-infeasible-section-title">❌ לא נמצאה תוכנית החלפה (${ctx.unsolvable.length})</h4>
+          <p class="fsos-infeasible-section-note">לשיבוצים האלה אין מועמד מתאים בכלל.</p>
+          ${renderInfeasibleList(ctx.unsolvable, ctx.dayStartHour, ctx.periodStart)}
+        </section>`
+      : '';
+
+    const candidateOnlyHtml = hasCandidateOnly
+      ? `<section class="fsos-infeasible-section fsos-infeasible-section--candidate">
+          <h4 class="fsos-infeasible-section-title">⚠️ קיימים מועמדים אך לא נמצא שילוב תקף (${candidateOnly.length})</h4>
+          <p class="fsos-infeasible-section-note">לשיבוצים האלה יש מועמדים בנפרד, אבל המועמדים מתנגשים זה בזה — אי אפשר ליישם אותם יחד מבלי להפר אילוצים.</p>
+          ${renderInfeasibleList(candidateOnly, ctx.dayStartHour, ctx.periodStart)}
+        </section>`
+      : '';
+
+    const retryLabel = hasUnsolvable ? 'הסר את הבלתי־פתירים ונסה שוב' : 'חזור והסר שיבוצים ידנית';
+
+    backdrop.innerHTML = `
+      <div class="gm-modal-dialog fsos-modal fsos-infeasible-modal" role="dialog" aria-modal="true">
+        <div class="gm-modal-header">
+          <span class="gm-modal-icon">⚠️</span>
+          <span class="gm-modal-title">לא נמצאה תוכנית החלפה תקפה · ${escHtml(ctx.participantName)}</span>
+        </div>
+        ${timeoutHtml}
+        ${explainHtml}
+        ${unsolvableHtml}
+        ${candidateOnlyHtml}
+        <div class="gm-modal-actions fsos-sticky-actions">
+          <button class="btn-primary fsos-infeasible-retry-btn">${escHtml(retryLabel)}</button>
+          <button class="btn-sm btn-outline fsos-infeasible-narrow-btn">צמצם חלון</button>
+          <button class="btn-sm btn-outline fsos-infeasible-cancel-btn">ביטול</button>
+        </div>
+      </div>`;
+
+    lockBodyScroll();
+    const close = (decision: InfeasibleDecision) => {
+      backdrop.remove();
+      unlockBodyScroll();
+      document.removeEventListener('keydown', onKey);
+      resolve(decision);
+    };
+
+    backdrop.querySelector('.fsos-infeasible-retry-btn')?.addEventListener('click', () => close('remove-and-retry'));
+    backdrop.querySelector('.fsos-infeasible-narrow-btn')?.addEventListener('click', () => close('narrow-window'));
+    backdrop.querySelector('.fsos-infeasible-cancel-btn')?.addEventListener('click', () => close('cancel'));
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) close('cancel');
+    });
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') close('cancel');
+    }
+    document.addEventListener('keydown', onKey);
+
+    document.body.appendChild(backdrop);
+  });
+}
+
+function renderInfeasibleList(items: AffectedAssignment[], dayStartHour: number, periodStart: Date): string {
+  const byDay = groupByOperationalDay(items, dayStartHour);
+  let html = '<div class="fsos-confirm-groups">';
+  for (const [_key, dayItems] of byDay) {
+    if (dayItems.length === 0) continue;
+    const anchor = dayItems[0].task.timeBlock.start;
+    html += `<div class="fsos-affected-day-group"><div class="fsos-affected-day-header">${escHtml(fmtDayLabel(anchor, periodStart, dayStartHour))}</div><ul class="fsos-infeasible-list">`;
+    for (const it of dayItems) {
+      const time = `<span dir="ltr" class="fsos-ltr">${fmt(it.task.timeBlock.start)}–${fmt(it.task.timeBlock.end)}</span>`;
+      const cleaned = it.slot.label ? cleanSlotLabel(it.slot.label) : '';
+      const slotLabel = cleaned ? ` · ${escHtml(cleaned)}` : '';
+      html += `<li>
+        <span class="fsos-affected-name">${escHtml(stripDayPrefix(it.task.name))}${slotLabel}</span>
+        ${time}
+      </li>`;
+    }
+    html += '</ul></div>';
+  }
+  html += '</div>';
+  return html;
 }
 
 // ─── Batch Plans ─────────────────────────────────────────────────────────────
@@ -659,44 +858,6 @@ function renderSwapsGroupedByDay(
 }
 
 function renderPlanDetails(plan: BatchRescuePlan, pMap: Map<string, Participant>): string {
-  // HC-invalid plans have no meaningful fairness numbers (we skipped the full
-  // scoring step). Replace the balance breakdown with a short explanation so
-  // users aren't shown all-zero "ללא שינוי משמעותי" badges that look like
-  // computed results.
-  const hasViolations = plan.violations.length > 0;
-  let balanceHtml: string;
-  if (hasViolations) {
-    balanceHtml = `<h5 class="fsos-plan-section-title">איזון עומסים</h5>
-      <p class="fsos-plan-no-eval">לא ניתן להעריך איזון עבור תוכנית שאינה עומדת באילוצים קשיחים.</p>`;
-  } else {
-    const balanceRows: Array<{ label: string; hint: string; value: number }> = [
-      {
-        label: 'הוגנות ג׳וניורים',
-        hint: 'האם עומס המשמרות מתחלק בצורה שווה בין הג׳וניורים',
-        value: plan.fairnessDelta.l0StdDev,
-      },
-      {
-        label: 'הוגנות סגל',
-        hint: 'האם עומס המשמרות מתחלק בצורה שווה בין אנשי הסגל',
-        value: plan.fairnessDelta.seniorStdDev,
-      },
-      {
-        label: 'אחידות לאורך השבוע',
-        hint: 'האם העומס מתחלק בצורה אחידה על פני כל ימי השבוע (עבור כל הצוות וכל משתתף)',
-        value: plan.fairnessDelta.dailyGlobalStdDev + plan.fairnessDelta.dailyPerParticipantStdDev,
-      },
-    ];
-    balanceHtml = '<h5 class="fsos-plan-section-title">איזון עומסים</h5><ul class="fsos-plan-balance-list">';
-    for (const r of balanceRows) {
-      const badge = renderBalanceBadge(r.value);
-      balanceHtml += `<li class="fsos-plan-balance-row">
-        <span class="fsos-plan-balance-label" title="${escAttr(r.hint)}">${escHtml(r.label)}</span>
-        ${badge}
-      </li>`;
-    }
-    balanceHtml += '</ul>';
-  }
-
   let changesHtml = '';
   if (plan.perParticipantChanges.length > 0) {
     const nAffected = plan.perParticipantChanges.length;
@@ -730,20 +891,7 @@ function renderPlanDetails(plan: BatchRescuePlan, pMap: Map<string, Participant>
     violationsHtml += '</ul>';
   }
 
-  return balanceHtml + changesHtml + violationsHtml;
-}
-
-function renderBalanceBadge(delta: number): string {
-  // Positive delta = stdDev dropped = balance improved. Threshold chosen so
-  // sub-6-minute swings don't claim "improved"/"worsened" — they're noise.
-  if (Math.abs(delta) < 0.1) {
-    return '<span class="fsos-plan-balance-badge fsos-plan-balance-badge--neutral">ללא שינוי משמעותי</span>';
-  }
-  const magnitude = Math.abs(delta).toFixed(1);
-  if (delta > 0) {
-    return `<span class="fsos-plan-balance-badge fsos-plan-balance-badge--pos">משתפר <span dir="ltr" class="fsos-ltr">(${magnitude}h)</span></span>`;
-  }
-  return `<span class="fsos-plan-balance-badge fsos-plan-balance-badge--neg">מחמיר <span dir="ltr" class="fsos-ltr">(${magnitude}h)</span></span>`;
+  return changesHtml + violationsHtml;
 }
 
 function showSoftViolationsSubConfirm(plan: BatchRescuePlan): Promise<boolean> {

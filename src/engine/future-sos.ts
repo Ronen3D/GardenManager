@@ -10,12 +10,7 @@
  */
 
 import { validateHardConstraints } from '../constraints/hard-constraints';
-import {
-  computeScheduleScore,
-  dailyWorkloadImbalance,
-  type ScoreContext,
-  workloadImbalanceSplit,
-} from '../constraints/soft-constraints';
+import { computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
 import type {
   Assignment,
   ConstraintViolation,
@@ -50,13 +45,6 @@ export interface AffectedAssignment {
   slot: SlotRequirement;
 }
 
-export interface FairnessDelta {
-  l0StdDev: number;
-  seniorStdDev: number;
-  dailyPerParticipantStdDev: number;
-  dailyGlobalStdDev: number;
-}
-
 export interface PerParticipantChange {
   participantId: string;
   added: Assignment[];
@@ -69,8 +57,6 @@ export interface BatchRescuePlan {
   swaps: RescueSwap[];
   /** candidate composite − baseline composite. Positive = improvement. */
   compositeDelta: number;
-  /** Baseline stdDev − candidate stdDev. Positive = fairness improvement. */
-  fairnessDelta: FairnessDelta;
   /** { 1: n1, 2: n2, 3: n3, 4: n4, 5: n5 } — chain depths used across all slots. */
   depthHistogram: Record<1 | 2 | 3 | 4 | 5, number>;
   perParticipantChanges: PerParticipantChange[];
@@ -551,16 +537,6 @@ export function generateBatchRescuePlans(
     opts.config,
     opts.scoreCtx,
   );
-  const baselineSplit = workloadImbalanceSplit(schedule.participants, schedule.assignments, schedule.tasks, taskMap);
-  const baselineDaily = dailyWorkloadImbalance(
-    schedule.participants,
-    schedule.assignments,
-    schedule.tasks,
-    taskMap,
-    undefined,
-    undefined,
-    schedule.algorithmSettings.dayStartHour,
-  );
 
   const slotCtx: SlotEnumerationContext = {
     schedule,
@@ -666,7 +642,6 @@ export function generateBatchRescuePlans(
           rank: 0,
           swaps: mergeSwaps(comp.chains),
           compositeDelta: comp.deltaSum,
-          fairnessDelta: { l0StdDev: 0, seniorStdDev: 0, dailyPerParticipantStdDev: 0, dailyGlobalStdDev: 0 },
           depthHistogram,
           perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
           violations: validation.violations,
@@ -685,29 +660,11 @@ export function generateBatchRescuePlans(
       );
       const compositeDelta = candScore.compositeScore - baselineScore.compositeScore;
 
-      const candSplit = workloadImbalanceSplit(schedule.participants, tempAssignments, schedule.tasks, taskMap);
-      const candDaily = dailyWorkloadImbalance(
-        schedule.participants,
-        tempAssignments,
-        schedule.tasks,
-        taskMap,
-        undefined,
-        undefined,
-        schedule.algorithmSettings.dayStartHour,
-      );
-      const fairnessDelta: FairnessDelta = {
-        l0StdDev: baselineSplit.l0StdDev - candSplit.l0StdDev,
-        seniorStdDev: baselineSplit.seniorStdDev - candSplit.seniorStdDev,
-        dailyPerParticipantStdDev: baselineDaily.dailyPerParticipantStdDev - candDaily.dailyPerParticipantStdDev,
-        dailyGlobalStdDev: baselineDaily.dailyGlobalStdDev - candDaily.dailyGlobalStdDev,
-      };
-
       scored.push({
         id: `fsos-${hashSwaps(mergeSwaps(comp.chains))}-${i}`,
         rank: 0,
         swaps: mergeSwaps(comp.chains),
         compositeDelta,
-        fairnessDelta,
         depthHistogram,
         perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
         violations: validation.violations,

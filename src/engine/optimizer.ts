@@ -2070,7 +2070,9 @@ export function classifyUnfilledSlots(unfilled: UnfilledSlot[]): EliteBoostState
  * task-order jitter, keeping the best result. This introduces diversity
  * in both participant ordering and task scheduling priority.
  *
- * @param attempts Number of optimization attempts
+ * @param attempts Number of optimization attempts. REQUIRED — callers must
+ *   pass an explicit value. The web app resolves its default via
+ *   `getStoredDefaultAttempts()` in `src/web/ui-helpers.ts` (fallback 60).
  * @param onProgress Optional callback fired after each attempt
  */
 export function optimizeMultiAttempt(
@@ -2078,7 +2080,7 @@ export function optimizeMultiAttempt(
   participants: Participant[],
   config: SchedulerConfig,
   pinnedAssignments: Assignment[] = [],
-  attempts: number = 2000,
+  attempts: number,
   onProgress?: MultiAttemptProgressCallback,
   disabledHC?: Set<string>,
   phantomContext?: PhantomContext,
@@ -2216,6 +2218,11 @@ export function optimizeMultiAttempt(
  * yields once via setTimeout so the browser can repaint the progress
  * overlay. This avoids one setTimeout round-trip per attempt while
  * still keeping the UI responsive.
+ *
+ * `attempts` is REQUIRED — no library-level default. The web app's
+ * effective default lives in `src/web/ui-helpers.ts`
+ * (`FALLBACK_DEFAULT_ATTEMPTS`, currently 60), overridable per-user via
+ * localStorage.
  */
 const ASYNC_BATCH_SIZE = 4;
 
@@ -2224,7 +2231,7 @@ export function optimizeMultiAttemptAsync(
   participants: Participant[],
   config: SchedulerConfig,
   pinnedAssignments: Assignment[] = [],
-  attempts: number = 2000,
+  attempts: number,
   onProgress?: MultiAttemptProgressCallback,
   disabledHC?: Set<string>,
   phantomContext?: PhantomContext,

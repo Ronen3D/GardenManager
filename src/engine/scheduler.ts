@@ -468,11 +468,15 @@ export class SchedulingEngine {
    * yielding to the event loop between each so the UI can show progress.
    * Only the best result is committed to the engine state.
    *
-   * @param attempts Number of optimization attempts
+   * @param attempts Number of optimization attempts. REQUIRED — no engine-
+   *   level default. The web app's effective default lives in
+   *   `src/web/ui-helpers.ts` (`FALLBACK_DEFAULT_ATTEMPTS`, currently 60),
+   *   overridable per-user via localStorage `gardenmanager_default_attempts`.
+   *   Tests/CLI pass their own explicit values.
    * @param onProgress Callback fired after each attempt for progress UI
    */
   async generateScheduleAsync(
-    attempts: number = 2000,
+    attempts: number,
     onProgress?: MultiAttemptProgressCallback,
     abortSignal?: AbortSignal,
     stopSignal?: AbortSignal,

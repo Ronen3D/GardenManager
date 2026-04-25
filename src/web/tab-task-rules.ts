@@ -22,6 +22,7 @@ import {
   type TaskTemplate,
 } from '../models/types';
 import { detectStale } from '../shared/utils/load-formula';
+import { initAddTemplateModal, openAddTemplateModal } from './add-template-modal';
 import * as store from './config-store';
 import { initLoadFormulaModal, openLoadFormulaModal } from './load-formula-modal';
 import { runPreflight } from './preflight';
@@ -388,18 +389,18 @@ let expandedTemplateId: string | null = null;
 let expandedOtId: string | null = null;
 let addingSlotTo: { templateId: string; subTeamId?: string; isOneTime?: boolean } | null = null;
 let editingSlot: { templateId: string; subTeamId?: string; slotId: string; isOneTime?: boolean } | null = null;
-let showAddTemplate = false;
 let showAddOneTime = false;
 /** IDs of templates / one-time tasks whose Sleep & Recovery section is currently expanded. Collapsed by default. */
 const expandedSleepRecovery = new Set<string>();
 
 /**
- * Pending load formulas for the "new task" forms. Populated when the user opens
- * the load-formula modal from the add form and saves a formula; cleared when
- * the add form closes (confirm or cancel) or the load-formula modal clears it.
- * Survives re-renders of the add form so reopening the modal shows the in-progress formula.
+ * Pending load formula for the still-inline "add one-time task" form. Populated
+ * when the user opens the load-formula modal from the form and saves a formula;
+ * cleared when the form closes (confirm or cancel) or the load-formula modal
+ * clears it. Survives re-renders so reopening the modal shows the in-progress
+ * formula. The recurring-template add form has been replaced by add-template-modal,
+ * which manages its own pending formula internally.
  */
-let _pendingTplLoadFormula: LoadFormula | undefined;
 let _pendingOtLoadFormula: LoadFormula | undefined;
 
 // ─── Task Sets Panel State ───────────────────────────────────────────────────
@@ -443,11 +444,6 @@ export function renderTaskRulesTab(): string {
     html += renderTemplateCard(tpl, preflight);
   }
   html += '</div>';
-
-  // Add template form
-  if (showAddTemplate) {
-    html += renderAddTemplateForm();
-  }
 
   // ── One-Time Tasks Section ──
   const oneTimeTasks = store.getAllOneTimeTasks();
@@ -1151,30 +1147,6 @@ function renderSlotForm(
   </div>`;
 }
 
-function renderAddTemplateForm(): string {
-  const pendingValue = _pendingTplLoadFormula?.computedValue;
-  const baseLoadValue = pendingValue !== undefined ? pendingValue.toFixed(2) : '1';
-  const calcBtn = `<button class="btn-xs btn-outline lf-open-btn" type="button" data-action="open-load-formula-new" data-lf-target="tpl" title="הגדר לפי השוואה" aria-label="הגדר לפי השוואה">🧮</button>`;
-  return `<div class="add-form" id="add-template-form">
-    <h4>משימה חדשה</h4>
-    <div class="form-row">
-      <label>שם: <input class="input-sm" type="text" data-field="tpl-name" placeholder="שם משימה" /></label>
-      <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
-      <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
-      <label>שעת התחלה: <input class="input-sm" type="time" step="3600" value="06:00" data-field="tpl-start" /></label>
-      <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="${baseLoadValue}" data-field="tpl-base-load" /><span class="lf-controls">${calcBtn}</span></label>
-    </div>
-    <div class="form-row">
-      <label class="checkbox-label"><input type="checkbox" data-field="tpl-samegroup" /> נדרשת אותה קבוצה</label>
-      <label class="checkbox-label"><input type="checkbox" data-field="tpl-blocks-consecutive" checked /> חוסם רצף משימות</label>
-    </div>
-    <div class="form-row">
-      <button class="btn-sm btn-primary" data-action="confirm-add-template">צור</button>
-      <button class="btn-sm btn-outline" data-action="cancel-add-template">ביטול</button>
-    </div>
-  </div>`;
-}
-
 // ─── One-Time Task Renderers ─────────────────────────────────────────────────
 
 function renderAddOneTimeForm(): string {
@@ -1615,6 +1587,7 @@ function autoSaveRerender(rerender: () => void, flashSelector?: string | null): 
 
 export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void): void {
   initLoadFormulaModal({ onChanged: rerender });
+  initAddTemplateModal({ onCreated: rerender });
 
   // Re-wire sleep-recovery hour dropdowns after each render. Values are read
   // from `.gm-select[data-value]` on auto-save; picking an option auto-commits
@@ -1914,23 +1887,19 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'open-load-formula-new': {
-        // Calculator for a task that doesn't exist in the store yet (add form).
-        // Reads the in-progress name from the form so the modal header is meaningful.
-        const target = actionButton?.dataset.lfTarget as 'tpl' | 'ot' | undefined;
-        if (!target) break;
-        const form = container.querySelector(target === 'tpl' ? '#add-template-form' : '#add-onetime-form');
+        // Calculator for the still-inline "add one-time task" form. Reads the
+        // in-progress name from the form so the modal header is meaningful.
+        // The recurring-template add form lives in add-template-modal and
+        // handles its own load-formula picker.
+        const form = container.querySelector('#add-onetime-form');
         if (!form) break;
-        const nameField = target === 'tpl' ? 'tpl-name' : 'ot-name';
-        const name =
-          (form.querySelector(`[data-field="${nameField}"]`) as HTMLInputElement)?.value.trim() || 'משימה חדשה';
-        const existingFormula = target === 'tpl' ? _pendingTplLoadFormula : _pendingOtLoadFormula;
+        const name = (form.querySelector('[data-field="ot-name"]') as HTMLInputElement)?.value.trim() || 'משימה חדשה';
         openLoadFormulaModal({
           kind: 'ephemeral',
           name,
-          existingFormula,
+          existingFormula: _pendingOtLoadFormula,
           onSave: (formula) => {
-            if (target === 'tpl') _pendingTplLoadFormula = formula;
-            else _pendingOtLoadFormula = formula;
+            _pendingOtLoadFormula = formula;
           },
         });
         break;
@@ -2220,69 +2189,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         break;
       }
       case 'toggle-add-template': {
-        showAddTemplate = !showAddTemplate;
-        _pendingTplLoadFormula = undefined;
-        rerender();
-        break;
-      }
-      case 'confirm-add-template': {
-        const form = container.querySelector('#add-template-form')!;
-        const name = (form.querySelector('[data-field="tpl-name"]') as HTMLInputElement)?.value.trim();
-        if (!name) {
-          showToast('שם משימה נדרש', { type: 'error' });
-          return;
-        }
-        if (isTaskNameTaken(name)) {
-          showToast(`משימה בשם "${name}" כבר קיימת`, { type: 'error' });
-          return;
-        }
-        const dur = parseFloat((form.querySelector('[data-field="tpl-duration"]') as HTMLInputElement)?.value || '8');
-        const shifts = parseFloat((form.querySelector('[data-field="tpl-shifts"]') as HTMLInputElement)?.value || '1');
-        const startH = parseFloat((form.querySelector('[data-field="tpl-start"]') as HTMLInputElement)?.value || '6');
-        const baseLoad = parseFloat(
-          (form.querySelector('[data-field="tpl-base-load"]') as HTMLInputElement)?.value || '1',
-        );
-        const sameGroup = (form.querySelector('[data-field="tpl-samegroup"]') as HTMLInputElement)?.checked || false;
-        const blocksConsecutive =
-          (form.querySelector('[data-field="tpl-blocks-consecutive"]') as HTMLInputElement)?.checked ?? true;
-
-        const sanitized = store.sanitizeTemplateNumericFields({
-          durationHours: dur,
-          shiftsPerDay: shifts,
-          startHour: startH,
-        });
-        notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
-
-        const clampedBaseLoad = Math.max(0, Math.min(1, baseLoad));
-        // Drop pending formula if user manually edited the input away from the computed value.
-        const keepFormula =
-          _pendingTplLoadFormula !== undefined &&
-          Math.abs(clampedBaseLoad - _pendingTplLoadFormula.computedValue) <= 1e-9;
-
-        store.addTaskTemplate({
-          name,
-          durationHours: sanitized.durationHours,
-          shiftsPerDay: sanitized.shiftsPerDay,
-          startHour: sanitized.startHour,
-          sameGroupRequired: sameGroup,
-          baseLoadWeight: clampedBaseLoad,
-          loadFormula: keepFormula ? _pendingTplLoadFormula : undefined,
-          loadWindows: [],
-          blocksConsecutive,
-          togethernessRelevant: false,
-          restRuleId: undefined,
-          subTeams: [],
-          slots: [],
-        });
-        showAddTemplate = false;
-        _pendingTplLoadFormula = undefined;
-        rerender();
-        break;
-      }
-      case 'cancel-add-template': {
-        showAddTemplate = false;
-        _pendingTplLoadFormula = undefined;
-        rerender();
+        openAddTemplateModal();
         break;
       }
 

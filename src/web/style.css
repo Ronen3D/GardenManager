@@ -7831,6 +7831,10 @@ tr.now-row-animate > td.time-cell {
   overflow: hidden;
 }
 
+.gm-modal-dialog-wide {
+  max-width: 640px;
+}
+
 @keyframes gmModalSlideIn {
   from {
     opacity: 0;
@@ -8352,6 +8356,77 @@ tr.now-row-animate > td.time-cell {
   white-space: nowrap;
 }
 
+/* ─── Future SOS infeasibility modal ────────────────────────────────── */
+.fsos-infeasible-modal .fsos-infeasible-explain {
+  margin: 0 20px 12px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.fsos-infeasible-section {
+  margin: 0 20px 12px;
+  border-radius: 10px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border);
+}
+.fsos-infeasible-section--missing {
+  background: rgba(231, 76, 60, 0.08);
+  border-color: rgba(231, 76, 60, 0.35);
+}
+.fsos-infeasible-section--candidate {
+  background: rgba(243, 156, 18, 0.1);
+  border-color: rgba(243, 156, 18, 0.4);
+}
+.fsos-infeasible-section-title {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.fsos-infeasible-section-note {
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  color: var(--text-muted, #888);
+  line-height: 1.4;
+}
+.fsos-infeasible-section--missing .fsos-infeasible-section-title {
+  color: #e74c3c;
+}
+.fsos-infeasible-section--candidate .fsos-infeasible-section-title {
+  color: #f39c12;
+}
+.fsos-infeasible-section .fsos-confirm-groups {
+  margin: 0;
+}
+.fsos-infeasible-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fsos-infeasible-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+}
+[data-theme="light"] .fsos-infeasible-section--missing {
+  background: rgba(192, 57, 43, 0.1);
+  border-color: rgba(192, 57, 43, 0.35);
+}
+[data-theme="light"] .fsos-infeasible-section--missing .fsos-infeasible-section-title {
+  color: #a93226;
+}
+[data-theme="light"] .fsos-infeasible-section--candidate {
+  background: rgba(214, 137, 16, 0.12);
+  border-color: rgba(214, 137, 16, 0.4);
+}
+[data-theme="light"] .fsos-infeasible-section--candidate .fsos-infeasible-section-title {
+  color: #b86d05;
+}
+
 .fsos-locked-section {
   margin: 6px 20px;
 }
@@ -8580,12 +8655,6 @@ tr.now-row-animate > td.time-cell {
   font-size: 0.8rem;
   color: var(--text-muted, #888);
 }
-.fsos-plan-no-eval {
-  font-size: 0.85rem;
-  color: var(--text-muted, #888);
-  font-style: italic;
-  margin: 4px 0 8px;
-}
 
 .fsos-plan-toggle {
   margin-inline-start: auto;
@@ -8683,49 +8752,6 @@ tr.now-row-animate > td.time-cell {
 }
 .fsos-plan-section-title--warn {
   color: #e74c3c;
-}
-.fsos-plan-balance-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 0.88rem;
-}
-.fsos-plan-balance-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.02);
-}
-.fsos-plan-balance-label {
-  color: var(--text);
-}
-.fsos-plan-balance-label[title] {
-  cursor: help;
-}
-.fsos-plan-balance-badge {
-  font-size: 0.82rem;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
-  white-space: nowrap;
-}
-.fsos-plan-balance-badge--pos {
-  background: rgba(46, 204, 113, 0.15);
-  color: #2ecc71;
-}
-.fsos-plan-balance-badge--neg {
-  background: rgba(231, 76, 60, 0.15);
-  color: #e74c3c;
-}
-.fsos-plan-balance-badge--neutral {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-muted, #888);
 }
 .fsos-plan-changes {
   list-style: none;
@@ -8958,22 +8984,9 @@ tr.now-row-animate > td.time-cell {
    modal in light mode — give them explicit subtle contrast and darker
    text where readability matters. */
 [data-theme="light"] .fsos-plan-card,
-[data-theme="light"] .fsos-plan-balance-row,
 [data-theme="light"] .fsos-plan-changes li {
   background: rgba(0, 0, 0, 0.03);
   border-color: rgba(0, 0, 0, 0.08);
-}
-[data-theme="light"] .fsos-plan-balance-badge--pos {
-  background: rgba(39, 174, 96, 0.18);
-  color: #1f7a43;
-}
-[data-theme="light"] .fsos-plan-balance-badge--neg {
-  background: rgba(192, 57, 43, 0.18);
-  color: #a93226;
-}
-[data-theme="light"] .fsos-plan-balance-badge--neutral {
-  background: rgba(0, 0, 0, 0.06);
-  color: #666;
 }
 [data-theme="light"] .fsos-plan-change-added {
   color: #1f7a43;
