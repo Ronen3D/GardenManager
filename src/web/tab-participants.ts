@@ -694,7 +694,7 @@ function renderEditRow(p: Participant, idx: number): string {
     <td class="col-select"></td>
     <td class="col-index">${idx}</td>
     <td class="col-name">
-      <input class="input-sm" type="text" data-field="name" value="${escHtml(p.name)}" />
+      <input class="input-sm" type="text" data-field="name" value="${escHtml(p.name)}" maxlength="${store.MAX_PARTICIPANT_NAME_LENGTH}" />
     </td>
     <td class="col-group">
       <select class="input-sm" data-field="group" data-group-select>
@@ -857,7 +857,7 @@ function renderAddForm(groups: string[]): string {
   <div id="add-participant-form" class="add-form hidden">
     <h4>הוסף משתתף</h4>
     <div class="form-row">
-      <label>שם <input class="input-sm" type="text" data-field="new-name" placeholder="שם" /></label>
+      <label>שם <input class="input-sm" type="text" data-field="new-name" placeholder="שם" maxlength="${store.MAX_PARTICIPANT_NAME_LENGTH}" /></label>
       <label>קבוצה
         <select class="input-sm" data-field="new-group" data-group-select>
           ${groups.map((g) => `<option value="${escHtml(g)}">${escHtml(g)}</option>`).join('')}
@@ -1331,7 +1331,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const levelEl = container.querySelector('[data-field="new-level"]') as HTMLSelectElement;
         const name = nameEl?.value.trim();
         if (!name) {
+          showToast('יש להזין שם משתתף/ת', { type: 'error' });
           nameEl?.focus();
+          nameEl?.select();
           return;
         }
         if (store.isParticipantNameTaken(name)) {
@@ -1398,7 +1400,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const nameEl = row.querySelector('[data-field="name"]') as HTMLInputElement;
         const name = nameEl?.value.trim();
         if (!name) {
+          showToast('יש להזין שם משתתף/ת', { type: 'error' });
           nameEl?.focus();
+          nameEl?.select();
           return;
         }
         if (store.isParticipantNameTaken(name, pid)) {

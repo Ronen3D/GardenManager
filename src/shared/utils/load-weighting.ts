@@ -53,7 +53,7 @@ export function getLoadWeightAtTime(task: Task, time: Date): number {
  * matching, so the result is correct for the actual calendar day the
  * instant falls on (including midnight-crossing windows).
  */
-function isTimeInsideWindow(time: Date, window: LoadWindow): boolean {
+export function isTimeInsideWindow(time: Date, window: LoadWindow): boolean {
   // Build the window boundaries on the same calendar day as `time`
   const dayStart = new Date(time.getFullYear(), time.getMonth(), time.getDate());
 

@@ -1976,7 +1976,7 @@ select.input-sm {
 }
 .lw-row {
   display: grid;
-  grid-template-columns: minmax(130px, max-content) minmax(95px, max-content) minmax(0, 1fr);
+  grid-template-columns: minmax(130px, max-content) minmax(95px, max-content) minmax(70px, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
@@ -2034,6 +2034,20 @@ select.input-sm {
   padding-inline: 4px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+.lw-blocks {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.lw-blocks .checkbox-label {
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.lw-blocks input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 .lw-actions {
   display: inline-flex;
@@ -2514,7 +2528,9 @@ select.input-sm {
 .kpi-cell-clickable {
   cursor: pointer;
   border-radius: 8px;
-  transition: background 120ms ease, transform 120ms ease;
+  transition:
+    background 120ms ease,
+    transform 120ms ease;
 }
 .kpi-cell-clickable:hover {
   background: rgba(255, 255, 255, 0.05);
@@ -2530,9 +2546,15 @@ select.input-sm {
 
 /* Brief highlight when the user jumps to the violations section */
 @keyframes violations-section-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(224, 160, 0, 0.55); }
-  60%  { box-shadow: 0 0 0 10px rgba(224, 160, 0, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(224, 160, 0, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(224, 160, 0, 0.55);
+  }
+  60% {
+    box-shadow: 0 0 0 10px rgba(224, 160, 0, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(224, 160, 0, 0);
+  }
 }
 .violations-section-pulse {
   animation: violations-section-pulse 1.4s ease-out 1;
@@ -13677,17 +13699,13 @@ tr.now-row-animate > td.time-cell {
   pointer-events: none;
   z-index: 9999;
   transform: translate(-50%, -50%);
-  filter:
-    drop-shadow(0 0 14px rgba(255, 60, 80, 0.55))
-    drop-shadow(0 0 38px rgba(180, 30, 50, 0.4))
+  filter: drop-shadow(0 0 14px rgba(255, 60, 80, 0.55)) drop-shadow(0 0 38px rgba(180, 30, 50, 0.4))
     drop-shadow(0 6px 18px rgba(0, 0, 0, 0.7));
   animation: ee-dark-mark-summon 3.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 .ee-vader-helmet--farewell {
   animation: ee-dark-mark-dissolve 2.2s ease-out forwards;
-  filter:
-    drop-shadow(0 0 12px rgba(255, 60, 80, 0.4))
-    drop-shadow(0 0 22px rgba(120, 20, 30, 0.25));
+  filter: drop-shadow(0 0 12px rgba(255, 60, 80, 0.4)) drop-shadow(0 0 22px rgba(120, 20, 30, 0.25));
 }
 .ee-vader-helmet svg {
   width: 100%;

@@ -1,14 +1,26 @@
 /**
- * Rest Calculator - Computes rest periods between load-bearing tasks.
+ * Rest Calculator - Computes rest periods between blocking load-bearing tasks.
  *
- * Rest Definition: time between consecutive load-bearing tasks where BOTH have
- * blocksConsecutive=true. This mirrors HC-12's logic — tasks that are allowed
- * to be placed back-to-back (e.g. Karov with blocksConsecutive=false) do not
- * generate rest-gap penalties.
+ * Rest Definition: time between *successive blocking tasks* (blocksConsecutive=true)
+ * in the participant's timeline. Non-blocking load-bearing tasks (e.g. Karov)
+ * sitting between two blocking tasks do NOT remove the blocking pair from the
+ * signal — the gap is measured from one blocking task's end to the next
+ * blocking task's start, regardless of what happens in between. This avoids a
+ * scoring blind spot where a non-blocking task slipped between two blocking
+ * tasks would hide the participant's tightest rest gap from the optimizer.
+ *
+ * The measured gap is therefore an *upper bound* on idle time when a
+ * non-blocking task is interleaved; workload std-dev (SC-3) and daily balance
+ * (SC-8) cover the "but they were doing Karov in between" axis separately.
  *
  * Zero-load tasks (computeTaskEffectiveHours(task) === 0, e.g. Karovit-style)
  * are excluded entirely — they do not count as work, do not participate in
  * rest-gap computation.
+ *
+ * Note: the rest-gap signal is driven by the task-level static
+ * `blocksConsecutive` flag only. The per-window HC-12 boundary opt-in
+ * (`LoadWindow.blocksAtBoundary`) is intentionally NOT consulted here —
+ * it is a hard-constraint boundary trigger, not a workload-fairness signal.
  */
 
 import type { Assignment, Participant, Task, TimeBlock } from '../../models/types';
@@ -23,7 +35,7 @@ interface TaggedBlock {
 
 export interface ParticipantRestProfile {
   participantId: string;
-  /** Rest gaps (hours) between consecutive dual-blocking task pairs */
+  /** Rest gaps (hours) between successive blocking tasks (non-blocking tasks in between are skipped, not erased) */
   restGaps: number[];
   /** Minimum rest gap (hours) — the bottleneck */
   minRestHours: number;
@@ -70,19 +82,21 @@ function getLoadBearingBlocks(
 }
 
 /**
- * Compute rest gaps between consecutive load-bearing task blocks.
- * Only gaps where BOTH the preceding and following tasks have
- * blocksConsecutive=true are included — mirroring HC-12's rule.
+ * Compute rest gaps between successive blocking task blocks.
+ *
+ * Filters down to blocking tasks first, then computes gaps between consecutive
+ * blocking pairs. A non-blocking task interleaved between two blocking tasks
+ * does NOT erase the blocking-to-blocking gap — that pair stays in the signal
+ * so the optimizer can keep maximising the tightest blocking rest gap.
  */
 function computeRestGaps(sortedBlocks: TaggedBlock[]): number[] {
+  const blocking: TaggedBlock[] = [];
+  for (const b of sortedBlocks) {
+    if (b.blocksConsecutive) blocking.push(b);
+  }
   const gaps: number[] = [];
-  for (let i = 1; i < sortedBlocks.length; i++) {
-    const prev = sortedBlocks[i - 1];
-    const curr = sortedBlocks[i];
-    // Only penalise gaps between two blocking tasks
-    if (!prev.blocksConsecutive || !curr.blocksConsecutive) continue;
-    const gap = gapHours(prev.block, curr.block);
-    gaps.push(gap);
+  for (let i = 1; i < blocking.length; i++) {
+    gaps.push(gapHours(blocking[i - 1].block, blocking[i].block));
   }
   return gaps;
 }

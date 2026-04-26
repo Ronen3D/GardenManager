@@ -169,8 +169,24 @@ function createKarovTask(timeBlock: TimeBlock): Task {
     ],
     baseLoadWeight: 1 / 3,
     loadWindows: [
-      { id: 'karov-hot-am', startHour: 5, startMinute: 0, endHour: 6, endMinute: 30, weight: 1 },
-      { id: 'karov-hot-pm', startHour: 17, startMinute: 0, endHour: 18, endMinute: 30, weight: 1 },
+      {
+        id: 'karov-hot-am',
+        startHour: 5,
+        startMinute: 0,
+        endHour: 6,
+        endMinute: 30,
+        weight: 1,
+        blocksAtBoundary: true,
+      },
+      {
+        id: 'karov-hot-pm',
+        startHour: 17,
+        startMinute: 0,
+        endHour: 18,
+        endMinute: 30,
+        weight: 1,
+        blocksAtBoundary: true,
+      },
     ],
     sameGroupRequired: false,
     blocksConsecutive: false,
@@ -1425,6 +1441,185 @@ const hcParticipant: Participant = {
     'HC-12: full validation has correct code',
   );
 }
+
+// ── New blocking-model tests (two-rule semantics) ────────────────────────────
+
+// Helper for the new tests: a single-slot task with custom load fields.
+let _hc12CustomCounter = 0;
+function _makeHc12CustomTask(opts: {
+  block: TimeBlock;
+  blocksConsecutive: boolean;
+  baseLoadWeight?: number;
+  loadWindows?: LoadWindow[];
+}): Task {
+  const n = ++_hc12CustomCounter;
+  return {
+    id: `hc12-custom-${n}`,
+    name: `custom-${n}`,
+    sourceName: `custom-${n}`,
+    timeBlock: opts.block,
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: `hc12-custom-slot-${n}`,
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+        label: 'משבצת',
+      },
+    ],
+    baseLoadWeight: opts.baseLoadWeight,
+    loadWindows: opts.loadWindows,
+    sameGroupRequired: false,
+    blocksConsecutive: opts.blocksConsecutive,
+  };
+}
+
+// T-HC12-13: blocksConsecutive=true with a hot window that covers only the
+// middle (not edges), adjacent to a heavy task → VIOLATION (regression test
+// for the prior bug where windows silently overrode the task-level flag).
+{
+  const midHot = _makeHc12CustomTask({
+    block: createTimeBlockFromHours(baseDate, 5, 13),
+    blocksConsecutive: true,
+    baseLoadWeight: 0.3,
+    loadWindows: [{ id: 'mid-hot', startHour: 7, startMinute: 0, endHour: 9, endMinute: 0, weight: 1 }],
+  });
+  const heavy = createShemeshTask(createTimeBlockFromHours(baseDate, 13, 22));
+  const tMap = new Map([
+    [midHot.id, midHot],
+    [heavy.id, heavy],
+  ]);
+  const assigns = [
+    {
+      id: 'hc12-13-a',
+      taskId: midHot.id,
+      slotId: midHot.slots[0].slotId,
+      participantId: hcParticipant.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'hc12-13-b',
+      taskId: heavy.id,
+      slotId: heavy.slots[0].slotId,
+      participantId: hcParticipant.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+  const v = checkNoConsecutiveHighLoad(hcParticipant.id, assigns, tMap);
+  assert(v.length === 1, 'HC-12 (T-13): blocksConsecutive=true is absolute even when boundary samples cold');
+  const result = validateHardConstraints([midHot, heavy], [hcParticipant], assigns);
+  assert(result.valid === false, 'HC-12 (T-13): aggregate validator agrees — invalid');
+  assert(
+    result.violations.some((vv) => vv.code === 'CONSECUTIVE_HIGH_LOAD'),
+    'HC-12 (T-13): aggregate validator reports CONSECUTIVE_HIGH_LOAD',
+  );
+}
+
+// T-HC12-14: blocksConsecutive=false with a hot window touching the end edge
+// but blocksAtBoundary=false → NO violation (per-window opt-in respected).
+{
+  const karovOptOut = _makeHc12CustomTask({
+    block: createTimeBlockFromHours(baseDate, 10, 18), // ends at 18:00 inside hot 17:00-18:30
+    blocksConsecutive: false,
+    baseLoadWeight: 1 / 3,
+    loadWindows: [
+      {
+        id: 'opt-out-pm',
+        startHour: 17,
+        startMinute: 0,
+        endHour: 18,
+        endMinute: 30,
+        weight: 1,
+        blocksAtBoundary: false,
+      },
+    ],
+  });
+  const heavy = createShemeshTask(createTimeBlockFromHours(baseDate, 18, 22));
+  const tMap = new Map([
+    [karovOptOut.id, karovOptOut],
+    [heavy.id, heavy],
+  ]);
+  const assigns = [
+    {
+      id: 'hc12-14-a',
+      taskId: karovOptOut.id,
+      slotId: karovOptOut.slots[0].slotId,
+      participantId: hcParticipant.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'hc12-14-b',
+      taskId: heavy.id,
+      slotId: heavy.slots[0].slotId,
+      participantId: hcParticipant.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+  const v = checkNoConsecutiveHighLoad(hcParticipant.id, assigns, tMap);
+  assert(v.length === 0, 'HC-12 (T-14): blocksConsecutive=false + blocksAtBoundary=false → no violation');
+  const result = validateHardConstraints([karovOptOut, heavy], [hcParticipant], assigns);
+  assert(
+    !result.violations.some((vv) => vv.code === 'CONSECUTIVE_HIGH_LOAD'),
+    'HC-12 (T-14): aggregate validator agrees — no CONSECUTIVE_HIGH_LOAD',
+  );
+}
+
+// T-HC12-15: blocksConsecutive=false with a hot window covering only the
+// middle (not edges), blocksAtBoundary=true → NO violation (the flag is on,
+// but the window doesn't touch any boundary, so neither rule fires).
+{
+  const midHotOptIn = _makeHc12CustomTask({
+    block: createTimeBlockFromHours(baseDate, 5, 13),
+    blocksConsecutive: false,
+    baseLoadWeight: 0.3,
+    loadWindows: [
+      {
+        id: 'mid-hot-opt-in',
+        startHour: 7,
+        startMinute: 0,
+        endHour: 9,
+        endMinute: 0,
+        weight: 1,
+        blocksAtBoundary: true,
+      },
+    ],
+  });
+  const heavy = createShemeshTask(createTimeBlockFromHours(baseDate, 13, 22));
+  const tMap = new Map([
+    [midHotOptIn.id, midHotOptIn],
+    [heavy.id, heavy],
+  ]);
+  const assigns = [
+    {
+      id: 'hc12-15-a',
+      taskId: midHotOptIn.id,
+      slotId: midHotOptIn.slots[0].slotId,
+      participantId: hcParticipant.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'hc12-15-b',
+      taskId: heavy.id,
+      slotId: heavy.slots[0].slotId,
+      participantId: hcParticipant.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+  const v = checkNoConsecutiveHighLoad(hcParticipant.id, assigns, tMap);
+  assert(v.length === 0, 'HC-12 (T-15): per-window flag does not fire when window misses both edges');
+  const result = validateHardConstraints([midHotOptIn, heavy], [hcParticipant], assigns);
+  assert(
+    !result.violations.some((vv) => vv.code === 'CONSECUTIVE_HIGH_LOAD'),
+    'HC-12 (T-15): aggregate validator agrees — no CONSECUTIVE_HIGH_LOAD',
+  );
+}
+
 // ─── Senior Role Policy (HC-13) Tests ─────────────────────────────────────
 
 console.log('\n── Senior Role Policy (HC-13) ───────────────');
@@ -4204,12 +4399,59 @@ console.log('\n── Rest Calculator: Extended ──────────�
     },
   ];
   const restNb = computeParticipantRest('rest-p4', nbAssigns, [blockingTask, nonBlockingTask, blockingTask2]);
-  // Karov (non-blocking) between two blocking tasks: blocking↔karov gap is NOT penalised
-  // Only blocking↔blocking gaps are counted
+  // Karov (non-blocking) between two blocking tasks: the blocking→blocking gap
+  // must still be measured. The non-blocking task in the middle is skipped, not
+  // erased — otherwise the participant's tightest rest gap is hidden from SA.
   assert(restNb.loadBearingAssignmentCount === 3, 'Rest: non-blocking still counted as work');
-  // The Karov breaks the blocking chain, so we expect gaps between blocking-blocking pairs only
-  // With no direct blocking→blocking adjacency, we should see limited rest gaps
-  assert(restNb.restGaps.length <= 1, 'Rest: non-blocking task breaks rest gap chain');
+  assert(restNb.restGaps.length === 1, 'Rest: B→N→B yields exactly one blocking-pair gap');
+  assert(restNb.restGaps[0] === 4, 'Rest: B(6-10)→N→B(14-18) gap = 4h (blocking end → blocking start)');
+  assert(restNb.minRestHours === 4, 'Rest: minRest reflects the hidden B→B gap');
+}
+
+// Blind-spot regression: B → N → B → B must surface the tighter B→B gap, not just the trailing one
+{
+  const bA = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10)); // blocking
+  const nM = createKarovTask(createTimeBlockFromHours(baseDate, 10, 13)); // non-blocking, load-bearing
+  const bB = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18)); // blocking — gap from bA = 4h (tight)
+  const bC = createShemeshTask(createTimeBlockFromHours(baseDate, 28, 32)); // blocking — gap from bB = 10h (loose)
+  const blindAssigns: Assignment[] = [
+    {
+      id: 'bs-a1',
+      taskId: bA.id,
+      slotId: bA.slots[0].slotId,
+      participantId: 'rest-p5',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'bs-a2',
+      taskId: nM.id,
+      slotId: nM.slots[0].slotId,
+      participantId: 'rest-p5',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'bs-a3',
+      taskId: bB.id,
+      slotId: bB.slots[0].slotId,
+      participantId: 'rest-p5',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'bs-a4',
+      taskId: bC.id,
+      slotId: bC.slots[0].slotId,
+      participantId: 'rest-p5',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+  const restBs = computeParticipantRest('rest-p5', blindAssigns, [bA, nM, bB, bC]);
+  assert(restBs.restGaps.length === 2, 'Blind-spot: B→N→B→B yields 2 blocking-pair gaps');
+  assert(restBs.minRestHours === 4, 'Blind-spot: tightest B→B gap (4h) survives despite N in the middle');
+  assert(restBs.maxRestHours === 10, 'Blind-spot: looser B→B gap (10h) also recorded');
 }
 
 // computeAllRestProfiles: covers all participants
@@ -8078,6 +8320,234 @@ console.log('\n── HC-14: Cross-Boundary & Cross-Rule ──');
   );
 }
 
+// ─── HC-14: Phase-2 three-rule valley regression ────────────────────────────
+// Regression for a soundness bug where Phase-2 only checked adjacent cross-rule
+// pairs in the globally sorted list. With 3+ rules whose middle rule has a much
+// smaller duration, the long-rule pair at the ends could slip through silently
+// because the small middle threshold is satisfied by both adjacent pairs while
+// the actual end-to-end gap is far below the long-rule minimum.
+
+console.log('\n── HC-14: Three-Rule Valley (Phase-2) ──');
+{
+  const valleyP: Participant = {
+    id: 'hc14v-p1',
+    name: 'HC14ValleyTester',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: [{ start: new Date(2026, 3, 12, 0, 0), end: new Date(2026, 3, 14, 12, 0) }],
+    dateUnavailability: [],
+  };
+  const valleyBase = new Date(2026, 3, 12, 0, 0);
+
+  const mkTask = (id: string, name: string, startHour: number, endHour: number, restRuleId: string): Task => ({
+    id,
+    name,
+    timeBlock: createTimeBlockFromHours(valleyBase, startHour, endHour),
+    requiredCount: 1,
+    slots: [{ slotId: `${id}-s`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    restRuleId,
+  });
+  const mkAssign = (id: string, taskId: string): Assignment => ({
+    id,
+    taskId,
+    slotId: `${taskId}-s`,
+    participantId: valleyP.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  });
+
+  // Test 1 — the trace scenario. A/X(10h) at 00-01, B/Y(2h) at 03-04, C/Z(10h)
+  // at 06-07. Adjacent gaps (A,B)=2h and (B,C)=2h satisfy min(rule,2h)=2h.
+  // But (A,C) needs min(10h,10h)=10h, actual gap is 5h → MUST violate.
+  const valleyRules = new Map([
+    ['rule-x', 10 * 3600000],
+    ['rule-y', 2 * 3600000],
+    ['rule-z', 10 * 3600000],
+  ]);
+  const tA = mkTask('hc14v-a', 'A', 0, 1, 'rule-x');
+  const tB = mkTask('hc14v-b', 'B', 3, 4, 'rule-y');
+  const tC = mkTask('hc14v-c', 'C', 6, 7, 'rule-z');
+  const tMapValley = new Map([
+    [tA.id, tA],
+    [tB.id, tB],
+    [tC.id, tC],
+  ]);
+  const valleyAssigns: Assignment[] = [
+    mkAssign('hc14v-a1', tA.id),
+    mkAssign('hc14v-a2', tB.id),
+    mkAssign('hc14v-a3', tC.id),
+  ];
+  const vValley = checkRestRules(valleyP.id, valleyAssigns, tMapValley, valleyRules);
+  assert(vValley.length === 1, 'HC-14 valley: exactly one violation reported (the non-adjacent (A,C) cross-rule pair)');
+  assert(vValley[0].code === 'CATEGORY_BREAK_VIOLATION', 'HC-14 valley: violation code correct');
+  assert(vValley[0].taskId === tC.id, 'HC-14 valley: violation reported on the later task (C) of the offending pair');
+
+  // Test 2 — boundary: same valley shape but C pushed out so gap(A,C) = 10h
+  // exactly. The break condition `gap >= maxDur` skips the check; no violation
+  // should be reported (threshold is min(10,10) = 10, gap = 10, not <).
+  const tC_boundary = mkTask('hc14v-c-bnd', 'C-bnd', 11, 12, 'rule-z');
+  const tMapBoundary = new Map([
+    [tA.id, tA],
+    [tB.id, tB],
+    [tC_boundary.id, tC_boundary],
+  ]);
+  const boundaryAssigns: Assignment[] = [
+    mkAssign('hc14v-b1', tA.id),
+    mkAssign('hc14v-b2', tB.id),
+    mkAssign('hc14v-b3', tC_boundary.id),
+  ];
+  assert(
+    checkRestRules(valleyP.id, boundaryAssigns, tMapBoundary, valleyRules).length === 0,
+    'HC-14 valley boundary: gap(A,C) exactly == 10h → no violation',
+  );
+
+  // Test 3 — adjacent gaps fail too. All three pairs (A,B), (B,C), (A,C)
+  // violate. Confirms dedupe still works and the new all-pairs scan does not
+  // double-count via violatedPairs.
+  const tB_close = mkTask('hc14v-b-close', 'B-close', 1, 2, 'rule-y'); // gap A→B = 0h
+  const tC_close = mkTask('hc14v-c-close', 'C-close', 3, 4, 'rule-z'); // gap B→C = 1h, gap A→C = 2h
+  const tMapClose = new Map([
+    [tA.id, tA],
+    [tB_close.id, tB_close],
+    [tC_close.id, tC_close],
+  ]);
+  const closeAssigns: Assignment[] = [
+    mkAssign('hc14v-c1', tA.id),
+    mkAssign('hc14v-c2', tB_close.id),
+    mkAssign('hc14v-c3', tC_close.id),
+  ];
+  const vClose = checkRestRules(valleyP.id, closeAssigns, tMapClose, valleyRules);
+  assert(vClose.length === 3, 'HC-14 valley close: all three pairs (A,B), (B,C), (A,C) reported exactly once each');
+
+  // Test 4 — Phase-1 transitivity sanity. Three tasks all sharing rule X with
+  // adjacent gaps exactly == 10h. Phase 1 must accept; Phase 2 must not run
+  // (only one rule present). Guards against accidental over-fixing.
+  const onlyXRules = new Map([['rule-x', 10 * 3600000]]);
+  const tA_x = mkTask('hc14v-x1', 'X1', 0, 1, 'rule-x');
+  const tB_x = mkTask('hc14v-x2', 'X2', 11, 12, 'rule-x');
+  const tC_x = mkTask('hc14v-x3', 'X3', 22, 23, 'rule-x');
+  const tMapAllX = new Map([
+    [tA_x.id, tA_x],
+    [tB_x.id, tB_x],
+    [tC_x.id, tC_x],
+  ]);
+  const allXAssigns: Assignment[] = [
+    mkAssign('hc14v-x-a1', tA_x.id),
+    mkAssign('hc14v-x-a2', tB_x.id),
+    mkAssign('hc14v-x-a3', tC_x.id),
+  ];
+  assert(
+    checkRestRules(valleyP.id, allXAssigns, tMapAllX, onlyXRules).length === 0,
+    'HC-14 same-rule transitivity: 3 tasks sharing rule X with 10h adjacent gaps → 0 violations',
+  );
+
+  // Test 5 — early-termination correctness. Build 4 tasks, 4 rules where some
+  // pair gaps exceed maxDur. Every pair within range must be checked correctly;
+  // pairs beyond maxDur must not produce false positives. Here all pairs are
+  // legal so the result must be 0 violations.
+  const fourRules = new Map([
+    ['rule-x', 10 * 3600000],
+    ['rule-y', 2 * 3600000],
+    ['rule-z', 5 * 3600000],
+    ['rule-w', 3 * 3600000],
+  ]);
+  // A(X)/0-1, B(Y)/3-4 (gap 2 ≥ min(10,2)=2 ✓), C(Z)/9-10 (gap from B = 5 ≥ min(2,5)=2 ✓; gap from A = 8 < maxDur=10, min(10,5)=5, 8≥5 ✓), D(W)/14-15 (gap from C=4 ≥ min(5,3)=3 ✓; gap from B=10 ≥ maxDur, break; gap from A=13 ≥ maxDur, break)
+  const tD = mkTask('hc14v-et-d', 'D', 14, 15, 'rule-w');
+  const tC_et = mkTask('hc14v-et-c', 'C-et', 9, 10, 'rule-z');
+  const tMapET = new Map([
+    [tA.id, tA],
+    [tB.id, tB],
+    [tC_et.id, tC_et],
+    [tD.id, tD],
+  ]);
+  const etAssigns: Assignment[] = [
+    mkAssign('hc14v-et-a1', tA.id),
+    mkAssign('hc14v-et-a2', tB.id),
+    mkAssign('hc14v-et-a3', tC_et.id),
+    mkAssign('hc14v-et-a4', tD.id),
+  ];
+  assert(
+    checkRestRules(valleyP.id, etAssigns, tMapET, fourRules).length === 0,
+    'HC-14 early-termination: 4 tasks/4 rules with all pairs legal → 0 violations (no false positive from break)',
+  );
+
+  // Test 6 — validateHardConstraints integration. End-to-end aggregate verdict
+  // must catch the same valley violation, since this is what every downstream
+  // path (rescue, FSOS, inject, manual swap, post-optimize) depends on.
+  const aggValley = validateHardConstraints([tA, tB, tC], [valleyP], valleyAssigns, undefined, valleyRules);
+  assert(
+    aggValley.violations.some((v) => v.code === 'CATEGORY_BREAK_VIOLATION' && v.taskId === tC.id),
+    'HC-14 valley: validateHardConstraints (post-optimize verdict) reports the (A,C) violation',
+  );
+
+  // Test 7 — isSwapFeasible (SA hot path) must reject a swap that produces the
+  // 3-rule valley state. Pre-swap state was legal (P1 had A+B, P2 had C+D);
+  // post-swap P1 holds A+B+C (the valley), P2 holds D. isSwapFeasible exchanges
+  // C and D between P1 and P2.
+  const valleyP2: Participant = { ...valleyP, id: 'hc14v-p2', name: 'HC14ValleyP2' };
+  const tD_safe = mkTask('hc14v-sf-d', 'D-safe', 20, 21, 'rule-w'); // unrelated task for P2
+  const swapAssigns: Assignment[] = [
+    { ...mkAssign('hc14v-sw-a', tA.id), participantId: valleyP.id }, // P1 holds A
+    { ...mkAssign('hc14v-sw-b', tB.id), participantId: valleyP.id }, // P1 holds B
+    { ...mkAssign('hc14v-sw-c', tC.id), participantId: valleyP.id }, // POST-swap: P1 holds C (the new arrival)
+    { ...mkAssign('hc14v-sw-d', tD_safe.id), participantId: valleyP2.id }, // POST-swap: P2 holds D
+  ];
+  const swapTaskMap = new Map<string, Task>([
+    [tA.id, tA],
+    [tB.id, tB],
+    [tC.id, tC],
+    [tD_safe.id, tD_safe],
+  ]);
+  const swapPMap = new Map<string, Participant>([
+    [valleyP.id, valleyP],
+    [valleyP2.id, valleyP2],
+  ]);
+  const swapByParticipant = new Map<string, Assignment[]>([
+    [valleyP.id, [swapAssigns[0], swapAssigns[1], swapAssigns[2]]],
+    [valleyP2.id, [swapAssigns[3]]],
+  ]);
+  const swapByTask = new Map<string, Assignment[]>([
+    [tA.id, [swapAssigns[0]]],
+    [tB.id, [swapAssigns[1]]],
+    [tC.id, [swapAssigns[2]]],
+    [tD_safe.id, [swapAssigns[3]]],
+  ]);
+  // idxI=2 (C, now P1's), idxJ=3 (D, now P2's) — the exchanged pair.
+  const swapFeasible = isSwapFeasible(
+    swapAssigns,
+    2,
+    3,
+    swapTaskMap,
+    swapPMap,
+    swapByParticipant,
+    swapByTask,
+    undefined,
+    valleyRules,
+  );
+  assert(swapFeasible === false, 'HC-14 valley: isSwapFeasible rejects a swap that creates the 3-rule valley on P1');
+
+  // Sanity: with HC-14 disabled, the same swap is now feasible — confirms the
+  // rejection above is specifically HC-14 and not leaking from another check.
+  const swapFeasibleDisabled = isSwapFeasible(
+    swapAssigns,
+    2,
+    3,
+    swapTaskMap,
+    swapPMap,
+    swapByParticipant,
+    swapByTask,
+    new Set<string>(['HC-14']),
+    valleyRules,
+  );
+  assert(
+    swapFeasibleDisabled === true,
+    'HC-14 valley: isSwapFeasible accepts the same swap when HC-14 is disabled (isolates the rejection cause)',
+  );
+}
+
 // ─── Capacity: scheduleEnd is exclusive (preflight off-by-one regression) ───
 
 console.log('\n── Capacity Window Semantics ──────────────────');
@@ -11714,7 +12184,6 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
     assert(report !== null, 'inject-G7: future-day spec succeeds with anchor set');
     assert(error === undefined, 'inject-G7: no error returned');
   }
-
 }
 
 // ─── Temporal mutation-gate helpers (operational-day based) ─────────────────

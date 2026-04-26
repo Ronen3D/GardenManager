@@ -142,15 +142,7 @@ const CHARACTERS: CharacterEntry[] = [
 
   // — Sith Lord (Star Wars crossover) —
   {
-    names: [
-      'darth vader',
-      'vader',
-      'דארת ווידר',
-      'דארת ויידר',
-      "דארת' ויידר",
-      'דארת וויידר',
-      'דארת ואדר',
-    ],
+    names: ['darth vader', 'vader', 'דארת ווידר', 'דארת ויידר', "דארת' ויידר", 'דארת וויידר', 'דארת ואדר'],
     preset: {
       variant: 'sith',
       spell: 'I am your father',
@@ -247,8 +239,7 @@ function runMainCast(preset: Preset, anchor: AnchorPoint, rowEl: Element | null)
   }
 
   // Particle burst
-  const particleCount =
-    variant === 'dumbledore' ? 40 : variant === 'darkwizard' ? 24 : variant === 'sith' ? 22 : 28;
+  const particleCount = variant === 'dumbledore' ? 40 : variant === 'darkwizard' ? 24 : variant === 'sith' ? 22 : 28;
   const particleClass =
     variant === 'dumbledore'
       ? 'ee-particle--gold-large'

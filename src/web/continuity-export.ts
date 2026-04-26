@@ -117,6 +117,7 @@ function taskToContinuityAssignment(task: Task): ContinuityAssignment {
     endHour: lw.endHour,
     endMinute: lw.endMinute,
     weight: lw.weight,
+    blocksAtBoundary: lw.blocksAtBoundary,
   }));
 
   return {

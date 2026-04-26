@@ -68,7 +68,6 @@ import { showRangePicker } from './range-picker-modal';
 import { closeRescueModal, initRescue, openRescueModal, type RescueSwapLabel } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice, onSmallScreenChange } from './responsive';
 import { renderScheduleGrid } from './schedule-grid-view';
-import { initSwimlane, renderSwimlaneView, wireSwimlaneEvents } from './swimlane-view';
 import {
   computePerDayHours,
   filterVisibleViolations,
@@ -84,6 +83,7 @@ import {
   violationLabel,
 } from './schedule-utils';
 import { openSwapPicker } from './swap-picker';
+import { initSwimlane, renderSwimlaneView, wireSwimlaneEvents } from './swimlane-view';
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
 import {
   canLeaveParticipantsTab,
@@ -3586,7 +3586,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.3</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4396,9 +4396,7 @@ function wireScheduleEvents(container: HTMLElement): void {
     if (!section) return;
     // If we're in manual-build mode the section is collapsed by default — expand it first
     // so the user lands on actual content rather than a closed header.
-    const collapsedToggle = section.querySelector<HTMLElement>(
-      '.violations-toggle[aria-expanded="false"]',
-    );
+    const collapsedToggle = section.querySelector<HTMLElement>('.violations-toggle[aria-expanded="false"]');
     if (collapsedToggle) collapsedToggle.click();
     section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     // Brief highlight pulse so the user sees where they landed.
@@ -4537,7 +4535,6 @@ function wireScheduleEvents(container: HTMLElement): void {
   // scroll/resize rather than recompute (anchor would otherwise drift).
   window.addEventListener('scroll', () => closeOpenTaskPanelMenus(container), true);
   window.addEventListener('resize', () => closeOpenTaskPanelMenus(container));
-
 
   // ── Time-cell two-click range selection ──
   const handleTimeCellSelect = (target: HTMLElement) => {

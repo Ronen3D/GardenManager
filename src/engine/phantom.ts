@@ -102,6 +102,7 @@ function continuityAssignmentToTask(taskId: string, ca: ContinuityAssignment): T
       endHour: lw.endHour,
       endMinute: lw.endMinute,
       weight: lw.weight,
+      blocksAtBoundary: lw.blocksAtBoundary,
     })),
     sameGroupRequired: false,
     blocksConsecutive: ca.blocksConsecutive,

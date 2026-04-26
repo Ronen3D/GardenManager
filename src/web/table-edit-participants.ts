@@ -461,7 +461,7 @@ function renderDesktopRow(
     <td class="te-col-select"><input type="checkbox" data-te-action="select-row" data-te-row-id="${row.rowId}" ${row.selected ? 'checked' : ''}${dis} /></td>
     <td class="te-col-index">${index + 1}</td>
     <td class="te-col-name">
-      <input type="text" class="input-sm te-input${row.errors.has('name') ? ' te-cell-error' : ''}" data-te-field="name" data-te-row-id="${row.rowId}" value="${escAttr(row.name)}"${dis} aria-invalid="${row.errors.has('name')}" />
+      <input type="text" class="input-sm te-input${row.errors.has('name') ? ' te-cell-error' : ''}" data-te-field="name" data-te-row-id="${row.rowId}" value="${escAttr(row.name)}" maxlength="${store.MAX_PARTICIPANT_NAME_LENGTH}"${dis} aria-invalid="${row.errors.has('name')}" />
       ${row.errors.has('name') ? `<div class="te-field-error">${escHtml(row.errors.get('name')!)}</div>` : ''}
     </td>
     <td class="te-col-group">
@@ -605,7 +605,7 @@ function renderCompactRow(
   let html = `<div class="te-compact-row ${statusCls}${isExpanded ? ' te-compact-expanded' : ''}${hasErrors ? ' te-compact-has-errors' : ''}" data-te-row="${row.rowId}">
     <div class="te-compact-header">
       <input type="checkbox" data-te-action="select-row" data-te-row-id="${row.rowId}" ${row.selected ? 'checked' : ''}${dis} />
-      <input type="text" class="te-compact-name${row.errors.has('name') ? ' te-cell-error' : ''}" data-te-field="name" data-te-row-id="${row.rowId}" value="${escAttr(row.name)}" placeholder="שם"${dis} aria-invalid="${row.errors.has('name')}" />
+      <input type="text" class="te-compact-name${row.errors.has('name') ? ' te-cell-error' : ''}" data-te-field="name" data-te-row-id="${row.rowId}" value="${escAttr(row.name)}" placeholder="שם" maxlength="${store.MAX_PARTICIPANT_NAME_LENGTH}"${dis} aria-invalid="${row.errors.has('name')}" />
       <select class="te-compact-pill te-compact-group${row.errors.has('group') ? ' te-cell-error' : ''}" data-te-field="group" data-te-row-id="${row.rowId}"${dis} aria-invalid="${row.errors.has('group')}">
         ${groups.map((g) => `<option value="${escAttr(g)}"${row.group === g ? ' selected' : ''}>${escHtml(g)}</option>`).join('')}
         <option value="__new__">+ חדשה…</option>

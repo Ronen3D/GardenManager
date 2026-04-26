@@ -405,7 +405,6 @@ export type HardConstraintCode =
   | 'HC-8' // Adanit feasibility
   | 'HC-11' // Forbidden certification (per-slot)
   | 'HC-12' // No consecutive high-load
-  | 'HC-13' // Senior policy (soft penalty only)
   | 'HC-14' // Minimum category break (5h)
   | 'HC-15'; // Sleep & recovery window after late/overnight tasks
 
@@ -431,7 +430,6 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-8': 'כשירות קבוצה למשימות משותפות',
   'HC-11': 'הסמכה אסורה במשבצת',
   'HC-12': 'ללא עומס רצוף',
-  'HC-13': 'מדיניות סגל (עונש רך)',
   'HC-14': 'הפסקה מינימלית בין משימות קטגוריה',
   'HC-15': 'השלמות שינה והתאוששות',
 };
@@ -453,7 +451,6 @@ export const ALL_HC_CODES: HardConstraintCode[] = [
   'HC-8',
   'HC-11',
   'HC-12',
-  'HC-13',
   'HC-14',
   'HC-15',
 ];
@@ -659,6 +656,14 @@ export interface LoadWindow {
   endHour: number;
   endMinute: number;
   weight: number;
+  /**
+   * HC-12 per-window opt-in. When the parent task has `blocksConsecutive=false`,
+   * a window whose interval covers a task boundary instant (start or end)
+   * causes that boundary to block iff this flag is true. Ignored when the
+   * task-level `blocksConsecutive=true` (which is absolute and unconditional).
+   * Treated as `false` when missing.
+   */
+  blocksAtBoundary?: boolean;
   /** Optional comparison formula that derived `weight`. Input-layer only. */
   loadFormula?: LoadFormula;
 }

@@ -367,9 +367,7 @@ export class SchedulingEngine {
     // that HC-6 emits for the same (taskId, slotId) — otherwise each empty slot
     // is reported twice in the violations panel.
     const infeasibleKey = (taskId: string, slotId: string) => `${taskId}|${slotId}`;
-    const infeasibleSlotKeys = new Set(
-      result.unfilledSlots.map((uf) => infeasibleKey(uf.taskId, uf.slotId)),
-    );
+    const infeasibleSlotKeys = new Set(result.unfilledSlots.map((uf) => infeasibleKey(uf.taskId, uf.slotId)));
     const dedupedHard = hardValidation.violations.filter((v) => {
       if (v.code === 'SLOT_UNFILLED' && v.taskId && v.slotId) {
         return !infeasibleSlotKeys.has(infeasibleKey(v.taskId, v.slotId));
@@ -386,9 +384,7 @@ export class SchedulingEngine {
       allViolations.push({
         severity: ViolationSeverity.Error,
         code: 'INFEASIBLE_SLOT',
-        message: reason
-          ? `${where} \u200F\u2014 ${reason}`
-          : `${where} \u200F\u2014 אין משתתפים זמינים`,
+        message: reason ? `${where} \u200F\u2014 ${reason}` : `${where} \u200F\u2014 אין משתתפים זמינים`,
         taskId,
         slotId,
       });

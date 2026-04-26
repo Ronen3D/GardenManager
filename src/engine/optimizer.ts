@@ -952,8 +952,7 @@ export function greedyAssign(
         if (!backtrackSuccess) {
           // R8: Build specific reason with constraint codes for diagnostics
           const levelStr = slot.acceptableLevels.map((e) => 'L' + e.level).join('/');
-          const certStr =
-            slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
+          const certStr = slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
           const profile = `${levelStr}${certStr}`;
 
           // Collect per-participant rejection codes to surface constraint conflicts
@@ -1313,6 +1312,8 @@ export function isSwapFeasible(
   // HC-14: Rest rules — minimum gap between rest-rule-tagged tasks
   // Uses module-level _hcScratch to avoid per-call allocations.
   if (!disabledHC?.has('HC-14') && restRuleMap && restRuleMap.size > 0) {
+    let maxRestDurMs = 0;
+    for (const d of restRuleMap.values()) if (d > maxRestDurMs) maxRestDurMs = d;
     const checkRestRules = (pid: string): boolean => {
       const raw = byParticipant.get(pid) || [];
       _hcScratch.length = 0;
@@ -1344,16 +1345,25 @@ export function isSwapFeasible(
         }
       }
 
-      // Phase 2: Cross-rule adjacent pairs
+      // Phase 2: Cross-rule pairs — all forward pairs within the
+      // max-rule-duration window. Adjacent-only is unsound when 3+ rules with
+      // different durations interleave (a small-duration rule between two
+      // large ones lets a long-rule pair slip through). The forward gap is
+      // monotone non-decreasing (sorted by start), so we break once
+      // gap >= maxDur. Mirrors checkRestRules() in hard-constraints.ts.
       if (ruleGroups.size > 1) {
         for (let x = 0; x < _hcScratch.length - 1; x++) {
           const cur = _hcScratch[x];
-          const nxt = _hcScratch[x + 1];
-          if (cur.id === nxt.id) continue;
-          if (cur.restRuleId === nxt.restRuleId) continue;
-          const dur = Math.min(restRuleMap.get(cur.restRuleId!)!, restRuleMap.get(nxt.restRuleId!)!);
-          const gap = nxt.timeBlock.start.getTime() - cur.timeBlock.end.getTime();
-          if (gap < dur) return false;
+          const curEnd = cur.timeBlock.end.getTime();
+          for (let y = x + 1; y < _hcScratch.length; y++) {
+            const nxt = _hcScratch[y];
+            const gap = nxt.timeBlock.start.getTime() - curEnd;
+            if (gap >= maxRestDurMs) break;
+            if (cur.id === nxt.id) continue;
+            if (cur.restRuleId === nxt.restRuleId) continue;
+            const dur = Math.min(restRuleMap.get(cur.restRuleId!)!, restRuleMap.get(nxt.restRuleId!)!);
+            if (gap < dur) return false;
+          }
         }
       }
       return true;

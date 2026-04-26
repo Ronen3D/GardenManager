@@ -15,7 +15,7 @@ import {
   type ValidationResult,
   ViolationSeverity,
 } from '../models/types';
-import { isHighLoadAtBoundary } from '../shared/utils/load-weighting';
+import { isTimeInsideWindow } from '../shared/utils/load-weighting';
 import {
   blocksOverlap,
   isBlockedByDateUnavailability,
@@ -183,7 +183,11 @@ export function checkSameGroup(task: Task, assignedParticipants: Participant[]):
   const groups = new Set(assignedParticipants.map((p) => p.group));
   if (groups.size > 1) {
     return [
-      violation('GROUP_MISMATCH', `${describeTaskInstance(task)} \u200F— קבוצות: ${[...groups].join(', ')} (נדרשת קבוצה אחת)`, task.id),
+      violation(
+        'GROUP_MISMATCH',
+        `${describeTaskInstance(task)} \u200F— קבוצות: ${[...groups].join(', ')} (נדרשת קבוצה אחת)`,
+        task.id,
+      ),
     ];
   }
   return [];
@@ -280,14 +284,7 @@ export function checkSlotsFilled(task: Task, assignments: Assignment[]): Constra
   for (const slot of task.slots) {
     const slotAssignments = taskAssignments.filter((a) => a.slotId === slot.slotId);
     if (slotAssignments.length === 0) {
-      violations.push(
-        violation(
-          'SLOT_UNFILLED',
-          `${describeTaskInstance(task)}`,
-          task.id,
-          slot.slotId,
-        ),
-      );
+      violations.push(violation('SLOT_UNFILLED', `${describeTaskInstance(task)}`, task.id, slot.slotId));
     } else if (slotAssignments.length > 1) {
       violations.push(
         violation(
@@ -313,7 +310,13 @@ export function checkUniqueParticipantsPerTask(task: Task, assignments: Assignme
   for (const a of taskAssignments) {
     if (seen.has(a.participantId)) {
       violations.push(
-        violation('DUPLICATE_IN_TASK', `${a.participantId} \u200F— ${describeTaskInstance(task)}`, task.id, a.slotId, a.participantId),
+        violation(
+          'DUPLICATE_IN_TASK',
+          `${a.participantId} \u200F— ${describeTaskInstance(task)}`,
+          task.id,
+          a.slotId,
+          a.participantId,
+        ),
       );
     }
     seen.add(a.participantId);
@@ -385,25 +388,36 @@ export function checkGroupFeasibility(
  * Determine whether a task effectively blocks consecutive placement at a
  * given edge ('start' or 'end').
  *
- * For tasks with loadWindows (e.g. Karov), the boundary is blocking only
- * when the task is at high load at that edge — a Karov ending in a hot
- * window blocks, but one ending in a cold zone does not.
+ * Two-rule model:
+ *   1. Task-level `blocksConsecutive=true` is absolute and unconditional —
+ *      both edges block, regardless of any load windows.
+ *   2. Otherwise, an individual `LoadWindow` may opt-in via
+ *      `blocksAtBoundary=true`. The opt-in fires at whichever boundary
+ *      the window's interval covers (start, end, or both).
  *
- * For tasks without loadWindows, the static `blocksConsecutive` flag is used.
+ * Sample at task.start for 'start' and at end-1ms for 'end' (half-open
+ * interval [start, end) — same convention as `getLoadWeightAtTime`).
  */
 export function effectivelyBlocksAt(task: Task, edge: 'start' | 'end'): boolean {
-  if (task.loadWindows && task.loadWindows.length > 0) {
-    return isHighLoadAtBoundary(task, edge);
+  // Rule 1: task-level flag is absolute.
+  if (task.blocksConsecutive) return true;
+
+  // Rule 2: per-window opt-in, evaluated at the boundary instant.
+  const windows = task.loadWindows;
+  if (!windows || windows.length === 0) return false;
+
+  const sampleTime = edge === 'start' ? task.timeBlock.start : new Date(task.timeBlock.end.getTime() - 1);
+  for (const w of windows) {
+    if (!w.blocksAtBoundary) continue;
+    if (isTimeInsideWindow(sampleTime, w)) return true;
   }
-  return task.blocksConsecutive;
+  return false;
 }
 
 /**
  * HC-12: A participant must NOT have two back-to-back assignments where
- * the first task ends at high load and the next starts at high load.
- *
- * For tasks with loadWindows, load is evaluated at the boundary instant.
- * For tasks without loadWindows, the blocksConsecutive flag is used.
+ * the first task's end blocks AND the next task's start blocks (per
+ * `effectivelyBlocksAt`).
  */
 export function checkNoConsecutiveHighLoad(
   participantId: string,
@@ -462,10 +476,14 @@ export function checkNoConsecutiveHighLoad(
  *
  * Two-phase algorithm:
  * Phase 1: Within each rule group, adjacent pairs (sorted by time) are
- *   sufficient because all pairs share the same threshold.
- * Phase 2: Across rule groups, adjacent pairs in the global sorted list
- *   (only checking cross-rule pairs) are sufficient because the min-threshold
- *   is constant for any pair from the same two rules.
+ *   sufficient by transitivity (gap(A,C) ≥ gap(A,B) + gap(B,C) ≥ 2·d ≥ d).
+ * Phase 2: Across rule groups, ALL forward cross-rule pairs within the
+ *   max-rule-duration window must be checked. Adjacent-only is unsound when
+ *   3+ rules with different durations interleave: a small-duration rule
+ *   between two large ones lets the long-rule pair slip through (the
+ *   transitive bound min(dA,dB) + dur(B) + min(dB,dC) does not dominate
+ *   min(dA,dC) when dB ≪ dA, dC). The forward gap is monotone non-decreasing
+ *   as j advances (tasks are sorted by start), so we break once gap ≥ maxDur.
  */
 export function checkRestRules(
   participantId: string,
@@ -527,28 +545,36 @@ export function checkRestRules(
     }
   }
 
-  // Phase 2: Cross-rule adjacent pairs
+  // Phase 2: Cross-rule pairs — all forward pairs within the max-rule-duration
+  // window. See header comment for why adjacent-only is unsound.
   if (byRule.size > 1) {
     tagged.sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+    let maxDurMs = 0;
+    for (const d of restRuleMap.values()) if (d > maxDurMs) maxDurMs = d;
     for (let i = 0; i < tagged.length - 1; i++) {
       const cur = tagged[i];
-      const nxt = tagged[i + 1];
-      if (cur.task.id === nxt.task.id) continue;
-      if (cur.task.restRuleId === nxt.task.restRuleId) continue; // same-rule handled in phase 1
-      const pairKey = cur.task.id < nxt.task.id ? `${cur.task.id}|${nxt.task.id}` : `${nxt.task.id}|${cur.task.id}`;
-      if (violatedPairs.has(pairKey)) continue;
-      const durationMs = Math.min(restRuleMap.get(cur.task.restRuleId!)!, restRuleMap.get(nxt.task.restRuleId!)!);
-      const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
-      if (gap < durationMs) {
-        violations.push(
-          violation(
-            'CATEGORY_BREAK_VIOLATION',
-            `${displayName} \u200F— ${(gap / 3600000).toFixed(1)} שעות בין "${describeTaskBidi(cur.task)}" ל-"${describeTaskBidi(nxt.task)}" (מינימום ${(durationMs / 3600000).toFixed(1)})`,
-            nxt.task.id,
-            undefined,
-            participantId,
-          ),
-        );
+      const curEnd = cur.task.timeBlock.end.getTime();
+      for (let j = i + 1; j < tagged.length; j++) {
+        const nxt = tagged[j];
+        const gap = nxt.task.timeBlock.start.getTime() - curEnd;
+        if (gap >= maxDurMs) break; // monotone forward gap; no later j can violate from this i
+        if (cur.task.id === nxt.task.id) continue;
+        if (cur.task.restRuleId === nxt.task.restRuleId) continue; // same-rule handled in phase 1
+        const pairKey = cur.task.id < nxt.task.id ? `${cur.task.id}|${nxt.task.id}` : `${nxt.task.id}|${cur.task.id}`;
+        if (violatedPairs.has(pairKey)) continue;
+        const durationMs = Math.min(restRuleMap.get(cur.task.restRuleId!)!, restRuleMap.get(nxt.task.restRuleId!)!);
+        if (gap < durationMs) {
+          violatedPairs.add(pairKey);
+          violations.push(
+            violation(
+              'CATEGORY_BREAK_VIOLATION',
+              `${displayName} \u200F— ${(gap / 3600000).toFixed(1)} שעות בין "${describeTaskBidi(cur.task)}" ל-"${describeTaskBidi(nxt.task)}" (מינימום ${(durationMs / 3600000).toFixed(1)})`,
+              nxt.task.id,
+              undefined,
+              participantId,
+            ),
+          );
+        }
       }
     }
   }
@@ -606,14 +632,7 @@ export function validateHardConstraints(
       for (const slot of task.slots) {
         const slotAssignments = taskAssignments.filter((a) => a.slotId === slot.slotId);
         if (slotAssignments.length === 0) {
-          allViolations.push(
-            violation(
-              'SLOT_UNFILLED',
-              `${describeTaskInstance(task)}`,
-              task.id,
-              slot.slotId,
-            ),
-          );
+          allViolations.push(violation('SLOT_UNFILLED', `${describeTaskInstance(task)}`, task.id, slot.slotId));
         } else if (slotAssignments.length > 1) {
           allViolations.push(
             violation(
@@ -634,7 +653,13 @@ export function validateHardConstraints(
         if (seen.has(a.participantId)) {
           const pName = pMap.get(a.participantId)?.name || a.participantId;
           allViolations.push(
-            violation('DUPLICATE_IN_TASK', `${pName} \u200F— ${describeTaskInstance(task)}`, task.id, a.slotId, a.participantId),
+            violation(
+              'DUPLICATE_IN_TASK',
+              `${pName} \u200F— ${describeTaskInstance(task)}`,
+              task.id,
+              a.slotId,
+              a.participantId,
+            ),
           );
         }
         seen.add(a.participantId);

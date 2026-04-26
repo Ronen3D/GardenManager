@@ -194,7 +194,10 @@ function fmtHm(h: number, m: number): string {
  * constraint engine handles the wrap automatically and the user does not
  * need to confirm it.
  */
-type ParsedSleepRecovery = { kind: 'preserve' } | { kind: 'set'; value: SleepRecoveryRule } | { kind: 'invalid'; reason: string };
+type ParsedSleepRecovery =
+  | { kind: 'preserve' }
+  | { kind: 'set'; value: SleepRecoveryRule }
+  | { kind: 'invalid'; reason: string };
 
 const SLEEP_RECOVERY_MAX_HOURS = 24;
 
@@ -331,9 +334,7 @@ function renderSleepRecoveryEditor(rule: SleepRecoveryRule | undefined, target: 
     : '';
 
   const switchTitle = enabled ? 'הכלל פעיל. לחיצה תכבה אותו.' : 'הכלל כבוי. לחיצה תפעיל אותו.';
-  const switchAriaLabel = enabled
-    ? 'כבה כלל השלמות שינה והתאוששות'
-    : 'הפעל כלל השלמות שינה והתאוששות';
+  const switchAriaLabel = enabled ? 'כבה כלל השלמות שינה והתאוששות' : 'הפעל כלל השלמות שינה והתאוששות';
 
   return `
     <section class="tprop-section tprop-section--sleep-recovery sr-collapsible${enabled ? ' sr-enabled' : ''}${showBody ? ' sr-open' : ''}">
@@ -902,12 +903,16 @@ type LoadFormulaSnapshotEntryLocal = {
 
 function renderLoadWindowsEditor(tpl: TaskTemplate): string {
   const windows = tpl.loadWindows ?? [];
+  const taskBlocks = !!tpl.blocksConsecutive;
+  const blocksTooltip = taskBlocks
+    ? 'חוסם רצף משימות מופעל ברמת המשימה — הגדרת חלון לא רלוונטית'
+    : 'אם החלון נוגע בקצה המשימה (תחילה או סוף) — הגדר אותו כחוסם רצף בקצה זה';
   let html = `<div class="lw-editor">
     <div class="lw-editor-header">
       <h4 class="lw-editor-title">חלונות עומס מוגבר</h4>
       <span class="lw-editor-count">${windows.length === 0 ? 'אין חלונות' : windows.length === 1 ? 'חלון אחד' : `${windows.length} חלונות`}</span>
     </div>
-    <p class="lw-editor-help text-muted">טווחי שעות בהם המשימה נחשבת עומס מוגבר. לכל חלון משקל בין 0 ל-1.</p>`;
+    <p class="lw-editor-help text-muted">טווחי שעות בהם המשימה נחשבת עומס מוגבר. לכל חלון משקל בין 0 ל-1. אם "חוסם רצף משימות" כבוי, ניתן לסמן חלון ספציפי כחוסם בקצה — החסימה תחול על קצה המשימה (תחילה/סוף) שהחלון נוגע בו.</p>`;
 
   if (windows.length === 0) {
     html += '<p class="lw-empty">לא הוגדרו חלונות עומס. משקל העומס חל על כל המשימה.</p>';
@@ -916,9 +921,12 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
       <div class="lw-row lw-row-head" aria-hidden="true">
         <span class="lw-col-label lw-col-time">טווח שעות</span>
         <span class="lw-col-label lw-col-weight">משקל</span>
+        <span class="lw-col-label lw-col-blocks">חוסם רצף בקצה</span>
         <span class="lw-col-label lw-col-actions">פעולות</span>
       </div>`;
     for (const w of windows) {
+      const checkedAttr = w.blocksAtBoundary ? 'checked' : '';
+      const disabledAttr = taskBlocks ? 'disabled' : '';
       html += `<div class="lw-row" role="listitem">
         <div class="lw-time">
           <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-start" data-lwid="${w.id}" value="${fmtHm(w.startHour, w.startMinute)}" aria-label="שעת התחלה" />
@@ -928,6 +936,11 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
         <div class="lw-weight">
           <input class="input-sm lw-weight-input" type="number" step="0.05" min="0" max="1" data-field="lw-edit-weight" data-lwid="${w.id}" value="${w.weight.toFixed(2)}" aria-label="משקל" />
           ${renderLoadFormulaControls({ kind: 'window', tpl, window: w, disabled: false })}
+        </div>
+        <div class="lw-blocks">
+          <label class="checkbox-label" title="${escHtml(blocksTooltip)}">
+            <input type="checkbox" data-field="lw-edit-blocks" data-lwid="${w.id}" ${checkedAttr} ${disabledAttr} aria-label="חוסם רצף בקצה" />
+          </label>
         </div>
         <div class="lw-actions">
           <button class="lw-btn lw-remove" data-action="remove-load-window" data-tid="${tpl.id}" data-lwid="${w.id}" title="מחק חלון" aria-label="מחק חלון">✕</button>
@@ -949,6 +962,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
         <input class="input-sm lw-weight-input" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" aria-label="משקל (0-1)" />
         <button class="btn-xs btn-outline lf-open-btn" type="button" data-action="add-load-window-and-compute" data-tid="${tpl.id}" title="הוסף וחשב לפי השוואה" aria-label="הוסף וחשב לפי השוואה">🧮</button>
       </div>
+      <div class="lw-blocks" aria-hidden="true"></div>
       <div class="lw-actions">
         <button class="lw-btn lw-save" data-action="add-load-window" data-tid="${tpl.id}" title="הוסף חלון" aria-label="הוסף חלון">+</button>
       </div>
@@ -1481,11 +1495,15 @@ function _commitLoadWindow(body: HTMLElement, tid: string, lwid: string): boolea
   const weightInput = body.querySelector(
     `[data-field="lw-edit-weight"][data-lwid="${lwid}"]`,
   ) as HTMLInputElement | null;
+  const blocksInput = body.querySelector(
+    `[data-field="lw-edit-blocks"][data-lwid="${lwid}"]`,
+  ) as HTMLInputElement | null;
   if (!startInput || !endInput || !weightInput) return false;
 
   const ps = parseHm(startInput.value);
   const pe = parseHm(endInput.value);
   const weight = parseFloat(weightInput.value || '1');
+  const blocksAtBoundary = blocksInput?.checked ?? false;
   if (!ps || !pe) {
     showToast('שעה לא תקינה — יש להזין בפורמט HH:MM (00:00–23:59)', { type: 'error' });
     return false;
@@ -1516,6 +1534,7 @@ function _commitLoadWindow(body: HTMLElement, tid: string, lwid: string): boolea
         endHour: pe.h,
         endMinute: pe.m,
         weight: nextWeight,
+        blocksAtBoundary,
       };
       // Manual edit of window weight clears any stored formula.
       if (w.loadFormula && Math.abs(nextWeight - w.loadFormula.computedValue) > 1e-9) {

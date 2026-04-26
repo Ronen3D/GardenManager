@@ -75,4 +75,6 @@ export interface ContinuityLoadWindow {
   endHour: number;
   endMinute: number;
   weight: number;
+  /** HC-12 per-window opt-in (mirrors `LoadWindow.blocksAtBoundary`). */
+  blocksAtBoundary?: boolean;
 }

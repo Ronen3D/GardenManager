@@ -23,7 +23,6 @@
 
 import { validateHardConstraints } from '../constraints/hard-constraints';
 import { computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
-import type { ScheduleContext } from '../shared/utils/time-utils';
 import type {
   Assignment,
   Participant,
@@ -36,6 +35,7 @@ import type {
   Task,
 } from '../models/types';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import type { ScheduleContext } from '../shared/utils/time-utils';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
 import { sortDonorsByProximity, sortParticipantsByLoadProximity } from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';

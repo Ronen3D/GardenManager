@@ -13,9 +13,9 @@
  */
 
 import type { Assignment, ConstraintViolation, LoadWindow, Task } from '../models/types';
-import { describeTaskBidi } from '../utils/date-utils';
 import { ViolationSeverity } from '../models/types';
 import { getLoadWeightAtTime } from '../shared/utils/load-weighting';
+import { describeTaskBidi } from '../utils/date-utils';
 
 function violation(code: string, message: string, taskId: string, participantId?: string): ConstraintViolation {
   return {

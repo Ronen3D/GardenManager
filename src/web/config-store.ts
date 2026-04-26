@@ -894,6 +894,8 @@ export function isParticipantNameTaken(name: string, excludeId?: string): boolea
 
 // ── Internal no-snapshot helpers (used by public functions & bulkMutateParticipants) ──
 
+export const MAX_PARTICIPANT_NAME_LENGTH = 30;
+
 function _addParticipantNoSnapshot(data: {
   name: string;
   level?: Level;
@@ -907,7 +909,7 @@ function _addParticipantNoSnapshot(data: {
   const pIds = sanitizePakalIds(data.pakalIds, pakalDefinitions);
   const p: Participant = {
     id,
-    name: data.name,
+    name: data.name.slice(0, MAX_PARTICIPANT_NAME_LENGTH),
     level: data.level ?? Level.L0,
     certifications: certs,
     pakalIds: pIds,
@@ -923,6 +925,9 @@ function _updateParticipantNoSnapshot(id: string, patch: Partial<Omit<Participan
   const p = participants.get(id);
   if (!p) return;
   const nextPatch = { ...patch };
+  if (typeof nextPatch.name === 'string') {
+    nextPatch.name = nextPatch.name.slice(0, MAX_PARTICIPANT_NAME_LENGTH);
+  }
   // biome-ignore lint/suspicious/noPrototypeBuiltins: ES2020 target doesn't support Object.hasOwn
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'pakalIds')) {
     nextPatch.pakalIds = sanitizePakalIds(nextPatch.pakalIds, pakalDefinitions);
@@ -2882,6 +2887,11 @@ const STORAGE_KEY_ALGORITHM = 'gardenmanager_algorithm';
 
 let _algorithmSettings: AlgorithmSettings | null = null;
 
+function _normalizeDayStartHour(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_ALGORITHM_SETTINGS.dayStartHour;
+  return Math.max(0, Math.min(23, Math.floor(v)));
+}
+
 /**
  * Get current algorithm settings (lazy-loaded from localStorage).
  * Returns a deep copy so mutations don't leak.
@@ -2898,10 +2908,7 @@ export function getAlgorithmSettings(): AlgorithmSettings {
           disabledHardConstraints: Array.isArray(parsed.disabledHardConstraints)
             ? (parsed.disabledHardConstraints as HardConstraintCode[])
             : [],
-          dayStartHour:
-            typeof parsed.dayStartHour === 'number'
-              ? Math.max(0, Math.min(23, Math.floor(parsed.dayStartHour)))
-              : DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
+          dayStartHour: _normalizeDayStartHour(parsed.dayStartHour),
         };
       } else {
         _algorithmSettings = {
@@ -2932,14 +2939,16 @@ export function getAlgorithmSettings(): AlgorithmSettings {
  */
 export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
   const current = getAlgorithmSettings();
-  const dayStartHourChanged = patch.dayStartHour !== undefined && patch.dayStartHour !== current.dayStartHour;
+  const nextDayStartHour =
+    patch.dayStartHour !== undefined ? _normalizeDayStartHour(patch.dayStartHour) : current.dayStartHour;
+  const dayStartHourChanged = nextDayStartHour !== current.dayStartHour;
   _algorithmSettings = {
     config: patch.config ? { ...current.config, ...patch.config } : current.config,
     disabledHardConstraints:
       patch.disabledHardConstraints !== undefined
         ? [...patch.disabledHardConstraints]
         : current.disabledHardConstraints,
-    dayStartHour: patch.dayStartHour !== undefined ? patch.dayStartHour : current.dayStartHour,
+    dayStartHour: nextDayStartHour,
   };
   _saveAlgorithmSettings();
   // The op-day boundary anchors weekly blackout windows in `computeAvailability`,
@@ -3134,10 +3143,7 @@ export function loadPreset(id: string): void {
   _algorithmSettings = {
     config: { ...preset.settings.config },
     disabledHardConstraints: [...preset.settings.disabledHardConstraints],
-    dayStartHour:
-      typeof preset.settings.dayStartHour === 'number'
-        ? preset.settings.dayStartHour
-        : DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
+    dayStartHour: _normalizeDayStartHour(preset.settings.dayStartHour),
   };
   _saveAlgorithmSettings();
   _activePresetId = id;
