@@ -104,6 +104,42 @@ function templateBadge(tpl: { color?: string; name: string }): string {
   return `<span class="badge" style="background:${color}">${escHtml(tpl.name)}</span>`;
 }
 
+/**
+ * Render a horizontal strip of chips that materialize the abstract
+ * (startHour, durationHours, shiftsPerDay) trio into a concrete shift list,
+ * so the user can see what those numbers actually produce. Wrap-around past
+ * 24:00 displays as the next day's wall-clock time (no midnight-crossing
+ * label, per project convention).
+ */
+function renderShiftPreview(tpl: TaskTemplate): string {
+  const { durationHours, shiftsPerDay, startHour } = tpl;
+  if (shiftsPerDay < 1 || durationHours <= 0) return '';
+
+  const fmt = (totalMinutes: number): string => {
+    const dayMin = 24 * 60;
+    const m = ((totalMinutes % dayMin) + dayMin) % dayMin;
+    const h = Math.floor(m / 60);
+    const min = Math.round(m % 60);
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+  };
+
+  const startMin = startHour * 60;
+  const durMin = durationHours * 60;
+  const chips: string[] = [];
+  for (let i = 0; i < shiftsPerDay; i++) {
+    const s = startMin + i * durMin;
+    const e = s + durMin;
+    chips.push(
+      `<span class="tprop-shift-chip"><span class="tprop-shift-chip-idx">${i + 1}</span><span class="tprop-shift-chip-range" dir="ltr">${fmt(s)}–${fmt(e)}</span></span>`,
+    );
+  }
+
+  return `<div class="tprop-shift-preview" aria-label="רשימת משמרות ביום">
+    <span class="tprop-shift-preview-label">משמרות ביום</span>
+    <div class="tprop-shift-preview-chips">${chips.join('')}</div>
+  </div>`;
+}
+
 /** Check if any slot in a template references a deleted certification. */
 function hasOrphanedSlotCerts(tpl: {
   slots: { requiredCertifications: string[]; forbiddenCertifications?: string[] }[];
@@ -683,6 +719,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
             </div>
           </label>
         </div>
+        ${renderShiftPreview(tpl)}
       </section>
 
       <section class="tprop-section tprop-section--behavior">

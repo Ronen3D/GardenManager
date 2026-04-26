@@ -1504,6 +1504,62 @@ select.input-sm {
   margin-top: 2px;
 }
 
+/* ─── Shift preview (concrete shift list) ────────────────
+   Materializes the (start, duration, count) trio so users can see the
+   actual shift windows their settings produce. Sits inside the numeric
+   section, below the input grid. Wraps freely on narrow screens. */
+.tprop-shift-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.tprop-shift-preview-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.tprop-shift-preview-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tprop-shift-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+  color: var(--text);
+  line-height: 1.1;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.tprop-shift-chip:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+}
+.tprop-shift-chip-idx {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-weight: 700;
+  min-width: 0.9em;
+  text-align: center;
+}
+.tprop-shift-chip-range {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
+}
+[data-theme="light"] .tprop-shift-chip {
+  background: rgba(0, 0, 0, 0.03);
+}
+
 /* ─── Auto-save flash ────────────────────────────────────
    Applied briefly to a field container when its change lands in the store.
    Uses a box-shadow ring so it's visible over any existing border/padding
