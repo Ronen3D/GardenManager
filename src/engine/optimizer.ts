@@ -1429,12 +1429,14 @@ export function localSearchOptimize(
   saIntensifyTaskIds?: Set<string>,
   scheduleContext?: ScheduleContext,
   stopSignal?: AbortSignal,
-): { assignments: Assignment[]; filledSlots: string[] } {
+): { assignments: Assignment[]; filledSlots: Array<{ taskId: string; slotId: string }> } {
   const current = [...assignments.map((a) => ({ ...a }))];
 
-  // Track unfilled slots that SA might fill via insert moves
+  // Track unfilled slots that SA might fill via insert moves.
+  // Keyed as taskId|slotId pairs because SlotRequirement.slotId is only
+  // unique within a task — two distinct unfilled slots can share a slotId.
   const remainingUnfilled = unfilledSlots ? [...unfilledSlots] : [];
-  const filledSlots: string[] = [];
+  const filledSlots: Array<{ taskId: string; slotId: string }> = [];
 
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
@@ -1625,7 +1627,7 @@ export function localSearchOptimize(
               idxOrder.push(current.length - 1);
               // Remove from unfilled
               remainingUnfilled.splice(ufIdx, 1);
-              filledSlots.push(uf.slotId);
+              filledSlots.push({ taskId: uf.taskId, slotId: uf.slotId });
               accepted = true;
 
               // Rebuild incremental scorer — the insert changed the
@@ -1794,9 +1796,9 @@ export function localSearchOptimize(
   // Slots accepted via the insert bonus that never made it to `best` must be
   // restored to remainingUnfilled so the post-SA sweep can retry them.
   for (let k = filledSlots.length - 1; k >= 0; k--) {
-    const slotId = filledSlots[k];
-    if (!best.some((a) => a.slotId === slotId)) {
-      const original = (unfilledSlots || []).find((uf) => uf.slotId === slotId);
+    const fk = filledSlots[k];
+    if (!best.some((a) => a.taskId === fk.taskId && a.slotId === fk.slotId)) {
+      const original = (unfilledSlots || []).find((uf) => uf.taskId === fk.taskId && uf.slotId === fk.slotId);
       if (original) {
         remainingUnfilled.push(original);
       }
@@ -1854,7 +1856,7 @@ export function localSearchOptimize(
         const tList = sweepByTask.get(uf.taskId);
         if (tList) tList.push(newA);
         else sweepByTask.set(uf.taskId, [newA]);
-        filledSlots.push(uf.slotId);
+        filledSlots.push({ taskId: uf.taskId, slotId: uf.slotId });
         break;
       }
     }
@@ -1934,8 +1936,10 @@ export function optimize(
     stopSignal,
   );
 
-  // Remove slots that SA managed to fill
-  const remainingUnfilled = greedy.unfilledSlots.filter((uf) => !lsResult.filledSlots.includes(uf.slotId));
+  // Remove slots that SA managed to fill. Match on (taskId, slotId) — slotId
+  // alone is only unique within a task, so two unfilled tasks can share an id.
+  const filledKeys = new Set(lsResult.filledSlots.map((fk) => `${fk.taskId}|${fk.slotId}`));
+  const remainingUnfilled = greedy.unfilledSlots.filter((uf) => !filledKeys.has(`${uf.taskId}|${uf.slotId}`));
 
   // Validate final result. Pass restRuleMap so HC-14 is part of the feasibility
   // verdict — otherwise `validation.valid` (and therefore the schedule's
