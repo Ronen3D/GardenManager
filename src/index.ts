@@ -78,7 +78,6 @@ export type {
   ParticipantCapacity,
   PreflightFinding,
   PreflightResult,
-  ReScheduleRequest,
   RescuePlan,
   RescueRequest,
   RescueResult,

@@ -65,6 +65,28 @@ export interface ChainEnumerationCaps {
 
 export const DEFAULT_CAPS: ChainEnumerationCaps = { depth1: 6, depth2: 4, depth3: 2, depth4: 1, depth5: 1 };
 
+/**
+ * Derive per-slot enumeration caps based on the affected-slot count K of a
+ * Future-SOS batch. The original `DEFAULT_CAPS` is calibrated for the worst
+ * case (K ≥ 8), which under-explores the common K=2..4 batches where the DFS
+ * has plenty of budget. This widens d1/d2/d3 inversely with K and converges to
+ * the historical defaults at K ≥ 8 — so existing K=8+ behaviour is preserved.
+ *
+ * d4/d5 stay at 1: those depths are the deep-chain feasibility fallback, never
+ * a quality lever. Widening them would just bloat the invalid-bucket.
+ *
+ *   K=1 → {13,9,6}   K=4 → {10,6,3}   K=8+ → {6,4,2} (== DEFAULT_CAPS)
+ */
+export function deriveCapsForBatchSize(K: number): ChainEnumerationCaps {
+  return {
+    depth1: Math.max(6, Math.min(14, 6 + Math.max(0, 8 - K))),
+    depth2: Math.max(4, Math.min(10, 4 + Math.max(0, 6 - K))),
+    depth3: Math.max(2, Math.min(6, 2 + Math.max(0, 5 - K))),
+    depth4: 1,
+    depth5: 1,
+  };
+}
+
 /** Fallback level passed to `enumerateChainsForSlot`. Controls whether
  *  depth-4 / depth-5 chains are produced in addition to the default
  *  depth-1/2/3 enumeration. */

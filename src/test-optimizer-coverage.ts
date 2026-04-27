@@ -10,7 +10,6 @@
  *  5. Same-group tasks: HC-4 strict — partial-fill from one group must not leak
  *  6. requiredCount > eligible participants: graceful failure, no crash
  *  7. Async multi-attempt produces a fully-frozen Schedule (no missing fields)
- *  8. partialReSchedule preserves periodStart/periodDays/scheduleUnavailability
  *
  * Run via:  npx ts-node src/test-optimizer-coverage.ts
  */
@@ -27,7 +26,7 @@ import {
   ViolationSeverity,
   validateHardConstraints,
 } from './index';
-import type { SchedulerConfig, ScheduleUnavailability } from './models/types';
+import type { SchedulerConfig } from './models/types';
 
 let passed = 0;
 let failed = 0;
@@ -399,72 +398,6 @@ async function runAsyncTests(): Promise<void> {
   assert(sched.certLabelSnapshot.Nitzan === 'ניצן', 'Async: certLabelSnapshot includes Nitzan');
   assert(Array.isArray(sched.scheduleUnavailability), 'Async: scheduleUnavailability is an array (initialized to [])');
   assert((sched.scheduleUnavailability ?? []).length === 0, 'Async: scheduleUnavailability initialized empty');
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 8. partialReSchedule preserves frozen-snapshot fields.
-// ═══════════════════════════════════════════════════════════════════════════
-console.log('\n── 8. partialReSchedule preserves frozen fields ──');
-{
-  const engine = new SchedulingEngine(
-    { maxIterations: 200, maxSolverTimeMs: 1500 },
-    new Set(['HC-12']),
-    new Map([['rr-1', 4]]),
-    8,
-  );
-  engine.setCertLabelSnapshot({ Nitzan: 'ניצן-x' });
-  engine.setPeriod(baseDate, 5);
-  engine.addParticipants([mkP('pr-1', Level.L0), mkP('pr-2', Level.L0), mkP('pr-3', Level.L0)]);
-  engine.addTask({
-    id: 'pr-t1',
-    name: 'PR',
-    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
-    requiredCount: 1,
-    slots: [
-      { slotId: 'pr-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'a' },
-    ],
-    sameGroupRequired: false,
-    blocksConsecutive: false,
-  });
-  const initial = engine.generateSchedule();
-
-  // Inject an unavailability into the current schedule before partial replan
-  const fakeUnavail: ScheduleUnavailability = {
-    id: 'pr-u1',
-    participantId: 'pr-3',
-    start: new Date(2026, 4, 1),
-    end: new Date(2026, 4, 2),
-    createdAt: new Date(),
-    anchorAtCreation: new Date(),
-  };
-  initial.scheduleUnavailability = [fakeUnavail];
-
-  // Make pr-1 unavailable: triggers reassignment of pr-1's slot
-  const replanned = engine.partialReSchedule({
-    pinnedAssignmentIds: [],
-    unavailableParticipantIds: ['pr-1'],
-  });
-
-  assert(replanned.periodStart.getTime() === baseDate.getTime(), 'partialReSchedule: periodStart preserved');
-  assert(replanned.periodDays === 5, `partialReSchedule: periodDays preserved (got ${replanned.periodDays})`);
-  assert(
-    replanned.algorithmSettings.dayStartHour === 8,
-    `partialReSchedule: dayStartHour preserved (got ${replanned.algorithmSettings.dayStartHour})`,
-  );
-  assert(
-    replanned.algorithmSettings.disabledHardConstraints.includes('HC-12'),
-    'partialReSchedule: disabledHardConstraints preserved',
-  );
-  assert(replanned.restRuleSnapshot['rr-1'] === 4, 'partialReSchedule: restRuleSnapshot preserved');
-  assert(replanned.certLabelSnapshot.Nitzan === 'ניצן-x', 'partialReSchedule: certLabelSnapshot preserved');
-  assert(
-    (replanned.scheduleUnavailability ?? []).length === 1,
-    `partialReSchedule: scheduleUnavailability carried forward (got ${(replanned.scheduleUnavailability ?? []).length})`,
-  );
-  assert(
-    (replanned.scheduleUnavailability ?? [])[0]?.id === 'pr-u1',
-    'partialReSchedule: scheduleUnavailability entry id preserved',
-  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -141,6 +141,14 @@ export function toggleSchedulerDiag(on?: boolean): void {
   console.log(`[Scheduler] Diagnostic logging: ${_diagnosticLogging ? 'ON' : 'OFF'}`);
 }
 
+/** Whether scheduler diagnostic logging is currently enabled. Used by rescue
+ *  and Future-SOS to gate cap-hit / per-stage telemetry behind the same
+ *  `toggleSchedulerDiag()` switch, without taking a direct dependency on
+ *  module-private state. */
+export function isSchedulerDiagOn(): boolean {
+  return _diagnosticLogging;
+}
+
 // Expose globally for browser console use
 if (typeof globalThis !== 'undefined') {
   (globalThis as Record<string, unknown>).toggleSchedulerDiag = toggleSchedulerDiag;

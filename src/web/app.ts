@@ -466,6 +466,7 @@ let _tTaskCounter = 0;
 function generateTasksFromTemplates(): Task[] {
   const numDays = store.getScheduleDays();
   const baseDate = store.getScheduleDate();
+  const dayStartHour = store.getDayStartHour();
   const templates = store.getAllTaskTemplates();
   const visuals = store.getTemplateVisualMap();
   const allTasks: Task[] = [];
@@ -473,7 +474,6 @@ function generateTasksFromTemplates(): Task[] {
   _tTaskCounter = 0;
 
   for (let dayIdx = 0; dayIdx < numDays; dayIdx++) {
-    const d = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dayIdx);
     const dayLabel = `D${dayIdx + 1}`;
 
     for (const tpl of templates) {
@@ -483,7 +483,8 @@ function generateTasksFromTemplates(): Task[] {
         );
         continue;
       }
-      const startDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tpl.startHour, 0);
+      // hourInOpDay handles the case where startHour < dayStartHour (post-midnight tail).
+      const startDate = new Date(hourInOpDay(baseDate, dayStartHour, dayIdx + 1, tpl.startHour));
 
       const shifts: { start: Date; end: Date }[] =
         tpl.shiftsPerDay === 1
@@ -564,8 +565,9 @@ function generateTasksFromTemplates(): Task[] {
     const dayIdx = Math.round((otDay.getTime() - windowStart.getTime()) / 86400000);
     const dayLabel = `D${dayIdx + 1}`;
 
-    const start = new Date(otDay.getFullYear(), otDay.getMonth(), otDay.getDate(), ot.startHour, ot.startMinute || 0);
-    const end = new Date(start.getTime() + ot.durationHours * 3600000);
+    const startMs = hourInOpDay(baseDate, dayStartHour, dayIdx + 1, ot.startHour) + (ot.startMinute || 0) * 60_000;
+    const start = new Date(startMs);
+    const end = new Date(startMs + ot.durationHours * 3600000);
 
     // Build slots (same logic as template slot building above)
     const slots: SlotRequirement[] = [];
@@ -3586,7 +3588,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.5</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

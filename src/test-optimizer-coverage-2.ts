@@ -3,7 +3,6 @@
  *
  * Targets gaps not pinned by `src/test-optimizer-coverage.ts`:
  *   1. Abort/stop signal handling in `optimizeMultiAttemptAsync`.
- *   2. `partialReSchedule` preserves a *populated* `scheduleUnavailability`.
  *   3. Multi-attempt first iteration determinism (jitter=0, original order).
  *   4. SA insert-move respects HC-4 sameGroupRequired.
  *   5. Pinned assignment referencing a participant absent from participants list.
@@ -18,10 +17,9 @@ import {
   DEFAULT_CONFIG,
   Level,
   type Participant,
-  SchedulingEngine,
   type Task,
 } from './index';
-import type { Assignment, SchedulerConfig, ScheduleUnavailability } from './models/types';
+import type { Assignment, SchedulerConfig } from './models/types';
 
 let passed = 0;
 let failed = 0;
@@ -196,87 +194,6 @@ async function test1_signals(): Promise<void> {
         `stopSignal: actualAttempts ≤ requested (got ${result.actualAttempts})`,
       );
     }
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 2. partialReSchedule preserves a *populated* scheduleUnavailability.
-//    Test Agent A pinned the empty-array case; we pin a 2-entry case.
-// ═══════════════════════════════════════════════════════════════════════════
-function test2_partialReSchedulePopulated(): void {
-  console.log('\n── 2. partialReSchedule preserves populated scheduleUnavailability ──');
-
-  const engine = new SchedulingEngine(
-    { maxIterations: 200, maxSolverTimeMs: 1500 },
-    new Set(['HC-12']),
-    new Map([['rr-x', 5]]),
-    7,
-  );
-  engine.setCertLabelSnapshot({ Nitzan: 'ניצן' });
-  engine.setPeriod(baseDate, 4);
-  engine.addParticipants([mkP('pp-1', Level.L0), mkP('pp-2', Level.L0), mkP('pp-3', Level.L0), mkP('pp-4', Level.L0)]);
-  engine.addTask({
-    id: 'pp-t1',
-    name: 'PP',
-    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
-    requiredCount: 1,
-    slots: [
-      { slotId: 'pp-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'a' },
-    ],
-    sameGroupRequired: false,
-    blocksConsecutive: false,
-  });
-
-  const initial = engine.generateSchedule();
-
-  // Inject TWO unavailability entries simulating two Future-SOS applies
-  const u1: ScheduleUnavailability = {
-    id: 'u-1',
-    participantId: 'pp-3',
-    start: new Date(2026, 4, 1, 6, 0, 0),
-    end: new Date(2026, 4, 2, 6, 0, 0),
-    reason: 'מילואים',
-    createdAt: new Date(2026, 3, 15, 10, 0, 0),
-    anchorAtCreation: new Date(2026, 3, 15, 10, 0, 0),
-    appliedSwapCount: 2,
-  };
-  const u2: ScheduleUnavailability = {
-    id: 'u-2',
-    participantId: 'pp-4',
-    start: new Date(2026, 4, 3, 12, 0, 0),
-    end: new Date(2026, 4, 3, 22, 0, 0),
-    createdAt: new Date(2026, 3, 16, 9, 0, 0),
-    anchorAtCreation: new Date(2026, 3, 16, 9, 0, 0),
-    appliedSwapCount: 0,
-  };
-  initial.scheduleUnavailability = [u1, u2];
-
-  // Trigger partial replan — make pp-1 unavailable, forcing reassignment.
-  const replanned = engine.partialReSchedule({
-    pinnedAssignmentIds: [],
-    unavailableParticipantIds: ['pp-1'],
-  });
-
-  const su = replanned.scheduleUnavailability ?? [];
-  assert(su.length === 2, `partialReSchedule: scheduleUnavailability has 2 entries (got ${su.length})`);
-  // structural equality on important fields (object identity may or may not
-  // be preserved; we test contents).
-  const e1 = su.find((e) => e.id === 'u-1');
-  const e2 = su.find((e) => e.id === 'u-2');
-  assert(e1 !== undefined, 'partialReSchedule: entry u-1 carried forward');
-  assert(e2 !== undefined, 'partialReSchedule: entry u-2 carried forward');
-  if (e1) {
-    assert(e1.participantId === 'pp-3', 'u-1: participantId preserved');
-    assert(e1.start.getTime() === u1.start.getTime(), 'u-1: start preserved');
-    assert(e1.end.getTime() === u1.end.getTime(), 'u-1: end preserved');
-    assert(e1.reason === 'מילואים', 'u-1: reason preserved');
-    assert(e1.appliedSwapCount === 2, 'u-1: appliedSwapCount preserved');
-  }
-  if (e2) {
-    assert(e2.participantId === 'pp-4', 'u-2: participantId preserved');
-    assert(e2.start.getTime() === u2.start.getTime(), 'u-2: start preserved');
-    assert(e2.end.getTime() === u2.end.getTime(), 'u-2: end preserved');
-    assert(e2.appliedSwapCount === 0, 'u-2: appliedSwapCount preserved');
   }
 }
 
@@ -468,100 +385,54 @@ function test4_saInsertSameGroup(): void {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 5. pinnedAssignments referencing a participant absent from the pool.
-//    Two scenarios:
-//      (a) optimize() with a stray pin — must not crash, must produce a
-//          finite-score result.
-//      (b) SchedulingEngine.partialReSchedule with a stray pin in the
-//          existing schedule — same expectations.
+// 5. optimize() with a pinned assignment referencing a participant absent
+//    from the pool — must not crash, must produce a finite-score result.
 // ═══════════════════════════════════════════════════════════════════════════
 function test5_strayPinned(): void {
   console.log('\n── 5. Pinned assignment with absent participantId ──');
 
-  // (a) direct optimize() call with a stray pin.
-  {
-    const t: Task = {
-      id: 'sp-1',
-      name: 'SP',
-      timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
-      requiredCount: 2,
-      slots: [
-        { slotId: 'sp-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'a' },
-        { slotId: 'sp-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'b' },
-      ],
-      sameGroupRequired: false,
-      blocksConsecutive: false,
-    };
-    const pool: Participant[] = [mkP('sp-p1', Level.L0, []), mkP('sp-p2', Level.L0, [])];
+  const t: Task = {
+    id: 'sp-1',
+    name: 'SP',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 2,
+    slots: [
+      { slotId: 'sp-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'a' },
+      { slotId: 'sp-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'b' },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const pool: Participant[] = [mkP('sp-p1', Level.L0, []), mkP('sp-p2', Level.L0, [])];
 
-    const strayPin: Assignment = {
-      id: 'stray-1',
-      taskId: 'sp-1',
-      slotId: 'sp-s1',
-      participantId: 'GHOST', // not in pool!
-      status: AssignmentStatus.Scheduled,
-      updatedAt: new Date(),
-    };
+  const strayPin: Assignment = {
+    id: 'stray-1',
+    taskId: 'sp-1',
+    slotId: 'sp-s1',
+    participantId: 'GHOST', // not in pool!
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
 
-    let crashed = false;
-    let errMsg = '';
-    let result: ReturnType<typeof optimize> | undefined;
-    try {
-      result = optimize([t], pool, fastConfig, [strayPin]);
-    } catch (e) {
-      crashed = true;
-      errMsg = e instanceof Error ? e.message : String(e);
-    }
-
-    if (crashed) {
-      assert(errMsg.length > 0, `optimize+strayPin: rejected with message: "${errMsg}"`);
-    } else if (result) {
-      assert(Number.isFinite(result.score.compositeScore), 'optimize+strayPin: compositeScore is finite');
-      assert(Array.isArray(result.assignments), 'optimize+strayPin: assignments is an array');
-      // The stray pin should NOT count as filling a slot for a real participant.
-      // Either the engine kept the stray (and surfaced unfilled correctly) or
-      // dropped it. Assert correctness of the final shape:
-      // count of distinct (taskId,slotId) cells equals at most slots count
-      const filledCells = new Set(result.assignments.map((a) => `${a.taskId}|${a.slotId ?? ''}`));
-      assert(filledCells.size <= 2, `optimize+strayPin: at most 2 distinct cells filled (got ${filledCells.size})`);
-      // Re-run just to make sure shape is stable
-      const r2 = optimize([t], pool, fastConfig, [strayPin]);
-      assert(Number.isFinite(r2.score.compositeScore), 'optimize+strayPin: 2nd run also finite');
-    }
+  let crashed = false;
+  let errMsg = '';
+  let result: ReturnType<typeof optimize> | undefined;
+  try {
+    result = optimize([t], pool, fastConfig, [strayPin]);
+  } catch (e) {
+    crashed = true;
+    errMsg = e instanceof Error ? e.message : String(e);
   }
 
-  // (b) SchedulingEngine.partialReSchedule via pinnedAssignmentIds — engine
-  // resolves IDs from currentSchedule.assignments, so a stray pinned ID just
-  // refers to nothing and should be a no-op for that ID.
-  {
-    const engine = new SchedulingEngine({ maxIterations: 200, maxSolverTimeMs: 1500 }, undefined, undefined, 5);
-    engine.setPeriod(baseDate, 2);
-    engine.addParticipants([mkP('sp2-1', Level.L0, []), mkP('sp2-2', Level.L0, [])]);
-    engine.addTask({
-      id: 'sp2-t1',
-      name: 'SP2',
-      timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
-      requiredCount: 1,
-      slots: [{ slotId: 'sp2-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'a' }],
-      sameGroupRequired: false,
-      blocksConsecutive: false,
-    });
-    engine.generateSchedule();
-
-    let crashed = false;
-    let errMsg = '';
-    try {
-      const replanned = engine.partialReSchedule({
-        pinnedAssignmentIds: ['NONEXISTENT-ID-XYZ'],
-        unavailableParticipantIds: [],
-      });
-      assert(Number.isFinite(replanned.score.compositeScore), 'partialReSchedule+strayPinId: composite finite');
-      assert(Array.isArray(replanned.assignments), 'partialReSchedule+strayPinId: assignments array present');
-    } catch (e) {
-      crashed = true;
-      errMsg = e instanceof Error ? e.message : String(e);
-    }
-    assert(!crashed, `partialReSchedule+strayPinId: did not crash (err="${errMsg}")`);
+  if (crashed) {
+    assert(errMsg.length > 0, `optimize+strayPin: rejected with message: "${errMsg}"`);
+  } else if (result) {
+    assert(Number.isFinite(result.score.compositeScore), 'optimize+strayPin: compositeScore is finite');
+    assert(Array.isArray(result.assignments), 'optimize+strayPin: assignments is an array');
+    const filledCells = new Set(result.assignments.map((a) => `${a.taskId}|${a.slotId ?? ''}`));
+    assert(filledCells.size <= 2, `optimize+strayPin: at most 2 distinct cells filled (got ${filledCells.size})`);
+    const r2 = optimize([t], pool, fastConfig, [strayPin]);
+    assert(Number.isFinite(r2.score.compositeScore), 'optimize+strayPin: 2nd run also finite');
   }
 }
 
@@ -570,7 +441,6 @@ function test5_strayPinned(): void {
 // ═══════════════════════════════════════════════════════════════════════════
 async function main(): Promise<void> {
   await test1_signals();
-  test2_partialReSchedulePopulated();
   test3_determinism();
   test4_saInsertSameGroup();
   test5_strayPinned();

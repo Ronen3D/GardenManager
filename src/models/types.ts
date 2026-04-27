@@ -629,13 +629,6 @@ export interface SwapRequest {
   newParticipantId: string;
 }
 
-export interface ReScheduleRequest {
-  /** IDs of assignments to keep pinned (not re-optimized) */
-  pinnedAssignmentIds: string[];
-  /** IDs of participants that became unavailable */
-  unavailableParticipantIds: string[];
-}
-
 // ─── Stage 0: Configuration Types ───────────────────────────────────────────
 
 /** A single slot template inside a TaskTemplate */

@@ -37,7 +37,7 @@ import {
   DEFAULT_CONFIG,
 } from '../../src/models/types';
 import { SchedulingEngine } from '../../src/engine/scheduler';
-import { generateShiftBlocks } from '../../src/shared/utils/time-utils';
+import { generateShiftBlocks, hourInOpDay } from '../../src/shared/utils/time-utils';
 
 // Import config-store as a module (it auto-runs initialization on import? let me be explicit)
 const configStore = require('../../src/web/config-store');
@@ -71,13 +71,13 @@ function buildTasks(numDays: number, baseDate: Date): Task[] {
   const templates = getAllTaskTemplates();
   const allTasks: Task[] = [];
 
+  const dayStartHour = getDayStartHour();
   for (let dayIdx = 0; dayIdx < numDays; dayIdx++) {
-    const d = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dayIdx);
     const dayLabel = `D${dayIdx + 1}`;
 
     for (const tpl of templates) {
       if (tpl.shiftsPerDay < 1 || tpl.durationHours <= 0) continue;
-      const startDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), tpl.startHour, 0);
+      const startDate = new Date(hourInOpDay(baseDate, dayStartHour, dayIdx + 1, tpl.startHour));
 
       const shifts: { start: Date; end: Date }[] =
         tpl.shiftsPerDay === 1

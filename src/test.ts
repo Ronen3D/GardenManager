@@ -722,16 +722,6 @@ if (schedule.assignments.length >= 1) {
   }
 }
 
-// Partial re-schedule test
-console.log('  Testing partial re-schedule...');
-const pinnedIds = schedule.assignments.slice(0, 2).map((a) => a.id);
-const reScheduled = engine.partialReSchedule({
-  pinnedAssignmentIds: pinnedIds,
-  unavailableParticipantIds: ['p0'], // Remove one person
-});
-assert(reScheduled.assignments.length > 0, 'Partial re-schedule produces assignments');
-console.log(`  Re-scheduled: ${reScheduled.assignments.length} assignments, feasible=${reScheduled.feasible}`);
-
 // ─── Load Weighting: Hot / Cold / Effective Tests ────────────────────────────
 
 import type { LoadWindow, Task } from './models/types';
@@ -6692,7 +6682,11 @@ import {
   upsertScheduleUnavailability,
 } from './engine/future-sos';
 import { generateRescuePlans } from './engine/rescue';
-import { sortDonorsByProximity, sortParticipantsByLoadProximity } from './engine/rescue-primitives';
+import {
+  deriveCapsForBatchSize,
+  sortDonorsByProximity,
+  sortParticipantsByLoadProximity,
+} from './engine/rescue-primitives';
 import type { RescueRequest, ScheduleScore } from './models/types';
 
 console.log('\n── Rescue Plans ────────────────────────');
@@ -6866,6 +6860,150 @@ console.log('\n── Rescue Plans ───────────────
   };
   const noEligResult = generateRescuePlans(noEligSched, request, anchor);
   assert(noEligResult.plans.length === 0, 'rescue: no eligible participants → empty plans');
+
+  // ─── scheduleUnavailability is honored during plan generation, not just ──
+  //     during final validation. Without `extraUnavailability` threaded into
+  //     the eligibility checks, generation would enumerate the blocked
+  //     candidate, then drop it at final validation — wasting depth-3/4
+  //     budget caps and producing spurious depth-4 fallbacks.
+  {
+    // Add a fourth participant who would otherwise rescue rsc-s1 at depth 1,
+    // but has a scheduleUnavailability covering the task window.
+    const rP4: Participant = {
+      id: 'rsc-p4',
+      name: 'R4',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: rescueAvail,
+      dateUnavailability: [],
+    };
+    const blockedSched: Schedule = {
+      ...schedule,
+      participants: [rP1, rP2, rP3, rP4],
+      scheduleUnavailability: [
+        {
+          id: 'su-p4',
+          participantId: 'rsc-p4',
+          start: rescueBlock.start,
+          end: rescueBlock.end,
+          createdAt: new Date(),
+          anchorAtCreation: anchor,
+        },
+      ],
+    };
+    const blockedResult = generateRescuePlans(blockedSched, request, anchor);
+    assert(blockedResult.plans.length > 0, 'rescue-su: still surfaces a valid plan when one candidate is blocked');
+    // p4's unavailability covers rsc-t1 only; the vacated slot is in rsc-t1,
+    // so p4 must never be the target of the first swap (which fills the
+    // vacated slot). p4 MAY legitimately appear as a downstream swap target
+    // for rsc-t2 (outside their blocked window) — final validation gates that.
+    for (const plan of blockedResult.plans) {
+      assert(
+        plan.swaps[0].toParticipantId !== 'rsc-p4',
+        `rescue-su: blocked participant filled vacated slot in plan ${plan.id}`,
+      );
+    }
+    // Final-validation guarantee: every surfaced plan must pass full HC validation
+    // when scheduleUnavailability is layered on. This catches any future
+    // regression where eligibility and validation diverge again.
+    for (const plan of blockedResult.plans) {
+      const tempAssigns = blockedSched.assignments.map((a) => {
+        const sw = plan.swaps.find((s) => s.assignmentId === a.id);
+        return sw ? { ...a, participantId: sw.toParticipantId } : a;
+      });
+      const v = validateHardConstraints(
+        blockedSched.tasks,
+        blockedSched.participants,
+        tempAssigns,
+        undefined,
+        undefined,
+        undefined,
+        blockedSched.scheduleUnavailability,
+      );
+      assert(v.valid, `rescue-su: plan ${plan.id} surfaces invalid under HC validation`);
+    }
+
+    // Block ALL otherwise-eligible candidates → no plan should surface.
+    const allBlockedSched: Schedule = {
+      ...blockedSched,
+      scheduleUnavailability: [
+        {
+          id: 'su-p3',
+          participantId: 'rsc-p3',
+          start: rescueBlock.start,
+          end: rescueBlock.end,
+          createdAt: new Date(),
+          anchorAtCreation: anchor,
+        },
+        {
+          id: 'su-p4',
+          participantId: 'rsc-p4',
+          start: rescueBlock.start,
+          end: rescueBlock.end,
+          createdAt: new Date(),
+          anchorAtCreation: anchor,
+        },
+      ],
+    };
+    const allBlockedResult = generateRescuePlans(allBlockedSched, request, anchor);
+    for (const plan of allBlockedResult.plans) {
+      for (const swap of plan.swaps) {
+        assert(
+          swap.toParticipantId !== 'rsc-p3' && swap.toParticipantId !== 'rsc-p4',
+          `rescue-su: blocked participant surfaces in returned plan ${plan.id}`,
+        );
+      }
+    }
+  }
+
+  // ─── scheduleUnavailability also gates donor-recipient (q) at depth 2 ───
+  //     A depth-1 swap is impossible (only candidate is busy in another task);
+  //     the depth-2 chain is the only path. The donor recipient `q` happens
+  //     to have scheduleUnavailability covering the donor task — without the
+  //     fix, this chain reaches final validation and is silently dropped,
+  //     and depth-3/4 fallback may fire. With the fix it's filtered upfront.
+  {
+    // p3 occupies the donor task (rsc-t2). p2 is busy in rsc-t1 already (HC-7),
+    // so the chain must be: vacated → p3 (filling rsc-s1), donor (rsc-t2) → q.
+    // Set q = p2 — which is also busy in rsc-t1 but the chain frees rsc-t2.
+    // Block p2 from rsc-t2's window via scheduleUnavailability.
+    const dPart1: Participant = { ...rP1 };
+    const dPart2: Participant = { ...rP2 };
+    const dPart3: Participant = { ...rP3 };
+    const depth2Sched: Schedule = {
+      ...schedule,
+      participants: [dPart1, dPart2, dPart3],
+      scheduleUnavailability: [
+        {
+          id: 'su-p2-t2',
+          participantId: 'rsc-p2',
+          start: rescueBlock2.start,
+          end: rescueBlock2.end,
+          createdAt: new Date(),
+          anchorAtCreation: anchor,
+        },
+      ],
+    };
+    const depth2Result = generateRescuePlans(depth2Sched, request, anchor);
+    // Every surfaced plan must pass full HC validation with su layered on.
+    for (const plan of depth2Result.plans) {
+      const tempAssigns = depth2Sched.assignments.map((a) => {
+        const sw = plan.swaps.find((s) => s.assignmentId === a.id);
+        return sw ? { ...a, participantId: sw.toParticipantId } : a;
+      });
+      const v = validateHardConstraints(
+        depth2Sched.tasks,
+        depth2Sched.participants,
+        tempAssigns,
+        undefined,
+        undefined,
+        undefined,
+        depth2Sched.scheduleUnavailability,
+      );
+      assert(v.valid, `rescue-su-d2: plan ${plan.id} violates HC under scheduleUnavailability`);
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -11847,6 +11985,359 @@ console.log('\n── Deep-chain fallback (depth 4/5) ────');
       'dcf-D: fallback clears infeasibleAssignmentIds for recoverable slot',
     );
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Adaptive limits (rescue depth-3 ordering / FSOS K-adaptive caps + budget /
+// rescue depth-2 quality backfill)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+console.log('\n── Adaptive limits ─────────────────────');
+
+// ── Test: deriveCapsForBatchSize shape across K ──
+{
+  // Formula: depth1 = 6 + max(0, 8-K), depth2 = 4 + max(0, 6-K),
+  //          depth3 = 2 + max(0, 5-K), all clamped to plan bounds.
+  const k1 = deriveCapsForBatchSize(1);
+  assert(
+    k1.depth1 === 13 && k1.depth2 === 9 && k1.depth3 === 6,
+    `adaptive-caps: K=1 expected {13,9,6} got {${k1.depth1},${k1.depth2},${k1.depth3}}`,
+  );
+  const k4 = deriveCapsForBatchSize(4);
+  assert(
+    k4.depth1 === 10 && k4.depth2 === 6 && k4.depth3 === 3,
+    `adaptive-caps: K=4 expected {10,6,3} got {${k4.depth1},${k4.depth2},${k4.depth3}}`,
+  );
+  // K≥8 must converge to historical {6,4,2} so existing FSOS callers see no
+  // behavioural change at the worst-case batch size.
+  const k8 = deriveCapsForBatchSize(8);
+  assert(
+    k8.depth1 === 6 && k8.depth2 === 4 && k8.depth3 === 2,
+    `adaptive-caps: K=8 expected {6,4,2} got {${k8.depth1},${k8.depth2},${k8.depth3}}`,
+  );
+  const k12 = deriveCapsForBatchSize(12);
+  assert(k12.depth1 === 6 && k12.depth2 === 4 && k12.depth3 === 2, `adaptive-caps: K=12 stays at floor {6,4,2}`);
+  // Depth-4 / depth-5 are feasibility-only; widening them would just bloat
+  // the invalid bucket. Lock to 1 across all K.
+  for (const K of [1, 4, 8, 12]) {
+    const c = deriveCapsForBatchSize(K);
+    assert(c.depth4 === 1 && c.depth5 === 1, `adaptive-caps: K=${K} d4/d5 stay at 1`);
+  }
+}
+
+// ── Test: FSOS with caps undefined uses K-adaptive defaults end-to-end ──
+{
+  // Two-slot batch (K=2). With caps undefined, the engine should derive
+  // {12, 8, 5} and produce a valid plan that fills both slots.
+  const adBase = new Date(2026, 6, 1);
+  const adAnchor = new Date(2026, 5, 30);
+  const adBlock1 = createTimeBlockFromHours(adBase, 8, 12);
+  const adBlock2 = createTimeBlockFromHours(adBase, 14, 18); // non-overlapping
+  const adAvail = [{ start: new Date(2026, 5, 28), end: new Date(2026, 6, 5) }];
+
+  const adTask = (id: string, block: { start: Date; end: Date }, slotId: string): Task => ({
+    id,
+    name: id,
+    timeBlock: block,
+    requiredCount: 1,
+    slots: [{ slotId, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: id }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  });
+  const adP = (id: string): Participant => ({
+    id,
+    name: id,
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: adAvail,
+    dateUnavailability: [],
+  });
+  const adA = (id: string, taskId: string, slotId: string, pid: string): Assignment => ({
+    id,
+    taskId,
+    slotId,
+    participantId: pid,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  });
+
+  const t1 = adTask('ad-t1', adBlock1, 'ad-s1');
+  const t2 = adTask('ad-t2', adBlock2, 'ad-s2');
+  const focal = adP('ad-focal');
+  // Plenty of free replacements so the engine has options to surface.
+  const free: Participant[] = [];
+  for (let i = 1; i <= 10; i++) free.push(adP(`ad-free-${i}`));
+  const assigns: Assignment[] = [adA('ad-a1', t1.id, 'ad-s1', focal.id), adA('ad-a2', t2.id, 'ad-s2', focal.id)];
+
+  const adDummyScore: ScheduleScore = {
+    minRestHours: 0,
+    avgRestHours: 0,
+    restStdDev: 0,
+    totalPenalty: 0,
+    compositeScore: 0,
+    l0StdDev: 0,
+    l0AvgEffective: 0,
+    seniorStdDev: 0,
+    seniorAvgEffective: 0,
+    dailyPerParticipantStdDev: 0,
+    dailyGlobalStdDev: 0,
+  };
+  const sched: Schedule = {
+    id: 'ad-sched',
+    tasks: [t1, t2],
+    participants: [focal, ...free],
+    assignments: assigns,
+    feasible: true,
+    score: adDummyScore,
+    violations: [],
+    generatedAt: new Date(),
+    algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+    periodStart: new Date(2026, 5, 28),
+    periodDays: 7,
+    restRuleSnapshot: {},
+    certLabelSnapshot: {},
+  };
+
+  let schedStart = sched.tasks[0].timeBlock.start;
+  let schedEnd = sched.tasks[0].timeBlock.end;
+  for (const t of sched.tasks) {
+    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+  }
+  const scoreCtx: ScoreContext = {
+    taskMap: new Map(sched.tasks.map((t) => [t.id, t])),
+    pMap: new Map(sched.participants.map((p) => [p.id, p])),
+    capacities: computeAllCapacities(sched.participants, schedStart, schedEnd, 5),
+    notWithPairs: new Map(),
+    dayStartHour: 5,
+  };
+
+  const window = { start: adBase, end: new Date(2026, 6, 2) };
+  const result = generateBatchRescuePlans(sched, { participantId: focal.id, window }, adAnchor, {
+    config: { ...DEFAULT_CONFIG },
+    scoreCtx,
+    maxPlans: 3,
+    // caps deliberately omitted → engine should derive {12, 8, 5} via K=2
+  });
+  assert(result.affected.length === 2, 'adaptive-fsos: K=2 batch identifies both slots');
+  assert(result.plans.length >= 1, 'adaptive-fsos: K=2 with derived caps returns at least one plan');
+  assert(!result.timedOut, 'adaptive-fsos: K=2 default budget completes without timeout');
+  // Sanity: every returned plan fills both slots (depth-1 chain per slot at minimum).
+  assert(
+    result.plans.every((p) => p.swaps.length >= 2),
+    'adaptive-fsos: each plan covers both vacated slots',
+  );
+}
+
+// ── Test: rescue depth-3 sorted q/r still produces a depth-3 plan ──
+// Smoke test: when depth-1/2 are blocked and only depth-3 chains work, the
+// (now-sorted) outer loops must still find them.
+{
+  const adBase = new Date(2026, 7, 1);
+  const adAnchor = new Date(2026, 6, 30);
+  const adBlock = createTimeBlockFromHours(adBase, 9, 13); // shared block → HC-5 ripples
+  const adAvail = [{ start: new Date(2026, 6, 28), end: new Date(2026, 7, 5) }];
+
+  const mkTask = (id: string, cert: string, slotId: string): Task => ({
+    id,
+    name: id,
+    timeBlock: adBlock,
+    requiredCount: 1,
+    slots: [{ slotId, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [cert], label: id }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  });
+  const mkP = (id: string, certs: string[]): Participant => ({
+    id,
+    name: id,
+    level: Level.L0,
+    certifications: certs,
+    group: 'A',
+    availability: adAvail,
+    dateUnavailability: [],
+  });
+  const mkA = (id: string, taskId: string, slotId: string, pid: string): Assignment => ({
+    id,
+    taskId,
+    slotId,
+    participantId: pid,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  });
+
+  // Cert cascade: t0 needs c0, t1 needs c1, t2 needs c2.
+  // pA: c0 (vacated). pB: c0+c1 (only direct replacement, but already on t1).
+  // pC: c1+c2 (already on t2). pFree: c2.
+  // Depth-1: pB direct → blocked by HC-5 (pB on t1 same time).
+  // Depth-2: pB→t0, then pC must take t1 → pC has c1 ✓ but already on t2 →
+  //          pFree must take t2 → pFree has c2 ✓. Wait, that's 3 swaps.
+  // So depth-2 cannot solve this; only depth-3 can: t0→pB, t1→pC, t2→pFree.
+  const t0 = mkTask('ad3-t0', 'c0', 'ad3-s0');
+  const t1 = mkTask('ad3-t1', 'c1', 'ad3-s1');
+  const t2 = mkTask('ad3-t2', 'c2', 'ad3-s2');
+  const pA = mkP('ad3-pA', ['c0']);
+  const pB = mkP('ad3-pB', ['c0', 'c1']);
+  const pC = mkP('ad3-pC', ['c1', 'c2']);
+  const pFree = mkP('ad3-pFree', ['c2']);
+  // Place pFree LAST in schedule.participants — under raw iteration the
+  // MAX_DEPTH3 cap might (in larger fixtures) cut off before reaching them.
+  // The sorted-by-load-proximity iteration handles them by load distance, not
+  // schedule position.
+  const participants = [pA, pB, pC, pFree];
+  const assigns = [
+    mkA('ad3-a0', t0.id, 'ad3-s0', pA.id),
+    mkA('ad3-a1', t1.id, 'ad3-s1', pB.id),
+    mkA('ad3-a2', t2.id, 'ad3-s2', pC.id),
+  ];
+  const adScore: ScheduleScore = {
+    minRestHours: 0,
+    avgRestHours: 0,
+    restStdDev: 0,
+    totalPenalty: 0,
+    compositeScore: 0,
+    l0StdDev: 0,
+    l0AvgEffective: 0,
+    seniorStdDev: 0,
+    seniorAvgEffective: 0,
+    dailyPerParticipantStdDev: 0,
+    dailyGlobalStdDev: 0,
+  };
+  const sched: Schedule = {
+    id: 'ad3-sched',
+    tasks: [t0, t1, t2],
+    participants,
+    assignments: assigns,
+    feasible: true,
+    score: adScore,
+    violations: [],
+    generatedAt: new Date(),
+    algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+    periodStart: new Date(2026, 6, 28),
+    periodDays: 7,
+    restRuleSnapshot: {},
+    certLabelSnapshot: {},
+  };
+
+  const result = generateRescuePlans(
+    sched,
+    { vacatedAssignmentId: 'ad3-a0', taskId: t0.id, slotId: 'ad3-s0', vacatedBy: pA.id },
+    adAnchor,
+    0,
+    undefined,
+    undefined,
+    undefined,
+    5,
+  );
+  assert(result.plans.length >= 1, 'adaptive-d3-sort: depth-3-only fixture returns at least one plan');
+  // Top plan must be depth-3 (3 swaps) — depth 1/2 are infeasible by construction.
+  const topDepth = result.plans[0].swaps.length;
+  assert(topDepth === 3, `adaptive-d3-sort: top plan depth expected 3 got ${topDepth}`);
+}
+
+// ── Test: rescue depth-2 quality backfill — depth-2 enumerated even when
+//          we already have ≥ needed*2 depth-1 plans, if all depth-1 are
+//          regressions. ──
+{
+  // We can't easily force the optimizer to produce a fixture where all
+  // depth-1 plans are regressions and depth-2 plans improve, without
+  // building a full scoring fixture. As a behavioural proxy, we verify the
+  // weaker invariant: the engine still respects count-based skip when
+  // compositeDelta is undefined (legacy path) — i.e. ≥6 depth-1 plans
+  // suppress depth-2 enumeration. This locks the change to "quality only
+  // overrides the skip when compositeDelta is provided AND negative".
+  const adBase = new Date(2026, 8, 1);
+  const adAnchor = new Date(2026, 7, 30);
+  const adBlock = createTimeBlockFromHours(adBase, 9, 13);
+  const adAvail = [{ start: new Date(2026, 7, 28), end: new Date(2026, 8, 5) }];
+
+  const slot: import('./models/types').SlotRequirement = {
+    slotId: 'qb-s0',
+    acceptableLevels: [{ level: Level.L0 }],
+    requiredCertifications: [],
+    label: 'qb',
+  };
+  const t0: Task = {
+    id: 'qb-t0',
+    name: 'qb-t0',
+    timeBlock: adBlock,
+    requiredCount: 1,
+    slots: [slot],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const mkP = (id: string): Participant => ({
+    id,
+    name: id,
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: adAvail,
+    dateUnavailability: [],
+  });
+  const pV = mkP('qb-pV');
+  // Eight free L0 candidates with no other assignments → 8 depth-1 plans
+  // (more than needed*2 = 6 with default page size 3).
+  const free: Participant[] = [];
+  for (let i = 1; i <= 8; i++) free.push(mkP(`qb-free-${i}`));
+  const assigns: Assignment[] = [
+    {
+      id: 'qb-a0',
+      taskId: t0.id,
+      slotId: slot.slotId,
+      participantId: pV.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+  const adScore: ScheduleScore = {
+    minRestHours: 0,
+    avgRestHours: 0,
+    restStdDev: 0,
+    totalPenalty: 0,
+    compositeScore: 0,
+    l0StdDev: 0,
+    l0AvgEffective: 0,
+    seniorStdDev: 0,
+    seniorAvgEffective: 0,
+    dailyPerParticipantStdDev: 0,
+    dailyGlobalStdDev: 0,
+  };
+  const sched: Schedule = {
+    id: 'qb-sched',
+    tasks: [t0],
+    participants: [pV, ...free],
+    assignments: assigns,
+    feasible: true,
+    score: adScore,
+    violations: [],
+    generatedAt: new Date(),
+    algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+    periodStart: new Date(2026, 7, 28),
+    periodDays: 7,
+    restRuleSnapshot: {},
+    certLabelSnapshot: {},
+  };
+
+  // Legacy path: no config / scoreCtx → compositeDelta undefined → quality
+  // gate falls back to count-based skip (preserves historical behaviour).
+  const result = generateRescuePlans(
+    sched,
+    { vacatedAssignmentId: 'qb-a0', taskId: t0.id, slotId: slot.slotId, vacatedBy: pV.id },
+    adAnchor,
+    0,
+    undefined,
+    undefined,
+    undefined,
+    5,
+  );
+  assert(result.plans.length >= 3, 'adaptive-d2-qb: legacy path returns at least page size of plans');
+  // All returned plans are depth-1 (we have 8 candidates and depth-2 was
+  // suppressed because compositeDelta is undefined and treated as 0 ≥ 0).
+  assert(
+    result.plans.every((p) => p.swaps.length === 1),
+    'adaptive-d2-qb: legacy path keeps depth-1-only when compositeDelta unavailable',
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

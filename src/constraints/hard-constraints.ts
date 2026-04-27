@@ -329,6 +329,12 @@ export function checkUniqueParticipantsPerTask(task: Task, assignments: Assignme
  * must have enough participants to fill every slot, matching each slot's
  * acceptableLevels and requiredCertifications.
  *
+ * Honors the global `disabledHC` set: if HC-1, HC-2, or HC-11 are disabled,
+ * the matching predicate drops the corresponding filter so HC-8 cannot
+ * indirectly re-impose a constraint the user has explicitly relaxed. With
+ * all three disabled, HC-8 degenerates to a pure cardinality check
+ * (group size ≥ slot count).
+ *
  * This is data-driven: slot definitions determine what's needed, not hardcoded
  * counts. For the default Adanit template (6 slots: 4×L0+Nitzan, 1×L2+Nitzan,
  * 1×L3/L4+Nitzan), this produces equivalent results to the previous hardcoded check.
@@ -337,8 +343,13 @@ export function checkGroupFeasibility(
   task: Task,
   groupParticipants: Participant[],
   certLabelResolver: (certId: string) => string = (id) => id,
+  disabledHC?: Set<string>,
 ): ConstraintViolation[] {
   if (!task.sameGroupRequired) return [];
+
+  const enforceLevel = !disabledHC?.has('HC-1');
+  const enforceReqCert = !disabledHC?.has('HC-2');
+  const enforceForbiddenCert = !disabledHC?.has('HC-11');
 
   const violations: ConstraintViolation[] = [];
   // Track which participants have been "claimed" by a slot (greedy matching)
@@ -353,28 +364,26 @@ export function checkGroupFeasibility(
   for (const slot of sortedSlots) {
     const match = groupParticipants.find((p) => {
       if (claimed.has(p.id)) return false;
-      if (!slot.acceptableLevels.some((e) => e.level === p.level)) return false;
-      for (const cert of slot.requiredCertifications) {
-        if (!p.certifications.includes(cert)) return false;
+      if (enforceLevel && !slot.acceptableLevels.some((e) => e.level === p.level)) return false;
+      if (enforceReqCert) {
+        for (const cert of slot.requiredCertifications) {
+          if (!p.certifications.includes(cert)) return false;
+        }
       }
-      if (slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) return false;
+      if (enforceForbiddenCert && slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) return false;
       return true;
     });
     if (match) {
       claimed.add(match.id);
     } else {
-      const levelDesc = slot.acceptableLevels.map((e) => `דרגה ${e.level}`).join('/');
-      const certDesc =
-        slot.requiredCertifications.length > 0
-          ? ` + ${slot.requiredCertifications.map(certLabelResolver).join(', ')}`
-          : '';
+      const parts: string[] = [];
+      if (enforceLevel) parts.push(slot.acceptableLevels.map((e) => `דרגה ${e.level}`).join('/'));
+      if (enforceReqCert && slot.requiredCertifications.length > 0) {
+        parts.push(slot.requiredCertifications.map(certLabelResolver).join(', '));
+      }
+      const desc = parts.length > 0 ? `נדרש: ${parts.join(' + ')}` : 'אין מספיק משתתפים בקבוצה';
       violations.push(
-        violation(
-          'GROUP_INSUFFICIENT',
-          `${describeTaskInstance(task)} \u200F— נדרש: ${levelDesc}${certDesc}`,
-          task.id,
-          slot.slotId,
-        ),
+        violation('GROUP_INSUFFICIENT', `${describeTaskInstance(task)} \u200F— ${desc}`, task.id, slot.slotId),
       );
     }
   }
@@ -722,7 +731,7 @@ export function validateHardConstraints(
       if (assignedParticipants.length > 0) {
         const group = assignedParticipants[0].group;
         const groupMembers = participants.filter((p) => p.group === group);
-        allViolations.push(...checkGroupFeasibility(task, groupMembers, certLabelResolver));
+        allViolations.push(...checkGroupFeasibility(task, groupMembers, certLabelResolver, disabledHC));
       }
     }
   }

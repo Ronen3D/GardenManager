@@ -1539,7 +1539,9 @@ select.input-sm {
   font-size: 0.78rem;
   color: var(--text);
   line-height: 1.1;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
 }
 .tprop-shift-chip:hover {
   background: var(--accent-glow);

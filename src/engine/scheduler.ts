@@ -15,7 +15,6 @@ import {
   DEFAULT_CONFIG,
   type HardConstraintCode,
   type Participant,
-  type ReScheduleRequest,
   type Schedule,
   type SchedulerConfig,
   type SwapRequest,
@@ -991,106 +990,6 @@ export class SchedulingEngine {
     }
 
     return preview;
-  }
-
-  /**
-   * Partial re-schedule: pin existing assignments and re-optimize only affected slots.
-   * Used when a participant becomes unavailable mid-day.
-   */
-  partialReSchedule(request: ReScheduleRequest): Schedule {
-    if (!this.currentSchedule) {
-      throw new Error('אין שבצ"ק לתזמון מחדש חלקי.');
-    }
-
-    const { pinnedAssignmentIds, unavailableParticipantIds } = request;
-    const unavailableSet = new Set(unavailableParticipantIds);
-
-    // Separate pinned assignments from those that need re-assignment
-    const pinnedAssignments: Assignment[] = [];
-    const needsReassignment: Assignment[] = [];
-
-    for (const a of this.currentSchedule.assignments) {
-      if (pinnedAssignmentIds.includes(a.id)) {
-        // Keep pinned unless the participant is unavailable
-        if (unavailableSet.has(a.participantId)) {
-          needsReassignment.push(a);
-        } else {
-          pinnedAssignments.push({ ...a });
-        }
-      } else if (unavailableSet.has(a.participantId)) {
-        needsReassignment.push(a);
-      } else {
-        pinnedAssignments.push({ ...a });
-      }
-    }
-
-    // Filter out unavailable participants
-    const availableParticipants = this.getAllParticipants().filter((p) => !unavailableSet.has(p.id));
-
-    // Re-optimize with pinned assignments
-    const reoptCtx = this.getScheduleContext();
-    const result = optimize(
-      this.currentSchedule.tasks,
-      availableParticipants,
-      this.config,
-      pinnedAssignments,
-      this.disabledHC,
-      0,
-      undefined,
-      this.restRuleMap,
-      this.dayStartHour,
-      this.certLabelResolver,
-      undefined,
-      undefined,
-      undefined,
-      reoptCtx,
-    );
-
-    // Validate
-    const hardValidation = validateHardConstraints(
-      this.currentSchedule.tasks,
-      this.getAllParticipants(),
-      result.assignments,
-      this.disabledHC,
-      this.restRuleMap,
-      this.certLabelResolver,
-      undefined,
-      reoptCtx,
-    );
-    const softWarnings = collectSoftWarnings(
-      this.currentSchedule.tasks,
-      this.getAllParticipants(),
-      result.assignments,
-      this.config,
-    );
-
-    const prev = this.currentSchedule;
-    const fallback = this._resolvePeriod(prev.tasks);
-    const periodStart = prev.periodStart ? new Date(prev.periodStart.getTime()) : fallback.periodStart;
-    const periodDays = prev.periodDays ?? fallback.periodDays;
-    const schedule: Schedule = {
-      id: `schedule-${Date.now()}`,
-      tasks: this.currentSchedule.tasks,
-      participants: this.getAllParticipants(),
-      assignments: result.assignments,
-      feasible: result.feasible,
-      score: result.score,
-      violations: [...hardValidation.violations, ...softWarnings],
-      generatedAt: new Date(),
-      algorithmSettings: {
-        config: { ...this.config },
-        disabledHardConstraints: [...((this.disabledHC ?? new Set()) as Set<HardConstraintCode>)],
-        dayStartHour: this.dayStartHour,
-      },
-      periodStart,
-      periodDays,
-      restRuleSnapshot: Object.fromEntries(this.restRuleMap ?? new Map()),
-      certLabelSnapshot: { ...this._certLabelSnapshot },
-      scheduleUnavailability: this.currentSchedule.scheduleUnavailability ?? [],
-    };
-
-    this.currentSchedule = schedule;
-    return schedule;
   }
 
   /**

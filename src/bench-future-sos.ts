@@ -201,9 +201,15 @@ function printTable(rows: BenchRow[]): void {
     windows.push({ label: `day 2…${days + 1}`, start, end });
   }
 
-  const capsList: Array<{ label: string; caps: { depth1: number; depth2: number; depth3: number } }> = [
+  // `k-adaptive` (caps: undefined) lets generateBatchRescuePlans pick caps via
+  // deriveCapsForBatchSize(K) — wider for K=2..4, converging to default at K≥8.
+  const capsList: Array<{
+    label: string;
+    caps: { depth1: number; depth2: number; depth3: number } | undefined;
+  }> = [
     { label: 'default', caps: { depth1: 6, depth2: 4, depth3: 2 } },
     { label: 'wide', caps: { depth1: 10, depth2: 8, depth3: 4 } },
+    { label: 'k-adaptive', caps: undefined },
   ];
 
   const rows: BenchRow[] = [];
@@ -218,12 +224,15 @@ function printTable(rows: BenchRow[]): void {
         { config: DEFAULT_CONFIG, scoreCtx, maxPlans: 3, caps: capCfg.caps },
       );
       const totalMs = Date.now() - t0;
+      const capsTag = capCfg.caps
+        ? `${capCfg.label} {${capCfg.caps.depth1},${capCfg.caps.depth2},${capCfg.caps.depth3}}`
+        : `${capCfg.label} (K-derived)`;
       rows.push({
         k: res.affected.length,
         participants: participants.length,
         tasks: tasks.length,
         assignments: schedule.assignments.length,
-        capsLabel: `${capCfg.label} {${capCfg.caps.depth1},${capCfg.caps.depth2},${capCfg.caps.depth3}}`,
+        capsLabel: capsTag,
         totalMs,
         plans: res.plans.length,
         infeasible: res.infeasibleAssignmentIds.length,
@@ -235,6 +244,36 @@ function printTable(rows: BenchRow[]): void {
 
   console.log('\nResults (K = number of affected in-window assignments):\n');
   printTable(rows);
+
+  // K-adaptive vs default sanity check: flag any window where k-adaptive runs
+  // more than 2× the default's wall time, or returns fewer plans at K ≤ 4
+  // (where it should be at least as permissive).
+  const byWindow = new Map<number, { default?: BenchRow; adaptive?: BenchRow }>();
+  for (const r of rows) {
+    let entry = byWindow.get(r.k);
+    if (!entry) {
+      entry = {};
+      byWindow.set(r.k, entry);
+    }
+    if (r.capsLabel.startsWith('default')) entry.default = r;
+    if (r.capsLabel.startsWith('k-adaptive')) entry.adaptive = r;
+  }
+  const flags: string[] = [];
+  for (const [k, pair] of byWindow) {
+    if (!pair.default || !pair.adaptive) continue;
+    if (pair.adaptive.totalMs > pair.default.totalMs * 2 + 50) {
+      flags.push(`K=${k}: k-adaptive ${pair.adaptive.totalMs}ms > 2× default ${pair.default.totalMs}ms`);
+    }
+    if (k > 0 && k <= 4 && pair.adaptive.plans < pair.default.plans) {
+      flags.push(`K=${k}: k-adaptive plans=${pair.adaptive.plans} < default plans=${pair.default.plans}`);
+    }
+  }
+  if (flags.length > 0) {
+    console.log('\n⚠️  K-adaptive regression flags:');
+    for (const f of flags) console.log(`   ${f}`);
+  } else {
+    console.log('\n✅ K-adaptive within expected envelope vs default.');
+  }
 
   // Also measure with a budget-constrained run vs unbounded to see how the
   // time cap interacts with the DFS.
@@ -325,12 +364,15 @@ function printTable(rows: BenchRow[]): void {
         { config: DEFAULT_CONFIG, scoreCtx: slackCtx, maxPlans: 3, caps: capCfg.caps },
       );
       const totalMs = Date.now() - t0;
+      const slackCapsTag = capCfg.caps
+        ? `${capCfg.label} {${capCfg.caps.depth1},${capCfg.caps.depth2},${capCfg.caps.depth3}}`
+        : `${capCfg.label} (K-derived)`;
       slackRows.push({
         k: res.affected.length,
         participants: slackParticipants.length,
         tasks: tasks.length,
         assignments: slackSchedule.assignments.length,
-        capsLabel: `${capCfg.label} {${capCfg.caps.depth1},${capCfg.caps.depth2},${capCfg.caps.depth3}}`,
+        capsLabel: slackCapsTag,
         totalMs,
         plans: res.plans.length,
         infeasible: res.infeasibleAssignmentIds.length,

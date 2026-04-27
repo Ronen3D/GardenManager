@@ -37,6 +37,7 @@ import type {
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import type { ScheduleContext } from '../shared/utils/time-utils';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
+import { isSchedulerDiagOn } from './optimizer';
 import { sortDonorsByProximity, sortParticipantsByLoadProximity } from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { isEligible } from './validator';
@@ -285,6 +286,15 @@ interface RescueContext {
   dayStartHour: number;
   /** Schedule window context for HC-3 operational-day rule evaluation. */
   scheduleContext?: ScheduleContext;
+  /**
+   * Schedule-scoped Future-SOS unavailability windows. Layered on top of
+   * participant master availability during HC-3 evaluation, both at the
+   * per-step `isEligible` gate AND at the final `validateHardConstraints`
+   * call. Without it, generation enumerates candidates that final validation
+   * later filters out — wasting depth-3/4 budget caps and triggering
+   * spurious depth-4 fallbacks.
+   */
+  extraUnavailability: Array<{ participantId: string; start: Date; end: Date }>;
   // Full composite scoring (when available)
   config?: SchedulerConfig;
   scoreCtx?: ScoreContext;
@@ -309,6 +319,7 @@ function generateDepth1Plans(ctx: RescueContext): CandidatePlan[] {
         disabledHC: ctx.disabledHC,
         restRuleMap: ctx.restRuleMap,
         scheduleContext: ctx.scheduleContext,
+        extraUnavailability: ctx.extraUnavailability,
       })
     )
       continue;
@@ -366,6 +377,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
           disabledHC: ctx.disabledHC,
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
+          extraUnavailability: ctx.extraUnavailability,
         })
       )
         continue;
@@ -374,7 +386,12 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
         if (q.id === p.id || q.id === ctx.vacatedAssignment.participantId) continue;
 
         const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
-        const d2DonorExclude = new Set([donorAssignment.id]);
+        // Include vacatedAssignment.id so that when the donor task IS the
+        // vacated task, the obsolete (vacatedSlot, vacatedBy) entry is
+        // removed before the virtual (vacatedSlot, p) is added — otherwise
+        // HC-4 same-group could compare q against vacatedBy's group when
+        // vacatedBy is being replaced by p.
+        const d2DonorExclude = new Set([donorAssignment.id, ctx.vacatedAssignment.id]);
 
         const d2DonorExtra =
           donorTask.id === ctx.vacatedTask.id ? [{ slotId: ctx.vacatedSlot.slotId, participantId: p.id }] : undefined;
@@ -387,6 +404,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
             disabledHC: ctx.disabledHC,
             restRuleMap: ctx.restRuleMap,
             scheduleContext: ctx.scheduleContext,
+            extraUnavailability: ctx.extraUnavailability,
           })
         )
           continue;
@@ -431,9 +449,14 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
 
 function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
   const plans: CandidatePlan[] = [];
-  const MAX_P_DONORS = 5;
-  const MAX_Q_DONORS = 3;
-  const MAX_DEPTH3 = 200;
+  // Adaptive caps: at typical N≤40 these match the historical fixed values
+  // (5/3/200). They only widen for larger teams, where the 200-plan early-exit
+  // would otherwise cut quality-correlated candidates before they could be
+  // enumerated.
+  const N = ctx.schedule.participants.length;
+  const MAX_P_DONORS = Math.max(5, Math.ceil(N / 8));
+  const MAX_Q_DONORS = Math.max(3, Math.ceil(N / 12));
+  const MAX_DEPTH3 = Math.max(200, N * 5);
 
   // Shared helpers with rescue-primitives — identical participant/donor sort
   // so batch rescue (Future SOS) and single-slot rescue produce consistent
@@ -476,11 +499,15 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
           disabledHC: ctx.disabledHC,
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
+          extraUnavailability: ctx.extraUnavailability,
         })
       )
         continue;
 
-      for (const q of ctx.schedule.participants) {
+      // Iterate q in load-proximity order (matches depth-4) so the MAX_DEPTH3
+      // early-exit truncates the *least* load-proximal triples instead of
+      // whichever participants happened to come first in schedule order.
+      for (const q of sortedParticipants) {
         if (q.id === p.id || q.id === ctx.vacatedAssignment.participantId) continue;
         const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
 
@@ -500,7 +527,9 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
           if (!donorQSlot) continue;
 
           const qWithout = qAssignments.filter((a) => a.id !== donorQ.id);
-          const d3DonorPExclude = new Set([donorP.id]);
+          // See depth-2 comment: include vacatedAssignment.id so the obsolete
+          // (vacatedSlot, vacatedBy) is removed before the virtual is added.
+          const d3DonorPExclude = new Set([donorP.id, ctx.vacatedAssignment.id]);
 
           const d3DonorPExtra: Array<{ slotId: string; participantId: string }> = [];
           if (donorPTask.id === ctx.vacatedTask.id) {
@@ -519,14 +548,16 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
               disabledHC: ctx.disabledHC,
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
+              extraUnavailability: ctx.extraUnavailability,
             })
           )
             continue;
 
-          for (const r of ctx.schedule.participants) {
+          // r in load-proximity order, same rationale as q above.
+          for (const r of sortedParticipants) {
             if (r.id === p.id || r.id === q.id || r.id === ctx.vacatedAssignment.participantId) continue;
             const rAssignments = ctx.assignmentsByParticipant.get(r.id) || [];
-            const d3DonorQExclude = new Set([donorQ.id]);
+            const d3DonorQExclude = new Set([donorQ.id, donorP.id, ctx.vacatedAssignment.id]);
 
             const d3DonorQExtra: Array<{ slotId: string; participantId: string }> = [];
             if (donorQTask.id === ctx.vacatedTask.id) {
@@ -548,6 +579,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
                 disabledHC: ctx.disabledHC,
                 restRuleMap: ctx.restRuleMap,
                 scheduleContext: ctx.scheduleContext,
+                extraUnavailability: ctx.extraUnavailability,
               })
             )
               continue;
@@ -595,6 +627,13 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
         }
       }
     }
+  }
+
+  if (plans.length >= MAX_DEPTH3 && isSchedulerDiagOn()) {
+    console.log(
+      `[rescue] depth-3 cap reached (${MAX_DEPTH3} candidates) for task=${ctx.vacatedTask.id} ` +
+        `slot=${ctx.vacatedSlot.slotId} — N=${ctx.schedule.participants.length}, P×Q=${MAX_P_DONORS}×${MAX_Q_DONORS}`,
+    );
   }
 
   plans.sort((a, b) => a.impactScore - b.impactScore);
@@ -657,6 +696,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
           disabledHC: ctx.disabledHC,
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
+          extraUnavailability: ctx.extraUnavailability,
         })
       )
         continue;
@@ -681,7 +721,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
           if (!donorQSlot) continue;
 
           const qWithout = qAssignments.filter((a) => a.id !== donorQ.id);
-          const d4DonorPExclude = new Set([donorP.id]);
+          const d4DonorPExclude = new Set([donorP.id, ctx.vacatedAssignment.id]);
 
           const d4DonorPExtra: Array<{ slotId: string; participantId: string }> = [];
           if (donorPTask.id === ctx.vacatedTask.id) {
@@ -700,6 +740,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
               disabledHC: ctx.disabledHC,
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
+              extraUnavailability: ctx.extraUnavailability,
             })
           )
             continue;
@@ -724,7 +765,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
               if (!donorRSlot) continue;
 
               const rWithout = rAssignments.filter((a) => a.id !== donorR.id);
-              const d4DonorQExclude = new Set([donorQ.id]);
+              const d4DonorQExclude = new Set([donorQ.id, donorP.id, ctx.vacatedAssignment.id]);
 
               const d4DonorQExtra: Array<{ slotId: string; participantId: string }> = [];
               if (donorQTask.id === ctx.vacatedTask.id) {
@@ -746,6 +787,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
                   disabledHC: ctx.disabledHC,
                   restRuleMap: ctx.restRuleMap,
                   scheduleContext: ctx.scheduleContext,
+                  extraUnavailability: ctx.extraUnavailability,
                 })
               )
                 continue;
@@ -754,7 +796,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
                 if (s.id === p.id || s.id === q.id || s.id === r.id || s.id === ctx.vacatedAssignment.participantId)
                   continue;
                 const sAssignments = ctx.assignmentsByParticipant.get(s.id) || [];
-                const d4DonorRExclude = new Set([donorR.id]);
+                const d4DonorRExclude = new Set([donorR.id, donorQ.id, donorP.id, ctx.vacatedAssignment.id]);
 
                 const d4DonorRExtra: Array<{ slotId: string; participantId: string }> = [];
                 if (donorRTask.id === ctx.vacatedTask.id) {
@@ -779,6 +821,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
                     disabledHC: ctx.disabledHC,
                     restRuleMap: ctx.restRuleMap,
                     scheduleContext: ctx.scheduleContext,
+                    extraUnavailability: ctx.extraUnavailability,
                   })
                 )
                   continue;
@@ -949,6 +992,12 @@ export function generateRescuePlans(
     assignmentsByParticipant.set(a.participantId, list);
   }
 
+  // Schedule-scoped Future-SOS windows feed both per-step eligibility and
+  // final validation. Snapshotting once here keeps the array reference stable
+  // across the whole enumeration so V8 can hoist it; it also matches the
+  // exact same value passed to `validateHardConstraints` below.
+  const extraUnavailability = schedule.scheduleUnavailability ?? [];
+
   const ctx: RescueContext = {
     schedule,
     taskMap,
@@ -965,6 +1014,7 @@ export function generateRescuePlans(
     restRuleMap,
     dayStartHour,
     scheduleContext,
+    extraUnavailability,
     config,
     scoreCtx,
     baselineComposite,
@@ -972,13 +1022,24 @@ export function generateRescuePlans(
 
   // Generate plans at each depth, expanding only when needed.
   // Request extra candidates to compensate for filtering out invalid plans.
+  //
+  // Backfill is gated on count *and* quality: when the best shallow plan is a
+  // regression (negative compositeDelta), we keep enumerating deeper depths
+  // even if we already have enough candidates by count — a deeper chain may
+  // surface a non-regressing plan that the user actually wants. When
+  // compositeDelta is undefined (legacy scoring path) we fall back to 0,
+  // preserving the historical count-only behaviour.
   const needed = maxPlans ?? (page + 1) * PAGE_SIZE;
   const depth1Plans = generateDepth1Plans(ctx);
 
-  const depth2Plans = depth1Plans.length < needed * 2 ? generateDepth2Plans(ctx) : [];
+  const topD1Delta = depth1Plans[0]?.compositeDelta ?? 0;
+  const skipDepth2 = depth1Plans.length >= needed * 2 && topD1Delta >= 0;
+  const depth2Plans = skipDepth2 ? [] : generateDepth2Plans(ctx);
 
   const totalSoFar = depth1Plans.length + depth2Plans.length;
-  const depth3Plans = totalSoFar < needed * 2 ? generateDepth3Plans(ctx) : [];
+  const bestShallowDelta = Math.max(topD1Delta, depth2Plans[0]?.compositeDelta ?? -Infinity);
+  const skipDepth3 = totalSoFar >= needed * 2 && bestShallowDelta >= 0;
+  const depth3Plans = skipDepth3 ? [] : generateDepth3Plans(ctx);
 
   // Assemble all plans in priority order: depth 1 → depth 2 → depth 3
   const allCandidates = [...depth1Plans, ...depth2Plans, ...depth3Plans];
@@ -1004,7 +1065,7 @@ export function generateRescuePlans(
       disabledHC,
       restRuleMap,
       certLabelResolver,
-      schedule.scheduleUnavailability ?? [],
+      extraUnavailability,
       scheduleContext,
     );
     if (validation.valid) {
@@ -1035,7 +1096,7 @@ export function generateRescuePlans(
         disabledHC,
         restRuleMap,
         certLabelResolver,
-        schedule.scheduleUnavailability ?? [],
+        extraUnavailability,
         scheduleContext,
       );
       if (validation.valid) {

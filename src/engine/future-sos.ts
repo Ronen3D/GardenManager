@@ -22,10 +22,11 @@ import type {
   Task,
 } from '../models/types';
 import { blocksOverlap } from '../shared/utils/time-utils';
+import { isSchedulerDiagOn } from './optimizer';
 import {
   type CandidateChain,
   type ChainEnumerationCaps,
-  DEFAULT_CAPS,
+  deriveCapsForBatchSize,
   enumerateChainsForSlot,
   type FallbackLevel,
   type SlotEnumerationContext,
@@ -455,13 +456,18 @@ export function generateBatchRescuePlans(
   );
 
   const maxPlans = opts.maxPlans ?? 3;
-  const caps = opts.caps ?? DEFAULT_CAPS;
-  // K-aware budget default: 12^K grows fast. 500ms is adequate for K ≤ 4, but
-  // realistic week-long windows routinely hit K=5+ where the DFS would time
-  // out mid-composition. Scale the default up for larger batches; callers can
-  // still override explicitly.
+  // K-adaptive caps: for the common K=2..4 case the search has plenty of
+  // budget, so widen per-slot enumeration there. The historical fixed
+  // {6,4,2} only protects worst-case K≥8; using it everywhere left K=2..4
+  // batches under-explored. `deriveCapsForBatchSize` converges to the old
+  // values at K≥8, so K≥8 behaviour is preserved.
   const affectedCount = allAffected.filter((a) => !opts.excludedAssignmentIds?.has(a.assignment.id)).length;
-  const defaultBudget = affectedCount >= 5 ? 1500 : 500;
+  const caps = opts.caps ?? deriveCapsForBatchSize(affectedCount);
+  // K-aware time budget: smooth linear scaling instead of the historical
+  // step at K=5. K=2 → 500ms, K=5 → 1250ms, K=8 → 2000ms, K≥14 → 4000ms
+  // (clamped). DFS uses suffix-best admissible pruning so the extra budget
+  // is spent on real branches, not fan-out.
+  const defaultBudget = Math.min(4000, Math.max(500, 500 + 250 * Math.max(0, affectedCount - 2)));
   const timeBudgetMs = opts.timeBudgetMs ?? defaultBudget;
 
   const excludedIds = opts.excludedAssignmentIds;
@@ -588,6 +594,12 @@ export function generateBatchRescuePlans(
       if (candidatesPerSlot[i].length > 0) solvableIdx.push(i);
     }
     if (solvableIdx.length === 0) {
+      if (isSchedulerDiagOn()) {
+        console.log(
+          `[future-sos] stage=${fallbackLevel} K=${affectedCount} caps=${JSON.stringify(caps)} ` +
+            `no-solvable-slots infeasible=${infeasibleIds.length}/${affected.length}`,
+        );
+      }
       return { validPlans: [], invalidPlans: [], infeasibleIds, timedOut: false, anySolvable: false };
     }
 
@@ -599,6 +611,12 @@ export function generateBatchRescuePlans(
     const { compositions, timedOut } = dfsCompose(orderedCandidates, Math.max(maxPlans * 4, 8), deadline);
 
     if (compositions.length === 0) {
+      if (isSchedulerDiagOn()) {
+        console.log(
+          `[future-sos] stage=${fallbackLevel} K=${affectedCount} caps=${JSON.stringify(caps)} ` +
+            `budgetMs=${budgetMs} dfs-empty timedOut=${timedOut}`,
+        );
+      }
       return { validPlans: [], invalidPlans: [], infeasibleIds, timedOut, anySolvable: true };
     }
 
@@ -686,6 +704,14 @@ export function generateBatchRescuePlans(
 
     const top = selectDiversePlans(scored, maxPlans);
     for (let i = 0; i < top.length; i++) top[i].rank = i + 1;
+
+    if (isSchedulerDiagOn()) {
+      console.log(
+        `[future-sos] stage=${fallbackLevel} K=${affectedCount} caps=${JSON.stringify(caps)} ` +
+          `budgetMs=${budgetMs} valid=${top.length} invalid=${scoredInvalid.length} ` +
+          `infeasible=${infeasibleIds.length}/${affected.length} timedOut=${timedOut}`,
+      );
+    }
 
     return { validPlans: top, invalidPlans: scoredInvalid, infeasibleIds, timedOut, anySolvable: true };
   };
