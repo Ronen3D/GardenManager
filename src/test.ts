@@ -307,6 +307,7 @@ function createAdanitTasks(baseDate: Date): Task[] {
   });
 }
 
+import { findMaxMatching } from './constraints/group-matching';
 import {
   checkAvailability,
   checkCertificationRequirement,
@@ -3112,6 +3113,227 @@ console.log('\n── Hard Constraints: Individual Functions ──');
   ];
   const v4 = checkGroupFeasibility(task, noCertGroup);
   assert(v4.length === 1, 'HC-8: group L2 missing cert → violation');
+
+  // Cert-tightness regression: greedy claim-first-available falsely rejects
+  // when both slots accept L0 but only one slot needs the rare cert.
+  // Group: P-A (Nitzan only), P-B (Nitzan + Hamama).
+  // Slots: X (L0+Nitzan), Y (L0+Nitzan+Hamama). Valid matching: X→A, Y→B.
+  // If a greedy walk picks B for X first, Y becomes unfillable.
+  const certTightTask: Task = {
+    id: 'hc8-tight-t1',
+    name: 'CertTightness',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 2,
+    slots: [
+      { slotId: 's-x', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 'X' },
+      {
+        slotId: 's-y',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan', 'Hamama'],
+        label: 'Y',
+      },
+    ],
+    sameGroupRequired: true,
+    blocksConsecutive: true,
+  };
+  const certTightGroup: Participant[] = [
+    // P-B comes first — order that broke the old greedy walk
+    {
+      id: 'tight-pB',
+      name: 'B-both',
+      level: Level.L0,
+      certifications: ['Nitzan', 'Hamama'],
+      group: 'A',
+      availability: dayAvail,
+      dateUnavailability: [],
+    },
+    {
+      id: 'tight-pA',
+      name: 'A-nitzan',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: dayAvail,
+      dateUnavailability: [],
+    },
+  ];
+  const v5 = checkGroupFeasibility(certTightTask, certTightGroup);
+  assert(v5.length === 0, 'HC-8: cert-tightness counterexample matched (no false rejection)');
+
+  // Cross-level regression: group has just enough for each slot, but only
+  // when the right L4 fills the L4-only slot.
+  // Group: P-Q (L4 no cert), P-R (L4+Nitzan), P-S (L0+Nitzan).
+  // Slots: α (L4 only), β (L0/L2/L3/L4 + Nitzan), γ (L0).
+  const crossLevelTask: Task = {
+    id: 'hc8-cross-t1',
+    name: 'CrossLevel',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 3,
+    slots: [
+      { slotId: 's-a', acceptableLevels: [{ level: Level.L4 }], requiredCertifications: [], label: 'α' },
+      {
+        slotId: 's-b',
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
+        requiredCertifications: ['Nitzan'],
+        label: 'β',
+      },
+      { slotId: 's-c', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'γ' },
+    ],
+    sameGroupRequired: true,
+    blocksConsecutive: true,
+  };
+  const crossLevelGroup: Participant[] = [
+    {
+      id: 'cross-pR',
+      name: 'R-L4-Nitzan',
+      level: Level.L4,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: dayAvail,
+      dateUnavailability: [],
+    },
+    {
+      id: 'cross-pQ',
+      name: 'Q-L4',
+      level: Level.L4,
+      certifications: [],
+      group: 'A',
+      availability: dayAvail,
+      dateUnavailability: [],
+    },
+    {
+      id: 'cross-pS',
+      name: 'S-L0-Nitzan',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: dayAvail,
+      dateUnavailability: [],
+    },
+  ];
+  const v6 = checkGroupFeasibility(crossLevelTask, crossLevelGroup);
+  assert(v6.length === 0, 'HC-8: cross-level counterexample matched (no false rejection)');
+
+  // Genuinely infeasible group: 2 slots both need the rare cert, only one
+  // group member has it. Matching must report 1 unfilled slot.
+  const infeasibleTask: Task = {
+    id: 'hc8-infeasible-t1',
+    name: 'InfeasibleDouble',
+    timeBlock: createTimeBlockFromHours(baseDate, 6, 14),
+    requiredCount: 2,
+    slots: [
+      {
+        slotId: 's-i1',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Hamama'],
+        label: 'i1',
+      },
+      {
+        slotId: 's-i2',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Hamama'],
+        label: 'i2',
+      },
+    ],
+    sameGroupRequired: true,
+    blocksConsecutive: true,
+  };
+  const infeasibleGroup: Participant[] = [
+    {
+      id: 'inf-p1',
+      name: 'P1',
+      level: Level.L0,
+      certifications: ['Hamama'],
+      group: 'A',
+      availability: dayAvail,
+      dateUnavailability: [],
+    },
+    {
+      id: 'inf-p2',
+      name: 'P2',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: dayAvail,
+      dateUnavailability: [],
+    },
+  ];
+  const v7 = checkGroupFeasibility(infeasibleTask, infeasibleGroup);
+  assert(v7.length === 1, 'HC-8: genuinely infeasible group reports exactly 1 unfilled slot');
+  assert(v7[0].code === 'GROUP_INSUFFICIENT', 'HC-8: infeasible reported as GROUP_INSUFFICIENT');
+}
+
+// ── findMaxMatching: bipartite-matching primitive ───────────────────────────
+
+console.log('\n── Bipartite Matching Primitive ────────');
+
+{
+  // Empty input → empty matching, no unfilled
+  const empty = findMaxMatching([]);
+  assert(empty.assignments.size === 0, 'matcher: empty input → empty assignments');
+  assert(empty.unfilled.length === 0, 'matcher: empty input → no unfilled');
+
+  // Trivial 1:1
+  const trivial = findMaxMatching([{ slotId: 's1', candidates: ['p1'] }]);
+  assert(trivial.assignments.get('s1') === 'p1', 'matcher: trivial 1:1 matched');
+  assert(trivial.unfilled.length === 0, 'matcher: trivial → no unfilled');
+
+  // Slot with no candidates → unfilled
+  const empty2 = findMaxMatching([{ slotId: 's1', candidates: [] }]);
+  assert(empty2.unfilled.length === 1 && empty2.unfilled[0] === 's1', 'matcher: empty candidates → unfilled');
+
+  // Order honored when feasibility allows: prefers candidates[0] over later
+  const ordered = findMaxMatching([
+    { slotId: 's1', candidates: ['pA', 'pB'] },
+    { slotId: 's2', candidates: ['pC'] },
+  ]);
+  assert(ordered.assignments.get('s1') === 'pA', 'matcher: priority order honored when feasible');
+  assert(ordered.assignments.get('s2') === 'pC', 'matcher: independent slot matched');
+
+  // Augmenting path: greedy would fail — preferred candidate of s1 is the
+  // only one that can fill s2, so s1 must take its second choice.
+  const aug = findMaxMatching([
+    { slotId: 's1', candidates: ['pX', 'pY'] }, // both eligible
+    { slotId: 's2', candidates: ['pX'] }, // only pX eligible
+  ]);
+  assert(aug.unfilled.length === 0, 'matcher: augmenting path covers both slots');
+  assert(aug.assignments.get('s1') === 'pY', 'matcher: augmenting path re-routes s1 to pY');
+  assert(aug.assignments.get('s2') === 'pX', 'matcher: pX correctly assigned to its only feasible slot');
+
+  // Three-slot chain: classic example where pure greedy fails
+  // s1: {pA, pB}, s2: {pA}, s3: {pB, pC}
+  // Greedy s1→pA, s2 needs pA → fail. Matching: s1→pB, s2→pA, s3→pC.
+  const chain = findMaxMatching([
+    { slotId: 's1', candidates: ['pA', 'pB'] },
+    { slotId: 's2', candidates: ['pA'] },
+    { slotId: 's3', candidates: ['pB', 'pC'] },
+  ]);
+  assert(chain.unfilled.length === 0, 'matcher: 3-slot chain fully matched');
+  assert(chain.assignments.get('s2') === 'pA', 'matcher: chain — s2 takes pA');
+  assert(chain.assignments.get('s1') === 'pB', 'matcher: chain — s1 takes pB');
+  assert(chain.assignments.get('s3') === 'pC', 'matcher: chain — s3 takes pC');
+
+  // Genuinely infeasible (Hall condition violated): two slots, both need pX
+  const inf = findMaxMatching([
+    { slotId: 's1', candidates: ['pX'] },
+    { slotId: 's2', candidates: ['pX'] },
+  ]);
+  assert(inf.assignments.size === 1, 'matcher: infeasible → partial size 1');
+  assert(inf.unfilled.length === 1, 'matcher: infeasible → 1 unfilled');
+
+  // Determinism: same input twice → identical result
+  const det1 = findMaxMatching([
+    { slotId: 'a', candidates: ['p1', 'p2'] },
+    { slotId: 'b', candidates: ['p2', 'p3'] },
+  ]);
+  const det2 = findMaxMatching([
+    { slotId: 'a', candidates: ['p1', 'p2'] },
+    { slotId: 'b', candidates: ['p2', 'p3'] },
+  ]);
+  assert(
+    det1.assignments.get('a') === det2.assignments.get('a') && det1.assignments.get('b') === det2.assignments.get('b'),
+    'matcher: deterministic on identical input',
+  );
 }
 
 // ── HC-14: checkRestRules ──────────────────────────────────────────────────
@@ -7370,6 +7592,73 @@ console.log('\n── Optimizer ────────────────
   const cons1Pid = consResult.assignments.find((a) => a.taskId === 'opt-cons1')?.participantId;
   const cons2Pid = consResult.assignments.find((a) => a.taskId === 'opt-cons2')?.participantId;
   assert(cons1Pid !== cons2Pid, 'optimize: HC-12 assigns back-to-back blocking tasks to different participants');
+
+  // ── greedyAssign: depth-1 repair across non-overlap blocker (HC-12) ──
+  //
+  // Forced scenario where the only path to full coverage is a depth-1 swap
+  // whose blocker is BACK-TO-BACK (HC-12), not overlapping (HC-5):
+  //   • Task A (06–14) blocksConsecutive, slot accepts {L0 normal, L4 lowPriority}
+  //   • Task B (14–22) blocksConsecutive, slot accepts {L0 only}
+  //   • p1 = L0 + cert,  p2 = L4 + cert
+  //
+  // Greedy processes A first. Composite sort puts non-lowPriority L0 (p1)
+  // ahead of lowPriority L4 (p2), so p1 deterministically wins A. For B,
+  // p1 is now blocked by HC-12 (A ends at 14:00, B starts at 14:00, both
+  // blocksConsecutive) and p2 fails HC-1 (level). The repair must swap
+  // p1 off A onto B, with p2 backfilling A.
+  //
+  // Pre-fix the repair only treated overlapping assignments as blockers,
+  // so this slot stayed unfilled. The fix uses removal-simulation as the
+  // gate, which catches HC-12 (and HC-14, HC-15) blockers transparently.
+  const d1A: Task = {
+    id: 'opt-d1-a',
+    name: 'D1A',
+    timeBlock: createTimeBlockFromHours(optBase, 6, 14),
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: 'opt-d1-a-s',
+        acceptableLevels: [{ level: Level.L0 }, { level: Level.L4, lowPriority: true }],
+        requiredCertifications: ['Nitzan'],
+        label: 'D1A',
+      },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+  };
+  const d1B: Task = {
+    id: 'opt-d1-b',
+    name: 'D1B',
+    timeBlock: createTimeBlockFromHours(optBase, 14, 22),
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: 'opt-d1-b-s',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+        label: 'D1B',
+      },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+  };
+  const d1P1 = mkParticipant('opt-d1-p1', 'D1P1', Level.L0, ['Nitzan'], 'A');
+  const d1P2 = mkParticipant('opt-d1-p2', 'D1P2', Level.L4, ['Nitzan'], 'A');
+  const d1Greedy = greedyAssign([d1A, d1B], [d1P1, d1P2]);
+  assert(
+    d1Greedy.unfilledSlots.length === 0,
+    'greedy: depth-1 repair fills both slots when blocker is HC-12 (back-to-back)',
+  );
+  const d1AAssign = d1Greedy.assignments.find((a) => a.taskId === 'opt-d1-a');
+  const d1BAssign = d1Greedy.assignments.find((a) => a.taskId === 'opt-d1-b');
+  assert(d1AAssign !== undefined, 'greedy: depth-1 repair leaves A filled');
+  assert(d1BAssign !== undefined, 'greedy: depth-1 repair fills B');
+  // After the swap, p1 (L0) must take B (L0-only) and p2 (L4) must take A.
+  assert(d1BAssign?.participantId === 'opt-d1-p1', 'greedy: depth-1 repair routes the only L0 to the L0-only slot');
+  assert(d1AAssign?.participantId === 'opt-d1-p2', 'greedy: depth-1 repair backfills the lowPriority slot with L4');
+  // Output must pass full HC re-validation (no HC-12 violation introduced).
+  const d1ReVal = validateHardConstraints([d1A, d1B], [d1P1, d1P2], d1Greedy.assignments);
+  assert(d1ReVal.valid === true, 'greedy: depth-1 repair output passes hard-constraint re-validation');
 
   // ═══ Phase 1: SchedulingContext signal-aware ordering ══════════════════════
 

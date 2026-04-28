@@ -7,6 +7,7 @@
  * 3. Group Integrity: for sameGroupRequired tasks, each group must fill all sub-team roles
  */
 
+import { findMaxMatching, type SlotCandidates } from '../constraints/group-matching';
 import {
   Level,
   type OneTimeTask,
@@ -214,31 +215,28 @@ function checkGroupIntegrity(
     items.push({ name: ot.name, sameGroupRequired: ot.sameGroupRequired, slots: collectAllSlots(ot) });
   }
 
+  // Bipartite max matching: group-can-fill ⇔ a covering matching exists
+  // between slots and group members. Greedy first-eligible would falsely
+  // reject groups when a different selection would have succeeded.
+  const groupCanFillItem = (groupMembers: Participant[], slots: SlotTemplate[]): boolean => {
+    const slotInputs: SlotCandidates[] = slots.map((slot, i) => ({
+      slotId: `${i}`,
+      candidates: groupMembers.filter((m) => participantMatchesSlot(m, slot)).map((m) => m.id),
+    }));
+    return findMaxMatching(slotInputs).unfilled.length === 0;
+  };
+
   for (const item of items) {
     if (!item.sameGroupRequired) continue;
     if (item.slots.length === 0) continue;
 
     // For each group, check if they can fill ALL slots simultaneously
     let anyGroupCanFill = false;
-
     for (const group of groups) {
       const groupMembers = participants.filter((p) => p.group === group);
-      let canFillAll = true;
-
-      // Greedy check: try to assign each slot to a different member
-      const used = new Set<string>();
-      for (const slot of item.slots) {
-        const eligible = groupMembers.filter((m) => !used.has(m.id) && participantMatchesSlot(m, slot));
-        if (eligible.length === 0) {
-          canFillAll = false;
-          break;
-        }
-        used.add(eligible[0].id);
-      }
-
-      if (canFillAll) {
+      if (groupCanFillItem(groupMembers, item.slots)) {
         anyGroupCanFill = true;
-        break; // At least one group can fill: sufficient
+        break;
       }
     }
 
@@ -254,17 +252,7 @@ function checkGroupIntegrity(
       const insufficientGroups: string[] = [];
       for (const group of groups) {
         const groupMembers = participants.filter((p) => p.group === group);
-        const used = new Set<string>();
-        let canFill = true;
-        for (const slot of item.slots) {
-          const eligible = groupMembers.filter((m) => !used.has(m.id) && participantMatchesSlot(m, slot));
-          if (eligible.length === 0) {
-            canFill = false;
-            break;
-          }
-          used.add(eligible[0].id);
-        }
-        if (!canFill) insufficientGroups.push(group);
+        if (!groupCanFillItem(groupMembers, item.slots)) insufficientGroups.push(group);
       }
 
       if (insufficientGroups.length > 0) {

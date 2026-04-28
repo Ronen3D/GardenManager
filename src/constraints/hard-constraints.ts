@@ -23,6 +23,7 @@ import {
   type ScheduleContext,
 } from '../shared/utils/time-utils';
 import { describeTaskBidi, describeTaskInstance } from '../utils/date-utils';
+import { findMaxMatching, type SlotCandidates } from './group-matching';
 import { checkSleepRecovery } from './sleep-recovery';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -335,9 +336,12 @@ export function checkUniqueParticipantsPerTask(task: Task, assignments: Assignme
  * all three disabled, HC-8 degenerates to a pure cardinality check
  * (group size ≥ slot count).
  *
- * This is data-driven: slot definitions determine what's needed, not hardcoded
- * counts. For the default Adanit template (6 slots: 4×L0+Nitzan, 1×L2+Nitzan,
- * 1×L3/L4+Nitzan), this produces equivalent results to the previous hardcoded check.
+ * Feasibility is decided by maximum bipartite matching (see
+ * {@link findMaxMatching}). A group is sufficient iff every slot can be
+ * matched to a distinct eligible member; greedy claim-first-available is
+ * insufficient when slots have heterogeneous tightness (e.g. one slot needs
+ * a rare cert that only one member holds, while another slot also accepts
+ * that member).
  */
 export function checkGroupFeasibility(
   task: Task,
@@ -351,43 +355,38 @@ export function checkGroupFeasibility(
   const enforceReqCert = !disabledHC?.has('HC-2');
   const enforceForbiddenCert = !disabledHC?.has('HC-11');
 
-  const violations: ConstraintViolation[] = [];
-  // Track which participants have been "claimed" by a slot (greedy matching)
-  const claimed = new Set<string>();
-
-  // Sort slots most-constrained-first (same as optimizer) so greedy matching
-  // doesn't falsely claim a flexible slot leaves a strict one unfillable.
-  const sortedSlots = [...task.slots].sort(
-    (a, b) => Math.min(...b.acceptableLevels.map((e) => e.level)) - Math.min(...a.acceptableLevels.map((e) => e.level)),
-  );
-
-  for (const slot of sortedSlots) {
-    const match = groupParticipants.find((p) => {
-      if (claimed.has(p.id)) return false;
-      if (enforceLevel && !slot.acceptableLevels.some((e) => e.level === p.level)) return false;
-      if (enforceReqCert) {
-        for (const cert of slot.requiredCertifications) {
-          if (!p.certifications.includes(cert)) return false;
+  const slotInputs: SlotCandidates[] = task.slots.map((slot) => ({
+    slotId: slot.slotId,
+    candidates: groupParticipants
+      .filter((p) => {
+        if (enforceLevel && !slot.acceptableLevels.some((e) => e.level === p.level)) return false;
+        if (enforceReqCert) {
+          for (const cert of slot.requiredCertifications) {
+            if (!p.certifications.includes(cert)) return false;
+          }
         }
-      }
-      if (enforceForbiddenCert && slot.forbiddenCertifications?.some((c) => p.certifications.includes(c))) return false;
-      return true;
-    });
-    if (match) {
-      claimed.add(match.id);
-    } else {
-      const parts: string[] = [];
-      if (enforceLevel) parts.push(slot.acceptableLevels.map((e) => `דרגה ${e.level}`).join('/'));
-      if (enforceReqCert && slot.requiredCertifications.length > 0) {
-        parts.push(slot.requiredCertifications.map(certLabelResolver).join(', '));
-      }
-      const desc = parts.length > 0 ? `נדרש: ${parts.join(' + ')}` : 'אין מספיק משתתפים בקבוצה';
-      violations.push(
-        violation('GROUP_INSUFFICIENT', `${describeTaskInstance(task)} \u200F— ${desc}`, task.id, slot.slotId),
-      );
-    }
-  }
+        if (enforceForbiddenCert && slot.forbiddenCertifications?.some((c) => p.certifications.includes(c)))
+          return false;
+        return true;
+      })
+      .map((p) => p.id),
+  }));
 
+  const result = findMaxMatching(slotInputs);
+  if (result.unfilled.length === 0) return [];
+
+  const slotById = new Map(task.slots.map((s) => [s.slotId, s] as const));
+  const violations: ConstraintViolation[] = [];
+  for (const slotId of result.unfilled) {
+    const slot = slotById.get(slotId);
+    const parts: string[] = [];
+    if (slot && enforceLevel) parts.push(slot.acceptableLevels.map((e) => `דרגה ${e.level}`).join('/'));
+    if (slot && enforceReqCert && slot.requiredCertifications.length > 0) {
+      parts.push(slot.requiredCertifications.map(certLabelResolver).join(', '));
+    }
+    const desc = parts.length > 0 ? `נדרש: ${parts.join(' + ')}` : 'אין מספיק משתתפים בקבוצה';
+    violations.push(violation('GROUP_INSUFFICIENT', `${describeTaskInstance(task)} \u200F— ${desc}`, task.id, slotId));
+  }
   return violations;
 }
 

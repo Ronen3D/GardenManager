@@ -20,6 +20,7 @@
  * └─────────────────────────────────────────────────┘
  */
 
+import { findMaxMatching, type SlotCandidates } from '../constraints/group-matching';
 import { effectivelyBlocksAt, isLevelSatisfied, validateHardConstraints } from '../constraints/hard-constraints';
 import { checkSleepRecoveryForPlacement } from '../constraints/sleep-recovery';
 import { computeScheduleScore, IncrementalScorer, type ScoreContext } from '../constraints/soft-constraints';
@@ -28,6 +29,7 @@ import {
   AssignmentStatus,
   Level,
   type Participant,
+  type ParticipantCapacity,
   type SchedulerConfig,
   type ScheduleScore,
   type SlotRequirement,
@@ -817,8 +819,13 @@ export function greedyAssign(
       } else {
         // ── Backtracking: try depth-1 swap chains to free a participant ──
         // Find participants who pass level/cert/availability but are blocked by
-        // a current assignment (typically HC-5 double-booking). If we can
-        // reassign their blocking assignment to someone else, we free them.
+        // a current assignment. The "blocker" is identified by simulation:
+        // any of p's existing assignments whose removal makes p eligible for
+        // the target slot is a candidate. This is HC-agnostic and covers
+        // every assignment-induced rejection — HC-5 (overlap), HC-12 (back-to-back
+        // blocking), HC-14 (rest-rule gap), HC-15 (sleep recovery). Earlier
+        // versions only considered time-overlapping assignments (HC-5), which
+        // missed adjacent / near-adjacent blockers that depth-1 can repair.
         let backtrackSuccess = false;
         let swapPlan: {
           p: Participant;
@@ -828,19 +835,24 @@ export function greedyAssign(
         } | null = null;
 
         for (const p of participants) {
-          // Quick filter: skip if participant can't possibly fill this slot
-          // (wrong level, missing cert, unavailable)
-          if (!isLevelSatisfied(p.level, slot)) continue;
-          if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
-          if (!isFullyCovered(task.timeBlock, p.availability)) continue;
-          if (hasForbiddenCertification(p, slot)) continue;
+          // Quick filter: skip if participant can't possibly fill this slot.
+          // Each check is gated by disabledHC so a globally-relaxed HC doesn't
+          // get silently re-imposed here — must stay aligned with the
+          // authoritative isEligible() in validator.ts and the SA swap gate.
+          if (!disabledHC?.has('HC-1') && !isLevelSatisfied(p.level, slot)) continue;
+          if (!disabledHC?.has('HC-2') && slot.requiredCertifications.some((c) => !p.certifications.includes(c)))
+            continue;
+          if (!disabledHC?.has('HC-3') && !isFullyCovered(task.timeBlock, p.availability)) continue;
+          if (!disabledHC?.has('HC-11') && hasForbiddenCertification(p, slot)) continue;
 
           // Already eligible (shouldn't happen since candidates was empty, but guard)
           const pAssigns = assignmentsByParticipant.get(p.id) || [];
           if (isEligibleForSlot(p, task, slot, pAssigns, taskMap, disabledHC, restRuleMap, scheduleContext)) continue;
 
-          // Find which of p's current assignments blocks them from this slot
-          // (must overlap in time — HC-5 conflict)
+          // Find which of p's current assignments blocks them from this slot.
+          // The simulation `pAssigns - {blockingAssign}` re-checked against
+          // isEligibleForSlot is the authoritative test; any assignment whose
+          // removal flips eligibility is a valid blocker, regardless of HC.
           const pAssignsCopy = [...pAssigns];
           for (const blockingAssign of pAssignsCopy) {
             if (
@@ -852,12 +864,17 @@ export function greedyAssign(
 
             const blockingTask = taskMap.get(blockingAssign.taskId);
             if (!blockingTask) continue;
-            if (!blocksOverlap(blockingTask.timeBlock, task.timeBlock)) continue;
-            // Don't steal from same-group tasks (Adanit) — too complex
+            // Don't steal from same-group tasks (Adanit) — would cascade group integrity
             if (blockingTask.sameGroupRequired) continue;
 
             const blockingSlot = blockingTask.slots.find((s) => s.slotId === blockingAssign.slotId);
             if (!blockingSlot) continue;
+
+            // Blocker gate: would removing this assignment unblock p? Computed
+            // once per blocker (independent of replacement choice).
+            const pAssignsWithout = pAssigns.filter((a) => a.id !== blockingAssign.id);
+            if (!isEligibleForSlot(p, task, slot, pAssignsWithout, taskMap, disabledHC, restRuleMap, scheduleContext))
+              continue;
 
             // Try to find a replacement for the blocking assignment
             for (const replacement of participants) {
@@ -877,13 +894,6 @@ export function greedyAssign(
                   scheduleContext,
                 )
               )
-                continue;
-
-              // Would the replacement be eligible for the blocking slot AND
-              // would p then become eligible for the target slot once unblocked?
-              // Simulate: remove blockingAssign from p, check eligibility
-              const pAssignsWithout = pAssigns.filter((a) => a.id !== blockingAssign.id);
-              if (!isEligibleForSlot(p, task, slot, pAssignsWithout, taskMap, disabledHC, restRuleMap, scheduleContext))
                 continue;
 
               swapPlan = { p, blockingAssign, blockingTask, replacement };
@@ -1082,30 +1092,27 @@ function assignSameGroupTask(
     return (groupRng.get(ga) || 0) - (groupRng.get(gb) || 0);
   });
 
-  // Sort slots: fill most-constrained first (highest min-level → fewest candidates)
-  const slotsToFill = task.slots
-    .filter((s) => !pinnedSlotIds.has(s.slotId))
-    .sort(
-      (a, b) =>
-        Math.min(...b.acceptableLevels.map((e) => e.level)) - Math.min(...a.acceptableLevels.map((e) => e.level)),
-    );
+  const slotsToFill = task.slots.filter((s) => !pinnedSlotIds.has(s.slotId));
 
-  // Track best partial result across groups
-  let bestGroupAssignments: Assignment[] = [];
+  // Track best partial result across groups (diagnostic only)
   let bestFilledCount = 0;
 
   for (const group of groupsToTry) {
     const groupParticipants = groupParticipantsMap.get(group) || [];
-    const tempAssignments: Assignment[] = [];
 
-    // P4: Build temp map for this group attempt (clone current + add temps as we go)
+    // P4: Build temp map for this group attempt. Per-slot eligibility within
+    // the same task is independent of slot order — every slot in a same-group
+    // task shares one timeBlock — so we score eligibility once and let the
+    // matcher enforce per-task uniqueness (HC-7) via "each participant at
+    // most one slot".
     const tempMap = new Map<string, Assignment[]>();
     for (const [pid, arr] of assignmentsByParticipant) {
       tempMap.set(pid, [...arr]);
     }
 
-    for (const slot of slotsToFill) {
-      const candidates = getEligibleCandidates(
+    const slotInputs: SlotCandidates[] = slotsToFill.map((slot) => ({
+      slotId: slot.slotId,
+      candidates: getEligibleCandidates(
         task,
         slot,
         groupParticipants,
@@ -1118,50 +1125,45 @@ function assignSameGroupTask(
         restRuleMap,
         dayStartHour,
         scheduleContext,
-      );
+      ).map((p) => p.id),
+    }));
 
-      if (candidates.length > 0) {
+    const matching = findMaxMatching(slotInputs);
+
+    if (matching.unfilled.length === 0) {
+      // Full success — commit and return immediately
+      for (const slot of slotsToFill) {
+        const pid = matching.assignments.get(slot.slotId);
+        if (!pid) continue;
         const newAssignment: Assignment = {
           id: nextAssignmentId(),
           taskId: task.id,
           slotId: slot.slotId,
-          participantId: candidates[0].id,
+          participantId: pid,
           status: AssignmentStatus.Scheduled,
           updatedAt: new Date(),
         };
-        tempAssignments.push(newAssignment);
-        addToAssignmentMap(tempMap, newAssignment);
-      }
-      // Don't break — continue filling remaining slots even if one fails
-    }
-
-    if (tempAssignments.length === slotsToFill.length) {
-      // Full success — commit and return immediately
-      for (const a of tempAssignments) {
-        currentAssignments.push(a);
-        addToAssignmentMap(assignmentsByParticipant, a);
-        const t = taskMap.get(a.taskId);
-        if (t) {
-          const eff = computeTaskEffectiveHours(t);
-          workload.set(a.participantId, (workload.get(a.participantId) || 0) + eff);
-          if (dailyWorkload) {
-            const dk = operationalDateKey(t.timeBlock.start, dayStartHour);
-            let pDaily = dailyWorkload.get(a.participantId);
-            if (!pDaily) {
-              pDaily = new Map();
-              dailyWorkload.set(a.participantId, pDaily);
-            }
-            pDaily.set(dk, (pDaily.get(dk) || 0) + eff);
+        currentAssignments.push(newAssignment);
+        addToAssignmentMap(assignmentsByParticipant, newAssignment);
+        const eff = computeTaskEffectiveHours(task);
+        workload.set(pid, (workload.get(pid) || 0) + eff);
+        if (dailyWorkload) {
+          const dk = operationalDateKey(task.timeBlock.start, dayStartHour);
+          let pDaily = dailyWorkload.get(pid);
+          if (!pDaily) {
+            pDaily = new Map();
+            dailyWorkload.set(pid, pDaily);
           }
+          pDaily.set(dk, (pDaily.get(dk) || 0) + eff);
         }
       }
       return true;
     }
 
     // Track best partial result
-    if (tempAssignments.length > bestFilledCount) {
-      bestFilledCount = tempAssignments.length;
-      bestGroupAssignments = tempAssignments;
+    const filledCount = slotsToFill.length - matching.unfilled.length;
+    if (filledCount > bestFilledCount) {
+      bestFilledCount = filledCount;
     }
   }
 
@@ -1862,7 +1864,210 @@ export function localSearchOptimize(
     }
   }
 
+  // ── Post-SA Polish: replace assigned with idle when strictly better ──────
+  // SA's pairwise-swap neighborhood + insert-into-unfilled cannot reach a
+  // configuration where an idle eligible participant replaces an already-
+  // assigned one in a filled slot. The polish closes this structural gap
+  // deterministically, accepting only strict composite-score improvements
+  // while preserving every hard constraint via isEligibleForSlot.
+  // sameGroupRequired tasks are skipped — within-group swaps are reachable
+  // by SA and cross-group replacements are infeasible for a single primitive.
+  // The fresh-recompute at optimize() (computeScheduleScore) will re-derive
+  // the final score from scratch, masking any incScorer FP drift; do not
+  // remove that safety net.
+  polishReplaceWithIdle(
+    best,
+    tasks,
+    participants,
+    config,
+    pinnedIds,
+    taskMap,
+    pMap,
+    phantomContext,
+    disabledHC,
+    restRuleMap,
+    dayStartHour,
+    capacities,
+    notWithPairs,
+    startTime,
+    abortSignal,
+    stopSignal,
+    scheduleContext,
+  );
+
   return { assignments: best, filledSlots };
+}
+
+// ─── Post-SA Polish ──────────────────────────────────────────────────────────
+
+const MAX_POLISH_PASSES = 3;
+
+/**
+ * Replace each assigned participant with an idle eligible candidate when
+ * doing so strictly improves the composite score. Operates in-place on `best`.
+ *
+ * Determinism: iterates participants in input order, accepts only strict
+ * improvements (delta > 1e-6). Same input → same output.
+ *
+ * Skips sameGroupRequired tasks and pinned/Manual/Frozen incumbents.
+ *
+ * Reuses IncrementalScorer for O(k) per-attempt scoring. Builds fresh
+ * indices from `best` so the post-SA insert sweep's mutations are seen.
+ */
+function polishReplaceWithIdle(
+  best: Assignment[],
+  tasks: Task[],
+  participants: Participant[],
+  config: SchedulerConfig,
+  pinnedIds: Set<string>,
+  taskMap: Map<string, Task>,
+  pMap: Map<string, Participant>,
+  phantomContext: PhantomContext | undefined,
+  disabledHC: Set<string> | undefined,
+  restRuleMap: Map<string, number> | undefined,
+  dayStartHour: number,
+  capacities: Map<string, ParticipantCapacity>,
+  notWithPairs: Map<string, Set<string>>,
+  startTime: number,
+  abortSignal: AbortSignal | undefined,
+  stopSignal: AbortSignal | undefined,
+  scheduleContext: ScheduleContext | undefined,
+): void {
+  // Build fresh indices from `best`. The post-SA insert sweep extended `best`
+  // without updating any of the SA-loop indices, so reusing them would feed
+  // the scorer a stale assignment set. Phantom assignments are seeded into
+  // byParticipant for cross-schedule eligibility (HC-5/12/14), matching
+  // localSearchOptimize's own seeding pattern.
+  const polishByParticipant = buildAssignmentMap(best);
+  if (phantomContext) {
+    for (const pa of phantomContext.phantomAssignments) addToAssignmentMap(polishByParticipant, pa);
+  }
+  const polishByTask = new Map<string, Assignment[]>();
+  for (const a of best) {
+    const list = polishByTask.get(a.taskId);
+    if (list) list.push(a);
+    else polishByTask.set(a.taskId, [a]);
+  }
+
+  const polishCtx: ScoreContext = {
+    taskMap,
+    pMap,
+    assignmentsByParticipant: polishByParticipant,
+    assignmentsByTask: polishByTask,
+    capacities,
+    notWithPairs,
+    dayStartHour,
+  };
+
+  const incScorer = IncrementalScorer.build(tasks, participants, best, config, polishCtx);
+  let currentComposite = incScorer.compositeScore;
+
+  for (let pass = 0; pass < MAX_POLISH_PASSES; pass++) {
+    let improvedThisPass = false;
+
+    // Snapshot the assignment array so mid-pass mutations don't shift indices
+    // we're about to visit. `best[i]` may be replaced as we commit; we only
+    // mutate `participantId` in place, never reorder.
+    const passSnapshot = [...best];
+
+    for (const a of passSnapshot) {
+      // Stop / abort handling — mirror SA loop's check (line 1531).
+      if (Date.now() - startTime > config.maxSolverTimeMs || abortSignal?.aborted || stopSignal?.aborted) return;
+
+      // Skip pinned / manual / frozen incumbents — same gate as SA.
+      if (pinnedIds.has(a.id) || a.status === AssignmentStatus.Manual || a.status === AssignmentStatus.Frozen) continue;
+
+      const task = taskMap.get(a.taskId);
+      if (!task) continue;
+
+      // Skip sameGroupRequired — within-group is SA's job, cross-group is
+      // infeasible for a single replacement primitive.
+      if (task.sameGroupRequired) continue;
+
+      const slot = task.slots.find((s) => s.slotId === a.slotId);
+      if (!slot) continue;
+
+      const incumbentPid = a.participantId;
+      const incumbentList = polishByParticipant.get(incumbentPid);
+      if (!incumbentList) continue; // defensive
+
+      let bestDelta = 0;
+      let bestCandidate: Participant | null = null;
+
+      for (const cand of participants) {
+        if (cand.id === incumbentPid) continue;
+
+        const candList = polishByParticipant.get(cand.id) ?? [];
+
+        // HC-7: candidate cannot already be in this task
+        const taskAssigns = polishByTask.get(a.taskId) ?? [];
+        if (taskAssigns.some((c) => c.participantId === cand.id)) continue;
+
+        // Authoritative HC gate
+        if (!isEligibleForSlot(cand, task, slot, candList, taskMap, disabledHC, restRuleMap, scheduleContext)) continue;
+
+        // Save scorer state before any mutation. saveParticipant snapshots the
+        // perParticipant cache; recomputeForSwap will rebuild from the (newly
+        // mutated) byParticipant index.
+        const savedI = incScorer.saveParticipant(incumbentPid);
+        const savedC = incScorer.saveParticipant(cand.id);
+        if (!savedI || !savedC) continue;
+
+        // Apply trial replacement to indices and assignment object
+        const incIdx = incumbentList.indexOf(a);
+        if (incIdx === -1) continue; // defensive
+        incumbentList.splice(incIdx, 1);
+        a.participantId = cand.id;
+        let candListEntry = polishByParticipant.get(cand.id);
+        if (!candListEntry) {
+          candListEntry = [];
+          polishByParticipant.set(cand.id, candListEntry);
+        }
+        candListEntry.push(a);
+
+        const newComposite = incScorer.recomputeForSwap(incumbentPid, cand.id);
+        const delta = newComposite - currentComposite;
+
+        // Always undo the trial; we commit only the best candidate at the end.
+        a.participantId = incumbentPid;
+        // Remove from candidate list
+        const candIdx = candListEntry.indexOf(a);
+        if (candIdx !== -1) candListEntry.splice(candIdx, 1);
+        if (candListEntry.length === 0 && candList.length === 0) polishByParticipant.delete(cand.id);
+        // Restore to incumbent list at the same position (push is fine — order
+        // within the list does not affect scoring or eligibility).
+        incumbentList.push(a);
+        // Restore scorer state
+        incScorer.restoreParticipant(incumbentPid, savedI);
+        incScorer.restoreParticipant(cand.id, savedC);
+        incScorer.finalizeUndo();
+
+        if (delta > bestDelta + 1e-6) {
+          bestDelta = delta;
+          bestCandidate = cand;
+        }
+      }
+
+      if (bestCandidate && bestDelta > 1e-6) {
+        // Commit the best replacement permanently.
+        const incIdx = incumbentList.indexOf(a);
+        if (incIdx === -1) continue; // defensive
+        incumbentList.splice(incIdx, 1);
+        a.participantId = bestCandidate.id;
+        a.updatedAt = new Date();
+        let committedList = polishByParticipant.get(bestCandidate.id);
+        if (!committedList) {
+          committedList = [];
+          polishByParticipant.set(bestCandidate.id, committedList);
+        }
+        committedList.push(a);
+        currentComposite = incScorer.recomputeForSwap(incumbentPid, bestCandidate.id);
+        improvedThisPass = true;
+      }
+    }
+
+    if (!improvedThisPass) break;
+  }
 }
 
 // ─── Main Optimize Function ──────────────────────────────────────────────────
