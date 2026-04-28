@@ -190,8 +190,10 @@ export interface Task {
   togethernessRelevant?: boolean;
   /** HC-14: Rest rule ID — when set, enforces a minimum gap between this and other tasks sharing a rest rule. */
   restRuleId?: string;
-  /** HC-15: Sleep & Recovery rule propagated from the template. When set and the task's end hour falls inside the rule's range, a recovery window begins at task end. */
+  /** HC-15: Sleep & Recovery rule propagated from the template. When set and the task's `shiftIndex` is in the rule's `triggerShifts`, a recovery window begins at task end. */
   sleepRecovery?: SleepRecoveryRule;
+  /** 1-based shift index this task instance occupies. Recurring template shifts use 1..shiftsPerDay; one-time tasks always use 1. Read by HC-15 to decide whether to trigger a recovery window. */
+  shiftIndex?: number;
   /**
    * Structural grouping key for the schedule board. Tasks sharing a key
    * render as one section (side-by-side columns). Computed at generation
@@ -557,18 +559,19 @@ export interface RestRule {
 /**
  * HC-15: Sleep & Recovery rule attached to a single task (template or one-time).
  *
- * If the task instance's clock end hour falls inside the inclusive range
- * [rangeStartHour..rangeEndHour] (may cross midnight when end < start), a recovery
- * window starts at the task's end timestamp and lasts `recoveryHours` whole hours.
- * During that window the assigned participant may not take any other task that has
- * effective load > 0 at any instant overlapping the window. Tasks whose effective
- * load is 0 throughout the overlapping portion remain allowed.
+ * If the task instance's shift index is in `triggerShifts`, a recovery window
+ * starts at the task's end timestamp and lasts `recoveryHours` whole hours.
+ * During that window the assigned participant may not take any other task that
+ * has effective load > 0 at any instant overlapping the window. Tasks whose
+ * effective load is 0 throughout the overlapping portion remain allowed.
+ *
+ * Shift indices are 1-based; one-time tasks have a single shift indexed 1.
+ * Stale indices that exceed the task's current shiftsPerDay are ignored at
+ * evaluation time.
  */
 export interface SleepRecoveryRule {
-  /** Inclusive clock hour (0..23) — start of the end-time trigger range. */
-  rangeStartHour: number;
-  /** Inclusive clock hour (0..23) — end of the end-time trigger range. May be less than rangeStartHour (crosses midnight). */
-  rangeEndHour: number;
+  /** 1-based shift indices that trigger recovery. Must be non-empty when the rule is enabled. */
+  triggerShifts: number[];
   /** Whole hours of recovery window starting at the task's end timestamp. Must be in [1, 48]. */
   recoveryHours: number;
 }

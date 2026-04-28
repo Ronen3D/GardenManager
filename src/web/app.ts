@@ -543,7 +543,10 @@ function generateTasksFromTemplates(): Task[] {
           schedulingPriority: tpl.schedulingPriority,
           togethernessRelevant: tpl.togethernessRelevant,
           restRuleId: tpl.restRuleId,
-          sleepRecovery: tpl.sleepRecovery ? { ...tpl.sleepRecovery } : undefined,
+          sleepRecovery: tpl.sleepRecovery
+            ? { ...tpl.sleepRecovery, triggerShifts: [...tpl.sleepRecovery.triggerShifts] }
+            : undefined,
+          shiftIndex: si + 1,
           sectionKey: computeTemplateSectionKey(tpl),
           color: tpl.color || v?.color || '#7f8c8d',
         });
@@ -610,7 +613,10 @@ function generateTasksFromTemplates(): Task[] {
       schedulingPriority: ot.schedulingPriority,
       togethernessRelevant: ot.togethernessRelevant,
       restRuleId: ot.restRuleId,
-      sleepRecovery: ot.sleepRecovery ? { ...ot.sleepRecovery } : undefined,
+      sleepRecovery: ot.sleepRecovery
+        ? { ...ot.sleepRecovery, triggerShifts: [...ot.sleepRecovery.triggerShifts] }
+        : undefined,
+      shiftIndex: 1,
       sectionKey: oneTimeSectionKey(ot.id),
       color: ot.color || '#7f8c8d',
     });
@@ -3588,7 +3594,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.7</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

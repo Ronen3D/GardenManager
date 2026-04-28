@@ -1,12 +1,12 @@
 /**
  * HC-15: Sleep & Recovery
  *
- * Per-task recovery window. If a task's clock end hour falls inside the
- * configured inclusive trigger range (may cross midnight), a recovery window
- * starts at the task's end timestamp and lasts `recoveryHours` whole hours.
- * During that window the assigned participant may not take any other task
- * whose effective load > 0 at any instant overlapping the window. Tasks
- * whose effective load is 0 throughout the overlapping portion are allowed.
+ * Per-task recovery window. If a task's 1-based shift index is in the rule's
+ * `triggerShifts` set, a recovery window starts at the task's end timestamp
+ * and lasts `recoveryHours` whole hours. During that window the assigned
+ * participant may not take any other task whose effective load > 0 at any
+ * instant overlapping the window. Tasks whose effective load is 0 throughout
+ * the overlapping portion are allowed.
  *
  * Centralised here so every placement path (optimizer, rescue, manual,
  * aggregate validator) shares a single source of truth.
@@ -28,29 +28,21 @@ function violation(code: string, message: string, taskId: string, participantId?
 }
 
 /**
- * Inclusive-range check over clock hours (0..23). When endHour < startHour
- * the range crosses midnight, so hours on either side match.
- * Single-hour ranges (start === end) match only that hour.
- */
-export function clockHourInInclusiveRange(hour: number, startHour: number, endHour: number): boolean {
-  if (startHour === endHour) return hour === startHour;
-  if (startHour <= endHour) return hour >= startHour && hour <= endHour;
-  // Crosses midnight
-  return hour >= startHour || hour <= endHour;
-}
-
-/**
  * Compute the recovery window produced by `task` for HC-15, or null if the
- * task has no rule or its clock end hour is outside the configured trigger
- * range. The window is half-open [start, end) to match the load-weighting
- * semantics used across the engine.
+ * task has no rule, the rule has no triggering shifts selected, or this
+ * instance's shift is not in that set. The window is half-open [start, end)
+ * to match the load-weighting semantics used across the engine.
+ *
+ * Tasks generated without a `shiftIndex` (legacy / fixture data) default to
+ * shift 1, so single-shift fixtures keep working without explicit setup.
  */
 export function getRecoveryWindow(task: Task): { start: Date; end: Date } | null {
   const rule = task.sleepRecovery;
   if (!rule) return null;
   if (rule.recoveryHours <= 0) return null;
-  const endHour = task.timeBlock.end.getHours();
-  if (!clockHourInInclusiveRange(endHour, rule.rangeStartHour, rule.rangeEndHour)) return null;
+  if (!rule.triggerShifts || rule.triggerShifts.length === 0) return null;
+  const shiftIndex = task.shiftIndex ?? 1;
+  if (!rule.triggerShifts.includes(shiftIndex)) return null;
   const start = new Date(task.timeBlock.end.getTime());
   const end = new Date(start.getTime() + rule.recoveryHours * 3600000);
   return { start, end };

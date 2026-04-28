@@ -1562,6 +1562,41 @@ select.input-sm {
   background: rgba(0, 0, 0, 0.03);
 }
 
+/* Selectable variant — chips inside the HC-15 sleep-recovery editor that the
+   user toggles on/off. Sits on top of the base chip style (inherits index +
+   range typography). The buttonized form uses a plain reset so the chip looks
+   identical to the read-only span variant when unselected. */
+.tprop-shift-chip--selectable {
+  appearance: none;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 8px 12px;
+  min-height: 36px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.tprop-shift-chip--selectable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.tprop-shift-chip--selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.tprop-shift-chip--selected .tprop-shift-chip-idx,
+.tprop-shift-chip--selected .tprop-shift-chip-range {
+  color: #fff;
+}
+.tprop-shift-chip--selected:hover {
+  background: var(--accent);
+  filter: brightness(1.1);
+}
+.tprop-shift-chip-tick {
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 /* ─── Auto-save flash ────────────────────────────────────
    Applied briefly to a field container when its change lands in the store.
    Uses a box-shadow ring so it's visible over any existing border/padding
@@ -1838,6 +1873,41 @@ select.input-sm {
   font-weight: 600;
 }
 
+/* Shift multi-select inside the sleep-recovery editor */
+.sr-field-row--shift-header {
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.sr-shift-bulk {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.74rem;
+}
+.sr-link-btn {
+  background: transparent;
+  border: 0;
+  padding: 2px 4px;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.74rem;
+}
+.sr-link-btn:hover,
+.sr-link-btn:focus-visible {
+  text-decoration: underline;
+  outline: none;
+}
+.sr-bulk-sep {
+  color: var(--text-muted);
+}
+.sr-shift-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 /* Mobile: full-width fields, bigger tap targets */
 @media (max-width: 479px) {
   .sr-header {
@@ -1880,6 +1950,14 @@ select.input-sm {
   }
   .sr-field-row--times {
     gap: 12px;
+  }
+  .sr-shift-chips {
+    gap: 10px;
+  }
+  .tprop-shift-chip--selectable {
+    min-height: 44px;
+    padding: 10px 14px;
+    font-size: 0.85rem;
   }
   .sr-hours {
     min-height: 44px;

@@ -76,7 +76,7 @@ console.log('\n── 1. HC-15 disable round-trip ──');
     ],
     sameGroupRequired: false,
     blocksConsecutive: false,
-    sleepRecovery: { rangeStartHour: 3, rangeEndHour: 7, recoveryHours: 8 },
+    sleepRecovery: { triggerShifts: [1], recoveryHours: 8 },
   };
   const taskB: Task = {
     id: 'r1-b',

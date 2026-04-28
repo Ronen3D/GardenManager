@@ -1309,6 +1309,17 @@ export function updateTaskTemplate(id: string, patch: Partial<Omit<TaskTemplate,
   const sanitized = sanitizeTemplateNumericFields(patch);
   patch = sanitized;
   Object.assign(tpl, patch);
+  // HC-15: when shiftsPerDay shrinks, trim stale indices in the rule's
+  // triggerShifts. If trimming would empty the set, drop the rule entirely
+  // so the user has to re-enable and re-pick on the new shift count.
+  if (tpl.sleepRecovery && tpl.shiftsPerDay >= 1) {
+    const trimmed = tpl.sleepRecovery.triggerShifts.filter((idx) => idx >= 1 && idx <= tpl.shiftsPerDay);
+    if (trimmed.length === 0) {
+      tpl.sleepRecovery = undefined;
+    } else if (trimmed.length !== tpl.sleepRecovery.triggerShifts.length) {
+      tpl.sleepRecovery = { ...tpl.sleepRecovery, triggerShifts: trimmed };
+    }
+  }
   if (patch.loadWindows) {
     tpl.loadWindows = patch.loadWindows.map((w) => ({
       ...w,
@@ -2127,7 +2138,7 @@ export function seedDefaultTaskTemplates(): void {
     ],
     slots: [],
     restRuleId: defaultRestRule.id,
-    sleepRecovery: { rangeStartHour: 3, rangeEndHour: 8, recoveryHours: 5 },
+    sleepRecovery: { triggerShifts: [3], recoveryHours: 5 },
     color: '#4A90D9',
     displayOrder: 0,
   });
@@ -2184,7 +2195,7 @@ export function seedDefaultTaskTemplates(): void {
       },
     ],
     restRuleId: defaultRestRule.id,
-    sleepRecovery: { rangeStartHour: 4, rangeEndHour: 6, recoveryHours: 5 },
+    sleepRecovery: { triggerShifts: [6], recoveryHours: 5 },
     color: '#F39C12',
     displayOrder: 4,
   });

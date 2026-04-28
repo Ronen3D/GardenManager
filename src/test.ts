@@ -3326,7 +3326,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
   {
     const trigger = mkTask('hc15-trigger', 22, 4, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     const loaded = mkTask('hc15-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
     const tMap = new Map([
@@ -3358,17 +3358,15 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     );
   }
 
-  // Test 2: Midnight-crossing trigger range (22–6): task ending 05:00 triggers
+  // Test 2: Shift not in triggerShifts → no recovery window
   {
-    const trigger = mkTask('hc15-cross', 23, 5, {
+    // Trigger task on shift 1 with rule selecting [1] → triggers
+    const trigger = mkTask('hc15-shift-in', 23, 5, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 3 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 3 },
+      shiftIndex: 1,
     });
-    const loaded = mkTask('hc15-cross-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
-    const tMap = new Map([
-      [trigger.id, trigger],
-      [loaded.id, loaded],
-    ]);
+    const loaded = mkTask('hc15-shift-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
     const as: Assignment[] = [
       {
         id: 'b1',
@@ -3390,17 +3388,18 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     const r = validateHardConstraints([trigger, loaded], [srP], as);
     assert(
       r.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
-      'HC-15: midnight-crossing range, ending at 05:00 → violation',
+      'HC-15: shift in triggerShifts → violation',
     );
 
-    // Same range, task ending at 07:00 (outside the 22..6 inclusive range) → no trigger
+    // Same rule, but the trigger task occupies shift 2 (not in triggerShifts: [1]) → no trigger
     const triggerOut = mkTask(
-      'hc15-cross-out',
+      'hc15-shift-out',
       3,
       7,
       {
         baseLoadWeight: 0,
-        sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 3 },
+        sleepRecovery: { triggerShifts: [1], recoveryHours: 3 },
+        shiftIndex: 2,
       },
       nextDate,
     );
@@ -3425,27 +3424,30 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     const r2 = validateHardConstraints([triggerOut, loaded], [srP], as2);
     assert(
       !r2.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
-      'HC-15: ending at 07:00 outside 22..6 range → no trigger',
+      'HC-15: shift not in triggerShifts → no trigger',
     );
   }
 
-  // Test 3: Inclusive boundaries (start hour and end hour both trigger)
+  // Test 3: Multi-shift selection — only listed shifts trigger; others don't
   {
-    const endsAtStart = mkTask('hc15-bdy1', 18, 22, {
+    const onShift1 = mkTask('hc15-multi-1', 18, 22, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 2 },
+      sleepRecovery: { triggerShifts: [1, 3], recoveryHours: 2 },
+      shiftIndex: 1,
     });
-    const endsAtEnd = mkTask('hc15-bdy2', 2, 6, {
+    const onShift3 = mkTask('hc15-multi-3', 2, 6, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 2 },
+      sleepRecovery: { triggerShifts: [1, 3], recoveryHours: 2 },
+      shiftIndex: 3,
     });
-    const endsJustAfter = mkTask('hc15-bdy3', 3, 7, {
+    const onShift2 = mkTask('hc15-multi-2', 3, 7, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 2 },
+      sleepRecovery: { triggerShifts: [1, 3], recoveryHours: 2 },
+      shiftIndex: 2,
     });
-    assert(getRecoveryWindow(endsAtStart) !== null, 'HC-15: end hour 22 (== rangeStartHour) triggers');
-    assert(getRecoveryWindow(endsAtEnd) !== null, 'HC-15: end hour 06 (== rangeEndHour) triggers');
-    assert(getRecoveryWindow(endsJustAfter) === null, 'HC-15: end hour 07 (outside) does not trigger');
+    assert(getRecoveryWindow(onShift1) !== null, 'HC-15: shift 1 in [1,3] triggers');
+    assert(getRecoveryWindow(onShift3) !== null, 'HC-15: shift 3 in [1,3] triggers');
+    assert(getRecoveryWindow(onShift2) === null, 'HC-15: shift 2 not in [1,3] does not trigger');
   }
 
   // Test 4 / 5: Load window segmentation inside overlap
@@ -3454,7 +3456,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     // Test 4: load 0 from 04:00–05:00, load 1 from 05:00–08:00 → blocked (load 1 inside 05:00–05:30 overlap)
     const trigger4 = mkTask('hc15-seg-trigger4', 19, 0.5, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     // trigger4 ends at 00:30, recovery window 00:30–05:30
     const blocked = mkTask(
@@ -3531,7 +3533,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
   {
     const trigger = mkTask('hc15-z-trigger', 22, 4, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     const zero = mkTask('hc15-zero', 5, 8, { baseLoadWeight: 0 }, nextDate);
     const as: Assignment[] = [
@@ -3561,7 +3563,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     // Candidate is the night-ender with rule; existing loaded task is in its recovery window
     const trigger = mkTask('hc15-sym-trig', 22, 4, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     const loaded = mkTask('hc15-sym-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
     const tMap = new Map([
@@ -3588,7 +3590,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     const trigger = mkTask('hc15-int-trig', 22, 4, {
       baseLoadWeight: 1,
       restRuleId: 'test-rule',
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     const other = mkTask('hc15-int-other', 5, 9, { baseLoadWeight: 1, restRuleId: 'test-rule' }, nextDate);
     const as: Assignment[] = [
@@ -3637,7 +3639,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
   {
     const trigger = mkTask('hc15-off-trig', 22, 4, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     const loaded = mkTask('hc15-off-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
     const as: Assignment[] = [
@@ -3667,7 +3669,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
   {
     const trigger = mkTask('hc15-p-trig', 22, 4, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     const loaded = mkTask('hc15-p-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
     const tMap = new Map([
@@ -3698,7 +3700,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
   {
     const trigger = mkTask('hc15-sharp-trig', 22, 4, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     // trigger ends at 04:00 baseDate+1; recovery window ends at 09:00
     const sharp = mkTask('hc15-sharp', 9, 13, { baseLoadWeight: 1 }, nextDate);
@@ -3727,25 +3729,27 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     );
   }
 
-  // Test 12: Single-hour range (startHour === endHour) matches only that hour
+  // Test 12: Single-shift selection — only that shift triggers
   {
-    const trigEqual5 = mkTask('hc15-eq-trig', 1, 5, {
+    const onShift3 = mkTask('hc15-single-on', 1, 5, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 5, rangeEndHour: 5, recoveryHours: 3 },
+      sleepRecovery: { triggerShifts: [3], recoveryHours: 3 },
+      shiftIndex: 3,
     });
-    const trigEqual4 = mkTask('hc15-eq-trig-off', 0, 4, {
+    const onShift1 = mkTask('hc15-single-off', 0, 4, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 5, rangeEndHour: 5, recoveryHours: 3 },
+      sleepRecovery: { triggerShifts: [3], recoveryHours: 3 },
+      shiftIndex: 1,
     });
-    assert(getRecoveryWindow(trigEqual5) !== null, 'HC-15: single-hour range 5..5 matches end hour 5');
-    assert(getRecoveryWindow(trigEqual4) === null, 'HC-15: single-hour range 5..5 does not match end hour 4');
+    assert(getRecoveryWindow(onShift3) !== null, 'HC-15: triggerShifts: [3] matches shiftIndex 3');
+    assert(getRecoveryWindow(onShift1) === null, 'HC-15: triggerShifts: [3] does not match shiftIndex 1');
   }
 
   // Test 13: recoveryHours <= 0 → no window produced (defensive guard)
   {
     const badRule = mkTask('hc15-bad-hrs', 22, 4, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 0 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 0 },
     });
     assert(getRecoveryWindow(badRule) === null, 'HC-15: recoveryHours=0 yields no window');
   }
@@ -3763,7 +3767,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     };
     const trigger = mkTask('hc15-iso-trig', 22, 4, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     const loaded = mkTask('hc15-iso-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
     const as: Assignment[] = [
@@ -3797,7 +3801,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
   {
     const a = mkTask('hc15-mut-a', 22, 4, {
       baseLoadWeight: 1,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     const b = mkTask(
       'hc15-mut-b',
@@ -3805,7 +3809,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
       9,
       {
         baseLoadWeight: 1,
-        sleepRecovery: { rangeStartHour: 5, rangeEndHour: 10, recoveryHours: 5 },
+        sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
       },
       nextDate,
     );
@@ -3839,7 +3843,7 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
   {
     const trigger = mkTask('hc15-fv-trig', 22, 4, {
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
     });
     const loaded = mkTask('hc15-fv-loaded', 6, 8, { baseLoadWeight: 1 }, nextDate);
     const as: Assignment[] = [
@@ -3872,10 +3876,10 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
     assert(fv.valid === false, 'HC-15: fullValidate reports schedule as invalid');
   }
 
-  // Test 17: Non-hour-aligned end time (one-time-task shape) — hour extracted correctly
+  // Test 17: Non-hour-aligned end time (one-time-task shape) — recovery window
+  // anchors to the exact end timestamp, not the rounded clock hour.
   {
     // Task starts 22:00 baseDate, ends 04:30 nextDate (duration 6.5h).
-    // end.getHours() === 4 → inside range 22..6 → triggers.
     const baseDay = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
     const start = new Date(baseDay.getFullYear(), baseDay.getMonth(), baseDay.getDate(), 22, 0);
     const end = new Date(start.getTime() + 6.5 * 3600000);
@@ -3888,13 +3892,18 @@ console.log('\n── Sleep & Recovery (HC-15) ───────────
       sameGroupRequired: false,
       blocksConsecutive: false,
       baseLoadWeight: 0,
-      sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+      sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
+      shiftIndex: 1,
     };
     const window = getRecoveryWindow(trigger);
-    assert(window !== null, 'HC-15: end at 04:30 (non-hour-aligned) triggers by hour extraction');
+    assert(window !== null, 'HC-15: selected shift triggers regardless of end-time alignment');
     assert(
       !!window && window.end.getTime() - window.start.getTime() === 5 * 3600000,
       'HC-15: recovery window duration = recoveryHours × 3600000 ms',
+    );
+    assert(
+      !!window && window.start.getTime() === end.getTime(),
+      'HC-15: recovery window anchors at the exact end timestamp (non-hour-aligned)',
     );
     // Loaded task covers 05:00–09:00 on nextDate → full overlap with window [04:30, 09:30)
     const loaded = mkTask('hc15-ot-loaded', 5, 9, { baseLoadWeight: 1 }, nextDate);
@@ -7855,7 +7864,8 @@ console.log('\n── Optimizer: isSwapFeasible HC-15 regression ─');
     sameGroupRequired: false,
     blocksConsecutive: false,
     baseLoadWeight: 1,
-    sleepRecovery: { rangeStartHour: 3, rangeEndHour: 8, recoveryHours: 7 },
+    sleepRecovery: { triggerShifts: [1], recoveryHours: 7 },
+    shiftIndex: 1,
   };
 
   // LOADED_DAY (09:00-12:00 next day) — sits fully inside [05:00, 12:00) recovery window.

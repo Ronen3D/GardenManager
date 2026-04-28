@@ -90,7 +90,7 @@ section('T1: HC-15 disabled-HC gate');
     sameGroupRequired: false,
     blocksConsecutive: false,
     baseLoadWeight: 1,
-    sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
   };
   const loaded: Task = {
     id: 't1-loaded',
@@ -178,7 +178,7 @@ section('T3: HC-15 recovery window is wall-clock');
     sameGroupRequired: false,
     blocksConsecutive: false,
     baseLoadWeight: 1,
-    sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
   };
   const loaded: Task = {
     id: 't3-loaded',
@@ -219,7 +219,7 @@ section('T4: HC-15 allows zero-load task in recovery window');
     sameGroupRequired: false,
     blocksConsecutive: false,
     baseLoadWeight: 1,
-    sleepRecovery: { rangeStartHour: 22, rangeEndHour: 6, recoveryHours: 5 },
+    sleepRecovery: { triggerShifts: [1], recoveryHours: 5 },
   };
   const zeroLoad: Task = {
     id: 't4-zero',

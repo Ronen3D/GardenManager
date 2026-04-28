@@ -27,7 +27,7 @@ import * as store from './config-store';
 import { initLoadFormulaModal, openLoadFormulaModal } from './load-formula-modal';
 import { runPreflight } from './preflight';
 import { escHtml, SVG_ICONS } from './ui-helpers';
-import { renderCustomSelect, showAlert, showConfirm, showPrompt, showToast, wireCustomSelect } from './ui-modal';
+import { showAlert, showConfirm, showPrompt, showToast } from './ui-modal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -104,6 +104,43 @@ function templateBadge(tpl: { color?: string; name: string }): string {
   return `<span class="badge" style="background:${color}">${escHtml(tpl.name)}</span>`;
 }
 
+/** A single shift descriptor — 1-based index + display label like "06:00–14:00". */
+type ShiftDescriptor = { idx: number; label: string };
+
+/** Format a clock-time-of-day (in minutes), wrapping past 24:00 to next-day clock. */
+function fmtClockMinutes(totalMinutes: number): string {
+  const dayMin = 24 * 60;
+  const m = ((totalMinutes % dayMin) + dayMin) % dayMin;
+  const h = Math.floor(m / 60);
+  const min = Math.round(m % 60);
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/** Materialise (startMinutes, durationMinutes, count) into per-shift descriptors. */
+function computeShiftDescriptors(startMinutes: number, durationMinutes: number, count: number): ShiftDescriptor[] {
+  const out: ShiftDescriptor[] = [];
+  if (count < 1 || durationMinutes <= 0) return out;
+  for (let i = 0; i < count; i++) {
+    const s = startMinutes + i * durationMinutes;
+    const e = s + durationMinutes;
+    out.push({ idx: i + 1, label: `${fmtClockMinutes(s)}–${fmtClockMinutes(e)}` });
+  }
+  return out;
+}
+
+/** Shift descriptors for a recurring template. */
+function shiftsForTemplate(tpl: TaskTemplate): ShiftDescriptor[] {
+  return computeShiftDescriptors(tpl.startHour * 60, tpl.durationHours * 60, tpl.shiftsPerDay);
+}
+
+/** Single shift descriptor for a one-time task — its own time block. */
+function shiftsForOneTime(ot: { startHour: number; startMinute: number; durationHours: number }): ShiftDescriptor[] {
+  const startMin = ot.startHour * 60 + (ot.startMinute || 0);
+  const durMin = ot.durationHours * 60;
+  if (durMin <= 0) return [{ idx: 1, label: '' }];
+  return [{ idx: 1, label: `${fmtClockMinutes(startMin)}–${fmtClockMinutes(startMin + durMin)}` }];
+}
+
 /**
  * Render a horizontal strip of chips that materialize the abstract
  * (startHour, durationHours, shiftsPerDay) trio into a concrete shift list,
@@ -112,31 +149,17 @@ function templateBadge(tpl: { color?: string; name: string }): string {
  * label, per project convention).
  */
 function renderShiftPreview(tpl: TaskTemplate): string {
-  const { durationHours, shiftsPerDay, startHour } = tpl;
-  if (shiftsPerDay < 1 || durationHours <= 0) return '';
-
-  const fmt = (totalMinutes: number): string => {
-    const dayMin = 24 * 60;
-    const m = ((totalMinutes % dayMin) + dayMin) % dayMin;
-    const h = Math.floor(m / 60);
-    const min = Math.round(m % 60);
-    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-  };
-
-  const startMin = startHour * 60;
-  const durMin = durationHours * 60;
-  const chips: string[] = [];
-  for (let i = 0; i < shiftsPerDay; i++) {
-    const s = startMin + i * durMin;
-    const e = s + durMin;
-    chips.push(
-      `<span class="tprop-shift-chip"><span class="tprop-shift-chip-idx">${i + 1}</span><span class="tprop-shift-chip-range" dir="ltr">${fmt(s)}–${fmt(e)}</span></span>`,
-    );
-  }
-
+  const shifts = shiftsForTemplate(tpl);
+  if (shifts.length === 0) return '';
+  const chips = shifts
+    .map(
+      (s) =>
+        `<span class="tprop-shift-chip"><span class="tprop-shift-chip-idx">${s.idx}</span><span class="tprop-shift-chip-range" dir="ltr">${s.label}</span></span>`,
+    )
+    .join('');
   return `<div class="tprop-shift-preview" aria-label="רשימת משמרות ביום">
     <span class="tprop-shift-preview-label">משמרות ביום</span>
-    <div class="tprop-shift-preview-chips">${chips.join('')}</div>
+    <div class="tprop-shift-preview-chips">${chips}</div>
   </div>`;
 }
 
@@ -236,41 +259,41 @@ type ParsedSleepRecovery =
   | { kind: 'invalid'; reason: string };
 
 const SLEEP_RECOVERY_MAX_HOURS = 24;
+const DEFAULT_RECOVERY_HOURS = 5;
 
-const DEFAULT_SLEEP_RECOVERY_RULE: SleepRecoveryRule = {
-  rangeStartHour: 22,
-  rangeEndHour: 6,
-  recoveryHours: 5,
-};
+/** Default rule for first-time enable. Defaults to the last shift, which is the
+ *  typical night-ending shift in most templates. */
+function defaultSleepRecoveryRule(shiftCount: number): SleepRecoveryRule {
+  const lastIdx = Math.max(1, shiftCount);
+  return { triggerShifts: [lastIdx], recoveryHours: DEFAULT_RECOVERY_HOURS };
+}
 
 /**
  * Cache last-known rule values per template/one-time task so that toggling
  * the switch off → on restores what the user previously had instead of
- * snapping back to the global defaults. Cleared on disable, populated on
- * disable so the next enable pulls from here.
+ * snapping back to the global defaults. Populated on disable, consumed on
+ * the next enable.
  */
 const lastSleepRecoveryValues = new Map<string, SleepRecoveryRule>();
 
 function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): ParsedSleepRecovery {
   const attr = target === 'tpl' ? 'tpl' : 'ot';
-  const startBlock = scope.querySelector(`[data-${attr}-field="sleepRecoveryStartBlock"]`);
-  if (!startBlock) {
+  const chipContainer = scope.querySelector(`[data-${attr}-field="sleepRecoveryShifts"]`) as HTMLElement | null;
+  if (!chipContainer) {
+    // Body not rendered (rule off, or section collapsed) → leave stored rule alone.
     return { kind: 'preserve' };
   }
 
-  const readHourFromSelectBlock = (blockField: string): number | null => {
-    const block = scope.querySelector(`[data-${attr}-field="${blockField}"]`) as HTMLElement | null;
-    const select = block?.querySelector('.gm-select') as HTMLElement | null;
-    const raw = select?.dataset.value ?? '';
-    const n = parseInt(raw, 10);
-    if (!Number.isFinite(n) || n < 0 || n > 23) return null;
-    return n;
-  };
-
-  const startHour = readHourFromSelectBlock('sleepRecoveryStartBlock');
-  const endHour = readHourFromSelectBlock('sleepRecoveryEndBlock');
-  if (startHour === null || endHour === null) {
-    return { kind: 'invalid', reason: 'שעת טווח ההפעלה לא תקינה' };
+  const chips = Array.from(chipContainer.querySelectorAll('[data-action="toggle-shift-chip"]')) as HTMLElement[];
+  const triggerShifts: number[] = [];
+  for (const chip of chips) {
+    if (chip.getAttribute('aria-checked') !== 'true') continue;
+    const idx = parseInt(chip.dataset.shiftIdx ?? '', 10);
+    if (Number.isFinite(idx) && idx >= 1) triggerShifts.push(idx);
+  }
+  triggerShifts.sort((a, b) => a - b);
+  if (triggerShifts.length === 0) {
+    return { kind: 'invalid', reason: 'יש לבחור משמרת אחת לפחות שמפעילה את הכלל' };
   }
 
   const hoursRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryHours"]`) as HTMLInputElement | null)?.value;
@@ -284,8 +307,23 @@ function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): Pars
   }
   return {
     kind: 'set',
-    value: { rangeStartHour: startHour, rangeEndHour: endHour, recoveryHours: Math.floor(hours) },
+    value: { triggerShifts, recoveryHours: Math.floor(hours) },
   };
+}
+
+/**
+ * Build the header summary chip text (shown when section is collapsed).
+ *  - 0 selected (invalid state): "אין משמרות מסומנות"
+ *  - all selected: "כל המשמרות"
+ *  - single: "משמרת N"
+ *  - multiple: "משמרות 1,3"
+ */
+function summariseTriggerShifts(selected: number[], total: number): string {
+  if (selected.length === 0) return 'אין משמרות מסומנות';
+  if (total > 0 && selected.length === total) return 'כל המשמרות';
+  const sorted = [...selected].sort((a, b) => a - b);
+  if (sorted.length === 1) return `משמרת ${sorted[0]}`;
+  return `משמרות ${sorted.join(',')}`;
 }
 
 /**
@@ -294,67 +332,79 @@ function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): Pars
  *
  * Layout: a single header row with three logical zones:
  *  - the title block (clickable to expand/collapse the editor body);
- *  - a summary chip showing the configured range + recovery hours, or a muted
+ *  - a summary chip showing the selected shifts + recovery hours, or a muted
  *    "לא פעיל" label;
  *  - an iOS-style switch that toggles the rule on/off in one click.
  *
- * The body renders only when the rule is on AND the section is expanded —
- * there is intentionally no dimmed/disabled middle state. Disabling via the
- * switch caches the user's last values; re-enabling restores them so the
- * common "toggle off, toggle on" round-trip is non-destructive.
- *
- * Midnight crossing is inferred from `endHour < startHour` (the constraint
- * engine handles the wrap automatically) and surfaced as a small "חוצה חצות"
- * pill — there is no checkbox for it.
+ * Body: a row of selectable shift chips (multi-select) + a recovery-hours
+ * number input. The body renders only when the rule is on AND the section is
+ * expanded. Disabling via the switch caches the user's last values; re-enabling
+ * restores them so the common "toggle off, toggle on" round-trip is
+ * non-destructive.
  */
-function renderSleepRecoveryEditor(rule: SleepRecoveryRule | undefined, target: 'tpl' | 'ot', id: string): string {
+function renderSleepRecoveryEditor(
+  rule: SleepRecoveryRule | undefined,
+  target: 'tpl' | 'ot',
+  id: string,
+  shifts: ShiftDescriptor[],
+): string {
   const enabled = !!rule;
-  const start = rule?.rangeStartHour ?? DEFAULT_SLEEP_RECOVERY_RULE.rangeStartHour;
-  const end = rule?.rangeEndHour ?? DEFAULT_SLEEP_RECOVERY_RULE.rangeEndHour;
-  const hours = rule?.recoveryHours ?? DEFAULT_SLEEP_RECOVERY_RULE.recoveryHours;
+  const triggerShifts = rule?.triggerShifts ?? [];
+  const hours = rule?.recoveryHours ?? DEFAULT_RECOVERY_HOURS;
   const attr = target === 'tpl' ? 'tpl' : 'ot';
   const idAttr = target === 'tpl' ? 'tid' : 'ot-id';
   const expandKey = `${target}:${id}`;
   const isExpanded = expandedSleepRecovery.has(expandKey);
   const showBody = isExpanded && enabled;
-  const fmtHh = (h: number) => `${String(h).padStart(2, '0')}:00`;
 
-  const hourOptions = (selectedHour: number) =>
-    Array.from({ length: 24 }, (_, h) => ({
-      value: String(h),
-      label: fmtHh(h),
-      selected: h === selectedHour,
-    }));
+  // Effective selection used for rendering — clamp stale indices that exceed
+  // the current shift count so the chip strip never shows phantom selections.
+  const validIdxs = new Set(shifts.map((s) => s.idx));
+  const effectiveSelected = triggerShifts.filter((idx) => validIdxs.has(idx));
 
-  // When the body is open, the values below already show the configured range
-  // and recovery hours — duplicating them in a header chip just crowds the row
-  // and forces the title to wrap. Show the chip only when collapsed.
   const summary = !enabled
     ? `<span class="sr-summary-off">לא פעיל</span>`
     : showBody
       ? ''
-      : `<span class="sr-summary-chip">מ־${fmtHh(start)} עד ${fmtHh(end)} · ${hours} שע׳</span>`;
+      : `<span class="sr-summary-chip">${escHtml(summariseTriggerShifts(effectiveSelected, shifts.length))} · ${hours} שע׳</span>`;
 
-  const startSelectId = `sr-start-${attr}-${id}`;
-  const endSelectId = `sr-end-${attr}-${id}`;
+  const chipHtml = shifts
+    .map((s) => {
+      const sel = effectiveSelected.includes(s.idx);
+      const cls = `tprop-shift-chip tprop-shift-chip--selectable${sel ? ' tprop-shift-chip--selected' : ''}`;
+      const tickGlyph = sel ? '<span class="tprop-shift-chip-tick" aria-hidden="true">✓</span>' : '';
+      return `<button type="button" class="${cls}" role="checkbox" aria-checked="${sel}"
+                data-action="toggle-shift-chip" data-shift-idx="${s.idx}"
+                aria-label="משמרת ${s.idx} ${s.label}">
+        ${tickGlyph}<span class="tprop-shift-chip-idx">${s.idx}</span><span class="tprop-shift-chip-range" dir="ltr">${escHtml(s.label)}</span>
+      </button>`;
+    })
+    .join('');
+
+  // Bulk actions are only useful for templates with multiple shifts. For a
+  // single-shift task, the chip itself is the only control.
+  const showBulkActions = shifts.length > 1;
+  const bulkActions = showBulkActions
+    ? `<div class="sr-shift-bulk">
+        <button type="button" class="sr-link-btn" data-action="shift-bulk-select">בחר הכל</button>
+        <span class="sr-bulk-sep" aria-hidden="true">·</span>
+        <button type="button" class="sr-link-btn" data-action="shift-bulk-clear">נקה</button>
+      </div>`
+    : '';
 
   const body = showBody
     ? `
       <div class="sr-body">
         <div class="sr-field-group">
           <div class="sr-field">
-            <label class="sr-field-label">טווח שעות סיום המשימה שמפעיל את הכלל</label>
-            <div class="sr-field-row sr-field-row--times">
-              <div class="sr-time-block" data-${attr}-field="sleepRecoveryStartBlock" data-${idAttr}="${id}">
-                <span class="sr-input-label">משעה</span>
-                ${renderCustomSelect({ id: startSelectId, options: hourOptions(start), className: 'sr-select' })}
-              </div>
-              <div class="sr-time-block" data-${attr}-field="sleepRecoveryEndBlock" data-${idAttr}="${id}">
-                <span class="sr-input-label">עד שעה</span>
-                ${renderCustomSelect({ id: endSelectId, options: hourOptions(end), className: 'sr-select' })}
-              </div>
+            <div class="sr-field-row sr-field-row--shift-header">
+              <label class="sr-field-label">משמרות שמפעילות את הכלל</label>
+              ${bulkActions}
             </div>
-            <div class="sr-field-hint">כולל שני הקצוות</div>
+            <div class="sr-shift-chips" data-${attr}-field="sleepRecoveryShifts" data-${idAttr}="${id}"
+                 role="group" aria-label="בחירת משמרות מפעילות">
+              ${chipHtml}
+            </div>
           </div>
           <div class="sr-field">
             <label class="sr-field-label">חסום משימות עם עומס &gt; 0 למשך</label>
@@ -747,7 +797,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         </label>
       </div>
       ${_restRuleOrphanNote(tpl.restRuleId)}
-      ${renderSleepRecoveryEditor(tpl.sleepRecovery, 'tpl', tpl.id)}
+      ${renderSleepRecoveryEditor(tpl.sleepRecovery, 'tpl', tpl.id, shiftsForTemplate(tpl))}
     </div>`;
 
     html += renderLoadWindowsEditor(tpl);
@@ -1338,7 +1388,7 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
           )
           .join('')}
       </select></label>${_restRuleOrphanNote(ot.restRuleId)}
-      ${renderSleepRecoveryEditor(ot.sleepRecovery, 'ot', ot.id)}
+      ${renderSleepRecoveryEditor(ot.sleepRecovery, 'ot', ot.id, shiftsForOneTime(ot))}
       <label>תיאור: <input class="input-sm" type="text" data-ot-field="description" value="${escHtml(ot.description || '')}" data-ot-id="${ot.id}" /></label>
     </div>`;
 
@@ -1662,32 +1712,6 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
   initLoadFormulaModal({ onChanged: rerender });
   initAddTemplateModal({ onCreated: rerender });
 
-  // Re-wire sleep-recovery hour dropdowns after each render. Values are read
-  // from `.gm-select[data-value]` on auto-save; picking an option auto-commits
-  // the enclosing template or one-time task.
-  container.querySelectorAll('.sr-body .gm-select').forEach((el) => {
-    const selectId = (el as HTMLElement).id;
-    if (!selectId) return;
-    wireCustomSelect(container, selectId, () => {
-      const block = el.closest('[data-tpl-field], [data-ot-field]') as HTMLElement | null;
-      if (!block) return;
-      const body = block.closest('.template-body') as HTMLElement | null;
-      if (!body) return;
-      const flashSelector = _buildFocusSelector(block);
-      if (block.hasAttribute('data-tpl-field')) {
-        const tid = block.dataset.tid;
-        if (tid && _commitTemplateProps(body, tid)) {
-          autoSaveRerender(rerender, flashSelector);
-        }
-      } else {
-        const otId = block.dataset.otId;
-        if (otId && _commitOneTimeProps(body, otId)) {
-          autoSaveRerender(rerender, flashSelector);
-        }
-      }
-    });
-  });
-
   container.addEventListener('input', (e) => {
     const target = e.target as HTMLInputElement;
     if (target.dataset.field !== 'tset-saveas-name' && target.dataset.field !== 'tset-rename-name') return;
@@ -1923,28 +1947,88 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           const tpl = store.getTaskTemplate(srId);
           if (!tpl) break;
           if (tpl.sleepRecovery) {
-            lastSleepRecoveryValues.set(cacheKey, { ...tpl.sleepRecovery });
+            lastSleepRecoveryValues.set(cacheKey, {
+              triggerShifts: [...tpl.sleepRecovery.triggerShifts],
+              recoveryHours: tpl.sleepRecovery.recoveryHours,
+            });
             store.updateTaskTemplate(srId, { sleepRecovery: undefined });
             expandedSleepRecovery.delete(key);
           } else {
-            const restored = lastSleepRecoveryValues.get(cacheKey) ?? DEFAULT_SLEEP_RECOVERY_RULE;
-            store.updateTaskTemplate(srId, { sleepRecovery: { ...restored } });
+            const restored = lastSleepRecoveryValues.get(cacheKey) ?? defaultSleepRecoveryRule(tpl.shiftsPerDay);
+            // Clamp cached indices to the current shift count — shiftsPerDay
+            // may have shrunk while the rule was off, leaving stale entries.
+            const validShifts = restored.triggerShifts.filter((idx) => idx >= 1 && idx <= tpl.shiftsPerDay);
+            const finalRule: SleepRecoveryRule = {
+              triggerShifts: validShifts.length > 0 ? validShifts : [tpl.shiftsPerDay],
+              recoveryHours: restored.recoveryHours,
+            };
+            store.updateTaskTemplate(srId, { sleepRecovery: finalRule });
             expandedSleepRecovery.add(key);
           }
         } else {
           const ot = store.getOneTimeTask(srId);
           if (!ot) break;
           if (ot.sleepRecovery) {
-            lastSleepRecoveryValues.set(cacheKey, { ...ot.sleepRecovery });
+            lastSleepRecoveryValues.set(cacheKey, {
+              triggerShifts: [...ot.sleepRecovery.triggerShifts],
+              recoveryHours: ot.sleepRecovery.recoveryHours,
+            });
             store.updateOneTimeTask(srId, { sleepRecovery: undefined });
             expandedSleepRecovery.delete(key);
           } else {
-            const restored = lastSleepRecoveryValues.get(cacheKey) ?? DEFAULT_SLEEP_RECOVERY_RULE;
-            store.updateOneTimeTask(srId, { sleepRecovery: { ...restored } });
+            const restored = lastSleepRecoveryValues.get(cacheKey) ?? defaultSleepRecoveryRule(1);
+            const finalRule: SleepRecoveryRule = {
+              triggerShifts: [1],
+              recoveryHours: restored.recoveryHours,
+            };
+            store.updateOneTimeTask(srId, { sleepRecovery: finalRule });
             expandedSleepRecovery.add(key);
           }
         }
         rerender();
+        break;
+      }
+      case 'toggle-shift-chip': {
+        if (!actionButton) break;
+        const newState = actionButton.getAttribute('aria-checked') !== 'true';
+        actionButton.setAttribute('aria-checked', String(newState));
+        actionButton.classList.toggle('tprop-shift-chip--selected', newState);
+        const block = actionButton.closest<HTMLElement>('[data-tpl-field], [data-ot-field]');
+        const body = actionButton.closest<HTMLElement>('.template-body');
+        if (!block || !body) break;
+        const flashSelector = _buildFocusSelector(block);
+        if (block.hasAttribute('data-tpl-field')) {
+          const tid = block.dataset.tid;
+          if (tid && _commitTemplateProps(body, tid)) autoSaveRerender(rerender, flashSelector);
+        } else {
+          const otId = block.dataset.otId;
+          if (otId && _commitOneTimeProps(body, otId)) autoSaveRerender(rerender, flashSelector);
+        }
+        break;
+      }
+      case 'shift-bulk-select':
+      case 'shift-bulk-clear': {
+        if (!actionButton) break;
+        const selectAll = action === 'shift-bulk-select';
+        const srBody = actionButton.closest<HTMLElement>('.sr-body');
+        if (!srBody) break;
+        srBody.querySelectorAll('[data-action="toggle-shift-chip"]').forEach((chip) => {
+          chip.setAttribute('aria-checked', String(selectAll));
+          (chip as HTMLElement).classList.toggle('tprop-shift-chip--selected', selectAll);
+        });
+        const block = srBody.querySelector<HTMLElement>(
+          '[data-tpl-field="sleepRecoveryShifts"], [data-ot-field="sleepRecoveryShifts"]',
+        );
+        const body = actionButton.closest<HTMLElement>('.template-body');
+        if (!block || !body) break;
+        const flashSelector = _buildFocusSelector(block);
+        if (block.hasAttribute('data-tpl-field')) {
+          const tid = block.dataset.tid;
+          if (tid && _commitTemplateProps(body, tid)) autoSaveRerender(rerender, flashSelector);
+        } else {
+          const otId = block.dataset.otId;
+          if (otId && _commitOneTimeProps(body, otId)) autoSaveRerender(rerender, flashSelector);
+        }
         break;
       }
       case 'toggle-onetime': {
