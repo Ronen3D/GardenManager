@@ -663,7 +663,18 @@ interface ParticipantScoreData {
   minRest: number; // min rest gap (Infinity if no blocking rest gaps)
   /** Σ √gap across this participant's gaps — for the per-gap rest gradient */
   restPerGapBonus: number;
-  dailyLoads: Map<string, number>; // operationalDateKey → effective hours
+  /**
+   * operationalDateKey → effective hours.
+   *
+   * IMMUTABLE AFTER CONSTRUCTION. Built once in `computeParticipantData`
+   * and read-only thereafter. `saveParticipant()` aliases this reference
+   * instead of cloning, which is only safe because no code mutates the
+   * map after it is attached to a `ParticipantScoreData`. If you ever need
+   * to update daily loads, REPLACE the whole `ParticipantScoreData` object
+   * via `perParticipant.set(...)` (as `recomputeForSwap` does) — never
+   * call `.set` / `.delete` on this map in place.
+   */
+  dailyLoads: ReadonlyMap<string, number>;
   dailyStdDev: number; // std-dev of this participant's daily loads
   isL0: boolean;
   capacity: number; // total available hours
@@ -1088,10 +1099,11 @@ export class IncrementalScorer {
   saveParticipant(pid: string): ParticipantScoreData | undefined {
     const data = this.perParticipant.get(pid);
     if (!data) return undefined;
-    return {
-      ...data,
-      dailyLoads: new Map(data.dailyLoads),
-    };
+    // dailyLoads is aliased, not cloned: it is treated as immutable after
+    // construction (see ParticipantScoreData.dailyLoads docs). recomputeForSwap
+    // replaces the whole object via perParticipant.set, so the saved snapshot
+    // never observes a mutated map.
+    return { ...data };
   }
 
   /**
