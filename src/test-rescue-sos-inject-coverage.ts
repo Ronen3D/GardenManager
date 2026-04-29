@@ -63,6 +63,7 @@ const dummyScore: ScheduleScore = {
   seniorAvgEffective: 0,
   dailyPerParticipantStdDev: 0,
   dailyGlobalStdDev: 0,
+  restPerGapBonus: 0,
 };
 
 function mkSchedule(tasks: Task[], participants: Participant[], assignments: Assignment[]): Schedule {

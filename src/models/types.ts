@@ -326,6 +326,10 @@ export interface ScheduleScore {
   dailyPerParticipantStdDev: number;
   /** Std-dev of total hours per calendar day (global day spread) */
   dailyGlobalStdDev: number;
+  /** Sum of √gap across every gap of every participant. Per-gap rest gradient
+   *  that escapes the globalMin plateau: rises with any individual gap that
+   *  grows, with diminishing returns from the concave shape. */
+  restPerGapBonus: number;
   /** Penalty for disrupting existing assignments (rescue mode only) */
   disruptionPenalty?: number;
 }
@@ -355,6 +359,11 @@ export interface ValidationResult {
 export interface SchedulerConfig {
   /** Weight for min-rest in composite score */
   minRestWeight: number;
+  /** Weight for the per-gap rest gradient (Σ √gap across all participants).
+   *  Complements minRestWeight, which only sees the worst gap; this term
+   *  rewards every individual gap with diminishing returns. Set to 0 to
+   *  disable cleanly. */
+  restPerGapWeight: number;
   /** Weight for L0 fairness (negative std dev) — primary */
   l0FairnessWeight: number;
   /** Weight for senior (L2-L4) fairness — secondary */
@@ -380,6 +389,12 @@ export interface SchedulerConfig {
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
   minRestWeight: 8,
+  // 5 chosen empirically: in the symmetric 9P / 3-slot / 6-day no-restRule
+  // scenario, drops <8h gaps from ~34/99 (default minRestWeight-only baseline)
+  // to ~2/99 ≈ 95% reduction. Production schedules with HC-14 active see
+  // negligible behavioral change because gaps are already ≥ 5h there. Higher
+  // values (≥ 10) start to noticeably trade fairness for marginal rest gains.
+  restPerGapWeight: 5,
   l0FairnessWeight: 111,
   seniorFairnessWeight: 1,
 

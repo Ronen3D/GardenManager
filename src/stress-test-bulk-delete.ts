@@ -120,6 +120,7 @@ const fakeSchedule: Schedule = {
     seniorAvgEffective: 10,
     dailyPerParticipantStdDev: 0,
     dailyGlobalStdDev: 0,
+    restPerGapBonus: 0,
   },
   algorithmSettings: {
     config: { ...DEFAULT_CONFIG },

@@ -41,6 +41,7 @@ import {
   DEFAULT_CERTIFICATION_DEFINITIONS,
   type LevelEntry,
   type Schedule,
+  type SchedulerConfig,
   type SlotRequirement,
   type TimeBlock,
 } from './models/types';
@@ -4785,6 +4786,104 @@ console.log('\n── Rest Calculator: Extended ──────────�
   assert(fairnessEmpty.stdDevRest === 0, 'computeRestFairness: empty → stdDev=0');
 }
 
+// ─── restPerGapBonus: per-gap concave reward ────────────────────────────────
+//
+// The optimizer's existing minRest signal collapses the rest distribution to
+// one number (the worst gap). On symmetric scenarios this creates a plateau
+// that SA cannot escape via single swaps — every "fix one short gap" move
+// leaves globalMin unchanged. The restPerGapBonus = Σ √gap term gives a
+// per-gap gradient with diminishing returns, so SA can climb out one swap
+// at a time. These tests pin its math and the SA-escape property.
+
+// Empty and single-gap edge cases
+{
+  const empty = computeParticipantRest('rpgb-empty', [], []);
+  assert(empty.restPerGapBonus === 0, 'restPerGapBonus: no assignments → 0');
+}
+
+// Three Shemesh tasks: 6-8, 12-14, 20-22 → gaps [4, 6]. √4 + √6 ≈ 2 + 2.449.
+{
+  const t1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 8));
+  const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 12, 14));
+  const t3 = createShemeshTask(createTimeBlockFromHours(baseDate, 20, 22));
+  const aList: Assignment[] = [
+    { id: 'pgb-a1', taskId: t1.id, slotId: t1.slots[0].slotId, participantId: 'rpgb-p', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'pgb-a2', taskId: t2.id, slotId: t2.slots[0].slotId, participantId: 'rpgb-p', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'pgb-a3', taskId: t3.id, slotId: t3.slots[0].slotId, participantId: 'rpgb-p', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const r = computeParticipantRest('rpgb-p', aList, [t1, t2, t3]);
+  const expected = Math.sqrt(4) + Math.sqrt(6);
+  assert(Math.abs(r.restPerGapBonus - expected) < 1e-9, `restPerGapBonus: 3 tasks → √4+√6 ≈ ${expected.toFixed(3)}, got ${r.restPerGapBonus.toFixed(3)}`);
+}
+
+// Composite includes restPerGapWeight × Σ √gap; setting weight=0 disables cleanly.
+{
+  const t1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10)); // 4h
+  const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18)); // 4h, gap=4h
+  const tasks = [t1, t2];
+  const p: Participant = {
+    id: 'rpgb-cs',
+    name: 'rpgb-cs',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'g1',
+    availability: [{ start: new Date(baseDate.getTime() - 86400000), end: new Date(baseDate.getTime() + 86400000) }],
+    dateUnavailability: [],
+  };
+  const aList: Assignment[] = [
+    { id: 'pgb-cs1', taskId: t1.id, slotId: t1.slots[0].slotId, participantId: p.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    { id: 'pgb-cs2', taskId: t2.id, slotId: t2.slots[0].slotId, participantId: p.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+  ];
+  const cfgOn: SchedulerConfig = { ...DEFAULT_CONFIG, restPerGapWeight: 1 };
+  const cfgOff: SchedulerConfig = { ...DEFAULT_CONFIG, restPerGapWeight: 0 };
+  const sOn = computeScheduleScore(tasks, [p], aList, cfgOn);
+  const sOff = computeScheduleScore(tasks, [p], aList, cfgOff);
+  const expectedBonus = Math.sqrt(4);
+  assert(Math.abs(sOn.restPerGapBonus - expectedBonus) < 1e-9, `Score exposes restPerGapBonus = √4 ≈ ${expectedBonus.toFixed(3)}, got ${sOn.restPerGapBonus.toFixed(3)}`);
+  assert(Math.abs((sOn.compositeScore - sOff.compositeScore) - cfgOn.restPerGapWeight * expectedBonus) < 1e-9,
+    `weight=1 vs weight=0 differs by exactly restPerGapWeight × Σ√gap`);
+  assert(Math.abs(sOff.restPerGapBonus - expectedBonus) < 1e-9, 'restPerGapBonus is computed even when weight=0 (display only)');
+}
+
+// SA-escape property: an 8h-rotation pattern strictly outscores a 4h-rotation
+// pattern via the new bonus, even though both have the same workload and
+// (in larger schedules) the same globalMin. This is the regression guard.
+//
+// 3 Shemesh tasks each for one participant — comparing two variants of the
+// same workload but different gap distributions:
+//   narrow: gaps 4h, 4h  → Σ √gap = 2 + 2 = 4
+//   wide:   gaps 8h, 8h  → Σ √gap = √8 + √8 ≈ 5.66
+{
+  const pA: Participant = {
+    id: 'rot-a', name: 'rot-a', level: Level.L0, certifications: ['Nitzan'], group: 'g',
+    availability: [{ start: new Date(baseDate.getTime() - 86400000), end: new Date(baseDate.getTime() + 2 * 86400000) }],
+    dateUnavailability: [],
+  };
+  const tasksSparse = [
+    createShemeshTask(createTimeBlockFromHours(baseDate, 5, 9)),
+    createShemeshTask(createTimeBlockFromHours(baseDate, 13, 17)),
+    createShemeshTask(createTimeBlockFromHours(baseDate, 21, 25)),
+  ];
+  const sparseAssigns: Assignment[] = tasksSparse.map((t, i) => ({
+    id: `s-${i}`, taskId: t.id, slotId: t.slots[0].slotId,
+    participantId: pA.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  }));
+  const tasksWide = [
+    createShemeshTask(createTimeBlockFromHours(baseDate, 5, 9)),
+    createShemeshTask(createTimeBlockFromHours(baseDate, 17, 21)),
+    createShemeshTask(createTimeBlockFromHours(baseDate, 29, 33)),
+  ];
+  const wideAssigns: Assignment[] = tasksWide.map((t, i) => ({
+    id: `w-${i}`, taskId: t.id, slotId: t.slots[0].slotId,
+    participantId: pA.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  }));
+  const cfg: SchedulerConfig = { ...DEFAULT_CONFIG, restPerGapWeight: 1 };
+  const sNarrow = computeScheduleScore(tasksSparse, [pA], sparseAssigns, cfg);
+  const sWide = computeScheduleScore(tasksWide, [pA], wideAssigns, cfg);
+  assert(sWide.restPerGapBonus > sNarrow.restPerGapBonus + 1e-6,
+    `restPerGapBonus signals 8h-rotation > 4h-rotation: wide=${sWide.restPerGapBonus.toFixed(3)} > narrow=${sNarrow.restPerGapBonus.toFixed(3)}`);
+}
+
 // ─── Soft Constraints: workloadImbalanceSplit ───────────────────────────────
 
 console.log('\n── Soft Constraints: Workload Balance ──');
@@ -6997,6 +7096,7 @@ console.log('\n── Rescue Plans ───────────────
     seniorAvgEffective: 0,
     dailyPerParticipantStdDev: 0,
     dailyGlobalStdDev: 0,
+    restPerGapBonus: 0,
   };
 
   // Current assignments: p1→slot1, p2→slot2
@@ -7251,7 +7351,6 @@ import {
   optimizeMultiAttempt,
   type UnfilledSlot,
 } from './engine/optimizer';
-import type { SchedulerConfig } from './models/types';
 
 console.log('\n── Optimizer ───────────────────────────');
 
@@ -9326,6 +9425,20 @@ assert(tunerIqr([10, 10, 10, 10]) === 0, 'iqr: no spread → 0');
   assert(minObserved >= 1, `LHS integer clamp: observed min = ${minObserved} (must be ≥ 1)`);
 }
 
+// Latin Hypercube: restPerGapWeight dim ([1, 50]) actually explores its range.
+// Regression guard for the bug where min=0 collapsed every sample to 0
+// because Math.log(0) = -Infinity. The fix raised min to 1 (slider keeps 0).
+{
+  const dims: TunerDim[] = [{ min: 1, max: 50, integer: true }];
+  const samples = latinHypercubeSample(dims, 40, mulberry32(23));
+  const distinctValues = new Set(samples.map((r) => r[0]));
+  assert(distinctValues.size >= 8, `LHS restPerGapWeight dim: ≥8 distinct values across 40 samples (got ${distinctValues.size})`);
+  const maxObserved = Math.max(...samples.map((r) => r[0]));
+  assert(maxObserved >= 20, `LHS restPerGapWeight dim: at least one sample ≥ 20 (got max ${maxObserved})`);
+  const minObserved = Math.min(...samples.map((r) => r[0]));
+  assert(minObserved >= 1, `LHS restPerGapWeight dim: no sample < 1 (got min ${minObserved})`);
+}
+
 // Latin Hypercube: coverage at higher resolution (8 buckets with 80 samples)
 {
   const dims: TunerDim[] = [{ min: 1, max: 100000, integer: true }];
@@ -9679,6 +9792,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'crs-sched',
@@ -9793,6 +9907,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'clf-sched',
@@ -9891,6 +10006,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'clp-sched',
@@ -10029,6 +10145,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'cnw-sched',
@@ -10175,6 +10292,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'cd2-sched',
@@ -10309,6 +10427,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'cso-sched',
@@ -10407,6 +10526,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'cpm-sched',
@@ -10498,6 +10618,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'csm-sched',
@@ -10675,6 +10796,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'fa-sched',
@@ -10809,6 +10931,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'fb-sched',
@@ -10931,6 +11054,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'fi-sched',
@@ -11102,6 +11226,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'f2-sched',
@@ -11198,6 +11323,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'to-sched',
@@ -11424,6 +11550,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'b2-sched',
@@ -11522,6 +11649,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'b1-sched',
@@ -11693,6 +11821,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const buildSched = (assigns: Assignment[]): Schedule => ({
       id: 'b5',
@@ -11838,6 +11967,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     };
     const sched: Schedule = {
       id: 'b3-sched',
@@ -12087,6 +12217,7 @@ console.log('\n── Deep-chain fallback (depth 4/5) ────');
     seniorAvgEffective: 0,
     dailyPerParticipantStdDev: 0,
     dailyGlobalStdDev: 0,
+    restPerGapBonus: 0,
   };
 
   function mkSchedule(tasks: Task[], participants: Participant[], assignments: Assignment[]): Schedule {
@@ -12381,6 +12512,7 @@ console.log('\n── Adaptive limits ──────────────
     seniorAvgEffective: 0,
     dailyPerParticipantStdDev: 0,
     dailyGlobalStdDev: 0,
+    restPerGapBonus: 0,
   };
   const sched: Schedule = {
     id: 'ad-sched',
@@ -12501,6 +12633,7 @@ console.log('\n── Adaptive limits ──────────────
     seniorAvgEffective: 0,
     dailyPerParticipantStdDev: 0,
     dailyGlobalStdDev: 0,
+    restPerGapBonus: 0,
   };
   const sched: Schedule = {
     id: 'ad3-sched',
@@ -12601,6 +12734,7 @@ console.log('\n── Adaptive limits ──────────────
     seniorAvgEffective: 0,
     dailyPerParticipantStdDev: 0,
     dailyGlobalStdDev: 0,
+    restPerGapBonus: 0,
   };
   const sched: Schedule = {
     id: 'qb-sched',
@@ -12675,6 +12809,7 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
     seniorAvgEffective: 0,
     dailyPerParticipantStdDev: 0,
     dailyGlobalStdDev: 0,
+    restPerGapBonus: 0,
   };
 
   function mkInjSchedule(participants: Participant[]): Schedule {

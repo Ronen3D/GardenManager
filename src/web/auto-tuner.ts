@@ -128,6 +128,7 @@ export function cancelAutoTune(): void {
 
 type TunedKey =
   | 'minRestWeight'
+  | 'restPerGapWeight'
   | 'l0FairnessWeight'
   | 'seniorFairnessWeight'
   | 'lowPriorityLevelPenalty'
@@ -149,6 +150,10 @@ interface Dim {
 
 const BASE_DIMS: Dim[] = [
   { key: 'minRestWeight', min: 1, max: 200, integer: true },
+  // min must be ≥ 1: the LHS sampler is log-scaled, so min=0 → log(0) = -Infinity
+  // collapses every sample to 0. The slider still permits 0 (manual disable);
+  // the tuner explores [1, 50] which is the practically-useful active range.
+  { key: 'restPerGapWeight', min: 1, max: 50, integer: true },
   { key: 'l0FairnessWeight', min: 1, max: 500, integer: true },
   { key: 'seniorFairnessWeight', min: 1, max: 200, integer: true },
   { key: 'lowPriorityLevelPenalty', min: 50, max: 20000, integer: true },
@@ -602,6 +607,7 @@ let _leaderDiffDims: Dim[] | null = null;
  * stays free of a reverse dependency back to the app layer. */
 const TUNED_LABELS: Record<string, string> = {
   minRestWeight: 'משקל מנוחה מינימלית',
+  restPerGapWeight: 'משקל פערי מנוחה',
   l0FairnessWeight: 'שיוויוניות כללי',
   seniorFairnessWeight: 'שיוויוניות סגל',
   lowPriorityLevelPenalty: 'עונש דרגה בעדיפות נמוכה',

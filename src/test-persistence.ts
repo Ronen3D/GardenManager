@@ -263,6 +263,7 @@ function makeSchedule(overrides?: Partial<Schedule>): Schedule {
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     },
     violations: [],
     generatedAt: now,

@@ -2467,6 +2467,7 @@ function doCreateManualSchedule(): void {
       seniorAvgEffective: 0,
       dailyPerParticipantStdDev: 0,
       dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
     },
     violations: [],
     generatedAt: new Date(),
@@ -2588,6 +2589,7 @@ async function handleAutoTune(): Promise<void> {
 function formatWeightKey(key: string): string {
   const labels: Record<string, string> = {
     minRestWeight: 'משקל מנוחה מינימלית',
+    restPerGapWeight: 'משקל פערי מנוחה',
     l0FairnessWeight: 'שיוויוניות כללי',
     seniorFairnessWeight: 'שיוויוניות סגל',
     lowPriorityLevelPenalty: 'עונש דרגה בעדיפות נמוכה',
@@ -3594,7 +3596,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.8.9</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.9.0</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>

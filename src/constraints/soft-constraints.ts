@@ -580,6 +580,13 @@ export function computeScheduleScore(
   const profiles = computeAllRestProfiles(participants, assignments, tasks, taskMap, byParticipant);
   const fairness = computeRestFairness(profiles);
 
+  // Per-gap rest gradient: Σ √gap across all participants. Concave, target-free,
+  // so every individual gap improvement is visible to SA — escapes the
+  // globalMin plateau in symmetric scenarios where every participant sits at
+  // the same minRest. Free to compute (already summed inside each profile).
+  let restPerGapBonus = 0;
+  for (const prof of profiles.values()) restPerGapBonus += prof.restPerGapBonus;
+
   // Split-pool workload stats — pass pre-built data + capacities
   const wlSplit = workloadImbalanceSplit(participants, assignments, tasks, taskMap, byParticipant, ctx?.capacities);
 
@@ -623,7 +630,8 @@ export function computeScheduleScore(
   const avgRest = isFinite(fairness.globalAvgRest) ? fairness.globalAvgRest : 0;
 
   const compositeScore =
-    config.minRestWeight * minRest -
+    config.minRestWeight * minRest +
+    config.restPerGapWeight * restPerGapBonus -
     config.l0FairnessWeight * wlSplit.l0StdDev -
     config.seniorFairnessWeight * wlSplit.seniorStdDev -
     config.dailyBalanceWeight * (dailyBalance.dailyPerParticipantStdDev + dailyBalance.dailyGlobalStdDev) -
@@ -641,6 +649,7 @@ export function computeScheduleScore(
     seniorAvgEffective: wlSplit.seniorAvg,
     dailyPerParticipantStdDev: dailyBalance.dailyPerParticipantStdDev,
     dailyGlobalStdDev: dailyBalance.dailyGlobalStdDev,
+    restPerGapBonus,
   };
 }
 
@@ -652,6 +661,8 @@ export function computeScheduleScore(
 interface ParticipantScoreData {
   effectiveHours: number;
   minRest: number; // min rest gap (Infinity if no blocking rest gaps)
+  /** Σ √gap across this participant's gaps — for the per-gap rest gradient */
+  restPerGapBonus: number;
   dailyLoads: Map<string, number>; // operationalDateKey → effective hours
   dailyStdDev: number; // std-dev of this participant's daily loads
   isL0: boolean;
@@ -691,6 +702,10 @@ export class IncrementalScorer {
   // Global min rest
   private _globalMinRest = 0;
   private _globalAvgRest = 0;
+  // Per-gap rest gradient (Σ √gap across all participants).
+  // Maintained as a running sum so swap delta is O(k): subtract old A,B
+  // contributions, add new A,B contributions in (add|remove)ParticipantContribution.
+  private _restPerGapBonusSum = 0;
   // Low-priority level penalty
   private _lowPriorityPenalty = 0;
   /** Per-participant low-priority penalty for O(1) delta updates */
@@ -787,6 +802,7 @@ export class IncrementalScorer {
         scorer.seniorCount++;
       }
       scorer._dailyPerParticipantStdDevSum += data.dailyStdDev;
+      scorer._restPerGapBonusSum += data.restPerGapBonus;
       for (const [dk, load] of data.dailyLoads) {
         scorer.globalDayTotals.set(dk, (scorer.globalDayTotals.get(dk) || 0) + load);
       }
@@ -983,6 +999,7 @@ export class IncrementalScorer {
     return {
       effectiveHours,
       minRest: restProfile.minRestHours,
+      restPerGapBonus: restProfile.restPerGapBonus,
       dailyLoads,
       dailyStdDev,
       isL0: p.level === Level.L0,
@@ -1054,7 +1071,8 @@ export class IncrementalScorer {
     const dailyGlobal = this.computeGlobalDailyStdDev();
 
     return (
-      this.config.minRestWeight * minRest -
+      this.config.minRestWeight * minRest +
+      this.config.restPerGapWeight * this._restPerGapBonusSum -
       this.config.l0FairnessWeight * l0StdDev -
       this.config.seniorFairnessWeight * seniorStdDev -
       this.config.dailyBalanceWeight * (dailyPP + dailyGlobal) -
@@ -1306,6 +1324,7 @@ export class IncrementalScorer {
       this.seniorSumSq -= data.effectiveHours ** 2;
     }
     this._dailyPerParticipantStdDevSum -= data.dailyStdDev;
+    this._restPerGapBonusSum -= data.restPerGapBonus;
     for (const [dk, load] of data.dailyLoads) {
       this.globalDayTotals.set(dk, (this.globalDayTotals.get(dk) || 0) - load);
     }
@@ -1322,6 +1341,7 @@ export class IncrementalScorer {
       this.seniorSumSq += data.effectiveHours ** 2;
     }
     this._dailyPerParticipantStdDevSum += data.dailyStdDev;
+    this._restPerGapBonusSum += data.restPerGapBonus;
     for (const [dk, load] of data.dailyLoads) {
       this.globalDayTotals.set(dk, (this.globalDayTotals.get(dk) || 0) + load);
     }

@@ -47,6 +47,10 @@ export interface ParticipantRestProfile {
   totalWorkHours: number;
   /** Number of load-bearing assignments */
   loadBearingAssignmentCount: number;
+  /** Σ √gap across this participant's gaps. Concave per-gap reward used by the
+   *  scheduler's distribution-aware rest signal: every gap counts independently,
+   *  short gaps weigh more than long ones (diminishing returns). */
+  restPerGapBonus: number;
 }
 
 /**
@@ -121,6 +125,7 @@ export function computeParticipantRest(
   const minRest = restGaps.length > 0 ? Math.min(...restGaps) : Infinity;
   const maxRest = restGaps.length > 0 ? Math.max(...restGaps) : Infinity;
   const avgRest = restGaps.length > 0 ? restGaps.reduce((a, b) => a + b, 0) / restGaps.length : Infinity;
+  const restPerGapBonus = restGaps.reduce((s, g) => s + Math.sqrt(Math.max(0, g)), 0);
 
   return {
     participantId,
@@ -130,6 +135,7 @@ export function computeParticipantRest(
     avgRestHours: avgRest,
     totalWorkHours,
     loadBearingAssignmentCount: loadBearingBlocks.length,
+    restPerGapBonus,
   };
 }
 
@@ -162,6 +168,7 @@ export function computeRestFromAssignments(
   const minRest = restGaps.length > 0 ? Math.min(...restGaps) : Infinity;
   const maxRest = restGaps.length > 0 ? Math.max(...restGaps) : Infinity;
   const avgRest = restGaps.length > 0 ? restGaps.reduce((a, b) => a + b, 0) / restGaps.length : Infinity;
+  const restPerGapBonus = restGaps.reduce((s, g) => s + Math.sqrt(Math.max(0, g)), 0);
 
   return {
     participantId,
@@ -171,6 +178,7 @@ export function computeRestFromAssignments(
     avgRestHours: avgRest,
     totalWorkHours,
     loadBearingAssignmentCount: loadBearingBlocks.length,
+    restPerGapBonus,
   };
 }
 
