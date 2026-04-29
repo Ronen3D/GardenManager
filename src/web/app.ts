@@ -2735,14 +2735,16 @@ async function handleSwap(assignmentId: string): Promise<void> {
     disabledHC,
     restRuleMap,
     dayStartHour: engine.getDayStartHour(),
-    onCommit: ({ label, preCommitAssignments, swappedAssignmentIds }) => {
+    onCommit: ({ label, preCommitAssignments, swappedAssignmentIds, recordVacatedSlots }) => {
       if (!currentSchedule) return;
       // Record a pre-commit schedule snapshot on the parallel stack and push
       // a (no-op) checkpoint onto the store's undo stack so the header
       // undo/redo buttons light up and `doUndoRedo('undo')` restores the
       // pre-swap state. The engine mutated `currentSchedule.assignments` in
       // place (shared reference), so we clone the schedule and substitute
-      // the pre-commit assignments.
+      // the pre-commit assignments. The clone happens before the
+      // `scheduleUnavailability` upsert below so a single undo also rolls
+      // back the new unavailability entries.
       const preCommitSchedule: Schedule = {
         ...currentSchedule,
         assignments: preCommitAssignments,
@@ -2754,6 +2756,27 @@ async function handleSwap(assignmentId: string): Promise<void> {
       if (_scheduleUndoStack.length > 80) _scheduleUndoStack.shift();
       _scheduleRedoStack.length = 0;
       store.pushUndoCheckpoint();
+
+      // Record the optional "mark vacated participant(s) unavailable for the
+      // vacated slot's time window" entries. Past slots are skipped.
+      if (recordVacatedSlots.length > 0) {
+        const liveAnchor = store.getLiveModeState().currentTimestamp ?? new Date();
+        let next = currentSchedule.scheduleUnavailability;
+        for (let i = 0; i < recordVacatedSlots.length; i++) {
+          const r = recordVacatedSlots[i];
+          if (r.end.getTime() <= liveAnchor.getTime()) continue;
+          next = upsertScheduleUnavailability(next, {
+            id: `replaced-${Date.now()}-${i}-${r.participantId}`,
+            participantId: r.participantId,
+            start: r.start,
+            end: r.end,
+            createdAt: new Date(),
+            anchorAtCreation: liveAnchor,
+            appliedSwapCount: swappedAssignmentIds.length,
+          });
+        }
+        currentSchedule.scheduleUnavailability = next;
+      }
 
       for (const id of swappedAssignmentIds) _pendingSwapAnimIds.add(id);
       revalidateAndRefresh();
@@ -3596,7 +3619,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.9.0</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.9.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -5504,7 +5527,7 @@ function init(): void {
     initRescue({
       getSchedule: () => currentSchedule,
       getEngine: () => engine,
-      onPlanApplied: (updatedSchedule, swapLabels, swappedAssignmentIds) => {
+      onPlanApplied: (updatedSchedule, swapLabels, swappedAssignmentIds, recordVacatedSlot) => {
         if (currentSchedule) {
           _scheduleUndoStack.push({
             schedule: structuredClone(currentSchedule),
@@ -5515,6 +5538,28 @@ function init(): void {
           store.pushUndoCheckpoint();
         }
         currentSchedule = updatedSchedule;
+        // After the undo snapshot is pushed (so undo restores the pre-record
+        // unavailability set), upsert the optional "mark vacated participant
+        // unavailable for this slot's time" entry. Skipped automatically when
+        // the slot is fully in the past — past windows can't constrain
+        // future planning.
+        if (recordVacatedSlot && currentSchedule) {
+          const liveAnchor = store.getLiveModeState().currentTimestamp ?? new Date();
+          if (recordVacatedSlot.end.getTime() > liveAnchor.getTime()) {
+            currentSchedule.scheduleUnavailability = upsertScheduleUnavailability(
+              currentSchedule.scheduleUnavailability,
+              {
+                id: `replaced-${Date.now()}-${recordVacatedSlot.participantId}`,
+                participantId: recordVacatedSlot.participantId,
+                start: recordVacatedSlot.start,
+                end: recordVacatedSlot.end,
+                createdAt: new Date(),
+                anchorAtCreation: liveAnchor,
+                appliedSwapCount: swappedAssignmentIds.length,
+              },
+            );
+          }
+        }
         for (const id of swappedAssignmentIds) _pendingSwapAnimIds.add(id);
         revalidateAndRefresh();
 

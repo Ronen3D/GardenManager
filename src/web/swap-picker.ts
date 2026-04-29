@@ -34,6 +34,16 @@ import { escHtml, fmt, stripDayPrefix } from './ui-helpers';
 import { showBottomSheet, showToast } from './ui-modal';
 import { computeWeeklyWorkloads, type WeeklyWorkload } from './workload-utils';
 
+/** Optional record-as-future-unavailability entry built when the user kept
+ *  the (default-on) "mark vacated participant unavailable for this slot's time"
+ *  checkbox checked. App.ts upserts each entry onto
+ *  `Schedule.scheduleUnavailability` after the undo snapshot push. */
+export interface VacatedSlotRecord {
+  participantId: string;
+  start: Date;
+  end: Date;
+}
+
 export interface SwapPickerDeps {
   engine: SchedulingEngine;
   schedule: Schedule;
@@ -43,13 +53,27 @@ export interface SwapPickerDeps {
   /**
    * Called after the engine successfully commits the swap. The picker
    * passes the pre-commit assignments snapshot so the caller can push
-   * it onto the unified undo stack.
+   * it onto the unified undo stack. `recordVacatedSlots` is non-empty when
+   * the user kept the "mark vacated participant unavailable" checkbox
+   * checked — free mode produces 1 entry (source), trade mode produces 2
+   * (source + trade target). App.ts upserts these entries onto
+   * `Schedule.scheduleUnavailability` after the undo snapshot push.
    */
-  onCommit: (info: { label: string; preCommitAssignments: Assignment[]; swappedAssignmentIds: string[] }) => void;
+  onCommit: (info: {
+    label: string;
+    preCommitAssignments: Assignment[];
+    swappedAssignmentIds: string[];
+    recordVacatedSlots: VacatedSlotRecord[];
+  }) => void;
 }
 
 type PickerMode = 'free' | 'trade';
 type PickerSort = 'eligibility' | 'workload-asc' | 'workload-desc' | 'name';
+
+/** Session-scoped default for the "record vacated participant as
+ *  future-unavailable" checkbox. Updated whenever the user toggles it; the
+ *  next swap-picker open inherits the last choice. */
+let _swapRecordVacatedDefault = true;
 
 interface PickerState {
   assignmentId: string;
@@ -292,7 +316,7 @@ function renderBody(state: PickerState, ctx: ResolvedContext): string {
   const filters = renderFilters(state, ctx);
   const list = state.mode === 'free' ? renderCandidateList(state, ctx) : renderTradeList(state, ctx);
   const preview = renderPreviewPanel(state, ctx);
-  const actions = renderActions(state);
+  const actions = renderActions(state, ctx);
   // Preview + actions are wrapped in a single sticky footer so the preview
   // panel sits directly above the action bar without two elements fighting
   // for `position: sticky; bottom: 0`.
@@ -523,11 +547,30 @@ function renderDeltaRow(p: Participant, before: WeeklyWorkload, after: WeeklyWor
   </div>`;
 }
 
-function renderActions(state: PickerState): string {
+function renderActions(state: PickerState, ctx: ResolvedContext): string {
   const canConfirm = state.preview?.valid && !state.committing;
+  const recordChecked = _swapRecordVacatedDefault ? ' checked' : '';
+
+  // Compose the label based on the picker mode + currently-previewed swap.
+  // Free mode marks only the outgoing source. Trade mode marks both sides.
+  let recordLabel: string;
+  if (state.mode === 'trade' && state.selectedTradeAssignmentId) {
+    const other = ctx.tradeCandidates.find((tc) => tc.assignment.id === state.selectedTradeAssignmentId);
+    const otherName = other?.participant.name ?? '';
+    recordLabel = `סמן את <strong>${escHtml(ctx.sourceParticipant.name)}</strong> ו<strong>${escHtml(otherName)}</strong> כלא־זמינים לחלוני הזמן של המשבצות (לרסקיו עתידי)`;
+  } else {
+    recordLabel = `סמן את <strong>${escHtml(ctx.sourceParticipant.name)}</strong> כלא־זמין/ה לחלון הזמן של המשבצת (לרסקיו עתידי)`;
+  }
+
   return `<div class="swap-picker-actions">
-    <button class="btn-outline swap-picker-cancel">ביטול</button>
-    <button class="btn-primary swap-picker-confirm" ${canConfirm ? '' : 'disabled'}>אישור החלפה</button>
+    <label class="swap-picker-record-vacated">
+      <input type="checkbox" id="swap-picker-record-vacated"${recordChecked}>
+      <span>${recordLabel}</span>
+    </label>
+    <div class="swap-picker-actions-buttons">
+      <button class="btn-outline swap-picker-cancel">ביטול</button>
+      <button class="btn-primary swap-picker-confirm" ${canConfirm ? '' : 'disabled'}>אישור החלפה</button>
+    </div>
   </div>`;
 }
 
@@ -606,6 +649,16 @@ function wireEvents(
 
   // Preview delta-row hover/tap → show surrounding tasks for that participant
   wireDeltaHover(root, state, ctx, deps);
+
+  // Record-vacated checkbox: update session default whenever the user
+  // toggles it so re-renders preserve the choice and the next picker open
+  // inherits it.
+  const recordCb = root.querySelector<HTMLInputElement>('#swap-picker-record-vacated');
+  if (recordCb) {
+    recordCb.addEventListener('change', () => {
+      _swapRecordVacatedDefault = recordCb.checked;
+    });
+  }
 
   // Cancel / Confirm
   root.querySelector('.swap-picker-cancel')?.addEventListener('click', close);
@@ -774,9 +827,15 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
 
   const preCommitAssignments = deps.schedule.assignments.map((a) => ({ ...a }));
 
+  // Snapshot the checkbox state before close() removes the DOM. Falls back to
+  // the session default if the checkbox isn't in the DOM for any reason.
+  const recordCb = document.getElementById('swap-picker-record-vacated') as HTMLInputElement | null;
+  const recordChecked = recordCb ? recordCb.checked : _swapRecordVacatedDefault;
+
   let result: ReturnType<SchedulingEngine['swapParticipant']>;
   let label: string;
   let swappedAssignmentIds: string[];
+  let recordVacatedSlots: VacatedSlotRecord[] = [];
   if (state.mode === 'trade' && state.selectedTradeAssignmentId) {
     const other = deps.schedule.assignments.find((a) => a.id === state.selectedTradeAssignmentId);
     if (!other) {
@@ -784,12 +843,31 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
       return;
     }
     const otherP = deps.schedule.participants.find((p) => p.id === other.participantId);
+    const otherTask = deps.schedule.tasks.find((t) => t.id === other.taskId);
     result = deps.engine.swapParticipantChain([
       { assignmentId: state.assignmentId, newParticipantId: other.participantId },
       { assignmentId: other.id, newParticipantId: ctx.sourceParticipant.id },
     ]);
     label = `החלפה הדדית: ${ctx.sourceParticipant.name} ⇄ ${otherP?.name ?? ''}`;
     swappedAssignmentIds = [state.assignmentId, state.selectedTradeAssignmentId];
+    if (recordChecked) {
+      // Symmetric trade: each participant loses access to the slot they
+      // vacated. Source gives up sourceTask; trade target gives up otherTask.
+      recordVacatedSlots = [
+        {
+          participantId: ctx.sourceParticipant.id,
+          start: ctx.sourceTask.timeBlock.start,
+          end: ctx.sourceTask.timeBlock.end,
+        },
+      ];
+      if (otherP && otherTask) {
+        recordVacatedSlots.push({
+          participantId: otherP.id,
+          start: otherTask.timeBlock.start,
+          end: otherTask.timeBlock.end,
+        });
+      }
+    }
   } else if (state.selectedCandidateId) {
     const inc = deps.schedule.participants.find((p) => p.id === state.selectedCandidateId);
     result = deps.engine.swapParticipant({
@@ -801,6 +879,15 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
     // the arrow reads "incoming ← outgoing" = "incoming replaces outgoing".
     label = `החלפה: ${inc?.name ?? ''} ← ${ctx.sourceParticipant.name}`;
     swappedAssignmentIds = [state.assignmentId];
+    if (recordChecked) {
+      recordVacatedSlots = [
+        {
+          participantId: ctx.sourceParticipant.id,
+          start: ctx.sourceTask.timeBlock.start,
+          end: ctx.sourceTask.timeBlock.end,
+        },
+      ];
+    }
   } else {
     state.committing = false;
     return;
@@ -814,7 +901,7 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
   }
 
   close();
-  deps.onCommit({ label, preCommitAssignments, swappedAssignmentIds });
+  deps.onCommit({ label, preCommitAssignments, swappedAssignmentIds, recordVacatedSlots });
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

@@ -1558,7 +1558,10 @@ select.input-sm {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.3px;
 }
-[data-theme="light"] .tprop-shift-chip {
+/* Light-mode unselected chip — scoped with :not(--selected) so its (0,2,0)
+   specificity doesn't override the selected variant's accent background and
+   leave white text on a near-white plate. */
+[data-theme="light"] .tprop-shift-chip:not(.tprop-shift-chip--selected) {
   background: rgba(0, 0, 0, 0.03);
 }
 
@@ -1615,8 +1618,17 @@ select.input-sm {
 }
 
 /* ─── Sleep & Recovery (HC-15) section ─────────────────── */
-/* Collapsible disclosure card. Header is a full-width tap target so it works
-   well on phones; body stacks vertically with large inputs and clear labels. */
+/* Disclosure card. Header is a full-width tap target so it works well on
+   phones; body stacks vertically with large inputs and clear labels. The
+   rule's "active" state is fully derived from the chip selection — there's no
+   separate switch. The collapsed card shows an active/inactive pill so the
+   state is visible at a glance.
+
+   Visual states:
+   - .sr-inactive  — neutral border, muted "לא פעיל" pill.
+   - .sr-active    — accent border + soft glow, colored summary pill.
+   - .sr-open      — body expanded; header gets a divider underneath.
+*/
 .tprop-section--sleep-recovery.sr-collapsible {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1625,29 +1637,38 @@ select.input-sm {
   gap: 0;
   transition:
     border-color var(--transition-normal),
-    background var(--transition-normal);
+    background var(--transition-normal),
+    box-shadow var(--transition-normal);
 }
-.tprop-section--sleep-recovery.sr-enabled {
+.tprop-section--sleep-recovery.sr-active {
   border-color: var(--accent);
   background: var(--accent-glow);
+  box-shadow: 0 0 0 1px var(--accent-glow);
 }
-
-/* Header row: clickable title (expand/collapse) on the start side, switch on the end side. */
-.sr-header-row {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
+.tprop-section--sleep-recovery.sr-open {
+  /* Subtle elevation when expanded so the editor reads as a focused panel. */
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.08),
+    0 0 0 1px var(--accent-glow);
 }
-.tprop-section--sleep-recovery.sr-open .sr-header-row {
+.tprop-section--sleep-recovery.sr-open .sr-header {
   border-bottom: 1px solid var(--border);
 }
 
 .sr-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex: 1 1 auto;
+  /* Two-row grid: row 1 = title + arrow (always); row 2 = status pill (only
+     rendered when collapsed). Splitting the rows prevents the narrow-column
+     case where title and pill would both ellipsize each other into
+     illegibility ("השלמות ש…" + "משמרת 2 · 5 …"). The arrow stays vertically
+     centered with the title row via align-self. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title  arrow"
+    "status status";
+  column-gap: 10px;
+  row-gap: 4px;
+  width: 100%;
   min-width: 0;
   padding: 10px 12px;
   background: transparent;
@@ -1657,55 +1678,56 @@ select.input-sm {
   font-size: 0.88rem;
   font-weight: 600;
   text-align: start;
-  min-height: 44px; /* iOS tap target */
   box-sizing: border-box;
+  transition: background var(--transition-normal);
 }
-.sr-header[aria-disabled="true"] {
-  cursor: default;
-}
-.sr-header:not([aria-disabled="true"]):hover,
-.sr-header:not([aria-disabled="true"]):focus-visible {
+.sr-header:hover,
+.sr-header:focus-visible {
   background: var(--bg-hover);
   outline: none;
 }
 
 .sr-title {
+  grid-area: title;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex: 1 1 auto;
 }
-.sr-title > span:not(.sr-icon) {
+.sr-title-text {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
-/* Short variant kicks in on phone widths where "השלמות שינה והתאוששות" doesn't
-   fit alongside the switch and ellipsizes to "השלמות שינה ו…". The long form
-   stays the accessible label (sr-title-short is aria-hidden). */
-.sr-title-short {
-  display: none;
-}
 .sr-icon {
   font-size: 1rem;
   line-height: 1;
   flex-shrink: 0;
+  /* Slight desaturation when the rule is inactive so the icon doesn't compete
+     with the rest of the header. Active state restores full opacity. */
+  opacity: 0.55;
+  transition: opacity var(--transition-normal);
+}
+.sr-active .sr-icon {
+  opacity: 1;
 }
 
-.sr-header-right {
+.sr-status {
+  grid-area: status;
+  justify-self: start;
+  /* Bound the pill so a long summary ellipsizes within its row instead of
+     bleeding out of the section card. */
+  min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  /* Allow the chip to shrink and ellipsize when the title competes for room
-     instead of pushing past the edge of the section card. */
-  min-width: 0;
-  flex-shrink: 1;
 }
+/* Active-state summary: solid accent pill so the rule's settings are legible
+   and the section reads as "on" without expanding. */
 .sr-summary-chip {
   display: inline-block;
-  padding: 3px 8px;
+  padding: 4px 10px;
   border-radius: 999px;
   background: var(--accent);
   color: #fff;
@@ -1713,6 +1735,7 @@ select.input-sm {
   font-weight: 600;
   white-space: nowrap;
   letter-spacing: 0.2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
   /* Safety net: if a translation or future content makes the chip too long for
      a narrow modal column, shrink and ellipsize instead of overflowing. */
   min-width: 0;
@@ -1720,62 +1743,26 @@ select.input-sm {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Inactive-state placeholder: dashed outline pill so the slot is reserved at
+   the same visual weight as the active pill, but clearly "off." */
 .sr-summary-off {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 500;
+  letter-spacing: 0.2px;
 }
 .sr-arrow {
+  grid-area: arrow;
+  align-self: center;
   color: var(--text-muted);
   font-size: 0.85rem;
   width: 1em;
   text-align: center;
-}
-
-/* iOS-style switch — primary on/off control for the rule. Clicking flips the
-   rule between enabled (with restored or default values) and disabled. */
-.sr-switch {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  padding: 0 12px;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  min-height: 44px; /* iOS tap target */
-  box-sizing: border-box;
-}
-.sr-switch:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 8px;
-}
-.sr-switch-track {
-  position: relative;
-  display: inline-block;
-  width: 38px;
-  height: 22px;
-  border-radius: 999px;
-  background: var(--border);
-  transition: background var(--transition-normal);
-}
-.sr-switch.is-on .sr-switch-track {
-  background: var(--accent);
-}
-.sr-switch-thumb {
-  position: absolute;
-  top: 2px;
-  inset-inline-start: 2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-  transition: inset-inline-start var(--transition-normal);
-}
-.sr-switch.is-on .sr-switch-thumb {
-  inset-inline-start: 18px;
+  transition: transform var(--transition-normal);
 }
 
 .sr-body {
@@ -1783,6 +1770,25 @@ select.input-sm {
   flex-direction: column;
   gap: 10px;
   padding: 10px 12px 12px;
+  /* Soft inset highlight at the top so the body reads as a continuation of
+     the header rather than a separate card. */
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.04), transparent 8px);
+}
+
+/* Hint shown beneath the chip strip when no shifts are selected — explains
+   that selecting a chip is what activates the rule. */
+.sr-hint {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06);
+  border-inline-start: 3px solid var(--text-muted);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+[data-theme="light"] .sr-hint {
+  background: rgba(0, 0, 0, 0.03);
 }
 
 .sr-field-group {
@@ -1914,14 +1920,6 @@ select.input-sm {
     padding: 12px;
     font-size: 0.92rem;
   }
-  /* On phone widths the full title "השלמות שינה והתאוששות" doesn't fit
-     alongside the switch — swap to "השלמות שינה" instead of ellipsizing. */
-  .sr-title-full {
-    display: none;
-  }
-  .sr-title-short {
-    display: inline;
-  }
   .sr-summary-chip {
     font-size: 0.7rem;
     padding: 3px 7px;
@@ -1930,20 +1928,12 @@ select.input-sm {
     padding: 12px;
     gap: 14px;
   }
-  .sr-switch {
-    min-height: 48px;
-    padding: 0 14px;
+  .sr-summary-off {
+    font-size: 0.7rem;
+    padding: 3px 8px;
   }
-  .sr-switch-track {
-    width: 44px;
-    height: 26px;
-  }
-  .sr-switch-thumb {
-    width: 22px;
-    height: 22px;
-  }
-  .sr-switch.is-on .sr-switch-thumb {
-    inset-inline-start: 20px;
+  .sr-hint {
+    font-size: 0.82rem;
   }
   .sr-field-row {
     gap: 10px;
@@ -5275,6 +5265,33 @@ tr.row-selected:hover {
   gap: 10px;
   padding: 12px 20px;
   border-top: 1px solid var(--border, #e0e0e0);
+}
+
+.rescue-record-vacated-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 20px 0 20px;
+}
+
+.rescue-record-vacated-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted, #666);
+  cursor: pointer;
+  line-height: 1.35;
+}
+
+.rescue-record-vacated-label input[type='checkbox'] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.rescue-record-vacated-label strong {
+  color: var(--text, #222);
 }
 
 .btn-rescue-more {
@@ -10766,7 +10783,34 @@ tr.now-row-animate > td.time-cell {
 
 .swap-picker-actions {
   display: flex;
+  flex-direction: column;
   gap: 8px;
+}
+
+.swap-picker-actions-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.swap-picker-record-vacated {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted, #666);
+  cursor: pointer;
+  line-height: 1.35;
+}
+
+.swap-picker-record-vacated input[type='checkbox'] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.swap-picker-record-vacated strong {
+  color: var(--text, #222);
 }
 
 .swap-picker-cancel,

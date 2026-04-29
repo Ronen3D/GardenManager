@@ -30,11 +30,30 @@ export interface RescueSwapLabel {
   label: string;
 }
 
+/** Optional record-as-future-unavailability payload built when the
+ *  "mark vacated participant unavailable for this slot's time" checkbox
+ *  is checked at apply time. App.ts upserts this onto
+ *  `Schedule.scheduleUnavailability` after pushing the undo snapshot. */
+export interface VacatedSlotRecord {
+  participantId: string;
+  start: Date;
+  end: Date;
+}
+
 export interface RescueContext {
   getSchedule: () => Schedule | null;
   getEngine: () => SchedulingEngine | null;
-  /** Called after a rescue plan is successfully applied (swaps done, schedule updated). */
-  onPlanApplied: (updatedSchedule: Schedule, swapLabels: RescueSwapLabel[], swappedAssignmentIds: string[]) => void;
+  /** Called after a rescue plan is successfully applied (swaps done, schedule updated).
+   *  `recordVacatedSlot` is non-null when the user kept the (default-on)
+   *  "mark vacated participant unavailable for this slot's time" checkbox
+   *  checked. App.ts is responsible for upserting it onto
+   *  `Schedule.scheduleUnavailability` after the undo snapshot push. */
+  onPlanApplied: (
+    updatedSchedule: Schedule,
+    swapLabels: RescueSwapLabel[],
+    swappedAssignmentIds: string[],
+    recordVacatedSlot: VacatedSlotRecord | null,
+  ) => void;
   /** Called when a rescue plan swap fails and the engine rolled back. */
   onPlanFailed: () => void;
 }
@@ -60,6 +79,13 @@ let _rescueEscHandler: ((e: KeyboardEvent) => void) | null = null;
 
 let _rescueTooltipEl: HTMLElement | null = null;
 let _rescueTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+// ─── "Record vacated as future unavailability" preference ───────────────────
+
+/** Session-scoped: the user's last choice for the "record vacated participant
+ *  as unavailable for this slot's time" checkbox in the rescue modal. Default
+ *  is `true` (record). Persists for the session only — not localStorage. */
+let _rescueRecordVacatedDefault = true;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -250,7 +276,20 @@ function showRescueModal(): void {
     </div>`;
   }
 
+  // "Record vacated participant as future-unavailable" toggle. Single shared
+  // state — applies to whichever plan the user clicks Apply on.
+  const recordChecked = _rescueRecordVacatedDefault ? ' checked' : '';
+  const recordVacatedRow = vacatedP
+    ? `<div class="rescue-record-vacated-row">
+        <label class="rescue-record-vacated-label">
+          <input type="checkbox" id="rescue-record-vacated"${recordChecked}>
+          <span>סמן את <strong>${escHtml(vacatedP.name)}</strong> כלא־זמין/ה לחלון הזמן של המשבצת (לרסקיו עתידי)</span>
+        </label>
+      </div>`
+    : '';
+
   html += `</div>
+    ${recordVacatedRow}
     <div class="rescue-footer">
       ${hasMore ? `<button class="btn-rescue-more" id="btn-rescue-more">הצג אפשרויות נוספות</button>` : ''}
       <button class="btn-rescue-dismiss" id="btn-rescue-dismiss">סגור</button>
@@ -437,6 +476,16 @@ function wireRescueModalEvents(): void {
     showRescueModal();
   });
 
+  // Record-vacated checkbox: update session default whenever it changes so
+  // re-rendering after "Show More" preserves the user's choice and the next
+  // modal open inherits it.
+  const recordCb = backdrop.querySelector<HTMLInputElement>('#rescue-record-vacated');
+  if (recordCb) {
+    recordCb.addEventListener('change', () => {
+      _rescueRecordVacatedDefault = recordCb.checked;
+    });
+  }
+
   // Apply plan buttons
   backdrop.querySelectorAll('.btn-apply-plan').forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -570,7 +619,22 @@ function showRescueError(message: string): void {
 function applyRescuePlan(plan: RescuePlan): void {
   const currentSchedule = _ctx?.getSchedule();
   const engine = _ctx?.getEngine();
-  if (!currentSchedule || !engine) return;
+  if (!currentSchedule || !engine || !_rescueResult) return;
+
+  // Snapshot the checkbox state before closing the modal, then resolve the
+  // focal task's time block — those drive the optional VacatedSlotRecord
+  // payload that app.ts persists onto `Schedule.scheduleUnavailability`.
+  const recordCb = document.getElementById('rescue-record-vacated') as HTMLInputElement | null;
+  const recordChecked = recordCb ? recordCb.checked : _rescueRecordVacatedDefault;
+  const focalTask = currentSchedule.tasks.find((t) => t.id === _rescueResult!.request.taskId);
+  const recordVacatedSlot: VacatedSlotRecord | null =
+    recordChecked && focalTask
+      ? {
+          participantId: _rescueResult.request.vacatedBy,
+          start: focalTask.timeBlock.start,
+          end: focalTask.timeBlock.end,
+        }
+      : null;
 
   // Staleness check: verify all assignments still match the expected state
   for (const sw of plan.swaps) {
@@ -616,5 +680,6 @@ function applyRescuePlan(plan: RescuePlan): void {
     updated,
     swapLabels,
     plan.swaps.map((sw) => sw.assignmentId),
+    recordVacatedSlot,
   );
 }

@@ -7335,6 +7335,76 @@ console.log('\n── Rescue Plans ───────────────
       assert(v.valid, `rescue-su-d2: plan ${plan.id} violates HC under scheduleUnavailability`);
     }
   }
+
+  // ─── "Don't suggest the just-replaced participant back" — full flow ────────
+  //   Models the post-rescue-modal state when the (default-on) "mark vacated
+  //   participant unavailable for this slot's time" checkbox is kept checked.
+  //   After rescue replaces p1 from rsc-s1, p1 is free at the rsc-t1 time
+  //   window — and would otherwise be a natural candidate for any other slot
+  //   in that same window. The new ScheduleUnavailability entry must keep
+  //   p1 out of those slots.
+  {
+    // Step 1: simulate having applied a rescue plan that replaced p1 with p3
+    // in slot rsc-s1. p2 is still in rsc-s2 (untouched). We drop rsc-t2 from
+    // this scenario so the planner doesn't fixate on the empty rsc-s3
+    // (which would be left unfilled by the imagined first rescue moving p3
+    // out of rsc-t2 into rsc-t1) — the question we're asking is purely about
+    // rsc-t1 candidate eligibility.
+    const postSwapAssigns: Assignment[] = [
+      { id: 'rsc-a1', taskId: 'rsc-t1', slotId: 'rsc-s1', participantId: 'rsc-p3', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      { id: 'rsc-a2', taskId: 'rsc-t1', slotId: 'rsc-s2', participantId: 'rsc-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    ];
+
+    // Step 2: the new feature records p1 as unavailable for rsc-t1's window.
+    const recordedUnavailability = upsertScheduleUnavailability(undefined, {
+      id: 'replaced-rsc-p1',
+      participantId: 'rsc-p1',
+      start: rescueBlock.start,
+      end: rescueBlock.end,
+      createdAt: new Date(),
+      anchorAtCreation: anchor,
+      appliedSwapCount: 1,
+    });
+
+    const postSwapSched: Schedule = {
+      ...schedule,
+      tasks: [rTask],
+      assignments: postSwapAssigns,
+      scheduleUnavailability: recordedUnavailability,
+    };
+
+    // Step 3: run rescue on a *different* slot in the same time window
+    // (rsc-s2 of rsc-t1, currently held by p2). Without the new entry, p1
+    // — now free at this time — would be a perfectly valid replacement for
+    // p2 (HC-7 doesn't forbid them entering the same task they used to be
+    // in). With the entry, p1 must never appear as the swap target.
+    const secondRescueRequest: RescueRequest = {
+      vacatedAssignmentId: 'rsc-a2',
+      taskId: 'rsc-t1',
+      slotId: 'rsc-s2',
+      vacatedBy: 'rsc-p2',
+    };
+    const secondResult = generateRescuePlans(postSwapSched, secondRescueRequest, anchor);
+    for (const plan of secondResult.plans) {
+      for (const sw of plan.swaps) {
+        assert(
+          sw.toParticipantId !== 'rsc-p1',
+          `rescue-record-vacated: replaced participant suggested back into same time window (plan ${plan.id})`,
+        );
+      }
+    }
+
+    // Sanity: dropping the entry, p1 IS a candidate for the same second rescue.
+    const noEntrySched: Schedule = { ...postSwapSched, scheduleUnavailability: [] };
+    const noEntryResult = generateRescuePlans(noEntrySched, secondRescueRequest, anchor);
+    const p1AppearsWithoutEntry = noEntryResult.plans.some((plan) =>
+      plan.swaps.some((sw) => sw.toParticipantId === 'rsc-p1'),
+    );
+    assert(
+      p1AppearsWithoutEntry,
+      'rescue-record-vacated: control case — without the unavailability entry, p1 IS a candidate for the same slot',
+    );
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

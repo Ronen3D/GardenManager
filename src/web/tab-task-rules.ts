@@ -240,47 +240,39 @@ function fmtHm(h: number, m: number): string {
 /**
  * Read back the HC-15 "Sleep & Recovery" fields from the editable body.
  *
- * Enable/disable is controlled by the header switch and goes through the
- * `toggle-sleep-recovery-switch` action — never through this parser. So this
- * parser only sees one of:
- *  - 'preserve': body is not rendered (rule is off, or section is collapsed).
- *    The auto-save path leaves the stored rule untouched.
- *  - 'set' (rule): body is rendered with valid inputs → persist updated rule.
- *  - 'invalid': body is rendered but inputs are out of range → caller shows
- *    an error toast and bails (no silent wipe).
- *
- * `endHour < startHour` is interpreted as a midnight-crossing range; the
- * constraint engine handles the wrap automatically and the user does not
- * need to confirm it.
+ * The rule's "active" state is derived from the chip selection — at least one
+ * trigger shift must be checked for the rule to exist. The parser returns one
+ * of:
+ *  - 'preserve': body is not rendered (section collapsed) → leave stored rule alone.
+ *  - 'set' (rule): body is rendered with ≥1 chip + valid hours → persist rule.
+ *  - 'clear': body is rendered with zero chips → delete rule. The current hours
+ *    value is cached so re-activation later restores it instead of snapping
+ *    back to the default.
+ *  - 'invalid': body is rendered with chips but hours are out of range → caller
+ *    shows an error toast and bails.
  */
 type ParsedSleepRecovery =
   | { kind: 'preserve' }
   | { kind: 'set'; value: SleepRecoveryRule }
+  | { kind: 'clear' }
   | { kind: 'invalid'; reason: string };
 
 const SLEEP_RECOVERY_MAX_HOURS = 24;
 const DEFAULT_RECOVERY_HOURS = 5;
 
-/** Default rule for first-time enable. Defaults to the last shift, which is the
- *  typical night-ending shift in most templates. */
-function defaultSleepRecoveryRule(shiftCount: number): SleepRecoveryRule {
-  const lastIdx = Math.max(1, shiftCount);
-  return { triggerShifts: [lastIdx], recoveryHours: DEFAULT_RECOVERY_HOURS };
-}
-
 /**
- * Cache last-known rule values per template/one-time task so that toggling
- * the switch off → on restores what the user previously had instead of
- * snapping back to the global defaults. Populated on disable, consumed on
- * the next enable.
+ * Cache the user's last-typed recovery hours per template/one-time task. Read
+ * by the renderer when the rule is currently inactive (no chips selected) so
+ * the hours field shows what the user had instead of snapping to the default.
+ * Written by the parser when it sees a 'clear' transition.
  */
-const lastSleepRecoveryValues = new Map<string, SleepRecoveryRule>();
+const lastSleepRecoveryHours = new Map<string, number>();
 
-function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): ParsedSleepRecovery {
+function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot', id: string): ParsedSleepRecovery {
   const attr = target === 'tpl' ? 'tpl' : 'ot';
   const chipContainer = scope.querySelector(`[data-${attr}-field="sleepRecoveryShifts"]`) as HTMLElement | null;
   if (!chipContainer) {
-    // Body not rendered (rule off, or section collapsed) → leave stored rule alone.
+    // Body not rendered (section collapsed) → leave stored rule alone.
     return { kind: 'preserve' };
   }
 
@@ -292,22 +284,25 @@ function parseSleepRecoveryInput(scope: HTMLElement, target: 'tpl' | 'ot'): Pars
     if (Number.isFinite(idx) && idx >= 1) triggerShifts.push(idx);
   }
   triggerShifts.sort((a, b) => a - b);
-  if (triggerShifts.length === 0) {
-    return { kind: 'invalid', reason: 'יש לבחור משמרת אחת לפחות שמפעילה את הכלל' };
-  }
 
   const hoursRaw = (scope.querySelector(`[data-${attr}-field="sleepRecoveryHours"]`) as HTMLInputElement | null)?.value;
   const trimmed = (hoursRaw ?? '').trim();
-  if (trimmed === '') {
-    return { kind: 'invalid', reason: 'נא להזין מספר שעות להתאוששות' };
+  const hoursNumeric = Number(trimmed);
+  const hoursValid =
+    trimmed !== '' && Number.isFinite(hoursNumeric) && hoursNumeric >= 1 && hoursNumeric <= SLEEP_RECOVERY_MAX_HOURS;
+
+  if (triggerShifts.length === 0) {
+    // Cache user-typed hours so that re-activating the rule restores them.
+    if (hoursValid) lastSleepRecoveryHours.set(`${target}:${id}`, Math.floor(hoursNumeric));
+    return { kind: 'clear' };
   }
-  const hours = Number(trimmed);
-  if (!Number.isFinite(hours) || hours < 1 || hours > SLEEP_RECOVERY_MAX_HOURS) {
+
+  if (!hoursValid) {
     return { kind: 'invalid', reason: `משך התאוששות לא תקין (1–${SLEEP_RECOVERY_MAX_HOURS} שעות)` };
   }
   return {
     kind: 'set',
-    value: { triggerShifts, recoveryHours: Math.floor(hours) },
+    value: { triggerShifts, recoveryHours: Math.floor(hoursNumeric) },
   };
 }
 
@@ -330,17 +325,18 @@ function summariseTriggerShifts(selected: number[], total: number): string {
  * Render the HC-15 "Sleep & Recovery" editor section. Used by both
  * TaskTemplate and OneTimeTask editors.
  *
- * Layout: a single header row with three logical zones:
- *  - the title block (clickable to expand/collapse the editor body);
- *  - a summary chip showing the selected shifts + recovery hours, or a muted
- *    "לא פעיל" label;
- *  - an iOS-style switch that toggles the rule on/off in one click.
+ * The rule's "active" state is fully derived from the chip selection — there
+ * is no separate enable/disable switch. Selecting the first chip creates the
+ * rule with the displayed recovery-hours value; clearing the last chip deletes
+ * it. The header is purely an expand/collapse affordance.
  *
- * Body: a row of selectable shift chips (multi-select) + a recovery-hours
- * number input. The body renders only when the rule is on AND the section is
- * expanded. Disabling via the switch caches the user's last values; re-enabling
- * restores them so the common "toggle off, toggle on" round-trip is
- * non-destructive.
+ * Layout:
+ *  - Header row (always clickable): title, status pill (active summary or
+ *    muted "לא פעיל" placeholder), arrow.
+ *  - Body (rendered when expanded): shift chips + recovery-hours input. Both
+ *    are always editable; the chips alone gate "active." When active, an
+ *    "active" badge in the header and a colored ring on the section card make
+ *    the state visible without expanding.
  */
 function renderSleepRecoveryEditor(
   rule: SleepRecoveryRule | undefined,
@@ -348,25 +344,24 @@ function renderSleepRecoveryEditor(
   id: string,
   shifts: ShiftDescriptor[],
 ): string {
-  const enabled = !!rule;
+  const active = !!rule;
   const triggerShifts = rule?.triggerShifts ?? [];
-  const hours = rule?.recoveryHours ?? DEFAULT_RECOVERY_HOURS;
+  const expandKey = `${target}:${id}`;
+  // Hours fall back to last-typed (cached on rule clear) so reactivating the
+  // rule restores the user's preferred duration, not the global default.
+  const hours = rule?.recoveryHours ?? lastSleepRecoveryHours.get(expandKey) ?? DEFAULT_RECOVERY_HOURS;
   const attr = target === 'tpl' ? 'tpl' : 'ot';
   const idAttr = target === 'tpl' ? 'tid' : 'ot-id';
-  const expandKey = `${target}:${id}`;
   const isExpanded = expandedSleepRecovery.has(expandKey);
-  const showBody = isExpanded && enabled;
 
   // Effective selection used for rendering — clamp stale indices that exceed
   // the current shift count so the chip strip never shows phantom selections.
   const validIdxs = new Set(shifts.map((s) => s.idx));
   const effectiveSelected = triggerShifts.filter((idx) => validIdxs.has(idx));
 
-  const summary = !enabled
-    ? `<span class="sr-summary-off">לא פעיל</span>`
-    : showBody
-      ? ''
-      : `<span class="sr-summary-chip">${escHtml(summariseTriggerShifts(effectiveSelected, shifts.length))} · ${hours} שע׳</span>`;
+  const summary = active
+    ? `<span class="sr-summary-chip">${escHtml(summariseTriggerShifts(effectiveSelected, shifts.length))} · ${hours} שע׳</span>`
+    : `<span class="sr-summary-off">לא פעיל</span>`;
 
   const chipHtml = shifts
     .map((s) => {
@@ -392,7 +387,11 @@ function renderSleepRecoveryEditor(
       </div>`
     : '';
 
-  const body = showBody
+  const inactiveHint = !active
+    ? `<p class="sr-hint" role="note">בחר משמרות כדי להפעיל את הכלל. לאחר משמרת כזו תיחסם המשתתף ממשימות עם עומס ל־${hours} שעות.</p>`
+    : '';
+
+  const body = isExpanded
     ? `
       <div class="sr-body">
         <div class="sr-field-group">
@@ -405,6 +404,7 @@ function renderSleepRecoveryEditor(
                  role="group" aria-label="בחירת משמרות מפעילות">
               ${chipHtml}
             </div>
+            ${inactiveHint}
           </div>
           <div class="sr-field">
             <label class="sr-field-label">חסום משימות עם עומס &gt; 0 למשך</label>
@@ -419,33 +419,35 @@ function renderSleepRecoveryEditor(
       </div>`
     : '';
 
-  const switchTitle = enabled ? 'הכלל פעיל. לחיצה תכבה אותו.' : 'הכלל כבוי. לחיצה תפעיל אותו.';
-  const switchAriaLabel = enabled ? 'כבה כלל השלמות שינה והתאוששות' : 'הפעל כלל השלמות שינה והתאוששות';
+  const sectionCls = [
+    'tprop-section',
+    'tprop-section--sleep-recovery',
+    'sr-collapsible',
+    active ? 'sr-active' : 'sr-inactive',
+    isExpanded ? 'sr-open' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  // Two-row header: row 1 carries the title and arrow; row 2 carries the
+  // status pill. Splitting prevents the narrow-column case from forcing the
+  // title and pill to fight over the same line and ellipsize each other into
+  // illegibility ("השלמות ש…" + "משמרת 2 · 5 …"). The pill is hidden when the
+  // section is expanded since the body already shows the source of truth.
+  const statusRow = isExpanded ? '' : `<span class="sr-status">${summary}</span>`;
 
   return `
-    <section class="tprop-section tprop-section--sleep-recovery sr-collapsible${enabled ? ' sr-enabled' : ''}${showBody ? ' sr-open' : ''}">
-      <div class="sr-header-row">
-        <button type="button" class="sr-header"
-                data-action="toggle-sleep-recovery" data-sr-target="${target}" data-sr-id="${id}"
-                aria-expanded="${showBody}"${enabled ? '' : ' aria-disabled="true"'}>
-          <span class="sr-title">
-            <span class="sr-icon" aria-hidden="true">💤</span>
-            <span class="sr-title-full">השלמות שינה והתאוששות</span>
-            <span class="sr-title-short" aria-hidden="true">השלמות שינה</span>
-          </span>
-          <span class="sr-header-right">
-            ${summary}
-            ${enabled ? `<span class="sr-arrow" aria-hidden="true">${showBody ? '▾' : '◂'}</span>` : ''}
-          </span>
-        </button>
-        <button type="button" class="sr-switch${enabled ? ' is-on' : ''}"
-                data-action="toggle-sleep-recovery-switch" data-sr-target="${target}" data-sr-id="${id}"
-                role="switch" aria-checked="${enabled}" title="${switchTitle}" aria-label="${switchAriaLabel}">
-          <span class="sr-switch-track" aria-hidden="true">
-            <span class="sr-switch-thumb"></span>
-          </span>
-        </button>
-      </div>
+    <section class="${sectionCls}">
+      <button type="button" class="sr-header"
+              data-action="toggle-sleep-recovery" data-sr-target="${target}" data-sr-id="${id}"
+              aria-expanded="${isExpanded}">
+        <span class="sr-title">
+          <span class="sr-icon" aria-hidden="true">💤</span>
+          <span class="sr-title-text">השלמות שינה והתאוששות</span>
+        </span>
+        <span class="sr-arrow" aria-hidden="true">${isExpanded ? '▾' : '◂'}</span>
+        ${statusRow}
+      </button>
       ${body}
     </section>`;
 }
@@ -1464,7 +1466,7 @@ function _commitTemplateProps(body: HTMLElement, tid: string): boolean {
   const existingFormulaValue = existingTpl?.loadFormula?.computedValue;
   const formulaDroppedByManualEdit =
     existingFormulaValue !== undefined && Math.abs(clampedBaseLoad - existingFormulaValue) > 1e-9;
-  const sleepRecovery = parseSleepRecoveryInput(body, 'tpl');
+  const sleepRecovery = parseSleepRecoveryInput(body, 'tpl', tid);
   if (sleepRecovery.kind === 'invalid') {
     showToast(sleepRecovery.reason, { type: 'error' });
     return false;
@@ -1480,6 +1482,7 @@ function _commitTemplateProps(body: HTMLElement, tid: string): boolean {
     togethernessRelevant,
     restRuleId,
     ...(sleepRecovery.kind === 'set' ? { sleepRecovery: sleepRecovery.value } : {}),
+    ...(sleepRecovery.kind === 'clear' ? { sleepRecovery: undefined } : {}),
   });
   return true;
 }
@@ -1525,7 +1528,7 @@ function _commitOneTimeProps(body: HTMLElement, otId: string): boolean {
     { durationHours: otSanitized.durationHours, startHour: otSanitized.startHour, startMinute },
   );
 
-  const otSleepRecovery = parseSleepRecoveryInput(body, 'ot');
+  const otSleepRecovery = parseSleepRecoveryInput(body, 'ot', otId);
   if (otSleepRecovery.kind === 'invalid') {
     showToast(otSleepRecovery.reason, { type: 'error' });
     return false;
@@ -1541,6 +1544,7 @@ function _commitOneTimeProps(body: HTMLElement, otId: string): boolean {
     blocksConsecutive,
     restRuleId: otRestRuleId,
     ...(otSleepRecovery.kind === 'set' ? { sleepRecovery: otSleepRecovery.value } : {}),
+    ...(otSleepRecovery.kind === 'clear' ? { sleepRecovery: undefined } : {}),
     description: desc || undefined,
   });
   return true;
@@ -1924,67 +1928,9 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const srTarget = actionButton?.dataset.srTarget;
         const srId = actionButton?.dataset.srId;
         if (!srTarget || !srId) break;
-        const isEnabled =
-          srTarget === 'tpl'
-            ? !!store.getTaskTemplate(srId)?.sleepRecovery
-            : !!store.getOneTimeTask(srId)?.sleepRecovery;
-        // Only enabled rules have an editable body to expand. When disabled,
-        // the header click is a no-op — the user must flip the switch first.
-        if (!isEnabled) break;
         const key = `${srTarget}:${srId}`;
         if (expandedSleepRecovery.has(key)) expandedSleepRecovery.delete(key);
         else expandedSleepRecovery.add(key);
-        rerender();
-        break;
-      }
-      case 'toggle-sleep-recovery-switch': {
-        const srTarget = actionButton?.dataset.srTarget;
-        const srId = actionButton?.dataset.srId;
-        if (!srTarget || !srId) break;
-        const key = `${srTarget}:${srId}`;
-        const cacheKey = key;
-        if (srTarget === 'tpl') {
-          const tpl = store.getTaskTemplate(srId);
-          if (!tpl) break;
-          if (tpl.sleepRecovery) {
-            lastSleepRecoveryValues.set(cacheKey, {
-              triggerShifts: [...tpl.sleepRecovery.triggerShifts],
-              recoveryHours: tpl.sleepRecovery.recoveryHours,
-            });
-            store.updateTaskTemplate(srId, { sleepRecovery: undefined });
-            expandedSleepRecovery.delete(key);
-          } else {
-            const restored = lastSleepRecoveryValues.get(cacheKey) ?? defaultSleepRecoveryRule(tpl.shiftsPerDay);
-            // Clamp cached indices to the current shift count — shiftsPerDay
-            // may have shrunk while the rule was off, leaving stale entries.
-            const validShifts = restored.triggerShifts.filter((idx) => idx >= 1 && idx <= tpl.shiftsPerDay);
-            const finalRule: SleepRecoveryRule = {
-              triggerShifts: validShifts.length > 0 ? validShifts : [tpl.shiftsPerDay],
-              recoveryHours: restored.recoveryHours,
-            };
-            store.updateTaskTemplate(srId, { sleepRecovery: finalRule });
-            expandedSleepRecovery.add(key);
-          }
-        } else {
-          const ot = store.getOneTimeTask(srId);
-          if (!ot) break;
-          if (ot.sleepRecovery) {
-            lastSleepRecoveryValues.set(cacheKey, {
-              triggerShifts: [...ot.sleepRecovery.triggerShifts],
-              recoveryHours: ot.sleepRecovery.recoveryHours,
-            });
-            store.updateOneTimeTask(srId, { sleepRecovery: undefined });
-            expandedSleepRecovery.delete(key);
-          } else {
-            const restored = lastSleepRecoveryValues.get(cacheKey) ?? defaultSleepRecoveryRule(1);
-            const finalRule: SleepRecoveryRule = {
-              triggerShifts: [1],
-              recoveryHours: restored.recoveryHours,
-            };
-            store.updateOneTimeTask(srId, { sleepRecovery: finalRule });
-            expandedSleepRecovery.add(key);
-          }
-        }
         rerender();
         break;
       }
