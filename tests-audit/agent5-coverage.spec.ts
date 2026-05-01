@@ -127,7 +127,7 @@ test('continuity: generate-from-day button regenerates schedule', async ({ page 
 // ─────────────────────────────────────────────────────────────────
 test('data-transfer: open transfer accordion, click export', async ({ page }) => {
   await freshLoad(page);
-  await gotoTab(page, 'אלגו');
+  await gotoTab(page, 'הגדרות');
   // The accordion sections live under #acc-transfer
   // Find header by text
   const header = page.locator('.settings-accordion-header', { hasText: 'העברת נתונים' }).first();
@@ -150,7 +150,7 @@ test('data-transfer: open transfer accordion, click export', async ({ page }) =>
 
 test('data-transfer: import button opens dialog', async ({ page }) => {
   await freshLoad(page);
-  await gotoTab(page, 'אלגו');
+  await gotoTab(page, 'הגדרות');
   const acc = page.locator('[data-action="settings-accordion-toggle"]').filter({ hasText: 'העברת' }).first();
   if (await acc.isVisible().catch(() => false)) await acc.click();
   await page.waitForTimeout(200);
@@ -251,7 +251,7 @@ test('swimlane: clicking group header toggles aria-expanded', async ({ page }) =
 // ─────────────────────────────────────────────────────────────────
 test('day-start-hour: clicking a custom-select option persists value', async ({ page }) => {
   await freshLoad(page);
-  await gotoTab(page, 'אלגו');
+  await gotoTab(page, 'הגדרות');
   // ensure the parent accordion is open
   const acc = page.locator('[data-action="settings-accordion-toggle"]').filter({ hasText: /יום|שעה/ }).first();
   if (await acc.isVisible().catch(() => false)) await acc.click();
@@ -382,7 +382,7 @@ test('snapshot panel: open and save creates a new entry', async ({ page }) => {
 // ─────────────────────────────────────────────────────────────────
 test('reset storage and factory reset both trigger confirm dialogs', async ({ page }) => {
   await freshLoad(page);
-  await gotoTab(page, 'אלגו');
+  await gotoTab(page, 'הגדרות');
   // Find the factory reset button
   const factory = page.locator('#btn-factory-reset');
   await factory.waitFor();
@@ -417,7 +417,7 @@ test('no console errors during uncovered-surface exercises', async ({ page }) =>
   await days.dispatchEvent('change');
   await page.waitForTimeout(300);
   // toggle algo accordions
-  await gotoTab(page, 'אלגו');
+  await gotoTab(page, 'הגדרות');
   const accs = page.locator('[data-action="settings-accordion-toggle"]');
   const n = Math.min(await accs.count(), 3);
   for (let i = 0; i < n; i++) await accs.nth(i).click();
