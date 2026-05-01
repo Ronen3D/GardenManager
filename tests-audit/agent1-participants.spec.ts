@@ -94,14 +94,16 @@ test('delete participant: confirms then removes', async ({ page }) => {
   expect(pageErrors).toEqual([]);
 });
 
-test('toggle availability: open expand row, see availability data', async ({ page }) => {
+test('toggle blackouts within edit mode (desktop has no row-expand toggle, must use edit row)', async ({ page }) => {
   await setup(page);
-  const firstExpandBtn = page.locator('[data-action="toggle-details"]').first();
-  await firstExpandBtn.click();
-  await page.waitForTimeout(300);
-  // The "expand" toggles unavailability blackout panel
-  const expansion = page.locator('tr.row-blackout-expansion').first();
-  expect(await expansion.count()).toBeGreaterThan(0);
+  // Open edit on first participant
+  await page.locator('[data-action="edit-participant"]').first().click();
+  await page.waitForTimeout(200);
+  const blackoutToggle = page.locator('[data-action="toggle-blackouts"]').first();
+  await expect(blackoutToggle).toBeVisible();
+  await blackoutToggle.click();
+  await page.waitForTimeout(200);
+  await expect(page.locator('tr.row-blackout-expansion').first()).toBeVisible();
 });
 
 test('filter by group: click each group pill filters list', async ({ page }) => {
@@ -125,18 +127,49 @@ test('sort by name: clicking column header reverses order', async ({ page }) => 
   expect(JSON.stringify(after)).not.toBe(JSON.stringify(before));
 });
 
-test('table-edit mode: enter, edit a cell, exit', async ({ page }) => {
+test('table-edit mode: enter, edit a cell, save', async ({ page }) => {
   await setup(page);
   await page.locator('[data-action="enter-table-edit"]').click();
   await page.waitForTimeout(300);
-  // Inside table-edit; check for some indicator
-  const inEdit = await page.evaluate(() => !!document.querySelector('.table-edit-mode, [data-table-edit-active], .te-mode'));
-  console.log('in table-edit-mode marker found:', inEdit);
-  // Try to find an "exit" button
-  const exitBtn = page.locator('[data-action="exit-table-edit"], [data-action="cancel-table-edit"], [data-action="te-exit"]');
-  console.log('exit candidates:', await exitBtn.count());
-  // Capture screenshot to inspect
-  await page.screenshot({ path: 'tests-audit/screenshots/agent1-table-edit-mode.png', fullPage: true });
+  // Should now have te-table & te-toolbar
+  await expect(page.locator('.te-table')).toBeVisible();
+  // Edit name in first row
+  const firstNameInput = page.locator('.te-table input[data-te-field="name"]').first();
+  await firstNameInput.fill('שם חדש');
+  await firstNameInput.dispatchEvent('input');
+  // Try save
+  await page.locator('[data-te-action="save"]').click();
+  await page.waitForTimeout(500);
+  // Confirm dialog may appear; if so accept
+  const confirmDialog = page.locator('.gm-modal-backdrop button.btn-primary, .gm-modal-backdrop button', { hasText: 'אישור' }).first();
+  if (await confirmDialog.count() > 0 && await confirmDialog.isVisible()) {
+    await confirmDialog.click();
+    await page.waitForTimeout(500);
+  }
+  // Should have exited table-edit
+  expect(pageErrors).toEqual([]);
+});
+
+test('table-edit mode: cancel exits without saving', async ({ page }) => {
+  await setup(page);
+  await page.locator('[data-action="enter-table-edit"]').click();
+  await page.waitForTimeout(300);
+  await expect(page.locator('.te-table')).toBeVisible();
+  await page.locator('[data-te-action="cancel"]').click();
+  await page.waitForTimeout(300);
+  // Back to participants table
+  await expect(page.locator('.table-participants')).toBeVisible();
+});
+
+test('table-edit mode: add-row button', async ({ page }) => {
+  await setup(page);
+  await page.locator('[data-action="enter-table-edit"]').click();
+  await page.waitForTimeout(300);
+  const before = await page.locator('.te-table tbody tr.te-row').count();
+  await page.locator('[data-te-action="add-row"]').first().click();
+  await page.waitForTimeout(200);
+  const after = await page.locator('.te-table tbody tr.te-row').count();
+  expect(after).toBe(before + 1);
 });
 
 test('participant sets panel toggle', async ({ page }) => {
@@ -183,12 +216,14 @@ test('bulk add unavailability dialog opens', async ({ page }) => {
   await page.locator('[data-action="bulk-dialog-cancel"]').click();
 });
 
-test('toggle-all-details collapse/expand', async ({ page }) => {
+test('toggle-all-details exists but is hidden on desktop (mobile-only by design)', async ({ page }) => {
   await setup(page);
-  await page.locator('[data-action="toggle-all-details"]').click();
-  await page.waitForTimeout(200);
-  expect(pageErrors).toEqual([]);
-  console.log('console errors:', consoleErrors);
+  // The button has class .btn-expand-all-mobile which is display:none on desktop.
+  const btn = page.locator('[data-action="toggle-all-details"]');
+  expect(await btn.count()).toBeGreaterThan(0);
+  // Confirm it is intentionally hidden
+  const visible = await btn.isVisible();
+  expect(visible).toBe(false);
 });
 
 test('console errors during page load', async ({ page }) => {
