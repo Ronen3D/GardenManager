@@ -330,6 +330,15 @@ export interface ScheduleScore {
    *  that escapes the globalMin plateau: rises with any individual gap that
    *  grows, with diminishing returns from the concave shape. */
   restPerGapBonus: number;
+  /** SC-6 low-priority level penalty contribution to totalPenalty.
+   *  Optional so older serialized schedules deserialize cleanly. */
+  lowPriorityPenalty?: number;
+  /** SC-9 "not with" pair penalty contribution to totalPenalty.
+   *  Optional so older serialized schedules deserialize cleanly. */
+  notWithPenalty?: number;
+  /** SC-10 task-name preference penalty contribution to totalPenalty.
+   *  Optional so older serialized schedules deserialize cleanly. */
+  taskPrefPenalty?: number;
   /** Penalty for disrupting existing assignments (rescue mode only) */
   disruptionPenalty?: number;
 }

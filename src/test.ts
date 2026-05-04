@@ -4884,6 +4884,44 @@ console.log('\n── Rest Calculator: Extended ──────────�
     `restPerGapBonus signals 8h-rotation > 4h-rotation: wide=${sWide.restPerGapBonus.toFixed(3)} > narrow=${sNarrow.restPerGapBonus.toFixed(3)}`);
 }
 
+// ─── ScheduleScore: per-bucket penalty exposure ─────────────────────────────
+// Backs the score-breakdown debug panel — the panel shows penalty sub-buckets
+// individually, so we guard that they sum to totalPenalty and that the six
+// weighted terms reconstruct compositeScore exactly.
+{
+  const t1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10));
+  const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18));
+  const tasks = [t1, t2];
+  const pSum: Participant = {
+    id: 'sb-sum', name: 'sb-sum', level: Level.L0, certifications: ['Nitzan'], group: 'g',
+    availability: [{ start: new Date(baseDate.getTime() - 86400000), end: new Date(baseDate.getTime() + 2 * 86400000) }],
+    dateUnavailability: [],
+  };
+  const aSum: Assignment[] = tasks.map((t, i) => ({
+    id: `sb-${i}`, taskId: t.id, slotId: t.slots[0].slotId,
+    participantId: pSum.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+  }));
+  const sSum = computeScheduleScore(tasks, [pSum], aSum, DEFAULT_CONFIG);
+
+  // Penalty bucket sum equality
+  const bucketSum = (sSum.lowPriorityPenalty ?? 0) + (sSum.notWithPenalty ?? 0) + (sSum.taskPrefPenalty ?? 0);
+  assert(Math.abs(bucketSum - sSum.totalPenalty) < 1e-9,
+    `Penalty buckets sum to totalPenalty: ${bucketSum.toFixed(3)} vs ${sSum.totalPenalty.toFixed(3)}`);
+
+  // Six-term reconstruction equality — guards against drift between formula
+  // and exposed components, which is the contract the debug panel relies on.
+  const cfg = DEFAULT_CONFIG;
+  const reconstructed =
+    cfg.minRestWeight * sSum.minRestHours
+    + cfg.restPerGapWeight * sSum.restPerGapBonus
+    - cfg.l0FairnessWeight * sSum.l0StdDev
+    - cfg.seniorFairnessWeight * sSum.seniorStdDev
+    - cfg.dailyBalanceWeight * (sSum.dailyPerParticipantStdDev + sSum.dailyGlobalStdDev)
+    - sSum.totalPenalty;
+  assert(Math.abs(reconstructed - sSum.compositeScore) < 1e-6,
+    `Six-term sum reconstructs compositeScore: ${reconstructed.toFixed(3)} vs ${sSum.compositeScore.toFixed(3)}`);
+}
+
 // ─── Soft Constraints: workloadImbalanceSplit ───────────────────────────────
 
 console.log('\n── Soft Constraints: Workload Balance ──');

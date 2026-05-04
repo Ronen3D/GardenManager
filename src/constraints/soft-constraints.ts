@@ -594,25 +594,27 @@ export function computeScheduleScore(
   // to avoid a redundant O(P×A) effective-hours scan.
   const combinedStdDev = wlSplit.combinedStdDev;
 
-  // Penalties
-  let totalPenalty = 0;
-
+  // Penalties — captured per bucket so the score-breakdown panel can show
+  // SC-6 / SC-9 / SC-10 contributions individually. Same calls as before, just
+  // bound to named locals before being summed.
   // Workload imbalance is captured directly via l0FairnessWeight * l0StdDev
   // and seniorFairnessWeight * seniorStdDev in the composite formula — no
   // double-counting through totalPenalty.
-
   // SC-5 (back-to-back penalty) removed — redundant with minRestWeight and HC-12.
 
   // SC-6: Low-priority level penalty — pass pre-built maps
-  totalPenalty += computeLowPriorityLevelPenalty(participants, assignments, tasks, config, pMap, taskMap);
+  const lowPriorityPenalty = computeLowPriorityLevelPenalty(participants, assignments, tasks, config, pMap, taskMap);
 
   // SC-9: "Not with" togetherness penalty
-  if (ctx?.notWithPairs && ctx.notWithPairs.size > 0) {
-    totalPenalty += computeNotWithPenalty(assignments, config, taskMap, assignmentsByTask, ctx.notWithPairs);
-  }
+  const notWithPenalty =
+    ctx?.notWithPairs && ctx.notWithPairs.size > 0
+      ? computeNotWithPenalty(assignments, config, taskMap, assignmentsByTask, ctx.notWithPairs)
+      : 0;
 
   // SC-10: Task name preference penalty
-  totalPenalty += computeTaskNamePreferencePenalty(participants, config, taskMap, byParticipant);
+  const taskPrefPenalty = computeTaskNamePreferencePenalty(participants, config, taskMap, byParticipant);
+
+  const totalPenalty = lowPriorityPenalty + notWithPenalty + taskPrefPenalty;
 
   // SC-8: Daily workload balance — pass pre-built data + capacities
   const dailyBalance = dailyWorkloadImbalance(
@@ -650,6 +652,9 @@ export function computeScheduleScore(
     dailyPerParticipantStdDev: dailyBalance.dailyPerParticipantStdDev,
     dailyGlobalStdDev: dailyBalance.dailyGlobalStdDev,
     restPerGapBonus,
+    lowPriorityPenalty,
+    notWithPenalty,
+    taskPrefPenalty,
   };
 }
 

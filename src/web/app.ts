@@ -67,6 +67,7 @@ import { runPreflight } from './preflight';
 import { showRangePicker } from './range-picker-modal';
 import { closeRescueModal, initRescue, openRescueModal, type RescueSwapLabel } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice, onSmallScreenChange } from './responsive';
+import { attachTripleClickOpener, clearAttemptScoreHistory, pushAttemptScore } from './score-breakdown-panel';
 import { renderScheduleGrid } from './schedule-grid-view';
 import {
   computePerDayHours,
@@ -2308,6 +2309,9 @@ async function doGenerate(): Promise<void> {
     bestUnfilled: Infinity,
     lastImproved: false,
   };
+  // Reset per-attempt score history for the score-breakdown panel.
+  // Push happens inside the existing onProgress callback below.
+  clearAttemptScoreHistory();
 
   // Render the tab (with old schedule or empty state) + overlay
   renderAll();
@@ -2338,6 +2342,9 @@ async function doGenerate(): Promise<void> {
           bestUnfilled: info.currentBestUnfilled,
           lastImproved: info.improved,
         };
+        // Capture this attempt's final score for the breakdown sparkline.
+        // Push-only into a small array (~60 numbers/run) — free.
+        pushAttemptScore(info.attemptScore);
         // Surgically update just the overlay
         updateOverlay();
       },
@@ -3626,7 +3633,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.9.5</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.9.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4251,6 +4258,12 @@ function openTaskPanelMenu(menu: HTMLElement, trigger: HTMLElement): void {
 function wireScheduleEvents(container: HTMLElement): void {
   const genBtn = container.querySelector('#btn-generate');
   if (genBtn) genBtn.addEventListener('click', doGenerate);
+
+  // Score-breakdown easter egg: triple-click on the score chip opens a modal
+  // showing how the composite score is built. No visual affordance — the
+  // chip looks identical to today.
+  const scoreChip = container.querySelector('#kpi-score') as HTMLElement | null;
+  if (scoreChip) attachTripleClickOpener(scoreChip, () => currentSchedule);
 
   const createManualEmptyBtn = container.querySelector('#btn-create-manual-empty');
   if (createManualEmptyBtn) createManualEmptyBtn.addEventListener('click', doCreateManualSchedule);
