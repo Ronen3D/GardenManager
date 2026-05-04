@@ -20,7 +20,7 @@ import {
 import * as store from './config-store';
 import { isTouchDevice } from './responsive';
 import { violationLabel } from './schedule-utils';
-import { escHtml, fmt, stripDayPrefix } from './ui-helpers';
+import { escAttr, escHtml, fmt, stripDayPrefix } from './ui-helpers';
 
 // ─── Context injection ──────────────────────────────────────────────────────
 
@@ -38,6 +38,8 @@ export interface VacatedSlotRecord {
   participantId: string;
   start: Date;
   end: Date;
+  /** Optional free-text reason captured from the modal input. */
+  reason?: string;
 }
 
 export interface RescueContext {
@@ -87,6 +89,11 @@ let _rescueTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
  *  is `true` (record). Persists for the session only — not localStorage. */
 let _rescueRecordVacatedDefault = true;
 
+/** Per-modal reason input value. Reset when a fresh rescue modal opens so it
+ *  does not bleed between unrelated rescue sessions, but preserved across
+ *  same-session re-renders (Show More / page navigation). */
+let _rescueReasonInflight = '';
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 export function openRescueModal(assignmentId: string): void {
@@ -108,6 +115,7 @@ export function openRescueModal(assignmentId: string): void {
 
   _rescuePage = 0;
   _rescueAssignmentId = assignmentId;
+  _rescueReasonInflight = '';
   // Read frozen engine state so rescue planning uses the schedule's generation-
   // time settings; external edits since then are deliberately ignored.
   const engine = _ctx?.getEngine();
@@ -279,12 +287,20 @@ function showRescueModal(): void {
   // "Record vacated participant as future-unavailable" toggle. Single shared
   // state — applies to whichever plan the user clicks Apply on.
   const recordChecked = _rescueRecordVacatedDefault ? ' checked' : '';
+  const reasonDisplay = _rescueRecordVacatedDefault ? 'block' : 'none';
   const recordVacatedRow = vacatedP
     ? `<div class="rescue-record-vacated-row">
         <label class="rescue-record-vacated-label">
           <input type="checkbox" id="rescue-record-vacated"${recordChecked}>
           <span>סמן את <strong>${escHtml(vacatedP.name)}</strong> כלא־זמין/ה לחלון הזמן של המשבצת (לרסקיו עתידי)</span>
         </label>
+        <div class="rescue-record-vacated-reason" id="rescue-record-vacated-reason" style="display: ${reasonDisplay};">
+          <input id="rescue-record-vacated-reason-input"
+                 class="input-sm rescue-record-vacated-reason-input"
+                 type="text" maxlength="80" autocomplete="off"
+                 placeholder="סיבה (אופציונלי, למשל: מילואים, חופש, מחלה)"
+                 value="${escAttr(_rescueReasonInflight)}" />
+        </div>
       </div>`
     : '';
 
@@ -478,11 +494,23 @@ function wireRescueModalEvents(): void {
 
   // Record-vacated checkbox: update session default whenever it changes so
   // re-rendering after "Show More" preserves the user's choice and the next
-  // modal open inherits it.
+  // modal open inherits it. Also toggles the reason input visibility (it is
+  // an opt-in inside an opt-in).
   const recordCb = backdrop.querySelector<HTMLInputElement>('#rescue-record-vacated');
+  const reasonWrap = backdrop.querySelector<HTMLElement>('#rescue-record-vacated-reason');
+  const reasonInput = backdrop.querySelector<HTMLInputElement>('#rescue-record-vacated-reason-input');
   if (recordCb) {
     recordCb.addEventListener('change', () => {
       _rescueRecordVacatedDefault = recordCb.checked;
+      if (reasonWrap) {
+        reasonWrap.style.display = recordCb.checked ? 'block' : 'none';
+        if (recordCb.checked && reasonInput) reasonInput.focus();
+      }
+    });
+  }
+  if (reasonInput) {
+    reasonInput.addEventListener('input', () => {
+      _rescueReasonInflight = reasonInput.value;
     });
   }
 
@@ -626,6 +654,9 @@ function applyRescuePlan(plan: RescuePlan): void {
   // payload that app.ts persists onto `Schedule.scheduleUnavailability`.
   const recordCb = document.getElementById('rescue-record-vacated') as HTMLInputElement | null;
   const recordChecked = recordCb ? recordCb.checked : _rescueRecordVacatedDefault;
+  const reasonInputEl = document.getElementById('rescue-record-vacated-reason-input') as HTMLInputElement | null;
+  const reasonRaw = (reasonInputEl?.value ?? _rescueReasonInflight).trim();
+  const reason = reasonRaw === '' ? undefined : reasonRaw;
   const focalTask = currentSchedule.tasks.find((t) => t.id === _rescueResult!.request.taskId);
   const recordVacatedSlot: VacatedSlotRecord | null =
     recordChecked && focalTask
@@ -633,6 +664,7 @@ function applyRescuePlan(plan: RescuePlan): void {
           participantId: _rescueResult.request.vacatedBy,
           start: focalTask.timeBlock.start,
           end: focalTask.timeBlock.end,
+          reason,
         }
       : null;
 

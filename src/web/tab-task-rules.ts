@@ -258,7 +258,7 @@ type ParsedSleepRecovery =
   | { kind: 'invalid'; reason: string };
 
 const SLEEP_RECOVERY_MAX_HOURS = 24;
-const DEFAULT_RECOVERY_HOURS = 5;
+const DEFAULT_RECOVERY_HOURS = 7;
 
 /**
  * Cache the user's last-typed recovery hours per template/one-time task. Read

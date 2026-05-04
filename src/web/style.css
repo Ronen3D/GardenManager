@@ -5269,8 +5269,19 @@ tr.row-selected:hover {
 
 .rescue-record-vacated-row {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   padding: 10px 20px 0 20px;
+}
+
+.rescue-record-vacated-reason {
+  width: 100%;
+}
+
+.rescue-record-vacated-reason-input {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .rescue-record-vacated-label {
@@ -10815,6 +10826,15 @@ tr.now-row-animate > td.time-cell {
 
 .swap-picker-record-vacated strong {
   color: var(--text, #222);
+}
+
+.swap-picker-record-reason {
+  width: 100%;
+}
+
+.swap-picker-record-reason-input {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .swap-picker-cancel,

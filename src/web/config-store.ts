@@ -2138,7 +2138,7 @@ export function seedDefaultTaskTemplates(): void {
     ],
     slots: [],
     restRuleId: defaultRestRule.id,
-    sleepRecovery: { triggerShifts: [3], recoveryHours: 5 },
+    sleepRecovery: { triggerShifts: [3], recoveryHours: 7 },
     color: '#4A90D9',
     displayOrder: 0,
   });
@@ -2195,7 +2195,7 @@ export function seedDefaultTaskTemplates(): void {
       },
     ],
     restRuleId: defaultRestRule.id,
-    sleepRecovery: { triggerShifts: [6], recoveryHours: 5 },
+    sleepRecovery: { triggerShifts: [6], recoveryHours: 7 },
     color: '#F39C12',
     displayOrder: 4,
   });

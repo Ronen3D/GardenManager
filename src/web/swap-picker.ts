@@ -30,7 +30,7 @@ import { computeAllCapacities } from '../utils/capacity';
 import { renderParticipantCard } from './participant-card';
 import { isTouchDevice } from './responsive';
 import { violationLabel } from './schedule-utils';
-import { escHtml, fmt, stripDayPrefix } from './ui-helpers';
+import { escAttr, escHtml, fmt, stripDayPrefix } from './ui-helpers';
 import { showBottomSheet, showToast } from './ui-modal';
 import { computeWeeklyWorkloads, type WeeklyWorkload } from './workload-utils';
 
@@ -42,6 +42,8 @@ export interface VacatedSlotRecord {
   participantId: string;
   start: Date;
   end: Date;
+  /** Optional free-text reason captured from the picker input (free mode only). */
+  reason?: string;
 }
 
 export interface SwapPickerDeps {
@@ -88,6 +90,8 @@ interface PickerState {
   selectedTradeAssignmentId: string | null;
   preview: SwapPreview | null;
   committing: boolean;
+  /** Free-mode reason input value, preserved across re-renders. */
+  reason: string;
 }
 
 interface ResolvedContext {
@@ -127,6 +131,7 @@ export async function openSwapPicker(assignmentId: string, deps: SwapPickerDeps)
     selectedTradeAssignmentId: null,
     preview: null,
     committing: false,
+    reason: '',
   };
 
   const ctx = resolveContext(state, deps);
@@ -562,11 +567,27 @@ function renderActions(state: PickerState, ctx: ResolvedContext): string {
     recordLabel = `סמן את <strong>${escHtml(ctx.sourceParticipant.name)}</strong> כלא־זמין/ה לחלון הזמן של המשבצת (לרסקיו עתידי)`;
   }
 
+  // Reason input is shown only in free mode. Trade-mode entries are
+  // intentionally recorded without a `reason` — that behavior is under
+  // user reconsideration and we don't want to bake reason capture into it.
+  const reasonDisplay = _swapRecordVacatedDefault ? 'block' : 'none';
+  const reasonRow =
+    state.mode === 'free'
+      ? `<div class="swap-picker-record-reason" id="swap-picker-record-reason" style="display: ${reasonDisplay};">
+          <input id="swap-picker-record-reason-input"
+                 class="input-sm swap-picker-record-reason-input"
+                 type="text" maxlength="80" autocomplete="off"
+                 placeholder="סיבה (אופציונלי, למשל: מילואים, חופש, מחלה)"
+                 value="${escAttr(state.reason)}" />
+        </div>`
+      : '';
+
   return `<div class="swap-picker-actions">
     <label class="swap-picker-record-vacated">
       <input type="checkbox" id="swap-picker-record-vacated"${recordChecked}>
       <span>${recordLabel}</span>
     </label>
+    ${reasonRow}
     <div class="swap-picker-actions-buttons">
       <button class="btn-outline swap-picker-cancel">ביטול</button>
       <button class="btn-primary swap-picker-confirm" ${canConfirm ? '' : 'disabled'}>אישור החלפה</button>
@@ -652,11 +673,23 @@ function wireEvents(
 
   // Record-vacated checkbox: update session default whenever the user
   // toggles it so re-renders preserve the choice and the next picker open
-  // inherits it.
+  // inherits it. Also toggles the reason input visibility (free mode only —
+  // the input is not rendered at all in trade mode).
   const recordCb = root.querySelector<HTMLInputElement>('#swap-picker-record-vacated');
+  const reasonWrap = root.querySelector<HTMLElement>('#swap-picker-record-reason');
+  const reasonInput = root.querySelector<HTMLInputElement>('#swap-picker-record-reason-input');
   if (recordCb) {
     recordCb.addEventListener('change', () => {
       _swapRecordVacatedDefault = recordCb.checked;
+      if (reasonWrap) {
+        reasonWrap.style.display = recordCb.checked ? 'block' : 'none';
+        if (recordCb.checked && reasonInput) reasonInput.focus();
+      }
+    });
+  }
+  if (reasonInput) {
+    reasonInput.addEventListener('input', () => {
+      state.reason = reasonInput.value;
     });
   }
 
@@ -831,6 +864,10 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
   // the session default if the checkbox isn't in the DOM for any reason.
   const recordCb = document.getElementById('swap-picker-record-vacated') as HTMLInputElement | null;
   const recordChecked = recordCb ? recordCb.checked : _swapRecordVacatedDefault;
+  // Reason is captured only in free mode; trade-mode entries deliberately
+  // omit `reason` (see rationale on the `reasonRow` block in renderActions).
+  const reasonRaw = state.mode === 'free' ? state.reason.trim() : '';
+  const reason = reasonRaw === '' ? undefined : reasonRaw;
 
   let result: ReturnType<SchedulingEngine['swapParticipant']>;
   let label: string;
@@ -885,6 +922,7 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
           participantId: ctx.sourceParticipant.id,
           start: ctx.sourceTask.timeBlock.start,
           end: ctx.sourceTask.timeBlock.end,
+          reason,
         },
       ];
     }
