@@ -74,6 +74,7 @@ import {
   filterVisibleViolations,
   formatLiveClock,
   getDayWindow,
+  operationalHalfHourLabels,
   operationalHourOrder,
   resolveLogicalDayTimestamp,
   statusBadge,
@@ -99,6 +100,7 @@ import { hideTaskTooltip, hideTooltip, initTooltips, wireParticipantTooltip, wir
 import {
   applyTheme,
   certBadges,
+  escAttr,
   escHtml,
   fmt,
   getStoredDefaultAttempts,
@@ -246,8 +248,6 @@ let _sidebarCollapsed = (() => {
     return false;
   }
 })();
-let _availabilityPopoverEl: HTMLElement | null = null;
-let _availabilityPopoverKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 let _availabilityInlineOpen = false;
 
 // Range selection (replaces single-point _availabilityInlineTimeMs)
@@ -268,6 +268,18 @@ let _availabilityPostMarginHours = 1;
 // Strict sleep-recovery filter (off by default — resting participants are shown
 // with a 😴 badge so SOS/rescue triage can still see them).
 let _availabilityHideSleepRecovery = false;
+
+// Grouping mode for the availability bucket list. Default = פק"ל so the
+// initial view matches the historical behavior; user can switch via the tab
+// strip above the bucket list.
+type AvailabilityGroupingMode = 'pakal' | 'group' | 'level' | 'cert';
+let _availabilityGroupingMode: AvailabilityGroupingMode = 'pakal';
+
+// Multi-select chip filters applied BEFORE bucketing. Empty set = no filter
+// for that kind. AND across kinds, OR within each kind.
+let _availabilityLevelFilter: Set<Level> = new Set();
+let _availabilityCertFilter: Set<string> = new Set();
+let _availabilityGroupFilter: Set<string> = new Set();
 
 // Two-click cell range selection
 let _timeCellSelectionPhase: 'idle' | 'start-selected' = 'idle';
@@ -353,9 +365,9 @@ function clearManualSelection(): void {
 }
 
 function renderAvailabilityInspectorInline(): string {
-  const numDays = store.getScheduleDays();
-  const baseDate = store.getScheduleDate();
-  const dayStartHour = store.getDayStartHour();
+  if (!currentSchedule) return '';
+  const numDays = currentSchedule.periodDays;
+  const dayStartHour = currentSchedule.algorithmSettings.dayStartHour;
   const selectedDayStart =
     _availabilityInspectorDay && _availabilityInspectorDay >= 1 && _availabilityInspectorDay <= numDays
       ? _availabilityInspectorDay
@@ -368,9 +380,11 @@ function renderAvailabilityInspectorInline(): string {
   _availabilityInspectorDayEnd = selectedDayEnd;
 
   const normalizeHourLabel = (v: string): string => {
-    const m = v.match(/^(\d{1,2}):/);
+    const m = v.match(/^(\d{1,2}):(\d{2})$/);
     const h = m ? Math.max(0, Math.min(23, parseInt(m[1], 10))) : dayStartHour;
-    return `${String(h).padStart(2, '0')}:00`;
+    const minRaw = m ? parseInt(m[2], 10) : 0;
+    const min = minRaw >= 30 ? 30 : 0;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
   };
   _availabilityInspectorTimeStart = normalizeHourLabel(_availabilityInspectorTimeStart);
   _availabilityInspectorTimeEnd = normalizeHourLabel(_availabilityInspectorTimeEnd);
@@ -388,12 +402,48 @@ function renderAvailabilityInspectorInline(): string {
   };
 
   const makeHourOptions = (selectedTime: string) =>
-    operationalHourOrder(dayStartHour).map((h) => {
-      const label = `${String(h).padStart(2, '0')}:00`;
-      return { value: label, label, selected: label === selectedTime };
-    });
+    operationalHalfHourLabels(dayStartHour).map((label) => ({
+      value: label,
+      label,
+      selected: label === selectedTime,
+    }));
 
   const marginDisplay = _availabilityMarginEnabled ? '' : ' style="display:none"';
+  const hc15Disabled = new Set(currentSchedule.algorithmSettings.disabledHardConstraints).has('HC-15');
+
+  // Chip filters — each kind is OR within the kind, AND across kinds.
+  // Empty filter set = no constraint of that kind.
+  const chip = (kind: 'level' | 'cert' | 'group', value: string, label: string, active: boolean): string =>
+    `<button type="button" class="avail-strip-chip ${active ? 'avail-strip-chip-active' : ''}" data-chip-kind="${kind}" data-chip-value="${escAttr(value)}" data-no-swipe>${escHtml(label)}</button>`;
+
+  const levelChips = [Level.L4, Level.L3, Level.L2, Level.L0]
+    .map((lv) => chip('level', String(lv), `L${lv}`, _availabilityLevelFilter.has(lv)))
+    .join('');
+  const certEntries = Object.entries(currentSchedule.certLabelSnapshot);
+  const certChips = certEntries.map(([cid, label]) => chip('cert', cid, label, _availabilityCertFilter.has(cid))).join('');
+  const groupSet = new Set<string>();
+  for (const p of currentSchedule.participants) {
+    const g = (p.group || '').trim();
+    if (g) groupSet.add(g);
+  }
+  const groupChips = Array.from(groupSet)
+    .sort((a, b) => a.localeCompare(b, 'he'))
+    .map((g) => chip('group', g, g, _availabilityGroupFilter.has(g)))
+    .join('');
+
+  // Prune chip filter values whose chip is no longer rendered (e.g. cert
+  // removed from the schedule, group eliminated by a regeneration). Otherwise
+  // the filter would silently drop participants with no visible way to opt out
+  // beyond the "נקה" link.
+  const validCertIds = new Set(certEntries.map(([id]) => id));
+  for (const id of _availabilityCertFilter) {
+    if (!validCertIds.has(id)) _availabilityCertFilter.delete(id);
+  }
+  for (const g of _availabilityGroupFilter) {
+    if (!groupSet.has(g)) _availabilityGroupFilter.delete(g);
+  }
+  const hasAnyFilter =
+    _availabilityLevelFilter.size + _availabilityCertFilter.size + _availabilityGroupFilter.size > 0;
 
   return `
     <div class="avail-strip-inputs-row">
@@ -404,7 +454,7 @@ function renderAvailabilityInspectorInline(): string {
       <span class="avail-strip-range-label">עד:</span>
       ${renderCustomSelect({ id: 'gm-availability-day-end', options: makeDayOptions(selectedDayEnd), className: 'input-sm availability-day-select' })}
       ${renderCustomSelect({ id: 'gm-availability-time-end', options: makeHourOptions(_availabilityInspectorTimeEnd), className: 'input-sm availability-time-input' })}
-      <button class="btn-sm btn-primary" id="btn-open-availability-inspector" title="בדיקת זמינות לפי טווח">הצג זמינות</button>
+      <button class="btn-sm btn-primary" id="btn-open-availability-inspector" title="בדיקת זמינות לפי טווח">${_availabilityRangeStartMs !== null ? 'חשב מחדש' : 'הצג זמינות'}</button>
     </div>
     <div class="avail-strip-margin-row">
       <label class="avail-strip-margin-toggle">
@@ -416,13 +466,99 @@ function renderAvailabilityInspectorInline(): string {
         <label>אחרי: <input type="number" id="gm-availability-post-margin" class="input-sm avail-margin-input" value="${_availabilityPostMarginHours}" min="0" max="24" step="0.5" /> שעות</label>
       </div>
     </div>
-    <div class="avail-strip-margin-row">
+    <div class="avail-strip-chips-row">
+      <div class="avail-strip-chip-group"><span class="avail-strip-chip-label">דרגה:</span>${levelChips}</div>
+      ${certChips ? `<div class="avail-strip-chip-group"><span class="avail-strip-chip-label">הסמכות:</span>${certChips}</div>` : ''}
+      ${groupChips ? `<div class="avail-strip-chip-group"><span class="avail-strip-chip-label">קבוצות:</span>${groupChips}</div>` : ''}
+      ${hasAnyFilter ? `<button type="button" class="avail-strip-chip-clear" data-action="clear-availability-filters">נקה</button>` : ''}
+    </div>
+    ${
+      hc15Disabled
+        ? ''
+        : `<div class="avail-strip-margin-row">
       <label class="avail-strip-margin-toggle">
         <input type="checkbox" id="gm-availability-hide-sleep-recovery" ${_availabilityHideSleepRecovery ? 'checked' : ''} />
         <span>ללא השלמות שינה והתאוששות</span>
       </label>
-    </div>
+    </div>`
+    }
   `;
+}
+
+/**
+ * Round a timestamp down to the nearest half-hour so picked defaults align
+ * with the strip's HH:00/HH:30 dropdown grid. Avoids "off-by-N-minutes"
+ * dropdown labels that don't match the underlying range.
+ */
+function floorToHalfHour(ms: number): number {
+  return ms - (ms % (30 * 60_000));
+}
+
+/**
+ * The strip's grammar can address any timestamp from `[periodStart + dayStartHour]`
+ * up to (but not including) the next op-day's start, since `_availabilityInspectorDayEnd`
+ * is bounded by `periodDays`. The end of the very last op-day (`getDayWindow(periodDays).end`)
+ * has dayIndex = `periodDays + 1` which is unrepresentable. Clamp endMs to the
+ * last half-hour bucket BEFORE that boundary so the dropdowns always agree
+ * with the underlying range — otherwise a subsequent "חשב מחדש" click would
+ * read the clamped dropdowns and produce `tsEnd <= tsStart`.
+ */
+function clampToRepresentableHalfHour(ms: number, schedule: Schedule): number {
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  const lastValidEnd =
+    getDayWindow(schedule.periodDays, dsh, schedule.periodStart).end.getTime() - 30 * 60_000;
+  return Math.min(ms, lastValidEnd);
+}
+
+/**
+ * Compute a sensible default range for the availability strip the first time
+ * the user opens it on a given schedule:
+ *   - Live mode on  → [now, now + 1h] rounded down to half-hour grid
+ *   - Live mode off → the currently-selected day's op-day window (last half-hour
+ *     trimmed so it stays inside the strip's day/time grammar — see
+ *     clampToRepresentableHalfHour)
+ * Also mirrors the result onto the strip's day/time dropdowns so the user
+ * can see what was picked.
+ */
+function applySmartDefaultAvailabilityRange(): void {
+  if (!currentSchedule) return;
+  const schedule = currentSchedule;
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  const base = schedule.periodStart;
+  const lm = store.getLiveModeState();
+
+  let startMs: number;
+  let endMs: number;
+  if (lm.enabled) {
+    startMs = floorToHalfHour(lm.currentTimestamp.getTime());
+    endMs = startMs + 60 * 60_000;
+  } else {
+    const win = getDayWindow(currentDay, dsh, base);
+    startMs = win.start.getTime();
+    endMs = win.end.getTime();
+  }
+  endMs = clampToRepresentableHalfHour(endMs, schedule);
+  if (endMs <= startMs) {
+    // Pathological case: live anchor right at the period boundary. Fall back
+    // to a 30-min window ending at the last representable bucket.
+    startMs = endMs - 30 * 60_000;
+  }
+
+  _availabilityRangeStartMs = startMs;
+  _availabilityRangeEndMs = endMs;
+
+  // Mirror onto the strip dropdowns so the inputs reflect the picked range.
+  const anchor = new Date(base.getFullYear(), base.getMonth(), base.getDate(), dsh, 0).getTime();
+  const toDayIndex = (ms: number) => Math.max(1, Math.floor((ms - anchor) / 86400000) + 1);
+  const toHourLabel = (ms: number) => {
+    const d = new Date(ms);
+    const min = d.getMinutes() >= 30 ? 30 : 0;
+    return `${String(d.getHours()).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+  };
+  _availabilityInspectorDay = toDayIndex(startMs);
+  _availabilityInspectorDayEnd = toDayIndex(endMs);
+  _availabilityInspectorTimeStart = toHourLabel(startMs);
+  _availabilityInspectorTimeEnd = toHourLabel(endMs);
 }
 
 /** Collapsible availability strip between schedule grid and gantt */
@@ -3525,7 +3661,6 @@ function renderAll(): void {
   // Always hide tooltips on re-render to avoid stale state
   hideTooltip();
   hideTaskTooltip();
-  hideAvailabilityPopover();
 
   // ── Profile View: completely different layout, no re-optimization ──
   if (_viewMode === 'PROFILE_VIEW' && _profileParticipantId && currentSchedule) {
@@ -3634,7 +3769,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.9.7</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.9.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
@@ -4317,6 +4452,11 @@ function wireScheduleEvents(container: HTMLElement): void {
       const action = (e.target as HTMLElement).closest('[data-action]') as HTMLElement | null;
       if (action?.dataset.action === 'open-avail-strip') {
         _availabilityInlineOpen = true;
+        // Pre-fill a useful range so the user sees results on first open
+        // instead of an empty results panel.
+        if (_availabilityRangeStartMs === null || _availabilityRangeEndMs === null) {
+          applySmartDefaultAvailabilityRange();
+        }
         renderAll();
         return;
       }
@@ -4332,6 +4472,45 @@ function wireScheduleEvents(container: HTMLElement): void {
       if (closeTarget) {
         _availabilityRangeStartMs = null;
         _availabilityRangeEndMs = null;
+        renderAll();
+        return;
+      }
+      // Grouping switcher click
+      const tabTarget = (e.target as HTMLElement).closest('[data-grouping-mode]') as HTMLElement | null;
+      if (tabTarget) {
+        const mode = tabTarget.dataset.groupingMode as AvailabilityGroupingMode | undefined;
+        if (mode && mode !== _availabilityGroupingMode) {
+          _availabilityGroupingMode = mode;
+          renderAll();
+        }
+        return;
+      }
+      // Chip filter click
+      const chipTarget = (e.target as HTMLElement).closest('[data-chip-kind]') as HTMLElement | null;
+      if (chipTarget) {
+        const kind = chipTarget.dataset.chipKind as 'level' | 'cert' | 'group' | undefined;
+        const value = chipTarget.dataset.chipValue;
+        if (kind && value !== undefined) {
+          if (kind === 'level') {
+            const lv = Number(value) as Level;
+            if (_availabilityLevelFilter.has(lv)) _availabilityLevelFilter.delete(lv);
+            else _availabilityLevelFilter.add(lv);
+          } else if (kind === 'cert') {
+            if (_availabilityCertFilter.has(value)) _availabilityCertFilter.delete(value);
+            else _availabilityCertFilter.add(value);
+          } else if (kind === 'group') {
+            if (_availabilityGroupFilter.has(value)) _availabilityGroupFilter.delete(value);
+            else _availabilityGroupFilter.add(value);
+          }
+          renderAll();
+        }
+        return;
+      }
+      // Clear-all-filters link
+      if ((e.target as HTMLElement).closest('[data-action="clear-availability-filters"]')) {
+        _availabilityLevelFilter.clear();
+        _availabilityCertFilter.clear();
+        _availabilityGroupFilter.clear();
         renderAll();
         return;
       }
@@ -4612,6 +4791,7 @@ function wireScheduleEvents(container: HTMLElement): void {
         container
           .querySelectorAll('.time-cell-range-start')
           .forEach((el) => el.classList.remove('time-cell-range-start'));
+        showToast('בחירה בוטלה', { type: 'info' });
         return;
       }
       let startMs = _timeCellSelectionStartMs!;
@@ -4627,6 +4807,25 @@ function wireScheduleEvents(container: HTMLElement): void {
       _availabilityInlineOpen = true;
       _timeCellSelectionPhase = 'idle';
       _timeCellSelectionStartMs = null;
+
+      // Sync the strip dropdowns with the picked timestamps so that a
+      // subsequent click on "הצג זמינות" doesn't silently overwrite the
+      // cell-picked range with stale dropdown values (Bug 4).
+      if (currentSchedule) {
+        const dsh = currentSchedule.algorithmSettings.dayStartHour;
+        const base = currentSchedule.periodStart;
+        const anchor = new Date(base.getFullYear(), base.getMonth(), base.getDate(), dsh, 0).getTime();
+        const toDayIndex = (ms: number) => Math.floor((ms - anchor) / 86400000) + 1;
+        const toHourLabel = (ms: number) => {
+          const d = new Date(ms);
+          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        };
+        _availabilityInspectorDay = toDayIndex(startMs);
+        _availabilityInspectorDayEnd = toDayIndex(endMs);
+        _availabilityInspectorTimeStart = toHourLabel(startMs);
+        _availabilityInspectorTimeEnd = toHourLabel(endMs);
+      }
+
       container
         .querySelectorAll('.time-cell-range-start')
         .forEach((el) => el.classList.remove('time-cell-range-start'));
@@ -4676,8 +4875,7 @@ function wireScheduleEvents(container: HTMLElement): void {
   if (marginToggle) {
     marginToggle.addEventListener('change', () => {
       _availabilityMarginEnabled = marginToggle.checked;
-      const fields = container.querySelector('.avail-strip-margin-fields') as HTMLElement | null;
-      if (fields) fields.style.display = _availabilityMarginEnabled ? '' : 'none';
+      renderAll();
     });
   }
   const MARGIN_MIN_HOURS = 0;
@@ -4698,6 +4896,7 @@ function wireScheduleEvents(container: HTMLElement): void {
       } else {
         input.value = String(getState());
       }
+      renderAll();
     });
   };
   wireMarginInput(
@@ -4727,10 +4926,13 @@ function wireScheduleEvents(container: HTMLElement): void {
   const availabilityBtn = container.querySelector('#btn-open-availability-inspector') as HTMLElement | null;
   if (availabilityBtn) {
     availabilityBtn.addEventListener('click', () => {
+      if (!currentSchedule) return;
       const selectedDayStart = _availabilityInspectorDay ?? currentDay;
       const selectedDayEnd = _availabilityInspectorDayEnd ?? selectedDayStart;
-      const tsStart = resolveLogicalDayTimestamp(selectedDayStart, _availabilityInspectorTimeStart);
-      const tsEnd = resolveLogicalDayTimestamp(selectedDayEnd, _availabilityInspectorTimeEnd);
+      const dsh = currentSchedule.algorithmSettings.dayStartHour;
+      const base = currentSchedule.periodStart;
+      const tsStart = resolveLogicalDayTimestamp(selectedDayStart, _availabilityInspectorTimeStart, dsh, base);
+      const tsEnd = resolveLogicalDayTimestamp(selectedDayEnd, _availabilityInspectorTimeEnd, dsh, base);
       if (!tsStart || !tsEnd) return;
       if (tsEnd.getTime() <= tsStart.getTime()) {
         const message =
@@ -5146,17 +5348,6 @@ function navigateToTaskPanel(sourceName: string): void {
   window.scrollTo(0, 0);
 }
 
-function hideAvailabilityPopover(): void {
-  if (_availabilityPopoverKeyHandler) {
-    document.removeEventListener('keydown', _availabilityPopoverKeyHandler);
-    _availabilityPopoverKeyHandler = null;
-  }
-  if (_availabilityPopoverEl) {
-    _availabilityPopoverEl.remove();
-    _availabilityPopoverEl = null;
-  }
-}
-
 function getAvailableParticipantsInRange(
   schedule: Schedule,
   rangeStartMs: number,
@@ -5165,9 +5356,14 @@ function getAvailableParticipantsInRange(
   postMarginMs = 0,
   hideSleepRecovery = false,
 ): { participants: Participant[]; sleepRecoveryIds: Set<string> } {
+  const disabledHC = new Set(schedule.algorithmSettings.disabledHardConstraints);
+  const hc3Disabled = disabledHC.has('HC-3');
+  const hc15Disabled = disabledHC.has('HC-15');
   const taskMap = new Map(schedule.tasks.map((task) => [task.id, task]));
   const participantWindows = new Map<string, { startMs: number; endMs: number }[]>();
-  const participantTasks = new Map<string, Task[]>();
+  // participantTasks is only used by the HC-15 recovery-window scan; skip
+  // building it when HC-15 is disabled.
+  const participantTasks = hc15Disabled ? null : new Map<string, Task[]>();
   let orphanAssignments = 0;
   for (const assignment of schedule.assignments) {
     const task = taskMap.get(assignment.taskId);
@@ -5182,10 +5378,12 @@ function getAvailableParticipantsInRange(
       startMs: task.timeBlock.start.getTime(),
       endMs: task.timeBlock.end.getTime(),
     });
-    if (!participantTasks.has(assignment.participantId)) {
-      participantTasks.set(assignment.participantId, []);
+    if (participantTasks) {
+      if (!participantTasks.has(assignment.participantId)) {
+        participantTasks.set(assignment.participantId, []);
+      }
+      participantTasks.get(assignment.participantId)!.push(task);
     }
-    participantTasks.get(assignment.participantId)!.push(task);
   }
   const effectiveStart = rangeStartMs - preMarginMs;
   const effectiveEnd = rangeEndMs + postMarginMs;
@@ -5195,57 +5393,170 @@ function getAvailableParticipantsInRange(
   for (const participant of schedule.participants) {
     const windows = participantWindows.get(participant.id);
     if (windows?.some((w) => w.startMs < effectiveEnd && w.endMs > effectiveStart)) continue;
-    // Also exclude participants marked unavailable for any portion of the range
-    // via availability gaps, recurring weekly rules, or schedule-level
-    // unavailability entries (🆘 Future SOS).
-    if (findPreExistingUnavailabilityOverlaps(participant, schedule, effectiveWindow).length > 0) {
+    // HC-3: master availability + recurring rules + Future-SOS unavailability.
+    // Skipped when HC-3 is in disabledHardConstraints so the inspector mirrors
+    // what the engine/manual-build actually allow.
+    if (!hc3Disabled && findPreExistingUnavailabilityOverlaps(participant, schedule, effectiveWindow).length > 0) {
       continue;
     }
-    // HC-15 sleep-recovery: reports whether any finished task produces a
-    // recovery window that overlaps the effective range. When the strict
-    // filter is on, these participants are excluded; otherwise they stay in
-    // the list and the caller renders a 😴 badge.
-    let inRecovery = false;
-    const tasks = participantTasks.get(participant.id);
-    if (tasks) {
-      for (const task of tasks) {
-        const rw = getRecoveryWindow(task);
-        if (!rw) continue;
-        if (rw.start.getTime() < effectiveEnd && rw.end.getTime() > effectiveStart) {
-          inRecovery = true;
-          break;
+    // HC-15 sleep-recovery: 😴 tag (or strict drop) for participants whose
+    // recovery window overlaps the queried range. Skipped entirely when HC-15
+    // is disabled — no tag, no strict-filter effect.
+    if (!hc15Disabled && participantTasks) {
+      let inRecovery = false;
+      const tasks = participantTasks.get(participant.id);
+      if (tasks) {
+        for (const task of tasks) {
+          const rw = getRecoveryWindow(task);
+          if (!rw) continue;
+          if (rw.start.getTime() < effectiveEnd && rw.end.getTime() > effectiveStart) {
+            inRecovery = true;
+            break;
+          }
         }
       }
-    }
-    if (inRecovery) {
-      if (hideSleepRecovery) continue;
-      sleepRecoveryIds.add(participant.id);
+      if (inRecovery) {
+        if (hideSleepRecovery) continue;
+        sleepRecoveryIds.add(participant.id);
+      }
     }
     participants.push(participant);
   }
-  // Warn if suspiciously all participants are available despite assignments existing
   if (participants.length === schedule.participants.length && schedule.assignments.length > 0) {
-    console.warn('[עתודה] כל המשתתפים מסומנים כפנויים למרות שיש שיבוצים. מידע לאבחון:', {
+    console.debug('[עתודה] all participants marked free despite existing assignments:', {
       tasks: schedule.tasks.length,
       assignments: schedule.assignments.length,
       participants: schedule.participants.length,
       orphanAssignments,
-      participantWindowsCount: participantWindows.size,
       rangeStart: new Date(rangeStartMs).toString(),
       rangeEnd: new Date(rangeEndMs).toString(),
-      sampleTask: schedule.tasks[0]
-        ? {
-            start: schedule.tasks[0].timeBlock.start.toString(),
-            end: schedule.tasks[0].timeBlock.end.toString(),
-          }
-        : null,
-      sampleAssignment: schedule.assignments[0],
-      sampleParticipantId: schedule.participants[0]?.id,
-      participantIdInWindows: participantWindows.has(schedule.participants[0]?.id ?? ''),
     });
   }
   return { participants, sleepRecoveryIds };
 }
+
+interface AvailabilityBucket {
+  label: string;
+  participants: Participant[];
+  count: number;
+  preview: string;
+  className: string;
+}
+
+/**
+ * Pure bucket builder. Returns the ordered list of buckets to display under
+ * the active grouping mode, and a flag for whether the "מופיעים בכמה" overlap
+ * section should be rendered (only modes where overlap is possible: pakal,
+ * cert).
+ *
+ * Inputs come from the caller — no live-store reads, no DOM, no module state.
+ */
+function bucketAvailableParticipants(
+  available: Participant[],
+  mode: AvailabilityGroupingMode,
+  schedule: Schedule,
+  pakalDefs: ReturnType<typeof store.getPakalDefinitions>,
+): { buckets: AvailabilityBucket[]; allowsOverlap: boolean; multiBucketIds: Set<string> } {
+  const summarize = (participants: Participant[]): string => {
+    if (participants.length === 0) return 'אין פנויים בטווח';
+    const leading = participants.slice(0, 2).map((p) => p.name);
+    const remaining = participants.length - leading.length;
+    return remaining > 0 ? `${leading.join(', ')} +${remaining}` : leading.join(', ');
+  };
+  const make = (label: string, ps: Participant[], cls = 'availability-bucket'): AvailabilityBucket => ({
+    label,
+    participants: ps,
+    count: ps.length,
+    preview: summarize(ps),
+    className: cls,
+  });
+
+  if (mode === 'pakal') {
+    const pakalsByPid = new Map(available.map((p) => [p.id, getEffectivePakalDefinitions(p, pakalDefs)]));
+    const buckets = pakalDefs
+      .filter((def) => !def.deleted)
+      .map((def) =>
+        make(
+          def.label,
+          available.filter((p) => (pakalsByPid.get(p.id) || []).some((d) => d.id === def.id)),
+        ),
+      );
+    const noPakal = available.filter((p) => (pakalsByPid.get(p.id)?.length ?? 0) === 0);
+    const multiIds = new Set(available.filter((p) => (pakalsByPid.get(p.id)?.length ?? 0) > 1).map((p) => p.id));
+    const visible = buckets
+      .filter((b) => b.count > 0)
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'he'));
+    const empty = buckets.filter((b) => b.count === 0);
+    return {
+      buckets: [...visible, make('ללא שיוך לפק"ל', noPakal, 'availability-bucket availability-bucket-none'), ...empty],
+      allowsOverlap: true,
+      multiBucketIds: multiIds,
+    };
+  }
+
+  if (mode === 'group') {
+    const byKey = new Map<string, Participant[]>();
+    for (const p of available) {
+      const key = (p.group || '').trim() || '(ללא קבוצה)';
+      const arr = byKey.get(key) ?? [];
+      arr.push(p);
+      byKey.set(key, arr);
+    }
+    const buckets = Array.from(byKey, ([label, ps]) => make(label, ps)).sort(
+      (a, b) => b.count - a.count || a.label.localeCompare(b.label, 'he'),
+    );
+    return { buckets, allowsOverlap: false, multiBucketIds: new Set() };
+  }
+
+  if (mode === 'level') {
+    const order: { level: Level; label: string }[] = [
+      { level: Level.L4, label: 'L4' },
+      { level: Level.L3, label: 'L3' },
+      { level: Level.L2, label: 'L2' },
+      { level: Level.L0, label: 'L0' },
+    ];
+    const buckets = order.map(({ level, label }) =>
+      make(
+        label,
+        available.filter((p) => p.level === level),
+      ),
+    );
+    return { buckets, allowsOverlap: false, multiBucketIds: new Set() };
+  }
+
+  // mode === 'cert'
+  const certIds = Object.keys(schedule.certLabelSnapshot);
+  const certCountByPid = new Map<string, number>();
+  for (const p of available) {
+    const valid = (p.certifications ?? []).filter((c) => certIds.includes(c));
+    certCountByPid.set(p.id, valid.length);
+  }
+  const buckets = certIds.map((cid) =>
+    make(
+      schedule.certLabelSnapshot[cid] || cid,
+      available.filter((p) => (p.certifications ?? []).includes(cid)),
+    ),
+  );
+  const noCert = available.filter((p) => (certCountByPid.get(p.id) ?? 0) === 0);
+  const multiIds = new Set(available.filter((p) => (certCountByPid.get(p.id) ?? 0) > 1).map((p) => p.id));
+  const visible = buckets
+    .filter((b) => b.count > 0)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'he'));
+  const empty = buckets.filter((b) => b.count === 0);
+  return {
+    buckets: [...visible, make('ללא הסמכות', noCert, 'availability-bucket availability-bucket-none'), ...empty],
+    allowsOverlap: true,
+    multiBucketIds: multiIds,
+  };
+}
+
+const GROUPING_MODE_LABELS: Record<AvailabilityGroupingMode, string> = {
+  pakal: 'פק"ל',
+  group: 'קבוצה',
+  level: 'דרגה',
+  cert: 'הסמכה',
+};
+const GROUPING_MODE_ORDER: AvailabilityGroupingMode[] = ['pakal', 'group', 'level', 'cert'];
 
 function buildAvailabilityPopoverContent(
   startMs: number,
@@ -5255,87 +5566,64 @@ function buildAvailabilityPopoverContent(
   hideSleepRecovery = false,
 ): string {
   if (!currentSchedule) return '';
-  const isRange = startMs !== endMs;
-  const definitions = store.getPakalDefinitions();
-  const { participants: available, sleepRecoveryIds } = getAvailableParticipantsInRange(
-    currentSchedule,
+  const schedule = currentSchedule;
+  const pakalDefs = store.getPakalDefinitions();
+  const { participants: rawAvailable, sleepRecoveryIds } = getAvailableParticipantsInRange(
+    schedule,
     startMs,
     endMs,
     preMarginMs,
     postMarginMs,
     hideSleepRecovery,
   );
-  const pakalimByParticipantId = new Map(
-    available.map((participant) => [participant.id, getEffectivePakalDefinitions(participant, definitions)]),
-  );
 
-  const summarizeParticipants = (participants: Participant[]): string => {
-    if (participants.length === 0) return 'אין פנויים כרגע';
-    const leadingNames = participants.slice(0, 2).map((participant) => participant.name);
-    const remaining = participants.length - leadingNames.length;
-    return remaining > 0 ? `${leadingNames.join(', ')} +${remaining}` : leadingNames.join(', ');
-  };
-
-  const buckets = definitions.map((def) => {
-    const participants = available.filter((participant) =>
-      (pakalimByParticipantId.get(participant.id) || []).some((item) => item.id === def.id),
-    );
-    return {
-      label: def.label,
-      participants,
-      count: participants.length,
-      preview: summarizeParticipants(participants),
-      className: 'availability-bucket',
-    };
+  // Apply chip filters BEFORE bucketing. Empty filter set = no constraint;
+  // OR within each kind, AND across kinds.
+  const available = rawAvailable.filter((p) => {
+    if (_availabilityLevelFilter.size > 0 && !_availabilityLevelFilter.has(p.level)) return false;
+    if (_availabilityCertFilter.size > 0) {
+      const ok = (p.certifications ?? []).some((c) => _availabilityCertFilter.has(c));
+      if (!ok) return false;
+    }
+    if (_availabilityGroupFilter.size > 0) {
+      const key = (p.group || '').trim();
+      if (!_availabilityGroupFilter.has(key)) return false;
+    }
+    return true;
   });
 
-  const noPakalParticipants = available.filter(
-    (participant) => (pakalimByParticipantId.get(participant.id)?.length ?? 0) === 0,
+  const pakalsByPid = new Map(available.map((p) => [p.id, getEffectivePakalDefinitions(p, pakalDefs)]));
+  const { buckets, allowsOverlap, multiBucketIds } = bucketAvailableParticipants(
+    available,
+    _availabilityGroupingMode,
+    schedule,
+    pakalDefs,
   );
-  const multiPakalParticipants = available.filter(
-    (participant) => (pakalimByParticipantId.get(participant.id)?.length ?? 0) > 1,
-  );
-  const totalWithPakal = available.length - noPakalParticipants.length;
-  const noPakalBucket = {
-    label: 'ללא שיוך לפק"ל',
-    participants: noPakalParticipants,
-    count: noPakalParticipants.length,
-    preview: summarizeParticipants(noPakalParticipants),
-    className: 'availability-bucket availability-bucket-none',
-  };
-  const visibleBuckets = buckets
-    .filter((bucket) => bucket.count > 0)
-    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, 'he'));
-  const emptyBuckets = buckets.filter((bucket) => bucket.count === 0);
-  const displayBuckets = [...visibleBuckets, noPakalBucket, ...emptyBuckets];
+  const multiBucketParticipants = available.filter((p) => multiBucketIds.has(p.id));
 
   const renderParticipantList = (participants: Participant[]): string => {
-    if (participants.length === 0) return '<div class="availability-empty">כרגע אין פנויים בקבוצה הזאת.</div>';
+    if (participants.length === 0) return '<div class="availability-empty">אין פנויים בקבוצה הזאת.</div>';
     return `<div class="availability-name-list">${participants
-      .map((participant) => {
-        const pakalCount = pakalimByParticipantId.get(participant.id)?.length ?? 0;
-        const inRecovery = sleepRecoveryIds.has(participant.id);
+      .map((p) => {
+        const pakalCount = pakalsByPid.get(p.id)?.length ?? 0;
+        const inRecovery = sleepRecoveryIds.has(p.id);
         const recoveryBadge = inRecovery
           ? `<span class="badge badge-sm availability-sleep-tag" title="בהשלמות שינה והתאוששות">😴</span>`
           : '';
         const pakalBadge =
           pakalCount > 1 ? `<span class="badge badge-sm availability-multi-tag">${pakalCount} פק"לים</span>` : '';
-        return `<div class="availability-name-row"><span class="participant-hover" data-pid="${participant.id}">${escHtml(participant.name)}</span>${recoveryBadge}${pakalBadge}</div>`;
+        const levelBadge = `<span class="badge badge-sm avail-row-level">L${p.level}</span>`;
+        const groupLabel = p.group ? `<span class="avail-row-group">${escHtml(p.group)}</span>` : '';
+        return `<div class="availability-name-row"><span class="participant-hover" data-pid="${p.id}">${escHtml(p.name)}</span>${levelBadge}${groupLabel}${recoveryBadge}${pakalBadge}</div>`;
       })
       .join('')}</div>`;
   };
 
-  const renderBucket = (bucket: {
-    label: string;
-    participants: Participant[];
-    count: number;
-    preview: string;
-    className: string;
-  }): string => {
+  const renderBucket = (bucket: AvailabilityBucket): string => {
     const bucketLabel = escHtml(bucket.label);
     const preview = escHtml(bucket.preview);
     if (bucket.count === 0) {
-      return `<div class="${bucket.className} availability-bucket-empty availability-bucket-zero"><span class="availability-bucket-main"><span class="availability-bucket-label">${bucketLabel}</span><span class="availability-bucket-preview">אין פנויים כרגע</span></span><span class="availability-bucket-count">0</span></div>`;
+      return `<div class="${bucket.className} availability-bucket-empty availability-bucket-zero"><span class="availability-bucket-main"><span class="availability-bucket-label">${bucketLabel}</span><span class="availability-bucket-preview">אין פנויים בטווח</span></span><span class="availability-bucket-count">0</span></div>`;
     }
     return `<details class="${bucket.className}">
       <summary><span class="availability-bucket-main"><span class="availability-bucket-label">${bucketLabel}</span><span class="availability-bucket-preview">${preview}</span></span><span class="availability-bucket-count">${bucket.count}</span></summary>
@@ -5343,21 +5631,29 @@ function buildAvailabilityPopoverContent(
     </details>`;
   };
 
-  const quickStats = [
-    { label: 'עם פק"ל', value: totalWithPakal },
-    { label: 'ללא פק"ל', value: noPakalParticipants.length },
-    { label: 'בכמה פק"לים', value: multiPakalParticipants.length },
-  ];
+  const modeLabel = GROUPING_MODE_LABELS[_availabilityGroupingMode];
+  const groupingTabs = GROUPING_MODE_ORDER.map(
+    (m) =>
+      `<button class="avail-strip-group-tab ${m === _availabilityGroupingMode ? 'avail-strip-group-tab-active' : ''}" data-grouping-mode="${m}" role="tab">${GROUPING_MODE_LABELS[m]}</button>`,
+  ).join('');
 
   const startDate = new Date(startMs);
   const endDate = new Date(endMs);
-  const rangeLabel = `${fmt(startDate)} — ${fmt(endDate)}`;
-  const subtitle = isRange ? rangeLabel : `נכון ל${fmt(startDate)}`;
+  const subtitle = `${fmt(startDate)} — ${fmt(endDate)}`;
+
+  const overlapSection =
+    allowsOverlap && multiBucketParticipants.length > 0
+      ? `<details class="availability-overlap">
+        <summary><span class="availability-bucket-main"><span class="availability-bucket-label">מופיעים בכמה ${modeLabel === 'הסמכה' ? 'הסמכות' : 'פק"לים'}</span><span class="availability-bucket-preview">כדאי לבדוק אותם קודם</span></span><span class="availability-bucket-count">${multiBucketParticipants.length}</span></summary>
+        <div class="availability-overlap-note">המשתתפים כאן כבר נספרו בפירוט שלמעלה. הרשימה הזאת עוזרת לזהות חפיפות.</div>
+        ${renderParticipantList(multiBucketParticipants)}
+      </details>`
+      : '';
 
   return `
     <div class="availability-popover-header">
       <div>
-        <h3>פנויים לפי פק"ל</h3>
+        <h3>פנויים לפי ${modeLabel}</h3>
         <div class="availability-popover-subtitle">${subtitle}</div>
         ${preMarginMs > 0 || postMarginMs > 0 ? `<div class="availability-popover-margin-note">מרווח: ${preMarginMs / 3600000} שעות לפני, ${postMarginMs / 3600000} שעות אחרי</div>` : ''}
       </div>
@@ -5369,27 +5665,15 @@ function buildAvailabilityPopoverContent(
           <span class="availability-total-count">${available.length}</span>
           <div class="availability-total-copy">
             <strong>${available.length === 0 ? 'אין עתודה פנויה' : 'עתודה פנויה'}</strong>
-            <span>${isRange ? 'מספר המשתתפים שפנויים לאורך כל הטווח.' : 'מספר המשתתפים שלא נמצאים כרגע במשימה.'}</span>
+            <span>מספר המשתתפים שפנויים לאורך כל הטווח.</span>
           </div>
         </div>
-        <div class="availability-quick-stats">
-          ${quickStats.map((stat) => `<div class="availability-quick-stat"><span class="availability-quick-stat-value">${stat.value}</span><span class="availability-quick-stat-label">${stat.label}</span></div>`).join('')}
-        </div>
       </div>
-      <div class="availability-summary-note">למטה מופיע פירוט לפי פק"ל. משתתף עם יותר מפק"ל אחד יכול להופיע ביותר מקבוצה אחת.</div>
-      <div class="availability-section-title">פירוט מהיר לפי פק"ל</div>
+      <div class="avail-strip-group-tabs" role="tablist">${groupingTabs}</div>
       <div class="availability-bucket-list">
-        ${displayBuckets.map(renderBucket).join('')}
+        ${buckets.map(renderBucket).join('')}
       </div>
-      ${
-        multiPakalParticipants.length > 0
-          ? `<details class="availability-overlap">
-        <summary><span class="availability-bucket-main"><span class="availability-bucket-label">מופיעים בכמה פק"לים</span><span class="availability-bucket-preview">כדאי לבדוק אותם קודם</span></span><span class="availability-bucket-count">${multiPakalParticipants.length}</span></summary>
-        <div class="availability-overlap-note">המשתתפים כאן כבר נספרו בפירוט שלמעלה. הרשימה הזאת רק עוזרת לזהות במהירות חפיפות בין פק"לים.</div>
-        ${renderParticipantList(multiPakalParticipants)}
-      </details>`
-          : ''
-      }
+      ${overlapSection}
     </div>
   `;
 }

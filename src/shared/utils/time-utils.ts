@@ -57,6 +57,46 @@ export function createTimeBlockFromHours(
 }
 
 /**
+ * Parse an HH:MM string. Returns null for malformed input.
+ * Accepts any zero-padded hour 00..23 and minutes 00..59.
+ */
+export function parseTimeInput(timeValue: string): { hours: number; minutes: number } | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(timeValue.trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return { hours, minutes };
+}
+
+/**
+ * Map a 1-based op-day index + HH:MM string into an absolute timestamp,
+ * using the FROZEN schedule's `dayStartHour` and `periodStart` (never the
+ * live store). Hours `< dayStartHour` fall on the post-midnight tail of the
+ * given op-day (calendar day + 1).
+ */
+export function resolveLogicalDayTimestamp(
+  dayIndex: number,
+  timeValue: string,
+  dayStartHour: number,
+  baseDate: Date,
+): Date | null {
+  const parsed = parseTimeInput(timeValue);
+  if (!parsed) return null;
+  const dayOffset = parsed.hours < dayStartHour ? dayIndex : dayIndex - 1;
+  return new Date(
+    baseDate.getFullYear(),
+    baseDate.getMonth(),
+    baseDate.getDate() + dayOffset,
+    parsed.hours,
+    parsed.minutes,
+    0,
+    0,
+  );
+}
+
+/**
  * Duration of a TimeBlock in minutes.
  */
 export function blockDurationMinutes(block: TimeBlock): number {

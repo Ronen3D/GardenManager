@@ -13442,6 +13442,59 @@ console.log('\n── Structural section-key (layout) ─────');
   assert(adanitKey.startsWith('tpl:'), 'section-key: template namespace prefix');
 }
 
+// ─── resolveLogicalDayTimestamp ────────────────────────────────────────────
+// Bug 1 regression — the strip must use the FROZEN dayStartHour + periodStart,
+// not the live store. The new signature takes both as required parameters so
+// callers cannot accidentally read live state.
+{
+  const { resolveLogicalDayTimestamp } = require('./shared/utils/time-utils') as typeof import('./shared/utils/time-utils');
+
+  const base = new Date(2026, 0, 5); // Jan 5 2026, midnight local
+
+  // Boundary at op-day start
+  {
+    const t = resolveLogicalDayTimestamp(1, '05:00', 5, base);
+    assert(t !== null, 'resolveLogicalDayTimestamp: returns Date for valid input');
+    assert(t!.getDate() === 5 && t!.getHours() === 5, 'resolveLogicalDayTimestamp: day 1 / 05:00 lands on calendar day-0 at 05:00');
+  }
+
+  // Mid op-day
+  {
+    const t = resolveLogicalDayTimestamp(1, '14:00', 5, base);
+    assert(t!.getDate() === 5 && t!.getHours() === 14, 'resolveLogicalDayTimestamp: day 1 / 14:00 → calendar day-0 14:00');
+  }
+
+  // Post-midnight tail
+  {
+    const t = resolveLogicalDayTimestamp(1, '04:00', 5, base);
+    assert(t!.getDate() === 6 && t!.getHours() === 4, 'resolveLogicalDayTimestamp: day 1 / 04:00 → calendar day+1 04:00 (op-day-1 tail)');
+  }
+
+  // Half-hour minutes pass through
+  {
+    const t = resolveLogicalDayTimestamp(2, '14:30', 5, base);
+    assert(t!.getMinutes() === 30, 'resolveLogicalDayTimestamp: HH:MM minutes preserved');
+    assert(t!.getDate() === 6 && t!.getHours() === 14, 'resolveLogicalDayTimestamp: day 2 / 14:30 → calendar day+1 14:30');
+  }
+
+  // Frozen-snapshot consistency: same call returns the same timestamp regardless
+  // of any (hypothetical) live store mutation, because dsh + base are required
+  // parameters.
+  {
+    const tFrozen5 = resolveLogicalDayTimestamp(1, '06:00', 5, base);
+    const tDifferentDsh = resolveLogicalDayTimestamp(1, '06:00', 7, base);
+    // dsh=5: 6 >= 5 → dayOffset = 0 → calendar day-0 06:00
+    // dsh=7: 6 <  7 → dayOffset = 1 → calendar day+1 06:00 (different op-day mapping)
+    assert(tFrozen5!.getDate() === 5, 'resolveLogicalDayTimestamp: dsh=5 maps day 1 / 06:00 to calendar day-0');
+    assert(tDifferentDsh!.getDate() === 6, 'resolveLogicalDayTimestamp: dsh=7 maps day 1 / 06:00 to calendar day+1 (proves param is honored, not the store)');
+  }
+
+  // Malformed input returns null (existing behavior)
+  {
+    assert(resolveLogicalDayTimestamp(1, 'garbage', 5, base) === null, 'resolveLogicalDayTimestamp: malformed input returns null');
+  }
+}
+
 // ─── Async test blocks + Summary ─────────────────────────────────────────────
 
 (async () => {

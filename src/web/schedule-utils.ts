@@ -11,24 +11,11 @@ import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import * as store from './config-store';
 
 // ─── Time Parsing ───────────────────────────────────────────────────────────
+// Pure parsers live in shared/utils/time-utils so the Node test runner (which
+// excludes src/web/) can import them. Re-exported here to keep existing
+// schedule-utils import paths working.
 
-export function parseTimeInput(timeValue: string): { hours: number; minutes: number } | null {
-  const match = /^(\d{2}):(\d{2})$/.exec(timeValue.trim());
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
-  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
-  return { hours, minutes };
-}
-
-export function resolveLogicalDayTimestamp(dayIndex: number, timeValue: string): Date | null {
-  const parsed = parseTimeInput(timeValue);
-  if (!parsed) return null;
-  const base = store.getScheduleDate();
-  const dayOffset = parsed.hours < store.getDayStartHour() ? dayIndex : dayIndex - 1;
-  return new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayOffset, parsed.hours, parsed.minutes, 0, 0);
-}
+export { parseTimeInput, resolveLogicalDayTimestamp } from '../shared/utils/time-utils';
 
 // ─── Day Window Helpers ─────────────────────────────────────────────────────
 
@@ -93,6 +80,19 @@ export function operationalHourOrder(dayStartHour: number): number[] {
   const hours: number[] = [];
   for (let i = 0; i < 24; i++) hours.push((dsh + i) % 24);
   return hours;
+}
+
+/**
+ * Operational-day half-hour labels: 05:00, 05:30, 06:00, …, 04:00, 04:30 for dsh=5.
+ * Used by the availability inspector strip so users can query e.g. 14:30.
+ */
+export function operationalHalfHourLabels(dayStartHour: number): string[] {
+  const labels: string[] = [];
+  for (const h of operationalHourOrder(dayStartHour)) {
+    labels.push(`${String(h).padStart(2, '0')}:00`);
+    labels.push(`${String(h).padStart(2, '0')}:30`);
+  }
+  return labels;
 }
 
 // ─── Status & Violation Display ─────────────────────────────────────────────
