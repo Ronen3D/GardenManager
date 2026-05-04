@@ -8469,6 +8469,10 @@ tr.now-row-animate > td.time-cell {
   font-size: 0.8rem;
   color: var(--text-muted, #888);
 }
+.gm-range-picker-reason-input {
+  width: 100%;
+  box-sizing: border-box;
+}
 .gm-range-picker-preview {
   padding: 4px 20px;
   font-size: 0.85rem;

@@ -37,6 +37,7 @@ export interface RangePickerOptions {
   defaultStartHour?: string;
   defaultEndDay?: string;
   defaultEndHour?: string;
+  defaultReason?: string;
   /**
    * Optional validator. Return a Hebrew error message to show inline, or
    * null to accept. Called on every change and on submit.
@@ -53,6 +54,8 @@ export interface RangePickerResult {
   startHour: string;
   endDay: string;
   endHour: string;
+  /** Free-text note. Empty/whitespace is normalized to undefined by the modal. */
+  reason?: string;
 }
 
 export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerResult | null> {
@@ -64,6 +67,7 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
       startHour: opts.defaultStartHour ?? opts.hours[0]?.value ?? '',
       endDay: opts.defaultEndDay ?? opts.defaultStartDay ?? opts.days[0]?.value ?? '',
       endHour: opts.defaultEndHour ?? opts.defaultStartHour ?? opts.hours[0]?.value ?? '',
+      reason: opts.defaultReason,
     };
 
     const anchorHtml = renderAnchor(opts.anchor);
@@ -97,6 +101,13 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
             <select id="gm-rp-end-hour" class="gm-timepicker-select">${hoursEnd}</select>
           </div>
         </div>
+        <div class="gm-range-picker-v2-section">
+          <label for="gm-rp-reason" class="gm-range-picker-v2-label">סיבה</label>
+          <input id="gm-rp-reason" class="input-sm gm-range-picker-reason-input" type="text"
+                 maxlength="80" autocomplete="off"
+                 placeholder="למשל: מילואים, חופש, מחלה (אופציונלי)"
+                 value="${escAttr(defaultStart.reason ?? '')}" />
+        </div>
         <div class="gm-range-picker-preview" id="gm-rp-preview" aria-live="polite"></div>
         <div class="gm-range-picker-error" id="gm-rp-error" aria-live="polite"></div>
         <div class="gm-modal-actions gm-range-picker-actions">
@@ -118,6 +129,7 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
 
     const sh = backdrop.querySelector('#gm-rp-start-hour') as HTMLSelectElement;
     const eh = backdrop.querySelector('#gm-rp-end-hour') as HTMLSelectElement;
+    const reasonInput = backdrop.querySelector('#gm-rp-reason') as HTMLInputElement;
     const err = backdrop.querySelector('#gm-rp-error') as HTMLElement;
     const preview = backdrop.querySelector('#gm-rp-preview') as HTMLElement;
     const okBtn = backdrop.querySelector('.gm-modal-btn-ok') as HTMLButtonElement;
@@ -173,6 +185,9 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
       state.endHour = eh.value;
       runValidate();
     });
+    reasonInput.addEventListener('input', () => {
+      state.reason = reasonInput.value;
+    });
 
     const anchorBtn = backdrop.querySelector('.gm-range-picker-anchor-btn') as HTMLButtonElement | null;
     if (anchorBtn && opts.anchor) {
@@ -185,8 +200,13 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
       });
     }
 
+    const buildResult = (): RangePickerResult => {
+      const trimmed = (state.reason ?? '').trim();
+      return { ...state, reason: trimmed === '' ? undefined : trimmed };
+    };
+
     okBtn.addEventListener('click', () => {
-      if (runValidate()) close({ ...state });
+      if (runValidate()) close(buildResult());
     });
     backdrop.querySelector('.gm-modal-btn-cancel')?.addEventListener('click', () => close(null));
     backdrop.addEventListener('click', (e) => {
@@ -196,7 +216,7 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') close(null);
       else if (e.key === 'Enter') {
-        if (runValidate()) close({ ...state });
+        if (runValidate()) close(buildResult());
       }
     }
     document.addEventListener('keydown', onKey);

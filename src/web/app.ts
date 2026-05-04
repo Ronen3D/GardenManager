@@ -2868,6 +2868,7 @@ interface FutureSosEntryOpts {
   defaultStartHour?: string;
   defaultEndDay?: string;
   defaultEndHour?: string;
+  defaultReason?: string;
 }
 
 interface PreExistingUnavailabilityOverlap {
@@ -3073,6 +3074,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
     defaultStartHour: initial.startHour,
     defaultEndDay: initial.endDay,
     defaultEndHour: initial.endHour,
+    defaultReason: entryOpts.defaultReason,
     anchor: {
       currentLabel: anchorLabel(anchor),
       changeButtonLabel: 'שנה',
@@ -3119,6 +3121,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
 
   const windowStart = toDate(range.startDay, range.startHour);
   const windowEnd = toDate(range.endDay, range.endHour);
+  const reason = range.reason;
 
   // Warn when the window overlaps an existing unavailability source
   // (participant availability gap, recurring date-unavailability rule, or a
@@ -3193,6 +3196,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
           participantId,
           start: w.start,
           end: w.end,
+          reason,
           createdAt: new Date(),
           anchorAtCreation: anchor,
           appliedSwapCount: 0,
@@ -3246,6 +3250,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
         defaultStartHour: range.startHour,
         defaultEndDay: range.endDay,
         defaultEndHour: range.endHour,
+        defaultReason: reason,
       });
       return;
     }
@@ -3265,6 +3270,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
         defaultStartHour: range.startHour,
         defaultEndDay: range.endDay,
         defaultEndHour: range.endHour,
+        defaultReason: reason,
       });
     },
     onApply: (plan) => {
@@ -3299,6 +3305,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
           participantId,
           start: w.start,
           end: w.end,
+          reason,
           createdAt: new Date(),
           anchorAtCreation: anchor,
           appliedSwapCount: plan.swaps.length,
@@ -3619,7 +3626,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.9.4</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v2.9.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
