@@ -641,6 +641,7 @@ export function greedyAssign(
   dayStartHour: number = 5,
   ctx?: SchedulingContext,
   scheduleContext?: ScheduleContext,
+  certLabelResolver?: (certId: string) => string,
 ): {
   assignments: Assignment[];
   unfilledSlots: UnfilledSlot[];
@@ -761,7 +762,9 @@ export function greedyAssign(
           if (!alreadyFilled) {
             const levelStr = slot.acceptableLevels.map((e) => 'L' + e.level).join('/');
             const certStr =
-              slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
+              slot.requiredCertifications.length > 0
+                ? ` + ${slot.requiredCertifications.map((c) => certLabelResolver?.(c) ?? c).join(', ')}`
+                : '';
             const reason = `אף קבוצה לא יכולה למלא את כל העמדות. חסר ${levelStr}${certStr}`;
             unfilledSlots.push({ taskId: task.id, slotId: slot.slotId, reason, hcCodes: ['HC-4'] });
           }
@@ -970,7 +973,10 @@ export function greedyAssign(
         if (!backtrackSuccess) {
           // R8: Build specific reason with constraint codes for diagnostics
           const levelStr = slot.acceptableLevels.map((e) => 'L' + e.level).join('/');
-          const certStr = slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
+          const certStr =
+            slot.requiredCertifications.length > 0
+              ? ` + ${slot.requiredCertifications.map((c) => certLabelResolver?.(c) ?? c).join(', ')}`
+              : '';
           const profile = `${levelStr}${certStr}`;
 
           // Collect per-participant rejection codes to surface constraint conflicts
@@ -2121,6 +2127,7 @@ export function optimize(
     dayStartHour,
     schedulingCtx,
     scheduleContext,
+    certLabelResolver,
   );
 
   // Phase 2: Local search improvement (also tries to fill unfilled slots)

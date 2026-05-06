@@ -281,6 +281,10 @@ function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
   ];
   ws.addRow(headers);
 
+  // Resolve cert IDs to display labels via the schedule's frozen snapshot —
+  // never reach into the live store from a schedule-screen code path.
+  const certLabel = (id: string): string => schedule.certLabelSnapshot?.[id] ?? id;
+
   const numDays = getNumDays(schedule, dayStartHour);
   for (let d = 1; d <= numDays; d++) {
     const dayTasks = getTasksForDay(schedule, d, dayStartHour);
@@ -300,11 +304,11 @@ function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
           slot.subTeamLabel || slot.subTeamId || '',
           slot.label || '',
           slot.acceptableLevels.map((l) => fmtLevel(l.level)).join('/'),
-          slot.requiredCertifications.join(', '),
+          slot.requiredCertifications.map(certLabel).join(', '),
           p?.name || '',
           p?.group || '',
           fmtLevel(p?.level),
-          p ? p.certifications.join(', ') : '',
+          p ? p.certifications.map(certLabel).join(', ') : '',
           fmtStatus(as.assignment?.status),
           task.id,
           slot.slotId,

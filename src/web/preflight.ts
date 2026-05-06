@@ -23,6 +23,7 @@ import {
   getAllOneTimeTasks,
   getAllParticipants,
   getAllTaskTemplates,
+  getCertLabel,
   getDayStartHour,
   getGroups,
   getScheduleDate,
@@ -68,9 +69,13 @@ function checkSkillGaps(
     for (const slot of allSlots) {
       const eligible = participants.filter((p) => participantMatchesSlot(p, slot));
       if (eligible.length === 0) {
-        // Build a human-readable requirement string
+        // Build a human-readable requirement string. Resolve cert IDs (which can be
+        // ugly auto-generated strings like "cert-10-mou2unsx") to their display labels.
         const levelStr = slot.acceptableLevels.map((l) => `דרגה ${l.level}`).join('/');
-        const certStr = slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
+        const certStr =
+          slot.requiredCertifications.length > 0
+            ? ` + ${slot.requiredCertifications.map((c) => getCertLabel(c)).join(', ')}`
+            : '';
         findings.push({
           severity: PreflightSeverity.Critical,
           code: 'SKILL_GAP',
@@ -97,7 +102,10 @@ function checkSkillGaps(
       const eligible = participants.filter((p) => participantMatchesSlot(p, slot));
       if (eligible.length === 0) {
         const levelStr = slot.acceptableLevels.map((l) => `דרגה ${l.level}`).join('/');
-        const certStr = slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.join(', ')}` : '';
+        const certStr =
+          slot.requiredCertifications.length > 0
+            ? ` + ${slot.requiredCertifications.map((c) => getCertLabel(c)).join(', ')}`
+            : '';
         findings.push({
           severity: PreflightSeverity.Critical,
           code: 'SKILL_GAP',
