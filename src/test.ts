@@ -7184,6 +7184,134 @@ console.log('\n── dailyWorkloadImbalance ───────────�
   }
 }
 
+import { greedyAssign as greedyAssignForCapTest } from './engine/optimizer';
+
+// ─── Greedy: capacity-aware tie-break ───────────────────────────────────────
+//
+// When two candidates have identical absolute workload on the target day, the
+// greedy comparator should prefer the one with more headroom (higher per-day
+// availability). Without capacities, the tie-break falls back to absolute
+// hours (utilization === absolute when caps are equal/missing) and the test
+// still must pass (the capacity-aware path runs only when caps are provided).
+{
+  console.log('   greedy capacity-aware tie-break...');
+  const DSH = 5;
+  const base = new Date(2026, 1, 14);
+  const dayMs = 24 * 3600_000;
+  const dayStart = new Date(base.getFullYear(), base.getMonth(), base.getDate(), DSH, 0, 0, 0);
+
+  // Two L0 participants. Both available the full target day; the difference
+  // is on a *different* day in the week so per-day capacity on the TARGET day
+  // is identical (24h each) and the tie-break MUST come from period-level
+  // utilization. Tight-week's totalCap is lower, so identical existing load
+  // is a higher fraction of their period capacity → tight-week loses the tie.
+  const tight: Participant = {
+    id: 'tight',
+    name: 'tight',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: [
+      { start: dayStart, end: new Date(dayStart.getTime() + dayMs) },
+      { start: new Date(dayStart.getTime() + dayMs), end: new Date(dayStart.getTime() + dayMs + 4 * 3600_000) },
+    ],
+    dateUnavailability: [],
+  };
+  const roomy: Participant = {
+    id: 'roomy',
+    name: 'roomy',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: [
+      { start: dayStart, end: new Date(dayStart.getTime() + dayMs) },
+      { start: new Date(dayStart.getTime() + dayMs), end: new Date(dayStart.getTime() + 2 * dayMs) },
+    ],
+    dateUnavailability: [],
+  };
+
+  // Pre-existing 4h tasks on day 0 for BOTH so the workload tie-breaker has
+  // identical raw inputs. The only difference is the period-level capacity.
+  const mkGreedyTask = (id: string, start: Date, durationHours: number): Task =>
+    ({
+      id,
+      name: id,
+      sourceName: id,
+      timeBlock: { start, end: new Date(start.getTime() + durationHours * 3600_000) },
+      requiredCount: 1,
+      slots: [
+        {
+          slotId: `${id}-s1`,
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: ['Nitzan'],
+        },
+      ],
+      blocksConsecutive: false,
+      sameGroupRequired: false,
+      baseLoadWeight: 1,
+      loadWindows: [],
+    }) as Task;
+
+  const tightExisting = mkGreedyTask('grd-tight-existing', new Date(dayStart.getTime() + 0.1 * 3600_000), 4);
+  const roomyExisting = mkGreedyTask('grd-roomy-existing', new Date(dayStart.getTime() + 4.2 * 3600_000), 4);
+  // The slot to fill — late in day 0, both are eligible.
+  const target = mkGreedyTask('grd-target', new Date(dayStart.getTime() + 14 * 3600_000), 4);
+  // Dummy task on day 1 so capacity computation walks past day 0 and sees the
+  // capacity difference (tight has 4h on day 1, roomy has 24h). Without this,
+  // the schedule window stops at day 0 and totalCap is identical for both.
+  const dummyDay1 = mkGreedyTask('grd-dummy-day1', new Date(dayStart.getTime() + dayMs + 0.5 * 3600_000), 1);
+
+  const pinned: Assignment[] = [
+    {
+      id: 'grd-pin-tight',
+      taskId: tightExisting.id,
+      slotId: tightExisting.slots[0].slotId,
+      participantId: tight.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'grd-pin-roomy',
+      taskId: roomyExisting.id,
+      slotId: roomyExisting.slots[0].slotId,
+      participantId: roomy.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+
+  // Run greedy 50× and count how often the higher-capacity participant
+  // is chosen for the target slot. Without capacity-awareness the random
+  // tiebreak yields ~50/50; with capacity-awareness `roomy` should win
+  // every time because their period utilization is strictly lower.
+  let roomyWins = 0;
+  let tightWins = 0;
+  for (let trial = 0; trial < 50; trial++) {
+    const greedy = greedyAssignForCapTest(
+      [tightExisting, roomyExisting, target, dummyDay1],
+      [tight, roomy],
+      pinned,
+      undefined,
+      0,
+      undefined,
+      undefined,
+      DSH,
+      undefined,
+      undefined,
+      undefined,
+      computeAllCapacities([tight, roomy], tightExisting.timeBlock.start, dummyDay1.timeBlock.end, DSH),
+    );
+    const targetAssign = greedy.assignments.find((a) => a.taskId === target.id);
+    if (!targetAssign) continue;
+    if (targetAssign.participantId === roomy.id) roomyWins++;
+    else if (targetAssign.participantId === tight.id) tightWins++;
+  }
+  assert(
+    roomyWins >= 45,
+    `greedy(cap): higher-capacity participant wins workload tie (roomy=${roomyWins}/50, tight=${tightWins}/50)`,
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Phantom Context (buildPhantomContext, mergePhantomRules)
 // ═══════════════════════════════════════════════════════════════════════════════

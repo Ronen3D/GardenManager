@@ -225,6 +225,11 @@ function getEligibleCandidates(
   restRuleMap?: Map<string, number>,
   dayStartHour?: number,
   scheduleContext?: ScheduleContext,
+  /** Per-participant capacities. When provided, the workload tie-breaker reads
+   *  in utilization space (load / capacity) instead of absolute hours, so a
+   *  partial-availability participant isn't pushed onto the assignment ahead
+   *  of a participant with more headroom. */
+  capacities?: Map<string, ParticipantCapacity>,
 ): Participant[] {
   const eligible = participants.filter((p) =>
     isEligibleForSlot(
@@ -251,21 +256,38 @@ function getEligibleCandidates(
   const rngKey = new Map<string, number>();
   for (const p of eligible) rngKey.set(p.id, Math.random());
 
+  /**
+   * Workload tie-breaker score. When `capacities` are provided, reads in
+   * utilization space (load_p / cap_p) so a participant with 18h available
+   * today doesn't compete 1:1 against a participant with 9h available today —
+   * the algorithm prefers whoever has more headroom. When capacities are
+   * missing, falls back to absolute hours (the historical formula).
+   *
+   * The 2.0 weight on the day axis is preserved across both code paths.
+   */
+  const workloadScore = (pid: string): number => {
+    const w = participantWorkload.get(pid) || 0;
+    const day = dailyWorkload?.get(pid)?.get(taskDay) ?? 0;
+    const cap = capacities?.get(pid);
+    const totalCap = cap?.totalAvailableHours ?? 0;
+    const dayCap = cap?.dailyAvailableHours.get(taskDay) ?? 0;
+    const periodPart = totalCap > 0 ? w / totalCap : w;
+    const dayPart = dayCap > 0 ? day / dayCap : 0;
+    return periodPart + 2.0 * dayPart;
+  };
+
   eligible.sort((a, b) => {
     if (task.sameGroupRequired) {
       // T1: exact level match vs overqualified
       const aExact = slot.acceptableLevels.some((e) => e.level === a.level) ? 0 : 1;
       const bExact = slot.acceptableLevels.some((e) => e.level === b.level) ? 0 : 1;
       if (aExact !== bExact) return aExact - bExact;
-      // T2: blended workload score — flat (absolute hours).
-      // Proportional fairness is handled by SC-3/SC-8 in the scoring phase;
-      // greedy phase uses flat workload to maximise slot coverage.
-      const wa = participantWorkload.get(a.id) || 0;
-      const wb = participantWorkload.get(b.id) || 0;
-      const dayA = dailyWorkload?.get(a.id)?.get(taskDay) ?? 0;
-      const dayB = dailyWorkload?.get(b.id)?.get(taskDay) ?? 0;
-      const scoreA = wa + 2.0 * dayA;
-      const scoreB = wb + 2.0 * dayB;
+      // T2: blended workload score — utilization-space when capacities exist,
+      // absolute hours otherwise. Capacity-proportional fairness is also
+      // applied in the SC-3/SC-8 scoring phase; matching shapes here reduces
+      // the SA correction work needed to reach the proportional optimum.
+      const scoreA = workloadScore(a.id);
+      const scoreB = workloadScore(b.id);
       if (scoreA !== scoreB) return scoreA - scoreB;
       // T2.5: Same-group-required assignment count — prefer participants with fewer
       // same-group shifts so L3/L4 naturally alternate instead of one level hoarding.
@@ -295,15 +317,11 @@ function getEligibleCandidates(
       if (aLow !== bLow) return aLow - bLow;
     }
 
-    // Primary fairness driver: flat blended workload score.
-    // Proportional fairness is handled by SC-3/SC-8 in the scoring phase;
-    // greedy phase uses flat workload to maximise slot coverage.
-    const wa = participantWorkload.get(a.id) || 0;
-    const wb = participantWorkload.get(b.id) || 0;
-    const dayA = dailyWorkload?.get(a.id)?.get(taskDay) ?? 0;
-    const dayB = dailyWorkload?.get(b.id)?.get(taskDay) ?? 0;
-    const scoreA = wa + 2.0 * dayA;
-    const scoreB = wb + 2.0 * dayB;
+    // Primary fairness driver: blended workload score in utilization space
+    // when capacities exist (otherwise absolute hours). Matches the
+    // capacity-proportional target used by SC-3/SC-8 in the scoring phase.
+    const scoreA = workloadScore(a.id);
+    const scoreB = workloadScore(b.id);
     if (scoreA !== scoreB) return scoreA - scoreB;
 
     // Prefer exact level match
@@ -642,6 +660,11 @@ export function greedyAssign(
   ctx?: SchedulingContext,
   scheduleContext?: ScheduleContext,
   certLabelResolver?: (certId: string) => string,
+  /** Per-participant capacities. When provided, the greedy comparator reads
+   *  in utilization space so partial-availability participants aren't
+   *  preferred over participants with more headroom. Pre-computed by the
+   *  caller (`optimize` / `localSearchOptimize`) so all phases share one map. */
+  capacities?: Map<string, ParticipantCapacity>,
 ): {
   assignments: Assignment[];
   unfilledSlots: UnfilledSlot[];
@@ -754,6 +777,7 @@ export function greedyAssign(
         restRuleMap,
         dayStartHour,
         scheduleContext,
+        capacities,
       );
       if (!assigned) {
         // Mark all slots as unfilled with specific reasons
@@ -796,6 +820,7 @@ export function greedyAssign(
         restRuleMap,
         dayStartHour,
         scheduleContext,
+        capacities,
       );
 
       if (candidates.length > 0) {
@@ -1055,6 +1080,7 @@ function assignSameGroupTask(
   restRuleMap?: Map<string, number>,
   dayStartHour: number = 5,
   scheduleContext?: ScheduleContext,
+  capacities?: Map<string, ParticipantCapacity>,
 ): boolean {
   // Already have some pinned assignments for this task?
   const pinnedForTask = currentAssignments.filter((a) => a.taskId === task.id);
@@ -1131,6 +1157,7 @@ function assignSameGroupTask(
         restRuleMap,
         dayStartHour,
         scheduleContext,
+        capacities,
       ).map((p) => p.id),
     }));
 
@@ -2115,6 +2142,17 @@ export function optimize(
   // O(T×S×P) work per attempt.
   const schedulingCtx = ctx ?? buildSchedulingContext(tasks, participants);
 
+  // Pre-compute per-participant capacities once. Shared across greedy,
+  // local search, polish, and final scoring so all phases see the same
+  // capacity-proportional view of the world.
+  let schedStart = tasks[0]?.timeBlock.start ?? new Date();
+  let schedEnd = tasks[0]?.timeBlock.end ?? new Date();
+  for (const t of tasks) {
+    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+  }
+  const capacities = computeAllCapacities(participants, schedStart, schedEnd, dayStartHour);
+
   // Phase 1: Greedy construction
   const greedy = greedyAssign(
     tasks,
@@ -2128,6 +2166,7 @@ export function optimize(
     schedulingCtx,
     scheduleContext,
     certLabelResolver,
+    capacities,
   );
 
   // Phase 2: Local search improvement (also tries to fill unfilled slots)
@@ -2169,14 +2208,10 @@ export function optimize(
     scheduleContext,
   );
 
-  // Build capacities for final scoring
-  let schedStart = tasks[0]?.timeBlock.start ?? new Date();
-  let schedEnd = tasks[0]?.timeBlock.end ?? new Date();
-  for (const t of tasks) {
-    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
-    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
-  }
-  const finalCapacities = computeAllCapacities(participants, schedStart, schedEnd, dayStartHour);
+  // Reuse the capacities computed at the top of optimize() — same inputs
+  // (participants, schedule window, dayStartHour) produce the same map, so
+  // computing it twice is wasted work.
+  const finalCapacities = capacities;
   // Rebuild notWithPairs for final scoring
   const finalNotWithPairs = new Map<string, Set<string>>();
   for (const p of participants) {
