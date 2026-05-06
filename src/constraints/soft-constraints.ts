@@ -152,18 +152,24 @@ export function workloadImbalanceSplit(
 // ─── SC-8: Daily Workload Balance ────────────────────────────────────────────
 
 /**
- * SC-8: Daily workload imbalance — penalise schedules where some calendar
- * days are extremely busy while others are extremely light.
+ * SC-8: Daily workload imbalance — penalise schedules where some operational
+ * days are loaded out of proportion to the available capacity for that day.
  *
- * Two complementary metrics:
- *  1. **Per-participant daily std-dev** — each participant should have their
- *     effective hours spread roughly evenly across the days they work.
- *     When `capacities` is provided, days where a participant has zero
- *     available hours are excluded from their std-dev calculation so that
- *     unavailable days don't inflate the penalty with phantom zeros.
- *  2. **Global daily std-dev** — the total effective hours scheduled per
- *     calendar day (across all participants) should be roughly equal.
- *     This metric is absolute and unaffected by individual availability.
+ * Two complementary metrics, each computed against a **capacity-proportional
+ * target** when `capacities` are provided:
+ *  1. **Per-participant daily std-dev** — each participant's day-load should
+ *     match their share of capacity for that day:
+ *         target_d = totalLoad_p × (cap_p_d / totalCap_p)
+ *     This means a participant available 4h Monday and 24h Tuesday is expected
+ *     to carry roughly 6× more load on Tuesday — not equal hours on both.
+ *  2. **Global daily std-dev** — the total team-load on a day should match
+ *     that day's share of the team's capacity:
+ *         target_d = totalGlobalLoad × (teamCap_d / teamCapTotal)
+ *     A Friday with reduced team availability is expected to carry less
+ *     work, not the same as a full-staffed Sunday.
+ *
+ * When `capacities` is missing (e.g. tests that don't pass it), the function
+ * gracefully degrades to the historical capacity-blind flat-mean formulation.
  *
  * Both values are returned so the caller can weight them in the composite.
  */
@@ -190,7 +196,6 @@ export function dailyWorkloadImbalance(
   }
 
   // ── Per-participant daily loads ──
-  // participantId → (operationalDateKey → effectiveHours)
   const dayIndex = new Map<string, number>();
   for (let i = 0; i < dayList.length; i++) dayIndex.set(dayList[i], i);
   const numDays = dayList.length;
@@ -203,6 +208,7 @@ export function dailyWorkloadImbalance(
 
   for (const p of participants) {
     const dailyLoad = new Float64Array(numDays); // zero-initialised
+    let totalLoad = 0;
 
     const pAssignments = assignmentsByParticipant
       ? assignmentsByParticipant.get(p.id) || []
@@ -217,34 +223,38 @@ export function dailyWorkloadImbalance(
       const eff = computeTaskEffectiveHours(task);
       dailyLoad[idx] += eff;
       globalDayTotals[idx] += eff;
+      totalLoad += eff;
     }
 
-    // Std-dev of this participant's daily loads.
-    // When capacities are available, exclude days where the participant
-    // has zero available hours — those are fully-unavailable days whose
-    // "0 load" is expected, not a sign of imbalance.
     const pCap = capacities?.get(p.id);
-    let sum = 0;
-    let availableDayCount = 0;
-    for (let i = 0; i < numDays; i++) {
-      const dk = dayList[i];
-      const dayAvail = pCap?.dailyAvailableHours.get(dk);
-      //  Skip fully-unavailable days when capacity data is present
-      if (pCap && (dayAvail === undefined || dayAvail <= 0)) continue;
-      sum += dailyLoad[i];
-      availableDayCount++;
-    }
-    if (availableDayCount > 0) {
-      const avg = sum / availableDayCount;
-      let variance = 0;
-      for (let i = 0; i < numDays; i++) {
-        const dk = dayList[i];
-        const dayAvail = pCap?.dailyAvailableHours.get(dk);
-        if (pCap && (dayAvail === undefined || dayAvail <= 0)) continue;
-        variance += (dailyLoad[i] - avg) ** 2;
+    let totalCap = 0;
+    if (pCap) {
+      for (const dk of dayList) {
+        const c = pCap.dailyAvailableHours.get(dk) ?? 0;
+        if (c > 0) totalCap += c;
       }
-      variance /= availableDayCount;
-      sumOfParticipantStdDevs += Math.sqrt(variance);
+    }
+
+    if (pCap && totalCap > 0) {
+      // Capacity-proportional target: each day's expected load scales with
+      // that day's share of the participant's total available hours.
+      let variance = 0;
+      let availDays = 0;
+      for (let i = 0; i < numDays; i++) {
+        const cd = pCap.dailyAvailableHours.get(dayList[i]) ?? 0;
+        if (cd <= 0) continue;
+        const target = totalLoad * (cd / totalCap);
+        variance += (dailyLoad[i] - target) ** 2;
+        availDays++;
+      }
+      if (availDays > 0) sumOfParticipantStdDevs += Math.sqrt(variance / availDays);
+    } else {
+      // No-capacity graceful degradation — flat-mean across all days.
+      // Used by callers that don't pass a capacities map (e.g. some tests).
+      const avg = totalLoad / numDays;
+      let variance = 0;
+      for (let i = 0; i < numDays; i++) variance += (dailyLoad[i] - avg) ** 2;
+      sumOfParticipantStdDevs += Math.sqrt(variance / numDays);
     }
     participantCount++;
   }
@@ -254,11 +264,33 @@ export function dailyWorkloadImbalance(
   // ── Global daily std-dev ──
   let gSum = 0;
   for (let i = 0; i < numDays; i++) gSum += globalDayTotals[i];
-  const gAvg = gSum / numDays;
+
+  let teamCapTotal = 0;
+  const teamCapPerDay = new Float64Array(numDays);
+  if (capacities) {
+    for (let i = 0; i < numDays; i++) {
+      const dk = dayList[i];
+      let dayCap = 0;
+      for (const cap of capacities.values()) dayCap += cap.dailyAvailableHours.get(dk) ?? 0;
+      teamCapPerDay[i] = dayCap;
+      teamCapTotal += dayCap;
+    }
+  }
+
   let gVariance = 0;
-  for (let i = 0; i < numDays; i++) gVariance += (globalDayTotals[i] - gAvg) ** 2;
-  gVariance /= numDays;
-  const dailyGlobalStdDev = Math.sqrt(gVariance);
+  if (capacities && teamCapTotal > 0) {
+    // Capacity-proportional global target — each day's expected total scales
+    // with that day's share of total team capacity. A Shabbat-eve day with
+    // half the staff naturally gets half the load and is not penalised.
+    for (let i = 0; i < numDays; i++) {
+      const target = gSum * (teamCapPerDay[i] / teamCapTotal);
+      gVariance += (globalDayTotals[i] - target) ** 2;
+    }
+  } else {
+    const gAvg = gSum / numDays;
+    for (let i = 0; i < numDays; i++) gVariance += (globalDayTotals[i] - gAvg) ** 2;
+  }
+  const dailyGlobalStdDev = Math.sqrt(gVariance / numDays);
 
   return { dailyPerParticipantStdDev, dailyGlobalStdDev };
 }
@@ -729,8 +761,15 @@ export class IncrementalScorer {
   // Daily balance
   private _dailyPerParticipantStdDevSum = 0;
   private _participantCount = 0;
-  // Global daily totals
+  // Global daily totals (mutated by addParticipantContribution / removeParticipantContribution)
   private globalDayTotals: Map<string, number>;
+  // Capacity per op-day, summed across all participants. Invariant across SA
+  // swaps (capacities don't change with assignment moves), so populated once
+  // in build() and read-only thereafter. Used by computeGlobalDailyStdDev to
+  // build a capacity-proportional global target.
+  private globalDayCapacities: Map<string, number>;
+  // Sum of globalDayCapacities — cached to avoid re-summing on every swap.
+  private _globalDayCapTotal = 0;
 
   // Saved low-priority state for undo (set at start of recomputeForSwap)
   private _savedLowPriorityTotal = 0;
@@ -765,6 +804,7 @@ export class IncrementalScorer {
     this.capacities = new Map();
     this.dayList = [];
     this.globalDayTotals = new Map();
+    this.globalDayCapacities = new Map();
     this._perParticipantLowPriorityPenalty = new Map();
     this._perParticipantNotWithPenalty = new Map();
     this._notWithPairs = new Map();
@@ -798,6 +838,17 @@ export class IncrementalScorer {
 
     // Init global day totals
     for (const d of scorer.dayList) scorer.globalDayTotals.set(d, 0);
+
+    // Init global day capacities — Σ cap_p_d across all participants.
+    // Invariant for the lifetime of the scorer (capacities don't change with
+    // assignment swaps), so we compute once and cache the sum.
+    scorer._globalDayCapTotal = 0;
+    for (const d of scorer.dayList) {
+      let dayCap = 0;
+      for (const cap of scorer.capacities.values()) dayCap += cap.dailyAvailableHours.get(d) ?? 0;
+      scorer.globalDayCapacities.set(d, dayCap);
+      scorer._globalDayCapTotal += dayCap;
+    }
 
     scorer._participantCount = participants.length;
 
@@ -988,27 +1039,42 @@ export class IncrementalScorer {
     // Rest profile
     const restProfile = computeRestFromAssignments(p.id, pAssignments, this.taskMap);
 
-    // Daily std-dev for this participant
+    // Daily std-dev for this participant — capacity-proportional target.
+    // Each day's expected load scales with (cap_d / totalCap_p) so a participant
+    // available 4h Monday and 24h Tuesday is expected to carry ~6× more on
+    // Tuesday, not equal hours on both. Mirrors `dailyWorkloadImbalance`.
     const cap = this.capacities.get(p.id);
     let dailyStdDev = 0;
     if (this.dayList.length > 1) {
-      let sum = 0;
-      let availCount = 0;
-      for (const dk of this.dayList) {
-        const dayAvail = cap?.dailyAvailableHours.get(dk);
-        if (cap && (dayAvail === undefined || dayAvail <= 0)) continue;
-        sum += dailyLoads.get(dk) || 0;
-        availCount++;
-      }
-      if (availCount > 0) {
-        const avg = sum / availCount;
-        let variance = 0;
+      let totalCap = 0;
+      if (cap) {
         for (const dk of this.dayList) {
-          const dayAvail = cap?.dailyAvailableHours.get(dk);
-          if (cap && (dayAvail === undefined || dayAvail <= 0)) continue;
-          variance += ((dailyLoads.get(dk) || 0) - avg) ** 2;
+          const c = cap.dailyAvailableHours.get(dk) ?? 0;
+          if (c > 0) totalCap += c;
         }
-        dailyStdDev = Math.sqrt(variance / availCount);
+      }
+
+      if (cap && totalCap > 0) {
+        let totalLoad = 0;
+        for (const dk of this.dayList) totalLoad += dailyLoads.get(dk) || 0;
+        let variance = 0;
+        let availDays = 0;
+        for (const dk of this.dayList) {
+          const cd = cap.dailyAvailableHours.get(dk) ?? 0;
+          if (cd <= 0) continue;
+          const target = totalLoad * (cd / totalCap);
+          variance += ((dailyLoads.get(dk) || 0) - target) ** 2;
+          availDays++;
+        }
+        if (availDays > 0) dailyStdDev = Math.sqrt(variance / availDays);
+      } else {
+        // No-capacity graceful degradation — flat-mean across all days.
+        let sum = 0;
+        for (const dk of this.dayList) sum += dailyLoads.get(dk) || 0;
+        const avg = sum / this.dayList.length;
+        let variance = 0;
+        for (const dk of this.dayList) variance += ((dailyLoads.get(dk) || 0) - avg) ** 2;
+        dailyStdDev = Math.sqrt(variance / this.dayList.length);
       }
     }
 
@@ -1072,6 +1138,20 @@ export class IncrementalScorer {
     if (this.dayList.length <= 1) return 0;
     let gSum = 0;
     for (const d of this.dayList) gSum += this.globalDayTotals.get(d) || 0;
+
+    // Capacity-proportional global target — each day's expected total scales
+    // with that day's share of total team capacity. A Shabbat-eve day with
+    // half the staff naturally gets half the load and is not penalised.
+    if (this._globalDayCapTotal > 0) {
+      let gVar = 0;
+      for (const d of this.dayList) {
+        const target = gSum * ((this.globalDayCapacities.get(d) ?? 0) / this._globalDayCapTotal);
+        gVar += ((this.globalDayTotals.get(d) || 0) - target) ** 2;
+      }
+      return Math.sqrt(gVar / this.dayList.length);
+    }
+
+    // Graceful degradation when no capacities — flat mean across days.
     const gAvg = gSum / this.dayList.length;
     let gVar = 0;
     for (const d of this.dayList) gVar += ((this.globalDayTotals.get(d) || 0) - gAvg) ** 2;

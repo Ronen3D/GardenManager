@@ -4807,13 +4807,37 @@ console.log('\n── Rest Calculator: Extended ──────────�
   const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 12, 14));
   const t3 = createShemeshTask(createTimeBlockFromHours(baseDate, 20, 22));
   const aList: Assignment[] = [
-    { id: 'pgb-a1', taskId: t1.id, slotId: t1.slots[0].slotId, participantId: 'rpgb-p', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'pgb-a2', taskId: t2.id, slotId: t2.slots[0].slotId, participantId: 'rpgb-p', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'pgb-a3', taskId: t3.id, slotId: t3.slots[0].slotId, participantId: 'rpgb-p', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    {
+      id: 'pgb-a1',
+      taskId: t1.id,
+      slotId: t1.slots[0].slotId,
+      participantId: 'rpgb-p',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'pgb-a2',
+      taskId: t2.id,
+      slotId: t2.slots[0].slotId,
+      participantId: 'rpgb-p',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'pgb-a3',
+      taskId: t3.id,
+      slotId: t3.slots[0].slotId,
+      participantId: 'rpgb-p',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
   ];
   const r = computeParticipantRest('rpgb-p', aList, [t1, t2, t3]);
   const expected = Math.sqrt(4) + Math.sqrt(6);
-  assert(Math.abs(r.restPerGapBonus - expected) < 1e-9, `restPerGapBonus: 3 tasks → √4+√6 ≈ ${expected.toFixed(3)}, got ${r.restPerGapBonus.toFixed(3)}`);
+  assert(
+    Math.abs(r.restPerGapBonus - expected) < 1e-9,
+    `restPerGapBonus: 3 tasks → √4+√6 ≈ ${expected.toFixed(3)}, got ${r.restPerGapBonus.toFixed(3)}`,
+  );
 }
 
 // Composite includes restPerGapWeight × Σ √gap; setting weight=0 disables cleanly.
@@ -4831,18 +4855,40 @@ console.log('\n── Rest Calculator: Extended ──────────�
     dateUnavailability: [],
   };
   const aList: Assignment[] = [
-    { id: 'pgb-cs1', taskId: t1.id, slotId: t1.slots[0].slotId, participantId: p.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'pgb-cs2', taskId: t2.id, slotId: t2.slots[0].slotId, participantId: p.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    {
+      id: 'pgb-cs1',
+      taskId: t1.id,
+      slotId: t1.slots[0].slotId,
+      participantId: p.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'pgb-cs2',
+      taskId: t2.id,
+      slotId: t2.slots[0].slotId,
+      participantId: p.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
   ];
   const cfgOn: SchedulerConfig = { ...DEFAULT_CONFIG, restPerGapWeight: 1 };
   const cfgOff: SchedulerConfig = { ...DEFAULT_CONFIG, restPerGapWeight: 0 };
   const sOn = computeScheduleScore(tasks, [p], aList, cfgOn);
   const sOff = computeScheduleScore(tasks, [p], aList, cfgOff);
   const expectedBonus = Math.sqrt(4);
-  assert(Math.abs(sOn.restPerGapBonus - expectedBonus) < 1e-9, `Score exposes restPerGapBonus = √4 ≈ ${expectedBonus.toFixed(3)}, got ${sOn.restPerGapBonus.toFixed(3)}`);
-  assert(Math.abs((sOn.compositeScore - sOff.compositeScore) - cfgOn.restPerGapWeight * expectedBonus) < 1e-9,
-    `weight=1 vs weight=0 differs by exactly restPerGapWeight × Σ√gap`);
-  assert(Math.abs(sOff.restPerGapBonus - expectedBonus) < 1e-9, 'restPerGapBonus is computed even when weight=0 (display only)');
+  assert(
+    Math.abs(sOn.restPerGapBonus - expectedBonus) < 1e-9,
+    `Score exposes restPerGapBonus = √4 ≈ ${expectedBonus.toFixed(3)}, got ${sOn.restPerGapBonus.toFixed(3)}`,
+  );
+  assert(
+    Math.abs(sOn.compositeScore - sOff.compositeScore - cfgOn.restPerGapWeight * expectedBonus) < 1e-9,
+    `weight=1 vs weight=0 differs by exactly restPerGapWeight × Σ√gap`,
+  );
+  assert(
+    Math.abs(sOff.restPerGapBonus - expectedBonus) < 1e-9,
+    'restPerGapBonus is computed even when weight=0 (display only)',
+  );
 }
 
 // SA-escape property: an 8h-rotation pattern strictly outscores a 4h-rotation
@@ -4855,8 +4901,14 @@ console.log('\n── Rest Calculator: Extended ──────────�
 //   wide:   gaps 8h, 8h  → Σ √gap = √8 + √8 ≈ 5.66
 {
   const pA: Participant = {
-    id: 'rot-a', name: 'rot-a', level: Level.L0, certifications: ['Nitzan'], group: 'g',
-    availability: [{ start: new Date(baseDate.getTime() - 86400000), end: new Date(baseDate.getTime() + 2 * 86400000) }],
+    id: 'rot-a',
+    name: 'rot-a',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'g',
+    availability: [
+      { start: new Date(baseDate.getTime() - 86400000), end: new Date(baseDate.getTime() + 2 * 86400000) },
+    ],
     dateUnavailability: [],
   };
   const tasksSparse = [
@@ -4865,8 +4917,12 @@ console.log('\n── Rest Calculator: Extended ──────────�
     createShemeshTask(createTimeBlockFromHours(baseDate, 21, 25)),
   ];
   const sparseAssigns: Assignment[] = tasksSparse.map((t, i) => ({
-    id: `s-${i}`, taskId: t.id, slotId: t.slots[0].slotId,
-    participantId: pA.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+    id: `s-${i}`,
+    taskId: t.id,
+    slotId: t.slots[0].slotId,
+    participantId: pA.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
   }));
   const tasksWide = [
     createShemeshTask(createTimeBlockFromHours(baseDate, 5, 9)),
@@ -4874,14 +4930,20 @@ console.log('\n── Rest Calculator: Extended ──────────�
     createShemeshTask(createTimeBlockFromHours(baseDate, 29, 33)),
   ];
   const wideAssigns: Assignment[] = tasksWide.map((t, i) => ({
-    id: `w-${i}`, taskId: t.id, slotId: t.slots[0].slotId,
-    participantId: pA.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+    id: `w-${i}`,
+    taskId: t.id,
+    slotId: t.slots[0].slotId,
+    participantId: pA.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
   }));
   const cfg: SchedulerConfig = { ...DEFAULT_CONFIG, restPerGapWeight: 1 };
   const sNarrow = computeScheduleScore(tasksSparse, [pA], sparseAssigns, cfg);
   const sWide = computeScheduleScore(tasksWide, [pA], wideAssigns, cfg);
-  assert(sWide.restPerGapBonus > sNarrow.restPerGapBonus + 1e-6,
-    `restPerGapBonus signals 8h-rotation > 4h-rotation: wide=${sWide.restPerGapBonus.toFixed(3)} > narrow=${sNarrow.restPerGapBonus.toFixed(3)}`);
+  assert(
+    sWide.restPerGapBonus > sNarrow.restPerGapBonus + 1e-6,
+    `restPerGapBonus signals 8h-rotation > 4h-rotation: wide=${sWide.restPerGapBonus.toFixed(3)} > narrow=${sNarrow.restPerGapBonus.toFixed(3)}`,
+  );
 }
 
 // ─── ScheduleScore: per-bucket penalty exposure ─────────────────────────────
@@ -4893,33 +4955,47 @@ console.log('\n── Rest Calculator: Extended ──────────�
   const t2 = createShemeshTask(createTimeBlockFromHours(baseDate, 14, 18));
   const tasks = [t1, t2];
   const pSum: Participant = {
-    id: 'sb-sum', name: 'sb-sum', level: Level.L0, certifications: ['Nitzan'], group: 'g',
-    availability: [{ start: new Date(baseDate.getTime() - 86400000), end: new Date(baseDate.getTime() + 2 * 86400000) }],
+    id: 'sb-sum',
+    name: 'sb-sum',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'g',
+    availability: [
+      { start: new Date(baseDate.getTime() - 86400000), end: new Date(baseDate.getTime() + 2 * 86400000) },
+    ],
     dateUnavailability: [],
   };
   const aSum: Assignment[] = tasks.map((t, i) => ({
-    id: `sb-${i}`, taskId: t.id, slotId: t.slots[0].slotId,
-    participantId: pSum.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+    id: `sb-${i}`,
+    taskId: t.id,
+    slotId: t.slots[0].slotId,
+    participantId: pSum.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
   }));
   const sSum = computeScheduleScore(tasks, [pSum], aSum, DEFAULT_CONFIG);
 
   // Penalty bucket sum equality
   const bucketSum = (sSum.lowPriorityPenalty ?? 0) + (sSum.notWithPenalty ?? 0) + (sSum.taskPrefPenalty ?? 0);
-  assert(Math.abs(bucketSum - sSum.totalPenalty) < 1e-9,
-    `Penalty buckets sum to totalPenalty: ${bucketSum.toFixed(3)} vs ${sSum.totalPenalty.toFixed(3)}`);
+  assert(
+    Math.abs(bucketSum - sSum.totalPenalty) < 1e-9,
+    `Penalty buckets sum to totalPenalty: ${bucketSum.toFixed(3)} vs ${sSum.totalPenalty.toFixed(3)}`,
+  );
 
   // Six-term reconstruction equality — guards against drift between formula
   // and exposed components, which is the contract the debug panel relies on.
   const cfg = DEFAULT_CONFIG;
   const reconstructed =
-    cfg.minRestWeight * sSum.minRestHours
-    + cfg.restPerGapWeight * sSum.restPerGapBonus
-    - cfg.l0FairnessWeight * sSum.l0StdDev
-    - cfg.seniorFairnessWeight * sSum.seniorStdDev
-    - cfg.dailyBalanceWeight * (sSum.dailyPerParticipantStdDev + sSum.dailyGlobalStdDev)
-    - sSum.totalPenalty;
-  assert(Math.abs(reconstructed - sSum.compositeScore) < 1e-6,
-    `Six-term sum reconstructs compositeScore: ${reconstructed.toFixed(3)} vs ${sSum.compositeScore.toFixed(3)}`);
+    cfg.minRestWeight * sSum.minRestHours +
+    cfg.restPerGapWeight * sSum.restPerGapBonus -
+    cfg.l0FairnessWeight * sSum.l0StdDev -
+    cfg.seniorFairnessWeight * sSum.seniorStdDev -
+    cfg.dailyBalanceWeight * (sSum.dailyPerParticipantStdDev + sSum.dailyGlobalStdDev) -
+    sSum.totalPenalty;
+  assert(
+    Math.abs(reconstructed - sSum.compositeScore) < 1e-6,
+    `Six-term sum reconstructs compositeScore: ${reconstructed.toFixed(3)} vs ${sSum.compositeScore.toFixed(3)}`,
+  );
 }
 
 // ─── Soft Constraints: workloadImbalanceSplit ───────────────────────────────
@@ -6812,6 +6888,8 @@ console.log('\n── getEligibleParticipantsForSlot ───────');
 // dailyWorkloadImbalance (per-day std-dev)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+import { computeAllCapacities } from './utils/capacity';
+
 console.log('\n── dailyWorkloadImbalance ───────────────');
 
 {
@@ -6890,6 +6968,220 @@ console.log('\n── dailyWorkloadImbalance ───────────�
   const singleDay = dailyWorkloadImbalance([p1], balAssigns.slice(0, 1), [t1]);
   assert(singleDay.dailyPerParticipantStdDev === 0, 'dailyImbalance: single day → per-participant stdDev = 0');
   assert(singleDay.dailyGlobalStdDev === 0, 'dailyImbalance: single day → global stdDev = 0');
+}
+
+// ─── dailyWorkloadImbalance — capacity-proportional path ────────────────────
+//
+// Verifies SC-8 produces the right answer when capacity context is provided.
+// Mirrors the five scenarios in `src/bench-sc8-magnitude.ts`.
+{
+  console.log('   capacity-proportional path...');
+
+  const DSH = 5;
+  const base = new Date(2026, 1, 14);
+  const dayMs = 24 * 3600_000;
+
+  const buildOpDayWindows = (perDayHours: number[]): Array<{ start: Date; end: Date }> => {
+    const out: Array<{ start: Date; end: Date }> = [];
+    for (let d = 0; d < perDayHours.length; d++) {
+      const dayStart = new Date(base.getTime() + d * dayMs);
+      const opStart = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate(), DSH, 0, 0, 0);
+      if (perDayHours[d] > 0) {
+        out.push({ start: opStart, end: new Date(opStart.getTime() + perDayHours[d] * 3600_000) });
+      }
+    }
+    return out;
+  };
+
+  const mkTask = (id: string, start: Date, durationHours: number): Task =>
+    ({
+      id,
+      name: id,
+      sourceName: id,
+      timeBlock: { start, end: new Date(start.getTime() + durationHours * 3600_000) },
+      requiredCount: 1,
+      slots: [
+        {
+          slotId: `${id}-s1`,
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: ['Nitzan'],
+        },
+      ],
+      blocksConsecutive: false,
+      sameGroupRequired: false,
+      baseLoadWeight: 1,
+      loadWindows: [],
+    }) as Task;
+
+  const mkAssign = (taskId: string, slotId: string, pid: string, idx: number): Assignment => ({
+    id: `cap-a-${idx}`,
+    taskId,
+    slotId,
+    participantId: pid,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  });
+
+  // Scenario A: Carol equal-hours-mixed-availability — old metric blind, new flags it.
+  {
+    const carol: Participant = {
+      id: 'capA-carol',
+      name: 'Carol',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: buildOpDayWindows([4, 24, 4, 24, 4, 24, 24]),
+      dateUnavailability: [],
+    };
+    const tasks: Task[] = [];
+    const assignments: Assignment[] = [];
+    for (let d = 0; d < 7; d++) {
+      const ts = new Date(base.getTime() + d * dayMs);
+      ts.setHours(DSH, 0, 0, 0);
+      const t = mkTask(`capA-t${d}`, ts, 4);
+      tasks.push(t);
+      assignments.push(mkAssign(t.id, t.slots[0].slotId, carol.id, d));
+    }
+    const caps = computeAllCapacities([carol], tasks[0].timeBlock.start, tasks[6].timeBlock.end, DSH);
+    const withCap = dailyWorkloadImbalance([carol], assignments, tasks, undefined, undefined, caps, DSH);
+    const noCap = dailyWorkloadImbalance([carol], assignments, tasks, undefined, undefined, undefined, DSH);
+    assert(
+      withCap.dailyPerParticipantStdDev > 2,
+      `dailyImbalance(cap): equal-hours on mixed-cap days flags imbalance (got ${withCap.dailyPerParticipantStdDev})`,
+    );
+    assert(
+      noCap.dailyPerParticipantStdDev < 0.001,
+      `dailyImbalance(no-cap): equal-hours looks balanced (got ${noCap.dailyPerParticipantStdDev})`,
+    );
+  }
+
+  // Scenario B: Carol capacity-proportional load — old metric penalises, new doesn't.
+  {
+    const carol: Participant = {
+      id: 'capB-carol',
+      name: 'Carol',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: buildOpDayWindows([4, 24, 4, 24, 4, 24, 24]),
+      dateUnavailability: [],
+    };
+    const tasks: Task[] = [];
+    const assignments: Assignment[] = [];
+    const dayHours = [1.3, 7, 1.3, 7, 1.3, 7, 7];
+    for (let d = 0; d < 7; d++) {
+      const ts = new Date(base.getTime() + d * dayMs);
+      ts.setHours(DSH, 0, 0, 0);
+      const t = mkTask(`capB-t${d}`, ts, dayHours[d]);
+      tasks.push(t);
+      assignments.push(mkAssign(t.id, t.slots[0].slotId, carol.id, d));
+    }
+    const caps = computeAllCapacities([carol], tasks[0].timeBlock.start, tasks[6].timeBlock.end, DSH);
+    const withCap = dailyWorkloadImbalance([carol], assignments, tasks, undefined, undefined, caps, DSH);
+    assert(
+      withCap.dailyPerParticipantStdDev < 0.5,
+      `dailyImbalance(cap): proportional load looks balanced (got ${withCap.dailyPerParticipantStdDev})`,
+    );
+  }
+
+  // Scenario C: whole-team Friday with reduced capacity — global stddev should drop.
+  {
+    const participants: Participant[] = [];
+    for (let i = 0; i < 4; i++) {
+      participants.push({
+        id: `capC-p${i}`,
+        name: `P${i}`,
+        level: Level.L0,
+        certifications: ['Nitzan'],
+        group: 'A',
+        availability: buildOpDayWindows([24, 24, 24, 24, 12, 24, 24]),
+        dateUnavailability: [],
+      });
+    }
+    const tasks: Task[] = [];
+    const assignments: Assignment[] = [];
+    let aIdx = 0;
+    for (let d = 0; d < 7; d++) {
+      const dayLoad = d === 4 ? 12 : 20;
+      let remaining = dayLoad;
+      let pIdx = 0;
+      const ts = new Date(base.getTime() + d * dayMs);
+      ts.setHours(DSH, 0, 0, 0);
+      while (remaining >= 4) {
+        const t = mkTask(`capC-d${d}-p${pIdx}`, ts, 4);
+        tasks.push(t);
+        assignments.push(mkAssign(t.id, t.slots[0].slotId, participants[pIdx % 4].id, aIdx++));
+        pIdx++;
+        remaining -= 4;
+      }
+    }
+    const lastTask = tasks[tasks.length - 1];
+    const caps = computeAllCapacities(participants, tasks[0].timeBlock.start, lastTask.timeBlock.end, DSH);
+    const withCap = dailyWorkloadImbalance(participants, assignments, tasks, undefined, undefined, caps, DSH);
+    const noCap = dailyWorkloadImbalance(participants, assignments, tasks, undefined, undefined, undefined, DSH);
+    assert(
+      withCap.dailyGlobalStdDev < noCap.dailyGlobalStdDev,
+      `dailyImbalance(cap): Shabbat-eve dip absorbed (${withCap.dailyGlobalStdDev} < ${noCap.dailyGlobalStdDev})`,
+    );
+  }
+
+  // Scenario E: single-day participant with multi-day schedule — both metrics 0.
+  {
+    const bob: Participant = {
+      id: 'capE-bob',
+      name: 'Bob',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: buildOpDayWindows([24, 0]),
+      dateUnavailability: [],
+    };
+    const opStart = new Date(base.getFullYear(), base.getMonth(), base.getDate(), DSH, 0, 0, 0);
+    const t = mkTask('capE-bob-task', opStart, 4);
+    const dummyStart = new Date(base.getTime() + dayMs);
+    dummyStart.setHours(DSH, 0, 0, 0);
+    const dummy = mkTask('capE-dummy', dummyStart, 4);
+    const tasks = [t, dummy];
+    const assignments = [mkAssign(t.id, t.slots[0].slotId, bob.id, 0)];
+    const caps = computeAllCapacities([bob], t.timeBlock.start, dummy.timeBlock.end, DSH);
+    const withCap = dailyWorkloadImbalance([bob], assignments, tasks, undefined, undefined, caps, DSH);
+    assert(
+      withCap.dailyPerParticipantStdDev < 0.001 && withCap.dailyGlobalStdDev < 0.001,
+      `dailyImbalance(cap): single-day participant produces zero stddev (got per=${withCap.dailyPerParticipantStdDev}, glob=${withCap.dailyGlobalStdDev})`,
+    );
+  }
+
+  // Zero-cap day for one participant — that day excluded, no NaN.
+  {
+    const part: Participant = {
+      id: 'capZ-p',
+      name: 'P',
+      level: Level.L0,
+      certifications: ['Nitzan'],
+      group: 'A',
+      availability: buildOpDayWindows([24, 0, 24]),
+      dateUnavailability: [],
+    };
+    const tasks: Task[] = [];
+    const assignments: Assignment[] = [];
+    for (let d = 0; d < 3; d += 2) {
+      const ts = new Date(base.getTime() + d * dayMs);
+      ts.setHours(DSH, 0, 0, 0);
+      const t = mkTask(`capZ-t${d}`, ts, 4);
+      tasks.push(t);
+      assignments.push(mkAssign(t.id, t.slots[0].slotId, part.id, d));
+    }
+    // Add a dummy task on the zero-cap day so the day appears in dayList
+    const dummyTs = new Date(base.getTime() + dayMs);
+    dummyTs.setHours(DSH, 0, 0, 0);
+    tasks.push(mkTask('capZ-dummy', dummyTs, 1));
+    const caps = computeAllCapacities([part], tasks[0].timeBlock.start, tasks[2].timeBlock.end, DSH);
+    const withCap = dailyWorkloadImbalance([part], assignments, tasks, undefined, undefined, caps, DSH);
+    assert(
+      Number.isFinite(withCap.dailyPerParticipantStdDev) && Number.isFinite(withCap.dailyGlobalStdDev),
+      `dailyImbalance(cap): zero-cap day produces finite values (got per=${withCap.dailyPerParticipantStdDev}, glob=${withCap.dailyGlobalStdDev})`,
+    );
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -7389,8 +7681,22 @@ console.log('\n── Rescue Plans ───────────────
     // out of rsc-t2 into rsc-t1) — the question we're asking is purely about
     // rsc-t1 candidate eligibility.
     const postSwapAssigns: Assignment[] = [
-      { id: 'rsc-a1', taskId: 'rsc-t1', slotId: 'rsc-s1', participantId: 'rsc-p3', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'rsc-a2', taskId: 'rsc-t1', slotId: 'rsc-s2', participantId: 'rsc-p2', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'rsc-a1',
+        taskId: 'rsc-t1',
+        slotId: 'rsc-s1',
+        participantId: 'rsc-p3',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'rsc-a2',
+        taskId: 'rsc-t1',
+        slotId: 'rsc-s2',
+        participantId: 'rsc-p2',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ];
 
     // Step 2: the new feature records p1 as unavailable for rsc-t1's window.
@@ -9540,7 +9846,10 @@ assert(tunerIqr([10, 10, 10, 10]) === 0, 'iqr: no spread → 0');
   const dims: TunerDim[] = [{ min: 1, max: 50, integer: true }];
   const samples = latinHypercubeSample(dims, 40, mulberry32(23));
   const distinctValues = new Set(samples.map((r) => r[0]));
-  assert(distinctValues.size >= 8, `LHS restPerGapWeight dim: ≥8 distinct values across 40 samples (got ${distinctValues.size})`);
+  assert(
+    distinctValues.size >= 8,
+    `LHS restPerGapWeight dim: ≥8 distinct values across 40 samples (got ${distinctValues.size})`,
+  );
   const maxObserved = Math.max(...samples.map((r) => r[0]));
   assert(maxObserved >= 20, `LHS restPerGapWeight dim: at least one sample ≥ 20 (got max ${maxObserved})`);
   const minObserved = Math.min(...samples.map((r) => r[0]));
@@ -9793,7 +10102,6 @@ console.log('\n── Auto-Tuner: reference-scoring invariance ──');
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import type { ScoreContext } from './constraints/soft-constraints';
-import { computeAllCapacities } from './utils/capacity';
 
 console.log('\n── Rescue Plans (Composite Scoring) ────');
 
@@ -13447,7 +13755,8 @@ console.log('\n── Structural section-key (layout) ─────');
 // not the live store. The new signature takes both as required parameters so
 // callers cannot accidentally read live state.
 {
-  const { resolveLogicalDayTimestamp } = require('./shared/utils/time-utils') as typeof import('./shared/utils/time-utils');
+  const { resolveLogicalDayTimestamp } =
+    require('./shared/utils/time-utils') as typeof import('./shared/utils/time-utils');
 
   const base = new Date(2026, 0, 5); // Jan 5 2026, midnight local
 
@@ -13455,26 +13764,38 @@ console.log('\n── Structural section-key (layout) ─────');
   {
     const t = resolveLogicalDayTimestamp(1, '05:00', 5, base);
     assert(t !== null, 'resolveLogicalDayTimestamp: returns Date for valid input');
-    assert(t!.getDate() === 5 && t!.getHours() === 5, 'resolveLogicalDayTimestamp: day 1 / 05:00 lands on calendar day-0 at 05:00');
+    assert(
+      t!.getDate() === 5 && t!.getHours() === 5,
+      'resolveLogicalDayTimestamp: day 1 / 05:00 lands on calendar day-0 at 05:00',
+    );
   }
 
   // Mid op-day
   {
     const t = resolveLogicalDayTimestamp(1, '14:00', 5, base);
-    assert(t!.getDate() === 5 && t!.getHours() === 14, 'resolveLogicalDayTimestamp: day 1 / 14:00 → calendar day-0 14:00');
+    assert(
+      t!.getDate() === 5 && t!.getHours() === 14,
+      'resolveLogicalDayTimestamp: day 1 / 14:00 → calendar day-0 14:00',
+    );
   }
 
   // Post-midnight tail
   {
     const t = resolveLogicalDayTimestamp(1, '04:00', 5, base);
-    assert(t!.getDate() === 6 && t!.getHours() === 4, 'resolveLogicalDayTimestamp: day 1 / 04:00 → calendar day+1 04:00 (op-day-1 tail)');
+    assert(
+      t!.getDate() === 6 && t!.getHours() === 4,
+      'resolveLogicalDayTimestamp: day 1 / 04:00 → calendar day+1 04:00 (op-day-1 tail)',
+    );
   }
 
   // Half-hour minutes pass through
   {
     const t = resolveLogicalDayTimestamp(2, '14:30', 5, base);
     assert(t!.getMinutes() === 30, 'resolveLogicalDayTimestamp: HH:MM minutes preserved');
-    assert(t!.getDate() === 6 && t!.getHours() === 14, 'resolveLogicalDayTimestamp: day 2 / 14:30 → calendar day+1 14:30');
+    assert(
+      t!.getDate() === 6 && t!.getHours() === 14,
+      'resolveLogicalDayTimestamp: day 2 / 14:30 → calendar day+1 14:30',
+    );
   }
 
   // Frozen-snapshot consistency: same call returns the same timestamp regardless
@@ -13486,12 +13807,18 @@ console.log('\n── Structural section-key (layout) ─────');
     // dsh=5: 6 >= 5 → dayOffset = 0 → calendar day-0 06:00
     // dsh=7: 6 <  7 → dayOffset = 1 → calendar day+1 06:00 (different op-day mapping)
     assert(tFrozen5!.getDate() === 5, 'resolveLogicalDayTimestamp: dsh=5 maps day 1 / 06:00 to calendar day-0');
-    assert(tDifferentDsh!.getDate() === 6, 'resolveLogicalDayTimestamp: dsh=7 maps day 1 / 06:00 to calendar day+1 (proves param is honored, not the store)');
+    assert(
+      tDifferentDsh!.getDate() === 6,
+      'resolveLogicalDayTimestamp: dsh=7 maps day 1 / 06:00 to calendar day+1 (proves param is honored, not the store)',
+    );
   }
 
   // Malformed input returns null (existing behavior)
   {
-    assert(resolveLogicalDayTimestamp(1, 'garbage', 5, base) === null, 'resolveLogicalDayTimestamp: malformed input returns null');
+    assert(
+      resolveLogicalDayTimestamp(1, 'garbage', 5, base) === null,
+      'resolveLogicalDayTimestamp: malformed input returns null',
+    );
   }
 }
 

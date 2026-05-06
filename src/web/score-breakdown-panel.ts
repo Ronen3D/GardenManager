@@ -104,7 +104,8 @@ function buildBreakdownRows(score: ScheduleScore, config: SchedulerConfig): Brea
   rows.push({
     id: 'restPerGap',
     label: 'פיזור מנוחה',
-    subtitle: 'סכום השורשים של כל פערי המנוחה (Σ√gap). כל פער תורם בנפרד עם תשואה פוחתת — מתגמל גם שיפור פערים שאינם הקצרים ביותר.',
+    subtitle:
+      'סכום השורשים של כל פערי המנוחה (Σ√gap). כל פער תורם בנפרד עם תשואה פוחתת — מתגמל גם שיפור פערים שאינם הקצרים ביותר.',
     code: 'SC-3',
     group: 'reward',
     signedWeight: config.restPerGapWeight,
@@ -144,7 +145,8 @@ function buildBreakdownRows(score: ScheduleScore, config: SchedulerConfig): Brea
   rows.push({
     id: 'dailyBalance',
     label: 'חוסר איזון יומי',
-    subtitle: 'סכום של שתי סטיות תקן יומיות: פר-משתתף (התפלגות שעות לאורך הימים) + גלובלי (פיזור סך השעות בין ימי השבצ"ק).',
+    subtitle:
+      'סכום של שתי סטיות תקן יומיות מול יעד פרופורציונלי לזמינות: פר-משתתף (כמה החלוקה היומית סוטה מהיעד שלו) + גלובלי (כמה כל יום סוטה מהיעד הקבוצתי).',
     code: 'SC-8',
     group: 'cost',
     signedWeight: -config.dailyBalanceWeight,
@@ -259,9 +261,10 @@ function renderSummary(rows: BreakdownRow[], composite: number): string {
   }
   const sumCheck = rewardSum - costSum;
   const drift = Math.abs(sumCheck - composite);
-  const driftLine = drift > 0.01
-    ? `<div class="gm-sb-drift" title="פער מהסכום המאוחסן">⚠ פער טכני של ${fmt(drift, 2)} בין הסכום המוצג לציון השמור</div>`
-    : '';
+  const driftLine =
+    drift > 0.01
+      ? `<div class="gm-sb-drift" title="פער מהסכום המאוחסן">⚠ פער טכני של ${fmt(drift, 2)} בין הסכום המוצג לציון השמור</div>`
+      : '';
   return `<div class="gm-sb-summary">
     <div class="gm-sb-summary-row gm-sb-summary-rewards">
       <span class="gm-sb-summary-label">סך תגמולים (מוסיפים לציון)</span>
@@ -299,9 +302,7 @@ function renderRow(row: BreakdownRow, sharePct: number): string {
   const codeBadge = `<span class="gm-sb-code">${escHtml(row.code)}</span>`;
   // Subtitle and inactive hint span the full width of the row (all 5 columns),
   // so the narrow label column doesn't get squeezed by long explanations.
-  const inactiveLine = row.inactiveHint
-    ? `<span class="gm-sb-inactive">${escHtml(row.inactiveHint)}</span>`
-    : '';
+  const inactiveLine = row.inactiveHint ? `<span class="gm-sb-inactive">${escHtml(row.inactiveHint)}</span>` : '';
   // Weight: signed (sign reflects the formula). Use unsigned digits for whole numbers.
   const weightStr = signedFmt(row.signedWeight, row.signedWeight % 1 === 0 ? 0 : 2);
   // Raw is always shown as a non-negative number (sign lives in the weight).
@@ -320,9 +321,7 @@ function renderRow(row: BreakdownRow, sharePct: number): string {
 }
 
 function renderGroupHeader(group: RowGroup, count: number): string {
-  const text = group === 'reward'
-    ? `תגמולים — מוסיפים לציון (${count})`
-    : `עלויות — מורידות מהציון (${count})`;
+  const text = group === 'reward' ? `תגמולים — מוסיפים לציון (${count})` : `עלויות — מורידות מהציון (${count})`;
   return `<div class="gm-sb-group gm-sb-group-${group}" role="row">
     <span class="gm-sb-group-label" style="grid-column: 1 / -1;">${escHtml(text)}</span>
   </div>`;
