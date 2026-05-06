@@ -1349,6 +1349,27 @@ export function updateTaskTemplate(id: string, patch: Partial<Omit<TaskTemplate,
   notify();
 }
 
+/**
+ * Rename a task template and propagate the new name to every participant
+ * preference (`preferredTaskName` / `lessPreferredTaskName`) that referenced
+ * the old name. Single snapshot so undo restores both sides atomically.
+ * No-op when the trimmed name is unchanged.
+ */
+export function renameTaskTemplate(id: string, newName: string): void {
+  const tpl = taskTemplates.get(id);
+  if (!tpl) return;
+  const trimmed = newName.trim();
+  const oldName = tpl.name.trim();
+  if (!trimmed || trimmed === oldName) return;
+  pushSnapshot();
+  tpl.name = trimmed;
+  for (const p of participants.values()) {
+    if (p.preferredTaskName?.trim() === oldName) p.preferredTaskName = trimmed;
+    if (p.lessPreferredTaskName?.trim() === oldName) p.lessPreferredTaskName = trimmed;
+  }
+  notify();
+}
+
 export function removeTaskTemplate(id: string): void {
   if (!taskTemplates.has(id)) return;
   pushSnapshot();

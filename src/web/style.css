@@ -2085,6 +2085,7 @@ select.input-sm {
   line-height: 1.4;
 }
 .lw-empty {
+  grid-column: 1 / -1;
   margin: 0 0 10px;
   padding: 10px 12px;
   color: var(--text-muted);
@@ -2094,7 +2095,24 @@ select.input-sm {
   border-radius: 6px;
 }
 
+/* Outer grid: column tracks are defined ONCE here, then propagate via subgrid
+   into .lw-list, .lw-add-form, and every .lw-row inside. This keeps the head,
+   data, and add-row columns vertically aligned without fixing widths (so the
+   layout still adapts to narrow viewports). */
+.lw-table {
+  display: grid;
+  grid-template-columns:
+    minmax(0, max-content) /* time   */
+    minmax(0, max-content) /* weight */
+    minmax(0, max-content) /* blocks */
+    minmax(0, 1fr); /* actions */
+  column-gap: 8px;
+  row-gap: 0;
+}
 .lw-list {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
   margin: 0 0 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -2102,9 +2120,10 @@ select.input-sm {
 }
 .lw-row {
   display: grid;
-  grid-template-columns: minmax(130px, max-content) minmax(95px, max-content) minmax(70px, max-content) minmax(0, 1fr);
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   transition: background-color var(--transition-normal);
@@ -2212,22 +2231,29 @@ select.input-sm {
 }
 
 .lw-add-form {
-  padding: 8px 10px 10px;
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
   background: var(--bg);
   border: 1px dashed var(--border);
   border-radius: 6px;
+  /* Zero inline padding (overrides .add-slot-form's `padding: 16px`) so the
+     add-row's content range lines up with rows in the .lw-list above —
+     inline padding lives on .lw-row instead. */
+  padding: 8px 0 10px;
 }
 .lw-add-caption {
+  grid-column: 1 / -1;
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--text-muted);
   letter-spacing: 0.02em;
+  padding-inline: 10px;
   margin-bottom: 6px;
 }
-/* Add-row reuses the .lw-row grid so columns line up with the list above.
+/* Add-row reuses the .lw-row subgrid so columns line up with the list above.
    The wrapper has its own border, so strip the row's border/background. */
 .lw-row-add {
-  padding-inline: 0;
   padding-block: 2px;
   border-bottom: none;
   background: transparent;

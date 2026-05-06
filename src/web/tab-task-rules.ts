@@ -752,6 +752,10 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         <h5 class="tprop-section-title">מאפיינים בסיסיים</h5>
         <div class="tprop-grid tprop-grid-numeric">
           <label class="tprop-field">
+            <span class="tprop-field-label">שם</span>
+            <input class="input-sm" type="text" maxlength="60" data-tpl-field="name" value="${escHtml(tpl.name)}" data-tid="${tpl.id}" />
+          </label>
+          <label class="tprop-field">
             <span class="tprop-field-label">משך (שעות)</span>
             <input class="input-sm" type="number" step="0.5" min="0.5" data-tpl-field="durationHours" value="${tpl.durationHours}" data-tid="${tpl.id}" />
           </label>
@@ -1003,6 +1007,10 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
     </div>
     <p class="lw-editor-help text-muted">טווחי שעות בהם המשימה נחשבת עומס מוגבר. לכל חלון משקל בין 0 ל-1. אם "חוסם רצף משימות" כבוי, ניתן לסמן חלון ספציפי כחוסם בקצה — החסימה תחול על קצה המשימה (תחילה/סוף) שהחלון נוגע בו.</p>`;
 
+  // Outer .lw-table grid defines column tracks ONCE; .lw-list, .lw-add-form,
+  // and every .lw-row inside use `subgrid` so all rows align column-for-column
+  // even though they live in two visually distinct wrappers.
+  html += '<div class="lw-table">';
   if (windows.length === 0) {
     html += '<p class="lw-empty">לא הוגדרו חלונות עומס. משקל העומס חל על כל המשימה.</p>';
   } else {
@@ -1056,6 +1064,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
         <button class="lw-btn lw-save" data-action="add-load-window" data-tid="${tpl.id}" title="הוסף חלון" aria-label="הוסף חלון">+</button>
       </div>
     </div>
+  </div>
   </div>
   </div>`;
 
@@ -1438,6 +1447,15 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
  * store update — matching the former explicit-save semantics.
  */
 function _commitTemplateProps(body: HTMLElement, tid: string): boolean {
+  const name = (body.querySelector('[data-tpl-field="name"]') as HTMLInputElement)?.value.trim();
+  if (!name) {
+    showToast('שם משימה נדרש', { type: 'error' });
+    return false;
+  }
+  if (isTaskNameTaken(name, tid)) {
+    showToast(`משימה בשם "${name}" כבר קיימת`, { type: 'error' });
+    return false;
+  }
   const dur = parseFloat((body.querySelector('[data-tpl-field="durationHours"]') as HTMLInputElement)?.value || '8');
   // parseFloat so that decimals (e.g. 1.7) reach the sanitizer's rounding
   // path and surface as a clamp notification instead of being silently
@@ -1471,6 +1489,7 @@ function _commitTemplateProps(body: HTMLElement, tid: string): boolean {
     showToast(sleepRecovery.reason, { type: 'error' });
     return false;
   }
+  store.renameTaskTemplate(tid, name);
   store.updateTaskTemplate(tid, {
     durationHours: sanitized.durationHours,
     shiftsPerDay: sanitized.shiftsPerDay,

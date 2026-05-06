@@ -316,7 +316,7 @@ function render(): void {
 
           <div class="lf-bar-summary">
             <div class="lf-bar-number">
-              <span class="lf-bar-number-label">עומס מחושב לשעה</span>
+              <span class="lf-bar-number-label">עומס לשעה</span>
               <strong class="lf-bar-number-value">${computed.toFixed(2)}</strong>
               <span class="lf-bar-number-raw" title="ערך לפני חיתוך"${clampedHigh || clampedLow ? '' : ' hidden'}>(${perHourRaw.toFixed(2)})</span>
               ${
