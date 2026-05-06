@@ -7,6 +7,7 @@
  */
 
 import type { Participant, Schedule, Task } from '../index';
+import { computeParticipantCapacity } from '../utils/capacity';
 import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
 import { isTouchDevice } from './responsive';
@@ -102,7 +103,6 @@ export function buildParticipantTooltipContent(
 ): string {
   // Workload data
   const numDays = store.getScheduleDays();
-  const totalPeriodHours = numDays * 24;
 
   // Build breakdown using shared utility (R1)
   let bd = {
@@ -127,8 +127,21 @@ export function buildParticipantTooltipContent(
   }
   const { heavyHours, effectiveHeavyHours, sourceHours, sourceEffectiveHours, sourceCounts, sourceColors } = bd;
 
-  // R7: Use effectiveHeavyHours for workload %, consistent with sidebar & profile
-  const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
+  // R7 + capacity-aware: render % as utilization of the participant's actual
+  // available hours, matching the sidebar / profile / popup. Falls back to
+  // the flat numDays × 24 denominator when no schedule context is available.
+  let denom = numDays * 24;
+  if (schedule && schedule.tasks.length > 0) {
+    let schedStart = schedule.tasks[0].timeBlock.start;
+    let schedEnd = schedule.tasks[0].timeBlock.end;
+    for (const t of schedule.tasks) {
+      if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+      if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+    }
+    const cap = computeParticipantCapacity(p, schedStart, schedEnd, schedule.algorithmSettings.dayStartHour);
+    if (cap.totalAvailableHours > 0) denom = cap.totalAvailableHours;
+  }
+  const pctOfCapacity = denom > 0 ? (effectiveHeavyHours / denom) * 100 : 0;
 
   const certsHtml =
     p.certifications.length > 0
@@ -160,7 +173,7 @@ export function buildParticipantTooltipContent(
       <button class="btn-swap" data-assignment-id="${slotCtx.assignmentId}" data-task-id="${slotCtx.taskId}" title="החלף">⇄</button>
       ${lm.enabled ? `<button class="btn-rescue" data-assignment-id="${slotCtx.assignmentId}" title="החלפה">🆘</button>` : ''}
     </span>`;
-  } else if (slotCtx && slotCtx.isFrozen) {
+  } else if (slotCtx?.isFrozen) {
     actionsHtml = `<span class="tt-actions"><span class="tt-dim">${SVG_ICONS.snowflake}</span></span>`;
   }
 
@@ -176,12 +189,12 @@ export function buildParticipantTooltipContent(
     <div class="tt-divider"></div>
     ${breakdownRows}
     <div class="tt-divider"></div>
-    <div class="tt-kpi" title="סה&quot;כ שעות אפקטיביות · ${pctOfPeriod.toFixed(1)}% מתוך ${totalPeriodHours} שע'">
+    <div class="tt-kpi" title="סה&quot;כ שעות אפקטיביות · ${pctOfCapacity.toFixed(1)}% מתוך ${denom.toFixed(0)} שעות זמינות">
       <div class="tt-kpi-main">
         <span class="tt-kpi-number">${effectiveHeavyHours.toFixed(1)}</span>
         <span class="tt-kpi-unit">שעות עומס</span>
       </div>
-      <span class="tt-kpi-pct tt-kpi-pct-${pctOfPeriod > 25 ? 'danger' : pctOfPeriod > 18 ? 'warning' : 'ok'}">${pctOfPeriod.toFixed(1)}%</span>
+      <span class="tt-kpi-pct tt-kpi-pct-${pctOfCapacity > 70 ? 'danger' : pctOfCapacity > 50 ? 'warning' : 'ok'}">${pctOfCapacity.toFixed(1)}%</span>
     </div>
     ${isTouchDevice ? `<div class="tt-divider"></div><div class="tt-row"><button class="btn-sm btn-outline" data-action="goto-profile" data-pid="${p.id}" style="width:100%">📋 צפה בפרופיל</button></div>` : ''}
   `;

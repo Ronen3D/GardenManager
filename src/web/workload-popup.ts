@@ -7,6 +7,7 @@
  */
 
 import type { Participant, Schedule, Task } from '../index';
+import { computeAllCapacities } from '../utils/capacity';
 import { isTouchDevice } from './responsive';
 import { computePerDayHours } from './schedule-utils';
 import { escHtml, groupBadge, levelBadge } from './ui-helpers';
@@ -41,7 +42,7 @@ function hidePopover(): void {
 interface PopupContext {
   participant: Participant;
   effectiveHours: number;
-  pctOfPeriod: number;
+  pctOfCapacity: number;
   loadBearingCount: number;
   perDay: Map<number, number>;
   numDays: number;
@@ -109,7 +110,7 @@ function buildPopupHtml(ctx: PopupContext): string {
         <span class="wp-big">${ctx.effectiveHours.toFixed(1)}</span>
         <span class="wp-unit">שעות עומס</span>
       </div>
-      <div class="wp-primary-sub">${ctx.pctOfPeriod.toFixed(1)}% מסך התקופה · ${ctx.loadBearingCount} משימות נושאות עומס</div>
+      <div class="wp-primary-sub">${ctx.pctOfCapacity.toFixed(1)}% מהזמינות שלך · ${ctx.loadBearingCount} משימות נושאות עומס</div>
     </div>
     <div class="wp-section-label">פיזור יומי</div>
     <div class="wp-sparkline">${sparkHtml}</div>
@@ -133,7 +134,22 @@ export function openWorkloadPopup(
   const participant = schedule.participants.find((p) => p.id === participantId);
   if (!participant) return;
 
-  const workloads = computeWeeklyWorkloads(schedule.participants, schedule.assignments, schedule.tasks);
+  // Capacity-aware: feed capacities to computeWeeklyWorkloads so the returned
+  // WeeklyWorkload carries availableHours / loadRatio. The primary stat then
+  // renders as utilization of the participant's actual available hours.
+  let schedStart = schedule.tasks[0]?.timeBlock.start ?? schedule.periodStart;
+  let schedEnd = schedule.tasks[0]?.timeBlock.end ?? schedule.periodStart;
+  for (const t of schedule.tasks) {
+    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+  }
+  const capacities = computeAllCapacities(
+    schedule.participants,
+    schedStart,
+    schedEnd,
+    schedule.algorithmSettings.dayStartHour,
+  );
+  const workloads = computeWeeklyWorkloads(schedule.participants, schedule.assignments, schedule.tasks, capacities);
   const w = workloads.get(participantId) || {
     totalHours: 0,
     effectiveHours: 0,
@@ -144,13 +160,13 @@ export function openWorkloadPopup(
   const taskMap = new Map<string, Task>(schedule.tasks.map((t) => [t.id, t]));
   const perDay = computePerDayHours(participantId, schedule, taskMap);
   const numDays = schedule.periodDays;
-  const totalPeriodHours = numDays * 24;
-  const pctOfPeriod = totalPeriodHours > 0 ? (w.effectiveHours / totalPeriodHours) * 100 : 0;
+  const denom = w.availableHours && w.availableHours > 0 ? w.availableHours : numDays * 24;
+  const pctOfCapacity = denom > 0 ? (w.effectiveHours / denom) * 100 : 0;
 
   const ctx: PopupContext = {
     participant,
     effectiveHours: w.effectiveHours,
-    pctOfPeriod,
+    pctOfCapacity,
     loadBearingCount: w.loadBearingCount,
     perDay,
     numDays,

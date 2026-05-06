@@ -21,21 +21,13 @@ import {
   upsertScheduleUnavailability,
 } from '../engine/future-sos';
 import { buildPhantomContext } from '../engine/phantom';
-import {
-  freezeAssignments,
-  isDayFrozen,
-  isDayPartiallyFrozen,
-  isFutureTask,
-  isModifiableAssignment,
-  unfreezeAll,
-} from '../engine/temporal';
+import { freezeAssignments, isDayFrozen, isDayPartiallyFrozen, isFutureTask, unfreezeAll } from '../engine/temporal';
 import { getEligibleParticipantsForSlot, getRejectionReason, REJECTION_REASONS_HE } from '../engine/validator';
 import {
   type Assignment,
   AssignmentStatus,
   type ConstraintViolation,
   Level,
-  LiveModeState,
   type Participant,
   type Schedule,
   SchedulingEngine,
@@ -46,6 +38,8 @@ import {
 import { computeTemplateSectionKey, oneTimeSectionKey } from '../shared/layout-key';
 import { generateShiftBlocks, hourInOpDay } from '../shared/utils/time-utils';
 import { scheduleToGantt } from '../ui/gantt-bridge';
+import { computeAllCapacities } from '../utils/capacity';
+import { operationalDateKey } from '../utils/date-utils';
 import { runAutoTune, setAutoTunerTaskFactory, type TuneRecommendation } from './auto-tuner';
 import * as store from './config-store';
 import { exportDaySnapshot } from './continuity-export';
@@ -65,9 +59,8 @@ import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
 import { runPreflight } from './preflight';
 import { showRangePicker } from './range-picker-modal';
-import { closeRescueModal, initRescue, openRescueModal, type RescueSwapLabel } from './rescue-modal';
+import { closeRescueModal, initRescue, openRescueModal } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice, onSmallScreenChange } from './responsive';
-import { attachTripleClickOpener, clearAttemptScoreHistory, pushAttemptScore } from './score-breakdown-panel';
 import { renderScheduleGrid } from './schedule-grid-view';
 import {
   computePerDayHours,
@@ -77,13 +70,13 @@ import {
   operationalHalfHourLabels,
   operationalHourOrder,
   resolveLogicalDayTimestamp,
-  statusBadge,
   taskDayIndex,
   taskEndsAfter,
   taskIntersectsDay,
   taskStartsBefore,
   violationLabel,
 } from './schedule-utils';
+import { attachTripleClickOpener, clearAttemptScoreHistory, pushAttemptScore } from './score-breakdown-panel';
 import { openSwapPicker } from './swap-picker';
 import { initSwimlane, renderSwimlaneView, wireSwimlaneEvents } from './swimlane-view';
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
@@ -109,7 +102,6 @@ import {
   levelBadge,
   SVG_ICONS,
   stripDayPrefix,
-  taskBadge,
 } from './ui-helpers';
 import {
   renderCustomSelect,
@@ -277,9 +269,9 @@ let _availabilityGroupingMode: AvailabilityGroupingMode = 'pakal';
 
 // Multi-select chip filters applied BEFORE bucketing. Empty set = no filter
 // for that kind. AND across kinds, OR within each kind.
-let _availabilityLevelFilter: Set<Level> = new Set();
-let _availabilityCertFilter: Set<string> = new Set();
-let _availabilityGroupFilter: Set<string> = new Set();
+const _availabilityLevelFilter: Set<Level> = new Set();
+const _availabilityCertFilter: Set<string> = new Set();
+const _availabilityGroupFilter: Set<string> = new Set();
 
 // Two-click cell range selection
 let _timeCellSelectionPhase: 'idle' | 'start-selected' = 'idle';
@@ -420,7 +412,9 @@ function renderAvailabilityInspectorInline(): string {
     .map((lv) => chip('level', String(lv), `L${lv}`, _availabilityLevelFilter.has(lv)))
     .join('');
   const certEntries = Object.entries(currentSchedule.certLabelSnapshot);
-  const certChips = certEntries.map(([cid, label]) => chip('cert', cid, label, _availabilityCertFilter.has(cid))).join('');
+  const certChips = certEntries
+    .map(([cid, label]) => chip('cert', cid, label, _availabilityCertFilter.has(cid)))
+    .join('');
   const groupSet = new Set<string>();
   for (const p of currentSchedule.participants) {
     const g = (p.group || '').trim();
@@ -442,8 +436,7 @@ function renderAvailabilityInspectorInline(): string {
   for (const g of _availabilityGroupFilter) {
     if (!groupSet.has(g)) _availabilityGroupFilter.delete(g);
   }
-  const hasAnyFilter =
-    _availabilityLevelFilter.size + _availabilityCertFilter.size + _availabilityGroupFilter.size > 0;
+  const hasAnyFilter = _availabilityLevelFilter.size + _availabilityCertFilter.size + _availabilityGroupFilter.size > 0;
 
   return `
     <div class="avail-strip-inputs-row">
@@ -505,8 +498,7 @@ function floorToHalfHour(ms: number): number {
  */
 function clampToRepresentableHalfHour(ms: number, schedule: Schedule): number {
   const dsh = schedule.algorithmSettings.dayStartHour;
-  const lastValidEnd =
-    getDayWindow(schedule.periodDays, dsh, schedule.periodStart).end.getTime() - 30 * 60_000;
+  const lastValidEnd = getDayWindow(schedule.periodDays, dsh, schedule.periodStart).end.getTime() - 30 * 60_000;
   return Math.min(ms, lastValidEnd);
 }
 
@@ -1031,25 +1023,28 @@ function renderWeeklyDashboard(schedule: Schedule): string {
 
 // ─── Participant Status Sidebar ──────────────────────────────────────────────
 
-/** Build a single sidebar entry's HTML */
-function renderSidebarEntry(
-  entry: {
-    p: Participant;
-    w: { totalHours: number; effectiveHours: number; hotHours: number; coldHours: number; loadBearingCount: number };
-    pctOfPeriod: number;
-    perDay: Map<number, number>;
-  },
-  totalPeriodHours: number,
-): string {
+/** Build a single sidebar entry's HTML.
+ *
+ * Bar widths are in *utilization space*: how much of the participant's actual
+ * available hours (period-total and per-day) is consumed by their assignments.
+ * The `100/60` factor saturates the bar at 60% utilization — typical
+ * fully-booked participants render near full bar width on the new scale.
+ */
+function renderSidebarEntry(entry: {
+  p: Participant;
+  w: { totalHours: number; effectiveHours: number; hotHours: number; coldHours: number; loadBearingCount: number };
+  pctOfCapacity: number;
+  perDay: Map<number, number>;
+  todayCap: number;
+}): string {
   const p = entry.p;
-  const barPct = Math.min(entry.pctOfPeriod * (100 / 30), 100);
-  const barWidth = barPct;
+  const barWidth = Math.min(entry.pctOfCapacity * (100 / 60), 100);
 
   const todayHrs = entry.perDay.get(currentDay) || 0;
-  const todayRatio = totalPeriodHours > 0 ? todayHrs / totalPeriodHours : 0;
-  const todayBarWidth = Math.min(todayRatio * 100 * (100 / 30), barWidth);
+  const todayUtilPct = entry.todayCap > 0 ? (todayHrs / entry.todayCap) * 100 : 0;
+  const todayBarWidth = Math.min(todayUtilPct * (100 / 60), barWidth);
 
-  const hoverTitle = `${escHtml(p.name)} — ${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfPeriod.toFixed(1)}%)`;
+  const hoverTitle = `${escHtml(p.name)} — ${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfCapacity.toFixed(1)}% מהזמינות)`;
 
   return `<div class="sidebar-entry">
     <div class="sidebar-name">
@@ -1060,7 +1055,7 @@ function renderSidebarEntry(
       <div class="sidebar-bar-bg" title="${hoverTitle}" data-pid="${p.id}">
         <div class="sidebar-bar-fill" style="width:${barWidth}%"></div>
         <div class="sidebar-bar-today" style="width:${todayBarWidth}%"></div>
-        <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfPeriod.toFixed(1)}%)</span>
+        <span class="sidebar-bar-label">${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfCapacity.toFixed(1)}%)</span>
       </div>
       <span class="sidebar-today-tag" title="היום (יום ${currentDay}): ${todayHrs.toFixed(1)} שע'">
         יום ${currentDay}: ${todayHrs.toFixed(1)} שע'
@@ -1075,9 +1070,35 @@ function renderSidebarEntry(
  * - Senior (L2-L4) workload hidden behind a toggle button
  */
 function renderParticipantSidebar(schedule: Schedule): string {
-  const workloads = computeWeeklyWorkloads(schedule.participants, schedule.assignments, schedule.tasks);
   const numDays = schedule.periodDays;
-  const totalPeriodHours = numDays * 24;
+
+  // Capacity-aware: build per-participant capacities once and feed them to
+  // computeWeeklyWorkloads so each WeeklyWorkload carries availableHours +
+  // loadRatio. The sidebar bar then renders in utilization space (effective
+  // hours / available hours), matching the participant-card and the new
+  // SC-8 scoring semantics.
+  let schedStart = schedule.tasks[0]?.timeBlock.start ?? schedule.periodStart;
+  let schedEnd = schedule.tasks[0]?.timeBlock.end ?? schedule.periodStart;
+  for (const t of schedule.tasks) {
+    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+  }
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  const capacities = computeAllCapacities(schedule.participants, schedStart, schedEnd, dsh);
+  const workloads = computeWeeklyWorkloads(schedule.participants, schedule.assignments, schedule.tasks, capacities);
+
+  // Op-day key for the currently-displayed day, used to look up each
+  // participant's capacity for "today".
+  const todayDate = new Date(
+    schedule.periodStart.getFullYear(),
+    schedule.periodStart.getMonth(),
+    schedule.periodStart.getDate() + currentDay - 1,
+    dsh,
+    0,
+    0,
+    0,
+  );
+  const todayKey = operationalDateKey(todayDate, dsh);
 
   const sidebarTaskMap = new Map<string, Task>(schedule.tasks.map((t) => [t.id, t]));
 
@@ -1090,9 +1111,11 @@ function renderParticipantSidebar(schedule: Schedule): string {
       coldHours: 0,
       loadBearingCount: 0,
     };
-    const pctOfPeriod = totalPeriodHours > 0 ? (w.effectiveHours / totalPeriodHours) * 100 : 0;
+    const cap = capacities.get(p.id);
+    const pctOfCapacity = w.availableHours && w.availableHours > 0 ? (w.effectiveHours / w.availableHours) * 100 : 0;
     const perDay = computePerDayHours(p.id, schedule, sidebarTaskMap);
-    return { p, w, pctOfPeriod, perDay };
+    const todayCap = cap?.dailyAvailableHours.get(todayKey) ?? 0;
+    return { p, w, pctOfCapacity, perDay, todayCap };
   });
 
   // Split into L0 and Senior pools
@@ -1108,7 +1131,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
   const l0Avg = l0Entries.length > 0 ? l0Total / l0Entries.length : 0;
   const l0Var =
     l0Entries.length > 0 ? l0Entries.reduce((s, e) => s + (e.w.effectiveHours - l0Avg) ** 2, 0) / l0Entries.length : 0;
-  const l0Sigma = Math.sqrt(l0Var);
+  const _l0Sigma = Math.sqrt(l0Var);
 
   // Senior stats
   const seniorTotal = seniorEntries.reduce((s, e) => s + e.w.effectiveHours, 0);
@@ -1144,7 +1167,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
     <div class="sidebar-entries">`;
 
   for (const entry of l0Entries) {
-    html += renderSidebarEntry(entry, totalPeriodHours);
+    html += renderSidebarEntry(entry);
   }
 
   html += `</div>`;
@@ -1165,7 +1188,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
       <div class="sidebar-entries">`;
 
   for (const entry of seniorEntries) {
-    html += renderSidebarEntry(entry, totalPeriodHours);
+    html += renderSidebarEntry(entry);
   }
 
   html += `</div></div></div>`;
@@ -1435,8 +1458,8 @@ function renderParticipantWarehouse(schedule: Schedule): string {
     // Sort: eligible first (if slot selected), then by name
     if (_eligibleForSelectedSlot) {
       filtered.sort((a, b) => {
-        const aElig = _eligibleForSelectedSlot!.has(a.id) ? 0 : 1;
-        const bElig = _eligibleForSelectedSlot!.has(b.id) ? 0 : 1;
+        const aElig = _eligibleForSelectedSlot?.has(a.id) ? 0 : 1;
+        const bElig = _eligibleForSelectedSlot?.has(b.id) ? 0 : 1;
         if (aElig !== bElig) return aElig - bElig;
         return a.name.localeCompare(b.name, 'he');
       });
@@ -1509,8 +1532,8 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
   // Sort eligible first
   if (_eligibleForSelectedSlot) {
     filtered.sort((a, b) => {
-      const aElig = _eligibleForSelectedSlot!.has(a.id) ? 0 : 1;
-      const bElig = _eligibleForSelectedSlot!.has(b.id) ? 0 : 1;
+      const aElig = _eligibleForSelectedSlot?.has(a.id) ? 0 : 1;
+      const bElig = _eligibleForSelectedSlot?.has(b.id) ? 0 : 1;
       if (aElig !== bElig) return aElig - bElig;
       return a.name.localeCompare(b.name, 'he');
     });
@@ -2484,8 +2507,8 @@ async function doGenerate(): Promise<void> {
         // Surgically update just the overlay
         updateOverlay();
       },
-      _optimAbortController!.signal,
-      _optimEarlyStopController!.signal,
+      _optimAbortController?.signal,
+      _optimEarlyStopController?.signal,
     );
     wasEarlyStopped = _optimEarlyStopController?.signal.aborted === true;
 
@@ -3424,7 +3447,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
 
       // Capture the reverse swap map BEFORE mutating, to support undo.
       const reverseSwaps = plan.swaps.map((sw) => {
-        const assn = currentSchedule!.assignments.find((a) => a.id === sw.assignmentId);
+        const assn = currentSchedule?.assignments.find((a) => a.id === sw.assignmentId);
         return {
           assignmentId: sw.assignmentId,
           prevParticipantId: assn?.participantId ?? sw.fromParticipantId ?? '',
@@ -3769,12 +3792,12 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.1</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
-          title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ' (' + store.getUndoRedoState().undoDepth + ')' : ''}</span></button>
+          title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
         <button class="btn-sm btn-outline" id="btn-redo" ${!store.getUndoRedoState().canRedo ? 'disabled' : ''}
-          title="שחזור">↩<span class="btn-label"> שחזור${store.getUndoRedoState().redoDepth ? ' (' + store.getUndoRedoState().redoDepth + ')' : ''}</span></button>
+          title="שחזור">↩<span class="btn-label"> שחזור${store.getUndoRedoState().redoDepth ? ` (${store.getUndoRedoState().redoDepth})` : ''}</span></button>
       </div>
     </div>
     <p class="subtitle">
@@ -4010,7 +4033,7 @@ function showEasterEgg(): void {
     backdrop.classList.add('closing');
     backdrop.addEventListener('animationend', () => backdrop.remove(), { once: true });
   };
-  backdrop.querySelector('.gm-egg-seal')!.addEventListener('click', close);
+  backdrop.querySelector('.gm-egg-seal')?.addEventListener('click', close);
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) close();
   });
@@ -5038,7 +5061,7 @@ function wireScheduleEvents(container: HTMLElement): void {
   const updateLiveTimestamp = () => {
     const dayIdx = parseInt(_liveDayVal, 10);
     const hour = parseInt(_liveHourVal, 10);
-    if (isNaN(dayIdx) || isNaN(hour)) return;
+    if (Number.isNaN(dayIdx) || Number.isNaN(hour)) return;
     const base = store.getScheduleDate();
     const ts = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIdx - 1, hour, 0);
     store.setLiveModeTimestamp(ts);
@@ -5374,7 +5397,7 @@ function getAvailableParticipantsInRange(
     if (!participantWindows.has(assignment.participantId)) {
       participantWindows.set(assignment.participantId, []);
     }
-    participantWindows.get(assignment.participantId)!.push({
+    participantWindows.get(assignment.participantId)?.push({
       startMs: task.timeBlock.start.getTime(),
       endMs: task.timeBlock.end.getTime(),
     });
@@ -5382,7 +5405,7 @@ function getAvailableParticipantsInRange(
       if (!participantTasks.has(assignment.participantId)) {
         participantTasks.set(assignment.participantId, []);
       }
-      participantTasks.get(assignment.participantId)!.push(task);
+      participantTasks.get(assignment.participantId)?.push(task);
     }
   }
   const effectiveStart = rangeStartMs - preMarginMs;
@@ -5766,7 +5789,7 @@ function init(): void {
     initInjectTaskModal({
       getSchedule: () => currentSchedule,
       getEngine: () => engine,
-      onCommit: (updatedSchedule, report, saveToStore, spec) => {
+      onCommit: (updatedSchedule, _report, saveToStore, spec) => {
         // Push undo snapshot BEFORE committing — includes the injected task so
         // a single undo reverts the injection cleanly.
         if (currentSchedule) {

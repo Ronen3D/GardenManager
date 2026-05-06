@@ -9,10 +9,11 @@
  * - Weekly workload metrics & per-task-type breakdown
  */
 
-import { type Assignment, Level, type Participant, type Schedule, type Task } from '../models/types';
+import type { Assignment, Participant, Schedule, Task } from '../models/types';
+import { computeParticipantCapacity } from '../utils/capacity';
 import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
-import { certBadge, escHtml, fmt, groupBadge, LEVEL_COLORS, levelBadge, stripDayPrefix, taskBadge } from './ui-helpers';
+import { certBadge, escHtml, fmt, groupBadge, levelBadge, stripDayPrefix, taskBadge } from './ui-helpers';
 import { computeTaskBreakdown } from './workload-utils';
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -62,7 +63,7 @@ export function renderProfileView(ctx: ProfileContext): string {
 
   // Right column: Unavailability + Metrics
   html += '<div class="profile-right">';
-  html += renderMetrics(p, myTasks, numDays);
+  html += renderMetrics(p, myTasks, numDays, schedule);
   html += renderUnavailabilitySection(p, schedule, ctx.showSosButtons ?? false, numDays);
   html += '</div>';
 
@@ -76,7 +77,7 @@ export function renderProfileView(ctx: ProfileContext): string {
 function renderTopBar(
   p: Participant,
   myTasks: Array<{ assignment: Assignment; task: Task }>,
-  ctx: ProfileContext,
+  _ctx: ProfileContext,
 ): string {
   // Determine status
   let statusText = 'זמין';
@@ -326,17 +327,29 @@ function renderUnavailabilitySection(
 // ─── Metrics ─────────────────────────────────────────────────────────────────
 
 function renderMetrics(
-  _p: Participant,
+  p: Participant,
   myTasks: Array<{ assignment: Assignment; task: Task }>,
   numDays: number,
+  schedule: Schedule,
 ): string {
-  const totalPeriodHours = numDays * 24;
-
   // Shared breakdown utility (R1)
   const { effectiveHeavyHours, sourceHours, sourceCounts, sourceColors } = computeTaskBreakdown(myTasks);
 
-  const pctOfPeriod = totalPeriodHours > 0 ? (effectiveHeavyHours / totalPeriodHours) * 100 : 0;
-  const workloadClass = pctOfPeriod > 25 ? 'metric-danger' : pctOfPeriod > 18 ? 'metric-warning' : 'metric-ok';
+  // Capacity-aware: render % as utilization of the participant's actual
+  // available hours, not a flat numDays × 24 denominator. Falls back to the
+  // flat denominator when the schedule has no tasks (capacity == 0).
+  let schedStart = schedule.tasks[0]?.timeBlock.start ?? schedule.periodStart;
+  let schedEnd = schedule.tasks[0]?.timeBlock.end ?? schedule.periodStart;
+  for (const t of schedule.tasks) {
+    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+  }
+  const cap = computeParticipantCapacity(p, schedStart, schedEnd, schedule.algorithmSettings.dayStartHour);
+  const denom = cap.totalAvailableHours > 0 ? cap.totalAvailableHours : numDays * 24;
+  const pctOfCapacity = denom > 0 ? (effectiveHeavyHours / denom) * 100 : 0;
+  // Thresholds re-calibrated for utilization-space: > 70% danger, > 50% warning.
+  const workloadClass = pctOfCapacity > 70 ? 'metric-danger' : pctOfCapacity > 50 ? 'metric-warning' : 'metric-ok';
+  const denomLabel = `${denom.toFixed(0)} שעות זמינות`;
 
   let html = `<div class="profile-card">
     <h3 class="profile-card-title">📊 מדדי עומס</h3>
@@ -346,8 +359,8 @@ function renderMetrics(
         <span class="metric-value">${effectiveHeavyHours.toFixed(1)}h</span>
       </div>
       <div class="metric-row">
-        <span class="metric-label">% עומס אפקטיבי מתוך ${totalPeriodHours} שעות</span>
-        <span class="metric-value ${workloadClass}">${pctOfPeriod.toFixed(1)}%</span>
+        <span class="metric-label">אחוז ניצול מתוך ${denomLabel}</span>
+        <span class="metric-value ${workloadClass}">${pctOfCapacity.toFixed(1)}%</span>
       </div>
     </div>
 
