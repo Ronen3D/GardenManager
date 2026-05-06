@@ -556,15 +556,26 @@ function renderActions(state: PickerState, ctx: ResolvedContext): string {
   const canConfirm = state.preview?.valid && !state.committing;
   const recordChecked = _swapRecordVacatedDefault ? ' checked' : '';
 
-  // Compose the label based on the picker mode + currently-previewed swap.
-  // Free mode marks only the outgoing source. Trade mode marks both sides.
-  let recordLabel: string;
+  // Free mode: one checkbox for the outgoing source. Trade mode: two
+  // independent checkboxes (one per participant) so the user can choose
+  // to mark either, both, or neither side as future-unavailable.
+  let recordRows: string;
   if (state.mode === 'trade' && state.selectedTradeAssignmentId) {
     const other = ctx.tradeCandidates.find((tc) => tc.assignment.id === state.selectedTradeAssignmentId);
     const otherName = other?.participant.name ?? '';
-    recordLabel = `סמן את <strong>${escHtml(ctx.sourceParticipant.name)}</strong> ו<strong>${escHtml(otherName)}</strong> כלא־זמינים לחלוני הזמן של המשבצות (לרסקיו עתידי)`;
+    recordRows = `<label class="swap-picker-record-vacated">
+      <input type="checkbox" id="swap-picker-record-vacated"${recordChecked}>
+      <span>סמן את <strong>${escHtml(ctx.sourceParticipant.name)}</strong> כלא־זמין/ה לחלון הזמן של המשבצת (לרסקיו עתידי)</span>
+    </label>
+    <label class="swap-picker-record-vacated">
+      <input type="checkbox" id="swap-picker-record-vacated-other"${recordChecked}>
+      <span>סמן את <strong>${escHtml(otherName)}</strong> כלא־זמין/ה לחלון הזמן של המשבצת (לרסקיו עתידי)</span>
+    </label>`;
   } else {
-    recordLabel = `סמן את <strong>${escHtml(ctx.sourceParticipant.name)}</strong> כלא־זמין/ה לחלון הזמן של המשבצת (לרסקיו עתידי)`;
+    recordRows = `<label class="swap-picker-record-vacated">
+      <input type="checkbox" id="swap-picker-record-vacated"${recordChecked}>
+      <span>סמן את <strong>${escHtml(ctx.sourceParticipant.name)}</strong> כלא־זמין/ה לחלון הזמן של המשבצת (לרסקיו עתידי)</span>
+    </label>`;
   }
 
   // Reason input is shown only in free mode. Trade-mode entries are
@@ -583,10 +594,7 @@ function renderActions(state: PickerState, ctx: ResolvedContext): string {
       : '';
 
   return `<div class="swap-picker-actions">
-    <label class="swap-picker-record-vacated">
-      <input type="checkbox" id="swap-picker-record-vacated"${recordChecked}>
-      <span>${recordLabel}</span>
-    </label>
+    ${recordRows}
     ${reasonRow}
     <div class="swap-picker-actions-buttons">
       <button class="btn-outline swap-picker-cancel">ביטול</button>
@@ -676,6 +684,7 @@ function wireEvents(
   // inherits it. Also toggles the reason input visibility (free mode only —
   // the input is not rendered at all in trade mode).
   const recordCb = root.querySelector<HTMLInputElement>('#swap-picker-record-vacated');
+  const recordCbOther = root.querySelector<HTMLInputElement>('#swap-picker-record-vacated-other');
   const reasonWrap = root.querySelector<HTMLElement>('#swap-picker-record-reason');
   const reasonInput = root.querySelector<HTMLInputElement>('#swap-picker-record-reason-input');
   if (recordCb) {
@@ -685,6 +694,13 @@ function wireEvents(
         reasonWrap.style.display = recordCb.checked ? 'block' : 'none';
         if (recordCb.checked && reasonInput) reasonInput.focus();
       }
+    });
+  }
+  if (recordCbOther) {
+    // Trade mode's per-participant checkboxes both feed the session default
+    // (last toggle wins) so re-opens carry the user's most recent intent.
+    recordCbOther.addEventListener('change', () => {
+      _swapRecordVacatedDefault = recordCbOther.checked;
     });
   }
   if (reasonInput) {
@@ -860,10 +876,15 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
 
   const preCommitAssignments = deps.schedule.assignments.map((a) => ({ ...a }));
 
-  // Snapshot the checkbox state before close() removes the DOM. Falls back to
-  // the session default if the checkbox isn't in the DOM for any reason.
-  const recordCb = document.getElementById('swap-picker-record-vacated') as HTMLInputElement | null;
-  const recordChecked = recordCb ? recordCb.checked : _swapRecordVacatedDefault;
+  // Snapshot each checkbox state before close() removes the DOM. Free mode
+  // uses only the source checkbox; trade mode reads both sides independently
+  // so the user can mark either, both, or neither participant as future-
+  // unavailable. Falls back to the session default if a checkbox isn't in
+  // the DOM for any reason.
+  const recordCbSrc = document.getElementById('swap-picker-record-vacated') as HTMLInputElement | null;
+  const recordCbOther = document.getElementById('swap-picker-record-vacated-other') as HTMLInputElement | null;
+  const sourceChecked = recordCbSrc ? recordCbSrc.checked : _swapRecordVacatedDefault;
+  const otherChecked = recordCbOther ? recordCbOther.checked : _swapRecordVacatedDefault;
   // Reason is captured only in free mode; trade-mode entries deliberately
   // omit `reason` (see rationale on the `reasonRow` block in renderActions).
   const reasonRaw = state.mode === 'free' ? state.reason.trim() : '';
@@ -887,23 +908,21 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
     ]);
     label = `החלפה הדדית: ${ctx.sourceParticipant.name} ⇄ ${otherP?.name ?? ''}`;
     swappedAssignmentIds = [state.assignmentId, state.selectedTradeAssignmentId];
-    if (recordChecked) {
-      // Symmetric trade: each participant loses access to the slot they
-      // vacated. Source gives up sourceTask; trade target gives up otherTask.
-      recordVacatedSlots = [
-        {
-          participantId: ctx.sourceParticipant.id,
-          start: ctx.sourceTask.timeBlock.start,
-          end: ctx.sourceTask.timeBlock.end,
-        },
-      ];
-      if (otherP && otherTask) {
-        recordVacatedSlots.push({
-          participantId: otherP.id,
-          start: otherTask.timeBlock.start,
-          end: otherTask.timeBlock.end,
-        });
-      }
+    // Per-side opt-in: each checkbox independently controls whether that
+    // participant is recorded as unavailable for the slot they vacated.
+    if (sourceChecked) {
+      recordVacatedSlots.push({
+        participantId: ctx.sourceParticipant.id,
+        start: ctx.sourceTask.timeBlock.start,
+        end: ctx.sourceTask.timeBlock.end,
+      });
+    }
+    if (otherChecked && otherP && otherTask) {
+      recordVacatedSlots.push({
+        participantId: otherP.id,
+        start: otherTask.timeBlock.start,
+        end: otherTask.timeBlock.end,
+      });
     }
   } else if (state.selectedCandidateId) {
     const inc = deps.schedule.participants.find((p) => p.id === state.selectedCandidateId);
@@ -916,7 +935,7 @@ function commitSwap(state: PickerState, ctx: ResolvedContext, deps: SwapPickerDe
     // the arrow reads "incoming ← outgoing" = "incoming replaces outgoing".
     label = `החלפה: ${inc?.name ?? ''} ← ${ctx.sourceParticipant.name}`;
     swappedAssignmentIds = [state.assignmentId];
-    if (recordChecked) {
+    if (sourceChecked) {
       recordVacatedSlots = [
         {
           participantId: ctx.sourceParticipant.id,
