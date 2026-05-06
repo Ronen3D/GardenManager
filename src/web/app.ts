@@ -2489,23 +2489,45 @@ async function doGenerate(): Promise<void> {
   let wasCancelled = false;
   let wasEarlyStopped = false;
 
+  // Coalesce per-batch progress events via rAF, OR-ing `improved` so an
+  // early-batch improvement isn't clobbered by a non-improving later attempt
+  // in the same synchronous batch (ASYNC_BATCH_SIZE = 4 in optimizer.ts).
+  let pendingProgress: {
+    attempt: number;
+    totalAttempts: number;
+    bestScore: number;
+    bestUnfilled: number;
+    lastImproved: boolean;
+  } | null = null;
+  let progressRafId = 0;
+
   try {
     const schedule = await engine.generateScheduleAsync(
       OPTIM_ATTEMPTS,
       (info) => {
-        // Update progress state (in-memory only, no DOM thrash on renderAll)
-        _optimProgress = {
+        // Capture this attempt's final score for the breakdown sparkline.
+        // Push-only into a small array (~60 numbers/run) — free.
+        pushAttemptScore(info.attemptScore);
+
+        // Merge into the pending event: take latest counters/scores, but
+        // OR `lastImproved` so any improvement in the frame survives to paint.
+        pendingProgress = {
           attempt: info.attempt,
           totalAttempts: info.totalAttempts,
           bestScore: info.currentBestScore,
           bestUnfilled: info.currentBestUnfilled,
-          lastImproved: info.improved,
+          lastImproved: (pendingProgress?.lastImproved ?? false) || info.improved,
         };
-        // Capture this attempt's final score for the breakdown sparkline.
-        // Push-only into a small array (~60 numbers/run) — free.
-        pushAttemptScore(info.attemptScore);
-        // Surgically update just the overlay
-        updateOverlay();
+
+        if (progressRafId === 0) {
+          progressRafId = requestAnimationFrame(() => {
+            progressRafId = 0;
+            if (!pendingProgress) return;
+            _optimProgress = pendingProgress;
+            pendingProgress = null;
+            updateOverlay();
+          });
+        }
       },
       _optimAbortController?.signal,
       _optimEarlyStopController?.signal,
@@ -2560,6 +2582,11 @@ async function doGenerate(): Promise<void> {
       }
     }
   } finally {
+    if (progressRafId !== 0) {
+      cancelAnimationFrame(progressRafId);
+      progressRafId = 0;
+    }
+    pendingProgress = null;
     _isOptimizing = false;
     _optimProgress = null;
     _optimAbortController = null;
@@ -3792,7 +3819,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.4</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
