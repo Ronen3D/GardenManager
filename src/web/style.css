@@ -5320,7 +5320,7 @@ tr.row-selected:hover {
   line-height: 1.35;
 }
 
-.rescue-record-vacated-label input[type='checkbox'] {
+.rescue-record-vacated-label input[type="checkbox"] {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
@@ -5838,6 +5838,27 @@ tr.row-selected:hover {
   font-size: 0.78rem;
   color: var(--text-muted);
   margin-inline-start: 4px;
+}
+/* Inline recovery-window label rendered next to the 😴 badge in 'only' mode. */
+.availability-recovery-window {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-inline-start: 6px;
+  white-space: nowrap;
+}
+
+/* Inline range-validation warning shown when the strip dropdowns describe an
+   invalid range (e.g. end ≤ start). The last valid result remains visible. */
+.avail-strip-range-error {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  margin: 4px 0;
+  display: inline-block;
 }
 
 /* ─── Availability strip — grouping switcher (underline tabs) ─── */
@@ -10934,7 +10955,7 @@ tr.now-row-animate > td.time-cell {
   line-height: 1.35;
 }
 
-.swap-picker-record-vacated input[type='checkbox'] {
+.swap-picker-record-vacated input[type="checkbox"] {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;

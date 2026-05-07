@@ -252,14 +252,22 @@ let _availabilityInspectorDay: number | null = null;
 let _availabilityInspectorDayEnd: number | null = null;
 let _availabilityInspectorTimeStart = '05:00';
 let _availabilityInspectorTimeEnd = '06:00';
+// Inline validation message for the strip's range pickers. When non-null the
+// strip shows a small warning (and keeps the last successfully-committed
+// _availabilityRange*Ms so results don't flash empty mid-edit).
+let _availabilityRangeError: string | null = null;
 
 // Margin toggle + values
 let _availabilityMarginEnabled = false;
 let _availabilityPreMarginHours = 2;
 let _availabilityPostMarginHours = 1;
-// Strict sleep-recovery filter (off by default — resting participants are shown
-// with a 😴 badge so SOS/rescue triage can still see them).
-let _availabilityHideSleepRecovery = false;
+// Sleep-recovery view mode. `all` = today's default (everyone available, recovery
+// participants tagged with 😴). `hide` = exclude recovery participants (the old
+// "ללא השלמות שינה והתאוששות" checkbox behavior). `only` = invert — show ONLY
+// participants whose recovery window overlaps the picked range, with their
+// actual recovery times rendered inline and sorted chronologically.
+type SleepRecoveryMode = 'all' | 'hide' | 'only';
+let _availabilitySleepRecoveryMode: SleepRecoveryMode = 'all';
 
 // Grouping mode for the availability bucket list. Default = פק"ל so the
 // initial view matches the historical behavior; user can switch via the tab
@@ -305,7 +313,7 @@ let _optimProgress: {
 
 let _manualBuildActive = false;
 /** Swimlane "תצוגה כללית" section collapsed state — persists across re-renders. */
-let _swimlaneCollapsed = false;
+let _swimlaneCollapsed = true;
 /** Currently selected slot in manual-build mode */
 let _manualSelectedTaskId: string | null = null;
 let _manualSelectedSlotId: string | null = null;
@@ -447,8 +455,8 @@ function renderAvailabilityInspectorInline(): string {
       <span class="avail-strip-range-label">עד:</span>
       ${renderCustomSelect({ id: 'gm-availability-day-end', options: makeDayOptions(selectedDayEnd), className: 'input-sm availability-day-select' })}
       ${renderCustomSelect({ id: 'gm-availability-time-end', options: makeHourOptions(_availabilityInspectorTimeEnd), className: 'input-sm availability-time-input' })}
-      <button class="btn-sm btn-primary" id="btn-open-availability-inspector" title="בדיקת זמינות לפי טווח">${_availabilityRangeStartMs !== null ? 'חשב מחדש' : 'הצג זמינות'}</button>
     </div>
+    ${_availabilityRangeError ? `<div class="avail-strip-range-error" role="status">⚠ ${escHtml(_availabilityRangeError)}</div>` : ''}
     <div class="avail-strip-margin-row">
       <label class="avail-strip-margin-toggle">
         <input type="checkbox" id="gm-availability-margin-toggle" ${_availabilityMarginEnabled ? 'checked' : ''} />
@@ -468,12 +476,16 @@ function renderAvailabilityInspectorInline(): string {
     ${
       hc15Disabled
         ? ''
-        : `<div class="avail-strip-margin-row">
-      <label class="avail-strip-margin-toggle">
-        <input type="checkbox" id="gm-availability-hide-sleep-recovery" ${_availabilityHideSleepRecovery ? 'checked' : ''} />
-        <span>ללא השלמות שינה והתאוששות</span>
-      </label>
-    </div>`
+        : (
+            () => {
+              const m = _availabilitySleepRecoveryMode;
+              const modeChip = (value: SleepRecoveryMode, label: string): string =>
+                `<button type="button" class="avail-strip-chip ${m === value ? 'avail-strip-chip-active' : ''}" data-recovery-mode="${value}">${label}</button>`;
+              return `<div class="avail-strip-chips-row">
+      <div class="avail-strip-chip-group"><span class="avail-strip-chip-label">השלמות שינה והתאוששות:</span>${modeChip('all', 'הכל')}${modeChip('hide', 'הסתר')}${modeChip('only', 'רק הם')}</div>
+    </div>`;
+            }
+          )()
     }
   `;
 }
@@ -551,6 +563,42 @@ function applySmartDefaultAvailabilityRange(): void {
   _availabilityInspectorDayEnd = toDayIndex(endMs);
   _availabilityInspectorTimeStart = toHourLabel(startMs);
   _availabilityInspectorTimeEnd = toHourLabel(endMs);
+  _availabilityRangeError = null;
+}
+
+/**
+ * Resolve the strip's day/time dropdown values into a concrete range and
+ * commit it to `_availabilityRangeStartMs/EndMs`. On invalid input (e.g. end ≤
+ * start) we set `_availabilityRangeError` instead and keep the last valid
+ * committed range — that lets the user adjust dropdowns without the result
+ * panel flashing empty mid-edit.
+ *
+ * Caller is responsible for triggering a re-render afterwards.
+ */
+function tryCommitDropdownRange(): void {
+  if (!currentSchedule) return;
+  const dayStart = _availabilityInspectorDay ?? currentDay;
+  const dayEnd = _availabilityInspectorDayEnd ?? dayStart;
+  const dsh = currentSchedule.algorithmSettings.dayStartHour;
+  const base = currentSchedule.periodStart;
+  const tsStart = resolveLogicalDayTimestamp(dayStart, _availabilityInspectorTimeStart, dsh, base);
+  const tsEnd = resolveLogicalDayTimestamp(dayEnd, _availabilityInspectorTimeEnd, dsh, base);
+  if (!tsStart || !tsEnd) {
+    _availabilityRangeError = 'טווח לא תקין';
+    return;
+  }
+  if (tsEnd.getTime() <= tsStart.getTime()) {
+    _availabilityRangeError =
+      dayEnd < dayStart
+        ? 'יום הסיום חייב להיות זהה ליום ההתחלה או אחריו'
+        : dayEnd === dayStart
+          ? 'שעת סיום חייבת להיות אחרי שעת התחלה'
+          : 'מועד הסיום חייב להיות אחרי מועד ההתחלה';
+    return;
+  }
+  _availabilityRangeStartMs = tsStart.getTime();
+  _availabilityRangeEndMs = tsEnd.getTime();
+  _availabilityRangeError = null;
 }
 
 /** Collapsible availability strip between schedule grid and gantt */
@@ -580,7 +628,7 @@ function renderAvailabilityStrip(): string {
   if (_availabilityRangeStartMs !== null && _availabilityRangeEndMs !== null) {
     const preMs = _availabilityMarginEnabled ? _availabilityPreMarginHours * 3600000 : 0;
     const postMs = _availabilityMarginEnabled ? _availabilityPostMarginHours * 3600000 : 0;
-    html += `<div class="avail-strip-results">${buildAvailabilityPopoverContent(_availabilityRangeStartMs, _availabilityRangeEndMs, preMs, postMs, _availabilityHideSleepRecovery)}</div>`;
+    html += `<div class="avail-strip-results">${buildAvailabilityPopoverContent(_availabilityRangeStartMs, _availabilityRangeEndMs, preMs, postMs, _availabilitySleepRecoveryMode)}</div>`;
   }
 
   html += `</div></div>`;
@@ -3819,7 +3867,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.5</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4514,6 +4562,7 @@ function wireScheduleEvents(container: HTMLElement): void {
         _availabilityInlineOpen = false;
         _availabilityRangeStartMs = null;
         _availabilityRangeEndMs = null;
+        _availabilityRangeError = null;
         renderAll();
         return;
       }
@@ -4522,6 +4571,7 @@ function wireScheduleEvents(container: HTMLElement): void {
       if (closeTarget) {
         _availabilityRangeStartMs = null;
         _availabilityRangeEndMs = null;
+        _availabilityRangeError = null;
         renderAll();
         return;
       }
@@ -4905,19 +4955,30 @@ function wireScheduleEvents(container: HTMLElement): void {
     handleTimeCellSelect(target);
   });
 
+  // Range dropdowns: each change attempts to commit immediately. Invalid
+  // ranges leave the last valid commit in place and surface a small inline
+  // warning instead of a toast (less noisy mid-edit).
+  const onRangeDropdownChange = () => {
+    tryCommitDropdownRange();
+    renderAll();
+  };
   wireCustomSelect(container, 'gm-availability-day-start', (value) => {
     const day = parseInt(value, 10);
     if (!Number.isNaN(day)) _availabilityInspectorDay = day;
+    onRangeDropdownChange();
   });
   wireCustomSelect(container, 'gm-availability-day-end', (value) => {
     const day = parseInt(value, 10);
     if (!Number.isNaN(day)) _availabilityInspectorDayEnd = day;
+    onRangeDropdownChange();
   });
   wireCustomSelect(container, 'gm-availability-time-start', (value) => {
     if (value) _availabilityInspectorTimeStart = value;
+    onRangeDropdownChange();
   });
   wireCustomSelect(container, 'gm-availability-time-end', (value) => {
     if (value) _availabilityInspectorTimeEnd = value;
+    onRangeDropdownChange();
   });
 
   // ── Margin toggle + fields ──
@@ -4964,41 +5025,15 @@ function wireScheduleEvents(container: HTMLElement): void {
     },
   );
 
-  // ── Sleep-recovery strict filter toggle ──
-  const sleepToggle = container.querySelector('#gm-availability-hide-sleep-recovery') as HTMLInputElement | null;
-  if (sleepToggle) {
-    sleepToggle.addEventListener('change', () => {
-      _availabilityHideSleepRecovery = sleepToggle.checked;
+  // ── Sleep-recovery tri-state mode (all / hide / only) ──
+  container.querySelectorAll<HTMLButtonElement>('[data-recovery-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const m = btn.dataset.recoveryMode as SleepRecoveryMode | undefined;
+      if (!m || m === _availabilitySleepRecoveryMode) return;
+      _availabilitySleepRecoveryMode = m;
       renderAll();
     });
-  }
-
-  const availabilityBtn = container.querySelector('#btn-open-availability-inspector') as HTMLElement | null;
-  if (availabilityBtn) {
-    availabilityBtn.addEventListener('click', () => {
-      if (!currentSchedule) return;
-      const selectedDayStart = _availabilityInspectorDay ?? currentDay;
-      const selectedDayEnd = _availabilityInspectorDayEnd ?? selectedDayStart;
-      const dsh = currentSchedule.algorithmSettings.dayStartHour;
-      const base = currentSchedule.periodStart;
-      const tsStart = resolveLogicalDayTimestamp(selectedDayStart, _availabilityInspectorTimeStart, dsh, base);
-      const tsEnd = resolveLogicalDayTimestamp(selectedDayEnd, _availabilityInspectorTimeEnd, dsh, base);
-      if (!tsStart || !tsEnd) return;
-      if (tsEnd.getTime() <= tsStart.getTime()) {
-        const message =
-          selectedDayEnd < selectedDayStart
-            ? 'יום הסיום חייב להיות זהה ליום ההתחלה או אחריו'
-            : selectedDayEnd === selectedDayStart
-              ? 'שעת סיום חייבת להיות אחרי שעת התחלה'
-              : 'מועד הסיום חייב להיות אחרי מועד ההתחלה';
-        showToast(message, { type: 'error' });
-        return;
-      }
-      _availabilityRangeStartMs = tsStart.getTime();
-      _availabilityRangeEndMs = tsEnd.getTime();
-      renderAll();
-    });
-  }
+  });
 
   // ── Senior toggle button ──
   const seniorToggle = container.querySelector('#btn-senior-toggle');
@@ -5398,14 +5433,44 @@ function navigateToTaskPanel(sourceName: string): void {
   window.scrollTo(0, 0);
 }
 
+/**
+ * Convert an arbitrary timestamp to a 1-based op-day index against the given
+ * schedule's `periodStart + dayStartHour` anchor. Hours before `dayStartHour`
+ * roll to the previous op-day's tail, mirroring `taskDayIndex` and the
+ * existing `anchorLabel` math at app.ts:3197 / 3257. Result is clamped to ≥ 1.
+ */
+function timestampToOpDayIndex(d: Date, schedule: Schedule): number {
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  const base = schedule.periodStart;
+  const shifted = new Date(d.getTime());
+  if (shifted.getHours() < dsh) shifted.setDate(shifted.getDate() - 1);
+  shifted.setHours(0, 0, 0, 0);
+  const baseMidnight = new Date(base.getFullYear(), base.getMonth(), base.getDate()).getTime();
+  return Math.max(1, Math.floor((shifted.getTime() - baseMidnight) / 86400000) + 1);
+}
+
+/** Format an HC-15 recovery window as `יום N HH:MM – HH:MM` (single op-day) or `יום N HH:MM – יום M HH:MM`. */
+function fmtRecoveryWindow(win: { start: Date; end: Date }, schedule: Schedule): string {
+  const startDay = timestampToOpDayIndex(win.start, schedule);
+  const endDay = timestampToOpDayIndex(win.end, schedule);
+  const startTime = fmt(win.start);
+  const endTime = fmt(win.end);
+  if (startDay === endDay) return `יום ${startDay} ${startTime} – ${endTime}`;
+  return `יום ${startDay} ${startTime} – יום ${endDay} ${endTime}`;
+}
+
 function getAvailableParticipantsInRange(
   schedule: Schedule,
   rangeStartMs: number,
   rangeEndMs: number,
   preMarginMs = 0,
   postMarginMs = 0,
-  hideSleepRecovery = false,
-): { participants: Participant[]; sleepRecoveryIds: Set<string> } {
+  sleepRecoveryMode: SleepRecoveryMode = 'all',
+): {
+  participants: Participant[];
+  sleepRecoveryIds: Set<string>;
+  recoveryWindowsByPid: Map<string, { start: Date; end: Date }[]>;
+} {
   const disabledHC = new Set(schedule.algorithmSettings.disabledHardConstraints);
   const hc3Disabled = disabledHC.has('HC-3');
   const hc15Disabled = disabledHC.has('HC-15');
@@ -5439,8 +5504,36 @@ function getAvailableParticipantsInRange(
   const effectiveEnd = rangeEndMs + postMarginMs;
   const effectiveWindow = { start: new Date(effectiveStart), end: new Date(effectiveEnd) };
   const sleepRecoveryIds = new Set<string>();
+  const recoveryWindowsByPid = new Map<string, { start: Date; end: Date }[]>();
   const participants: Participant[] = [];
+
+  // Collect every recovery window for `pid` that overlaps [effectiveStart, effectiveEnd).
+  const getOverlappingRecoveryWindows = (pid: string): { start: Date; end: Date }[] => {
+    if (hc15Disabled || !participantTasks) return [];
+    const tasks = participantTasks.get(pid);
+    if (!tasks) return [];
+    const out: { start: Date; end: Date }[] = [];
+    for (const task of tasks) {
+      const rw = getRecoveryWindow(task);
+      if (!rw) continue;
+      if (rw.start.getTime() < effectiveEnd && rw.end.getTime() > effectiveStart) out.push(rw);
+    }
+    return out;
+  };
+
   for (const participant of schedule.participants) {
+    if (sleepRecoveryMode === 'only') {
+      // 'only' mode answers "who is in recovery during this range" — busy/HC-3
+      // filters don't apply (a participant's triggering task itself can sit at
+      // the head of the range). HC-15 disabled → nothing to show.
+      if (hc15Disabled) continue;
+      const windows = getOverlappingRecoveryWindows(participant.id);
+      if (windows.length === 0) continue;
+      sleepRecoveryIds.add(participant.id);
+      recoveryWindowsByPid.set(participant.id, windows);
+      participants.push(participant);
+      continue;
+    }
     const windows = participantWindows.get(participant.id);
     if (windows?.some((w) => w.startMs < effectiveEnd && w.endMs > effectiveStart)) continue;
     // HC-3: master availability + recurring rules + Future-SOS unavailability.
@@ -5453,21 +5546,11 @@ function getAvailableParticipantsInRange(
     // recovery window overlaps the queried range. Skipped entirely when HC-15
     // is disabled — no tag, no strict-filter effect.
     if (!hc15Disabled && participantTasks) {
-      let inRecovery = false;
-      const tasks = participantTasks.get(participant.id);
-      if (tasks) {
-        for (const task of tasks) {
-          const rw = getRecoveryWindow(task);
-          if (!rw) continue;
-          if (rw.start.getTime() < effectiveEnd && rw.end.getTime() > effectiveStart) {
-            inRecovery = true;
-            break;
-          }
-        }
-      }
-      if (inRecovery) {
-        if (hideSleepRecovery) continue;
+      const overlapping = getOverlappingRecoveryWindows(participant.id);
+      if (overlapping.length > 0) {
+        if (sleepRecoveryMode === 'hide') continue;
         sleepRecoveryIds.add(participant.id);
+        recoveryWindowsByPid.set(participant.id, overlapping);
       }
     }
     participants.push(participant);
@@ -5482,7 +5565,7 @@ function getAvailableParticipantsInRange(
       rangeEnd: new Date(rangeEndMs).toString(),
     });
   }
-  return { participants, sleepRecoveryIds };
+  return { participants, sleepRecoveryIds, recoveryWindowsByPid };
 }
 
 interface AvailabilityBucket {
@@ -5506,9 +5589,10 @@ function bucketAvailableParticipants(
   mode: AvailabilityGroupingMode,
   schedule: Schedule,
   pakalDefs: ReturnType<typeof store.getPakalDefinitions>,
+  emptyPreviewLabel = 'אין פנויים בטווח',
 ): { buckets: AvailabilityBucket[]; allowsOverlap: boolean; multiBucketIds: Set<string> } {
   const summarize = (participants: Participant[]): string => {
-    if (participants.length === 0) return 'אין פנויים בטווח';
+    if (participants.length === 0) return emptyPreviewLabel;
     const leading = participants.slice(0, 2).map((p) => p.name);
     const remaining = participants.length - leading.length;
     return remaining > 0 ? `${leading.join(', ')} +${remaining}` : leading.join(', ');
@@ -5613,19 +5697,19 @@ function buildAvailabilityPopoverContent(
   endMs: number,
   preMarginMs = 0,
   postMarginMs = 0,
-  hideSleepRecovery = false,
+  sleepRecoveryMode: SleepRecoveryMode = 'all',
 ): string {
   if (!currentSchedule) return '';
   const schedule = currentSchedule;
   const pakalDefs = store.getPakalDefinitions();
-  const { participants: rawAvailable, sleepRecoveryIds } = getAvailableParticipantsInRange(
-    schedule,
-    startMs,
-    endMs,
-    preMarginMs,
-    postMarginMs,
-    hideSleepRecovery,
-  );
+  const {
+    participants: rawAvailable,
+    sleepRecoveryIds,
+    recoveryWindowsByPid,
+  } = getAvailableParticipantsInRange(schedule, startMs, endMs, preMarginMs, postMarginMs, sleepRecoveryMode);
+  const onlyMode = sleepRecoveryMode === 'only';
+  const emptyPreviewLabel = onlyMode ? 'אין משתתפים בהשלמות בטווח' : 'אין פנויים בטווח';
+  const emptyListLabel = onlyMode ? 'אין משתתפים בהשלמות בקבוצה זו.' : 'אין פנויים בקבוצה הזאת.';
 
   // Apply chip filters BEFORE bucketing. Empty filter set = no constraint;
   // OR within each kind, AND across kinds.
@@ -5648,12 +5732,37 @@ function buildAvailabilityPopoverContent(
     _availabilityGroupingMode,
     schedule,
     pakalDefs,
+    emptyPreviewLabel,
   );
   const multiBucketParticipants = available.filter((p) => multiBucketIds.has(p.id));
 
+  // In 'only' mode, sort participants chronologically by their earliest
+  // overlapping recovery start. Stable secondary sort by name (Hebrew locale).
+  const recoveryStartByPid = new Map<string, number>();
+  if (onlyMode) {
+    for (const [pid, wins] of recoveryWindowsByPid) {
+      let earliest = Infinity;
+      for (const w of wins) {
+        const t = w.start.getTime();
+        if (t < earliest) earliest = t;
+      }
+      recoveryStartByPid.set(pid, earliest);
+    }
+  }
+  const sortForRender = (list: Participant[]): Participant[] => {
+    if (!onlyMode) return list;
+    return [...list].sort((a, b) => {
+      const sa = recoveryStartByPid.get(a.id) ?? Infinity;
+      const sb = recoveryStartByPid.get(b.id) ?? Infinity;
+      if (sa !== sb) return sa - sb;
+      return a.name.localeCompare(b.name, 'he');
+    });
+  };
+
   const renderParticipantList = (participants: Participant[]): string => {
-    if (participants.length === 0) return '<div class="availability-empty">אין פנויים בקבוצה הזאת.</div>';
-    return `<div class="availability-name-list">${participants
+    if (participants.length === 0) return `<div class="availability-empty">${escHtml(emptyListLabel)}</div>`;
+    const ordered = sortForRender(participants);
+    return `<div class="availability-name-list">${ordered
       .map((p) => {
         const pakalCount = pakalsByPid.get(p.id)?.length ?? 0;
         const inRecovery = sleepRecoveryIds.has(p.id);
@@ -5664,7 +5773,17 @@ function buildAvailabilityPopoverContent(
           pakalCount > 1 ? `<span class="badge badge-sm availability-multi-tag">${pakalCount} פק"לים</span>` : '';
         const levelBadge = `<span class="badge badge-sm avail-row-level">L${p.level}</span>`;
         const groupLabel = p.group ? `<span class="avail-row-group">${escHtml(p.group)}</span>` : '';
-        return `<div class="availability-name-row"><span class="participant-hover" data-pid="${p.id}">${escHtml(p.name)}</span>${levelBadge}${groupLabel}${recoveryBadge}${pakalBadge}</div>`;
+        // Inline recovery-window label only in 'only' mode — in 'all' the 😴
+        // badge is enough; piling the times on every row clutters that view.
+        let recoveryWindowLabel = '';
+        if (onlyMode) {
+          const wins = recoveryWindowsByPid.get(p.id);
+          if (wins && wins.length > 0) {
+            const text = wins.map((w) => fmtRecoveryWindow(w, schedule)).join(', ');
+            recoveryWindowLabel = `<span class="availability-recovery-window" dir="ltr" title="חלון השלמת שינה והתאוששות">${escHtml(text)}</span>`;
+          }
+        }
+        return `<div class="availability-name-row"><span class="participant-hover" data-pid="${p.id}">${escHtml(p.name)}</span>${levelBadge}${groupLabel}${recoveryBadge}${recoveryWindowLabel}${pakalBadge}</div>`;
       })
       .join('')}</div>`;
   };
@@ -5673,7 +5792,7 @@ function buildAvailabilityPopoverContent(
     const bucketLabel = escHtml(bucket.label);
     const preview = escHtml(bucket.preview);
     if (bucket.count === 0) {
-      return `<div class="${bucket.className} availability-bucket-empty availability-bucket-zero"><span class="availability-bucket-main"><span class="availability-bucket-label">${bucketLabel}</span><span class="availability-bucket-preview">אין פנויים בטווח</span></span><span class="availability-bucket-count">0</span></div>`;
+      return `<div class="${bucket.className} availability-bucket-empty availability-bucket-zero"><span class="availability-bucket-main"><span class="availability-bucket-label">${bucketLabel}</span><span class="availability-bucket-preview">${escHtml(emptyPreviewLabel)}</span></span><span class="availability-bucket-count">0</span></div>`;
     }
     return `<details class="${bucket.className}">
       <summary><span class="availability-bucket-main"><span class="availability-bucket-label">${bucketLabel}</span><span class="availability-bucket-preview">${preview}</span></span><span class="availability-bucket-count">${bucket.count}</span></summary>
@@ -5700,10 +5819,20 @@ function buildAvailabilityPopoverContent(
       </details>`
       : '';
 
+  const headerTitle = onlyMode ? `בהשלמות שינה לפי ${modeLabel}` : `פנויים לפי ${modeLabel}`;
+  const totalStrong = onlyMode
+    ? available.length === 0
+      ? 'אין משתתפים בהשלמות'
+      : 'משתתפים בהשלמות שינה'
+    : available.length === 0
+      ? 'אין עתודה פנויה'
+      : 'עתודה פנויה';
+  const totalSub = onlyMode ? 'מספר המשתתפים שחלון ההשלמה שלהם חופף לטווח.' : 'מספר המשתתפים שפנויים לאורך כל הטווח.';
+
   return `
     <div class="availability-popover-header">
       <div>
-        <h3>פנויים לפי ${modeLabel}</h3>
+        <h3>${headerTitle}</h3>
         <div class="availability-popover-subtitle">${subtitle}</div>
         ${preMarginMs > 0 || postMarginMs > 0 ? `<div class="availability-popover-margin-note">מרווח: ${preMarginMs / 3600000} שעות לפני, ${postMarginMs / 3600000} שעות אחרי</div>` : ''}
       </div>
@@ -5714,8 +5843,8 @@ function buildAvailabilityPopoverContent(
         <div class="availability-total-card">
           <span class="availability-total-count">${available.length}</span>
           <div class="availability-total-copy">
-            <strong>${available.length === 0 ? 'אין עתודה פנויה' : 'עתודה פנויה'}</strong>
-            <span>מספר המשתתפים שפנויים לאורך כל הטווח.</span>
+            <strong>${totalStrong}</strong>
+            <span>${totalSub}</span>
           </div>
         </div>
       </div>
