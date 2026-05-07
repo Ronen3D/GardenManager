@@ -3062,6 +3062,18 @@ select.input-sm {
   gap: 4px;
 }
 
+.sidebar-mult-badge {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 0 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: var(--warning, #d68910);
+  color: #fff;
+  border-radius: 8px;
+  cursor: help;
+}
+
 .sidebar-bar-row {
   display: flex;
   align-items: center;

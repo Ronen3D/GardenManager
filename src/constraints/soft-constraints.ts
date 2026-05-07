@@ -28,6 +28,23 @@ import { describeTaskInstance, operationalDateKey } from '../utils/date-utils';
 import { computeLowPriorityLevelPenalty } from './senior-policy';
 
 /**
+ * Fair-share capacity divisor. Returns physical capacity divided by the
+ * participant's `workloadMultiplier` (default 1). Used by SC-3 pool fairness,
+ * the IncrementalScorer per-participant capacity, and the optimizer's greedy
+ * workload tie-breaker — all of which compare a participant's hours against
+ * a target proportional to their capacity. Dividing capacity by the multiplier
+ * shrinks (or grows) that target without touching the raw hours, keeping HC
+ * gating and display values untouched.
+ *
+ * Never used by hard constraints, by `computeAllCapacities`, by global daily
+ * balance, or by any physical-availability code path.
+ */
+export function effectiveCapacity(p: Participant, rawCap: number): number {
+  const m = p.workloadMultiplier ?? 1;
+  return m > 0 ? rawCap / m : rawCap;
+}
+
+/**
  * SC-3: Workload balance — penalize uneven distribution of non-light assignments.
  *
  * Split-pool: L0 participants are balanced among themselves, seniors (L2-L4)
@@ -81,7 +98,7 @@ export function workloadImbalanceSplit(
       }
     }
 
-    const cap = capacities?.get(p.id)?.totalAvailableHours ?? 0;
+    const cap = effectiveCapacity(p, capacities?.get(p.id)?.totalAvailableHours ?? 0);
     if (p.level === Level.L0) {
       l0Data.push({ hours: effectiveHours, cap });
     } else {
@@ -1085,7 +1102,7 @@ export class IncrementalScorer {
       dailyLoads,
       dailyStdDev,
       isL0: p.level === Level.L0,
-      capacity: cap?.totalAvailableHours ?? 0,
+      capacity: effectiveCapacity(p, cap?.totalAvailableHours ?? 0),
     };
   }
 

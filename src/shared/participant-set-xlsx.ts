@@ -74,6 +74,11 @@ const HEADER_LEVEL = 'רמה';
 const HEADER_NOT_WITH = 'לא עם';
 const HEADER_PREFERRED = 'משימה מועדפת';
 const HEADER_LESS_PREFERRED = 'משימה פחות מועדפת';
+const HEADER_WORKLOAD_MULT = 'מקדם עומס';
+
+const WORKLOAD_MULT_MIN = 0.3;
+const WORKLOAD_MULT_MAX = 5;
+const WORKLOAD_MULT_DEFAULT = 1;
 
 // אי-זמינות headers.
 const UNAVAIL_HEADER_NAME = 'שם משתתף';
@@ -401,6 +406,11 @@ function buildInstructionsSheet(wb: Workbook, templateMode: boolean): void {
       text: R(`• ${HEADER_NOT_WITH} — שמות משתתפים אחרים בקובץ, מופרדים בנקודה-פסיק (;).`),
     },
     { text: R(`• ${HEADER_PREFERRED} / ${HEADER_LESS_PREFERRED} — שם משימה חופשי.`) },
+    {
+      text: R(
+        `• ${HEADER_WORKLOAD_MULT} — מקדם איזון עומס בטווח ${WORKLOAD_MULT_MIN}–${WORKLOAD_MULT_MAX} (ברירת מחדל ${WORKLOAD_MULT_DEFAULT}). ערך > 1 מקטין את ההקצאות, < 1 מגדיל. ריק = ${WORKLOAD_MULT_DEFAULT}.`,
+      ),
+    },
     { text: '' },
     { text: R('גיליון אי-זמינות'), heading: true },
     { text: R('• שורה אחת לכל חלון אי-זמינות קבוע בשבצ״ק.') },
@@ -458,7 +468,7 @@ function buildParticipantsSheet(
   const headers: string[] = [HEADER_NAME, HEADER_GROUP, HEADER_LEVEL];
   for (const c of certs) headers.push(buildCertHeader(c));
   for (const p of pakals) headers.push(buildPakalHeader(p));
-  headers.push(HEADER_NOT_WITH, HEADER_PREFERRED, HEADER_LESS_PREFERRED);
+  headers.push(HEADER_NOT_WITH, HEADER_PREFERRED, HEADER_LESS_PREFERRED, HEADER_WORKLOAD_MULT);
 
   ws.addRow(headers);
   applyHeaderRowStyle(ws.getRow(1));
@@ -469,9 +479,10 @@ function buildParticipantsSheet(
   ws.getColumn(3).width = 8;
   for (let i = 0; i < certs.length; i++) ws.getColumn(4 + i).width = 16;
   for (let i = 0; i < pakals.length; i++) ws.getColumn(4 + certs.length + i).width = 18;
-  ws.getColumn(headers.length - 2).width = 28; // לא עם
+  ws.getColumn(headers.length - 3).width = 28; // לא עם
+  ws.getColumn(headers.length - 2).width = 18;
   ws.getColumn(headers.length - 1).width = 18;
-  ws.getColumn(headers.length).width = 18;
+  ws.getColumn(headers.length).width = 12; // מקדם עומס
 
   // Name column is always text (defends against numeric auto-coerce).
   ws.getColumn(1).numFmt = '@';
@@ -488,10 +499,12 @@ function buildParticipantsSheet(
     for (const c of certs) rowValues.push(certIdSet.has(c.id) ? 'כן' : '');
     const pakalIdSet = new Set(p.pakalIds ?? []);
     for (const pk of pakals) rowValues.push(pakalIdSet.has(pk.id) ? 'כן' : '');
+    const mult = p.workloadMultiplier;
     rowValues.push(
       escapeFormulaInjection((p.notWithIds ?? []).join('; ')),
       escapeFormulaInjection(normStr(p.preferredTaskName ?? '')),
       escapeFormulaInjection(normStr(p.lessPreferredTaskName ?? '')),
+      mult !== undefined && mult !== WORKLOAD_MULT_DEFAULT ? mult : '',
     );
     const excelRow = ws.addRow(rowValues);
     excelRow.getCell(1).numFmt = '@';
@@ -671,7 +684,7 @@ function buildExampleSheet(wb: Workbook, certs: CertificationDefinition[], pakal
   const headers: string[] = [HEADER_NAME, HEADER_GROUP, HEADER_LEVEL];
   for (const c of certs) headers.push(buildCertHeader(c));
   for (const p of pakals) headers.push(buildPakalHeader(p));
-  headers.push(HEADER_NOT_WITH, HEADER_PREFERRED, HEADER_LESS_PREFERRED);
+  headers.push(HEADER_NOT_WITH, HEADER_PREFERRED, HEADER_LESS_PREFERRED, HEADER_WORKLOAD_MULT);
   ws.addRow(headers);
   applyHeaderRowStyle(ws.getRow(1));
   ws.getColumn(1).numFmt = '@';
@@ -680,7 +693,7 @@ function buildExampleSheet(wb: Workbook, certs: CertificationDefinition[], pakal
   const example: unknown[] = ['ישראל ישראלי', 'קבוצה א', 'L2'];
   for (let i = 0; i < certs.length; i++) example.push(i === 0 ? 'כן' : '');
   for (let i = 0; i < pakals.length; i++) example.push('');
-  example.push('', 'עבודה קלה', '');
+  example.push('', 'עבודה קלה', '', '');
   ws.addRow(example);
 
   ws.addRow([]);
@@ -699,6 +712,7 @@ interface ParsedHeader {
     | { type: 'notWith' }
     | { type: 'preferred' }
     | { type: 'lessPreferred' }
+    | { type: 'workloadMultiplier' }
     | { type: 'cert'; id: string }
     | { type: 'pakal'; id: string };
 }
@@ -1066,6 +1080,11 @@ function parseParticipantsHeader(
       seenFixed.add(HEADER_LESS_PREFERRED);
       continue;
     }
+    if (raw === HEADER_WORKLOAD_MULT) {
+      columns.set(c, { type: 'workloadMultiplier' });
+      seenFixed.add(HEADER_WORKLOAD_MULT);
+      continue;
+    }
 
     // Dynamic (cert/pakal) header — match by Hebrew label against the catalog.
     // Also accept legacy bracket format `<label> [<id>]` for older exports.
@@ -1300,6 +1319,18 @@ function parseParticipantsRows(
     const preferredTaskName = readCellString(row.getCell(prefCol)) || undefined;
     const lessPreferredTaskName = readCellString(row.getCell(lessCol)) || undefined;
 
+    const multCol = colByKind.get('workloadMultiplier');
+    let workloadMultiplier: number | undefined;
+    if (multCol !== undefined) {
+      const multRaw = row.getCell(multCol).value;
+      if (multRaw !== null && multRaw !== undefined && multRaw !== '') {
+        const multNum = typeof multRaw === 'number' ? multRaw : parseFloat(String(multRaw));
+        if (Number.isFinite(multNum) && multNum >= WORKLOAD_MULT_MIN && multNum <= WORKLOAD_MULT_MAX) {
+          if (multNum !== WORKLOAD_MULT_DEFAULT) workloadMultiplier = multNum;
+        }
+      }
+    }
+
     out.push({
       snapshot: {
         name,
@@ -1311,6 +1342,7 @@ function parseParticipantsRows(
         pakalIds: pakalIds.length > 0 ? pakalIds : undefined,
         preferredTaskName,
         lessPreferredTaskName,
+        workloadMultiplier,
       },
       rowNumber: r,
       notWithRawTokens: dedupedTokens,

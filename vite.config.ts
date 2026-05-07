@@ -12,6 +12,11 @@ export default defineConfig({
     // other Vite projects that default to 5173 on the same origin.
     port: 5174,
     strictPort: true,
+    watch: {
+      // Exclude Playwright MCP snapshot/log files from HMR so audit runs
+      // do not accidentally trigger page reloads mid-test.
+      ignored: ['**/.playwright-mcp/**'],
+    },
   },
   build: {
     outDir: 'dist-web',

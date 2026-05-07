@@ -902,6 +902,7 @@ function _addParticipantNoSnapshot(data: {
   certifications?: string[];
   pakalIds?: string[];
   group: string;
+  workloadMultiplier?: number;
 }): Participant {
   const id = uid('p');
   const firstActiveId = certificationDefinitions.find((d) => !d.deleted)?.id;
@@ -917,6 +918,9 @@ function _addParticipantNoSnapshot(data: {
     availability: getDefaultAvailability(),
     dateUnavailability: [],
   };
+  if (data.workloadMultiplier !== undefined && data.workloadMultiplier !== 1) {
+    p.workloadMultiplier = data.workloadMultiplier;
+  }
   participants.set(id, p);
   return p;
 }
@@ -957,6 +961,7 @@ export function addParticipant(data: {
   certifications?: string[];
   pakalIds?: string[];
   group: string;
+  workloadMultiplier?: number;
 }): Participant {
   pushSnapshot();
   const p = _addParticipantNoSnapshot(data);
@@ -3687,6 +3692,7 @@ function _snapshotCurrentParticipants(): ParticipantSnapshot[] {
       pakalIds: sanitizePakalIds(p.pakalIds, pakalDefinitions),
       preferredTaskName: p.preferredTaskName,
       lessPreferredTaskName: p.lessPreferredTaskName,
+      workloadMultiplier: p.workloadMultiplier,
     };
   });
 }
@@ -3871,6 +3877,9 @@ export function loadParticipantSet(id: string): void {
         preferredTaskName: snap.preferredTaskName,
         lessPreferredTaskName: snap.lessPreferredTaskName,
       };
+      if (snap.workloadMultiplier !== undefined && snap.workloadMultiplier !== 1) {
+        p.workloadMultiplier = snap.workloadMultiplier;
+      }
       participants.set(pid, p);
 
       // Restore date unavailabilities

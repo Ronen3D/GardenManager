@@ -1092,11 +1092,16 @@ function renderSidebarEntry(entry: {
   const todayUtilPct = entry.todayCap > 0 ? (todayHrs / entry.todayCap) * 100 : 0;
   const todayBarWidth = Math.min(todayUtilPct * (100 / 60), barWidth);
 
-  const hoverTitle = `${escHtml(p.name)} — ${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfCapacity.toFixed(1)}% מהזמינות)`;
+  const mult = p.workloadMultiplier ?? 1;
+  const hasMult = Math.abs(mult - 1) > 1e-9;
+  const multBadge = hasMult
+    ? ` <span class="sidebar-mult-badge" title="מקדם עומס ${mult} — היעד הוגנות מותאם בהתאם.">×${mult.toFixed(1)}</span>`
+    : '';
+  const hoverTitle = `${escHtml(p.name)} — ${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfCapacity.toFixed(1)}% מהזמינות)${hasMult ? ` · מקדם עומס ×${mult.toFixed(1)}` : ''}`;
 
   return `<div class="sidebar-entry">
     <div class="sidebar-name">
-      <span class="participant-hover" data-pid="${p.id}">${escHtml(p.name)}</span>
+      <span class="participant-hover" data-pid="${p.id}">${escHtml(p.name)}</span>${multBadge}
       <span class="sidebar-meta">${groupBadge(p.group)} ${levelBadge(p.level)}</span>
     </div>
     <div class="sidebar-bar-row">
@@ -1245,8 +1250,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
 
 // ─── Schedule Tab ────────────────────────────────────────────────────────────
 
-function renderScheduleTab(): string {
-  const preflight = runPreflight();
+function renderScheduleTab(preflight: ReturnType<typeof runPreflight>): string {
   const liveMode = store.getLiveModeState();
   // Display count follows the frozen schedule when one exists so the header
   // label and Live Mode options match what's rendered. The `input-days`
@@ -2465,6 +2469,18 @@ async function doGenerate(): Promise<void> {
   if (_isOptimizing) return;
   if (_isAutoTuningApp) {
     showToast('לא ניתן ליצור שבצ"ק בזמן כיול אוטומטי.', { type: 'warning' });
+    return;
+  }
+
+  // Defensive re-run: the button's disabled state was set at last render, so a
+  // user edit between render and click could have introduced a Critical
+  // finding. Re-running takes ~10–50ms and avoids spending a full optimization
+  // run on a config the engine will reject.
+  const pf = runPreflight();
+  if (!pf.canGenerate) {
+    const crits = pf.findings.filter((f) => f.severity === 'Critical');
+    showToast(`לא ניתן ליצור שיבוץ — ${crits.length} בעיות קריטיות. עבור למסך פירוט משימות לתיקון.`, { type: 'error' });
+    renderAll();
     return;
   }
 
@@ -3867,7 +3883,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.6</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -3915,10 +3931,10 @@ function renderAll(): void {
       html += renderParticipantsTab();
       break;
     case 'task-rules':
-      html += renderTaskRulesTab();
+      html += renderTaskRulesTab(preflight);
       break;
     case 'schedule':
-      html += renderScheduleTab();
+      html += renderScheduleTab(preflight);
       break;
     case 'algorithm':
       html += renderAlgorithmTab();

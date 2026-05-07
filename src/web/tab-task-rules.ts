@@ -14,7 +14,7 @@ import {
   type OneTimeTask,
   type PreflightResult,
   PreflightSeverity,
-  RestRule,
+  type RestRule,
   type SleepRecoveryRule,
   type SlotTemplate,
   type SubTeamTemplate,
@@ -518,10 +518,8 @@ let _taskSetRenameTargetId: string | null = null;
 
 // ─── Render ──────────────────────────────────────────────────────────────────
 
-export function renderTaskRulesTab(): string {
+export function renderTaskRulesTab(preflight: PreflightResult): string {
   const templates = store.getAllTaskTemplates();
-  const preflight = runPreflight();
-
   const criticals = preflight.findings.filter((f) => f.severity === PreflightSeverity.Critical);
 
   let html = `

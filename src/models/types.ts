@@ -125,6 +125,10 @@ export interface Participant {
   preferredTaskName?: string;
   /** Task name the participant prefers NOT to be assigned to (soft preference, matched against Task.sourceName) */
   lessPreferredTaskName?: string;
+  /** Soft-balancing weight on fair-share capacity. >1 protects (less work),
+   *  <1 absorbs more. Default 1.0. Range 0.3–5.0. Does NOT affect hard
+   *  constraints, real durations, rest gaps, or sleep-recovery windows. */
+  workloadMultiplier?: number;
 }
 
 // ─── Capacity ────────────────────────────────────────────────────────────────
@@ -550,6 +554,9 @@ export interface ParticipantSnapshot {
   preferredTaskName?: string;
   /** Task name the participant prefers NOT to be assigned to (soft preference, matched against Task.sourceName) */
   lessPreferredTaskName?: string;
+  /** Soft-balancing weight on fair-share capacity. >1 protects (less work),
+   *  <1 absorbs more. Default 1.0. Range 0.3–5.0. */
+  workloadMultiplier?: number;
 }
 
 /** A named, saveable collection of participants */

@@ -256,6 +256,13 @@ function getEligibleCandidates(
   const rngKey = new Map<string, number>();
   for (const p of eligible) rngKey.set(p.id, Math.random());
 
+  // Per-participant workloadMultiplier lookup (default 1.0). Divides physical
+  // capacity at the fairness/greedy layer so a high-multiplier participant
+  // looks more loaded for any given hours and is picked less often. Soft
+  // balancing only — never reaches HC.
+  const multByPid = new Map<string, number>();
+  for (const p of eligible) multByPid.set(p.id, p.workloadMultiplier ?? 1);
+
   /**
    * Workload tie-breaker score. When `capacities` are provided, reads in
    * utilization space (load_p / cap_p) so a participant with 18h available
@@ -264,13 +271,19 @@ function getEligibleCandidates(
    * missing, falls back to absolute hours (the historical formula).
    *
    * The 2.0 weight on the day axis is preserved across both code paths.
+   *
+   * Capacity is divided by the participant's `workloadMultiplier` so that
+   * `mult > 1` shrinks effective capacity (looks more loaded → picked less)
+   * and `mult < 1` grows it (picked more). Default 1.0 = unchanged.
    */
   const workloadScore = (pid: string): number => {
     const w = participantWorkload.get(pid) || 0;
     const day = dailyWorkload?.get(pid)?.get(taskDay) ?? 0;
     const cap = capacities?.get(pid);
-    const totalCap = cap?.totalAvailableHours ?? 0;
-    const dayCap = cap?.dailyAvailableHours.get(taskDay) ?? 0;
+    const mult = multByPid.get(pid) ?? 1;
+    const divisor = mult > 0 ? mult : 1;
+    const totalCap = (cap?.totalAvailableHours ?? 0) / divisor;
+    const dayCap = (cap?.dailyAvailableHours.get(taskDay) ?? 0) / divisor;
     const periodPart = totalCap > 0 ? w / totalCap : w;
     const dayPart = dayCap > 0 ? day / dayCap : 0;
     return periodPart + 2.0 * dayPart;

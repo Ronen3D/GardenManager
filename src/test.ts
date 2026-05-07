@@ -40,9 +40,11 @@ import {
   type CertificationDefinition,
   DEFAULT_CERTIFICATION_DEFINITIONS,
   type LevelEntry,
+  type RestRule,
   type Schedule,
   type SchedulerConfig,
   type SlotRequirement,
+  type TaskTemplate,
   type TimeBlock,
 } from './models/types';
 
@@ -320,8 +322,15 @@ import {
   checkUniqueParticipantsPerTask,
 } from './constraints/hard-constraints';
 import { getRecoveryWindow } from './constraints/sleep-recovery';
-import { collectSoftWarnings, dailyWorkloadImbalance, workloadImbalanceSplit } from './constraints/soft-constraints';
+import {
+  collectSoftWarnings,
+  dailyWorkloadImbalance,
+  effectiveCapacity,
+  workloadImbalanceSplit,
+} from './constraints/soft-constraints';
+import { computeAllCapacities } from './utils/capacity';
 import { fullValidate, previewSwap } from './engine/validator';
+import { runPreflightWithInputs } from './shared/preflight-core';
 import { computeParticipantRest } from './shared/utils/rest-calculator';
 import { isBlockedByDateUnavailability, isDateInBlock, type ScheduleContext } from './shared/utils/time-utils';
 import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
@@ -5177,6 +5186,158 @@ console.log('\n── Soft Constraints: Workload Balance ──');
   assert(lightStats.l0Avg === 0, 'SC-3: light task → 0 effective hours → avg=0');
 }
 
+// ─── Soft Constraints: workloadMultiplier (per-participant balancing knob) ──
+
+console.log('\n── Soft Constraints: workloadMultiplier ──');
+
+// Default (undefined) and explicit 1.0 produce identical SC-3 output.
+{
+  const wmTask1 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 14)); // 8h
+  const wmTask2 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 10)); // 4h
+  const mkP = (id: string, mult: number | undefined): Participant => ({
+    id,
+    name: id,
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: dayAvail,
+    dateUnavailability: [],
+    ...(mult === undefined ? {} : { workloadMultiplier: mult }),
+  });
+  const baseline = workloadImbalanceSplit(
+    [mkP('wm-a', undefined), mkP('wm-b', undefined)],
+    [
+      {
+        id: 'wm-x1',
+        taskId: wmTask1.id,
+        slotId: wmTask1.slots[0].slotId,
+        participantId: 'wm-a',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'wm-x2',
+        taskId: wmTask2.id,
+        slotId: wmTask2.slots[0].slotId,
+        participantId: 'wm-b',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ],
+    [wmTask1, wmTask2],
+  );
+  const explicitOnes = workloadImbalanceSplit(
+    [mkP('wm-a', 1), mkP('wm-b', 1)],
+    [
+      {
+        id: 'wm-x1',
+        taskId: wmTask1.id,
+        slotId: wmTask1.slots[0].slotId,
+        participantId: 'wm-a',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'wm-x2',
+        taskId: wmTask2.id,
+        slotId: wmTask2.slots[0].slotId,
+        participantId: 'wm-b',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ],
+    [wmTask1, wmTask2],
+  );
+  assert(
+    Math.abs(baseline.l0StdDev - explicitOnes.l0StdDev) < 1e-9 &&
+      Math.abs(baseline.l0Penalty - explicitOnes.l0Penalty) < 1e-9,
+    'workloadMultiplier: undefined ≡ 1.0 — identical SC-3 output',
+  );
+}
+
+// Capacity-proportional path: doubling A's multiplier halves their fair-share target.
+{
+  const wmTask = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 14)); // 8h
+  const wmTask2 = createShemeshTask(createTimeBlockFromHours(baseDate, 6, 14)); // 8h
+  const a: Participant = {
+    id: 'wm2-a',
+    name: 'A',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: dayAvail,
+    dateUnavailability: [],
+    workloadMultiplier: 2,
+  };
+  const b: Participant = {
+    id: 'wm2-b',
+    name: 'B',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: dayAvail,
+    dateUnavailability: [],
+  };
+  // Equal load (8h each). With equal physical caps and A.mult=2, A's effective
+  // cap is half of B's, so the fair-share target ratio is 1:2. Equal hours
+  // therefore generate non-zero penalty (A is over their target, B under).
+  const wmAssigns: Assignment[] = [
+    {
+      id: 'wm2-x1',
+      taskId: wmTask.id,
+      slotId: wmTask.slots[0].slotId,
+      participantId: 'wm2-a',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'wm2-x2',
+      taskId: wmTask2.id,
+      slotId: wmTask2.slots[0].slotId,
+      participantId: 'wm2-b',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+  const caps = computeAllCapacities([a, b], wmTask.timeBlock.start, wmTask.timeBlock.end, 5);
+  const stats = workloadImbalanceSplit([a, b], wmAssigns, [wmTask, wmTask2], undefined, undefined, caps);
+  assert(stats.l0StdDev > 0, 'workloadMultiplier: equal hours + asymmetric mults → l0StdDev > 0');
+
+  // Compare against equal-mult baseline: stdDev should be larger when one
+  // participant has mult=2 (target shifts).
+  const equalStats = workloadImbalanceSplit(
+    [{ ...a, workloadMultiplier: 1 }, b],
+    wmAssigns,
+    [wmTask, wmTask2],
+    undefined,
+    undefined,
+    caps,
+  );
+  assert(
+    stats.l0StdDev > equalStats.l0StdDev + 1e-9,
+    'workloadMultiplier: mult=2 introduces fairness penalty that mult=1 does not',
+  );
+}
+
+// effectiveCapacity helper: defends against bad data (m <= 0 falls back to raw).
+{
+  const p: Participant = {
+    id: 'wm3',
+    name: 'WM3',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: dayAvail,
+    dateUnavailability: [],
+  };
+  assert(effectiveCapacity(p, 10) === 10, 'effectiveCapacity: undefined mult → raw');
+  assert(effectiveCapacity({ ...p, workloadMultiplier: 1 }, 10) === 10, 'effectiveCapacity: mult=1 → raw');
+  assert(effectiveCapacity({ ...p, workloadMultiplier: 2 }, 10) === 5, 'effectiveCapacity: mult=2 → raw/2');
+  assert(effectiveCapacity({ ...p, workloadMultiplier: 0.5 }, 10) === 20, 'effectiveCapacity: mult=0.5 → raw*2');
+  assert(effectiveCapacity({ ...p, workloadMultiplier: 0 }, 10) === 10, 'effectiveCapacity: mult=0 → fallback to raw');
+  assert(effectiveCapacity({ ...p, workloadMultiplier: -1 }, 10) === 10, 'effectiveCapacity: mult<0 → fallback to raw');
+}
+
 // ─── collectSoftWarnings ────────────────────────────────────────────────────
 
 console.log('\n── collectSoftWarnings ─────────────────');
@@ -6887,8 +7048,6 @@ console.log('\n── getEligibleParticipantsForSlot ───────');
 // ═══════════════════════════════════════════════════════════════════════════════
 // dailyWorkloadImbalance (per-day std-dev)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-import { computeAllCapacities } from './utils/capacity';
 
 console.log('\n── dailyWorkloadImbalance ───────────────');
 
@@ -13947,6 +14106,237 @@ console.log('\n── Structural section-key (layout) ─────');
       resolveLogicalDayTimestamp(1, 'garbage', 5, base) === null,
       'resolveLogicalDayTimestamp: malformed input returns null',
     );
+  }
+}
+
+// ─── Preflight (deep checks) ─────────────────────────────────────────────────
+
+console.log('\n── Preflight Deep Checks ───────────────');
+{
+  const pfBase = new Date(2026, 5, 1); // Mon 1 Jun 2026
+  const dsh = 5;
+  const fullWeek = [{ start: new Date(2026, 5, 1, 0, 0), end: new Date(2026, 5, 8, 12, 0) }];
+
+  const makeP = (id: string, overrides: Partial<Participant> = {}): Participant => ({
+    id,
+    name: id,
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: fullWeek,
+    dateUnavailability: [],
+    ...overrides,
+  });
+
+  const baseTpl = (overrides: Partial<TaskTemplate>): TaskTemplate => ({
+    id: 't1',
+    name: 'משימה',
+    durationHours: 8,
+    shiftsPerDay: 1,
+    startHour: 8,
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    subTeams: [],
+    slots: [
+      {
+        id: 's1',
+        label: 'משבצת',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: [],
+      },
+    ],
+    ...overrides,
+  });
+
+  // 1. forbiddenCertifications eliminates the only candidate → SKILL_GAP.
+  {
+    const tpl = baseTpl({
+      slots: [
+        {
+          id: 's1',
+          label: 'משבצת',
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: ['nitzan'],
+          forbiddenCertifications: ['horesh'],
+        },
+      ],
+    });
+    const p = makeP('p1', { certifications: ['nitzan', 'horesh'] });
+    const r = runPreflightWithInputs({
+      participants: [p],
+      templates: [tpl],
+      oneTimeTasks: [],
+      scheduleStart: pfBase,
+      numDays: 1,
+      dayStartHour: dsh,
+    });
+    const skillGap = r.findings.filter((f) => f.code === 'SKILL_GAP');
+    assert(skillGap.length === 1, 'Preflight: forbiddenCertifications causes SKILL_GAP when no other candidate');
+    assert(r.canGenerate === false, 'Preflight: SKILL_GAP blocks generation');
+  }
+
+  // 2. Orphan restRuleId → ORPHAN_REST_RULE warning, but not Critical.
+  {
+    const tpl = baseTpl({ id: 't-orphan', restRuleId: 'rr-deleted' });
+    const restRules: RestRule[] = [{ id: 'rr-deleted', label: 'old', durationHours: 4, deleted: true }];
+    const p = makeP('p1');
+    const r = runPreflightWithInputs({
+      participants: [p],
+      templates: [tpl],
+      oneTimeTasks: [],
+      scheduleStart: pfBase,
+      numDays: 1,
+      dayStartHour: dsh,
+      restRules,
+    });
+    const orphan = r.findings.filter((f) => f.code === 'ORPHAN_REST_RULE');
+    assert(orphan.length === 1, 'Preflight: tombstoned restRuleId yields ORPHAN_REST_RULE warning');
+    assert(orphan[0].severity === 'Warning', 'Preflight: ORPHAN_REST_RULE is Warning, not Critical');
+    assert(r.canGenerate === true, 'Preflight: ORPHAN_REST_RULE does not block generation');
+  }
+
+  // 3. Stale triggerShifts (all > shiftsPerDay) → STALE_SLEEP_RECOVERY warning.
+  {
+    const tpl = baseTpl({
+      id: 't-stale',
+      shiftsPerDay: 2,
+      sleepRecovery: { triggerShifts: [3, 4], recoveryHours: 6 },
+    });
+    const p = makeP('p1');
+    const r = runPreflightWithInputs({
+      participants: [p],
+      templates: [tpl],
+      oneTimeTasks: [],
+      scheduleStart: pfBase,
+      numDays: 1,
+      dayStartHour: dsh,
+    });
+    const stale = r.findings.filter((f) => f.code === 'STALE_SLEEP_RECOVERY');
+    assert(stale.length === 1, 'Preflight: all-stale triggerShifts emits STALE_SLEEP_RECOVERY');
+  }
+
+  // 4. Per-shift availability gap: only candidate is unavailable on day 3.
+  {
+    const tpl = baseTpl({ id: 't-avail', shiftsPerDay: 1, durationHours: 6, startHour: 22 });
+    // Day 3 starts at op-day 2026-06-03 05:00. Shift starts at 22:00 day 3
+    // → calendar 2026-06-03 22:00 (since 22 >= dsh=5, calOffset = dayIdx-1 = 2,
+    // landing on 2026-06-03 22:00 .. 2026-06-04 04:00).
+    // Carve a hole that covers exactly that window; leave other days fully available.
+    const partial = [
+      { start: new Date(2026, 5, 1, 0, 0), end: new Date(2026, 5, 3, 22, 0) },
+      { start: new Date(2026, 5, 4, 4, 0), end: new Date(2026, 5, 8, 12, 0) },
+    ];
+    const p = makeP('p1', { availability: partial });
+    const r = runPreflightWithInputs({
+      participants: [p],
+      templates: [tpl],
+      oneTimeTasks: [],
+      scheduleStart: pfBase,
+      numDays: 7,
+      dayStartHour: dsh,
+    });
+    const shiftGap = r.findings.filter((f) => f.code === 'SHIFT_SKILL_GAP');
+    assert(shiftGap.length === 1, 'Preflight: per-shift availability gap emits exactly one SHIFT_SKILL_GAP');
+    assert(
+      shiftGap[0].message.includes('יום 3'),
+      'Preflight: SHIFT_SKILL_GAP names the specific day where every candidate is unavailable',
+    );
+    assert(r.canGenerate === false, 'Preflight: SHIFT_SKILL_GAP is Critical and blocks generation');
+  }
+
+  // 5. disabledHC includes HC-1 → SKILL_GAP suppressed even with universal level mismatch.
+  {
+    const tpl = baseTpl({
+      slots: [
+        {
+          id: 's1',
+          label: 'משבצת',
+          acceptableLevels: [{ level: Level.L4 }],
+          requiredCertifications: [],
+        },
+      ],
+    });
+    const p = makeP('p1', { level: Level.L0 });
+    // With HC-1 enabled the slot is unfillable.
+    const enabled = runPreflightWithInputs({
+      participants: [p],
+      templates: [tpl],
+      oneTimeTasks: [],
+      scheduleStart: pfBase,
+      numDays: 1,
+      dayStartHour: dsh,
+    });
+    assert(
+      enabled.findings.some((f) => f.code === 'SKILL_GAP'),
+      'Preflight: with HC-1 enabled, level mismatch produces SKILL_GAP',
+    );
+    // Disable HC-1 → no SKILL_GAP.
+    const disabled = runPreflightWithInputs({
+      participants: [p],
+      templates: [tpl],
+      oneTimeTasks: [],
+      scheduleStart: pfBase,
+      numDays: 1,
+      dayStartHour: dsh,
+      disabledHC: new Set(['HC-1']),
+    });
+    assert(
+      !disabled.findings.some((f) => f.code === 'SKILL_GAP'),
+      'Preflight: globally-disabled HC-1 suppresses SKILL_GAP from level mismatch',
+    );
+  }
+
+  // 6. Degenerate template (durationHours = 0) → INVALID_DURATION Critical.
+  {
+    const tpl = baseTpl({ id: 't-zero', durationHours: 0 });
+    const p = makeP('p1');
+    const r = runPreflightWithInputs({
+      participants: [p],
+      templates: [tpl],
+      oneTimeTasks: [],
+      scheduleStart: pfBase,
+      numDays: 1,
+      dayStartHour: dsh,
+    });
+    const dur = r.findings.filter((f) => f.code === 'INVALID_DURATION');
+    assert(dur.length === 1, 'Preflight: durationHours=0 emits INVALID_DURATION');
+    assert(r.canGenerate === false, 'Preflight: INVALID_DURATION blocks generation');
+  }
+
+  // 7. One-time task with restRuleId pointing at a missing rule.
+  {
+    const ot: OneTimeTask = {
+      id: 'ot1',
+      name: 'אירוע חירום',
+      scheduledDate: new Date(2026, 5, 2),
+      startHour: 10,
+      startMinute: 0,
+      durationHours: 4,
+      slots: [
+        {
+          id: 'ots1',
+          label: 'משבצת',
+          acceptableLevels: [{ level: Level.L0 }],
+          requiredCertifications: [],
+        },
+      ],
+      subTeams: [],
+      sameGroupRequired: false,
+      blocksConsecutive: false,
+      restRuleId: 'rr-nonexistent',
+    };
+    const p = makeP('p1');
+    const r = runPreflightWithInputs({
+      participants: [p],
+      templates: [],
+      oneTimeTasks: [ot],
+      scheduleStart: pfBase,
+      numDays: 7,
+      dayStartHour: dsh,
+      restRules: [],
+    });
+    const orphan = r.findings.filter((f) => f.code === 'ORPHAN_REST_RULE' && f.oneTimeTaskId === 'ot1');
+    assert(orphan.length === 1, 'Preflight: one-time task with missing restRuleId emits ORPHAN_REST_RULE');
   }
 }
 

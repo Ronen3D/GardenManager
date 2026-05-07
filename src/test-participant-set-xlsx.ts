@@ -150,6 +150,9 @@ function normalizeSnapshots(snaps: ParticipantSnapshot[]): Array<Record<string, 
       if (notWith !== undefined) canonical.notWithIds = notWith;
       if (p.preferredTaskName !== undefined) canonical.preferredTaskName = p.preferredTaskName;
       if (p.lessPreferredTaskName !== undefined) canonical.lessPreferredTaskName = p.lessPreferredTaskName;
+      if (p.workloadMultiplier !== undefined && p.workloadMultiplier !== 1) {
+        canonical.workloadMultiplier = p.workloadMultiplier;
+      }
       return canonical;
     })
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'he'));

@@ -27,6 +27,20 @@ import { showConfirm, showSaveConfirm, showToast } from './ui-modal';
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
+
+const MIN_WORKLOAD_MULTIPLIER = 0.3;
+const MAX_WORKLOAD_MULTIPLIER = 5;
+const DEFAULT_WORKLOAD_MULTIPLIER = 1;
+
+/** Parse a workload-multiplier input string → clamped numeric value, or
+ *  `DEFAULT_WORKLOAD_MULTIPLIER` if blank/invalid/out-of-range. */
+function parseWorkloadMultiplier(raw: string | undefined): number {
+  const v = parseFloat(raw ?? '');
+  if (!Number.isFinite(v)) return DEFAULT_WORKLOAD_MULTIPLIER;
+  if (v < MIN_WORKLOAD_MULTIPLIER || v > MAX_WORKLOAD_MULTIPLIER) return DEFAULT_WORKLOAD_MULTIPLIER;
+  return v;
+}
+
 function getCertOptions(): CertificationDefinition[] {
   return store.getCertificationDefinitions();
 }
@@ -398,6 +412,12 @@ function hasEditingChanges(row: Element, pid: string): boolean {
   const prefVal = (row.querySelector('[data-field="preferredTask"]') as HTMLSelectElement)?.value || '';
   if (prefVal !== (p.preferredTaskName || '')) return true;
 
+  const newMult = parseWorkloadMultiplier(
+    (row.querySelector('[data-field="workloadMultiplier"]') as HTMLInputElement)?.value,
+  );
+  const origMult = p.workloadMultiplier ?? DEFAULT_WORKLOAD_MULTIPLIER;
+  if (Math.abs(newMult - origMult) > 1e-9) return true;
+
   const lessPrefVal = (row.querySelector('[data-field="lessPreferredTask"]') as HTMLSelectElement)?.value || '';
   if (lessPrefVal !== (p.lessPreferredTaskName || '')) return true;
 
@@ -709,6 +729,12 @@ function renderEditRow(p: Participant, idx: number): string {
       <select class="input-sm" data-field="level">
         ${LEVEL_OPTIONS.map((l) => `<option value="${l}" ${p.level === l ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
+      <label style="font-size:0.75rem;margin:4px 0 0;display:block">מקדם עומס
+      <input class="input-sm" type="number" step="0.1" min="${MIN_WORKLOAD_MULTIPLIER}" max="${MAX_WORKLOAD_MULTIPLIER}"
+             data-field="workloadMultiplier"
+             value="${p.workloadMultiplier ?? DEFAULT_WORKLOAD_MULTIPLIER}"
+             style="width:60px"
+             title="ערך > 1 מקטין את ההקצאות, ערך < 1 מגדיל אותן. לא משפיע על הגבלות נוקשות (זמינות, מנוחה, היתכנות)." /></label>
     </td>
     <td class="col-certs">
       <div class="cert-checkboxes">
@@ -870,6 +896,10 @@ function renderAddForm(groups: string[]): string {
         <select class="input-sm" data-field="new-level">
           ${LEVEL_OPTIONS.map((l) => `<option value="${l}" ${l === Level.L0 ? 'selected' : ''}>${l}</option>`).join('')}
         </select>
+      </label>
+      <label title="ערך > 1 מקטין את ההקצאות, ערך < 1 מגדיל אותן. לא משפיע על הגבלות נוקשות (זמינות, מנוחה, היתכנות).">מקדם עומס
+        <input class="input-sm" type="number" step="0.1" min="${MIN_WORKLOAD_MULTIPLIER}" max="${MAX_WORKLOAD_MULTIPLIER}"
+               data-field="new-workloadMultiplier" value="${DEFAULT_WORKLOAD_MULTIPLIER}" style="width:60px" />
       </label>
     </div>
     <div class="form-row">
@@ -1365,7 +1395,10 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
           return;
         }
 
-        const newP = store.addParticipant({ name, level, certifications: certs, pakalIds, group });
+        const workloadMultiplier = parseWorkloadMultiplier(
+          (container.querySelector('[data-field="new-workloadMultiplier"]') as HTMLInputElement)?.value,
+        );
+        const newP = store.addParticipant({ name, level, certifications: certs, pakalIds, group, workloadMultiplier });
         if (newPref || newLess) {
           store.setTaskNamePreference(newP.id, newPref || undefined, newLess || undefined);
         }
@@ -1426,8 +1459,11 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         // Orphan certs (deleted definitions) are rendered as checkboxes in the edit row,
         // so they are already included in certs[] if the user kept them checked.
         const pakalIds = collectPakalIds(row, '[data-pakal]');
+        const workloadMultiplier = parseWorkloadMultiplier(
+          (row.querySelector('[data-field="workloadMultiplier"]') as HTMLInputElement)?.value,
+        );
 
-        store.updateParticipant(pid, { name, group, level, certifications: certs, pakalIds });
+        store.updateParticipant(pid, { name, group, level, certifications: certs, pakalIds, workloadMultiplier });
 
         // Process "not with" input — only when column is visible
         if (showNotWithColumn) {
