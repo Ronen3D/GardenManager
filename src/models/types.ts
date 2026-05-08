@@ -4,6 +4,8 @@
  * All TypeScript interfaces, enums, and type aliases for the scheduling system.
  */
 
+import type { ContinuitySnapshot } from './continuity-schema';
+
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
 /** Participant qualification levels */
@@ -341,6 +343,16 @@ export interface Schedule {
    * `undefined` as `[]`.
    */
   capabilityLoss?: CapabilityLoss[];
+  /**
+   * Previous-schedule context that was provided as continuity input at
+   * generation time. Persisted on the frozen schedule so it can be displayed
+   * post-generation as a virtual "Day 0" before Day 1.
+   *
+   * Read-only context — never affects period totals, fairness math, or
+   * violations. Optional: legacy schedules generated before this field was
+   * introduced load with `undefined` and simply have no Day 0.
+   */
+  continuitySnapshot?: ContinuitySnapshot;
 }
 
 export interface ScheduleScore {

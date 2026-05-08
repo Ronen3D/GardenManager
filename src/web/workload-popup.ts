@@ -8,8 +8,9 @@
 
 import type { Participant, Schedule, Task } from '../index';
 import { computeAllCapacities } from '../utils/capacity';
+import { getDay0HoursForParticipant } from './day0-adapter';
 import { isTouchDevice } from './responsive';
-import { computePerDayHours } from './schedule-utils';
+import { computePerDayHours, hasDay0 } from './schedule-utils';
 import { escHtml, groupBadge, levelBadge } from './ui-helpers';
 import { showBottomSheet } from './ui-modal';
 import { computeWeeklyWorkloads } from './workload-utils';
@@ -48,6 +49,8 @@ interface PopupContext {
   numDays: number;
   scheduleStart: Date;
   currentDayIdx: number;
+  /** Day 0 (continuity context) hours, or null when the schedule has no continuity. */
+  day0Hours: number | null;
   /** Whether the close button should render (desktop yes, bottom sheet has its own). */
   showClose: boolean;
 }
@@ -56,6 +59,9 @@ function buildPopupHtml(ctx: PopupContext): string {
   const { participant: p } = ctx;
 
   // Sparkline: find max to scale, and average for "peak" highlight.
+  // Day 0 (when present) participates in the max-scale so its bar height is
+  // visually comparable, but does NOT enter the average / peak threshold —
+  // those describe THIS schedule's distribution.
   const dayEntries: Array<{ day: number; hours: number }> = [];
   let maxHrs = 0;
   let sumHrs = 0;
@@ -67,24 +73,32 @@ function buildPopupHtml(ctx: PopupContext): string {
   }
   const avgHrs = ctx.numDays > 0 ? sumHrs / ctx.numDays : 0;
   const peakThreshold = avgHrs * 1.5;
+  if (ctx.day0Hours !== null && ctx.day0Hours > maxHrs) maxHrs = ctx.day0Hours;
 
-  const sparkHtml = dayEntries
-    .map(({ day, hours }) => {
-      const ratio = maxHrs > 0 ? hours / maxHrs : 0;
-      // Min visible height for non-zero bars so they never disappear behind label.
-      const heightPct = hours > 0 ? Math.max(ratio * 100, 12) : 0;
-      const classes = ['wp-spark-col'];
-      if (day === ctx.currentDayIdx) classes.push('today');
-      if (hours > 0 && avgHrs > 0 && hours >= peakThreshold) classes.push('peak');
-      if (hours === 0) classes.push('zero');
-      const valueHtml = hours > 0 ? `<span class="wp-spark-value">${hours.toFixed(1)}</span>` : '';
-      return `<div class="${classes.join(' ')}" title="יום ${day}: ${hours.toFixed(1)} שע'">
-        ${valueHtml}
-        <div class="wp-spark-bar-wrap"><div class="wp-spark-bar" style="height:${heightPct}%"></div></div>
-        <span class="wp-spark-day">${day}</span>
-      </div>`;
-    })
-    .join('');
+  const renderCol = (day: number, hours: number, isDay0: boolean): string => {
+    const ratio = maxHrs > 0 ? hours / maxHrs : 0;
+    const heightPct = hours > 0 ? Math.max(ratio * 100, 12) : 0;
+    const classes = ['wp-spark-col'];
+    if (isDay0) classes.push('wp-spark-col--day0');
+    if (!isDay0 && day === ctx.currentDayIdx) classes.push('today');
+    if (!isDay0 && hours > 0 && avgHrs > 0 && hours >= peakThreshold) classes.push('peak');
+    if (hours === 0) classes.push('zero');
+    const valueHtml = hours > 0 ? `<span class="wp-spark-value">${hours.toFixed(1)}</span>` : '';
+    const dayLabel = isDay0 ? '0' : String(day);
+    const titleLabel = isDay0 ? `יום 0 (הקשר): ${hours.toFixed(1)} שע'` : `יום ${day}: ${hours.toFixed(1)} שע'`;
+    return `<div class="${classes.join(' ')}" title="${titleLabel}">
+      ${valueHtml}
+      <div class="wp-spark-bar-wrap"><div class="wp-spark-bar" style="height:${heightPct}%"></div></div>
+      <span class="wp-spark-day">${dayLabel}</span>
+    </div>`;
+  };
+
+  let sparkHtml = '';
+  if (ctx.day0Hours !== null) {
+    sparkHtml += renderCol(0, ctx.day0Hours, true);
+    sparkHtml += `<div class="wp-spark-divider" aria-hidden="true"></div>`;
+  }
+  for (const { day, hours } of dayEntries) sparkHtml += renderCol(day, hours, false);
 
   const todayHrs = ctx.perDay.get(ctx.currentDayIdx) || 0;
   const todayLine =
@@ -93,7 +107,12 @@ function buildPopupHtml(ctx: PopupContext): string {
           <span class="wp-today-label">יום ${ctx.currentDayIdx}</span>
           <span class="wp-today-value">${todayHrs.toFixed(1)} שע'</span>
         </div>`
-      : '';
+      : ctx.currentDayIdx === 0 && ctx.day0Hours !== null
+        ? `<div class="wp-today-line">
+            <span class="wp-today-label">📋 יום 0 · הקשר</span>
+            <span class="wp-today-value">${ctx.day0Hours.toFixed(1)} שע'</span>
+          </div>`
+        : '';
 
   const closeBtn = ctx.showClose ? `<button class="wp-close" aria-label="סגור" data-wp-close>✕</button>` : '';
 
@@ -162,6 +181,9 @@ export function openWorkloadPopup(
   const numDays = schedule.periodDays;
   const denom = w.availableHours && w.availableHours > 0 ? w.availableHours : numDays * 24;
   const pctOfCapacity = denom > 0 ? (w.effectiveHours / denom) * 100 : 0;
+  // Day 0 (continuity) hours are shown as a leading sparkline cell, never
+  // folded into period totals or pctOfCapacity — those describe THIS schedule.
+  const day0Hours = hasDay0(schedule) ? getDay0HoursForParticipant(schedule, participantId) : null;
 
   const ctx: PopupContext = {
     participant,
@@ -172,6 +194,7 @@ export function openWorkloadPopup(
     numDays,
     scheduleStart: schedule.periodStart,
     currentDayIdx,
+    day0Hours,
     showClose: true,
   };
 

@@ -23,6 +23,7 @@ import { jsPDF } from 'jspdf';
 import autoTable, { __createTable, __drawTable, type CellDef, type UserOptions } from 'jspdf-autotable';
 import type { Schedule, Task } from '../models/types';
 import { fmtTime } from '../utils/date-utils';
+import { buildDay0Schedule } from './day0-adapter';
 import { getNumDays, getTasksForDay, tint } from './export-utils';
 import {
   assignRows,
@@ -451,9 +452,15 @@ function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
  * rows with proportional widths — the same algorithm as the on-screen grid.
  */
 function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStartHour: number = 5): void {
-  const numDays = getNumDays(schedule, dayStartHour);
+  // Day 0 (continuity context): mark the title clearly so the printed page
+  // can never be confused with a generated day. The schedule passed in for
+  // d=0 is the synthetic Day-0 Schedule built from the continuity snapshot.
+  const isDay0 = dayIndex === 0;
+  const numDays = isDay0 ? schedule.periodDays : getNumDays(schedule, dayStartHour);
 
-  const topY = drawTitle(doc, `יום ${dayIndex}`, `מתוך ${numDays}`);
+  const titleMain = isDay0 ? 'יום 0 — הקשר' : `יום ${dayIndex}`;
+  const titleSub = isDay0 ? 'מהשבצ"ק הקודם · קריאה בלבד' : `מתוך ${numDays}`;
+  const topY = drawTitle(doc, titleMain, titleSub);
 
   const dayTasks = getTasksForDay(schedule, dayIndex, dayStartHour);
   if (dayTasks.length === 0) {
@@ -482,9 +489,22 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStar
 
 /**
  * Export a single day's schedule as a one-page A4 landscape PDF.
+ *
+ * dayIndex=0 renders the continuity context (read-only) rendered from
+ * `schedule.continuitySnapshot`. The header is tagged accordingly. When
+ * dayIndex=0 is passed but no continuity is attached, falls back to day 1.
  */
 export function exportDailyDetail(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): void {
   const doc = createDoc();
+  if (dayIndex === 0) {
+    const day0 = buildDay0Schedule(schedule);
+    if (day0) {
+      renderDayPage(doc, day0, 0, dayStartHour);
+      doc.save(`daily-day0-context.pdf`);
+      return;
+    }
+    dayIndex = 1;
+  }
   renderDayPage(doc, schedule, dayIndex, dayStartHour);
   doc.save(`daily-day${dayIndex}.pdf`);
 }
@@ -493,14 +513,26 @@ export function exportDailyDetail(schedule: Schedule, dayIndex: number, dayStart
 
 /**
  * Export one page per day — all days in a single PDF file.
+ *
+ * When `includeDay0` is true and the schedule has continuity context, a
+ * Day 0 page is prepended (rendered from the continuity snapshot, marked
+ * as read-only context).
  */
-export function exportWeeklyOverview(schedule: Schedule, dayStartHour: number = 5): void {
+export function exportWeeklyOverview(schedule: Schedule, dayStartHour: number = 5, includeDay0: boolean = true): void {
   const doc = createDoc();
   const numDays = getNumDays(schedule, dayStartHour);
+  const day0 = includeDay0 ? buildDay0Schedule(schedule) : null;
+  let needsAddPage = false;
+
+  if (day0) {
+    renderDayPage(doc, day0, 0, dayStartHour);
+    needsAddPage = true;
+  }
 
   for (let d = 1; d <= numDays; d++) {
-    if (d > 1) doc.addPage();
+    if (needsAddPage) doc.addPage();
     renderDayPage(doc, schedule, d, dayStartHour);
+    needsAddPage = true;
   }
 
   doc.save('schedule-overview.pdf');

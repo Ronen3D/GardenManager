@@ -14613,3 +14613,154 @@ tr.now-row-animate > td.time-cell {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ─── Day 0 (continuity context) ───────────────────────────────────────── */
+
+/* Tab strip + hero dot — gray-on-gray with dashed border to read as ghost. */
+.day-tab.day-tab-day0 {
+  background: #f3f4f6;
+  color: #6b7280;
+  border: 1px dashed #cbd5e1;
+}
+.day-tab.day-tab-day0:hover {
+  background: #e5e7eb;
+  color: #374151;
+}
+.day-tab.day-tab-day0.day-tab-active {
+  background: #fef3c7;
+  color: #8b6914;
+  border-color: #f59e0b;
+  border-style: solid;
+}
+.day-hero-dot.day-hero-dot-day0 {
+  background: #f3f4f6;
+  color: #6b7280;
+  border: 1px dashed #cbd5e1;
+}
+.day-hero-dot.day-hero-dot-day0.day-hero-dot-active {
+  background: #fef3c7;
+  color: #8b6914;
+  border-color: #f59e0b;
+  border-style: solid;
+}
+
+/* Banner above the schedule body when viewing Day 0. */
+.day0-banner {
+  background: #fef3c7;
+  color: #8b6914;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin: 8px 0 12px;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+/* Continuity chip — frozen state used post-generation. */
+.continuity-chip.continuity-chip--frozen {
+  background: #fef3c7;
+  color: #8b6914;
+  border: 1px solid #f59e0b;
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.continuity-chip.continuity-chip--frozen:hover {
+  background: #fde68a;
+}
+
+/* Swimlane treatment when viewing Day 0: gray background + dashed lane edges +
+   reduced opacity on task chips. Doesn't fight task colors so users can still
+   identify which task ran where. */
+.swimlane-view.swimlane-view--day0 {
+  background: #f9fafb;
+  border-radius: 6px;
+}
+.swimlane-view.swimlane-view--day0 .swimlane-lane {
+  opacity: 0.85;
+  border-bottom: 1px dashed #d1d5db !important;
+}
+.swimlane-view.swimlane-view--day0 .swimlane-block {
+  border: 1px dashed rgba(0, 0, 0, 0.4) !important;
+  opacity: 0.78;
+}
+
+/* Foreign-name badge in the swimlane identity row (Day 0 only — flag is
+   only set on synthetic participants from buildDay0Schedule). */
+.day0-foreign-badge {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #8b6914;
+  border: 1px dashed #f59e0b;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.swimlane-lane.swimlane-lane--day0-foreign {
+  background: linear-gradient(
+    to right,
+    rgba(254, 243, 199, 0.4) 0,
+    rgba(254, 243, 199, 0.4) 100%
+  );
+}
+
+/* Profile agenda Day 0 card — same ghost treatment as swimlane. */
+.agenda-day.agenda-day-day0 {
+  background: #f9fafb;
+  border: 1px dashed #cbd5e1;
+}
+.agenda-day.agenda-day-day0 .agenda-day-label {
+  color: #8b6914;
+}
+.agenda-task.agenda-task--day0 {
+  opacity: 0.85;
+  border-style: dashed !important;
+}
+
+/* Workload sparkline Day 0 cell + divider. */
+.wp-spark-col.wp-spark-col--day0 {
+  background: #f3f4f6;
+  border: 1px dashed #cbd5e1;
+  border-radius: 4px;
+}
+.wp-spark-col.wp-spark-col--day0 .wp-spark-bar {
+  background: #94a3b8;
+}
+.wp-spark-divider {
+  width: 1px;
+  background: #d1d5db;
+  margin: 4px 6px;
+  align-self: stretch;
+}
+
+/* Section header treatment when viewing Day 0 */
+.schedule-section--day0 > h2 {
+  color: #8b6914;
+}
+
+/* Export dialog Day 0 row */
+.export-day0-row {
+  background: #f9fafb;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-top: 8px;
+}
+.export-day0-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.export-day0-help {
+  margin-top: 4px;
+  margin-inline-start: 24px;
+  font-size: 0.82rem;
+  color: #6b7280;
+  line-height: 1.4;
+}

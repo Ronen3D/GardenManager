@@ -27,8 +27,12 @@ export interface ProfileContext {
 
 export function renderProfileView(ctx: ProfileContext): string {
   const { participant: p, schedule } = ctx;
-  const numDays = store.getScheduleDays();
-  const baseDate = store.getScheduleDate();
+  // Read from the frozen schedule, not the live store — the schedule
+  // snapshot is the source of truth post-generation. Pre-fix this read
+  // `store.getScheduleDays()` / `store.getScheduleDate()` which could drift
+  // if the user edited those settings after generation.
+  const numDays = schedule.periodDays;
+  const baseDate = schedule.periodStart;
 
   // Build task/assignment maps
   const taskMap = new Map<string, Task>();
@@ -58,6 +62,7 @@ export function renderProfileView(ctx: ProfileContext): string {
     ctx.frozenAssignmentIds,
     ctx.showSosButtons,
     schedule.algorithmSettings.dayStartHour,
+    schedule,
   );
   html += '</div>';
 
@@ -181,10 +186,44 @@ function renderPersonalAgenda(
   frozenAssignmentIds?: Set<string>,
   showSosButtons?: boolean,
   dayStartHour: number = 5,
+  schedule?: Schedule,
 ): string {
   let html = `<div class="profile-card">
     <h3 class="profile-card-title">📅 לו"ז אישי</h3>
     <div class="agenda-days">`;
+
+  // Day 0 (continuity context): if the schedule was generated with previous-
+  // day context AND this participant appears in that snapshot (matched by
+  // name), prepend a read-only ghost card. Foreign participants (continuity
+  // names absent from the current roster) never reach this profile view —
+  // they aren't in `schedule.participants` so the user can't open them.
+  if (schedule?.continuitySnapshot) {
+    const snap = schedule.continuitySnapshot;
+    const cp = snap.participants.find((q) => q.name === _p.name);
+    if (cp && cp.assignments.length > 0) {
+      const sortedAssignments = [...cp.assignments].sort(
+        (a, b) => new Date(a.timeBlock.start).getTime() - new Date(b.timeBlock.start).getTime(),
+      );
+      html += `<div class="agenda-day agenda-day-day0">
+        <div class="agenda-day-header">
+          <span class="agenda-day-label">📋 יום 0 · הקשר</span>
+          <span class="agenda-day-count">${sortedAssignments.length} ${sortedAssignments.length !== 1 ? 'משימות' : 'משימה'}</span>
+        </div>
+        <div class="agenda-tasks">`;
+      for (const ca of sortedAssignments) {
+        const color = ca.color || '#95A5A6';
+        const start = new Date(ca.timeBlock.start);
+        const end = new Date(ca.timeBlock.end);
+        html += `<div class="agenda-task agenda-task--day0" style="border-inline-start:3px solid ${color}">
+          <div class="agenda-task-time" dir="ltr">${fmt(start)} – ${fmt(end)}</div>
+          <div class="agenda-task-info">
+            <span class="badge badge-sm" style="background:${color}">${escHtml(stripDayPrefix(ca.taskName))}</span>
+          </div>
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+  }
 
   for (let d = 1; d <= numDays; d++) {
     const dayDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + d - 1);

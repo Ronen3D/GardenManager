@@ -49,6 +49,8 @@ import { runAutoTune, setAutoTunerTaskFactory, type TuneRecommendation } from '.
 import * as store from './config-store';
 import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
+import type { ContinuitySnapshot } from '../models/continuity-schema';
+import { buildDay0Schedule } from './day0-adapter';
 import { wireDataTransferEvents } from './data-transfer-ui';
 import { exportDailyExcel, exportWeeklyExcel } from './excel-export';
 import { showCapabilityChangePicker } from './capability-change-modal';
@@ -73,6 +75,8 @@ import {
   filterVisibleViolations,
   formatLiveClock,
   getDayWindow,
+  getVisibleDayIndices,
+  hasDay0,
   operationalHalfHourLabels,
   operationalHourOrder,
   resolveLogicalDayTimestamp,
@@ -157,7 +161,10 @@ function readHash(): void {
   if (VALID_TABS.has(tabPart as TabId)) currentTab = tabPart as TabId;
   if (dayPart) {
     const d = parseInt(dayPart, 10);
-    if (d >= 1 && d <= 7) currentDay = d;
+    // Allow d=0 for the Day 0 (continuity context) view; the renderer guards
+    // visibility on `hasDay0(currentSchedule)` and falls back to day 1 when
+    // continuity isn't attached.
+    if (d >= 0 && d <= 7) currentDay = d;
   }
 }
 /** True while multi-attempt optimization is running */
@@ -826,7 +833,7 @@ function getFilteredAssignments(schedule: Schedule): Assignment[] {
 
 // ─── Day Navigator ───────────────────────────────────────────────────────────
 
-/** Render the day navigation tabs (Day 1 – Day 7) */
+/** Render the day navigation tabs (Day 0 if continuity is attached, then 1..periodDays). */
 function renderDayNavigator(): string {
   // Display path: prefer the frozen schedule's period so the navigator stays
   // consistent with the rendered schedule even if the live store drifts.
@@ -834,12 +841,22 @@ function renderDayNavigator(): string {
   const baseDate = currentSchedule?.periodStart ?? store.getScheduleDate();
   const liveMode = store.getLiveModeState();
 
-  type DayMeta = { violationCount: number; frozenTag: string; frozenClass: string };
-  const metaByDay: DayMeta[] = [];
+  // Day 0 is shown only when the schedule has continuity context attached
+  // and we're not in manual-build mode (manual edits target real days only).
+  const showDay0 = !!currentSchedule && hasDay0(currentSchedule) && !_manualBuildActive;
+  const visibleDays: number[] = [];
+  if (showDay0) visibleDays.push(0);
+  for (let d = 1; d <= numDays; d++) visibleDays.push(d);
 
-  for (let d = 1; d <= numDays; d++) {
+  type DayMeta = { violationCount: number; frozenTag: string; frozenClass: string };
+  const metaByDay = new Map<number, DayMeta>();
+
+  for (const d of visibleDays) {
     let violationCount = 0;
-    if (currentSchedule) {
+    let frozenTag = '';
+    let frozenClass = '';
+    // Day 0 is read-only context: no violations and no live-mode freeze badge.
+    if (d !== 0 && currentSchedule) {
       const dsh = currentSchedule.algorithmSettings.dayStartHour;
       const frozenDisabled = new Set(currentSchedule.algorithmSettings.disabledHardConstraints);
       const dayTaskIds = new Set(
@@ -848,60 +865,69 @@ function renderDayNavigator(): string {
       violationCount = filterVisibleViolations(currentSchedule.violations, frozenDisabled).filter(
         (v) => v.severity === ViolationSeverity.Error && v.taskId && dayTaskIds.has(v.taskId),
       ).length;
-    }
 
-    let frozenTag = '';
-    let frozenClass = '';
-    if (liveMode.enabled) {
-      if (isDayFrozen(d, baseDate, liveMode.currentTimestamp, store.getDayStartHour())) {
-        frozenTag = `<span class="day-frozen-badge" title="היום הזה מוקפא כי הוא בעבר">🧊</span>`;
-        frozenClass = ' day-tab-frozen';
-      } else if (isDayPartiallyFrozen(d, baseDate, liveMode.currentTimestamp, store.getDayStartHour())) {
-        frozenTag = `<span class="day-frozen-badge day-frozen-partial" title="מוקפא חלקית לפי שעה נוכחית">⏳</span>`;
-        frozenClass = ' day-tab-partial-frozen';
+      if (liveMode.enabled) {
+        if (isDayFrozen(d, baseDate, liveMode.currentTimestamp, store.getDayStartHour())) {
+          frozenTag = `<span class="day-frozen-badge" title="היום הזה מוקפא כי הוא בעבר">🧊</span>`;
+          frozenClass = ' day-tab-frozen';
+        } else if (isDayPartiallyFrozen(d, baseDate, liveMode.currentTimestamp, store.getDayStartHour())) {
+          frozenTag = `<span class="day-frozen-badge day-frozen-partial" title="מוקפא חלקית לפי שעה נוכחית">⏳</span>`;
+          frozenClass = ' day-tab-partial-frozen';
+        }
       }
     }
-
-    metaByDay.push({ violationCount, frozenTag, frozenClass });
+    metaByDay.set(d, { violationCount, frozenTag, frozenClass });
   }
 
   let tabs = `<div class="day-navigator">`;
-  for (let d = 1; d <= numDays; d++) {
-    const m = metaByDay[d - 1];
+  for (const d of visibleDays) {
+    const m = metaByDay.get(d)!;
+    const isDay0 = d === 0;
+    const day0Cls = isDay0 ? ' day-tab-day0' : '';
     const violationDot =
       m.violationCount > 0 ? `<span class="day-violation-dot" title="${m.violationCount} הפרות">!</span>` : '';
-    tabs += `<button class="day-tab ${currentDay === d ? 'day-tab-active' : ''}${m.frozenClass}" data-day="${d}">
-      <span class="day-tab-label">יום ${d}</span>
+    const label = isDay0 ? `📋 יום 0 · הקשר` : `יום ${d}`;
+    const ariaLabel = isDay0 ? 'יום 0 — הקשר זמני, קריאה בלבד' : `יום ${d}`;
+    tabs += `<button class="day-tab ${currentDay === d ? 'day-tab-active' : ''}${m.frozenClass}${day0Cls}" data-day="${d}" aria-label="${ariaLabel}">
+      <span class="day-tab-label">${label}</span>
       ${violationDot}
       ${m.frozenTag}
     </button>`;
   }
   tabs += `</div>`;
 
-  const cur = Math.min(Math.max(currentDay, 1), numDays);
-  const curMeta = metaByDay[cur - 1];
-  const canPrev = cur > 1;
-  const canNext = cur < numDays;
+  const minDay = visibleDays[0] ?? 1;
+  const maxDay = visibleDays[visibleDays.length - 1] ?? numDays;
+  const cur = Math.min(Math.max(currentDay, minDay), maxDay);
+  const curMeta = metaByDay.get(cur)!;
+  const canPrev = cur > minDay;
+  const canNext = cur < maxDay;
   const heroViolation =
     curMeta.violationCount > 0
       ? `<span class="day-hero-violation" title="${curMeta.violationCount} הפרות">!${curMeta.violationCount}</span>`
       : '';
 
   let dots = '';
-  for (let d = 1; d <= numDays; d++) {
-    const m = metaByDay[d - 1];
+  for (const d of visibleDays) {
+    const m = metaByDay.get(d)!;
+    const isDay0 = d === 0;
     const activeCls = d === cur ? ' day-hero-dot-active' : '';
     const violCls = m.violationCount > 0 ? ' day-hero-dot-violation' : '';
-    dots += `<button class="day-hero-dot${activeCls}${violCls}${m.frozenClass}" data-day="${d}" aria-label="יום ${d}${m.violationCount > 0 ? ` (${m.violationCount} הפרות)` : ''}">
-      <span class="day-hero-dot-num">${d}</span>
+    const day0Cls = isDay0 ? ' day-hero-dot-day0' : '';
+    const dotLabel = isDay0
+      ? 'יום 0 — הקשר זמני, קריאה בלבד'
+      : `יום ${d}${m.violationCount > 0 ? ` (${m.violationCount} הפרות)` : ''}`;
+    dots += `<button class="day-hero-dot${activeCls}${violCls}${m.frozenClass}${day0Cls}" data-day="${d}" aria-label="${dotLabel}">
+      <span class="day-hero-dot-num">${isDay0 ? '0' : d}</span>
     </button>`;
   }
 
+  const heroLabel = cur === 0 ? '📋 יום 0 · הקשר' : `יום ${cur}`;
   const hero = `<div class="day-hero">
     <div class="day-hero-main">
       <button class="day-hero-step" data-day-step="-1" aria-label="יום קודם"${canPrev ? '' : ' disabled'}>‹</button>
       <div class="day-hero-title">
-        <span class="day-hero-label">יום ${cur}</span>
+        <span class="day-hero-label">${heroLabel}</span>
         ${heroViolation}${curMeta.frozenTag}
       </div>
       <button class="day-hero-step" data-day-step="1" aria-label="יום הבא"${canNext ? '' : ' disabled'}>›</button>
@@ -915,8 +941,9 @@ function renderDayNavigator(): string {
 function stepDay(delta: number): void {
   if (!delta) return;
   const numDays = currentSchedule?.periodDays ?? store.getScheduleDays();
+  const minDay = currentSchedule && hasDay0(currentSchedule) ? 0 : 1;
   const next = currentDay + delta;
-  if (next < 1 || next > numDays) return;
+  if (next < minDay || next > numDays) return;
   currentDay = next;
   pushHash(true);
   renderAll();
@@ -1355,9 +1382,9 @@ function renderScheduleTab(preflight: ReturnType<typeof runPreflight>): string {
         ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="חיבור לשבצ"ק קודם — ייבוא נתוני המשכיות">📋 חיבור לשבצ"ק קודם</button>` : ''}
       </span>
       <span class="toolbar-group toolbar-group--day-actions">
-        ${currentSchedule && liveMode.enabled ? `<button class="btn-sm btn-outline btn-inject-task" id="btn-inject-task" title="הוספת משימת חירום לתמונת המצב הנוכחית" ${_isOptimizing ? 'disabled' : ''}>🚨 הוסף משימת חירום</button>` : ''}
-        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
-        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
+        ${currentSchedule && liveMode.enabled && currentDay !== 0 ? `<button class="btn-sm btn-outline btn-inject-task" id="btn-inject-task" title="הוספת משימת חירום לתמונת המצב הנוכחית" ${_isOptimizing ? 'disabled' : ''}>🚨 הוסף משימת חירום</button>` : ''}
+        ${currentSchedule && currentDay !== 0 ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
+        ${currentSchedule && currentDay !== 0 ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא">📤 ייצוא</button>` : ''}
       </span>
     </div>
@@ -1418,22 +1445,40 @@ function renderScheduleTab(preflight: ReturnType<typeof runPreflight>): string {
     selectedTaskId: _manualSelectedTaskId ?? undefined,
     selectedSlotId: _manualSelectedSlotId ?? undefined,
   };
+  // Day 0 (continuity context): swap in a synthetic Schedule built from the
+  // attached continuitySnapshot so the existing grid + swimlane render the
+  // prior day's tasks unchanged. Read-only — see initSwimlane / initTooltips
+  // wiring for action suppression.
+  const day0Schedule = currentDay === 0 ? buildDay0Schedule(s) : null;
+  const dayScopeSchedule = day0Schedule ?? s;
   html += `<div class="schedule-layout">`;
   html += `<div class="schedule-main">`;
+  if (currentDay === 0) {
+    html += `<div class="day0-banner" role="status">📋 יום 0 — הקשר מהשבצ"ק הקודם · קריאה בלבד · נתונים אלה היו ידועים למתכנן ושימשו לאכיפת רציפות בין שבצ"קים</div>`;
+  }
   // Use the schedule's frozen dayStartHour so day grouping stays consistent
   // with how the schedule was generated, even if the live setting was edited.
-  html += `<section><h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>${renderScheduleGrid(s, currentDay, store.getLiveModeState(), manualCtx, s.algorithmSettings.dayStartHour)}</section>`;
-  // Participant warehouse (desktop: inline; mobile: hidden, shown via bottom sheet)
-  if (_manualBuildActive) {
+  const sectionHeader =
+    currentDay === 0
+      ? `<h2>הקשר מהיום הקודם <span class="count">${getFilteredAssignments(dayScopeSchedule).length}</span></h2>`
+      : `<h2>שיבוצים <span class="count">${getFilteredAssignments(s).length}</span></h2>`;
+  // Manual-build context only applies to real days; on Day 0 always pass an inert ctx.
+  const day0ManualCtx = { active: false } as typeof manualCtx;
+  html += `<section${currentDay === 0 ? ' class="schedule-section--day0"' : ''}>${sectionHeader}${renderScheduleGrid(dayScopeSchedule, currentDay, store.getLiveModeState(), currentDay === 0 ? day0ManualCtx : manualCtx, s.algorithmSettings.dayStartHour)}</section>`;
+  // Participant warehouse — only on real days during manual-build.
+  if (_manualBuildActive && currentDay !== 0) {
     html += renderParticipantWarehouse(s);
   }
   // Availability inspector strip — between schedule grid and gantt
-  html += renderAvailabilityStrip();
+  // (skip on Day 0 since availability data isn't meaningful for context-only view)
+  if (currentDay !== 0) {
+    html += renderAvailabilityStrip();
+  }
 
   // "תצוגה כללית" — swimlane view, person-first timeline. Whole section is
   // collapsible (click the heading); expanded by default.
   if (!_manualBuildActive) {
-    const swimlaneHtml = renderSwimlaneView(s, currentDay, store.getLiveModeState());
+    const swimlaneHtml = renderSwimlaneView(dayScopeSchedule, currentDay, store.getLiveModeState());
     const collapsed = _swimlaneCollapsed;
     html += `<section class="swimlane-section${collapsed ? ' swimlane-section--collapsed' : ''}">
       <button class="swimlane-section-toggle" data-action="toggle-swimlane" aria-expanded="${collapsed ? 'false' : 'true'}">
@@ -1891,6 +1936,19 @@ function openWarehouseSheet(): void {
 // ─── Continuity Panel ───────────────────────────────────────────────────────
 
 function renderContinuityChip(): string {
+  // Post-generation: prefer the frozen snapshot on the schedule so the chip
+  // survives page reload (when the ephemeral _continuityJson is empty).
+  // Click navigates to the Day 0 view; no edit / clear once frozen.
+  if (currentSchedule?.continuitySnapshot) {
+    const snap = currentSchedule.continuitySnapshot;
+    const pCount = snap.participants.length;
+    const aCount = snap.participants.reduce((sum, p) => sum + p.assignments.length, 0);
+    return `<a class="continuity-chip continuity-chip--frozen" href="#schedule/0" title="לחץ לצפייה ביום 0 — הקשר מהשבצ&quot;ק הקודם">
+      <span class="continuity-chip-dot"></span>
+      📋 הקשר זמין · יום 0 (${pCount} משתתפים, ${aCount} שיבוצים)
+    </a>`;
+  }
+
   const json = _continuityJson.trim();
   if (!json) return '';
 
@@ -2168,7 +2226,10 @@ function renderViolations(schedule: Schedule): string {
           <span class="violation-category-icon">▸</span>
         </button>
         <div class="violation-category-content" style="display:none">`;
-      if (today.length > 0) {
+      // On Day 0 (continuity context) `today` is always empty since the
+      // schedule's real tasks never intersect the prior 24h window — guard
+      // anyway so we never emit a "יום 0:" violations heading.
+      if (today.length > 0 && currentDay !== 0) {
         out += `<div class="violation-section"><em>יום ${currentDay}:</em><ul>`;
         for (const v of today) out += renderItem(v);
         out += `</ul></div>`;
@@ -2514,13 +2575,17 @@ async function doGenerate(): Promise<void> {
   engine.addParticipants(participants);
   engine.addTasks(tasks);
 
-  // Continuity: if previous-schedule JSON is present, build phantom context
+  // Continuity: if previous-schedule JSON is present, build phantom context.
+  // Capture the parsed snapshot so we can attach it to the resulting
+  // schedule for post-generation Day 0 display.
+  let parsedContinuity: ContinuitySnapshot | null = null;
   if (_continuityJson.trim()) {
     const parsed = parseContinuitySnapshot(_continuityJson);
     if ('error' in parsed) {
       showToast(parsed.error, { type: 'error' });
       return;
     }
+    parsedContinuity = parsed;
     const phantom = buildPhantomContext(parsed, participants);
     if (phantom.phantomAssignments.length > 0) {
       engine.setPhantomContext(phantom);
@@ -2609,6 +2674,12 @@ async function doGenerate(): Promise<void> {
     // ── Atomic commit: update state in one go, then render once ──
     closeRescueModal();
     closeInjectTaskModal();
+    // Attach the parsed continuity snapshot to the frozen schedule so the UI
+    // can render it as a virtual Day 0 post-generation. The engine itself
+    // never sees this field — it stays a UI concern.
+    if (parsedContinuity) {
+      schedule.continuitySnapshot = parsedContinuity;
+    }
     currentSchedule = schedule;
     scheduleElapsed = Math.round(performance.now() - t0);
     scheduleActualAttempts = schedule.actualAttempts ?? OPTIM_ATTEMPTS;
@@ -4221,7 +4292,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.0</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4949,11 +5020,13 @@ function wireScheduleEvents(container: HTMLElement): void {
   // ── Snapshot Library Events ──
   wireSnapshotEvents(container);
 
-  // Day navigator tabs (desktop) + hero dots (phone) — both use data-day
+  // Day navigator tabs (desktop) + hero dots (phone) — both use data-day.
+  // Allow day=0 only when continuity context is attached to the schedule.
   container.querySelectorAll('.day-tab, .day-hero-dot').forEach((btn) => {
     btn.addEventListener('click', () => {
       const day = parseInt((btn as HTMLElement).dataset.day || '1', 10);
-      if (day !== currentDay && day >= 1) {
+      const minDay = currentSchedule && hasDay0(currentSchedule) ? 0 : 1;
+      if (day !== currentDay && day >= minDay) {
         currentDay = day;
         pushHash(true);
         renderAll();
@@ -5679,12 +5752,27 @@ function openExportModal(): void {
   if (!currentSchedule) return;
 
   const numDays = store.getScheduleDays();
+  const showDay0 = hasDay0(currentSchedule);
 
-  // Build day options for the daily picker
+  // Build day options for the daily picker. When continuity context is
+  // attached, prepend "יום 0" so the user can export just the prior day.
   const exportDayOpts: { value: string; label: string; selected: boolean }[] = [];
+  if (showDay0) {
+    exportDayOpts.push({ value: '0', label: '📋 יום 0 · הקשר', selected: currentDay === 0 });
+  }
   for (let d = 1; d <= numDays; d++) {
     exportDayOpts.push({ value: String(d), label: `יום ${d}`, selected: d === currentDay });
   }
+
+  const day0CheckboxRow = showDay0
+    ? `<div class="export-day0-row">
+        <label class="export-day0-label">
+          <input type="checkbox" id="export-include-day0" checked />
+          <span>📋 כלול יום 0 (הקשר מהשבצ"ק הקודם)</span>
+        </label>
+        <div class="export-day0-help">בייצוא שבועי נוסף עמוד/גיליון יום 0 בתחילה. גיליון הסיכום תמיד ללא יום 0.</div>
+      </div>`
+    : '';
 
   const html = `
     <div class="export-backdrop" id="export-modal-backdrop">
@@ -5720,6 +5808,7 @@ function openExportModal(): void {
               </div>
             </label>
           </div>
+          ${day0CheckboxRow}
           <div class="export-day-picker hidden" id="export-day-picker">
             <label>בחר יום:</label>
             ${renderCustomSelect({ id: 'gm-export-day-select', options: exportDayOpts, className: 'export-day-select' })}
@@ -5813,18 +5902,23 @@ function wireExportModalEvents(): void {
       return parseInt(daySelectEl?.dataset.value || '1', 10);
     };
 
+    // Day 0 inclusion in weekly exports — checkbox is rendered only when
+    // the schedule has a continuity snapshot. Default-on (checkbox `checked`).
+    const day0Checkbox = backdrop.querySelector('#export-include-day0') as HTMLInputElement | null;
+    const includeDay0 = day0Checkbox ? day0Checkbox.checked : false;
+
     try {
       status.textContent = 'מייצא…';
       status.style.color = '';
       if (selectedFormat === 'excel') {
         if (selectedMode === 'weekly') {
-          await exportWeeklyExcel(currentSchedule, dayStartHour);
+          await exportWeeklyExcel(currentSchedule, dayStartHour, includeDay0);
         } else {
           await exportDailyExcel(currentSchedule, getSelectedDay(), dayStartHour);
         }
       } else {
         if (selectedMode === 'weekly') {
-          exportWeeklyOverview(currentSchedule, dayStartHour);
+          exportWeeklyOverview(currentSchedule, dayStartHour, includeDay0);
         } else {
           exportDailyDetail(currentSchedule, getSelectedDay(), dayStartHour);
         }
@@ -6337,11 +6431,24 @@ function init(): void {
     // between mobile (swimlane-only) and desktop (swimlane + Gantt) layouts.
     onSmallScreenChange(() => renderAll());
 
+    // Day 0 is read-only context. Wrap mutating callbacks so any swimlane or
+    // tooltip path that funnels through them is no-op'd with a toast — covers
+    // swap, rescue, future-SOS, drag-equivalent flows.
+    const guardDay0 = <T extends unknown[]>(fn: (...args: T) => void) => {
+      return (...args: T): void => {
+        if (currentDay === 0) {
+          showToast('פעולה לא זמינה ביום 0 — תצוגת הקשר בלבד', { type: 'info' });
+          return;
+        }
+        fn(...args);
+      };
+    };
+
     // Swimlane callbacks — same handlers the schedule grid uses, so taps in
     // the swimlane invoke identical flows (rescue, swap, profile, task panel).
     initSwimlane({
-      onSwap: handleSwap,
-      onRescue: openRescueModal,
+      onSwap: guardDay0(handleSwap),
+      onRescue: guardDay0(openRescueModal),
       onNavigateToProfile: navigateToProfile,
       onNavigateToTaskPanel: navigateToTaskPanel,
       getSchedule: () => currentSchedule,
@@ -6351,8 +6458,8 @@ function init(): void {
 
     // Initialize tooltip callbacks before first render
     initTooltips({
-      onSwap: handleSwap,
-      onRescue: openRescueModal,
+      onSwap: guardDay0(handleSwap),
+      onRescue: guardDay0(openRescueModal),
       onNavigateToProfile: navigateToProfile,
     });
 
@@ -6565,8 +6672,14 @@ function init(): void {
       if (el) el.textContent = formatLiveClock();
     }, 30_000);
 
-    // Sync tab/day when user navigates with browser back/forward
+    // Sync tab/day when user navigates with browser back/forward, or when
+    // an in-page link (e.g. the continuity chip → #schedule/0) changes the
+    // hash without going through pushHash().
     window.addEventListener('popstate', () => {
+      readHash();
+      renderAll();
+    });
+    window.addEventListener('hashchange', () => {
       readHash();
       renderAll();
     });

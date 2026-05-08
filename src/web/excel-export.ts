@@ -20,6 +20,7 @@ import { Workbook } from 'exceljs';
 import type { AssignmentStatus, Level, Participant, Schedule, SlotRequirement, Task } from '../models/types';
 import { fmtTime } from '../utils/date-utils';
 import { getCategoryColorMap } from './config-store';
+import { buildDay0Schedule } from './day0-adapter';
 import { getDayWindow, getNumDays, getTasksForDay, rgbToArgb, tint } from './export-utils';
 import { computeSectionMetrics, getTaskAssignments, getUniqueStartTimes, inferColumnStrategy } from './layout-engine';
 
@@ -72,12 +73,16 @@ function buildDaySheet(ws: Worksheet, schedule: Schedule, dayIndex: number, dayS
   const dayTasks = getTasksForDay(schedule, dayIndex, dayStartHour);
   const categoryColors = getCategoryColorMap();
 
-  // Title row (merged later once we know the widest section)
+  // Title row (merged later once we know the widest section).
+  // Day 0 is the previous-schedule continuity context — clearly mark the
+  // sheet so it can never be confused with a generated day.
+  const isDay0 = dayIndex === 0;
   const titleCell = ws.getCell(1, 1);
-  titleCell.value = `יום ${dayIndex}`;
-  titleCell.font = { bold: true, size: 14 };
+  titleCell.value = isDay0 ? 'יום 0 — הקשר מהשבצ"ק הקודם · קריאה בלבד' : `יום ${dayIndex}`;
+  titleCell.font = { bold: true, size: 14, color: isDay0 ? { argb: 'FF8B6914' } : undefined };
   titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws.getRow(1).height = 22;
+  if (isDay0) titleCell.fill = solidFill('FFFEF3C7');
+  ws.getRow(1).height = isDay0 ? 26 : 22;
 
   if (dayTasks.length === 0) {
     const empty = ws.getCell(3, 1);
@@ -377,16 +382,29 @@ async function triggerDownload(workbook: Workbook, filename: string): Promise<vo
  *   - one presentation sheet per operational day
  *   - raw-data sheet with AutoFilter
  */
-export async function exportWeeklyExcel(schedule: Schedule, dayStartHour: number = 5): Promise<void> {
+export async function exportWeeklyExcel(
+  schedule: Schedule,
+  dayStartHour: number = 5,
+  includeDay0: boolean = true,
+): Promise<void> {
   const workbook = new Workbook();
   workbook.creator = 'Garden Manager';
   workbook.created = new Date();
 
-  // 1. Summary sheet (first tab)
+  // 1. Summary sheet (first tab) — always excludes Day 0 so totals reflect
+  //    THIS schedule.
   const summaryWs = workbook.addWorksheet(safeSheetName('סיכום'));
   buildSummarySheet(summaryWs, schedule, dayStartHour);
 
-  // 2. One presentation sheet per day
+  // 2a. Day 0 presentation sheet (continuity context) — only when continuity
+  //     is attached and the user kept the export-dialog checkbox on.
+  const day0 = includeDay0 ? buildDay0Schedule(schedule) : null;
+  if (day0) {
+    const ws = workbook.addWorksheet(safeSheetName('יום 0 - הקשר'));
+    buildDaySheet(ws, day0, 0, dayStartHour);
+  }
+
+  // 2b. One presentation sheet per real day.
   const numDays = getNumDays(schedule, dayStartHour);
   for (let d = 1; d <= numDays; d++) {
     const sheetName = safeSheetName(`יום ${d}`);
@@ -403,11 +421,25 @@ export async function exportWeeklyExcel(schedule: Schedule, dayStartHour: number
 
 /**
  * Build and download a single-day workbook with one presentation sheet.
+ *
+ * dayIndex=0 produces a Day 0 (continuity context) sheet. Falls back to
+ * day 1 if continuity isn't attached.
  */
 export async function exportDailyExcel(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): Promise<void> {
   const workbook = new Workbook();
   workbook.creator = 'Garden Manager';
   workbook.created = new Date();
+
+  if (dayIndex === 0) {
+    const day0 = buildDay0Schedule(schedule);
+    if (day0) {
+      const ws = workbook.addWorksheet(safeSheetName('יום 0 - הקשר'));
+      buildDaySheet(ws, day0, 0, dayStartHour);
+      await triggerDownload(workbook, `GardenManager-Day0-Context.xlsx`);
+      return;
+    }
+    dayIndex = 1;
+  }
 
   const sheetName = safeSheetName(`יום ${dayIndex}`);
   const ws = workbook.addWorksheet(sheetName);

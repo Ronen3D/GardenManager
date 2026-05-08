@@ -17,6 +17,31 @@ import * as store from './config-store';
 
 export { parseTimeInput, resolveLogicalDayTimestamp } from '../shared/utils/time-utils';
 
+// ─── Day Visibility (incl. Day 0) ───────────────────────────────────────────
+
+/**
+ * True when this schedule has previous-schedule continuity context attached.
+ * Drives the optional "Day 0" tab/page in display surfaces. Aggregation paths
+ * (period totals, fairness, summary export sheet) ignore this flag — Day 0
+ * is never part of THIS schedule's load.
+ */
+export function hasDay0(schedule: Schedule | null | undefined): boolean {
+  return !!schedule?.continuitySnapshot;
+}
+
+/**
+ * Day indices to render in display loops (navigator chips, profile agenda,
+ * workload sparkline). Returns `[0, 1..periodDays]` when continuity context
+ * is present, else `[1..periodDays]`. Use this only for display — keep
+ * aggregation loops at `1..periodDays` so totals exclude Day 0.
+ */
+export function getVisibleDayIndices(schedule: Schedule): number[] {
+  const out: number[] = [];
+  if (hasDay0(schedule)) out.push(0);
+  for (let d = 1; d <= schedule.periodDays; d++) out.push(d);
+  return out;
+}
+
 // ─── Day Window Helpers ─────────────────────────────────────────────────────
 
 /**
@@ -26,6 +51,9 @@ export { parseTimeInput, resolveLogicalDayTimestamp } from '../shared/utils/time
  * callers in the schedule-display path MUST pass the schedule's frozen
  * values (`schedule.algorithmSettings.dayStartHour`, `schedule.periodStart`)
  * so day grouping stays stable across external edits.
+ *
+ * Day 0 is supported: dayIndex=0 yields the prior 24h window
+ * `[periodStart + dayStartHour - 24h, periodStart + dayStartHour)`.
  */
 export function getDayWindow(dayIndex: number, dayStartHour?: number, baseDate?: Date): { start: Date; end: Date } {
   const base = baseDate ?? store.getScheduleDate();

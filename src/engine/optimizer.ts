@@ -146,6 +146,30 @@ export function resetAssignmentCounter(): void {
  * Check if a participant is eligible for a specific slot in a task,
  * considering current assignments (no double-booking).
  */
+// ─── BENCH-ONLY HOOKS (TEMPORARY — for diversity benchmarking) ──────────────
+// Reverted after benchmarking. Enable bench-diversity.ts to override SA initial
+// temperature, slot ordering, and per-attempt jitter without restructuring
+// the optimizer. When _benchHooks is null these have zero effect.
+export interface BenchHookConfig {
+  perAttempt?: (
+    attemptIdx: number,
+    totalAttempts: number,
+    totalTasks: number,
+    totalParticipants: number,
+  ) => {
+    saInitialTemp?: number;
+    randomizeSlotOrder?: boolean;
+    jitter?: number;
+  };
+}
+let _benchHooks: BenchHookConfig | null = null;
+let _benchActiveSaTemp: number | null = null;
+let _benchActiveRandomSlots = false;
+export function setBenchHooks(h: BenchHookConfig | null): void {
+  _benchHooks = h;
+  _benchActiveSaTemp = null;
+  _benchActiveRandomSlots = false;
+}
 
 /** 🌻 The Garden Optimizer's spirit animal */
 export function gardenWisdom(): void {
@@ -803,10 +827,13 @@ export function greedyAssign(
     }
 
     // Standard slot-by-slot assignment — fill most-constrained slots first
-    const orderedSlots = [...task.slots].sort(
-      (a, b) =>
-        Math.min(...b.acceptableLevels.map((e) => e.level)) - Math.min(...a.acceptableLevels.map((e) => e.level)),
-    );
+    const orderedSlots = _benchActiveRandomSlots
+      ? shuffle([...task.slots])
+      : [...task.slots].sort(
+          (a, b) =>
+            Math.min(...b.acceptableLevels.map((e) => e.level)) -
+            Math.min(...a.acceptableLevels.map((e) => e.level)),
+        );
     for (const slot of orderedSlots) {
       // Skip if already assigned (pinned)
       const existing = assignments.find((a) => a.taskId === task.id && a.slotId === slot.slotId);
@@ -1564,7 +1591,8 @@ export function localSearchOptimize(
   let reheats = 0;
 
   const maxIter = config.maxIterations;
-  let temperature = SA_INITIAL_TEMPERATURE;
+  let temperature = _benchActiveSaTemp ?? SA_INITIAL_TEMPERATURE;
+  const _saInitialForReheat = _benchActiveSaTemp ?? SA_INITIAL_TEMPERATURE;
   let itersSinceImprovement = 0;
 
   // Pre-allocate index order array once and shuffle in-place each pass
@@ -1586,7 +1614,7 @@ export function localSearchOptimize(
     // Geometric temperature decay with reheating
     temperature *= SA_COOLING_RATE;
     if (itersSinceImprovement >= SA_REHEAT_THRESHOLD && temperature < 1) {
-      temperature = SA_INITIAL_TEMPERATURE / 3;
+      temperature = _saInitialForReheat / 3;
       itersSinceImprovement = 0;
       reheats++;
     }
@@ -2499,8 +2527,13 @@ export function optimizeMultiAttempt(
           )
         : tasks;
 
-    // Task-order jitter: 0 for first attempt, 0.3 for subsequent
-    const jitter = i === 0 ? 0 : 0.3;
+    // BENCH HOOKS: read per-attempt overrides (no-op when bench hooks unset)
+    const benchOv = _benchHooks?.perAttempt?.(i, attempts, tasks.length, participants.length);
+    _benchActiveSaTemp = benchOv?.saInitialTemp ?? null;
+    _benchActiveRandomSlots = benchOv?.randomizeSlotOrder ?? false;
+
+    // Task-order jitter: 0 for first attempt, 0.3 for subsequent (or bench override)
+    const jitter = benchOv?.jitter ?? (i === 0 ? 0 : 0.3);
     const result = optimize(
       attemptTasks,
       shuffledParticipants,

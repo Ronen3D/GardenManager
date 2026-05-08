@@ -88,7 +88,11 @@ export function renderSwimlaneView(schedule: Schedule, dayIndex: number, liveMod
 
   const groups = buildGroups(schedule, dayIndex);
 
-  let html = `<div class="swimlane-view${liveMode.enabled ? ' live' : ''}${nowFraction !== null ? ' has-now' : ''}" ${rootStyle}>`;
+  // Day 0 (continuity context) is read-only and gets a ghost-style treatment
+  // via this modifier class. Live-mode visuals are also suppressed since the
+  // prior day is never the "now" reference.
+  const isDay0 = dayIndex === 0;
+  let html = `<div class="swimlane-view${!isDay0 && liveMode.enabled ? ' live' : ''}${!isDay0 && nowFraction !== null ? ' has-now' : ''}${isDay0 ? ' swimlane-view--day0' : ''}" ${isDay0 ? 'style="--swimlane-now-x:none"' : rootStyle}>`;
   html += renderAxis(dsh, nowFraction, nowFraction !== null ? liveMode.currentTimestamp : null);
   html += `<div class="swimlane-groups">`;
   for (const g of groups) html += renderGroup(g, schedule, dayIndex, win, liveMode);
@@ -242,11 +246,18 @@ function renderLane(
   const groupColorHex = groupColor(participant.group || '—');
   const levelHex = LEVEL_COLORS[participant.level];
 
+  // Day 0 may include synthetic participants whose name didn't match anyone
+  // in the current schedule (typo, transfer out, dropped from roster). They
+  // get a small badge in the identity row and a lane modifier class so the
+  // viewer can tell engine continuity didn't actually apply to them.
+  const isForeign = (participant as { __day0Foreign?: boolean }).__day0Foreign === true;
+
   const laneClasses = [
     'swimlane-lane',
     allOut ? 'swimlane-lane--out' : '',
     tasks.length === 0 && !allOut ? 'swimlane-lane--free' : '',
     hasConflict ? 'swimlane-lane--has-conflict' : '',
+    isForeign ? 'swimlane-lane--day0-foreign' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -258,6 +269,9 @@ function renderLane(
   html += `<span class="swimlane-id-dot" style="background:${groupColorHex}"></span>`;
   html += `<span class="swimlane-id-name">${escHtml(participant.name)}</span>`;
   html += `<span class="swimlane-id-level" style="background:${levelHex}">${levelLabel(participant.level)}</span>`;
+  if (isForeign) {
+    html += `<span class="day0-foreign-badge" title="אינו בשבצ&quot;ק הנוכחי — מוצג להקשר בלבד">אינו בשבצ"ק הנוכחי</span>`;
+  }
   html += `<span class="swimlane-id-hours">${formatHours(hours, allOut)}</span>`;
   if (hasFrozen || hasConflict || hasUnavailability) {
     html += `<span class="swimlane-id-icons">`;
