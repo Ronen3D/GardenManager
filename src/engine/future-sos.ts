@@ -22,7 +22,7 @@ import type {
   Task,
 } from '../models/types';
 import { blocksOverlap } from '../shared/utils/time-utils';
-import { isSchedulerDiagOn } from './optimizer';
+import { isSchedulerDiagOn } from './diagnostics';
 import {
   type CandidateChain,
   type ChainEnumerationCaps,

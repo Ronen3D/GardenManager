@@ -37,7 +37,7 @@ import type {
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import type { ScheduleContext } from '../shared/utils/time-utils';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
-import { isSchedulerDiagOn } from './optimizer';
+import { isSchedulerDiagOn } from './diagnostics';
 import { sortDonorsByProximity, sortParticipantsByLoadProximity } from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { isEligible } from './validator';
@@ -391,7 +391,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+          extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -419,7 +419,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
             restRuleMap: ctx.restRuleMap,
             scheduleContext: ctx.scheduleContext,
             extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+            extraCapabilityLoss: ctx.extraCapabilityLoss,
           })
         )
           continue;
@@ -515,7 +515,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+          extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -565,7 +565,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+              extraCapabilityLoss: ctx.extraCapabilityLoss,
             })
           )
             continue;
@@ -597,7 +597,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
                 restRuleMap: ctx.restRuleMap,
                 scheduleContext: ctx.scheduleContext,
                 extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+                extraCapabilityLoss: ctx.extraCapabilityLoss,
               })
             )
               continue;
@@ -715,7 +715,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+          extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -760,7 +760,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+              extraCapabilityLoss: ctx.extraCapabilityLoss,
             })
           )
             continue;
@@ -808,7 +808,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
                   restRuleMap: ctx.restRuleMap,
                   scheduleContext: ctx.scheduleContext,
                   extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+                  extraCapabilityLoss: ctx.extraCapabilityLoss,
                 })
               )
                 continue;
@@ -843,7 +843,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
                     restRuleMap: ctx.restRuleMap,
                     scheduleContext: ctx.scheduleContext,
                     extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+                    extraCapabilityLoss: ctx.extraCapabilityLoss,
                   })
                 )
                   continue;

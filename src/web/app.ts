@@ -4221,7 +4221,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.9</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.0</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4474,6 +4474,80 @@ function showEasterEgg(): void {
   });
   document.body.appendChild(backdrop);
   (backdrop.querySelector('.gm-egg-seal') as HTMLElement).focus();
+}
+
+// ─── Console-hint Easter Egg (empty-state icon) ─────────────────────────────
+
+let _consoleHintClicks = 0;
+let _consoleHintTimer: ReturnType<typeof setTimeout> | null = null;
+
+function attachConsoleHintEasterEgg(container: HTMLElement): void {
+  const icon = container.querySelector('.empty-icon') as HTMLElement | null;
+  if (!icon) return;
+  icon.addEventListener('click', () => {
+    _consoleHintClicks++;
+    if (_consoleHintTimer) clearTimeout(_consoleHintTimer);
+    _consoleHintTimer = setTimeout(() => {
+      _consoleHintClicks = 0;
+    }, 1500);
+    if (_consoleHintClicks >= 3) {
+      _consoleHintClicks = 0;
+      if (_consoleHintTimer) {
+        clearTimeout(_consoleHintTimer);
+        _consoleHintTimer = null;
+      }
+      showConsoleHint();
+    }
+  });
+}
+
+function showConsoleHint(): void {
+  const code = [
+    "toggleSchedulerDiag('on')       // start collecting",
+    "toggleSchedulerDiag('verbose')  // also log eligibility rejections",
+    "toggleSchedulerDiag('show')     // print last-run report",
+    "toggleSchedulerDiag('off')      // stop",
+  ].join('\n');
+  const backdrop = document.createElement('div');
+  backdrop.className = 'gm-modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="gm-modal-dialog gm-console-hint" role="dialog" aria-modal="true">
+      <div class="gm-console-hint-code">
+        <code>${escHtml(code)}</code>
+        <button type="button" class="gm-console-hint-copy" aria-label="העתק" title="העתק">📋</button>
+      </div>
+    </div>`;
+
+  const close = (): void => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') close();
+  };
+
+  const copyBtn = backdrop.querySelector('.gm-console-hint-copy') as HTMLButtonElement | null;
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      void navigator.clipboard?.writeText(code).then(
+        () => {
+          copyBtn.textContent = '✓';
+          setTimeout(() => {
+            copyBtn.textContent = '📋';
+          }, 1200);
+        },
+        () => {
+          copyBtn.textContent = '✗';
+        },
+      );
+    });
+  }
+
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) close();
+  });
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(backdrop);
 }
 
 // ─── KPI Count-Up Animation ─────────────────────────────────────────────────
@@ -4855,6 +4929,8 @@ function wireScheduleEvents(container: HTMLElement): void {
 
   const createManualEmptyBtn = container.querySelector('#btn-create-manual-empty');
   if (createManualEmptyBtn) createManualEmptyBtn.addEventListener('click', doCreateManualSchedule);
+
+  attachConsoleHintEasterEgg(container);
 
   const daysInput = container.querySelector('#input-days') as HTMLInputElement | null;
   if (daysInput) {

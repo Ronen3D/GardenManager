@@ -14522,6 +14522,126 @@ console.log('\n── Preflight Deep Checks ────────────
   }
 }
 
+// ─── Scheduler Diagnostics (gating contract) ─────────────────────────────────
+console.log('\n── Scheduler Diagnostics ───────────────');
+{
+  const { optimizeMultiAttempt } = require('./engine/optimizer') as typeof import('./engine/optimizer');
+  const diag = require('./engine/diagnostics') as typeof import('./engine/diagnostics');
+
+  const diagBaseDate = new Date(2026, 3, 1);
+  const diagWideAvail = [{ start: new Date(2026, 2, 30), end: new Date(2026, 3, 5) }];
+  const diagP = (id: string): Participant => ({
+    id,
+    name: id,
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: diagWideAvail,
+    dateUnavailability: [],
+  });
+  const diagTask: Task = {
+    id: 'diag-t1',
+    name: 'DiagTask',
+    timeBlock: createTimeBlockFromHours(diagBaseDate, 8, 12),
+    requiredCount: 1,
+    slots: [
+      { slotId: 'diag-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'], label: 's1' },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const diagPool = [diagP('diag-p1'), diagP('diag-p2'), diagP('diag-p3')];
+  const diagCfg = { ...DEFAULT_CONFIG, maxIterations: 200, maxSolverTimeMs: 1500 };
+
+  // Start clean
+  diag.toggleSchedulerDiag('off');
+  assert(diag.getSnapshot() === null, 'Diag: starts off → no snapshot');
+  assert(diag.isSchedulerDiagOn() === false, 'Diag: isSchedulerDiagOn() false when off');
+
+  // Run with diag OFF → no snapshot collected
+  const offRes = optimizeMultiAttempt([diagTask], diagPool, diagCfg, [], 3);
+  assert(diag.getSnapshot() === null, 'Diag: snapshot stays null when off across multi-attempt run');
+  assert(typeof offRes.iterations === 'number', 'Diag: result.iterations is a number (always-on bug fix)');
+  assert(offRes.phaseDurations !== undefined, 'Diag: result.phaseDurations populated always-on');
+  assert(offRes.phaseDurations.greedyMs >= 0, 'Diag: phaseDurations.greedyMs is a non-negative number');
+
+  // Toggle ON
+  diag.toggleSchedulerDiag('on');
+  assert(diag.isSchedulerDiagOn() === true, 'Diag: isSchedulerDiagOn() true when on');
+  assert(diag.isVerboseDiag() === false, 'Diag: not in verbose mode by default');
+
+  const onRes = optimizeMultiAttempt([diagTask], diagPool, diagCfg, [], 3);
+  const snap = diag.getSnapshot();
+  assert(snap !== null, 'Diag: snapshot populated after run with diag on');
+  assert(snap!.finalized === true, 'Diag: snapshot is marked finalized');
+  assert(snap!.attempts.length === 3, `Diag: 3 attempts captured (got ${snap!.attempts.length})`);
+  assert(snap!.attempts[0].score.minRestHours !== undefined, 'Diag: attempt rows include score components');
+  assert(snap!.phases.totalMs >= 0, 'Diag: phases.totalMs recorded at finalize');
+  // sa.iters == sum across attempts; result.iterations is the LAST attempt's count
+  assert(snap!.sa.iters >= onRes.iterations, 'Diag: snapshot.sa.iters cumulative across attempts');
+
+  // Reset on next multi-attempt entry (snapshot from prior run is replaced)
+  optimizeMultiAttempt([diagTask], diagPool, diagCfg, [], 1);
+  const snap2 = diag.getSnapshot();
+  assert(snap2 !== null && snap2.attempts.length === 1, 'Diag: resetSnapshot at multi-attempt entry clears prior data');
+
+  // Verbose mode captures rejections
+  const tightTask: Task = {
+    ...diagTask,
+    id: 'diag-t2',
+    slots: [
+      {
+        slotId: 'diag-t2-s1',
+        acceptableLevels: [{ level: Level.L4 }],
+        requiredCertifications: ['Nitzan'],
+        label: 's1',
+      },
+    ],
+  };
+  diag.toggleSchedulerDiag('verbose');
+  optimizeMultiAttempt([tightTask], diagPool, diagCfg, [], 1);
+  const snap3 = diag.getSnapshot();
+  assert(snap3 !== null && snap3.rejections.captured === true, 'Diag: verbose mode captures rejection data');
+  assert(snap3!.rejections.byCode.size > 0, 'Diag: byCode map populated in verbose mode');
+
+  // 'show' is a print-only action (no mode change, no snapshot mutation)
+  diag.toggleSchedulerDiag('on');
+  optimizeMultiAttempt([diagTask], diagPool, diagCfg, [], 1);
+  const beforeShow = diag.getSnapshot();
+  assert(beforeShow !== null, 'Diag: snapshot present before show');
+  // Capture console.log to verify show prints something without altering state
+  const origLog = console.log;
+  let logged = '';
+  console.log = (...args: unknown[]) => {
+    logged += `${args.map((a) => String(a)).join(' ')}\n`;
+  };
+  try {
+    diag.toggleSchedulerDiag('show');
+  } finally {
+    console.log = origLog;
+  }
+  assert(logged.includes('Scheduler Diagnostics'), `Diag: 'show' prints a report banner (got ${logged.length} chars)`);
+  assert(diag.getSnapshot() === beforeShow, "Diag: 'show' does not mutate snapshot");
+  assert(diag.isSchedulerDiagOn() === true, "Diag: 'show' does not change mode");
+
+  // 'show' with no snapshot prints a brief hint, doesn't throw
+  diag.toggleSchedulerDiag('off');
+  let logged2 = '';
+  console.log = (...args: unknown[]) => {
+    logged2 += `${args.map((a) => String(a)).join(' ')}\n`;
+  };
+  try {
+    diag.toggleSchedulerDiag('show');
+  } finally {
+    console.log = origLog;
+  }
+  assert(logged2.includes('No diag data'), "Diag: 'show' with no snapshot prints a hint");
+
+  // Toggle off → snapshot cleared
+  diag.toggleSchedulerDiag('off');
+  assert(diag.getSnapshot() === null, 'Diag: toggling off clears snapshot');
+}
+
 // ─── Async test blocks + Summary ─────────────────────────────────────────────
 
 (async () => {

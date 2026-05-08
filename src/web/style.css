@@ -2323,6 +2323,63 @@ select.input-sm {
   margin-bottom: 12px;
 }
 
+/* ─── Console-hint Easter Egg ────────────────────────────────────── */
+.gm-console-hint {
+  max-width: 620px;
+  padding: 22px;
+}
+.gm-console-hint-code {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 12px 14px;
+  direction: ltr;
+}
+.gm-console-hint-code code {
+  flex: 1;
+  font-family: var(--font-mono, "JetBrains Mono", "Courier New", monospace);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  letter-spacing: 0.2px;
+  color: #7dd3fc;
+  -webkit-user-select: all;
+  user-select: all;
+  text-align: left;
+  white-space: pre;
+  overflow-x: auto;
+}
+.gm-console-hint-copy {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 9px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+.gm-console-hint-copy:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+[data-theme="light"] .gm-console-hint-code {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .gm-console-hint-code code {
+  color: #0369a1;
+}
+[data-theme="light"] .gm-console-hint-copy {
+  border-color: rgba(0, 0, 0, 0.12);
+}
+[data-theme="light"] .gm-console-hint-copy:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
 /* ─── Disabled Button ────────────────────────────────── */
 .btn-primary:disabled {
   opacity: 0.4;

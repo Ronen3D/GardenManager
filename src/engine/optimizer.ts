@@ -44,6 +44,18 @@ import {
 } from '../shared/utils/time-utils';
 import { computeAllCapacities } from '../utils/capacity';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
+import {
+  type AttemptRow,
+  finalizeSnapshot,
+  isSchedulerDiagOn,
+  isVerboseDiag,
+  recordAttempt,
+  recordPhase,
+  recordPolishPass,
+  recordRejection,
+  recordSAStats,
+  resetSnapshot,
+} from './diagnostics';
 import type { PhantomContext } from './phantom';
 import { getRejectionReason, isEligible } from './validator';
 
@@ -134,27 +146,6 @@ export function resetAssignmentCounter(): void {
  * Check if a participant is eligible for a specific slot in a task,
  * considering current assignments (no double-booking).
  */
-/** Enable/disable verbose diagnostic logging */
-let _diagnosticLogging = false;
-
-/** Toggle scheduler diagnostic logging (call from console: toggleSchedulerDiag()) */
-export function toggleSchedulerDiag(on?: boolean): void {
-  _diagnosticLogging = on !== undefined ? on : !_diagnosticLogging;
-  console.log(`[Scheduler] Diagnostic logging: ${_diagnosticLogging ? 'ON' : 'OFF'}`);
-}
-
-/** Whether scheduler diagnostic logging is currently enabled. Used by rescue
- *  and Future-SOS to gate cap-hit / per-stage telemetry behind the same
- *  `toggleSchedulerDiag()` switch, without taking a direct dependency on
- *  module-private state. */
-export function isSchedulerDiagOn(): boolean {
-  return _diagnosticLogging;
-}
-
-// Expose globally for browser console use
-if (typeof globalThis !== 'undefined') {
-  (globalThis as Record<string, unknown>).toggleSchedulerDiag = toggleSchedulerDiag;
-}
 
 /** 🌻 The Garden Optimizer's spirit animal */
 export function gardenWisdom(): void {
@@ -187,7 +178,7 @@ function isEligibleForSlot(
   restRuleMap?: Map<string, number>,
   scheduleContext?: ScheduleContext,
 ): boolean {
-  if (_diagnosticLogging) {
+  if (isVerboseDiag()) {
     const code = getRejectionReason(participant, task, slot, participantAssignments, taskMap, {
       disabledHC,
       restRuleMap,
@@ -196,6 +187,7 @@ function isEligibleForSlot(
     if (code) {
       const _tag = `${participant.name} → ${task.name} [${describeSlot(slot.label, task.timeBlock)}]`;
       console.log(`[Elig] REJECT: ${_tag} — ${code}`);
+      recordRejection(code, task.id, participant.id);
     }
     return code === null;
   }
@@ -1052,7 +1044,7 @@ export function greedyAssign(
   }
 
   // ─── Greedy summary log (gated by diagnostic flag) ──────────────
-  if (_diagnosticLogging) {
+  if (isSchedulerDiagOn()) {
     const totalSlots = tasks.reduce((n, t) => n + t.slots.length, 0);
     const filledCount = assignments.length - pinnedAssignments.length;
     const usedIds = new Set(assignments.map((a) => a.participantId));
@@ -1215,7 +1207,7 @@ function assignSameGroupTask(
 
   // HC-4: No group could fill ALL slots. Cross-group fill is forbidden
   // (sameGroupRequired is a hard constraint). Report as infeasible.
-  if (bestFilledCount > 0 && _diagnosticLogging) {
+  if (bestFilledCount > 0 && isSchedulerDiagOn()) {
     console.warn(
       `[Scheduler] ${task.name}: no group could fill all ${slotsToFill.length} slots. ` +
         `Best group filled ${bestFilledCount}/${slotsToFill.length}. HC-4 forbids cross-group fill.`,
@@ -1477,7 +1469,13 @@ export function localSearchOptimize(
   saIntensifyTaskIds?: Set<string>,
   scheduleContext?: ScheduleContext,
   stopSignal?: AbortSignal,
-): { assignments: Assignment[]; filledSlots: Array<{ taskId: string; slotId: string }> } {
+): {
+  assignments: Assignment[];
+  filledSlots: Array<{ taskId: string; slotId: string }>;
+  iterations: number;
+  saMs: number;
+  polishMs: number;
+} {
   const current = [...assignments.map((a) => ({ ...a }))];
 
   // Track unfilled slots that SA might fill via insert moves.
@@ -1557,6 +1555,14 @@ export function localSearchOptimize(
   const startTime = Date.now();
   let iterations = 0;
 
+  // SA loop telemetry — local counters always increment (cheap), the snapshot
+  // push at SA exit is gated. Discarded silently when diag is off.
+  let swapAccept = 0;
+  let swapReject = 0;
+  let insertAccept = 0;
+  let insertReject = 0;
+  let reheats = 0;
+
   const maxIter = config.maxIterations;
   let temperature = SA_INITIAL_TEMPERATURE;
   let itersSinceImprovement = 0;
@@ -1582,6 +1588,7 @@ export function localSearchOptimize(
     if (itersSinceImprovement >= SA_REHEAT_THRESHOLD && temperature < 1) {
       temperature = SA_INITIAL_TEMPERATURE / 3;
       itersSinceImprovement = 0;
+      reheats++;
     }
 
     // Shuffle in-place (Fisher-Yates) — reuses the pre-allocated array
@@ -1668,6 +1675,7 @@ export function localSearchOptimize(
 
             if (effectiveScore > currentComposite) {
               // Accept insert
+              insertAccept++;
               // Update position map for the new assignment
               const pList = byParticipant.get(p.id)!;
               assignmentPos.set(newA.id, { pid: p.id, idx: pList.length - 1 });
@@ -1700,6 +1708,7 @@ export function localSearchOptimize(
               }
             } else {
               // Undo insert
+              insertReject++;
               current.pop();
               const pAssignList = byParticipant.get(p.id);
               if (pAssignList) {
@@ -1800,6 +1809,7 @@ export function localSearchOptimize(
 
         // Accept if strictly better, or probabilistically if worse (SA)
         if (delta > 0 || (temperature > 0.01 && Math.random() < Math.exp(delta / temperature))) {
+          swapAccept++;
           ai.updatedAt = new Date();
           aj.updatedAt = new Date();
           currentComposite = newComposite;
@@ -1811,6 +1821,7 @@ export function localSearchOptimize(
             bestScore = { ...bestScore, compositeScore: newComposite };
           }
         } else {
+          swapReject++;
           // Undo in-place swap
           ai.participantId = oldPidI;
           aj.participantId = oldPidJ;
@@ -1837,6 +1848,22 @@ export function localSearchOptimize(
     // significantly AND reheating can't help, the search has converged.
     if (!accepted && temperature < 0.5 && itersSinceImprovement > SA_REHEAT_THRESHOLD) break;
   }
+
+  // SA loop done. Capture timing + stats. saMs spans only the SA loop;
+  // post-SA reconciliation/sweep is small and folded into saMs implicitly
+  // through the time elapsed before polish.
+  const saExitTimeMs = Date.now();
+  const saMs = saExitTimeMs - startTime;
+  recordSAStats({
+    iters: iterations,
+    swapAccept,
+    swapReject,
+    insertAccept,
+    insertReject,
+    reheats,
+    tempAtExit: temperature,
+    itersSinceImprovementAtExit: itersSinceImprovement,
+  });
 
   // ── Reconcile filledSlots with best ──────────────────────────────────────
   // SA insert moves update filledSlots/remainingUnfilled eagerly on `current`,
@@ -1921,6 +1948,7 @@ export function localSearchOptimize(
   // The fresh-recompute at optimize() (computeScheduleScore) will re-derive
   // the final score from scratch, masking any incScorer FP drift; do not
   // remove that safety net.
+  const polishStartMs = Date.now();
   polishReplaceWithIdle(
     best,
     tasks,
@@ -1940,8 +1968,11 @@ export function localSearchOptimize(
     stopSignal,
     scheduleContext,
   );
+  const polishMs = Date.now() - polishStartMs;
+  recordPhase('sa', saMs);
+  recordPhase('polish', polishMs);
 
-  return { assignments: best, filledSlots };
+  return { assignments: best, filledSlots, iterations, saMs, polishMs };
 }
 
 // ─── Post-SA Polish ──────────────────────────────────────────────────────────
@@ -2010,6 +2041,8 @@ function polishReplaceWithIdle(
 
   for (let pass = 0; pass < MAX_POLISH_PASSES; pass++) {
     let improvedThisPass = false;
+    let passReplacements = 0;
+    let passDelta = 0;
 
     // Snapshot the assignment array so mid-pass mutations don't shift indices
     // we're about to visit. `best[i]` may be replaced as we commit; we only
@@ -2018,7 +2051,11 @@ function polishReplaceWithIdle(
 
     for (const a of passSnapshot) {
       // Stop / abort handling — mirror SA loop's check (line 1531).
-      if (Date.now() - startTime > config.maxSolverTimeMs || abortSignal?.aborted || stopSignal?.aborted) return;
+      if (Date.now() - startTime > config.maxSolverTimeMs || abortSignal?.aborted || stopSignal?.aborted) {
+        // Still record what this partial pass accomplished before bailing.
+        if (improvedThisPass) recordPolishPass(passReplacements, passDelta);
+        return;
+      }
 
       // Skip pinned / manual / frozen incumbents — same gate as SA.
       if (pinnedIds.has(a.id) || a.status === AssignmentStatus.Manual || a.status === AssignmentStatus.Frozen) continue;
@@ -2109,10 +2146,13 @@ function polishReplaceWithIdle(
         committedList.push(a);
         currentComposite = incScorer.recomputeForSwap(incumbentPid, bestCandidate.id);
         improvedThisPass = true;
+        passReplacements++;
+        passDelta += bestDelta;
       }
     }
 
     if (!improvedThisPass) break;
+    recordPolishPass(passReplacements, passDelta);
   }
 }
 
@@ -2126,6 +2166,10 @@ export interface OptimizationResult {
   iterations: number;
   durationMs: number;
   actualAttempts: number;
+  /** Per-phase wall-clock breakdown of the most recent `optimize()` call. For
+   *  multi-attempt results these reflect the final/best attempt only.
+   *  Always-on (cheap timestamp arithmetic). */
+  phaseDurations: { greedyMs: number; saMs: number; polishMs: number };
 }
 
 /**
@@ -2167,6 +2211,7 @@ export function optimize(
   const capacities = computeAllCapacities(participants, schedStart, schedEnd, dayStartHour);
 
   // Phase 1: Greedy construction
+  const greedyStartMs = Date.now();
   const greedy = greedyAssign(
     tasks,
     participants,
@@ -2181,6 +2226,8 @@ export function optimize(
     certLabelResolver,
     capacities,
   );
+  const greedyMs = Date.now() - greedyStartMs;
+  recordPhase('greedy', greedyMs);
 
   // Phase 2: Local search improvement (also tries to fill unfilled slots)
   const lsResult = localSearchOptimize(
@@ -2246,9 +2293,10 @@ export function optimize(
     score,
     feasible: validation.valid && remainingUnfilled.length === 0,
     unfilledSlots: remainingUnfilled,
-    iterations: 0,
+    iterations: lsResult.iterations,
     durationMs: Date.now() - startTime,
     actualAttempts: 1,
+    phaseDurations: { greedyMs, saMs: lsResult.saMs, polishMs: lsResult.polishMs },
   };
 }
 
@@ -2265,6 +2313,35 @@ export type MultiAttemptProgressCallback = (info: {
   attemptFeasible: boolean;
   improved: boolean;
 }) => void;
+
+/** Build a flat AttemptRow from an OptimizationResult. Only called when diag
+ *  is on; copies primitives only (no Assignment / Task / Participant refs). */
+function makeAttemptRow(attempt: number, r: OptimizationResult, improved: boolean): AttemptRow {
+  const s = r.score;
+  return {
+    attempt,
+    compositeScore: s.compositeScore,
+    unfilled: r.unfilledSlots.length,
+    feasible: r.feasible,
+    improved,
+    durationMs: r.durationMs,
+    iterations: r.iterations,
+    score: {
+      minRestHours: s.minRestHours,
+      avgRestHours: s.avgRestHours,
+      restStdDev: s.restStdDev,
+      totalPenalty: s.totalPenalty,
+      l0StdDev: s.l0StdDev,
+      seniorStdDev: s.seniorStdDev,
+      dailyPerParticipantStdDev: s.dailyPerParticipantStdDev,
+      dailyGlobalStdDev: s.dailyGlobalStdDev,
+      restPerGapBonus: s.restPerGapBonus,
+      lowPriorityPenalty: s.lowPriorityPenalty ?? 0,
+      notWithPenalty: s.notWithPenalty ?? 0,
+      taskPrefPenalty: s.taskPrefPenalty ?? 0,
+    },
+  };
+}
 
 /**
  * Fisher-Yates shuffle (in-place). Returns the same array.
@@ -2373,14 +2450,8 @@ export function optimizeMultiAttempt(
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
   const totalStart = Date.now();
-  const diagRows: Array<{
-    '#': number;
-    score: string;
-    unfilled: number;
-    stdDev: string;
-    penalty: string;
-    improved: string;
-  }> = [];
+  resetSnapshot();
+  const diagOn = isSchedulerDiagOn();
 
   // Elite restart: every ELITE_INTERVAL attempts, inspect the current best's
   // unfilled slots and refresh the two additive recovery hints. Every unfilled
@@ -2452,14 +2523,9 @@ export function optimizeMultiAttempt(
       best = result;
     }
 
-    diagRows.push({
-      '#': i + 1,
-      score: result.score.compositeScore.toFixed(4),
-      unfilled: result.unfilledSlots.length,
-      stdDev: result.score.restStdDev.toFixed(4),
-      penalty: result.score.totalPenalty.toFixed(2),
-      improved: improved ? '★ YES' : '',
-    });
+    if (diagOn) {
+      recordAttempt(makeAttemptRow(i + 1, result, improved));
+    }
 
     if (onProgress) {
       onProgress({
@@ -2477,16 +2543,16 @@ export function optimizeMultiAttempt(
 
   // Update total duration and actual attempts performed
   best!.durationMs = Date.now() - totalStart;
-  best!.actualAttempts = diagRows.length;
+  best!.actualAttempts = attempts;
+  finalizeSnapshot(best!.durationMs);
 
-  if (_diagnosticLogging) {
+  if (diagOn) {
     console.log(
-      `[Scheduler] Multi-attempt done: ${attempts} attempts in ${best!.durationMs}ms. ` +
-        `Best score: ${best!.score.compositeScore.toFixed(2)}, ` +
-        `unfilled: ${best!.unfilledSlots.length}, ` +
-        `restStdDev: ${best!.score.restStdDev.toFixed(2)}`,
+      `[Scheduler] Multi-attempt done: ${attempts} attempts in ${best!.durationMs}ms — ` +
+        `best score ${best!.score.compositeScore.toFixed(2)}, ` +
+        `unfilled ${best!.unfilledSlots.length}. ` +
+        `Run toggleSchedulerDiag('show') for the report.`,
     );
-    console.table(diagRows);
   }
 
   return best!;
@@ -2527,15 +2593,10 @@ export function optimizeMultiAttemptAsync(
   return new Promise((resolve, reject) => {
     let best: OptimizationResult | null = null;
     let i = 0;
+    let attemptsCompleted = 0;
     const totalStart = Date.now();
-    const diagRows: Array<{
-      '#': number;
-      score: string;
-      unfilled: number;
-      stdDev: string;
-      penalty: string;
-      improved: string;
-    }> = [];
+    resetSnapshot();
+    const diagOn = isSchedulerDiagOn();
 
     // Elite restart state (same classification as sync version)
     const ELITE_INTERVAL = 20;
@@ -2551,13 +2612,14 @@ export function optimizeMultiAttemptAsync(
     function finalizeEarlyStop(): boolean {
       if (!stopSignal?.aborted || best === null) return false;
       best.durationMs = Date.now() - totalStart;
-      best.actualAttempts = diagRows.length;
-      if (_diagnosticLogging) {
+      best.actualAttempts = attemptsCompleted;
+      finalizeSnapshot(best.durationMs);
+      if (diagOn) {
         console.log(
-          `[Scheduler] Multi-attempt async early-stopped after ${best.actualAttempts} attempts in ${best.durationMs}ms. ` +
-            `Best score: ${best.score.compositeScore.toFixed(2)}, ` +
-            `unfilled: ${best.unfilledSlots.length}, ` +
-            `restStdDev: ${best.score.restStdDev.toFixed(2)}`,
+          `[Scheduler] Multi-attempt async early-stopped after ${best.actualAttempts} attempts in ${best.durationMs}ms — ` +
+            `best score ${best.score.compositeScore.toFixed(2)}, ` +
+            `unfilled ${best.unfilledSlots.length}. ` +
+            `Run toggleSchedulerDiag('show') for the report.`,
         );
       }
       resolve(best);
@@ -2641,15 +2703,11 @@ export function optimizeMultiAttemptAsync(
           }
 
           i++;
+          attemptsCompleted = i;
 
-          diagRows.push({
-            '#': i,
-            score: result.score.compositeScore.toFixed(4),
-            unfilled: result.unfilledSlots.length,
-            stdDev: result.score.restStdDev.toFixed(4),
-            penalty: result.score.totalPenalty.toFixed(2),
-            improved: improved ? '★ YES' : '',
-          });
+          if (diagOn) {
+            recordAttempt(makeAttemptRow(i, result, improved));
+          }
 
           if (onProgress) {
             onProgress({
@@ -2670,15 +2728,15 @@ export function optimizeMultiAttemptAsync(
           setTimeout(runBatch, 0);
         } else {
           best!.durationMs = Date.now() - totalStart;
-          best!.actualAttempts = diagRows.length;
-          if (_diagnosticLogging) {
+          best!.actualAttempts = attemptsCompleted;
+          finalizeSnapshot(best!.durationMs);
+          if (diagOn) {
             console.log(
-              `[Scheduler] Multi-attempt async done: ${attempts} attempts in ${best!.durationMs}ms. ` +
-                `Best score: ${best!.score.compositeScore.toFixed(2)}, ` +
-                `unfilled: ${best!.unfilledSlots.length}, ` +
-                `restStdDev: ${best!.score.restStdDev.toFixed(2)}`,
+              `[Scheduler] Multi-attempt async done: ${attempts} attempts in ${best!.durationMs}ms — ` +
+                `best score ${best!.score.compositeScore.toFixed(2)}, ` +
+                `unfilled ${best!.unfilledSlots.length}. ` +
+                `Run toggleSchedulerDiag('show') for the report.`,
             );
-            console.table(diagRows);
           }
           resolve(best!);
         }

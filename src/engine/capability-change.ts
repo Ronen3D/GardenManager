@@ -20,14 +20,9 @@
 
 import { validateHardConstraints } from '../constraints/hard-constraints';
 import { computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
-import type {
-  Assignment,
-  Participant,
-  Schedule,
-  SchedulerConfig,
-  Task,
-} from '../models/types';
+import type { Assignment, Participant, Schedule, SchedulerConfig, Task } from '../models/types';
 import { blocksOverlap } from '../shared/utils/time-utils';
+import { isSchedulerDiagOn } from './diagnostics';
 import {
   type AffectedAssignment,
   applyCompositionToAssignments,
@@ -38,7 +33,6 @@ import {
   mergeSwaps,
   selectDiversePlans,
 } from './future-sos';
-import { isSchedulerDiagOn } from './optimizer';
 import {
   type CandidateChain,
   type ChainEnumerationCaps,
@@ -466,8 +460,7 @@ export function upsertCapabilityLoss(
   },
 ): NonNullable<Schedule['capabilityLoss']> {
   const entrySet = new Set(entry.lostCertifications);
-  const sameSet = (a: string[], b: Set<string>) =>
-    a.length === b.size && a.every((c) => b.has(c));
+  const sameSet = (a: string[], b: Set<string>) => a.length === b.size && a.every((c) => b.has(c));
 
   const result = (existing ?? []).map((e) => ({ ...e }));
   let mergedStart = entry.start;
