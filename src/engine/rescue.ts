@@ -295,6 +295,18 @@ interface RescueContext {
    * spurious depth-4 fallbacks.
    */
   extraUnavailability: Array<{ participantId: string; start: Date; end: Date }>;
+  /**
+   * Schedule-scoped capability overrides (mid-schedule cert loss). Same
+   * symmetry argument as `extraUnavailability`: layered into both the
+   * per-step `isEligible` gate and the final `validateHardConstraints` call
+   * so candidates rejected by HC-2/HC-11 don't waste enumeration budget.
+   */
+  extraCapabilityLoss?: Array<{
+    participantId: string;
+    lostCertifications: string[];
+    start: Date;
+    end: Date;
+  }>;
   // Full composite scoring (when available)
   config?: SchedulerConfig;
   scoreCtx?: ScoreContext;
@@ -320,6 +332,7 @@ function generateDepth1Plans(ctx: RescueContext): CandidatePlan[] {
         restRuleMap: ctx.restRuleMap,
         scheduleContext: ctx.scheduleContext,
         extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
       })
     )
       continue;
@@ -378,6 +391,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -405,6 +419,7 @@ function generateDepth2Plans(ctx: RescueContext): CandidatePlan[] {
             restRuleMap: ctx.restRuleMap,
             scheduleContext: ctx.scheduleContext,
             extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
           })
         )
           continue;
@@ -500,6 +515,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -549,6 +565,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
             })
           )
             continue;
@@ -580,6 +597,7 @@ function generateDepth3Plans(ctx: RescueContext): CandidatePlan[] {
                 restRuleMap: ctx.restRuleMap,
                 scheduleContext: ctx.scheduleContext,
                 extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
               })
             )
               continue;
@@ -697,6 +715,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -741,6 +760,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
             })
           )
             continue;
@@ -788,6 +808,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
                   restRuleMap: ctx.restRuleMap,
                   scheduleContext: ctx.scheduleContext,
                   extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
                 })
               )
                 continue;
@@ -822,6 +843,7 @@ function generateDepth4Plans(ctx: RescueContext): CandidatePlan[] {
                     restRuleMap: ctx.restRuleMap,
                     scheduleContext: ctx.scheduleContext,
                     extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
                   })
                 )
                   continue;
@@ -997,6 +1019,14 @@ export function generateRescuePlans(
   // across the whole enumeration so V8 can hoist it; it also matches the
   // exact same value passed to `validateHardConstraints` below.
   const extraUnavailability = schedule.scheduleUnavailability ?? [];
+  const extraCapabilityLoss = schedule.capabilityLoss?.length
+    ? schedule.capabilityLoss.map((c) => ({
+        participantId: c.participantId,
+        lostCertifications: c.lostCertifications,
+        start: c.start,
+        end: c.end,
+      }))
+    : undefined;
 
   const ctx: RescueContext = {
     schedule,
@@ -1015,6 +1045,7 @@ export function generateRescuePlans(
     dayStartHour,
     scheduleContext,
     extraUnavailability,
+    extraCapabilityLoss,
     config,
     scoreCtx,
     baselineComposite,
@@ -1067,6 +1098,7 @@ export function generateRescuePlans(
       certLabelResolver,
       extraUnavailability,
       scheduleContext,
+      extraCapabilityLoss,
     );
     if (validation.valid) {
       validPlans.push({ ...cp, violations: [] });
@@ -1098,6 +1130,7 @@ export function generateRescuePlans(
         certLabelResolver,
         extraUnavailability,
         scheduleContext,
+        extraCapabilityLoss,
       );
       if (validation.valid) {
         validPlans.push({ ...cp, violations: [], fallbackDepth: 4 });

@@ -262,15 +262,22 @@ function renderUnavailabilitySection(
 ): string {
   const dateRules = store.getDateUnavailabilities(p.id);
   const fsos = (schedule.scheduleUnavailability ?? []).filter((u) => u.participantId === p.id);
+  const capLoss = (schedule.capabilityLoss ?? []).filter((u) => u.participantId === p.id);
+  const certLabel = (id: string): string => schedule.certLabelSnapshot[id] ?? id;
 
   const sosBtn = showSosButtons
     ? `<button class="btn-future-sos profile-availability-action" data-action="future-sos" data-pid="${p.id}" title="סמן חלון אי־זמינות וחשב תוכנית החלפה">🆘 סמן אי־זמינות</button>`
     : '';
+  const capChangeBtn =
+    showSosButtons && p.certifications.length > 0
+      ? `<button class="btn-cap-change profile-availability-action" data-action="capability-change" data-pid="${p.id}" title="סמן הסמכה שאבדה וחשב תוכנית החלפה">📜 שינוי הסמכה</button>`
+      : '';
 
   let html = `<div class="profile-card">
     <div class="profile-card-header-row">
       <h3 class="profile-card-title">🚫 אי זמינות</h3>
       ${sosBtn}
+      ${capChangeBtn}
     </div>`;
 
   if (fsos.length > 0) {
@@ -297,6 +304,31 @@ function renderUnavailabilitySection(
     html += '</ul>';
   }
 
+  if (capLoss.length > 0) {
+    html += '<h4 class="profile-sub-title">שינויי הסמכה (על השבצ"ק הזה בלבד)</h4><ul class="profile-fsos-list">';
+    const base = schedule.periodStart;
+    const dsh = schedule.algorithmSettings.dayStartHour;
+    const baseMidnight = new Date(base.getFullYear(), base.getMonth(), base.getDate()).getTime();
+    const toDayIdx = (d: Date): number => {
+      const shifted = new Date(d.getTime());
+      if (shifted.getHours() < dsh) shifted.setDate(shifted.getDate() - 1);
+      const shiftedMidnight = new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate()).getTime();
+      return Math.floor((shiftedMidnight - baseMidnight) / (24 * 3600 * 1000)) + 1;
+    };
+    for (const entry of capLoss) {
+      const startLabel = `יום ${toDayIdx(entry.start)}`;
+      const endLabel = `יום ${toDayIdx(entry.end)}`;
+      const timeLabel = `${startLabel} <span dir="ltr">${fmt(entry.start)}</span> – ${endLabel} <span dir="ltr">${fmt(entry.end)}</span>`;
+      const certs = entry.lostCertifications.map(certLabel).join(', ');
+      const reason = entry.reason ? `<span class="text-muted"> · ${escHtml(entry.reason)}</span>` : '';
+      html += `<li>
+        <span><strong>${escHtml(certs)}</strong> · ${timeLabel}${reason}</span>
+        <button class="profile-fsos-remove" data-action="remove-cap-loss" data-entry-id="${entry.id}" title="הסר">הסר</button>
+      </li>`;
+    }
+    html += '</ul>';
+  }
+
   if (dateRules.length > 0) {
     html += '<h4 class="profile-sub-title">כללים קבועים לפי יום בשבצ״ק</h4><ul class="profile-list">';
     for (const r of dateRules) {
@@ -315,7 +347,7 @@ function renderUnavailabilitySection(
     html += '</ul>';
   }
 
-  if (dateRules.length === 0 && fsos.length === 0) {
+  if (dateRules.length === 0 && fsos.length === 0 && capLoss.length === 0) {
     const scopeLabel = numDays <= 1 ? 'לכל אורך היום' : 'לכל אורך השבצ"ק';
     html += `<p class="text-muted profile-empty-note">לא הוגדרו מגבלות זמינות. המשתתף זמין ${scopeLabel}.</p>`;
   }
@@ -393,6 +425,8 @@ export interface ProfileEventHandlers {
   onSosClick?: (assignmentId: string) => void;
   onFutureSosClick?: (participantId: string) => void;
   onRemoveFutureSosEntry?: (entryId: string) => void;
+  onCapabilityChangeClick?: (participantId: string) => void;
+  onRemoveCapabilityLossEntry?: (entryId: string) => void;
 }
 
 export function wireProfileEvents(
@@ -425,6 +459,14 @@ export function wireProfileEvents(
     }
     if (action === 'remove-fsos' && target.dataset.entryId && handlers.onRemoveFutureSosEntry) {
       handlers.onRemoveFutureSosEntry(target.dataset.entryId);
+      return;
+    }
+    if (action === 'capability-change' && target.dataset.pid && handlers.onCapabilityChangeClick) {
+      handlers.onCapabilityChangeClick(target.dataset.pid);
+      return;
+    }
+    if (action === 'remove-cap-loss' && target.dataset.entryId && handlers.onRemoveCapabilityLossEntry) {
+      handlers.onRemoveCapabilityLossEntry(target.dataset.entryId);
       return;
     }
   });

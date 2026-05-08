@@ -40,6 +40,41 @@ function buildTaskMap(tasks: Task[]): Map<string, Task> {
   return map;
 }
 
+/** Snapshot-scoped capability override entry (mirrors EligibilityOpts shape). */
+export type CapabilityLossOverride = {
+  participantId: string;
+  lostCertifications: string[];
+  start: Date;
+  end: Date;
+};
+
+/**
+ * Build an `effective certifications` predicate for a participant evaluated at
+ * a specific task's timeBlock, with `extraCapabilityLoss` subtracted when any
+ * entry overlaps. Zero-allocation pass-through when no losses apply.
+ */
+function effectiveCertsAt(
+  participant: Participant,
+  task: Task,
+  losses: CapabilityLossOverride[] | undefined,
+): { has: (cert: string) => boolean } {
+  if (!losses || losses.length === 0) {
+    return { has: (c) => participant.certifications.includes(c) };
+  }
+  let lost: Set<string> | null = null;
+  for (const loss of losses) {
+    if (loss.participantId !== participant.id) continue;
+    if (!blocksOverlap(task.timeBlock, { start: loss.start, end: loss.end })) continue;
+    if (!lost) lost = new Set();
+    for (const c of loss.lostCertifications) lost.add(c);
+  }
+  if (!lost) {
+    return { has: (c) => participant.certifications.includes(c) };
+  }
+  const lostFinal = lost;
+  return { has: (c) => participant.certifications.includes(c) && !lostFinal.has(c) };
+}
+
 function violation(
   code: string,
   message: string,
@@ -96,18 +131,25 @@ export function checkLevelRequirement(
 
 /**
  * HC-2: Certification requirement — participant must hold all required certs.
+ *
+ * @param extraCapabilityLoss Optional schedule-scoped capability overrides.
+ *        When the task's timeBlock overlaps a matching entry, the listed
+ *        certs are treated as absent — HC-2 fires for any required cert
+ *        that's been lost.
  */
 export function checkCertificationRequirement(
   participant: Participant,
   task: Task,
   slotId: string,
   certLabelResolver: (certId: string) => string = (id) => id,
+  extraCapabilityLoss?: CapabilityLossOverride[],
 ): ConstraintViolation | null {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) return null;
 
+  const effective = effectiveCertsAt(participant, task, extraCapabilityLoss);
   for (const cert of slot.requiredCertifications) {
-    if (!participant.certifications.includes(cert)) {
+    if (!effective.has(cert)) {
       return violation(
         'CERT_MISSING',
         `${participant.name} \u200F— ${describeTaskInstance(task)} (חסר: ${certLabelResolver(cert)})`,
@@ -197,12 +239,17 @@ export function checkSameGroup(task: Task, assignedParticipants: Participant[]):
 /**
  * HC-11: Forbidden certification check — participants holding a certification
  * listed in a slot's forbiddenCertifications are forbidden from that slot.
+ *
+ * Honors `extraCapabilityLoss`: a cert that's been lost for the overlapping
+ * window is treated as absent, so the participant becomes eligible for slots
+ * that previously forbade that cert.
  */
 export function checkForbiddenCertifications(
   task: Task,
   taskAssignments: Assignment[],
   pMap: Map<string, Participant>,
   certLabelResolver: (certId: string) => string = (id) => id,
+  extraCapabilityLoss?: CapabilityLossOverride[],
 ): ConstraintViolation[] {
   const violations: ConstraintViolation[] = [];
   for (const a of taskAssignments) {
@@ -210,7 +257,8 @@ export function checkForbiddenCertifications(
     if (!slot?.forbiddenCertifications?.length) continue;
     const p = pMap.get(a.participantId);
     if (!p) continue;
-    const forbidden = slot.forbiddenCertifications.filter((c) => p.certifications.includes(c));
+    const effective = effectiveCertsAt(p, task, extraCapabilityLoss);
+    const forbidden = slot.forbiddenCertifications.filter((c) => effective.has(c));
     if (forbidden.length > 0) {
       violations.push(
         violation(
@@ -608,6 +656,7 @@ export function validateHardConstraints(
   certLabelResolver: (certId: string) => string = (id) => id,
   extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
   scheduleContext?: ScheduleContext,
+  extraCapabilityLoss?: CapabilityLossOverride[],
 ): ValidationResult {
   const allViolations: ConstraintViolation[] = [];
   const pMap = buildParticipantMap(participants);
@@ -699,7 +748,7 @@ export function validateHardConstraints(
 
       // HC-2: Certifications
       if (!disabledHC?.has('HC-2')) {
-        const certV = checkCertificationRequirement(participant, task, a.slotId, certLabelResolver);
+        const certV = checkCertificationRequirement(participant, task, a.slotId, certLabelResolver, extraCapabilityLoss);
         if (certV) allViolations.push(certV);
       }
 
@@ -712,7 +761,7 @@ export function validateHardConstraints(
 
     // HC-11: Forbidden certification — per-slot check
     if (!disabledHC?.has('HC-11')) {
-      allViolations.push(...checkForbiddenCertifications(task, taskAssignments, pMap, certLabelResolver));
+      allViolations.push(...checkForbiddenCertifications(task, taskAssignments, pMap, certLabelResolver, extraCapabilityLoss));
     }
 
     // HC-4: Same group — use pre-indexed task assignments

@@ -266,6 +266,39 @@ export interface ScheduleUnavailability {
   appliedSwapCount?: number;
 }
 
+/**
+ * Mid-schedule capability change: a participant has lost one or more
+ * certifications for a defined window. Snapshot-scoped — does not mutate
+ * Participant master data. HC-2 (required certs) and HC-11 (forbidden certs)
+ * read this as an additive override, treating the listed certs as absent
+ * when the task's timeBlock overlaps the window.
+ *
+ * The participant remains otherwise eligible: they keep assignments that
+ * don't require a lost cert, and the rescue planner may relocate them into
+ * other open slots to keep workload balanced.
+ */
+export interface CapabilityLoss {
+  id: string;
+  participantId: string;
+  /** Cert IDs that the participant is treated as not having for this window. */
+  lostCertifications: string[];
+  /** Absolute window start (effective from). */
+  start: Date;
+  /** Absolute window end. Use a far-future date to model "permanent" loss. */
+  end: Date;
+  /** Optional note surfaced in UI. */
+  reason?: string;
+  /** When the entry was created. */
+  createdAt: Date;
+  /** Live-mode anchor at creation time (audit). */
+  anchorAtCreation: Date;
+  /**
+   * Swap count from the capability-change plan applied alongside this entry.
+   * Undefined on entries recorded without a replacement plan.
+   */
+  appliedSwapCount?: number;
+}
+
 export interface Schedule {
   id: string;
   /** All tasks in this scheduling window */
@@ -302,6 +335,12 @@ export interface Schedule {
    * fixtures and manually-authored literals can omit it.
    */
   scheduleUnavailability?: ScheduleUnavailability[];
+  /**
+   * Mid-schedule capability changes scoped to this snapshot. HC-2 / HC-11
+   * layer these on top of participant master-data certifications. Treat
+   * `undefined` as `[]`.
+   */
+  capabilityLoss?: CapabilityLoss[];
 }
 
 export interface ScheduleScore {

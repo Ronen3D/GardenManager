@@ -15,6 +15,11 @@ import './style-mobile.css';
 import './style-swimlane.css';
 import { getRecoveryWindow } from '../constraints/sleep-recovery';
 import {
+  findCertAffectedAssignments,
+  generateCapabilityChangePlans,
+  upsertCapabilityLoss,
+} from '../engine/capability-change';
+import {
   computeEffectiveUnavailabilityWindows,
   findAffectedAssignments,
   generateBatchRescuePlans,
@@ -46,6 +51,7 @@ import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
 import { wireDataTransferEvents } from './data-transfer-ui';
 import { exportDailyExcel, exportWeeklyExcel } from './excel-export';
+import { showCapabilityChangePicker } from './capability-change-modal';
 import {
   closeLoadingOverlay,
   openBatchPlansModal,
@@ -83,6 +89,7 @@ import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
 import {
   canLeaveParticipantsTab,
   clearParticipantSelection,
+  formatWorkloadMultiplier,
   renderParticipantsTab,
   wireParticipantsEvents,
 } from './tab-participants';
@@ -1094,10 +1101,11 @@ function renderSidebarEntry(entry: {
 
   const mult = p.workloadMultiplier ?? 1;
   const hasMult = Math.abs(mult - 1) > 1e-9;
+  const multDisplay = formatWorkloadMultiplier(mult);
   const multBadge = hasMult
-    ? ` <span class="sidebar-mult-badge" title="מקדם עומס ${mult} — היעד הוגנות מותאם בהתאם.">×${mult.toFixed(1)}</span>`
+    ? ` <span class="sidebar-mult-badge" title="מקדם עומס ${multDisplay} — היעד הוגנות מותאם בהתאם.">×${multDisplay}</span>`
     : '';
-  const hoverTitle = `${escHtml(p.name)} — ${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfCapacity.toFixed(1)}% מהזמינות)${hasMult ? ` · מקדם עומס ×${mult.toFixed(1)}` : ''}`;
+  const hoverTitle = `${escHtml(p.name)} — ${entry.w.effectiveHours.toFixed(1)} שעות עומס (${entry.pctOfCapacity.toFixed(1)}% מהזמינות)${hasMult ? ` · מקדם עומס ×${multDisplay}` : ''}`;
 
   return `<div class="sidebar-entry">
     <div class="sidebar-name">
@@ -3672,7 +3680,7 @@ function showFutureSosAppliedStrip(participantId: string, swapCount: number, und
     strip.classList.add('fsos-applied-strip--leaving');
     setTimeout(() => strip.remove(), 250);
   };
-  const timer = window.setTimeout(remove, 10000);
+  const timer = window.setTimeout(remove, 30000);
   strip.querySelector('.fsos-applied-strip-close')?.addEventListener('click', () => {
     window.clearTimeout(timer);
     remove();
@@ -3719,6 +3727,334 @@ function handleRemoveFutureSosEntry(entryId: string): void {
   store.saveSchedule(currentSchedule);
   renderAll();
   showToast('חלון אי זמינות עתידית הוסר.', { type: 'info', duration: 3000 });
+}
+
+interface CapabilityChangeUndoContext {
+  reverseSwaps: Array<{ assignmentId: string; prevParticipantId: string }>;
+  prevCapabilityLoss: Schedule['capabilityLoss'];
+  capLossEntryId: string;
+}
+
+async function handleProfileCapabilityChange(participantId: string): Promise<void> {
+  if (!currentSchedule || !engine) return;
+  const schedule = currentSchedule;
+  const participant = schedule.participants.find((p) => p.id === participantId);
+  if (!participant) return;
+  if (participant.certifications.length === 0) {
+    showToast('למשתתף זה אין הסמכות במאגר השבצ"ק הנוכחי.', { type: 'info', duration: 3000 });
+    return;
+  }
+
+  const numDays = store.getScheduleDays();
+  const baseDate = store.getScheduleDate();
+  const dayStartHour = schedule.algorithmSettings.dayStartHour;
+
+  const days: Array<{ value: string; label: string }> = [];
+  for (let d = 1; d <= numDays; d++) {
+    days.push({ value: String(d), label: `יום ${d}` });
+  }
+  const hours: Array<{ value: string; label: string }> = operationalHourOrder(dayStartHour).map((h) => ({
+    value: String(h),
+    label: `${String(h).padStart(2, '0')}:00`,
+  }));
+
+  const toDate = (day: string, hour: string): Date => {
+    const dIdx = parseInt(day, 10);
+    const hr = parseInt(hour, 10);
+    const dayOffset = hr < dayStartHour ? dIdx : dIdx - 1;
+    return new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dayOffset, hr, 0);
+  };
+
+  const lm = store.getLiveModeState();
+  const liveModeInitiallyOn = lm.enabled;
+  const anchor: Date = lm.enabled
+    ? lm.currentTimestamp
+    : new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0);
+
+  const certResolver = engine.getCertLabelResolver();
+  const availableCerts = participant.certifications.map((id) => ({
+    value: id,
+    label: certResolver(id),
+  }));
+
+  // Anchor the default window on the participant's next upcoming assignment so
+  // the picker doesn't open with a window straddling the live anchor (which
+  // would always fail the `start >= anchor` validator). Falls back to a 1-hour
+  // post-anchor window when the participant has no future assignments.
+  const smartDefault = computeSmartDefaultWindow(schedule, participantId, anchor, dayStartHour);
+
+  const picker = await showCapabilityChangePicker({
+    participantName: participant.name,
+    availableCerts,
+    days,
+    hours,
+    defaultStartDay: smartDefault.startDay,
+    defaultStartHour: smartDefault.startHour,
+    defaultEndDay: smartDefault.endDay,
+    defaultEndHour: smartDefault.endHour,
+    validate: (v) => {
+      const s = toDate(v.startDay, v.startHour);
+      const e = toDate(v.endDay, v.endHour);
+      if (e.getTime() <= s.getTime()) return 'זמן הסיום חייב להיות אחרי זמן ההתחלה.';
+      if (s.getTime() < anchor.getTime()) return 'ההתחלה חייבת להיות אחרי נקודת ההקפאה.';
+      return null;
+    },
+    onPreview: (v) => {
+      if (v.lostCertifications.length === 0) return '';
+      const s = toDate(v.startDay, v.startHour);
+      const e = toDate(v.endDay, v.endHour);
+      if (e.getTime() <= s.getTime() || s.getTime() < anchor.getTime()) return '';
+      const { affected } = findCertAffectedAssignments(
+        schedule,
+        {
+          participantId,
+          lostCertifications: v.lostCertifications,
+          window: { start: s, end: e },
+        },
+        anchor,
+      );
+      if (affected.length === 0) return 'אין שיבוצים מושפעים מאובדן ההסמכה.';
+      const dayKeys = new Set(affected.map((a) => a.task.timeBlock.start.toDateString()));
+      return `יעודכנו ${affected.length} שיבוצים ב־${dayKeys.size} ימים.`;
+    },
+  });
+  if (!picker) return;
+
+  const windowStart = toDate(picker.startDay, picker.startHour);
+  const windowEnd = toDate(picker.endDay, picker.endHour);
+  const reason = picker.reason;
+  const lostCertifications = picker.lostCertifications;
+
+  const { affected, lockedInPast } = findCertAffectedAssignments(
+    schedule,
+    { participantId, lostCertifications, window: { start: windowStart, end: windowEnd } },
+    anchor,
+  );
+
+  const certsLabel = lostCertifications.map(certResolver).join(', ');
+
+  const config = engine.getConfig();
+  const scoreCtx = engine.buildScoreContext();
+  if (!scoreCtx) return;
+
+  let preExcluded: ReadonlySet<string> = new Set();
+  let excludedIds: Set<string>;
+  let result: ReturnType<typeof generateCapabilityChangePlans>;
+  // biome-ignore lint/correctness/noConstantCondition: loop exits via return / break
+  while (true) {
+    const confirmResult = await openConfirmModal({
+      participantName: participant.name,
+      window: { start: windowStart, end: windowEnd },
+      affected,
+      lockedInPast,
+      dayStartHour,
+      periodStart: schedule.periodStart,
+      preExcludedIds: preExcluded,
+      headerIcon: '📜',
+      headerTitlePrefix: 'שינוי הסמכה — השפעה',
+      affectedSectionTitle: 'שיבוצים שדורשים את ההסמכה שאבדה',
+      preambleHtml: `<div class="fsos-window-sentence">הסמכות שאבדו: <strong>${escHtml(certsLabel)}</strong></div>`,
+    });
+    if (!confirmResult.confirmed) return;
+
+    excludedIds = new Set(confirmResult.excludedIds);
+    const effectiveAffected = affected.filter((a) => !excludedIds.has(a.assignment.id));
+
+    if (effectiveAffected.length === 0) {
+      // Nothing to rescue — record the capability-loss entry and return.
+      if (!liveModeInitiallyOn) activateLiveModeWithAnchor(anchor);
+      const baseId = `capch-${Date.now()}`;
+      currentSchedule.capabilityLoss = upsertCapabilityLoss(currentSchedule.capabilityLoss, {
+        id: baseId,
+        participantId,
+        lostCertifications,
+        start: windowStart,
+        end: windowEnd,
+        reason,
+        createdAt: new Date(),
+        anchorAtCreation: anchor,
+        appliedSwapCount: 0,
+      });
+      store.saveSchedule(currentSchedule);
+      engine.revalidateFull();
+      const refreshed = engine.getSchedule();
+      if (refreshed) {
+        currentSchedule = refreshed;
+        store.saveSchedule(currentSchedule);
+      }
+      renderAll();
+      showToast('שינוי הסמכה נרשם (אין שיבוצים להחלפה).', { type: 'info', duration: 4000 });
+      return;
+    }
+
+    await openLoadingOverlay();
+    try {
+      result = generateCapabilityChangePlans(
+        currentSchedule,
+        { participantId, lostCertifications, window: { start: windowStart, end: windowEnd }, reason },
+        anchor,
+        {
+          config,
+          scoreCtx,
+          disabledHC: engine.getDisabledHC(),
+          restRuleMap: engine.getRestRuleMap(),
+          certLabelResolver: engine.getCertLabelResolver(),
+          maxPlans: 3,
+          excludedAssignmentIds: excludedIds,
+          scheduleContext: engine.getScheduleContext(),
+        },
+      );
+    } finally {
+      closeLoadingOverlay();
+    }
+
+    const hasApplicablePlan = result.plans.some((p) => p.violations.length === 0 && !p.isPartial);
+    if (hasApplicablePlan) break;
+
+    const infeasibleSet = new Set(result.infeasibleAssignmentIds);
+    const unsolvable = result.affected.filter((a) => infeasibleSet.has(a.assignment.id));
+    const decision = await openInfeasibleModal({
+      participantName: participant.name,
+      affected: result.affected,
+      unsolvable,
+      timedOut: result.timedOut,
+      dayStartHour,
+      periodStart: schedule.periodStart,
+      headerIcon: '⚠️',
+      headerTitlePrefix: 'לא נמצאה תוכנית להחלפת הסמכה',
+    });
+    if (decision === 'cancel') return;
+    if (decision === 'narrow-window') {
+      void handleProfileCapabilityChange(participantId);
+      return;
+    }
+    preExcluded = new Set([...excludedIds, ...result.infeasibleAssignmentIds]);
+  }
+
+  openBatchPlansModal({
+    result,
+    schedule: currentSchedule,
+    participantName: participant.name,
+    headerIcon: '📜',
+    headerTitlePrefix: 'שינוי הסמכה — תוכניות',
+    onNarrowWindow: () => {
+      void handleProfileCapabilityChange(participantId);
+    },
+    onApply: (plan) => {
+      if (!currentSchedule || !engine) return;
+      if (!liveModeInitiallyOn) activateLiveModeWithAnchor(anchor);
+
+      const reverseSwaps = plan.swaps.map((sw) => {
+        const assn = currentSchedule?.assignments.find((a) => a.id === sw.assignmentId);
+        return {
+          assignmentId: sw.assignmentId,
+          prevParticipantId: assn?.participantId ?? sw.fromParticipantId ?? '',
+        };
+      });
+
+      const prevCapabilityLoss = currentSchedule.capabilityLoss;
+      const capLossEntryId = `capch-${Date.now()}`;
+      currentSchedule.capabilityLoss = upsertCapabilityLoss(prevCapabilityLoss, {
+        id: capLossEntryId,
+        participantId,
+        lostCertifications,
+        start: windowStart,
+        end: windowEnd,
+        reason,
+        createdAt: new Date(),
+        anchorAtCreation: anchor,
+        appliedSwapCount: plan.swaps.length,
+      });
+
+      const requests = plan.swaps.map((sw) => ({
+        assignmentId: sw.assignmentId,
+        newParticipantId: sw.toParticipantId,
+      }));
+      const applyResult = engine.swapParticipantChain(requests);
+      if (!applyResult.valid) {
+        currentSchedule.capabilityLoss = prevCapabilityLoss;
+        showToast('החלת התוכנית נכשלה — בוצע שחזור למצב הקודם.', { type: 'error', duration: 5000 });
+        return;
+      }
+
+      const updated = engine.getSchedule()!;
+      currentSchedule = updated;
+      store.saveSchedule(updated);
+      renderAll();
+      showCapabilityChangeAppliedStrip(participantId, plan.swaps.length, {
+        reverseSwaps,
+        prevCapabilityLoss,
+        capLossEntryId,
+      });
+    },
+  });
+}
+
+function showCapabilityChangeAppliedStrip(
+  participantId: string,
+  swapCount: number,
+  undoCtx: CapabilityChangeUndoContext,
+): void {
+  const strip = document.createElement('div');
+  strip.className = 'fsos-applied-strip';
+  const participant = currentSchedule?.participants.find((p) => p.id === participantId);
+  const name = participant?.name ?? '';
+  strip.innerHTML = `<span class="fsos-applied-strip-icon">✅</span>
+    <span class="fsos-applied-strip-text">הוחלה תוכנית עם <strong>${swapCount}</strong> החלפות. שינוי הסמכה ל־${escHtml(name)} נרשם.</span>
+    <button class="fsos-applied-strip-undo">בטל</button>
+    <button class="fsos-applied-strip-close" aria-label="סגור">✕</button>`;
+  document.body.appendChild(strip);
+  const remove = () => {
+    strip.classList.add('fsos-applied-strip--leaving');
+    setTimeout(() => strip.remove(), 250);
+  };
+  const timer = window.setTimeout(remove, 30000);
+  strip.querySelector('.fsos-applied-strip-close')?.addEventListener('click', () => {
+    window.clearTimeout(timer);
+    remove();
+  });
+  strip.querySelector('.fsos-applied-strip-undo')?.addEventListener('click', () => {
+    window.clearTimeout(timer);
+    remove();
+    undoCapabilityChange(undoCtx);
+  });
+}
+
+function undoCapabilityChange(undoCtx: CapabilityChangeUndoContext): void {
+  if (!currentSchedule || !engine) return;
+  const before = currentSchedule.capabilityLoss ?? [];
+  currentSchedule.capabilityLoss = before.filter((e) => e.id !== undoCtx.capLossEntryId);
+  const requests = undoCtx.reverseSwaps.map((s) => ({
+    assignmentId: s.assignmentId,
+    newParticipantId: s.prevParticipantId,
+  }));
+  const res = engine.swapParticipantChain(requests);
+  if (!res.valid) {
+    currentSchedule.capabilityLoss = undoCtx.prevCapabilityLoss;
+    showToast('ביטול התוכנית נכשל — המצב נשמר כפי שהיה.', { type: 'error', duration: 5000 });
+    return;
+  }
+  const updated = engine.getSchedule()!;
+  currentSchedule = updated;
+  store.saveSchedule(updated);
+  renderAll();
+  showToast('התוכנית בוטלה. השיבוצים ושינוי ההסמכה שוחזרו.', { type: 'info', duration: 4000 });
+}
+
+function handleRemoveCapabilityLossEntry(entryId: string): void {
+  if (!currentSchedule) return;
+  const before = currentSchedule.capabilityLoss ?? [];
+  const after = before.filter((e) => e.id !== entryId);
+  if (after.length === before.length) return;
+  // capabilityLoss is schedule-scoped; mutating it does NOT diverge from
+  // master-data, so _scheduleDirty must remain unchanged.
+  currentSchedule.capabilityLoss = after;
+  if (engine) engine.revalidateFull();
+  const refreshed = engine?.getSchedule();
+  if (refreshed) currentSchedule = refreshed;
+  store.saveSchedule(currentSchedule);
+  renderAll();
+  showToast('שינוי הסמכה הוסר.', { type: 'info', duration: 3000 });
 }
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -3813,6 +4149,8 @@ function renderAll(): void {
         onSosClick: handleProfileSos,
         onFutureSosClick: handleProfileFutureSos,
         onRemoveFutureSosEntry: handleRemoveFutureSosEntry,
+        onCapabilityChangeClick: handleProfileCapabilityChange,
+        onRemoveCapabilityLossEntry: handleRemoveCapabilityLossEntry,
       });
       // Wire task tooltip in profile view too
       wireTaskTooltip(root, () => currentSchedule);
@@ -3883,7 +4221,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.8</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.0.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>

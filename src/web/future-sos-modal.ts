@@ -32,6 +32,13 @@ export interface ConfirmContext {
   periodStart: Date;
   /** Assignment IDs to start unchecked (e.g. carried over from a prior infeasible attempt). */
   preExcludedIds?: ReadonlySet<string>;
+  /** Optional custom header (icon + title). Defaults to the FSOS branding. */
+  headerIcon?: string;
+  headerTitlePrefix?: string;
+  /** Optional override for the "assignments to replace" subtitle. */
+  affectedSectionTitle?: string;
+  /** Optional preamble HTML rendered above the window sentence. */
+  preambleHtml?: string;
 }
 
 /** Convert an absolute timestamp to its schedule-day index (1..periodDays),
@@ -66,16 +73,21 @@ export function openConfirmModal(ctx: ConfirmContext): Promise<ConfirmResult> {
 
     const windowSentence = renderWindowSentence(ctx.window, ctx.periodStart, ctx.dayStartHour);
 
+    const headerIcon = ctx.headerIcon ?? '🆘';
+    const headerTitlePrefix = ctx.headerTitlePrefix ?? 'אי זמינות עתידית — השפעה';
+    const affectedSectionTitle = ctx.affectedSectionTitle ?? 'שיבוצים שיש להחליף';
+
     backdrop.innerHTML = `
       <div class="gm-modal-dialog fsos-modal fsos-confirm-v2" role="dialog" aria-modal="true">
         <div class="gm-modal-header">
-          <span class="gm-modal-icon">🆘</span>
-          <span class="gm-modal-title">אי זמינות עתידית — השפעה · ${escHtml(ctx.participantName)}</span>
+          <span class="gm-modal-icon">${escHtml(headerIcon)}</span>
+          <span class="gm-modal-title">${escHtml(headerTitlePrefix)} · ${escHtml(ctx.participantName)}</span>
         </div>
+        ${ctx.preambleHtml ?? ''}
         <div class="fsos-window-sentence">${windowSentence}</div>
         ${
           ctx.affected.length > 0
-            ? `<h4 class="profile-sub-title fsos-affected-title">שיבוצים שיש להחליף</h4>${affectedHtml}`
+            ? `<h4 class="profile-sub-title fsos-affected-title">${escHtml(affectedSectionTitle)}</h4>${affectedHtml}`
             : '<p class="gm-modal-body fsos-empty-note">אין שיבוצים חופפים לחלון זה.</p>'
         }
         ${lockedHtml}
@@ -302,6 +314,9 @@ export interface InfeasibleContext {
   timedOut: boolean;
   dayStartHour: number;
   periodStart: Date;
+  /** Optional custom header (icon + title prefix). Defaults to the FSOS branding. */
+  headerIcon?: string;
+  headerTitlePrefix?: string;
 }
 
 /**
@@ -367,11 +382,14 @@ export function openInfeasibleModal(ctx: InfeasibleContext): Promise<InfeasibleD
 
     const retryLabel = hasUnsolvable ? 'הסר את הבלתי־פתירים ונסה שוב' : 'חזור והסר שיבוצים ידנית';
 
+    const infHeaderIcon = ctx.headerIcon ?? '⚠️';
+    const infHeaderTitlePrefix = ctx.headerTitlePrefix ?? 'לא נמצאה תוכנית החלפה תקפה';
+
     backdrop.innerHTML = `
       <div class="gm-modal-dialog fsos-modal fsos-infeasible-modal" role="dialog" aria-modal="true">
         <div class="gm-modal-header">
-          <span class="gm-modal-icon">⚠️</span>
-          <span class="gm-modal-title">לא נמצאה תוכנית החלפה תקפה · ${escHtml(ctx.participantName)}</span>
+          <span class="gm-modal-icon">${escHtml(infHeaderIcon)}</span>
+          <span class="gm-modal-title">${escHtml(infHeaderTitlePrefix)} · ${escHtml(ctx.participantName)}</span>
         </div>
         ${timeoutHtml}
         ${explainHtml}
@@ -431,13 +449,24 @@ function renderInfeasibleList(items: AffectedAssignment[], dayStartHour: number,
 
 // ─── Batch Plans ─────────────────────────────────────────────────────────────
 
+/** Structural subset of BatchRescueResult that the plans modal actually consumes.
+ *  Lets capability-change reuse the modal without depending on FSOS-specific
+ *  fields (`request`, `excludedInWindow`). */
+export type BatchPlansResultLike = Pick<
+  BatchRescueResult,
+  'affected' | 'infeasibleAssignmentIds' | 'plans' | 'timedOut'
+>;
+
 export interface BatchPlansContext {
-  result: BatchRescueResult;
+  result: BatchPlansResultLike;
   schedule: Schedule;
   participantName: string;
   onApply: (plan: BatchRescuePlan) => void;
   /** Invoked when the user taps "צמצם חלון" on the infeasibility banner. */
   onNarrowWindow?: () => void;
+  /** Optional custom header (icon + title prefix). Defaults to FSOS branding. */
+  headerIcon?: string;
+  headerTitlePrefix?: string;
 }
 
 interface PlanVerdict {
@@ -501,11 +530,14 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
     plansHtml = `<div class="fsos-plans-stack">${cards}</div>`;
   }
 
+  const plansHeaderIcon = ctx.headerIcon ?? '🆘';
+  const plansHeaderTitlePrefix = ctx.headerTitlePrefix ?? 'אי זמינות עתידית — תוכניות';
+
   backdrop.innerHTML = `
     <div class="gm-modal-dialog fsos-modal fsos-plans-v2 ${isTouch ? 'fsos-plans--touch' : ''}" role="dialog" aria-modal="true">
       <div class="gm-modal-header">
-        <span class="gm-modal-icon">🆘</span>
-        <span class="gm-modal-title">אי זמינות עתידית — תוכניות · ${escHtml(ctx.participantName)}</span>
+        <span class="gm-modal-icon">${escHtml(plansHeaderIcon)}</span>
+        <span class="gm-modal-title">${escHtml(plansHeaderTitlePrefix)} · ${escHtml(ctx.participantName)}</span>
       </div>
       ${timeoutHtml}
       ${warningHtml}
@@ -689,7 +721,7 @@ function renderTimeoutBanner(hasPartialPlans: boolean): string {
   </div>`;
 }
 
-function renderInfeasibleWarning(result: BatchRescueResult): string {
+function renderInfeasibleWarning(result: BatchPlansResultLike): string {
   const lines: string[] = [];
   for (const aId of result.infeasibleAssignmentIds) {
     const aff = result.affected.find((a) => a.assignment.id === aId);

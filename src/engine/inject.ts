@@ -749,6 +749,7 @@ function runStage(opts: StageOpts): StageOutput {
       undefined,
       slotCtx.extraUnavailability,
       slotCtx.scheduleContext,
+      slotCtx.extraCapabilityLoss,
     );
 
     const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
@@ -1111,6 +1112,7 @@ function diagnoseUnfillableSlotAtFinalState(
       restRuleMap: slotCtx.restRuleMap,
       scheduleContext: slotCtx.scheduleContext,
       extraUnavailability: slotCtx.extraUnavailability,
+      extraCapabilityLoss: slotCtx.extraCapabilityLoss,
     });
     if (code) bump(code);
   }
@@ -1338,6 +1340,14 @@ export function searchInjectionPlans(
     start: u.start,
     end: u.end,
   }));
+  const extraCapabilityLoss = schedule.capabilityLoss?.length
+    ? schedule.capabilityLoss.map((c) => ({
+        participantId: c.participantId,
+        lostCertifications: c.lostCertifications,
+        start: c.start,
+        end: c.end,
+      }))
+    : undefined;
 
   const baselineScore = computeScheduleScore(
     schedule.tasks,
@@ -1361,6 +1371,7 @@ export function searchInjectionPlans(
     scoreCtx,
     baselineComposite: baselineScore.compositeScore,
     extraUnavailability,
+    extraCapabilityLoss,
     excludeParticipantIds: new Set(),
   };
 

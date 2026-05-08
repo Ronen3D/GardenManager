@@ -108,6 +108,18 @@ export interface SlotEnumerationContext {
   baselineComposite: number;
   extraUnavailability: Array<{ participantId: string; start: Date; end: Date }>;
   /**
+   * Schedule-scoped capability overrides. When a candidate's task overlaps
+   * a matching entry, the listed certs are treated as absent — HC-2 / HC-11
+   * see the override during eligibility checks. Drives the mid-schedule
+   * capability-change flow.
+   */
+  extraCapabilityLoss?: Array<{
+    participantId: string;
+    lostCertifications: string[];
+    start: Date;
+    end: Date;
+  }>;
+  /**
    * Participants to exclude entirely from depth-1/2/3 candidate roles
    * (e.g. the focal unavailable participant of a Future SOS batch).
    * They can still appear as the donor's displaced participant.
@@ -281,6 +293,7 @@ function depth1(
         restRuleMap: ctx.restRuleMap,
         scheduleContext: ctx.scheduleContext,
         extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
       })
     )
       continue;
@@ -356,6 +369,7 @@ function depth2(
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -381,6 +395,7 @@ function depth2(
             restRuleMap: ctx.restRuleMap,
             scheduleContext: ctx.scheduleContext,
             extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
           })
         )
           continue;
@@ -475,6 +490,7 @@ function depth3(
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -522,6 +538,7 @@ function depth3(
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
             })
           )
             continue;
@@ -557,6 +574,7 @@ function depth3(
                 restRuleMap: ctx.restRuleMap,
                 scheduleContext: ctx.scheduleContext,
                 extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
               })
             )
               continue;
@@ -678,6 +696,7 @@ function depth4(
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -722,6 +741,7 @@ function depth4(
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
             })
           )
             continue;
@@ -772,6 +792,7 @@ function depth4(
                   restRuleMap: ctx.restRuleMap,
                   scheduleContext: ctx.scheduleContext,
                   extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
                 })
               )
                 continue;
@@ -807,6 +828,7 @@ function depth4(
                     restRuleMap: ctx.restRuleMap,
                     scheduleContext: ctx.scheduleContext,
                     extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
                   })
                 )
                   continue;
@@ -939,6 +961,7 @@ function depth5(
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -983,6 +1006,7 @@ function depth5(
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
             })
           )
             continue;
@@ -1033,6 +1057,7 @@ function depth5(
                   restRuleMap: ctx.restRuleMap,
                   scheduleContext: ctx.scheduleContext,
                   extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
                 })
               )
                 continue;
@@ -1087,6 +1112,7 @@ function depth5(
                       restRuleMap: ctx.restRuleMap,
                       scheduleContext: ctx.scheduleContext,
                       extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
                     })
                   )
                     continue;
@@ -1125,6 +1151,7 @@ function depth5(
                         restRuleMap: ctx.restRuleMap,
                         scheduleContext: ctx.scheduleContext,
                         extraUnavailability: ctx.extraUnavailability,
+        extraCapabilityLoss: ctx.extraCapabilityLoss,
                       })
                     )
                       continue;

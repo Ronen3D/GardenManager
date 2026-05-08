@@ -160,7 +160,7 @@ export function findAffectedAssignments(
 
 type Composition = { chains: CandidateChain[]; deltaSum: number };
 
-function applyCompositionToAssignments(schedule: Schedule, chains: CandidateChain[]): Assignment[] {
+export function applyCompositionToAssignments(schedule: Schedule, chains: CandidateChain[]): Assignment[] {
   const swapMap = new Map<string, string>();
   for (const c of chains) {
     for (const s of c.swaps) swapMap.set(s.assignmentId, s.toParticipantId);
@@ -176,7 +176,7 @@ function applyCompositionToAssignments(schedule: Schedule, chains: CandidateChai
  * for plan ID stability (UI state, test equivalence) without pulling in a
  * real hash dep. Independent of time → identical inputs produce identical IDs.
  */
-function hashSwaps(swaps: RescueSwap[]): string {
+export function hashSwaps(swaps: RescueSwap[]): string {
   let h = 2166136261; // FNV-1a offset basis
   const key = swaps
     .map((s) => `${s.assignmentId}>${s.toParticipantId}`)
@@ -200,7 +200,7 @@ function hashSwaps(swaps: RescueSwap[]): string {
  * two plans putting the same people on the same tasks score ~1.0 and get
  * demoted. λ = 0.3 keeps quality primary but breaks tie-cluster dominance.
  */
-function selectDiversePlans(ranked: BatchRescuePlan[], k: number, lambda = 0.3): BatchRescuePlan[] {
+export function selectDiversePlans(ranked: BatchRescuePlan[], k: number, lambda = 0.3): BatchRescuePlan[] {
   if (ranked.length <= k) return ranked;
   const keys = ranked.map((p) => new Set(p.swaps.map((s) => `${s.toParticipantId}|${s.taskId}`)));
   const picked: number[] = [0];
@@ -232,7 +232,7 @@ function selectDiversePlans(ranked: BatchRescuePlan[], k: number, lambda = 0.3):
   return picked.map((i) => ranked[i]);
 }
 
-function mergeSwaps(chains: CandidateChain[]): RescueSwap[] {
+export function mergeSwaps(chains: CandidateChain[]): RescueSwap[] {
   const merged: RescueSwap[] = [];
   const seen = new Set<string>();
   for (const c of chains) {
@@ -245,7 +245,7 @@ function mergeSwaps(chains: CandidateChain[]): RescueSwap[] {
   return merged;
 }
 
-function buildPerParticipantChanges(
+export function buildPerParticipantChanges(
   baseline: Assignment[],
   candidate: Assignment[],
   touchedAssignmentIds: Set<string>,
@@ -294,12 +294,12 @@ function pairKey(participantId: string, taskId: string): string {
   return `${participantId}|${taskId}`;
 }
 
-interface DfsOutcome {
+export interface DfsOutcome {
   compositions: Composition[];
   timedOut: boolean;
 }
 
-function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, deadline: number): DfsOutcome {
+export function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, deadline: number): DfsOutcome {
   // Suffix "best remaining" sums, for admissible upper-bound pruning.
   const suffixBest: number[] = new Array(candidatesPerSlot.length + 1).fill(0);
   for (let i = candidatesPerSlot.length - 1; i >= 0; i--) {

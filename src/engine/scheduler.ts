@@ -420,6 +420,7 @@ export class SchedulingEngine {
       restRuleSnapshot: Object.fromEntries(this.restRuleMap ?? new Map()),
       certLabelSnapshot: { ...this._certLabelSnapshot },
       scheduleUnavailability: [],
+      capabilityLoss: [],
     };
 
     this.currentSchedule = schedule;
@@ -561,6 +562,7 @@ export class SchedulingEngine {
       this.certLabelResolver,
       this.currentSchedule.scheduleUnavailability ?? [],
       this.getScheduleContext(),
+      this.currentSchedule.capabilityLoss,
     );
   }
 
@@ -584,6 +586,7 @@ export class SchedulingEngine {
       this.certLabelResolver,
       this.currentSchedule.scheduleUnavailability ?? [],
       this.getScheduleContext(),
+      this.currentSchedule.capabilityLoss,
     );
     const soft = collectSoftWarnings(tasks, participants, assignments, this.config);
     const score = computeScheduleScore(

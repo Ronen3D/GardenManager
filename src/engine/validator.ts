@@ -46,6 +46,12 @@ export function fullValidate(
   certLabelResolver?: (certId: string) => string,
   scheduleContext?: ScheduleContext,
   extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
+  extraCapabilityLoss?: Array<{
+    participantId: string;
+    lostCertifications: string[];
+    start: Date;
+    end: Date;
+  }>,
 ): FullValidationResult {
   const hard = validateHardConstraints(
     tasks,
@@ -56,6 +62,7 @@ export function fullValidate(
     certLabelResolver,
     extraUnavailability,
     scheduleContext,
+    extraCapabilityLoss,
   );
   const warnings = collectSoftWarnings(tasks, participants, assignments);
 
@@ -91,6 +98,12 @@ export function previewSwap(
   certLabelResolver?: (certId: string) => string,
   scheduleContext?: ScheduleContext,
   extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
+  extraCapabilityLoss?: Array<{
+    participantId: string;
+    lostCertifications: string[];
+    start: Date;
+    end: Date;
+  }>,
 ): FullValidationResult {
   // Create a temporary copy with the swap applied
   const tempAssignments = assignments.map((a) => {
@@ -109,6 +122,7 @@ export function previewSwap(
     certLabelResolver,
     scheduleContext,
     extraUnavailability,
+    extraCapabilityLoss,
   );
 }
 
@@ -147,12 +161,62 @@ export interface EligibilityOpts {
    */
   extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>;
   /**
+   * Schedule-scoped capability changes, layered on top of participant
+   * master-data certifications. Drives the mid-schedule capability change
+   * flow: when a task's timeBlock overlaps one of these windows, the listed
+   * certs are treated as absent for the participant — HC-2 rejects them
+   * from required-cert slots while HC-11 allows them into previously-
+   * forbidden slots (the cert is no longer present).
+   */
+  extraCapabilityLoss?: Array<{
+    participantId: string;
+    lostCertifications: string[];
+    start: Date;
+    end: Date;
+  }>;
+  /**
    * Schedule window context needed to evaluate weekly `dateUnavailability`
    * rules in operational-day semantics (see `ScheduleContext`). When omitted,
    * the recurring-rule check is skipped and HC-3 relies solely on
    * `participant.availability` and `extraUnavailability`.
    */
   scheduleContext?: ScheduleContext;
+}
+
+/**
+ * Build the effective certification set for `p` evaluated at `task.timeBlock`,
+ * subtracting any `extraCapabilityLoss` entries that overlap.
+ *
+ * Returns the participant's own `certifications` array directly (no allocation)
+ * when there are no overlapping losses — keeps the hot path zero-cost. Only
+ * allocates a Set on the cold path where a loss actually applies.
+ */
+export function effectiveCertsForTask(
+  participant: Participant,
+  task: Task,
+  losses: NonNullable<EligibilityOpts['extraCapabilityLoss']> | undefined,
+): { has: (cert: string) => boolean } {
+  if (!losses || losses.length === 0) {
+    return {
+      has: (c) => participant.certifications.includes(c),
+    };
+  }
+  let lost: Set<string> | null = null;
+  for (const loss of losses) {
+    if (loss.participantId !== participant.id) continue;
+    if (!blocksOverlap(task.timeBlock, { start: loss.start, end: loss.end })) continue;
+    if (!lost) lost = new Set();
+    for (const c of loss.lostCertifications) lost.add(c);
+  }
+  if (!lost) {
+    return {
+      has: (c) => participant.certifications.includes(c),
+    };
+  }
+  const lostFinal = lost;
+  return {
+    has: (c) => participant.certifications.includes(c) && !lostFinal.has(c),
+  };
 }
 
 /**
@@ -179,10 +243,13 @@ function checkEligibility(
   opts?: EligibilityOpts,
 ): RejectionCode | null {
   const disabled = opts?.disabledHC;
+  // Build the effective cert set once — accounts for snapshot-scoped
+  // capability losses overlapping this task. Cheap pass-through when no
+  // losses apply.
+  const effective = effectiveCertsForTask(participant, task, opts?.extraCapabilityLoss);
 
   // HC-11: Forbidden certification check (per-slot)
-  if (!disabled?.has('HC-11') && slot.forbiddenCertifications?.some((c) => participant.certifications.includes(c)))
-    return 'HC-11';
+  if (!disabled?.has('HC-11') && slot.forbiddenCertifications?.some((c) => effective.has(c))) return 'HC-11';
 
   // HC-1: Level check — single source of truth in isLevelSatisfied()
   if (!disabled?.has('HC-1') && !isLevelSatisfied(participant.level, slot)) return 'HC-1';
@@ -190,7 +257,7 @@ function checkEligibility(
   // HC-2: Certification check
   if (!disabled?.has('HC-2')) {
     for (const cert of slot.requiredCertifications) {
-      if (!participant.certifications.includes(cert)) return 'HC-2';
+      if (!effective.has(cert)) return 'HC-2';
     }
   }
 
@@ -328,6 +395,7 @@ export function getEligibleParticipantsForSlot(
   restRuleMap?: Map<string, number>,
   extraUnavailability?: Array<{ participantId: string; start: Date; end: Date }>,
   scheduleContext?: ScheduleContext,
+  extraCapabilityLoss?: EligibilityOpts['extraCapabilityLoss'],
 ): Participant[] {
   const slot = task.slots.find((s) => s.slotId === slotId);
   if (!slot) return [];
@@ -355,6 +423,7 @@ export function getEligibleParticipantsForSlot(
       disabledHC,
       restRuleMap,
       extraUnavailability,
+      extraCapabilityLoss,
       scheduleContext,
     });
   });

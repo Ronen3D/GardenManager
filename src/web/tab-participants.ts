@@ -40,7 +40,7 @@ function parseWorkloadMultiplier(raw: string | undefined): number {
 }
 
 /** Compact display for a workload multiplier (e.g. 0.5, 1.25, 2). */
-function formatWorkloadMultiplier(m: number): string {
+export function formatWorkloadMultiplier(m: number): string {
   return Number(m.toFixed(2)).toString();
 }
 
