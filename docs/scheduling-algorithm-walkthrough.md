@@ -260,8 +260,6 @@ Within a tier, two further nudges apply:
 - A small bottleneck-based bias: a task whose tightest slot has fewer eligible people sorts a step earlier.
 - A random tiebreaker per attempt, which gives the multi-attempt mechanism room to explore.
 
-A user can also override the priority of any task explicitly through configuration; that explicit value takes precedence over the structural calculation.
-
 ### 5.2 Ordering the slots within a task (most-constrained first)
 
 Within a single task, the system fills slots from most-restrictive level downward. A slot accepting only the most senior level is filled before a slot accepting any level, because the senior pool is smaller. This avoids the classic mistake of using a senior on a slot that also accepted a junior, leaving the senior-only slot empty later.
@@ -273,14 +271,14 @@ For every slot, the system collects every participant who passes every active ha
 The sort is a single composite comparator with the following priorities, top to bottom:
 
 1. **For non-same-group tasks**: prefer participants whose level is at *normal* priority for this slot over those whose level is marked *low-priority*. A low-priority participant is a last resort, used only when no normal-priority candidate exists.
-2. **Workload fairness (flat, blended)**: prefer participants who currently have less accumulated effective hours, with their hours-on-this-operational-day weighted twice as heavily as their total accumulated hours. This keeps each day balanced as the schedule fills, while still respecting overall fairness. The greedy phase deliberately uses *flat* hours rather than proportional-to-capacity hours; proportional fairness is the local-search phase's job. Greedy's first job is to fill slots, not to optimise.
-3. **Exact level match over overqualified**: when both tie on workload, the system prefers a participant whose level exactly matches one of the slot's accepted levels rather than an overqualified one. An L4 senior should not be burned on a slot that also accepts L0s, when L0s are available.
-4. **Resource conservation**: among overqualified candidates, prefer the lower level (don't waste seniority).
-5. **Same-group protection**: when same-group tasks exist, participants from "tight" groups (groups with fewer members eligible for same-group tasks) are slightly deprioritised here, so they remain available when their group is needed. This is a tiebreaker only — it never overrides workload or eligibility.
-6. **Task-name preference**: a small nudge toward participants who have marked this task as their preferred type, away from participants who marked it as less-preferred.
-7. **Random**: if everything else ties, a per-attempt random key breaks the tie. This is what gives multi-attempt diversity.
+2. **Workload fairness (blended, capacity-proportional)**: prefer participants who currently have the most spare capacity. The score reads in utilization space — accumulated hours divided by total available capacity for the schedule, plus hours-on-this-operational-day divided by available capacity for that day, with the day axis weighted twice as heavily as the period axis. This keeps each day balanced while respecting overall fairness, and matches the shape of the SC-3/SC-8 capacity-proportional fairness targets used in the scoring phase, so the greedy result is already close to the proportional optimum that the local-search phase polishes further.
+3. **Same-group protection**: when same-group tasks exist, participants from "tight" groups (groups with fewer members eligible for same-group tasks) are slightly deprioritised here, so they remain available when their group is needed. This is a tiebreaker only — it never overrides workload or eligibility.
+4. **Task-name preference**: a small nudge toward participants who have marked this task as their preferred type, away from participants who marked it as less-preferred.
+5. **Random**: if everything else ties, a per-attempt random key breaks the tie. This is what gives multi-attempt diversity.
 
-For **same-group tasks**, the comparator changes slightly: exact level match comes first (because cross-group fill is impossible, so we cannot afford to waste the limited group); then blended workload; then how many same-group tasks the participant has *already* been assigned (to alternate seniors naturally instead of letting one person hoard the same-group duty); then level conservation; then preference; then random.
+There is no separate "exact level match" or "resource conservation" step in the comparator. HC-1 already enforces that every candidate's level appears in the slot's `acceptableLevels` list, so by the time the sort runs there are no "overqualified" candidates to deprioritise. When a slot is configured to accept seniors only as a last resort, that is expressed by marking the senior level with `lowPriority` on the slot — and the very first comparator step (item 1) already pushes those candidates to the back of the queue.
+
+For **same-group tasks**, the comparator is shorter and skips the lowPriority and same-group-protection steps: blended workload comes first; then how many same-group tasks the participant has *already* been assigned (to alternate seniors naturally instead of letting one person hoard the same-group duty); then a tiebreak preferring the lower level when the slot accepts multiple levels (e.g. a slot listing both L3 and L4); then preference; then random.
 
 ### 5.4 Filling same-group tasks
 

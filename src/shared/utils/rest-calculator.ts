@@ -147,11 +147,13 @@ export function computeRestFromAssignments(
   participantId: string,
   pAssignments: Assignment[],
   taskMap: Map<string, Task>,
+  phantomTaskIds?: Set<string>,
 ): ParticipantRestProfile {
   const loadBearingBlocks: TaggedBlock[] = [];
   let totalWorkHours = 0;
 
   for (const a of pAssignments) {
+    if (phantomTaskIds?.has(a.taskId)) continue;
     const task = taskMap.get(a.taskId);
     if (!task) continue;
     if (computeTaskEffectiveHours(task) === 0) continue;
@@ -194,12 +196,13 @@ export function computeAllRestProfiles(
   tasks: Task[],
   prebuiltTaskMap?: Map<string, Task>,
   assignmentsByParticipant?: Map<string, Assignment[]>,
+  phantomTaskIds?: Set<string>,
 ): Map<string, ParticipantRestProfile> {
   const profiles = new Map<string, ParticipantRestProfile>();
   if (prebuiltTaskMap && assignmentsByParticipant) {
     for (const p of participants) {
       const pAssignments = assignmentsByParticipant.get(p.id) || [];
-      profiles.set(p.id, computeRestFromAssignments(p.id, pAssignments, prebuiltTaskMap));
+      profiles.set(p.id, computeRestFromAssignments(p.id, pAssignments, prebuiltTaskMap, phantomTaskIds));
     }
   } else {
     for (const p of participants) {

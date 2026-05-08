@@ -65,6 +65,7 @@ export function workloadImbalanceSplit(
   prebuiltTaskMap?: Map<string, Task>,
   assignmentsByParticipant?: Map<string, Assignment[]>,
   capacities?: Map<string, ParticipantCapacity>,
+  phantomTaskIds?: Set<string>,
 ): {
   l0Penalty: number;
   seniorPenalty: number;
@@ -85,6 +86,7 @@ export function workloadImbalanceSplit(
     if (assignmentsByParticipant) {
       const pAssignments = assignmentsByParticipant.get(p.id) || [];
       for (const a of pAssignments) {
+        if (phantomTaskIds?.has(a.taskId)) continue;
         const task = taskMap.get(a.taskId);
         if (!task) continue;
         effectiveHours += computeTaskEffectiveHours(task);
@@ -92,6 +94,7 @@ export function workloadImbalanceSplit(
     } else {
       for (const a of assignments) {
         if (a.participantId !== p.id) continue;
+        if (phantomTaskIds?.has(a.taskId)) continue;
         const task = taskMap.get(a.taskId);
         if (!task) continue;
         effectiveHours += computeTaskEffectiveHours(task);
@@ -198,6 +201,7 @@ export function dailyWorkloadImbalance(
   assignmentsByParticipant?: Map<string, Assignment[]>,
   capacities?: Map<string, ParticipantCapacity>,
   dayStartHour: number = 5,
+  phantomTaskIds?: Set<string>,
 ): { dailyPerParticipantStdDev: number; dailyGlobalStdDev: number } {
   const taskMap = prebuiltTaskMap ?? new Map(tasks.map((t) => [t.id, t]));
 
@@ -232,6 +236,7 @@ export function dailyWorkloadImbalance(
       : assignments.filter((a) => a.participantId === p.id);
 
     for (const a of pAssignments) {
+      if (phantomTaskIds?.has(a.taskId)) continue;
       const task = taskMap.get(a.taskId);
       if (!task) continue;
       const dk = operationalDateKey(task.timeBlock.start, dayStartHour);
@@ -510,6 +515,7 @@ export function computeTaskNamePreferencePenalty(
   config: SchedulerConfig,
   taskMap: Map<string, Task>,
   assignmentsByParticipant: Map<string, Assignment[]>,
+  phantomTaskIds?: Set<string>,
 ): number {
   if (
     config.taskNamePreferencePenalty <= 0 &&
@@ -526,6 +532,7 @@ export function computeTaskNamePreferencePenalty(
     // Avoidance: per-assignment penalty for less-preferred task name
     if (p.lessPreferredTaskName && config.taskNameAvoidancePenalty > 0) {
       for (const a of pAssigns) {
+        if (phantomTaskIds?.has(a.taskId)) continue;
         const task = taskMap.get(a.taskId);
         if (task && task.sourceName === p.lessPreferredTaskName) {
           penalty += config.taskNameAvoidancePenalty;
@@ -536,6 +543,7 @@ export function computeTaskNamePreferencePenalty(
     // Preference: binary penalty if no assignment to preferred name
     if (p.preferredTaskName && config.taskNamePreferencePenalty > 0) {
       const hasPreferred = pAssigns.some((a) => {
+        if (phantomTaskIds?.has(a.taskId)) return false;
         const task = taskMap.get(a.taskId);
         return task != null && task.sourceName === p.preferredTaskName;
       });
@@ -547,6 +555,7 @@ export function computeTaskNamePreferencePenalty(
     // Preference bonus: per-assignment reward for preferred task name
     if (p.preferredTaskName && config.taskNamePreferenceBonus > 0) {
       for (const a of pAssigns) {
+        if (phantomTaskIds?.has(a.taskId)) continue;
         const task = taskMap.get(a.taskId);
         if (task && task.sourceName === p.preferredTaskName) {
           penalty -= config.taskNamePreferenceBonus;
@@ -577,6 +586,15 @@ export interface ScoreContext {
   notWithPairs?: Map<string, Set<string>>;
   /** Hour (0-23) defining the operational day boundary (default 5) */
   dayStartHour?: number;
+  /**
+   * Optional: phantom task IDs to exclude from scoring iteration. The optimizer
+   * seeds `assignmentsByParticipant` and `taskMap` with phantom assignments so
+   * HC-5/12/14/15 see them across schedule boundaries; scoring must skip those
+   * same entries to keep SA-internal score == final reported score. HC checks
+   * read `byParticipant`/`taskMap` directly and never touch this field.
+   * Absent / empty → behave as before (no filtering).
+   */
+  phantomTaskIds?: Set<string>;
 }
 
 /**
@@ -626,7 +644,14 @@ export function computeScheduleScore(
   }
 
   // Rest metrics — pass pre-built data to avoid P redundant taskMap builds
-  const profiles = computeAllRestProfiles(participants, assignments, tasks, taskMap, byParticipant);
+  const profiles = computeAllRestProfiles(
+    participants,
+    assignments,
+    tasks,
+    taskMap,
+    byParticipant,
+    ctx?.phantomTaskIds,
+  );
   const fairness = computeRestFairness(profiles);
 
   // Per-gap rest gradient: Σ √gap across all participants. Concave, target-free,
@@ -637,7 +662,15 @@ export function computeScheduleScore(
   for (const prof of profiles.values()) restPerGapBonus += prof.restPerGapBonus;
 
   // Split-pool workload stats — pass pre-built data + capacities
-  const wlSplit = workloadImbalanceSplit(participants, assignments, tasks, taskMap, byParticipant, ctx?.capacities);
+  const wlSplit = workloadImbalanceSplit(
+    participants,
+    assignments,
+    tasks,
+    taskMap,
+    byParticipant,
+    ctx?.capacities,
+    ctx?.phantomTaskIds,
+  );
 
   // Reuse the combined std-dev already computed inside workloadImbalanceSplit
   // to avoid a redundant O(P×A) effective-hours scan.
@@ -661,7 +694,13 @@ export function computeScheduleScore(
       : 0;
 
   // SC-10: Task name preference penalty
-  const taskPrefPenalty = computeTaskNamePreferencePenalty(participants, config, taskMap, byParticipant);
+  const taskPrefPenalty = computeTaskNamePreferencePenalty(
+    participants,
+    config,
+    taskMap,
+    byParticipant,
+    ctx?.phantomTaskIds,
+  );
 
   const totalPenalty = lowPriorityPenalty + notWithPenalty + taskPrefPenalty;
 
@@ -674,6 +713,7 @@ export function computeScheduleScore(
     byParticipant,
     ctx?.capacities,
     ctx?.dayStartHour ?? 5,
+    ctx?.phantomTaskIds,
   );
 
   // Composite score
@@ -752,6 +792,14 @@ export class IncrementalScorer {
   private config: SchedulerConfig;
   private taskMap: Map<string, Task>;
   private assignmentsByParticipant: Map<string, Assignment[]>;
+  /**
+   * Phantom task IDs to skip during scoring iteration. Phantoms are seeded
+   * into `taskMap` and `assignmentsByParticipant` for cross-boundary HC checks
+   * but must NOT contribute to score components (l0StdDev, minRest, penalties)
+   * or the optimizer would optimise a different objective than the one finally
+   * reported. Empty set disables filtering.
+   */
+  private phantomTaskIds: Set<string> = new Set();
   private capacities: Map<string, ParticipantCapacity>;
   private dayList: string[];
   private _dayStartHour = 5;
@@ -843,6 +891,7 @@ export class IncrementalScorer {
     scorer.pMap = ctx.pMap;
     scorer.config = config;
     scorer.taskMap = ctx.taskMap;
+    scorer.phantomTaskIds = ctx.phantomTaskIds ?? new Set();
     scorer.assignmentsByParticipant = ctx.assignmentsByParticipant ?? new Map();
     scorer.capacities = ctx.capacities ?? new Map();
 
@@ -898,6 +947,7 @@ export class IncrementalScorer {
       let pPenalty = 0;
       const pAs = scorer.assignmentsByParticipant.get(p.id) || [];
       for (const a of pAs) {
+        if (scorer.phantomTaskIds.has(a.taskId)) continue;
         const task = ctx.taskMap.get(a.taskId);
         if (!task) continue;
         const slot = task.slots.find((s) => s.slotId === a.slotId);
@@ -973,6 +1023,7 @@ export class IncrementalScorer {
     let penalty = 0;
     const pAssigns = this.assignmentsByParticipant.get(pid) || [];
     for (const a of pAssigns) {
+      if (this.phantomTaskIds.has(a.taskId)) continue;
       const task = this.taskMap.get(a.taskId);
       if (!task?.togethernessRelevant) continue;
       // Find my sub-team group
@@ -1009,6 +1060,7 @@ export class IncrementalScorer {
     // Avoidance: per-assignment penalty
     if (p.lessPreferredTaskName && this.config.taskNameAvoidancePenalty > 0) {
       for (const a of pAssigns) {
+        if (this.phantomTaskIds.has(a.taskId)) continue;
         const task = this.taskMap.get(a.taskId);
         if (task && task.sourceName === p.lessPreferredTaskName) {
           penalty += this.config.taskNameAvoidancePenalty;
@@ -1019,6 +1071,7 @@ export class IncrementalScorer {
     // Preference: binary penalty
     if (p.preferredTaskName && this.config.taskNamePreferencePenalty > 0) {
       const hasPreferred = pAssigns.some((a) => {
+        if (this.phantomTaskIds.has(a.taskId)) return false;
         const task = this.taskMap.get(a.taskId);
         return task != null && task.sourceName === p.preferredTaskName;
       });
@@ -1030,6 +1083,7 @@ export class IncrementalScorer {
     // Preference bonus: per-assignment reward for preferred task name
     if (p.preferredTaskName && this.config.taskNamePreferenceBonus > 0) {
       for (const a of pAssigns) {
+        if (this.phantomTaskIds.has(a.taskId)) continue;
         const task = this.taskMap.get(a.taskId);
         if (task && task.sourceName === p.preferredTaskName) {
           penalty -= this.config.taskNamePreferenceBonus;
@@ -1045,6 +1099,7 @@ export class IncrementalScorer {
     const dailyLoads = new Map<string, number>();
 
     for (const a of pAssignments) {
+      if (this.phantomTaskIds.has(a.taskId)) continue;
       const task = this.taskMap.get(a.taskId);
       if (!task) continue;
       const eff = computeTaskEffectiveHours(task);
@@ -1053,8 +1108,8 @@ export class IncrementalScorer {
       dailyLoads.set(dk, (dailyLoads.get(dk) || 0) + eff);
     }
 
-    // Rest profile
-    const restProfile = computeRestFromAssignments(p.id, pAssignments, this.taskMap);
+    // Rest profile (phantom-blind: phantom assignments must not influence rest scoring)
+    const restProfile = computeRestFromAssignments(p.id, pAssignments, this.taskMap, this.phantomTaskIds);
 
     // Daily std-dev for this participant — capacity-proportional target.
     // Each day's expected load scales with (cap_d / totalCap_p) so a participant
@@ -1260,6 +1315,7 @@ export class IncrementalScorer {
         let penalty = 0;
         const pAs = this.assignmentsByParticipant.get(pid) || [];
         for (const a of pAs) {
+          if (this.phantomTaskIds.has(a.taskId)) continue;
           const task = this.taskMap.get(a.taskId);
           if (!task) continue;
           const slot = task.slots.find((s) => s.slotId === a.slotId);
@@ -1288,8 +1344,12 @@ export class IncrementalScorer {
       [pidB, this._perParticipantNotWithPenalty.get(pidB) || 0],
     ];
     if (this._notWithPairs.size > 0 && this.config.notWithPenalty > 0) {
-      const aInvolvesTogetherness = aAssigns.some((a) => this.taskMap.get(a.taskId)?.togethernessRelevant);
-      const bInvolvesTogetherness = bAssigns.some((a) => this.taskMap.get(a.taskId)?.togethernessRelevant);
+      const aInvolvesTogetherness = aAssigns.some(
+        (a) => !this.phantomTaskIds.has(a.taskId) && this.taskMap.get(a.taskId)?.togethernessRelevant,
+      );
+      const bInvolvesTogetherness = bAssigns.some(
+        (a) => !this.phantomTaskIds.has(a.taskId) && this.taskMap.get(a.taskId)?.togethernessRelevant,
+      );
       if (
         aInvolvesTogetherness ||
         bInvolvesTogetherness ||
@@ -1299,10 +1359,12 @@ export class IncrementalScorer {
         // Build per-task index for the two participants' tasks
         const byTask = new Map<string, Assignment[]>();
         for (const a of [...aAssigns, ...bAssigns]) {
+          if (this.phantomTaskIds.has(a.taskId)) continue;
           if (byTask.has(a.taskId)) continue;
           const allTaskAssigns: Assignment[] = [];
           for (const [, pAssigns] of this.assignmentsByParticipant) {
             for (const pa of pAssigns) {
+              if (this.phantomTaskIds.has(pa.taskId)) continue;
               if (pa.taskId === a.taskId) allTaskAssigns.push(pa);
             }
           }
@@ -1341,10 +1403,12 @@ export class IncrementalScorer {
         for (const coPid of affectedCoParticipants) {
           const coAssigns = this.assignmentsByParticipant.get(coPid) || [];
           for (const a of coAssigns) {
+            if (this.phantomTaskIds.has(a.taskId)) continue;
             if (byTask.has(a.taskId)) continue;
             const allTaskAssigns: Assignment[] = [];
             for (const [, pAs] of this.assignmentsByParticipant) {
               for (const pa of pAs) {
+                if (this.phantomTaskIds.has(pa.taskId)) continue;
                 if (pa.taskId === a.taskId) allTaskAssigns.push(pa);
               }
             }

@@ -146,10 +146,11 @@ export function resetAssignmentCounter(): void {
  * Check if a participant is eligible for a specific slot in a task,
  * considering current assignments (no double-booking).
  */
-// ─── BENCH-ONLY HOOKS (TEMPORARY — for diversity benchmarking) ──────────────
-// Reverted after benchmarking. Enable bench-diversity.ts to override SA initial
+// ─── Benchmark hooks ────────────────────────────────────────────────────────
+// Module-level state that lets benchmark scripts override SA initial
 // temperature, slot ordering, and per-attempt jitter without restructuring
-// the optimizer. When _benchHooks is null these have zero effect.
+// the optimizer. When _benchHooks is null these have zero effect on
+// production code paths.
 export interface BenchHookConfig {
   perAttempt?: (
     attemptIdx: number,
@@ -265,8 +266,8 @@ function getEligibleCandidates(
 
   // ── C1 FIX: Single composite comparator ──
   // Merges what were three sequential (destructive) sorts into one stable sort.
-  // Same-group:  exact-level → workload → same-group-required count → level → random
-  // Non-group:   (lowPriority level sort) → workload → exact-level → level → random
+  // Same-group:  workload → same-group-required count → level → preference → random
+  // Non-group:   (lowPriority level sort) → workload → group capacity → preference → random
 
   // P3: Pre-compute random keys for a transitive, unbiased tiebreaker
   const rngKey = new Map<string, number>();
@@ -307,18 +308,14 @@ function getEligibleCandidates(
 
   eligible.sort((a, b) => {
     if (task.sameGroupRequired) {
-      // T1: exact level match vs overqualified
-      const aExact = slot.acceptableLevels.some((e) => e.level === a.level) ? 0 : 1;
-      const bExact = slot.acceptableLevels.some((e) => e.level === b.level) ? 0 : 1;
-      if (aExact !== bExact) return aExact - bExact;
-      // T2: blended workload score — utilization-space when capacities exist,
+      // T1: blended workload score — utilization-space when capacities exist,
       // absolute hours otherwise. Capacity-proportional fairness is also
       // applied in the SC-3/SC-8 scoring phase; matching shapes here reduces
       // the SA correction work needed to reach the proportional optimum.
       const scoreA = workloadScore(a.id);
       const scoreB = workloadScore(b.id);
       if (scoreA !== scoreB) return scoreA - scoreB;
-      // T2.5: Same-group-required assignment count — prefer participants with fewer
+      // T2: Same-group-required assignment count — prefer participants with fewer
       // same-group shifts so L3/L4 naturally alternate instead of one level hoarding.
       const sameGroupCountA = (assignmentsByParticipant.get(a.id) || []).filter(
         (asgn) => taskMap.get(asgn.taskId)?.sameGroupRequired,
@@ -327,13 +324,14 @@ function getEligibleCandidates(
         (asgn) => taskMap.get(asgn.taskId)?.sameGroupRequired,
       ).length;
       if (sameGroupCountA !== sameGroupCountB) return sameGroupCountA - sameGroupCountB;
-      // T3: level ascending — resource conservation before personal preference
+      // T3: level ascending — when prior tiebreakers tied and the slot accepts
+      // multiple levels (e.g. [L3, L4]), prefer the lower level.
       if (a.level !== b.level) return a.level - b.level;
-      // T3.5: Task preference tiebreaker (gentle nudge)
+      // T4: Task preference tiebreaker (gentle nudge)
       const prefA = computeGreedyPreferenceScore(a, task);
       const prefB = computeGreedyPreferenceScore(b, task);
       if (prefA !== prefB) return prefA - prefB;
-      // T4: random tiebreak (pre-computed key)
+      // T5: random tiebreak (pre-computed key)
       return (rngKey.get(a.id) || 0) - (rngKey.get(b.id) || 0);
     }
 
@@ -352,16 +350,6 @@ function getEligibleCandidates(
     const scoreA = workloadScore(a.id);
     const scoreB = workloadScore(b.id);
     if (scoreA !== scoreB) return scoreA - scoreB;
-
-    // Prefer exact level match
-    const aExact = slot.acceptableLevels.some((e) => e.level === a.level) ? 0 : 1;
-    const bExact = slot.acceptableLevels.some((e) => e.level === b.level) ? 0 : 1;
-    if (aExact !== bExact) return aExact - bExact;
-
-    // Level ascending — only for overqualified participants.
-    // When both are exact matches (e.g. L2/L3/L4 for Karov commander),
-    // skip level bias so all eligible levels compete fairly.
-    if (aExact === 1 && a.level !== b.level) return a.level - b.level;
 
     // Same-group task protection: prefer participants from groups with more
     // members eligible for same-group tasks (those groups can spare people).
@@ -1568,6 +1556,7 @@ export function localSearchOptimize(
     capacities,
     notWithPairs,
     dayStartHour,
+    phantomTaskIds: phantomContext?.phantomTaskIds,
   };
 
   const currentScore = computeScheduleScore(tasks, participants, current, config, scoreCtx);
@@ -2062,6 +2051,7 @@ function polishReplaceWithIdle(
     capacities,
     notWithPairs,
     dayStartHour,
+    phantomTaskIds: phantomContext?.phantomTaskIds,
   };
 
   const incScorer = IncrementalScorer.build(tasks, participants, best, config, polishCtx);
