@@ -28,17 +28,29 @@ import { showConfirm, showSaveConfirm, showToast } from './ui-modal';
 
 const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
 
-const MIN_WORKLOAD_MULTIPLIER = 0.3;
-const MAX_WORKLOAD_MULTIPLIER = 5;
 const DEFAULT_WORKLOAD_MULTIPLIER = 1;
 
-/** Parse a workload-multiplier input string → clamped numeric value, or
- *  `DEFAULT_WORKLOAD_MULTIPLIER` if blank/invalid/out-of-range. */
+/** Parse a workload-multiplier input string → numeric value, or
+ *  `DEFAULT_WORKLOAD_MULTIPLIER` if blank/invalid/non-positive.
+ *  Any positive number is accepted. */
 function parseWorkloadMultiplier(raw: string | undefined): number {
   const v = parseFloat(raw ?? '');
-  if (!Number.isFinite(v)) return DEFAULT_WORKLOAD_MULTIPLIER;
-  if (v < MIN_WORKLOAD_MULTIPLIER || v > MAX_WORKLOAD_MULTIPLIER) return DEFAULT_WORKLOAD_MULTIPLIER;
+  if (!Number.isFinite(v) || v <= 0) return DEFAULT_WORKLOAD_MULTIPLIER;
   return v;
+}
+
+/** Compact display for a workload multiplier (e.g. 0.5, 1.25, 2). */
+function formatWorkloadMultiplier(m: number): string {
+  return Number(m.toFixed(2)).toString();
+}
+
+/** Badge shown in the participant row when workloadMultiplier ≠ 1.
+ *  Returns '' when the multiplier is the default. */
+function workloadMultBadge(mult: number | undefined): string {
+  if (mult === undefined || Math.abs(mult - 1) < 1e-9) return '';
+  const display = formatWorkloadMultiplier(mult);
+  return ` <span class="badge badge-sm workload-mult-badge"
+       title="מקדם עומס ${display} — היעד הוגנות מותאם בהתאם.">מקדם ×${display}</span>`;
 }
 
 function getCertOptions(): CertificationDefinition[] {
@@ -657,7 +669,7 @@ export function renderParticipantsTab(): string {
         <td class="col-index">${i + 1}</td>
         <td class="col-name" title="${escHtml(p.name)}">${hasOrphanedRefs(p) ? '<span class="badge-orphan-icon">⚠</span> ' : ''}<strong>${escHtml(p.name)}</strong>${renderUnavailChips(p.id)}</td>
         <td class="col-group">${groupBadge(p.group, true)}</td>
-        <td class="col-level">${levelBadge(p.level)}</td>
+        <td class="col-level">${levelBadge(p.level)}${workloadMultBadge(p.workloadMultiplier)}</td>
         <td class="col-certs">${certBadges(p.certifications)}</td>
         <td class="col-pakals">${renderPakalBadges(p, allPakalDefs)}</td>
         ${showNotWithColumn ? `<td class="col-notwith notwith-cell">${renderNotWithBadges(p.id)}</td>` : ''}
@@ -725,16 +737,19 @@ function renderEditRow(p: Participant, idx: number): string {
       <span class="group-error hidden" style="color:var(--danger); font-size:0.75rem;"></span>
     </td>
     <td class="col-level">
-      <label style="font-size:0.75rem;margin:0">דרגה
-      <select class="input-sm" data-field="level">
-        ${LEVEL_OPTIONS.map((l) => `<option value="${l}" ${p.level === l ? 'selected' : ''}>${l}</option>`).join('')}
-      </select></label>
-      <label style="font-size:0.75rem;margin:4px 0 0;display:block">מקדם עומס
-      <input class="input-sm" type="number" step="0.1" min="${MIN_WORKLOAD_MULTIPLIER}" max="${MAX_WORKLOAD_MULTIPLIER}"
-             data-field="workloadMultiplier"
-             value="${p.workloadMultiplier ?? DEFAULT_WORKLOAD_MULTIPLIER}"
-             style="width:60px"
-             title="ערך > 1 מקטין את ההקצאות, ערך < 1 מגדיל אותן. לא משפיע על הגבלות נוקשות (זמינות, מנוחה, היתכנות)." /></label>
+      <div class="participant-mini-fields">
+        <label class="participant-mini-field">דרגה
+          <select class="input-sm" data-field="level">
+            ${LEVEL_OPTIONS.map((l) => `<option value="${l}" ${p.level === l ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+        </label>
+        <label class="participant-mini-field"
+               title="ערך > 1 מקטין את ההקצאות, ערך < 1 מגדיל אותן. לא משפיע על הגבלות נוקשות (זמינות, מנוחה, היתכנות).">מקדם עומס
+          <input class="input-sm participant-mult-input" type="number" step="0.1" min="0.1"
+                 data-field="workloadMultiplier"
+                 value="${p.workloadMultiplier ?? DEFAULT_WORKLOAD_MULTIPLIER}" />
+        </label>
+      </div>
     </td>
     <td class="col-certs">
       <div class="cert-checkboxes">
@@ -898,8 +913,8 @@ function renderAddForm(groups: string[]): string {
         </select>
       </label>
       <label title="ערך > 1 מקטין את ההקצאות, ערך < 1 מגדיל אותן. לא משפיע על הגבלות נוקשות (זמינות, מנוחה, היתכנות).">מקדם עומס
-        <input class="input-sm" type="number" step="0.1" min="${MIN_WORKLOAD_MULTIPLIER}" max="${MAX_WORKLOAD_MULTIPLIER}"
-               data-field="new-workloadMultiplier" value="${DEFAULT_WORKLOAD_MULTIPLIER}" style="width:60px" />
+        <input class="input-sm participant-mult-input" type="number" step="0.1" min="0.1"
+               data-field="new-workloadMultiplier" value="${DEFAULT_WORKLOAD_MULTIPLIER}" />
       </label>
     </div>
     <div class="form-row">

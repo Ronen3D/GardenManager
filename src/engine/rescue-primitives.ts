@@ -133,6 +133,14 @@ export interface SlotEnumerationContext {
  * iterates participants in outer-loop order — caps terminate on schedule-
  * order participants without this, which is effectively random w.r.t.
  * plan quality.
+ *
+ * Multiplier-aware: each participant's day-load is multiplied by their
+ * `workloadMultiplier` (default 1) before computing proximity to the
+ * scaled-average. At the SC-3 / greedy equilibrium each load satisfies
+ * `load_p ∝ cap_p / mult_p`, so under equal physical caps the scaled
+ * loads are all equal — i.e. every participant looks "balanced" relative
+ * to their multiplier-adjusted target. With all multipliers = 1 the
+ * formula collapses to the original `|load − flat_avg|` ordering.
  */
 export function sortParticipantsByLoadProximity(
   participants: Participant[],
@@ -142,8 +150,8 @@ export function sortParticipantsByLoadProximity(
   assignmentsByParticipant: Map<string, Assignment[]>,
 ): Participant[] {
   const affectedDay = operationalDateKey(vacatedTask.timeBlock.start, dayStartHour);
-  const loads = new Map<string, number>();
-  let total = 0;
+  const scaledLoads = new Map<string, number>();
+  let scaledTotal = 0;
   for (const p of participants) {
     let hours = 0;
     const pAssignments = assignmentsByParticipant.get(p.id) || [];
@@ -153,12 +161,14 @@ export function sortParticipantsByLoadProximity(
         hours += computeTaskEffectiveHours(task);
       }
     }
-    loads.set(p.id, hours);
-    total += hours;
+    const m = p.workloadMultiplier ?? 1;
+    const scaled = hours * (m > 0 ? m : 1);
+    scaledLoads.set(p.id, scaled);
+    scaledTotal += scaled;
   }
-  const avg = participants.length > 0 ? total / participants.length : 0;
+  const avg = participants.length > 0 ? scaledTotal / participants.length : 0;
   return [...participants].sort(
-    (a, b) => Math.abs((loads.get(a.id) || 0) - avg) - Math.abs((loads.get(b.id) || 0) - avg),
+    (a, b) => Math.abs((scaledLoads.get(a.id) || 0) - avg) - Math.abs((scaledLoads.get(b.id) || 0) - avg),
   );
 }
 

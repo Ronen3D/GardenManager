@@ -19,6 +19,17 @@ import { showAlert, showBottomSheet, showPrompt, showSaveConfirm, showToast } fr
 const LEVEL_OPTIONS: Level[] = [Level.L0, Level.L2, Level.L3, Level.L4];
 const LEVEL_LABELS: Record<Level, string> = { [Level.L0]: 'L0', [Level.L2]: 'L2', [Level.L3]: 'L3', [Level.L4]: 'L4' };
 
+const MIN_WORKLOAD_MULTIPLIER = 0.3;
+const MAX_WORKLOAD_MULTIPLIER = 5;
+const DEFAULT_WORKLOAD_MULTIPLIER = 1;
+
+function parseWorkloadMultiplier(raw: string): number {
+  const v = Number.parseFloat(raw);
+  if (!Number.isFinite(v)) return DEFAULT_WORKLOAD_MULTIPLIER;
+  if (v < MIN_WORKLOAD_MULTIPLIER || v > MAX_WORKLOAD_MULTIPLIER) return DEFAULT_WORKLOAD_MULTIPLIER;
+  return v;
+}
+
 // ─── Draft State ────────────────────────────────────────────────────────────
 
 type RowStatus = 'unchanged' | 'modified' | 'new' | 'deleted';
@@ -33,6 +44,7 @@ interface DraftRow {
   pakalIds: string[];
   preferredTaskName: string;
   lessPreferredTaskName: string;
+  workloadMultiplier: number;
   status: RowStatus;
   errors: Map<string, string>;
   selected: boolean;
@@ -46,6 +58,7 @@ interface OriginalValues {
   pakalIds: string[];
   preferredTaskName: string;
   lessPreferredTaskName: string;
+  workloadMultiplier: number;
 }
 
 let _tableEditActive = false;
@@ -75,6 +88,7 @@ export function enterTableEditMode(): void {
   const participants = store.getAllParticipants();
   for (const p of participants) {
     const pref = store.getTaskNamePreference(p.id);
+    const mult = p.workloadMultiplier ?? DEFAULT_WORKLOAD_MULTIPLIER;
     const row: DraftRow = {
       rowId: p.id,
       originalId: p.id,
@@ -85,6 +99,7 @@ export function enterTableEditMode(): void {
       pakalIds: [...(p.pakalIds || [])],
       preferredTaskName: pref.preferred || '',
       lessPreferredTaskName: pref.lessPreferred || '',
+      workloadMultiplier: mult,
       status: 'unchanged',
       errors: new Map(),
       selected: false,
@@ -98,6 +113,7 @@ export function enterTableEditMode(): void {
       pakalIds: [...(p.pakalIds || [])],
       preferredTaskName: pref.preferred || '',
       lessPreferredTaskName: pref.lessPreferred || '',
+      workloadMultiplier: mult,
     });
   }
 
@@ -233,6 +249,7 @@ function computeRowStatus(row: DraftRow): void {
     row.level !== orig.level ||
     row.preferredTaskName !== orig.preferredTaskName ||
     row.lessPreferredTaskName !== orig.lessPreferredTaskName ||
+    Math.abs(row.workloadMultiplier - orig.workloadMultiplier) > 1e-9 ||
     JSON.stringify([...row.certifications].sort()) !== JSON.stringify([...orig.certifications].sort()) ||
     JSON.stringify([...row.pakalIds].sort()) !== JSON.stringify([...orig.pakalIds].sort());
   row.status = changed ? 'modified' : 'unchanged';
@@ -304,6 +321,7 @@ function executeSave(): boolean {
           pakalIds: [...row.pakalIds],
           preferredTaskName: row.preferredTaskName || undefined,
           lessPreferredTaskName: row.lessPreferredTaskName || undefined,
+          workloadMultiplier: row.workloadMultiplier,
         },
       });
     } else if (row.status === 'modified') {
@@ -318,6 +336,7 @@ function executeSave(): boolean {
           pakalIds: [...row.pakalIds],
           preferredTaskName: row.preferredTaskName || undefined,
           lessPreferredTaskName: row.lessPreferredTaskName || undefined,
+          workloadMultiplier: row.workloadMultiplier,
         },
       });
     } else if (row.status === 'deleted' && row.originalId) {
@@ -424,6 +443,7 @@ function renderDesktopTable(
       <th class="te-col-name">שם</th>
       <th class="te-col-group">קבוצה</th>
       <th class="te-col-level">דרגה</th>
+      <th class="te-col-mult" title="ערך > 1 מקטין הקצאות, ערך < 1 מגדיל. ברירת מחדל 1.">מקדם עומס</th>
       <th class="te-col-certs">הסמכות</th>
       <th class="te-col-pakals">פק"לים</th>
       <th class="te-col-pref">מעדיף</th>
@@ -472,6 +492,12 @@ function renderDesktopRow(
       <select class="input-sm te-input" data-te-field="level" data-te-row-id="${row.rowId}"${dis}>
         ${LEVEL_OPTIONS.map((l) => `<option value="${l}"${row.level === l ? ' selected' : ''}>${LEVEL_LABELS[l]}</option>`).join('')}
       </select>
+    </td>
+    <td class="te-col-mult">
+      <input type="number" class="input-sm te-input" data-te-field="workloadMultiplier" data-te-row-id="${row.rowId}"
+             min="${MIN_WORKLOAD_MULTIPLIER}" max="${MAX_WORKLOAD_MULTIPLIER}" step="0.1"
+             value="${row.workloadMultiplier}" style="width:60px"${dis}
+             title="ערך > 1 מקטין הקצאות, ערך < 1 מגדיל. לא משפיע על הגבלות נוקשות." />
     </td>
     <td class="te-col-certs">${renderCertCheckboxes(row, certDefs, isDeleted)}</td>
     <td class="te-col-pakals">${renderPakalCheckboxes(row, pakalDefs, isDeleted)}</td>
@@ -630,6 +656,12 @@ function renderCompactRow(
   // Single wrapper child is required for the 0fr → 1fr grid animation to work
   html += `<div class="te-compact-body${isDeleted ? ' te-compact-body-hidden' : ''}">
     <div class="te-compact-body-inner">
+      <div class="te-compact-field">
+        <label class="te-compact-label" title="ערך > 1 מקטין הקצאות, ערך < 1 מגדיל. ברירת מחדל 1.">מקדם עומס</label>
+        <input type="number" class="input-sm te-input" data-te-field="workloadMultiplier" data-te-row-id="${row.rowId}"
+               min="${MIN_WORKLOAD_MULTIPLIER}" max="${MAX_WORKLOAD_MULTIPLIER}" step="0.1"
+               value="${row.workloadMultiplier}" style="width:80px"${dis} />
+      </div>
       <div class="te-compact-field">
         <label class="te-compact-label">הסמכות</label>
         ${renderCertCheckboxes(row, certDefs, isDeleted)}
@@ -828,6 +860,13 @@ function handleFieldChange(
       updateRowUI(row, container);
       updateToolbarUI(container);
       break;
+
+    case 'workloadMultiplier':
+      row.workloadMultiplier = parseWorkloadMultiplier(target.value);
+      computeRowStatus(row);
+      updateRowUI(row, container);
+      updateToolbarUI(container);
+      break;
   }
 }
 
@@ -855,6 +894,7 @@ function handleAddRow(rerender: () => void): void {
     pakalIds: [],
     preferredTaskName: '',
     lessPreferredTaskName: '',
+    workloadMultiplier: DEFAULT_WORKLOAD_MULTIPLIER,
     status: 'new',
     errors: new Map(),
     selected: false,

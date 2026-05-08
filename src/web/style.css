@@ -1249,6 +1249,42 @@ select.input-sm {
 .col-actions {
   white-space: nowrap;
 }
+.participant-mini-fields {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.participant-mini-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  margin: 0;
+  white-space: nowrap;
+  width: auto;
+}
+.participant-mini-field .input-sm {
+  flex: 0 0 auto;
+}
+.participant-mult-input {
+  width: 56px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.participant-mult-input::-webkit-outer-spin-button,
+.participant-mult-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.workload-mult-badge {
+  background: var(--warning, #d68910);
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
 .col-expand {
   display: none;
 } /* mobile-only: shown via style-mobile.css */

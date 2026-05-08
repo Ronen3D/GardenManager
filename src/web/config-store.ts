@@ -936,8 +936,14 @@ function _updateParticipantNoSnapshot(id: string, patch: Partial<Omit<Participan
   if (Object.prototype.hasOwnProperty.call(nextPatch, 'pakalIds')) {
     nextPatch.pakalIds = sanitizePakalIds(nextPatch.pakalIds, pakalDefinitions);
   }
-  Object.assign(p, nextPatch);
-  p.availability = computeAvailability(id);
+  // Replace the stored Participant object rather than mutating in place. This
+  // keeps the store's update path local: any external reference (engine,
+  // schedule, undo stack) that happens to be holding the previous object
+  // observes its old, unmutated state. The engine and schedule already
+  // deep-clone on entry / generation, so this is purely defensive.
+  const next: Participant = { ...p, ...nextPatch };
+  next.availability = computeAvailability(id);
+  participants.set(id, next);
 }
 
 function _removeParticipantNoSnapshot(id: string): void {
@@ -1188,6 +1194,7 @@ export interface BulkParticipantOp {
     pakalIds?: string[];
     preferredTaskName?: string;
     lessPreferredTaskName?: string;
+    workloadMultiplier?: number;
   };
 }
 

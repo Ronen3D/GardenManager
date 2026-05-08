@@ -237,10 +237,14 @@ export class SchedulingEngine {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Add or update a participant.
+   * Add or update a participant. The engine deep-clones on entry so its
+   * internal Map owns its data — subsequent mutations to the caller's
+   * `Participant` object do not propagate. This is what makes the engine
+   * safe to keep around past a generation, even if upstream code mutates
+   * the live store while a schedule is still displayed.
    */
   addParticipant(participant: Participant): void {
-    this.participants.set(participant.id, participant);
+    this.participants.set(participant.id, structuredClone(participant));
   }
 
   /**
@@ -390,10 +394,16 @@ export class SchedulingEngine {
     }
 
     const { periodStart, periodDays } = this._resolvePeriod(tasks);
+    // Deep-clone participants here so the Schedule is genuinely frozen against
+    // subsequent live-store edits (level, group, certs, workloadMultiplier, …).
+    // Until this clone existed, the freeze relied on the JSON round-trip
+    // through localStorage to detach the schedule's participant graph from
+    // store.participants — a fragile, side-effect-driven invariant. Cloning
+    // at the generation site makes the freeze synchronous and explicit.
     const schedule: Schedule = {
       id: `schedule-${Date.now()}`,
       tasks,
-      participants,
+      participants: participants.map((p) => structuredClone(p)),
       assignments: result.assignments,
       feasible: result.feasible,
       score: result.score,

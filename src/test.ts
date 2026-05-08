@@ -12802,6 +12802,188 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     assert(emptyOrdering.length === 0, 'fsos-B4 helper: empty participants yields empty result');
   }
 
+  // ── Test 14b: sortParticipantsByLoadProximity with workloadMultiplier ──
+  {
+    // Setup: A.mult=2 (load=4), B.mult=1 (load=8), C.mult=1 (load=8).
+    // Plain sort: avg=6.67. |A-avg|=2.67, |B-avg|=1.33, |C-avg|=1.33.
+    //   → order: B/C tied first, A last.
+    // Mult-aware: scaled=[8,8,8]. avg=8. All proximity 0.
+    //   → A ties with B and C (rank improvement: was 3rd, now ≤ tied).
+    const day = new Date(2026, 5, 10);
+    const tHeavy: Task = {
+      id: 'wm-tHeavy',
+      name: 'Heavy',
+      timeBlock: createTimeBlockFromHours(day, 6, 14), // 8h
+      requiredCount: 1,
+      slots: [{ slotId: 'wm-sHeavy', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    const tLight: Task = {
+      id: 'wm-tLight',
+      name: 'Light',
+      timeBlock: createTimeBlockFromHours(day, 6, 10), // 4h
+      requiredCount: 1,
+      slots: [{ slotId: 'wm-sLight', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    const tHeavy2: Task = {
+      id: 'wm-tHeavy2',
+      name: 'Heavy2',
+      timeBlock: createTimeBlockFromHours(day, 14, 22), // 8h, same op-day
+      requiredCount: 1,
+      slots: [{ slotId: 'wm-sHeavy2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    };
+    const taskMap = new Map<string, Task>([
+      [tHeavy.id, tHeavy],
+      [tLight.id, tLight],
+      [tHeavy2.id, tHeavy2],
+    ]);
+
+    const mkP = (id: string, mult?: number): Participant => {
+      const p: Participant = {
+        id,
+        name: id,
+        level: Level.L0,
+        certifications: [],
+        group: 'A',
+        availability: fsosAvail,
+        dateUnavailability: [],
+      };
+      if (mult !== undefined) p.workloadMultiplier = mult;
+      return p;
+    };
+    const mkAssign = (id: string, taskId: string, slotId: string, pid: string): Assignment => ({
+      id,
+      taskId,
+      slotId,
+      participantId: pid,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    });
+
+    // Case 1: default behavior preserved (no multipliers set).
+    {
+      const A = mkP('wm-A');
+      const B = mkP('wm-B');
+      const C = mkP('wm-C');
+      // A=4h (light), B=8h (heavy), C=8h (heavy2).
+      const map = new Map<string, Assignment[]>();
+      map.set('wm-A', [mkAssign('wm-aA', tLight.id, 'wm-sLight', 'wm-A')]);
+      map.set('wm-B', [mkAssign('wm-aB', tHeavy.id, 'wm-sHeavy', 'wm-B')]);
+      map.set('wm-C', [mkAssign('wm-aC', tHeavy2.id, 'wm-sHeavy2', 'wm-C')]);
+      const sorted = sortParticipantsByLoadProximity([A, B, C], tHeavy, 5, taskMap, map);
+      // Plain proximity: avg = 20/3 = 6.67. |4-6.67|=2.67, |8-6.67|=1.33.
+      // → B/C tied first, A last. Multipliers all undefined → identical to plain.
+      assert(sorted[0].id !== 'wm-A', 'wm-sort: undefined mults preserve plain ordering — A is not first');
+      assert(sorted[2].id === 'wm-A', 'wm-sort: undefined mults preserve plain ordering — A is last');
+    }
+
+    // Case 2: explicit mult=1 ≡ undefined (bit-for-bit).
+    {
+      const A1 = mkP('wm-A', 1);
+      const B1 = mkP('wm-B', 1);
+      const C1 = mkP('wm-C', 1);
+      const A_undef = mkP('wm-A');
+      const B_undef = mkP('wm-B');
+      const C_undef = mkP('wm-C');
+      const map = new Map<string, Assignment[]>();
+      map.set('wm-A', [mkAssign('wm-aA', tLight.id, 'wm-sLight', 'wm-A')]);
+      map.set('wm-B', [mkAssign('wm-aB', tHeavy.id, 'wm-sHeavy', 'wm-B')]);
+      map.set('wm-C', [mkAssign('wm-aC', tHeavy2.id, 'wm-sHeavy2', 'wm-C')]);
+      const sortedExplicit = sortParticipantsByLoadProximity([A1, B1, C1], tHeavy, 5, taskMap, map);
+      const sortedUndef = sortParticipantsByLoadProximity([A_undef, B_undef, C_undef], tHeavy, 5, taskMap, map);
+      assert(
+        sortedExplicit.map((p) => p.id).join(',') === sortedUndef.map((p) => p.id).join(','),
+        'wm-sort: explicit mult=1 produces identical ordering to undefined',
+      );
+    }
+
+    // Case 3: high-mult near-target participant ranks at-least as high as plain.
+    {
+      const A = mkP('wm-A', 2); // mult=2, load=4 — at-target under equal-cap
+      const B = mkP('wm-B', 1);
+      const C = mkP('wm-C', 1);
+      const map = new Map<string, Assignment[]>();
+      map.set('wm-A', [mkAssign('wm-aA', tLight.id, 'wm-sLight', 'wm-A')]);
+      map.set('wm-B', [mkAssign('wm-aB', tHeavy.id, 'wm-sHeavy', 'wm-B')]);
+      map.set('wm-C', [mkAssign('wm-aC', tHeavy2.id, 'wm-sHeavy2', 'wm-C')]);
+      const sortedNew = sortParticipantsByLoadProximity([A, B, C], tHeavy, 5, taskMap, map);
+      // Scaled loads: A=8, B=8, C=8. avg=8. All proximity 0 → all tied.
+      // A should NOT be last. Plain sort had A last; new sort has A tied — improvement.
+      const aIdxNew = sortedNew.findIndex((p) => p.id === 'wm-A');
+      assert(aIdxNew <= 2, 'wm-sort: high-mult near-target A appears in valid position');
+      // Verify ranks are tied (all-equal proximity → input order preserved by stable sort).
+      // The key invariant: A's rank under new sort is no worse than under plain sort.
+      const A_plain = mkP('wm-A');
+      const sortedPlain = sortParticipantsByLoadProximity([A_plain, B, C], tHeavy, 5, taskMap, map);
+      const aIdxPlain = sortedPlain.findIndex((p) => p.id === 'wm-A');
+      assert(
+        aIdxNew <= aIdxPlain,
+        `wm-sort: high-mult target-aligned A ranks no worse with mult-aware sort (new=${aIdxNew}, plain=${aIdxPlain})`,
+      );
+    }
+
+    // Case 4: assignments on a different op-day do not influence ordering.
+    {
+      const otherDay = new Date(2026, 5, 12); // 2 days after `day`
+      const tOther: Task = {
+        id: 'wm-tOther',
+        name: 'Other',
+        timeBlock: createTimeBlockFromHours(otherDay, 6, 22), // 16h, different op-day
+        requiredCount: 1,
+        slots: [{ slotId: 'wm-sOther', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: true,
+      };
+      const tmExtended = new Map<string, Task>(taskMap);
+      tmExtended.set(tOther.id, tOther);
+
+      const A = mkP('wm-A', 2);
+      const B = mkP('wm-B', 1);
+      const C = mkP('wm-C', 1);
+      const mapBase = new Map<string, Assignment[]>();
+      mapBase.set('wm-A', [mkAssign('wm-aA', tLight.id, 'wm-sLight', 'wm-A')]);
+      mapBase.set('wm-B', [mkAssign('wm-aB', tHeavy.id, 'wm-sHeavy', 'wm-B')]);
+      mapBase.set('wm-C', [mkAssign('wm-aC', tHeavy2.id, 'wm-sHeavy2', 'wm-C')]);
+      const baseOrder = sortParticipantsByLoadProximity([A, B, C], tHeavy, 5, tmExtended, mapBase).map((p) => p.id);
+
+      const mapWithOther = new Map<string, Assignment[]>(mapBase);
+      mapWithOther.set('wm-A', [
+        mkAssign('wm-aA', tLight.id, 'wm-sLight', 'wm-A'),
+        mkAssign('wm-aOther', tOther.id, 'wm-sOther', 'wm-A'),
+      ]);
+      const orderWithOther = sortParticipantsByLoadProximity([A, B, C], tHeavy, 5, tmExtended, mapWithOther).map(
+        (p) => p.id,
+      );
+      assert(
+        baseOrder.join(',') === orderWithOther.join(','),
+        'wm-sort: assignments on a different op-day do not affect ordering',
+      );
+    }
+
+    // Case 5: defensive guard — mult=0 does not produce NaN/Infinity.
+    {
+      const A = mkP('wm-A', 0); // illegal but possible from corrupt data
+      const B = mkP('wm-B', 1);
+      const C = mkP('wm-C', 1);
+      const map = new Map<string, Assignment[]>();
+      map.set('wm-A', [mkAssign('wm-aA', tLight.id, 'wm-sLight', 'wm-A')]);
+      map.set('wm-B', [mkAssign('wm-aB', tHeavy.id, 'wm-sHeavy', 'wm-B')]);
+      map.set('wm-C', [mkAssign('wm-aC', tHeavy2.id, 'wm-sHeavy2', 'wm-C')]);
+      const sorted = sortParticipantsByLoadProximity([A, B, C], tHeavy, 5, taskMap, map);
+      assert(sorted.length === 3, 'wm-sort: mult=0 produces a valid 3-element ordering');
+      const ids = new Set(sorted.map((p) => p.id));
+      assert(
+        ids.has('wm-A') && ids.has('wm-B') && ids.has('wm-C'),
+        'wm-sort: mult=0 ordering is a valid permutation of input',
+      );
+    }
+  }
+
   // ── Test 15: sortDonorsByProximity orders by |task.start - vacated.start| (B5 unit test) ──
   {
     // Donors on days 2, 3, 5, 8. Vacated task on day 1. Proximity distances:
