@@ -60,8 +60,10 @@ export interface PointInTimeContext {
 type PointInTimeStatus =
   | { kind: 'assigned'; task: Task }
   | { kind: 'recovery'; recoveryEnd: Date; sourceTask: Task }
-  | { kind: 'unavailable'; reason: string; sourceKind: 'availability' | 'dateRule' | 'scheduleUnavailability' }
+  | { kind: 'unavailable'; reason: string; sourceKind: UnavailableSourceKind }
   | { kind: 'free' };
+
+type UnavailableSourceKind = 'availability' | 'dateRule' | 'scheduleUnavailability';
 
 function getPointInTimeStatus(
   p: Participant,
@@ -186,7 +188,7 @@ interface RecoveryGroup {
 }
 interface UnavailableGroup {
   participants: Participant[];
-  byPid: Map<string, { reason: string; sourceKind: string }>;
+  byPid: Map<string, { reason: string; sourceKind: UnavailableSourceKind }>;
 }
 interface FreeGroup {
   participants: Participant[];
@@ -411,10 +413,10 @@ function renderAssignedSection(group: AssignedGroup, t: Date): string {
 
 /**
  * Render one task and its assigned members as a self-contained card.
- * The header carries the task chip (template-color), time range, member count,
- * a thin progress bar showing where `t` falls in `[start, end)`, and a tiny
- * "X% · עוד H:MM" meta. Rows below show level-dot + name only — task-level
- * meta is shared across the group so per-row repetition is avoided.
+ * The header carries the task chip (template-color), time range, an
+ * "עוד H:MM" remaining-time meta, and the member count. Rows below show
+ * level-dot + name only — task-level meta is shared across the group so
+ * per-row repetition is avoided.
  */
 function renderTaskGroup(task: Task, members: Participant[], t: Date): string {
   const sourceName = task.sourceName || task.name;
@@ -458,9 +460,7 @@ function renderRecoverySection(group: RecoveryGroup, schedule: Schedule, t: Date
       if (!meta) return '';
       const sourceName = meta.sourceTask.sourceName || meta.sourceTask.name;
       const taskColor = getTaskColor(meta.sourceTask);
-      const recoveryWin = getRecoveryWindow(meta.sourceTask);
-      const recoveryStart = recoveryWin?.start || meta.sourceTask.timeBlock.end;
-      const frac = progressFraction(recoveryStart, meta.recoveryEnd, t);
+      const frac = progressFraction(meta.sourceTask.timeBlock.end, meta.recoveryEnd, t);
       const remaining = Math.max(0, meta.recoveryEnd.getTime() - t.getTime());
       const endLabel = formatRecoveryEndOnly(meta.recoveryEnd, schedule);
       return `<li class="pit-row pit-row-recovery" data-pid="${escAttr(p.id)}" tabindex="0" role="button" style="--task-color:${taskColor}">
@@ -493,7 +493,7 @@ function formatRecoveryEndOnly(endDate: Date, schedule: Schedule): string {
  * generic ("לא זמין"); a short kind tag tells the user whether this is a
  * one-off Future-SOS block, a recurring rule, or a master availability gap.
  */
-function unavailableKindTag(sourceKind: string): string {
+function unavailableKindTag(sourceKind: UnavailableSourceKind): string {
   switch (sourceKind) {
     case 'scheduleUnavailability':
       return '<span class="pit-kind-tag pit-kind-tag-sos" title="חוסר זמינות שנרשם בשבצ&quot;ק זה (Future SOS)">תכנית</span>';
@@ -501,8 +501,6 @@ function unavailableKindTag(sourceKind: string): string {
       return '<span class="pit-kind-tag pit-kind-tag-rule" title="כלל חוסר זמינות חוזר">כלל</span>';
     case 'availability':
       return '<span class="pit-kind-tag pit-kind-tag-avail" title="מחוץ לחלון הזמינות הקבוע">זמינות</span>';
-    default:
-      return '';
   }
 }
 
