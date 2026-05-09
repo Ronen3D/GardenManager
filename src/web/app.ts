@@ -4292,7 +4292,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.2</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -6630,6 +6630,16 @@ function init(): void {
 
     // Restore persisted schedule (if any) so it survives page reloads
     const savedSchedule = store.loadSchedule();
+
+    // First-launch seed of the Day 0 continuity buffer: if there's no saved
+    // schedule and the user hasn't pasted/cleared a snapshot yet, populate
+    // _continuityJson from the bundled default so HC-5/HC-12/HC-14 cross-
+    // boundary phantom enforcement is exercised out of the box. The snapshot
+    // is embedded into Schedule.continuitySnapshot at generation time.
+    if (!savedSchedule && _continuityJson === '') {
+      const defaultJson = store.getDefaultContinuityJson();
+      if (defaultJson) _continuityJson = defaultJson;
+    }
     if (savedSchedule && !hasFrozenFields(savedSchedule)) {
       // Stale pre-schema schedule: drop it and tell the user to regenerate.
       // Pre-release; no migration path supported.

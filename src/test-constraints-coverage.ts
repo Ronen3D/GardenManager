@@ -202,7 +202,7 @@ section('T3: HC-15 recovery window is wall-clock');
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// T4: HC-15 — `isLight` (zero-load) candidate is allowed inside the window.
+// T4: HC-15 — zero-load candidate is allowed inside the window.
 //
 // Same as T3 but the second task has baseLoadWeight=0 (e.g., a meeting).
 // The recovery rule only blocks tasks with effective load > 0 in the overlap.
@@ -238,7 +238,7 @@ section('T4: HC-15 allows zero-load task in recovery window');
   const r = validateHardConstraints([trigger, zeroLoad], [p], assigns);
   assert(
     !r.violations.some((v) => v.code === 'SLEEP_RECOVERY_VIOLATION'),
-    'T4 — zero-load (isLight) candidate inside recovery window does NOT fire HC-15',
+    'T4 — zero-load candidate inside recovery window does NOT fire HC-15',
   );
 }
 

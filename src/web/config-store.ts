@@ -37,6 +37,7 @@ import { computeTemplateSectionKey } from '../shared/layout-key';
 import { buildFormula } from '../shared/utils/load-formula';
 import { hourInOpDay } from '../shared/utils/time-utils';
 import { normalizeCertificationDefinitions, sanitizeCertificationIds } from './certification-utils';
+import { buildDefaultContinuityJson } from './default-continuity';
 import {
   clonePakalDefinitions,
   DEFAULT_PAKAL_DEFINITIONS,
@@ -734,6 +735,22 @@ export function setScheduleDays(n: number): void {
   scheduleDays = Math.max(1, Math.min(7, n));
   recalcAllAvailability();
   notify();
+}
+
+/**
+ * Return a freshly-built default Day 0 continuity snapshot, anchored at
+ * the current `scheduleDate` and bound to the active default rest rule's
+ * id (so HC-14 cross-boundary pairing fires).  Returns `null` when no
+ * rest rule is available (defaults haven't been seeded yet).
+ *
+ * Consumed by `app.ts` on first launch to pre-populate the continuity
+ * buffer; the snapshot becomes part of `Schedule.continuitySnapshot`
+ * after the user generates a schedule.
+ */
+export function getDefaultContinuityJson(): string | null {
+  const rule = _restRules.find((r) => !r.deleted);
+  if (!rule) return null;
+  return buildDefaultContinuityJson(scheduleDate, rule.id);
 }
 
 // ─── HC-14 Rest Rules ───────────────────────────────────────────────────────
@@ -1939,12 +1956,14 @@ export function seedDefaultParticipants(): void {
 
   // Per-name attribute overrides applied on top of the base seed so the
   // out-of-box demo exercises SC-9 (not-with), SC-10 (task preference),
-  // and HC-3 (date unavailability) without manual data entry.
+  // HC-3 (date unavailability), and SC-3/SC-8 fair-share tuning
+  // (workloadMultiplier) without manual data entry.
   type SeedDateRule = Omit<DateUnavailability, 'id'>;
   interface AttributePatch {
     preferredTaskName?: string;
     lessPreferredTaskName?: string;
     dateUnavailability?: SeedDateRule[];
+    workloadMultiplier?: number;
   }
   const attributePatches: Record<string, AttributePatch> = {
     // ── קבוצה 1 ──
@@ -1959,7 +1978,7 @@ export function seedDefaultParticipants(): void {
     'עדי מזרחי': {
       dateUnavailability: [{ dayIndex: 2, startHour: 10, endHour: 13, allDay: false, reason: 'רופא' }],
     },
-    'רועי שפירא': { preferredTaskName: 'שמש' },
+    'רועי שפירא': { preferredTaskName: 'שמש', workloadMultiplier: 1.05 },
     'מיכל אשכנזי': { lessPreferredTaskName: 'ממטרה' },
     'עומר דרוקר': {
       dateUnavailability: [{ dayIndex: 1, startHour: 8, endHour: 16, allDay: false, reason: 'חופש משפחתי' }],
@@ -1981,7 +2000,7 @@ export function seedDefaultParticipants(): void {
       dateUnavailability: [{ dayIndex: 3, startHour: 9, endHour: 12, allDay: false, reason: 'תור רפואי' }],
     },
     'גיא מור': { preferredTaskName: 'חממה' },
-    'יעל שלום': { lessPreferredTaskName: 'ממטרה' },
+    'יעל שלום': { lessPreferredTaskName: 'ממטרה', workloadMultiplier: 0.95 },
     'אלון ברק': {
       preferredTaskName: 'כרוב',
       dateUnavailability: [{ dayIndex: 5, startHour: 8, endHour: 16, allDay: false, reason: 'חופש' }],
@@ -2006,7 +2025,7 @@ export function seedDefaultParticipants(): void {
       dateUnavailability: [{ dayIndex: 3, startHour: 8, endHour: 16, allDay: false, reason: 'משפחתי' }],
     },
     'דנה צור': { lessPreferredTaskName: 'ממטרה' },
-    'אביב סוויסה': { preferredTaskName: 'כרוב' },
+    'אביב סוויסה': { preferredTaskName: 'כרוב', workloadMultiplier: 1.1 },
     'גלית שדה': { preferredTaskName: 'כרוב', lessPreferredTaskName: 'ערוגת ערב' },
     'ספיר מלמד': { lessPreferredTaskName: 'ערוגת בוקר' },
 
@@ -2027,7 +2046,7 @@ export function seedDefaultParticipants(): void {
       lessPreferredTaskName: 'ממטרה',
       dateUnavailability: [{ dayIndex: 1, startHour: 15, endHour: 18, allDay: false, reason: 'לימודים' }],
     },
-    'אוהד שטרן': { preferredTaskName: 'כרוב' },
+    'אוהד שטרן': { preferredTaskName: 'כרוב', workloadMultiplier: 0.9 },
     'רותם גנות': { lessPreferredTaskName: 'ערוגת בוקר' },
     'נעמה שקד': { preferredTaskName: 'כרוב', lessPreferredTaskName: 'ערוגת ערב' },
   };
@@ -2080,6 +2099,9 @@ export function seedDefaultParticipants(): void {
       };
       if (patch?.preferredTaskName) p.preferredTaskName = patch.preferredTaskName;
       if (patch?.lessPreferredTaskName) p.lessPreferredTaskName = patch.lessPreferredTaskName;
+      if (patch?.workloadMultiplier !== undefined && patch.workloadMultiplier !== 1) {
+        p.workloadMultiplier = patch.workloadMultiplier;
+      }
       participants.set(id, p);
       nameToId.set(name, id);
     });
@@ -2119,6 +2141,7 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
+    togethernessRelevant: true,
     subTeams: [
       {
         id: uid('st'),
@@ -2197,6 +2220,8 @@ export function seedDefaultTaskTemplates(): void {
         requiredCertifications: ['Hamama'],
       },
     ],
+    // HC-15: night-shift only (shift 2 ends 06:00 → no loaded task until 13:00).
+    sleepRecovery: { triggerShifts: [2], recoveryHours: 7 },
     color: '#E74C3C',
     displayOrder: 1,
   });
@@ -2212,6 +2237,7 @@ export function seedDefaultTaskTemplates(): void {
     baseLoadWeight: 1,
     loadWindows: [],
     blocksConsecutive: true,
+    togethernessRelevant: true,
     subTeams: [],
     slots: [
       {
@@ -2451,6 +2477,69 @@ export function seedDefaultTaskTemplates(): void {
   updateTaskTemplate(hamamaTpl.id, { loadFormula: hamamaLoadFormula });
 }
 
+/**
+ * Seed a single OneTimeTask so the out-of-box demo exercises the
+ * post-generation injection feature surface (one-time UI flow + engine
+ * scheduling of a OneTimeTask alongside templates).
+ *
+ * Depends on the default rest rule already created by
+ * `seedDefaultTaskTemplates()` — must run after it.
+ */
+export function seedDefaultOneTimeTasks(): void {
+  const defaultRule = _restRules.find((r) => !r.deleted);
+  if (!defaultRule) return; // template seed didn't run; nothing to anchor against
+
+  const d = scheduleDate;
+  // Day 3 of the schedule — calendar date two days after scheduleDate.
+  const day3 = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 2);
+
+  addOneTimeTask({
+    name: 'יזומה',
+    scheduledDate: day3,
+    startHour: 21,
+    startMinute: 0,
+    durationHours: 4,
+    sameGroupRequired: true,
+    blocksConsecutive: true,
+    baseLoadWeight: 1,
+    loadWindows: [],
+    togethernessRelevant: true,
+    subTeams: [],
+    slots: [
+      {
+        id: uid('slot'),
+        label: 'מפקד יזומה',
+        acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף ביזומה',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף ביזומה',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
+      {
+        id: uid('slot'),
+        label: 'משתתף ביזומה',
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: ['Nitzan'],
+      },
+    ],
+    restRuleId: defaultRule.id,
+    // HC-15: OneTimeTask shiftIndex is always 1, so triggerShifts must be [1].
+    sleepRecovery: { triggerShifts: [1], recoveryHours: 7 },
+    color: '#8E44AD',
+    displayOrder: 99,
+    description: 'משימה חד-פעמית — משמרת לילה יזומה',
+  });
+}
+
 // ─── Initialization ──────────────────────────────────────────────────────────
 
 let _initRunning = false;
@@ -2487,6 +2576,7 @@ export function initStore(): void {
     _suppressSnapshot = true;
     seedDefaultParticipants();
     seedDefaultTaskTemplates();
+    seedDefaultOneTimeTasks();
     // Seed built-in participant set from demo data
     _initParticipantSets();
     _initTaskSets();
