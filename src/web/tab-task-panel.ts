@@ -491,13 +491,17 @@ function renderDayStack(
   const pMap = new Map(schedule.participants.map((p) => [p.id, p]));
   const dayCards: string[] = [];
 
+  // Default-open the first day that actually has shifts of this task. For a
+  // recurring task that's day 1; for a one-time task it's the task's day.
+  const firstTaskDay = [...byDay.keys()].sort((a, b) => a - b)[0] ?? 1;
+
   for (let d = 1; d <= numDays; d++) {
     const dayTasks = byDay.get(d) || [];
     const dayHasUnfilled = dayTasks.some((task) => {
       const filled = new Set((assignmentsByTask.get(task.id) || []).map((a) => a.slotId));
       return task.slots.some((s) => !filled.has(s.slotId));
     });
-    const open = d === 1 || dayHasUnfilled;
+    const open = d === firstTaskDay || dayHasUnfilled;
 
     let shiftsHtml = '';
     if (dayTasks.length === 0) {

@@ -345,15 +345,33 @@ function getRescueTooltipEl(): HTMLElement {
 /**
  * Compute the next 3 tasks a participant would have after applying a plan's swaps.
  * Uses the vacated task's start as the "now" anchor so it works for future schedules.
+ *
+ * The "reference task" — highlighted with the ◄ marker — is the task this
+ * participant is being moved INTO by the chain (the swap where they appear as
+ * `toParticipantId`). For the depth-1 participant that is the focal/vacated
+ * task; for deeper chain steps it is the donor task they take over. Falls back
+ * to `fallbackReferenceTaskId` (the focal task) if the participant isn't a
+ * `toParticipantId` in any swap.
  */
 function computePostSwapTasks(
   participantId: string,
   plan: RescuePlan,
   schedule: Schedule,
-  referenceTaskId: string,
+  fallbackReferenceTaskId: string,
 ): Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> {
   const taskMap = new Map<string, Task>();
   for (const t of schedule.tasks) taskMap.set(t.id, t);
+
+  // The task this participant is being moved INTO by the chain is the
+  // reference for their tooltip. Each participant typically appears as `to`
+  // in exactly one swap of a rescue chain.
+  let referenceTaskId = fallbackReferenceTaskId;
+  for (const sw of plan.swaps) {
+    if (sw.toParticipantId === participantId) {
+      referenceTaskId = sw.taskId;
+      break;
+    }
+  }
 
   // Start with the participant's current task IDs (assignment → taskId)
   // Build a set of assignment IDs this participant currently holds
