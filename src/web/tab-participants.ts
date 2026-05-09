@@ -1095,6 +1095,11 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         // Click inside the editing row or its blackout expansion — do nothing
         if (editRow.contains(target)) return;
         if (blackoutRow?.contains(target)) return;
+        // Click inside the tutorial overlay — keep the edit row open so the
+        // tutorial can spotlight controls inside it (the engine programmatically
+        // opens edit mode for some steps). Without this, the next click on the
+        // tutorial popover would silently close the row mid-explanation.
+        if (document.querySelector('.tutorial-root')?.contains(target)) return;
 
         e.preventDefault();
         e.stopPropagation();

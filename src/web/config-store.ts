@@ -1978,7 +1978,7 @@ export function seedDefaultParticipants(): void {
     'עדי מזרחי': {
       dateUnavailability: [{ dayIndex: 2, startHour: 10, endHour: 13, allDay: false, reason: 'רופא' }],
     },
-    'רועי שפירא': { preferredTaskName: 'שמש', workloadMultiplier: 1.05 },
+    'רועי שפירא': { preferredTaskName: 'שמש' },
     'מיכל אשכנזי': { lessPreferredTaskName: 'ממטרה' },
     'עומר דרוקר': {
       dateUnavailability: [{ dayIndex: 1, startHour: 8, endHour: 16, allDay: false, reason: 'חופש משפחתי' }],
@@ -2000,7 +2000,7 @@ export function seedDefaultParticipants(): void {
       dateUnavailability: [{ dayIndex: 3, startHour: 9, endHour: 12, allDay: false, reason: 'תור רפואי' }],
     },
     'גיא מור': { preferredTaskName: 'חממה' },
-    'יעל שלום': { lessPreferredTaskName: 'ממטרה', workloadMultiplier: 0.95 },
+    'יעל שלום': { lessPreferredTaskName: 'ממטרה' },
     'אלון ברק': {
       preferredTaskName: 'כרוב',
       dateUnavailability: [{ dayIndex: 5, startHour: 8, endHour: 16, allDay: false, reason: 'חופש' }],
@@ -2959,6 +2959,8 @@ export function factoryReset(): void {
     localStorage.removeItem('gardenmanager_default_attempts');
     localStorage.removeItem('gardenmanager_theme');
     localStorage.removeItem('gm-sidebar-collapsed');
+    localStorage.removeItem('gardenmanager_tutorial_banner_dismissed');
+    localStorage.removeItem('gardenmanager_tutorial_seen_tracks');
     // A factory reset frees space, so clear the wedge latch to resume saves.
     onSaveSuccess();
   } catch (err) {

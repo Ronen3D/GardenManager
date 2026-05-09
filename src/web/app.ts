@@ -13,6 +13,7 @@
 import './style.css';
 import './style-mobile.css';
 import './style-swimlane.css';
+import './style-tutorial.css';
 import { getRecoveryWindow } from '../constraints/sleep-recovery';
 import {
   findCertAffectedAssignments,
@@ -111,6 +112,12 @@ import { renderTaskPanel, TASK_PANEL_EMPTY, type TaskPanelContext, wireTaskPanel
 import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
 import { hideTaskTooltip, hideTooltip, initTooltips, wireParticipantTooltip, wireTaskTooltip } from './tooltips';
 import {
+  exposeWindowApi as exposeTutorialWindowApi,
+  isBannerDismissed as isTutorialBannerDismissed,
+  showTutorialBanner,
+  type TutorialContext,
+} from './tutorial';
+import {
   applyTheme,
   certBadges,
   escAttr,
@@ -149,6 +156,12 @@ let scheduleElapsed = 0;
 let scheduleActualAttempts = 0;
 /** Currently viewed day (1–7). Always a specific day when schedule is shown. */
 let currentDay = 1;
+
+/** Stable context handed to the tutorial engine. Functions capture live state. */
+const tutorialContext: TutorialContext = {
+  getSchedule: () => currentSchedule,
+  isLiveModeEnabled: () => store.getLiveModeState().enabled,
+};
 
 // ─── URL hash ↔ tab/day sync ────────────────────────────────────────────────
 
@@ -4334,7 +4347,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.6</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4388,7 +4401,7 @@ function renderAll(): void {
       html += renderScheduleTab(preflight);
       break;
     case 'algorithm':
-      html += renderAlgorithmTab();
+      html += renderAlgorithmTab(tutorialContext);
       break;
   }
 
@@ -4425,7 +4438,7 @@ function renderAll(): void {
     const swimlane = content.querySelector('.swimlane-view') as HTMLElement | null;
     if (swimlane) wireSwimlaneEvents(swimlane);
   } else if (currentTab === 'algorithm') {
-    wireAlgorithmEvents(content, renderAll);
+    wireAlgorithmEvents(content, renderAll, tutorialContext);
     wireDataTransferEvents(content);
   }
 
@@ -6736,6 +6749,18 @@ function init(): void {
     }
 
     renderAll();
+
+    // Expose programmatic tutorial entry (used by Playwright specs and deep links).
+    exposeTutorialWindowApi(tutorialContext);
+
+    // First-launch tutorial banner: shown until the user dismisses it or opens
+    // the tutorial. We rely on the dedicated dismissed flag rather than checking
+    // gardenmanager_state, because seedDefaults() writes the state synchronously
+    // on first launch — making "no state" an unreliable proxy for "new user".
+    // Factory reset clears the dismissed flag, so the banner returns after reset.
+    if (!isTutorialBannerDismissed()) {
+      showTutorialBanner(tutorialContext);
+    }
 
     // Update the live clock every 30 seconds without a full re-render
     if (_liveClockInterval) clearInterval(_liveClockInterval);

@@ -21,6 +21,7 @@ import {
 } from '../models/types';
 import * as store from './config-store';
 import { renderDataTransferContent } from './data-transfer-ui';
+import { renderTutorialAccordionBody, type TutorialContext, wireTutorialAccordionEvents } from './tutorial';
 import {
   escHtml,
   getCurrentTheme,
@@ -736,7 +737,7 @@ function renderDangerContent(): string {
 
 // ─── Render ──────────────────────────────────────────────────────────────────
 
-export function renderAlgorithmTab(): string {
+export function renderAlgorithmTab(tutorialCtx: TutorialContext): string {
   const settings = store.getAlgorithmSettings();
   const cfg = settings.config;
   const disabledHC = new Set(settings.disabledHardConstraints);
@@ -754,6 +755,16 @@ export function renderAlgorithmTab(): string {
       <h2>הגדרות</h2>
     </div>
   </div>`;
+
+  // ── Section 0: Tutorial launcher (top of tab) ──
+  html += renderAccordion({
+    id: 'acc-tutorial',
+    icon: '📖',
+    title: 'מדריך למשתמש',
+    summary: 'סיורים מודרכים — לחץ להרחבה',
+    body: renderTutorialAccordionBody(tutorialCtx),
+    className: 'tutorial-accordion',
+  });
 
   // ── Section 1: Algorithm Settings ──
   const presetCount = presets.length;
@@ -945,9 +956,13 @@ function renderWeightInput(f: WeightField, value: number, defaultVal: number, is
 
 // ─── Wire Events ─────────────────────────────────────────────────────────────
 
-export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void): void {
+export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void, tutorialCtx: TutorialContext): void {
   // Store rerender for debounce flush
   _pendingRerender = rerender;
+
+  // Wire tutorial-launcher accordion track-button clicks. Re-wired on every
+  // render — that's the existing pattern in this tab.
+  wireTutorialAccordionEvents(container, tutorialCtx);
 
   container.addEventListener('input', (e) => {
     const target = e.target as HTMLInputElement;
