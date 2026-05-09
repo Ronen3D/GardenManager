@@ -295,7 +295,7 @@ let _pakalError = '';
 
 interface AccordionOpts {
   id: string;
-  icon: string;
+  icon?: string;
   title: string;
   summary: string;
   body: string;
@@ -333,7 +333,7 @@ function renderNestedAccordion(opts: AccordionOpts): string {
             aria-controls="${opts.id}-body"
             data-action="settings-accordion-toggle"
             data-accordion="${opts.id}">
-      <span class="settings-nested-icon">${opts.icon}</span>
+      ${opts.icon ? `<span class="settings-nested-icon">${opts.icon}</span>` : ''}
       <span class="settings-nested-title">${opts.title}</span>
       <span class="settings-nested-summary">${opts.summary}</span>
     </button>
@@ -775,21 +775,18 @@ export function renderAlgorithmTab(): string {
     ${_presetPanelOpen ? renderPresetPanel(presets, activeId, dirty, isBuiltIn) : ''}
     ${renderNestedAccordion({
       id: 'acc-general',
-      icon: '🕐',
       title: 'הגדרות כלליות',
       summary: `שעת תחילת יום: ${String(settings.dayStartHour).padStart(2, '0')}:00`,
       body: renderGeneralSettings(settings.dayStartHour),
     })}
     ${renderNestedAccordion({
       id: 'acc-weights',
-      icon: '⚖',
       title: 'משקלות',
       summary: getWeightsSummary(cfg),
       body: renderWeightGroups(cfg),
     })}
     ${renderNestedAccordion({
       id: 'acc-constraints',
-      icon: '🔒',
       title: 'תנאים מחייבים',
       summary: getConstraintsSummary(disabledHC),
       body: renderHardConstraints(disabledHC),

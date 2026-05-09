@@ -9,6 +9,7 @@
 import type { AssignmentStatus, ConstraintViolation, Schedule, Task } from '../index';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import * as store from './config-store';
+import { fmt } from './ui-helpers';
 
 // ─── Time Parsing ───────────────────────────────────────────────────────────
 // Pure parsers live in shared/utils/time-utils so the Node test runner (which
@@ -80,6 +81,31 @@ export function taskDayIndex(task: Task, dayStartHour: number, baseDate: Date): 
   const anchor = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0);
   const diffMs = task.timeBlock.start.getTime() - anchor.getTime();
   return Math.floor(diffMs / 86400000) + 1;
+}
+
+/**
+ * Convert an arbitrary timestamp to a 1-based op-day index against the given
+ * schedule's `periodStart + dayStartHour` anchor. Hours before `dayStartHour`
+ * roll to the previous op-day's tail. Result is clamped to ≥ 1.
+ */
+export function timestampToOpDayIndex(d: Date, schedule: Schedule): number {
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  const base = schedule.periodStart;
+  const shifted = new Date(d.getTime());
+  if (shifted.getHours() < dsh) shifted.setDate(shifted.getDate() - 1);
+  shifted.setHours(0, 0, 0, 0);
+  const baseMidnight = new Date(base.getFullYear(), base.getMonth(), base.getDate()).getTime();
+  return Math.max(1, Math.floor((shifted.getTime() - baseMidnight) / 86400000) + 1);
+}
+
+/** Format an HC-15 recovery window as `יום N HH:MM – HH:MM` (single op-day) or `יום N HH:MM – יום M HH:MM`. */
+export function fmtRecoveryWindow(win: { start: Date; end: Date }, schedule: Schedule): string {
+  const startDay = timestampToOpDayIndex(win.start, schedule);
+  const endDay = timestampToOpDayIndex(win.end, schedule);
+  const startTime = fmt(win.start);
+  const endTime = fmt(win.end);
+  if (startDay === endDay) return `יום ${startDay} ${startTime} – ${endTime}`;
+  return `יום ${startDay} ${startTime} – יום ${endDay} ${endTime}`;
 }
 
 /**

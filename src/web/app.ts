@@ -26,7 +26,14 @@ import {
   upsertScheduleUnavailability,
 } from '../engine/future-sos';
 import { buildPhantomContext } from '../engine/phantom';
-import { freezeAssignments, isDayFrozen, isDayPartiallyFrozen, isFutureTask, unfreezeAll } from '../engine/temporal';
+import {
+  freezeAssignments,
+  getAnchorDayIndex,
+  isDayFrozen,
+  isDayPartiallyFrozen,
+  isFutureTask,
+  unfreezeAll,
+} from '../engine/temporal';
 import { getEligibleParticipantsForSlot, getRejectionReason, REJECTION_REASONS_HE } from '../engine/validator';
 import {
   type Assignment,
@@ -40,20 +47,20 @@ import {
   type Task,
   ViolationSeverity,
 } from '../index';
+import type { ContinuitySnapshot } from '../models/continuity-schema';
 import { computeTemplateSectionKey, oneTimeSectionKey } from '../shared/layout-key';
 import { generateShiftBlocks, hourInOpDay } from '../shared/utils/time-utils';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { computeAllCapacities } from '../utils/capacity';
 import { operationalDateKey } from '../utils/date-utils';
 import { runAutoTune, setAutoTunerTaskFactory, type TuneRecommendation } from './auto-tuner';
+import { showCapabilityChangePicker } from './capability-change-modal';
 import * as store from './config-store';
 import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
-import type { ContinuitySnapshot } from '../models/continuity-schema';
-import { buildDay0Schedule } from './day0-adapter';
 import { wireDataTransferEvents } from './data-transfer-ui';
+import { buildDay0Schedule } from './day0-adapter';
 import { exportDailyExcel, exportWeeklyExcel } from './excel-export';
-import { showCapabilityChangePicker } from './capability-change-modal';
 import {
   closeLoadingOverlay,
   openBatchPlansModal,
@@ -65,6 +72,7 @@ import { closeInjectTaskModal, initInjectTaskModal, openInjectTaskModal } from '
 import { getEffectivePakalDefinitions } from './pakal-utils';
 import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
+import { type PointInTimeContext, renderPointInTimeView, wirePointInTimeEvents } from './point-in-time-view';
 import { runPreflight } from './preflight';
 import { showRangePicker } from './range-picker-modal';
 import { closeRescueModal, initRescue, openRescueModal } from './rescue-modal';
@@ -73,6 +81,7 @@ import { renderScheduleGrid } from './schedule-grid-view';
 import {
   computePerDayHours,
   filterVisibleViolations,
+  fmtRecoveryWindow,
   formatLiveClock,
   getDayWindow,
   getVisibleDayIndices,
@@ -302,11 +311,15 @@ let _liveClockInterval: ReturnType<typeof setInterval> | null = null;
 
 // ─── View Router ─────────────────────────────────────────────────────────────
 
-type ViewMode = 'SCHEDULE_VIEW' | 'PROFILE_VIEW' | 'TASK_PANEL_VIEW';
+type ViewMode = 'SCHEDULE_VIEW' | 'PROFILE_VIEW' | 'TASK_PANEL_VIEW' | 'POINT_IN_TIME_VIEW';
 let _viewMode: ViewMode = 'SCHEDULE_VIEW';
 let _profileParticipantId: string | null = null;
 /** Source name of the task currently shown in the per-task panel (null when not in TASK_PANEL_VIEW). */
 let _taskPanelSourceName: string | null = null;
+/** Selected timestamp for the point-in-time view (null when not in POINT_IN_TIME_VIEW). */
+let _pointInTimeTimestamp: Date | null = null;
+/** Whether the "פנויים" section is collapsed in the point-in-time view (default: collapsed). */
+let _pointInTimeFreeCollapsed = true;
 /** Saved scroll position of the schedule view for seamless return */
 let _scheduleScrollY = 0;
 /** When true, renderAll() will restore _scheduleScrollY after DOM replacement */
@@ -1382,6 +1395,7 @@ function renderScheduleTab(preflight: ReturnType<typeof runPreflight>): string {
         ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="חיבור לשבצ"ק קודם — ייבוא נתוני המשכיות">📋 חיבור לשבצ"ק קודם</button>` : ''}
       </span>
       <span class="toolbar-group toolbar-group--day-actions">
+        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-where-is-everyone" title="הצג היכן כל המשתתפים בנקודת זמן נבחרת">👥 איפה כולם</button>` : ''}
         ${currentSchedule && liveMode.enabled && currentDay !== 0 ? `<button class="btn-sm btn-outline btn-inject-task" id="btn-inject-task" title="הוספת משימת חירום לתמונת המצב הנוכחית" ${_isOptimizing ? 'disabled' : ''}>🚨 הוסף משימת חירום</button>` : ''}
         ${currentSchedule && currentDay !== 0 ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
         ${currentSchedule && currentDay !== 0 ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
@@ -4285,6 +4299,34 @@ function renderAll(): void {
     }
   }
 
+  // ── Point-in-Time View: "Where is everyone now?" ──
+  if (_viewMode === 'POINT_IN_TIME_VIEW' && _pointInTimeTimestamp && currentSchedule) {
+    const pitCtx: PointInTimeContext = {
+      schedule: currentSchedule,
+      timestamp: _pointInTimeTimestamp,
+      freeCollapsed: _pointInTimeFreeCollapsed,
+      onTimestampChange: (t) => {
+        _pointInTimeTimestamp = t;
+        renderAll();
+      },
+      onToggleFreeCollapsed: () => {
+        _pointInTimeFreeCollapsed = !_pointInTimeFreeCollapsed;
+      },
+      onBack: () => {
+        _viewMode = 'SCHEDULE_VIEW';
+        _pointInTimeTimestamp = null;
+        _restoreScheduleScroll = true;
+        renderAll();
+      },
+      onNavigateToProfile: navigateToProfile,
+      onNavigateToTaskPanel: navigateToTaskPanel,
+    };
+    app.innerHTML = `<div class="point-in-time-view-root">${renderPointInTimeView(pitCtx)}</div>`;
+    const root = app.querySelector('.point-in-time-view-root') as HTMLElement;
+    wirePointInTimeEvents(root, pitCtx);
+    return;
+  }
+
   const participants = store.getAllParticipants();
   const templates = store.getAllTaskTemplates();
   const preflight = runPreflight();
@@ -4292,7 +4334,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.3</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -5135,6 +5177,15 @@ function wireScheduleEvents(container: HTMLElement): void {
     });
   }
 
+  // ── Where-is-everyone (point-in-time status view) ──
+  const whereBtn = container.querySelector('#btn-where-is-everyone');
+  if (whereBtn && currentSchedule) {
+    whereBtn.addEventListener('click', () => {
+      if (!currentSchedule) return;
+      navigateToPointInTime();
+    });
+  }
+
   // ── Continuity: Export day JSON ──
   const exportDayBtn = container.querySelector('#btn-export-day-json');
   if (exportDayBtn && currentSchedule) {
@@ -5958,29 +6009,40 @@ function navigateToTaskPanel(sourceName: string): void {
 }
 
 /**
- * Convert an arbitrary timestamp to a 1-based op-day index against the given
- * schedule's `periodStart + dayStartHour` anchor. Hours before `dayStartHour`
- * roll to the previous op-day's tail, mirroring `taskDayIndex` and the
- * existing `anchorLabel` math at app.ts:3197 / 3257. Result is clamped to ≥ 1.
+ * Default timestamp for the point-in-time view: live-mode anchor when
+ * Live Mode is active AND the anchor falls inside this schedule's op-day
+ * range (so it maps to a real day index). Otherwise, day 1 at the
+ * schedule's dayStartHour.
+ *
+ * The fall-back matters because the live-mode anchor is set to "now" at
+ * Live Mode toggle time and persists in the live store; a schedule
+ * generated for a future date will see that anchor sit before its own
+ * periodStart, which would otherwise open the panel on a moment with no
+ * meaningful data.
  */
-function timestampToOpDayIndex(d: Date, schedule: Schedule): number {
+function computeDefaultPointInTime(schedule: Schedule): Date {
   const dsh = schedule.algorithmSettings.dayStartHour;
-  const base = schedule.periodStart;
-  const shifted = new Date(d.getTime());
-  if (shifted.getHours() < dsh) shifted.setDate(shifted.getDate() - 1);
-  shifted.setHours(0, 0, 0, 0);
-  const baseMidnight = new Date(base.getFullYear(), base.getMonth(), base.getDate()).getTime();
-  return Math.max(1, Math.floor((shifted.getTime() - baseMidnight) / 86400000) + 1);
+  const lm = store.getLiveModeState();
+  if (lm.enabled) {
+    const idx = getAnchorDayIndex(schedule.periodStart, schedule.periodDays, lm.currentTimestamp, dsh);
+    if (idx >= 1 && idx <= schedule.periodDays) {
+      return new Date(lm.currentTimestamp.getTime());
+    }
+  }
+  const ms = hourInOpDay(schedule.periodStart, dsh, 1, dsh);
+  return new Date(ms);
 }
 
-/** Format an HC-15 recovery window as `יום N HH:MM – HH:MM` (single op-day) or `יום N HH:MM – יום M HH:MM`. */
-function fmtRecoveryWindow(win: { start: Date; end: Date }, schedule: Schedule): string {
-  const startDay = timestampToOpDayIndex(win.start, schedule);
-  const endDay = timestampToOpDayIndex(win.end, schedule);
-  const startTime = fmt(win.start);
-  const endTime = fmt(win.end);
-  if (startDay === endDay) return `יום ${startDay} ${startTime} – ${endTime}`;
-  return `יום ${startDay} ${startTime} – יום ${endDay} ${endTime}`;
+/** Open the "Where is everyone now?" point-in-time status view. */
+function navigateToPointInTime(): void {
+  if (!currentSchedule) return;
+  _scheduleScrollY = window.scrollY;
+  _pointInTimeTimestamp = computeDefaultPointInTime(currentSchedule);
+  _viewMode = 'POINT_IN_TIME_VIEW';
+  hideTooltip();
+  hideTaskTooltip();
+  renderAll();
+  window.scrollTo(0, 0);
 }
 
 function getAvailableParticipantsInRange(
