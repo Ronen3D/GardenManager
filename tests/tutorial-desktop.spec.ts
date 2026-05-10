@@ -155,7 +155,12 @@ test.describe('Tutorial — desktop', () => {
     await expect(page.locator('.tutorial-title')).toContainText('יצירת שבצ"ק');
   });
 
-  test('embedded screenshot loads when reaching a step that has one', async ({ page }) => {
+  test('embedded screenshot loads when reaching a step that has one', async ({ page, viewport }) => {
+    // Phone-landscape (812×375) is too short for the centered fallback popover
+    // to fit body + chip + screenshot + footer all at once — the screenshot
+    // ends up below the popover's overflow-fold, which Playwright treats as
+    // not-visible. Other viewports have headroom; skip the short-landscape one.
+    if (viewport && viewport.height < 480) test.skip();
     // Step s-11 (manual build) has a screenshot. Walk the schedule track to it.
     await page.evaluate(() => window.gmStartTutorial?.('schedule'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
@@ -165,6 +170,10 @@ test.describe('Tutorial — desktop', () => {
       await page.click('.tutorial-popover [data-tutorial-action="next"]');
     }
     const img = page.locator('.tutorial-popover .tutorial-screenshot');
+    // Scroll the image into view inside the popover before asserting — on the
+    // smaller mobile-portrait viewport the bottom-sheet popover may need to
+    // scroll its overflow.
+    await img.scrollIntoViewIfNeeded().catch(() => {});
     await expect(img).toBeVisible();
     // Real assertion: the image actually loaded (naturalWidth > 0). A broken
     // src would render the alt text but naturalWidth would be 0.

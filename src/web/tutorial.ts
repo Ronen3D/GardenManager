@@ -158,6 +158,8 @@ let _userTabSwitchListener: ((e: Event) => void) | null = null;
 let _mqListener: ((e: MediaQueryListEvent) => void) | null = null;
 let _mql: MediaQueryList | null = null;
 let _resizeListener: (() => void) | null = null;
+let _scrollListener: (() => void) | null = null;
+let _scrollRafQueued = false;
 let _domObserver: MutationObserver | null = null;
 let _internalClickFlag = false;
 
@@ -501,15 +503,21 @@ function scrollIntoViewIfNeeded(el: HTMLElement): void {
   // On mobile the bottom-sheet popover covers ~half the viewport, so the
   // useful "above the sheet" area is roughly the top 50% — keep targets there.
   const isMobile = !!_mql?.matches;
-  const upperBound = 80;
-  const lowerBound = isMobile ? vh * 0.45 : vh - 80;
+  // Reserve enough headroom above the target so the user can see *context*
+  // (parent label, neighbouring rows, the row above the highlighted control).
+  // Previous behaviour used scrollIntoView({block:'start'}) which slammed the
+  // target right against the top edge — no context, no spatial reference.
+  const upperBound = isMobile ? vh * 0.18 : 100;
+  const lowerBound = isMobile ? vh * 0.45 : vh - 100;
   if (rect.top < upperBound || rect.bottom > lowerBound) {
-    // Use `instant` (cast — `behavior: 'instant'` is supported in Chromium and
-    // bypasses CSS scroll-behavior:smooth so getBoundingClientRect immediately
-    // reflects the new scroll. `auto` would honour smooth-scroll and create a
-    // race where the rect is read before the scroll settles.
-    const target = isMobile ? 'start' : 'center';
-    el.scrollIntoView({ behavior: 'instant' as ScrollBehavior, block: target });
+    // Compute the absolute scroll position that places the target's top edge
+    // at our preferred offset from the viewport top. Manual scroll instead of
+    // scrollIntoView so we control the gap precisely. `instant` bypasses the
+    // page's scroll-behavior:smooth — getBoundingClientRect reads the new
+    // position synchronously on return.
+    const desiredFromTop = isMobile ? vh * 0.22 : vh * 0.28;
+    const newScrollY = window.scrollY + rect.top - desiredFromTop;
+    window.scrollTo({ top: Math.max(0, newScrollY), behavior: 'instant' as ScrollBehavior });
   }
 }
 
@@ -740,6 +748,26 @@ async function runFallbackAction(action: FallbackAction): Promise<void> {
   await renderStep(_stepIdx);
 }
 
+/** Re-evaluate the current step's target rect and re-run positioning, without
+ * triggering a scroll. Called from the scroll listener so the spotlight halo
+ * (and on desktop, the popover) follows the target as the user scrolls around
+ * to read context. */
+function repositionCurrentStep(): void {
+  if (!_activeTrackId || !_popover || !_spotlight) return;
+  const track = getTrackById(_activeTrackId);
+  if (!track) return;
+  const stepRaw = track.steps[_stepIdx];
+  if (!stepRaw) return;
+  const isMobile = !!_mql?.matches;
+  const step: TutorialStep = isMobile && stepRaw.mobileOverride ? { ...stepRaw, ...stepRaw.mobileOverride } : stepRaw;
+  if (!step.target) return; // centered step — nothing to track
+  // Skip when the precondition gates the step into a centered fallback.
+  if (step.precondition && _ctx && !step.precondition(_ctx)) return;
+  const targetEl = document.querySelector<HTMLElement>(step.target);
+  if (!targetEl) return;
+  positionForTarget(targetEl, step.placement === 'center' ? 'auto' : step.placement);
+}
+
 function positionCentered(): void {
   if (!_spotlight || !_popover) return;
   _spotlight.classList.add('tutorial-spotlight-centered');
@@ -926,6 +954,21 @@ function installListeners(): void {
   window.addEventListener('resize', _resizeListener);
   window.addEventListener('orientationchange', _resizeListener);
 
+  // Scroll → reposition spotlight + popover so the halo tracks the target
+  // as the user scrolls around to read context. Without this the spotlight
+  // is fixed-positioned at its initial coords and points at empty space the
+  // moment the user scrolls. Throttled to rAF; capture-phase + passive so
+  // scrollable ancestors fire it too.
+  _scrollListener = () => {
+    if (!_activeTrackId || _scrollRafQueued) return;
+    _scrollRafQueued = true;
+    requestAnimationFrame(() => {
+      _scrollRafQueued = false;
+      repositionCurrentStep();
+    });
+  };
+  window.addEventListener('scroll', _scrollListener, { passive: true, capture: true });
+
   // Mobile breakpoint
   _mql = window.matchMedia('(max-width: 767px)');
   _mqListener = () => {
@@ -956,6 +999,11 @@ function uninstallListeners(): void {
     window.removeEventListener('orientationchange', _resizeListener);
     _resizeListener = null;
   }
+  if (_scrollListener) {
+    window.removeEventListener('scroll', _scrollListener, { capture: true });
+    _scrollListener = null;
+  }
+  _scrollRafQueued = false;
   if (_mql && _mqListener && _mql.removeEventListener) {
     _mql.removeEventListener('change', _mqListener);
   }
