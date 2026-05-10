@@ -499,7 +499,9 @@ function printSnapshot(): void {
     );
     const samples = downsampleTempCurve(firstAttempt, 12);
     for (const sample of samples) {
-      console.log(`    iter ${sample.iter.toLocaleString('en-US').padStart(12, ' ')}    temp ${sample.temp.toFixed(3)}`);
+      console.log(
+        `    iter ${sample.iter.toLocaleString('en-US').padStart(12, ' ')}    temp ${sample.temp.toFixed(3)}`,
+      );
     }
   }
 

@@ -59,17 +59,17 @@ const PARTICIPANTS_TRACK: TutorialTrack = {
       target: '[data-action="add-participant"]',
       placement: 'bottom',
       title: 'הוספת משתתף',
-      body: 'לחץ כאן לפתיחת טופס הוספה — שם, קבוצה ורמה, ואז <strong>✓ שמור</strong>. כל שדה משפיע על המשמרות שיוצעו למשתתף.',
+      body: 'לחץ כאן לפתיחת גיליון ההוספה — שם, קבוצה ורמה, ואז <strong>שמור</strong>. כל שדה משפיע על המשמרות שיוצעו למשתתף.',
     },
     {
       id: 'p-3',
-      target: '#add-participant-form',
+      target: '.gm-edit-sheet-v2',
       placement: 'inline-end',
       title: 'שדות מרכזיים',
       body: '<strong>שם</strong> — חופשי. <strong>קבוצה</strong> — קריטית למשימות שדורשות קבוצה אחידה. <strong>רמה</strong> — L0 (מתחיל) / L2 / L3 / L4 (בכיר); אין L1 במערכת. הרמה קובעת באילו משבצות המשתתף יוכל להשתבץ. <strong>הסמכות</strong> — פותחות גישה למשבצות מיוחדות.',
       bodyFallback:
-        'בעת פתיחת טופס ההוספה תראה את השדות המרכזיים: <strong>שם</strong>, <strong>קבוצה</strong>, <strong>רמה</strong> (L0–L4), ו<strong>הסמכות</strong>. כל שדה משפיע על המשמרות שיוצעו.',
-      precondition: () => !!document.querySelector('#add-participant-form'),
+        'בעת פתיחת גיליון ההוספה תראה את השדות המרכזיים: <strong>שם</strong>, <strong>קבוצה</strong>, <strong>רמה</strong> (L0–L4), ו<strong>הסמכות</strong>. כל שדה משפיע על המשמרות שיוצעו.',
+      precondition: () => !!document.querySelector('.gm-edit-sheet-v2'),
     },
     {
       id: 'p-4',
@@ -82,25 +82,25 @@ const PARTICIPANTS_TRACK: TutorialTrack = {
     },
     {
       id: 'p-5',
-      target: '.unavail-edit-toggle[data-action="toggle-blackouts"]',
+      target: '[data-pe-unavail-add]',
       placement: 'inline-start',
       title: 'אי-זמינות',
-      body: 'כאן מגדירים מתי המשתתף לא זמין — למשל יום 3 אחה"צ. המערכת תמנע אוטומטית שיבוץ במשמרות חופפות. <em>(פתחתי לך את שורת העריכה של המשתתף הראשון להדגמה.)</em>',
+      body: 'כאן מגדירים מתי המשתתף לא זמין — למשל יום 3 אחה"צ. בלחיצה על <strong>+ הוסף חסימה</strong> נפתח בורר שמאפשר לבחור טווח ימים ושעות; המערכת תמנע אוטומטית שיבוץ במשמרות חופפות. <em>(פתחתי לך את גיליון העריכה של המשתתף הראשון להדגמה.)</em>',
       bodyFallback:
         'לכל משתתף ניתן להגדיר חלונות אי-זמינות — ימים ושעות שבהם <strong>לא</strong> ישובץ. הוסף משתתף ראשון כדי לראות איפה.',
       expandFirstParticipant: true,
-      precondition: () => !!document.querySelector('.unavail-edit-toggle[data-action="toggle-blackouts"]'),
+      precondition: () => !!document.querySelector('[data-pe-unavail-add]'),
     },
     {
       id: 'p-5b',
-      target: '[data-field="workloadMultiplier"]',
+      target: '[data-pe-field="workloadMultiplier"]',
       placement: 'inline-start',
       title: 'מקדם עומס ופק"לים',
-      body: '<strong>מקדם עומס</strong> — מספר שמשנה את מטרת חלוקת השעות של המשתתף (1.0 = ברירת מחדל; 1.5 = יקבל ~50% יותר; 0.5 = ~50% פחות; טווח 0.3–5.0). תג <strong>×N</strong> בעמודת הרמה מציין שהמקדם שונה מ-1. בעמודת <strong>פק"לים</strong> — תיבות סימון להסמכות תפעוליות צמודות לאדם (מוגדרות בהגדרות ← הסמכות ופק"לים). <em>(פתחתי לך את שורת העריכה להדגמה.)</em>',
+      body: '<strong>מקדם עומס</strong> — מספר שמשנה את מטרת חלוקת השעות של המשתתף (1.0 = ברירת מחדל; 1.5 = יקבל ~50% יותר; 0.5 = ~50% פחות; טווח 0.3–5.0). תג <strong>×N</strong> בעמודת הרמה מציין שהמקדם שונה מ-1. בקטע <strong>פק"לים</strong> שבגיליון — תיבות סימון להסמכות תפעוליות צמודות לאדם (מוגדרות בהגדרות ← הסמכות ופק"לים). <em>(פתחתי לך את גיליון העריכה להדגמה.)</em>',
       bodyFallback:
-        'בשורת העריכה של כל משתתף יופיעו: <strong>מקדם עומס</strong> (משנה את מטרת חלוקת השעות שלו) ועמודת <strong>פק"לים</strong> (הסמכות תפעוליות נוספות).',
+        'בגיליון העריכה של כל משתתף יופיעו: <strong>מקדם עומס</strong> (משנה את מטרת חלוקת השעות שלו) וקטע <strong>פק"לים</strong> (הסמכות תפעוליות נוספות).',
       expandFirstParticipant: true,
-      precondition: () => !!document.querySelector('[data-field="workloadMultiplier"]'),
+      precondition: () => !!document.querySelector('[data-pe-field="workloadMultiplier"]'),
     },
     {
       id: 'p-6',
@@ -121,17 +121,18 @@ const PARTICIPANTS_TRACK: TutorialTrack = {
       target: '.table-participants',
       placement: 'top',
       title: 'העדפות משימה',
-      body: 'בעריכת משתתף תוכל להגדיר משימה <strong>מועדפת</strong> ו<strong>פחות-מועדפת</strong>. אלו אילוצים רכים — האופטימייזר יעדיף לכבד אותם, אך אינו מחויב לכך. אם תבחר משימה שהמשתתף לא כשיר אליה (רמה / הסמכה לא מתאימה), תופיע אזהרה מתחת לשדה — ההעדפה תישמר אך לא תשפיע על השיבוץ.',
+      body: 'בגיליון העריכה תוכל להגדיר משימה <strong>מועדפת</strong> ו<strong>פחות-מועדפת</strong>. אלו אילוצים רכים — האופטימייזר יעדיף לכבד אותם, אך אינו מחויב לכך. אם תבחר משימה שהמשתתף לא כשיר אליה (רמה / הסמכה לא מתאימה), תופיע אזהרה מתחת לשדה — ההעדפה תישמר אך לא תשפיע על השיבוץ.',
     },
     {
       id: 'p-7b',
-      target: '.tab-toolbar h2 .count',
-      placement: 'bottom',
+      target: '[data-pe-notwith]',
+      placement: 'inline-start',
       title: 'אי-התאמה בין משתתפים',
-      body: 'לחץ <strong>שלוש פעמים</strong> על מספר המשתתפים כאן בכותרת כדי לחשוף עמודת <strong>אי-התאמה</strong>. בשורת עריכת כל משתתף יופיע שדה לרישום שמות משתתפים שעדיף לא לשבץ יחד עם המשתתף הזה (מופרדים בפסיק). זהו <strong>אילוץ רך</strong> — האופטימייזר ישתדל להפריד ביניהם, אך עשוי לשבץ יחד אם אין ברירה, וההפרה תופיע כאזהרה בלוח האזהרות. <strong>שים לב</strong>: כדי שהאילוץ יחול על תבנית מסוימת, צריך להפעיל בה את המתג <strong>"אי-התאמה"</strong> (ראה לשונית כללי משימות).',
+      body: 'בקטע <strong>אי-זיווג</strong> בגיליון העריכה ניתן לסמן שמות משתתפים שעדיף לא לשבץ יחד עם המשתתף הזה. זהו <strong>אילוץ רך</strong> — האופטימייזר ישתדל להפריד ביניהם, אך עשוי לשבץ יחד אם אין ברירה, וההפרה תופיע כאזהרה בלוח האזהרות. <strong>שים לב</strong>: כדי שהאילוץ יחול על תבנית מסוימת, צריך להפעיל בה את המתג <strong>"אי-התאמה"</strong> (ראה לשונית כללי משימות). <em>(פתחתי לך את גיליון העריכה להדגמה.)</em>',
       bodyFallback:
-        'לחץ שלוש פעמים על מספר המשתתפים בכותרת הלשונית כדי לחשוף עמודת <strong>אי-התאמה</strong> — שדה רך לרישום משתתפים שעדיף לא לשבץ יחד.',
-      precondition: () => !!document.querySelector('.tab-toolbar h2 .count'),
+        'בגיליון העריכה של כל משתתף יש קטע <strong>אי-זיווג</strong> — שדה רך לרישום משתתפים שעדיף לא לשבץ יחד.',
+      expandFirstParticipant: true,
+      precondition: () => !!document.querySelector('[data-pe-notwith]'),
     },
     {
       id: 'p-8',
@@ -175,7 +176,8 @@ const TASK_RULES_TRACK: TutorialTrack = {
       placement: 'bottom',
       title: 'כרטיסיות התבניות',
       body: 'כל תבנית מוצגת ככרטיסייה. <strong>לחץ על הכותרת כדי להרחיב</strong> ולערוך — שם, מספר משמרות ביום, שעת התחלה ומשך. מתחת לשדות תופיע שורת שבבים שמראה בזמן אמת את <strong>שעות ההתחלה והסיום של כל משמרת</strong> — למשל: <code>1 06:00–14:00 &nbsp; 2 14:00–22:00 &nbsp; 3 22:00–06:00↩</code>. החץ ↩ מסמן משמרת שחוצה חצות ומסתיימת ביום התפעולי הבא. <strong>כל שינוי שדה נשמר אוטומטית — אין כפתור "שמור"</strong>; נצנוץ קצר בשורה מאשר כל שמירה.',
-      bodyFallback: 'לאחר הוספת תבנית ראשונה, היא תופיע כאן ככרטיסייה הניתנת להרחבה ועריכה. שינויים נשמרים אוטומטית — אין כפתור שמור.',
+      bodyFallback:
+        'לאחר הוספת תבנית ראשונה, היא תופיע כאן ככרטיסייה הניתנת להרחבה ועריכה. שינויים נשמרים אוטומטית — אין כפתור שמור.',
       precondition: () => !!document.querySelector('.template-card[data-template-id]'),
     },
     {
@@ -339,7 +341,8 @@ const SCHEDULE_TRACK: TutorialTrack = {
       placement: 'top',
       title: 'טבלת השיבוץ',
       body: 'כל שורה = פרק זמן; כל תא = משתתף משובץ או ריק. לחיצה על שם משתתף פותחת את הכרטיס האישי שלו, ולחיצה על תג משימה פותחת את לוח המשימה. מתחת לטבלה תמצא שתי תצוגות חלופיות (רצועות וגאנט) — נדבר עליהן בשלב הבא.',
-      bodyFallback: 'טבלת השיבוץ תופיע כאן לאחר יצירת שבצ"ק. כל תא = משתתף משובץ; לחיצה על שם פותחת את הכרטיס האישי, לחיצה על תג משימה פותחת את לוח המשימה.',
+      bodyFallback:
+        'טבלת השיבוץ תופיע כאן לאחר יצירת שבצ"ק. כל תא = משתתף משובץ; לחיצה על שם פותחת את הכרטיס האישי, לחיצה על תג משימה פותחת את לוח המשימה.',
       precondition: hasSchedule,
       fallbackAction: FA_GENERATE_SCHEDULE,
     },
@@ -352,7 +355,8 @@ const SCHEDULE_TRACK: TutorialTrack = {
       bodyFallback:
         'מתחת לטבלת השיבוץ יופיעו שתי תצוגות חלופיות: <strong>רצועות</strong> (שורה לכל משתתף עם פסי משימות) ו<strong>גאנט</strong> (סדר כרונולוגי עם סימוני חצייה חצות). שתיהן ניתנות לקיפול ולהרחבה.',
       precondition: (ctx) =>
-        hasSchedule(ctx) && !!document.querySelector('[data-action="toggle-swimlane"], .swimlane-section, .gantt-section'),
+        hasSchedule(ctx) &&
+        !!document.querySelector('[data-action="toggle-swimlane"], .swimlane-section, .gantt-section'),
       fallbackAction: FA_GENERATE_SCHEDULE,
     },
     {

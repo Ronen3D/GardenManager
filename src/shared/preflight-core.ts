@@ -95,9 +95,7 @@ function totalSlotsPerShift(tpl: TaskTemplate): number {
 function describeSkillRequirement(slot: SlotTemplate, certLabel: (id: string) => string): string {
   const levelStr = slot.acceptableLevels.map((l) => `דרגה ${l.level}`).join('/');
   const reqStr =
-    slot.requiredCertifications.length > 0
-      ? ` + ${slot.requiredCertifications.map(certLabel).join(', ')}`
-      : '';
+    slot.requiredCertifications.length > 0 ? ` + ${slot.requiredCertifications.map(certLabel).join(', ')}` : '';
   const forbidStr =
     slot.forbiddenCertifications && slot.forbiddenCertifications.length > 0
       ? ` (ללא ${slot.forbiddenCertifications.map(certLabel).join(', ')})`

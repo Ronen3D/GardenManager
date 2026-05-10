@@ -328,12 +328,12 @@ import {
   effectiveCapacity,
   workloadImbalanceSplit,
 } from './constraints/soft-constraints';
-import { computeAllCapacities } from './utils/capacity';
 import { fullValidate, previewSwap } from './engine/validator';
 import { runPreflightWithInputs } from './shared/preflight-core';
 import { computeParticipantRest } from './shared/utils/rest-calculator';
 import { isBlockedByDateUnavailability, isDateInBlock, type ScheduleContext } from './shared/utils/time-utils';
 import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
+import { computeAllCapacities } from './utils/capacity';
 
 let passed = 0;
 let failed = 0;
@@ -14889,14 +14889,10 @@ console.log('\n── Structural section-key (layout) ─────');
       'resolveLogicalDayTimestamp: dsh=7 maps day 1 / 06:00 to calendar day+1 (proves param is honored, not the store)',
     );
   }
-
-  // Malformed input returns null (existing behavior)
-  {
-    assert(
-      resolveLogicalDayTimestamp(1, 'garbage', 5, base) === null,
-      'resolveLogicalDayTimestamp: malformed input returns null',
-    );
-  }
+  assert(
+    resolveLogicalDayTimestamp(1, 'garbage', 5, base) === null,
+    'resolveLogicalDayTimestamp: malformed input returns null',
+  );
 }
 
 // ─── Preflight (deep checks) ─────────────────────────────────────────────────

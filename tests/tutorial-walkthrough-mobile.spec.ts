@@ -1,6 +1,6 @@
-import { type Page, test } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { type Page, test } from '@playwright/test';
 
 /**
  * Tutorial walkthrough — mobile (375×812).
@@ -64,12 +64,18 @@ async function clearStorage(page: Page): Promise<void> {
   // Dismiss the banner if present (don't wait long).
   const dismiss = page.locator('.tutorial-banner [data-tutorial-banner-action="dismiss"]:not(.tutorial-banner-close)');
   if ((await dismiss.count()) > 0) {
-    await dismiss.first().click({ timeout: 2000 }).catch(() => {});
+    await dismiss
+      .first()
+      .click({ timeout: 2000 })
+      .catch(() => {});
   }
 }
 
 async function generateSchedule(page: Page): Promise<boolean> {
-  await page.locator('.tab-btn[data-tab="schedule"]').click({ timeout: 5_000 }).catch(() => {});
+  await page
+    .locator('.tab-btn[data-tab="schedule"]')
+    .click({ timeout: 5_000 })
+    .catch(() => {});
   await page.waitForTimeout(300);
   // The grid container may already be present even before generate (empty state).
   // Generate to be sure assignments exist.
@@ -80,7 +86,10 @@ async function generateSchedule(page: Page): Promise<boolean> {
   if ((await scenInput.count()) > 0) {
     await scenInput.fill('4').catch(() => {});
   }
-  await gen.first().click({ timeout: 5_000 }).catch(() => {});
+  await gen
+    .first()
+    .click({ timeout: 5_000 })
+    .catch(() => {});
   // Wait for at least one participant cell to appear (schedule has assignments).
   const ok = await page
     .waitForSelector('.participant-hover[data-pid], [data-pid]', { timeout: 90_000, state: 'attached' })
@@ -91,7 +100,10 @@ async function generateSchedule(page: Page): Promise<boolean> {
 }
 
 async function enableLiveMode(page: Page): Promise<void> {
-  await page.locator('.tab-btn[data-tab="schedule"]').click({ timeout: 5_000 }).catch(() => {});
+  await page
+    .locator('.tab-btn[data-tab="schedule"]')
+    .click({ timeout: 5_000 })
+    .catch(() => {});
   await page.waitForTimeout(200);
   const chk = page.locator('#chk-live-mode');
   if ((await chk.count()) === 0) return;
@@ -100,9 +112,7 @@ async function enableLiveMode(page: Page): Promise<void> {
     await chk.click({ timeout: 3_000 }).catch(() => {});
     // Live-mode opens an anchor-time picker modal — accept defaults.
     await page.waitForTimeout(400);
-    const confirm = page
-      .locator('.gm-modal-dialog .btn-primary, .gm-modal .btn-primary')
-      .first();
+    const confirm = page.locator('.gm-modal-dialog .btn-primary, .gm-modal .btn-primary').first();
     if ((await confirm.count()) > 0) {
       await confirm.click({ timeout: 2_000 }).catch(() => {});
     }

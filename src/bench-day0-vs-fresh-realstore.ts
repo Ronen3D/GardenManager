@@ -39,11 +39,7 @@
 
 import { type OptimizationResult, optimizeMultiAttempt } from './engine/optimizer';
 import { buildPhantomContext, mergePhantomRules, type PhantomContext } from './engine/phantom';
-import {
-  type ContinuityAssignment,
-  type ContinuityParticipant,
-  type ContinuitySnapshot,
-} from './models/continuity-schema';
+import type { ContinuityAssignment, ContinuityParticipant, ContinuitySnapshot } from './models/continuity-schema';
 import {
   DEFAULT_CONFIG,
   type Participant,
@@ -371,9 +367,12 @@ function fmt(n: number, digits = 2): string {
 }
 
 function welchT(a: number[], b: number[]): { t: number; p: number } {
-  const ma = mean(a), mb = mean(b);
-  const va = stddev(a) ** 2, vb = stddev(b) ** 2;
-  const na = a.length, nb = b.length;
+  const ma = mean(a),
+    mb = mean(b);
+  const va = stddev(a) ** 2,
+    vb = stddev(b) ** 2;
+  const na = a.length,
+    nb = b.length;
   const se = Math.sqrt(va / na + vb / nb);
   if (se === 0) return { t: 0, p: 1 };
   const t = (ma - mb) / se;
@@ -384,7 +383,11 @@ function normalCdf(x: number): number {
   const sign = x < 0 ? -1 : 1;
   const ax = Math.abs(x) / Math.SQRT2;
   const tt = 1 / (1 + 0.3275911 * ax);
-  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429;
+  const a1 = 0.254829592,
+    a2 = -0.284496736,
+    a3 = 1.421413741,
+    a4 = -1.453152027,
+    a5 = 1.061405429;
   const y = 1 - ((((a5 * tt + a4) * tt + a3) * tt + a2) * tt + a1) * tt * Math.exp(-ax * ax);
   return 0.5 * (1 + sign * y);
 }
@@ -439,7 +442,9 @@ function main(): void {
   console.log(`  Real seed loaded: ${participants.length} participants, ${templates.length} templates`);
   console.log(`  Groups:           ${[...grouped.entries()].map(([g, n]) => `${g}=${n}`).join(', ')}`);
   console.log(`  Slots / day:      ${totalSlotsPerDay}`);
-  console.log(`  Rest rules:       ${[...restRuleMap.entries()].map(([k, v]) => `${k}=${(v / 3600000).toFixed(1)}h`).join(', ') || '(none)'}`);
+  console.log(
+    `  Rest rules:       ${[...restRuleMap.entries()].map(([k, v]) => `${k}=${(v / 3600000).toFixed(1)}h`).join(', ') || '(none)'}`,
+  );
   console.log(`  Day start hour:   ${dayStartHour}`);
   console.log('───────────────────────────────────────────────────────────────────────────');
 
@@ -472,9 +477,7 @@ function main(): void {
       DAY0_ATTEMPTS,
     );
     day0ByX.set(X, r);
-    console.log(
-      `${(r.durationMs / 1000).toFixed(2)}s, ${r.assignmentCount}/${r.totalSlots} assignments`,
-    );
+    console.log(`${(r.durationMs / 1000).toFixed(2)}s, ${r.assignmentCount}/${r.totalSlots} assignments`);
   }
   console.log('───────────────────────────────────────────────────────────────────────────');
 
@@ -543,37 +546,59 @@ function main(): void {
 
     console.log('');
     console.log(`  RUNTIME (optimizer-only, ms):`);
-    console.log(`    A-fresh:   mean ${fmt(mean(aDur), 0)} ± ${fmt(stddev(aDur), 0)}    median ${fmt(median(aDur), 0)}    min ${fmt(Math.min(...aDur), 0)}    max ${fmt(Math.max(...aDur), 0)}`);
-    console.log(`    B-day0:    mean ${fmt(mean(bDur), 0)} ± ${fmt(stddev(bDur), 0)}    median ${fmt(median(bDur), 0)}    min ${fmt(Math.min(...bDur), 0)}    max ${fmt(Math.max(...bDur), 0)}`);
+    console.log(
+      `    A-fresh:   mean ${fmt(mean(aDur), 0)} ± ${fmt(stddev(aDur), 0)}    median ${fmt(median(aDur), 0)}    min ${fmt(Math.min(...aDur), 0)}    max ${fmt(Math.max(...aDur), 0)}`,
+    );
+    console.log(
+      `    B-day0:    mean ${fmt(mean(bDur), 0)} ± ${fmt(stddev(bDur), 0)}    median ${fmt(median(bDur), 0)}    min ${fmt(Math.min(...bDur), 0)}    max ${fmt(Math.max(...bDur), 0)}`,
+    );
     const dPct = mean(aDur) === 0 ? 0 : ((mean(bDur) - mean(aDur)) / mean(aDur)) * 100;
     const dPv = welchT(bDur, aDur).p;
-    console.log(`    Δ (B-A):   ${fmt(mean(bDur) - mean(aDur), 0)}ms (${dPct >= 0 ? '+' : ''}${fmt(dPct, 1)}%)   p=${fmt(dPv, 4)}${star(dPv)}`);
+    console.log(
+      `    Δ (B-A):   ${fmt(mean(bDur) - mean(aDur), 0)}ms (${dPct >= 0 ? '+' : ''}${fmt(dPct, 1)}%)   p=${fmt(dPv, 4)}${star(dPv)}`,
+    );
 
     const aTotalMean = mean(aDur);
     const bTotalMean = mean(bDur) + b.day0BuildMs!;
     const dTotalPct = aTotalMean === 0 ? 0 : ((bTotalMean - aTotalMean) / aTotalMean) * 100;
     console.log(`  TOTAL WALL-CLOCK (incl day-0 setup, ms):`);
-    console.log(`    A-fresh:   ${fmt(aTotalMean, 0)}    B-day0+setup: ${fmt(bTotalMean, 0)}    Δ ${dTotalPct >= 0 ? '+' : ''}${fmt(dTotalPct, 1)}%`);
+    console.log(
+      `    A-fresh:   ${fmt(aTotalMean, 0)}    B-day0+setup: ${fmt(bTotalMean, 0)}    Δ ${dTotalPct >= 0 ? '+' : ''}${fmt(dTotalPct, 1)}%`,
+    );
 
     const aScoreP = aScore.map((s) => s / aDays);
     const bScoreP = bScore.map((s) => s / bDays);
     console.log('');
     console.log(`  COMPOSITE SCORE (raw, NOT directly comparable):`);
-    console.log(`    A-fresh:   mean ${fmt(mean(aScore), 2)} ± ${fmt(stddev(aScore), 2)}    median ${fmt(median(aScore), 2)}`);
-    console.log(`    B-day0:    mean ${fmt(mean(bScore), 2)} ± ${fmt(stddev(bScore), 2)}    median ${fmt(median(bScore), 2)}`);
+    console.log(
+      `    A-fresh:   mean ${fmt(mean(aScore), 2)} ± ${fmt(stddev(aScore), 2)}    median ${fmt(median(aScore), 2)}`,
+    );
+    console.log(
+      `    B-day0:    mean ${fmt(mean(bScore), 2)} ± ${fmt(stddev(bScore), 2)}    median ${fmt(median(bScore), 2)}`,
+    );
     console.log(`  SCORE / SCORED-DAY (normalised):`);
-    console.log(`    A-fresh:   mean ${fmt(mean(aScoreP), 2)} ± ${fmt(stddev(aScoreP), 2)}    median ${fmt(median(aScoreP), 2)}`);
-    console.log(`    B-day0:    mean ${fmt(mean(bScoreP), 2)} ± ${fmt(stddev(bScoreP), 2)}    median ${fmt(median(bScoreP), 2)}`);
+    console.log(
+      `    A-fresh:   mean ${fmt(mean(aScoreP), 2)} ± ${fmt(stddev(aScoreP), 2)}    median ${fmt(median(aScoreP), 2)}`,
+    );
+    console.log(
+      `    B-day0:    mean ${fmt(mean(bScoreP), 2)} ± ${fmt(stddev(bScoreP), 2)}    median ${fmt(median(bScoreP), 2)}`,
+    );
     const scorePv = welchT(bScoreP, aScoreP).p;
     const scorePctDiff = mean(aScoreP) === 0 ? 0 : ((mean(bScoreP) - mean(aScoreP)) / Math.abs(mean(aScoreP))) * 100;
-    console.log(`    Δ (B-A) /day:   ${fmt(mean(bScoreP) - mean(aScoreP), 2)} (${scorePctDiff >= 0 ? '+' : ''}${fmt(scorePctDiff, 2)}%)   p=${fmt(scorePv, 4)}${star(scorePv)}`);
+    console.log(
+      `    Δ (B-A) /day:   ${fmt(mean(bScoreP) - mean(aScoreP), 2)} (${scorePctDiff >= 0 ? '+' : ''}${fmt(scorePctDiff, 2)}%)   p=${fmt(scorePv, 4)}${star(scorePv)}`,
+    );
 
     const aUnfPct = aUnf.map((u, i) => (u / a.runs[i].totalSlots) * 100);
     const bUnfPct = bUnf.map((u, i) => (u / b.runs[i].totalSlots) * 100);
     console.log('');
     console.log(`  UNFILLED SLOTS (raw count):`);
-    console.log(`    A-fresh:   mean ${fmt(mean(aUnf), 1)} ± ${fmt(stddev(aUnf), 1)}    median ${fmt(median(aUnf), 1)}    range [${Math.min(...aUnf)}, ${Math.max(...aUnf)}]`);
-    console.log(`    B-day0:    mean ${fmt(mean(bUnf), 1)} ± ${fmt(stddev(bUnf), 1)}    median ${fmt(median(bUnf), 1)}    range [${Math.min(...bUnf)}, ${Math.max(...bUnf)}]`);
+    console.log(
+      `    A-fresh:   mean ${fmt(mean(aUnf), 1)} ± ${fmt(stddev(aUnf), 1)}    median ${fmt(median(aUnf), 1)}    range [${Math.min(...aUnf)}, ${Math.max(...aUnf)}]`,
+    );
+    console.log(
+      `    B-day0:    mean ${fmt(mean(bUnf), 1)} ± ${fmt(stddev(bUnf), 1)}    median ${fmt(median(bUnf), 1)}    range [${Math.min(...bUnf)}, ${Math.max(...bUnf)}]`,
+    );
     console.log(`  UNFILLED RATE (% of slots):`);
     console.log(`    A-fresh:   mean ${fmt(mean(aUnfPct), 2)}%`);
     console.log(`    B-day0:    mean ${fmt(mean(bUnfPct), 2)}%`);

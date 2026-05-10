@@ -7,9 +7,9 @@
  * only for display. Day 0 is never aggregated into period totals or fairness.
  */
 
+import type { ContinuityAssignment, ContinuityParticipant } from '../models/continuity-schema';
 import type { Assignment, Participant, Schedule, Task } from '../models/types';
 import { AssignmentStatus, Level } from '../models/types';
-import type { ContinuityAssignment, ContinuityParticipant } from '../models/continuity-schema';
 import { getDayWindow } from './schedule-utils';
 
 // ─── Foreign-participant marker ─────────────────────────────────────────────

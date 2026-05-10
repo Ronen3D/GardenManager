@@ -220,13 +220,13 @@ export async function startTutorial(trackId: string, ctx: TutorialContext): Prom
 export function exitTutorial(): void {
   if (!_activeTrackId) return;
   uninstallListeners();
-  // If the engine programmatically opened a participant row for edit during
-  // the tutorial (expandFirstParticipant), close it on exit so the still-armed
-  // outside-click handler doesn't swallow the user's next click.
-  const editCancel = document.querySelector<HTMLElement>('tr.row-editing [data-action="cancel-edit"]');
-  if (editCancel) {
+  // If the engine programmatically opened the participant editor sheet during
+  // the tutorial (expandFirstParticipant), close it on exit so the still-mounted
+  // backdrop doesn't swallow the user's next click.
+  const sheetCancel = document.querySelector<HTMLElement>('.gm-edit-sheet-v2 [data-pe-cancel]');
+  if (sheetCancel) {
     _internalClickFlag = true;
-    editCancel.click();
+    sheetCancel.click();
     _internalClickFlag = false;
   }
   if (_root) {
@@ -787,17 +787,14 @@ async function switchToTabProgrammatic(tab: string): Promise<void> {
   const btn = document.querySelector<HTMLButtonElement>(`.tab-btn[data-tab="${tab}"]`);
   if (!btn) return;
   if (btn.classList.contains('tab-active')) return;
-  // Defensive: a participant row left in inline-edit mode arms a
-  // capture-phase outside-click handler in tab-participants.ts that
-  // stop-propagates ANY click outside the row (including tab buttons,
-  // even ones inside .tutorial-root). If the engine programmatically
-  // expanded a row earlier (expandFirstParticipant), the next tab switch
-  // would silently fail and every downstream step would target the wrong
-  // tab. Cancel the edit first so the tab click reaches its own handler.
-  const editCancel = document.querySelector<HTMLElement>('tr.row-editing [data-action="cancel-edit"]');
-  if (editCancel) {
+  // Defensive: if the participant editor sheet is open from a prior
+  // expandFirstParticipant step, dismiss it so its modal backdrop doesn't
+  // intercept the next tab click. The sheet is a `.gm-modal-backdrop` that
+  // spans the viewport and would swallow the tab click otherwise.
+  const sheetCancel = document.querySelector<HTMLElement>('.gm-edit-sheet-v2 [data-pe-cancel]');
+  if (sheetCancel) {
     _internalClickFlag = true;
-    editCancel.click();
+    sheetCancel.click();
     _internalClickFlag = false;
     await rAFAsync();
   }
@@ -839,15 +836,16 @@ async function expandFirstTemplateCard(): Promise<void> {
 }
 
 async function expandFirstParticipantRow(): Promise<void> {
-  // No-op if any row is already in edit mode
-  if (document.querySelector('tr.row-editing')) return;
+  // No-op if the editor sheet is already open
+  if (document.querySelector('.gm-edit-sheet-v2')) return;
   const editBtn = document.querySelector<HTMLElement>('[data-action="edit-participant"][data-pid]');
   if (!editBtn) return;
   _internalClickFlag = true;
   editBtn.click();
   _internalClickFlag = false;
-  // Re-render is synchronous; one rAF lets the row-editing template render.
-  await rAFAsync();
+  // Sheet renders synchronously into the body; wait briefly for the modal
+  // backdrop + dialog to mount and the focus animation to settle.
+  await waitFor('.gm-edit-sheet-v2', 800);
 }
 
 async function openAccordionProgrammatic(id: string): Promise<void> {

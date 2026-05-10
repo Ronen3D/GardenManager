@@ -28,17 +28,9 @@
  *   BENCH_DAY0_ATTEMPTS attempts when building day-0 baseline (default 20)
  */
 
-import {
-  type OptimizationResult,
-  optimizeMultiAttempt,
-  setBenchHooks,
-} from './engine/optimizer';
+import { type OptimizationResult, optimizeMultiAttempt, setBenchHooks } from './engine/optimizer';
 import { buildPhantomContext, mergePhantomRules, type PhantomContext } from './engine/phantom';
-import {
-  type ContinuityAssignment,
-  type ContinuityParticipant,
-  type ContinuitySnapshot,
-} from './models/continuity-schema';
+import type { ContinuityAssignment, ContinuityParticipant, ContinuitySnapshot } from './models/continuity-schema';
 import { DEFAULT_CONFIG, Level, type Participant, type SchedulerConfig, type Task } from './models/types';
 import { generateWeeklyTasks } from './tasks/cli-task-factory';
 
@@ -72,24 +64,60 @@ function p(
 function buildProduction48(baseDate: Date, spanDays: number): Participant[] {
   const NAMES_BY_GROUP: Record<string, string[]> = {
     'קבוצה 1': [
-      'איתי לוין', 'נועה אברהמי', 'יונתן רפאלי', 'מאיה ישראלי',
-      'עידו כהן', 'עדי מזרחי', 'רועי שפירא', 'מיכל אשכנזי',
-      'עומר דרוקר', 'ענבר חזן', 'אורי גבאי', 'טל בן-דור',
+      'איתי לוין',
+      'נועה אברהמי',
+      'יונתן רפאלי',
+      'מאיה ישראלי',
+      'עידו כהן',
+      'עדי מזרחי',
+      'רועי שפירא',
+      'מיכל אשכנזי',
+      'עומר דרוקר',
+      'ענבר חזן',
+      'אורי גבאי',
+      'טל בן-דור',
     ],
     'קבוצה 2': [
-      'דניאל וייס', 'שירה אדרי', 'נדב הראל', 'ליאור פלד',
-      'אסף גרינברג', 'רוני סגל', 'גיא מור', 'יעל שלום',
-      'אלון ברק', 'הילה חדד', 'מתן אלוני', 'שחר עמר',
+      'דניאל וייס',
+      'שירה אדרי',
+      'נדב הראל',
+      'ליאור פלד',
+      'אסף גרינברג',
+      'רוני סגל',
+      'גיא מור',
+      'יעל שלום',
+      'אלון ברק',
+      'הילה חדד',
+      'מתן אלוני',
+      'שחר עמר',
     ],
     'קבוצה 3': [
-      'איתן דהן', 'עמית מלכה', 'דורון פרידמן', 'נטע לביא',
-      'יובל קליין', 'קרן אורן', 'אריאל נחום', 'דנה צור',
-      'אביב סוויסה', 'גלית שדה', 'תומר גולן', 'ספיר מלמד',
+      'איתן דהן',
+      'עמית מלכה',
+      'דורון פרידמן',
+      'נטע לביא',
+      'יובל קליין',
+      'קרן אורן',
+      'אריאל נחום',
+      'דנה צור',
+      'אביב סוויסה',
+      'גלית שדה',
+      'תומר גולן',
+      'ספיר מלמד',
     ],
     'קבוצה 4': [
-      'אופיר ביטון', 'נועם פרץ', 'אייל רוזנפלד', 'ליהי כץ',
-      'בועז נאמן', 'תמר יוספי', 'יואב פולק', 'סיון ריבלין',
-      'אוהד שטרן', 'רותם גנות', 'ברק אוריון', 'נעמה שקד',
+      'אופיר ביטון',
+      'נועם פרץ',
+      'אייל רוזנפלד',
+      'ליהי כץ',
+      'בועז נאמן',
+      'תמר יוספי',
+      'יואב פולק',
+      'סיון ריבלין',
+      'אוהד שטרן',
+      'רותם גנות',
+      'ברק אוריון',
+      'נעמה שקד',
     ],
   };
   const TEMPLATE: Array<{ level: Level; certs: string[] }> = [
@@ -205,9 +233,7 @@ function buildProduction48(baseDate: Date, spanDays: number): Participant[] {
       const part = p(id, name, spec.level, certs, g, baseDate, spanDays);
       const pref = TASK_PREF[name];
       const dateRules = DATE_UNAVAIL[name]?.filter((r) => r.dayIndex <= spanDays);
-      part.dateUnavailability = dateRules
-        ? dateRules.map((r, k) => ({ id: `du-${id}-${k}`, ...r }))
-        : [];
+      part.dateUnavailability = dateRules ? dateRules.map((r, k) => ({ id: `du-${id}-${k}`, ...r })) : [];
       if (pref?.pref) part.preferredTaskName = pref.pref;
       if (pref?.less) part.lessPreferredTaskName = pref.less;
       out.push(part);
@@ -322,11 +348,11 @@ function buildPriorDaySnapshot(
 // ─── Run kinds ──────────────────────────────────────────────────────────────
 
 interface RunResult {
-  durationMs: number;          // optimizer-only wall-clock
+  durationMs: number; // optimizer-only wall-clock
   bestScore: number;
   bestUnfilled: number;
   totalSlots: number;
-  daysCovered: number;          // days the optimizer worked on (X for A, X-1 for B)
+  daysCovered: number; // days the optimizer worked on (X for A, X-1 for B)
   totalTasks: number;
   feasible: boolean;
   attemptScores: number[];
@@ -439,14 +465,23 @@ function median(xs: number[]): number {
   const m = Math.floor(s.length / 2);
   return s.length % 2 === 0 ? (s[m - 1] + s[m]) / 2 : s[m];
 }
-function min(xs: number[]): number { return Math.min(...xs); }
-function max(xs: number[]): number { return Math.max(...xs); }
-function fmt(n: number, digits = 2): string { return n.toFixed(digits); }
+function min(xs: number[]): number {
+  return Math.min(...xs);
+}
+function max(xs: number[]): number {
+  return Math.max(...xs);
+}
+function fmt(n: number, digits = 2): string {
+  return n.toFixed(digits);
+}
 
 function welchT(a: number[], b: number[]): { t: number; p: number } {
-  const ma = mean(a), mb = mean(b);
-  const va = stddev(a) ** 2, vb = stddev(b) ** 2;
-  const na = a.length, nb = b.length;
+  const ma = mean(a),
+    mb = mean(b);
+  const va = stddev(a) ** 2,
+    vb = stddev(b) ** 2;
+  const na = a.length,
+    nb = b.length;
   const se = Math.sqrt(va / na + vb / nb);
   if (se === 0) return { t: 0, p: 1 };
   const t = (ma - mb) / se;
@@ -457,7 +492,11 @@ function normalCdf(x: number): number {
   const sign = x < 0 ? -1 : 1;
   const ax = Math.abs(x) / Math.SQRT2;
   const tt = 1 / (1 + 0.3275911 * ax);
-  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429;
+  const a1 = 0.254829592,
+    a2 = -0.284496736,
+    a3 = 1.421413741,
+    a4 = -1.453152027,
+    a5 = 1.061405429;
   const y = 1 - ((((a5 * tt + a4) * tt + a3) * tt + a2) * tt + a1) * tt * Math.exp(-ax * ax);
   return 0.5 * (1 + sign * y);
 }
@@ -498,8 +537,8 @@ function main(): void {
     X: number;
     approach: 'A-fresh' | 'B-day0';
     runs: RunResult[];
-    day0BuildMs?: number;       // only set for B
-    day0Assignments?: number;   // only set for B
+    day0BuildMs?: number; // only set for B
+    day0Assignments?: number; // only set for B
   }
   const cells: CellResult[] = [];
 
@@ -543,9 +582,7 @@ function main(): void {
     const t1 = Date.now();
     const bRuns: RunResult[] = [];
     for (let r = 0; r < NUM_RUNS; r++) {
-      bRuns.push(
-        runWithDay0(X, baseDate, participants, config, restRuleMap, ATTEMPTS, dayStartHour, day0.snapshot),
-      );
+      bRuns.push(runWithDay0(X, baseDate, participants, config, restRuleMap, ATTEMPTS, dayStartHour, day0.snapshot));
       process.stdout.write('.');
     }
     console.log(` done in ${((Date.now() - t1) / 1000).toFixed(1)}s`);
@@ -581,17 +618,25 @@ function main(): void {
     const bTasks = b.runs[0].totalTasks;
 
     console.log(`\n──── X = ${X} days ────`);
-    console.log(`Problem size:   A = ${aTasks} tasks (${aSlots} slots, ${aDays}d)   B = ${bTasks} tasks (${bSlots} slots, ${bDays}d) + ${b.day0Assignments} phantom`);
+    console.log(
+      `Problem size:   A = ${aTasks} tasks (${aSlots} slots, ${aDays}d)   B = ${bTasks} tasks (${bSlots} slots, ${bDays}d) + ${b.day0Assignments} phantom`,
+    );
     console.log(`Day-0 setup:    ${(b.day0BuildMs! / 1000).toFixed(2)}s (one-time, amortizable)`);
     console.log('');
 
     // Runtime
     console.log(`  RUNTIME (optimizer-only, ms):`);
-    console.log(`    A-fresh:   mean ${fmt(mean(aDur), 0)} ± ${fmt(stddev(aDur), 0)}    median ${fmt(median(aDur), 0)}    min ${fmt(min(aDur), 0)}    max ${fmt(max(aDur), 0)}`);
-    console.log(`    B-day0:    mean ${fmt(mean(bDur), 0)} ± ${fmt(stddev(bDur), 0)}    median ${fmt(median(bDur), 0)}    min ${fmt(min(bDur), 0)}    max ${fmt(max(bDur), 0)}`);
+    console.log(
+      `    A-fresh:   mean ${fmt(mean(aDur), 0)} ± ${fmt(stddev(aDur), 0)}    median ${fmt(median(aDur), 0)}    min ${fmt(min(aDur), 0)}    max ${fmt(max(aDur), 0)}`,
+    );
+    console.log(
+      `    B-day0:    mean ${fmt(mean(bDur), 0)} ± ${fmt(stddev(bDur), 0)}    median ${fmt(median(bDur), 0)}    min ${fmt(min(bDur), 0)}    max ${fmt(max(bDur), 0)}`,
+    );
     const dPct = mean(aDur) === 0 ? 0 : ((mean(bDur) - mean(aDur)) / mean(aDur)) * 100;
     const dPv = welchT(bDur, aDur).p;
-    console.log(`    Δ (B-A):   ${fmt(mean(bDur) - mean(aDur), 0)}ms (${dPct >= 0 ? '+' : ''}${fmt(dPct, 1)}%)   p=${fmt(dPv, 4)}${star(dPv)}`);
+    console.log(
+      `    Δ (B-A):   ${fmt(mean(bDur) - mean(aDur), 0)}ms (${dPct >= 0 ? '+' : ''}${fmt(dPct, 1)}%)   p=${fmt(dPv, 4)}${star(dPv)}`,
+    );
 
     // Total wall-clock including day-0 build (charged once even though the user
     // typically already has it).
@@ -599,29 +644,45 @@ function main(): void {
     const bTotalMean = mean(bDur) + b.day0BuildMs!;
     const dTotalPct = aTotalMean === 0 ? 0 : ((bTotalMean - aTotalMean) / aTotalMean) * 100;
     console.log(`  TOTAL WALL-CLOCK (one-time-incl-day0-setup, ms):`);
-    console.log(`    A-fresh:   ${fmt(aTotalMean, 0)}    B-day0+setup: ${fmt(bTotalMean, 0)}    Δ ${dTotalPct >= 0 ? '+' : ''}${fmt(dTotalPct, 1)}%`);
+    console.log(
+      `    A-fresh:   ${fmt(aTotalMean, 0)}    B-day0+setup: ${fmt(bTotalMean, 0)}    Δ ${dTotalPct >= 0 ? '+' : ''}${fmt(dTotalPct, 1)}%`,
+    );
 
     // Score
     const aScoreP = aScore.map((s) => s / aDays);
     const bScoreP = bScore.map((s) => s / bDays);
     console.log('');
     console.log(`  COMPOSITE SCORE (raw, NOT directly comparable — different denominators):`);
-    console.log(`    A-fresh:   mean ${fmt(mean(aScore), 2)} ± ${fmt(stddev(aScore), 2)}    median ${fmt(median(aScore), 2)}`);
-    console.log(`    B-day0:    mean ${fmt(mean(bScore), 2)} ± ${fmt(stddev(bScore), 2)}    median ${fmt(median(bScore), 2)}`);
+    console.log(
+      `    A-fresh:   mean ${fmt(mean(aScore), 2)} ± ${fmt(stddev(aScore), 2)}    median ${fmt(median(aScore), 2)}`,
+    );
+    console.log(
+      `    B-day0:    mean ${fmt(mean(bScore), 2)} ± ${fmt(stddev(bScore), 2)}    median ${fmt(median(bScore), 2)}`,
+    );
     console.log(`  SCORE / SCORED-DAY (normalised — comparable):`);
-    console.log(`    A-fresh:   mean ${fmt(mean(aScoreP), 2)} ± ${fmt(stddev(aScoreP), 2)}    median ${fmt(median(aScoreP), 2)}`);
-    console.log(`    B-day0:    mean ${fmt(mean(bScoreP), 2)} ± ${fmt(stddev(bScoreP), 2)}    median ${fmt(median(bScoreP), 2)}`);
+    console.log(
+      `    A-fresh:   mean ${fmt(mean(aScoreP), 2)} ± ${fmt(stddev(aScoreP), 2)}    median ${fmt(median(aScoreP), 2)}`,
+    );
+    console.log(
+      `    B-day0:    mean ${fmt(mean(bScoreP), 2)} ± ${fmt(stddev(bScoreP), 2)}    median ${fmt(median(bScoreP), 2)}`,
+    );
     const scorePv = welchT(bScoreP, aScoreP).p;
     const scorePctDiff = mean(aScoreP) === 0 ? 0 : ((mean(bScoreP) - mean(aScoreP)) / Math.abs(mean(aScoreP))) * 100;
-    console.log(`    Δ (B-A) /day:   ${fmt(mean(bScoreP) - mean(aScoreP), 2)} (${scorePctDiff >= 0 ? '+' : ''}${fmt(scorePctDiff, 2)}%)   p=${fmt(scorePv, 4)}${star(scorePv)}`);
+    console.log(
+      `    Δ (B-A) /day:   ${fmt(mean(bScoreP) - mean(aScoreP), 2)} (${scorePctDiff >= 0 ? '+' : ''}${fmt(scorePctDiff, 2)}%)   p=${fmt(scorePv, 4)}${star(scorePv)}`,
+    );
 
     // Unfilled
     const aUnfPct = aUnf.map((u, i) => (u / a.runs[i].totalSlots) * 100);
     const bUnfPct = bUnf.map((u, i) => (u / b.runs[i].totalSlots) * 100);
     console.log('');
     console.log(`  UNFILLED SLOTS (raw count):`);
-    console.log(`    A-fresh:   mean ${fmt(mean(aUnf), 1)} ± ${fmt(stddev(aUnf), 1)}    median ${fmt(median(aUnf), 1)}    range [${min(aUnf)}, ${max(aUnf)}]`);
-    console.log(`    B-day0:    mean ${fmt(mean(bUnf), 1)} ± ${fmt(stddev(bUnf), 1)}    median ${fmt(median(bUnf), 1)}    range [${min(bUnf)}, ${max(bUnf)}]`);
+    console.log(
+      `    A-fresh:   mean ${fmt(mean(aUnf), 1)} ± ${fmt(stddev(aUnf), 1)}    median ${fmt(median(aUnf), 1)}    range [${min(aUnf)}, ${max(aUnf)}]`,
+    );
+    console.log(
+      `    B-day0:    mean ${fmt(mean(bUnf), 1)} ± ${fmt(stddev(bUnf), 1)}    median ${fmt(median(bUnf), 1)}    range [${min(bUnf)}, ${max(bUnf)}]`,
+    );
     console.log(`  UNFILLED RATE (% of slots):`);
     console.log(`    A-fresh:   mean ${fmt(mean(aUnfPct), 2)}%`);
     console.log(`    B-day0:    mean ${fmt(mean(bUnfPct), 2)}%`);

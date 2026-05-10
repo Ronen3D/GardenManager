@@ -1,15 +1,17 @@
 /**
  * Range Picker Modal — pick a start (day+hour) and end (day+hour) pair.
  *
- * Used by the Future SOS flow to pick the window during which a
- * participant will be unavailable on the loaded schedule.
+ * Used by:
+ *  - Future SOS, to pick the window during which a participant will be
+ *    unavailable on the loaded schedule (mode: 'absolute', the default).
+ *  - The unified participant editor, to add or edit a recurring
+ *    DateUnavailability rule (mode: 'recurring', `allowAllDay` enabled).
  *
- * Layout (v2): quick-preset chip row, start/end day-chip rows, compact
- * hour selects with an explicit separator, optional anchor banner (shown
- * when live mode is off), and a live preview line that updates as the
- * user changes the selection. Renders as a bottom sheet on touch devices
- * and as a centered dialog elsewhere — the sheet styling is in
- * style.css under `.touch-device .gm-modal-dialog`.
+ * Layout: optional anchor banner, start/end day-chip rows, compact hour
+ * selects, optional "all day" toggle, optional Hebrew boundary note when
+ * a chosen hour falls inside the operational-day's post-midnight tail,
+ * a live preview line, and validation error. Renders as a bottom sheet
+ * on small screens via `.gm-range-picker-v2` mobile CSS.
  */
 
 import { escAttr, escHtml } from './ui-helpers';
@@ -31,6 +33,8 @@ export interface RangePickerAnchor {
 
 export interface RangePickerOptions {
   title?: string;
+  /** Header icon. Defaults to '🆘'. Set to '🚫' for recurring rules, or '' to omit. */
+  iconOverride?: string;
   days: RangePickerOption[];
   hours: RangePickerOption[];
   defaultStartDay?: string;
@@ -38,6 +42,17 @@ export interface RangePickerOptions {
   defaultEndDay?: string;
   defaultEndHour?: string;
   defaultReason?: string;
+  /** When true, render an "all day" checkbox; checking it disables hour selects. */
+  allowAllDay?: boolean;
+  /** Initial state of the all-day toggle. Ignored when `allowAllDay` is false. */
+  defaultAllDay?: boolean;
+  /**
+   * The operational-day boundary hour. When set, a Hebrew note appears under
+   * any hour input whose numeric value is < `dayStartHour`, since those hours
+   * fall on the post-midnight tail of the previous calendar day.
+   * Hour values must be parseable integers (the picker reads `parseInt(value)`).
+   */
+  dayStartHour?: number;
   /**
    * Optional validator. Return a Hebrew error message to show inline, or
    * null to accept. Called on every change and on submit.
@@ -54,6 +69,8 @@ export interface RangePickerResult {
   startHour: string;
   endDay: string;
   endHour: string;
+  /** True when the all-day toggle is checked. Always present; defaults to false. */
+  allDay: boolean;
   /** Free-text note. Empty/whitespace is normalized to undefined by the modal. */
   reason?: string;
 }
@@ -61,12 +78,14 @@ export interface RangePickerResult {
 export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerResult | null> {
   return new Promise((resolve) => {
     const title = opts.title || 'בחר טווח זמן';
+    const icon = opts.iconOverride ?? '🆘';
 
     const defaultStart: RangePickerResult = {
       startDay: opts.defaultStartDay ?? opts.days[0]?.value ?? '',
       startHour: opts.defaultStartHour ?? opts.hours[0]?.value ?? '',
       endDay: opts.defaultEndDay ?? opts.defaultStartDay ?? opts.days[0]?.value ?? '',
       endHour: opts.defaultEndHour ?? opts.defaultStartHour ?? opts.hours[0]?.value ?? '',
+      allDay: opts.allowAllDay ? (opts.defaultAllDay ?? false) : false,
       reason: opts.defaultReason,
     };
 
@@ -75,15 +94,26 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
     const dayChipsEnd = renderDayChips(opts.days, defaultStart.endDay);
     const hoursStart = renderHourOptions(opts.hours, defaultStart.startHour);
     const hoursEnd = renderHourOptions(opts.hours, defaultStart.endHour);
+    const allDayHtml = opts.allowAllDay
+      ? `<label class="gm-range-picker-allday">
+          <input type="checkbox" id="gm-rp-allday" ${defaultStart.allDay ? 'checked' : ''} />
+          <span>כל היום</span>
+        </label>`
+      : '';
+    const headerHtml = icon
+      ? `<div class="gm-modal-header">
+          <span class="gm-modal-icon">${escHtml(icon)}</span>
+          <span class="gm-modal-title">${escHtml(title)}</span>
+        </div>`
+      : `<div class="gm-modal-header">
+          <span class="gm-modal-title">${escHtml(title)}</span>
+        </div>`;
 
     const backdrop = document.createElement('div');
     backdrop.className = 'gm-modal-backdrop';
     backdrop.innerHTML = `
       <div class="gm-modal-dialog gm-range-picker-dialog gm-range-picker-v2" role="dialog" aria-modal="true">
-        <div class="gm-modal-header">
-          <span class="gm-modal-icon">🆘</span>
-          <span class="gm-modal-title">${escHtml(title)}</span>
-        </div>
+        ${headerHtml}
         ${anchorHtml}
         <div class="gm-range-picker-v2-section">
           <div class="gm-range-picker-v2-label">מתחיל ב־</div>
@@ -91,6 +121,7 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
           <div class="gm-range-picker-hour-row">
             <span class="gm-range-picker-hour-label">שעה</span>
             <select id="gm-rp-start-hour" class="gm-timepicker-select">${hoursStart}</select>
+            <span class="gm-range-picker-boundary-note" id="gm-rp-start-note" aria-live="polite"></span>
           </div>
         </div>
         <div class="gm-range-picker-v2-section">
@@ -99,8 +130,10 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
           <div class="gm-range-picker-hour-row">
             <span class="gm-range-picker-hour-label">שעה</span>
             <select id="gm-rp-end-hour" class="gm-timepicker-select">${hoursEnd}</select>
+            <span class="gm-range-picker-boundary-note" id="gm-rp-end-note" aria-live="polite"></span>
           </div>
         </div>
+        ${allDayHtml ? `<div class="gm-range-picker-v2-section">${allDayHtml}</div>` : ''}
         <div class="gm-range-picker-v2-section">
           <label for="gm-rp-reason" class="gm-range-picker-v2-label">סיבה</label>
           <input id="gm-rp-reason" class="input-sm gm-range-picker-reason-input" type="text"
@@ -129,6 +162,9 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
 
     const sh = backdrop.querySelector('#gm-rp-start-hour') as HTMLSelectElement;
     const eh = backdrop.querySelector('#gm-rp-end-hour') as HTMLSelectElement;
+    const allDayCb = backdrop.querySelector('#gm-rp-allday') as HTMLInputElement | null;
+    const startNote = backdrop.querySelector('#gm-rp-start-note') as HTMLElement;
+    const endNote = backdrop.querySelector('#gm-rp-end-note') as HTMLElement;
     const reasonInput = backdrop.querySelector('#gm-rp-reason') as HTMLInputElement;
     const err = backdrop.querySelector('#gm-rp-error') as HTMLElement;
     const preview = backdrop.querySelector('#gm-rp-preview') as HTMLElement;
@@ -144,6 +180,27 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
           chip.classList.toggle('gm-range-picker-chip--active', active);
           chip.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
+    };
+
+    const refreshAllDayUi = () => {
+      // Disable hour selects when "all day" is on. We keep the underlying
+      // values in `state` so toggling off restores the user's prior pick.
+      sh.disabled = state.allDay;
+      eh.disabled = state.allDay;
+      const startHourRow = sh.closest('.gm-range-picker-hour-row') as HTMLElement | null;
+      const endHourRow = eh.closest('.gm-range-picker-hour-row') as HTMLElement | null;
+      startHourRow?.classList.toggle('gm-range-picker-hour-row--disabled', state.allDay);
+      endHourRow?.classList.toggle('gm-range-picker-hour-row--disabled', state.allDay);
+    };
+
+    const refreshBoundaryNotes = () => {
+      const dsh = opts.dayStartHour;
+      if (dsh === undefined) return;
+      const note = 'ⓘ שעה זו נמצאת אחרי חצות של היום הקודם';
+      const showStart = !state.allDay && parseInt(state.startHour, 10) < dsh;
+      const showEnd = !state.allDay && parseInt(state.endHour, 10) < dsh;
+      startNote.textContent = showStart ? note : '';
+      endNote.textContent = showEnd ? note : '';
     };
 
     const runValidate = (): boolean => {
@@ -162,6 +219,7 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
         preview.textContent = text;
         preview.style.display = text ? 'block' : 'none';
       }
+      refreshBoundaryNotes();
       return !msg;
     };
 
@@ -185,6 +243,13 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
       state.endHour = eh.value;
       runValidate();
     });
+    if (allDayCb) {
+      allDayCb.addEventListener('change', () => {
+        state.allDay = allDayCb.checked;
+        refreshAllDayUi();
+        runValidate();
+      });
+    }
     reasonInput.addEventListener('input', () => {
       state.reason = reasonInput.value;
     });
@@ -223,6 +288,7 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
 
     refreshChipClasses('start');
     refreshChipClasses('end');
+    refreshAllDayUi();
     runValidate();
 
     document.body.appendChild(backdrop);

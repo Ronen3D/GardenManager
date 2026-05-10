@@ -58,8 +58,7 @@ function assert(cond: boolean, msg: string): void {
 
 // ─── Fixture builders ───────────────────────────────────────────────────────
 
-const D = (y: number, m: number, d: number, h: number = 0, min: number = 0): Date =>
-  new Date(y, m, d, h, min, 0, 0);
+const D = (y: number, m: number, d: number, h: number = 0, min: number = 0): Date => new Date(y, m, d, h, min, 0, 0);
 
 const FULL_AVAIL = [{ start: D(2026, 4, 1, 0), end: D(2026, 5, 31, 23, 59) }];
 
@@ -110,11 +109,13 @@ function mkAssignment(taskId: string, slotId: string, participantId: string): As
   };
 }
 
-function mkSchedule(overrides: Partial<Schedule> & {
-  tasks: Task[];
-  participants: Participant[];
-  assignments: Assignment[];
-}): Schedule {
+function mkSchedule(
+  overrides: Partial<Schedule> & {
+    tasks: Task[];
+    participants: Participant[];
+    assignments: Assignment[];
+  },
+): Schedule {
   return {
     id: `sch-${Date.now()}`,
     feasible: true,
@@ -255,10 +256,18 @@ section('HC-2 / HC-11 with extraCapabilityLoss');
       end: D(2026, 4, 5, 23),
     },
   ];
-  const r1 = validateHardConstraints([task], [p], [a], undefined, undefined, undefined, undefined, undefined, lossesMatch);
-  const certMissingWithOverride = r1.violations.some(
-    (v) => v.code === 'CERT_MISSING' && v.participantId === p.id,
+  const r1 = validateHardConstraints(
+    [task],
+    [p],
+    [a],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    lossesMatch,
   );
+  const certMissingWithOverride = r1.violations.some((v) => v.code === 'CERT_MISSING' && v.participantId === p.id);
   assert(certMissingWithOverride, 'HC-2: violation appears when matching override removes the cert');
 
   // Direct unit-level call to checkCertificationRequirement with override
@@ -267,7 +276,17 @@ section('HC-2 / HC-11 with extraCapabilityLoss');
 
   // HC-2 disabled: no violation even with override
   const disabled2 = new Set<string>(['HC-2']);
-  const r2 = validateHardConstraints([task], [p], [a], disabled2, undefined, undefined, undefined, undefined, lossesMatch);
+  const r2 = validateHardConstraints(
+    [task],
+    [p],
+    [a],
+    disabled2,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    lossesMatch,
+  );
   const certMissingDisabled = r2.violations.some((v) => v.code === 'CERT_MISSING' && v.participantId === p.id);
   assert(!certMissingDisabled, 'HC-2 disabled: override does not re-impose CERT_MISSING');
 }
@@ -284,9 +303,7 @@ section('HC-2 / HC-11 with extraCapabilityLoss');
 
   // Without override: HC-11 fires
   const r0 = validateHardConstraints([task], [p], [a]);
-  const excludedNoOverride = r0.violations.some(
-    (v) => v.code === 'EXCLUDED_CERTIFICATION' && v.participantId === p.id,
-  );
+  const excludedNoOverride = r0.violations.some((v) => v.code === 'EXCLUDED_CERTIFICATION' && v.participantId === p.id);
   assert(excludedNoOverride, 'HC-11: violation present when P holds forbidden cert (no override)');
 
   // With matching override removing Y: HC-11 should NOT fire
@@ -298,7 +315,17 @@ section('HC-2 / HC-11 with extraCapabilityLoss');
       end: D(2026, 4, 5, 23),
     },
   ];
-  const r1 = validateHardConstraints([task], [p], [a], undefined, undefined, undefined, undefined, undefined, lossesMatch);
+  const r1 = validateHardConstraints(
+    [task],
+    [p],
+    [a],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    lossesMatch,
+  );
   const excludedWithOverride = r1.violations.some(
     (v) => v.code === 'EXCLUDED_CERTIFICATION' && v.participantId === p.id,
   );
@@ -315,9 +342,7 @@ section('HC-2 / HC-11 with extraCapabilityLoss');
   // HC-11 disabled: no violation regardless of override
   const disabled11 = new Set<string>(['HC-11']);
   const r2 = validateHardConstraints([task], [p], [a], disabled11);
-  const excludedDisabled = r2.violations.some(
-    (v) => v.code === 'EXCLUDED_CERTIFICATION' && v.participantId === p.id,
-  );
+  const excludedDisabled = r2.violations.some((v) => v.code === 'EXCLUDED_CERTIFICATION' && v.participantId === p.id);
   assert(!excludedDisabled, 'HC-11 disabled: no EXCLUDED_CERTIFICATION violation (no override needed)');
 }
 
@@ -327,13 +352,7 @@ section('upsertCapabilityLoss merge semantics');
 
 {
   const baseTime = D(2026, 4, 5, 0);
-  const mkEntry = (
-    id: string,
-    pid: string,
-    certs: string[],
-    startOffsetH: number,
-    endOffsetH: number,
-  ) => ({
+  const mkEntry = (id: string, pid: string, certs: string[], startOffsetH: number, endOffsetH: number) => ({
     id,
     participantId: pid,
     lostCertifications: certs,
@@ -373,10 +392,7 @@ section('upsertCapabilityLoss merge semantics');
     assert(result.length === 1, 'overlapping same set: merged into 1 entry');
     const merged = result[0];
     assert(merged.start.getTime() === baseTime.getTime(), 'merged start = earliest of two starts');
-    assert(
-      merged.end.getTime() === baseTime.getTime() + 36 * 3600000,
-      'merged end = latest of two ends',
-    );
+    assert(merged.end.getTime() === baseTime.getTime() + 36 * 3600000, 'merged end = latest of two ends');
   }
 
   // 3d. Overlapping, same participant but DIFFERENT cert set → both kept
@@ -595,10 +611,7 @@ section('generateCapabilityChangePlans smoke tests');
   );
 
   assert(result.affected.length === 1, 'infeasible: 1 affected assignment');
-  assert(
-    result.infeasibleAssignmentIds.includes(a.id),
-    'infeasible: affected assignment ID flagged as infeasible',
-  );
+  assert(result.infeasibleAssignmentIds.includes(a.id), 'infeasible: affected assignment ID flagged as infeasible');
   // Plans MAY contain best-effort partial plans tagged isPartial=true, OR be empty.
   if (result.plans.length > 0) {
     assert(

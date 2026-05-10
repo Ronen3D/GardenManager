@@ -5,39 +5,27 @@
  * group filtering, and blackout period management.
  */
 
-import { checkTemplateEligibility, type TemplateEligibilityResult } from '../engine/validator';
-import { type CertificationDefinition, Level, type PakalDefinition, type Participant } from '../models/types';
+import type { CertificationDefinition, Participant } from '../models/types';
 import { fmtTime } from '../utils/date-utils';
 import * as store from './config-store';
 import { openParticipantSetFormatSheet, openXlsxImportFlow } from './data-transfer-ui';
-import { triggerCharacterEffect, triggerCharacterFarewell } from './easter-eggs';
-import { getEffectivePakalIds, renderPakalBadges } from './pakal-utils';
+import { triggerCharacterFarewell } from './easter-eggs';
+import { renderPakalBadges } from './pakal-utils';
+import { showParticipantEditor } from './participant-editor-sheet';
 import {
   canLeaveTableEdit,
   enterTableEditMode,
   exitTableEditMode,
-  hasTableEditChanges,
   isTableEditActive,
   renderTableEditMode,
   wireTableEditEvents,
 } from './table-edit-participants';
-import { certBadges, escHtml, groupBadge, groupColor, levelBadge, SVG_ICONS } from './ui-helpers';
-import { showConfirm, showSaveConfirm, showToast } from './ui-modal';
+import { certBadges, escHtml, groupBadge, levelBadge, SVG_ICONS } from './ui-helpers';
+import { showConfirm, showToast } from './ui-modal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const LEVEL_OPTIONS = [Level.L0, Level.L2, Level.L3, Level.L4];
-
 const DEFAULT_WORKLOAD_MULTIPLIER = 1;
-
-/** Parse a workload-multiplier input string → numeric value, or
- *  `DEFAULT_WORKLOAD_MULTIPLIER` if blank/invalid/non-positive.
- *  Any positive number is accepted. */
-function parseWorkloadMultiplier(raw: string | undefined): number {
-  const v = parseFloat(raw ?? '');
-  if (!Number.isFinite(v) || v <= 0) return DEFAULT_WORKLOAD_MULTIPLIER;
-  return v;
-}
 
 /** Compact display for a workload multiplier (e.g. 0.5, 1.25, 2). */
 export function formatWorkloadMultiplier(m: number): string {
@@ -64,29 +52,6 @@ function hasOrphanedRefs(p: Participant): boolean {
   const activePakalIds = new Set(store.getPakalDefinitions().map((d) => d.id));
   if ((p.pakalIds || []).some((id) => !activePakalIds.has(id))) return true;
   return false;
-}
-
-function getNotWithNamesForEdit(pid: string): string {
-  const ids = store.getNotWithIds(pid);
-  return ids
-    .map((id) => {
-      const p = store.getParticipant(id);
-      return p ? p.name : '';
-    })
-    .filter(Boolean)
-    .join(', ');
-}
-
-function renderNotWithBadges(pid: string): string {
-  const ids = store.getNotWithIds(pid);
-  if (ids.length === 0) return '<span class="text-muted">—</span>';
-  return ids
-    .map((id) => {
-      const p = store.getParticipant(id);
-      return p ? `<span class="badge badge-sm" style="background:#e74c3c">${escHtml(p.name)}</span>` : '';
-    })
-    .filter(Boolean)
-    .join(' ');
 }
 
 /** Format the day-range prefix of a DateUnavailability rule as "יום N" or "יום N–יום M". */
@@ -131,55 +96,6 @@ function renderUnavailChips(pid: string): string {
   return `<div class="unavail-chips" data-action="toggle-blackouts" data-pid="${pid}">${chips}${overflow}</div>`;
 }
 
-/** Get distinct task template names for preference dropdowns. */
-function getTaskNameOptions(): string[] {
-  return [...new Set(store.getAllTaskTemplates().map((t) => t.name))];
-}
-
-function renderPakalCheckboxes(
-  definitions: PakalDefinition[],
-  explicitIds: string[],
-  _certifications: string[],
-  attrName: string,
-): string {
-  const effectiveIds = new Set(
-    getEffectivePakalIds(
-      {
-        id: '',
-        name: '',
-        level: Level.L0,
-        certifications: _certifications,
-        group: '',
-        availability: [],
-        dateUnavailability: [],
-        pakalIds: explicitIds,
-      },
-      definitions,
-    ),
-  );
-
-  return `<div class="pakal-checkboxes">
-    ${definitions
-      .map((def) => {
-        const checked = effectiveIds.has(def.id);
-        return `<label class="checkbox-label" title="${escHtml(def.label)}">
-        <input type="checkbox" ${attrName}="${def.id}" ${checked ? 'checked' : ''} /> ${escHtml(def.label)}
-      </label>`;
-      })
-      .join('')}
-  </div>`;
-}
-
-function collectPakalIds(scope: ParentNode, selector: string): string[] {
-  const ids: string[] = [];
-  scope.querySelectorAll<HTMLInputElement>(selector).forEach((cb) => {
-    const pakalId = cb.getAttribute(selector.includes('new-pakal') ? 'data-new-pakal' : 'data-pakal');
-    if (!pakalId || !cb.checked) return;
-    ids.push(pakalId);
-  });
-  return ids;
-}
-
 function renderPreferenceBadges(p: Participant): string {
   const parts: string[] = [];
   if (p.preferredTaskName) {
@@ -191,173 +107,11 @@ function renderPreferenceBadges(p: Participant): string {
   return parts.length > 0 ? parts.join(' ') : '<span class="text-muted">—</span>';
 }
 
-function renderTaskNameSelect(fieldName: string, value?: string): string {
-  const options = getTaskNameOptions();
-  return `<select class="input-sm" data-field="${fieldName}">
-    <option value="">— ללא —</option>
-    ${options.map((name) => `<option value="${name}" ${value === name ? 'selected' : ''}>${name}</option>`).join('')}
-  </select>
-  <div class="pref-eligibility-warning hidden" data-warning-for="${fieldName}">
-    <span class="warn-icon">⚠</span>
-    <span class="warn-text"></span>
-  </div>`;
-}
-
-// ─── Preference Eligibility Warning Helpers ─────────────────────────────────
-
-/** Read participant level + certs from an edit row or add form. */
-function readParticipantFromForm(row: Element, isAddForm: boolean): { level: Level; certifications: string[] } {
-  const levelField = isAddForm ? 'new-level' : 'level';
-  const levelSel = row.querySelector(`[data-field="${levelField}"]`) as HTMLSelectElement | null;
-  const level = parseInt(levelSel?.value || '0') as Level;
-  const certAttr = isAddForm ? 'data-new-cert' : 'data-cert';
-  const certs: string[] = [];
-  row.querySelectorAll<HTMLInputElement>(`[${certAttr}]`).forEach((cb) => {
-    if (cb.checked) {
-      const val = isAddForm ? cb.dataset.newCert : cb.dataset.cert;
-      if (val) certs.push(val);
-    }
-  });
-  return { level, certifications: certs };
-}
-
-/** Show/hide the eligibility warning for a preference select. */
-function updatePrefWarning(
-  container: Element,
-  fieldName: string,
-  taskName: string,
-  level: Level,
-  certs: string[],
-): void {
-  const warningEl = container.querySelector(`[data-warning-for="${fieldName}"]`) as HTMLElement | null;
-  if (!warningEl) return;
-  const textEl = warningEl.querySelector('.warn-text') as HTMLElement;
-
-  if (!taskName) {
-    warningEl.classList.add('hidden');
-    return;
-  }
-
-  const templates = store.getAllTaskTemplates().filter((t) => t.name === taskName);
-  if (templates.length === 0) {
-    warningEl.classList.add('hidden');
-    return;
-  }
-
-  // Eligible if ANY template with this name has a fillable slot
-  let bestResult: TemplateEligibilityResult = { eligible: false, reasons: [] };
-  for (const tpl of templates) {
-    const result = checkTemplateEligibility(level, certs, tpl, store.getCertLabel);
-    if (result.eligible) {
-      bestResult = result;
-      break;
-    }
-    if (bestResult.reasons.length === 0) bestResult = result;
-  }
-
-  if (bestResult.eligible) {
-    warningEl.classList.add('hidden');
-  } else {
-    textEl.textContent = bestResult.reasons.join(' | ');
-    warningEl.classList.remove('hidden');
-  }
-}
-
-/** Trigger eligibility warning for both preference selects in a row/form. */
-function recheckAllPrefWarnings(container: Element, isAddForm: boolean): void {
-  const { level, certifications } = readParticipantFromForm(container, isAddForm);
-  const prefField = isAddForm ? 'new-preferredTask' : 'preferredTask';
-  const lessField = isAddForm ? 'new-lessPreferredTask' : 'lessPreferredTask';
-  const prefVal = (container.querySelector(`[data-field="${prefField}"]`) as HTMLSelectElement | null)?.value || '';
-  const lessVal = (container.querySelector(`[data-field="${lessField}"]`) as HTMLSelectElement | null)?.value || '';
-  updatePrefWarning(container, prefField, prefVal, level, certifications);
-  updatePrefWarning(container, lessField, lessVal, level, certifications);
-}
-
-// ─── Group Name Validation ───────────────────────────────────────────────────
-
-const FORBIDDEN_GROUP_PATTERNS = [
-  /^new\s*group$/i,
-  /^group\s*\w$/i, // "Group A", "Group X", "Group 1"
-  /^untitled/i,
-  /^default/i,
-];
-
-interface GroupValidation {
-  valid: boolean;
-  error: string;
-}
-
-function setAriaInvalid(field: HTMLElement | null, invalid: boolean): void {
-  if (!field) return;
-  if (invalid) {
-    field.setAttribute('aria-invalid', 'true');
-    return;
-  }
-  field.removeAttribute('aria-invalid');
-}
-
-function syncGroupValidationState(
-  newGroupInput: HTMLInputElement | null,
-  errorSpan: HTMLElement | null,
-  result: GroupValidation,
-): void {
-  setAriaInvalid(newGroupInput, !result.valid);
-  if (!errorSpan) return;
-  errorSpan.textContent = result.error;
-  errorSpan.classList.toggle('hidden', result.valid);
-}
-
-function validateGroupName(raw: string, existingGroups: string[]): GroupValidation {
-  const name = raw.trim();
-  if (!name) return { valid: false, error: 'קבוצה לא יכולה להיות ריקה.' };
-  if (name.length < 2) return { valid: false, error: 'שם קבוצה חייב להכיל לפחות 2 תווים.' };
-  for (const pat of FORBIDDEN_GROUP_PATTERNS) {
-    if (pat.test(name)) return { valid: false, error: `"${name}" אינו מותר כשם קבוצה.` };
-  }
-  // Check for near-duplicates (case-insensitive)
-  const lower = name.toLowerCase();
-  const dup = existingGroups.find((g) => g.toLowerCase() === lower && g !== name);
-  if (dup) return { valid: false, error: `קבוצה דומה "${dup}" כבר קיימת. השתמש בה.` };
-  return { valid: true, error: '' };
-}
-
-/** Resolve a group select + optional new-group input into a validated group name. Returns null on failure. */
-function resolveGroupInput(
-  groupValue: string,
-  newGroupInput: HTMLInputElement | null,
-  errorSpan: HTMLElement | null,
-): string | null {
-  if (groupValue !== '__new__') {
-    syncGroupValidationState(newGroupInput, errorSpan, { valid: true, error: '' });
-    return groupValue;
-  }
-  const raw = newGroupInput?.value ?? '';
-  const result = validateGroupName(raw, store.getGroups());
-  if (!result.valid) {
-    // Defensive: if the input is hidden (e.g., when __new__ was the default
-    // selected option and no change event ever fired), unhide it so the user
-    // can see and act on the validation error.
-    newGroupInput?.classList.remove('hidden');
-    syncGroupValidationState(newGroupInput, errorSpan, result);
-    newGroupInput?.focus();
-    return null;
-  }
-  syncGroupValidationState(newGroupInput, errorSpan, result);
-  // Normalize: if exact match exists already, use it
-  const existing = store.getGroups().find((g) => g.toLowerCase() === raw.trim().toLowerCase());
-  return existing ?? raw.trim();
-}
-
 // ─── State ───────────────────────────────────────────────────────────────────
 
-let editingId: string | null = null;
-let expandedBlackoutId: string | null = null;
 let filterGroup: string = '';
 let sortColumn: 'name' | 'group' | 'level' | '' = '';
 let sortDirection: 'asc' | 'desc' = 'asc';
-let showNotWithColumn = false;
-let _pulseCountBadgeOnNextWire = false;
 
 // ─── Multi-Select State ──────────────────────────────────────────────────────
 
@@ -368,79 +122,6 @@ let _lastClickedId: string | null = null;
 let _bulkDialogOpen = false;
 /** When true the bulk delete confirmation dialog is open */
 let _bulkDeleteDialogOpen = false;
-
-/** Check whether the editing form has unsaved changes compared to the stored participant. */
-function hasEditingChanges(row: Element, pid: string): boolean {
-  const p = store.getParticipant(pid);
-  if (!p) return false;
-
-  const name = (row.querySelector('[data-field="name"]') as HTMLInputElement)?.value.trim() || '';
-  if (name !== p.name) return true;
-
-  const group = (row.querySelector('[data-field="group"]') as HTMLSelectElement)?.value || '';
-  if (group === '__new__') {
-    const newGroupVal = (row.querySelector('[data-field="new-group-name"]') as HTMLInputElement)?.value.trim() || '';
-    if (newGroupVal) return true;
-  } else if (group !== p.group) {
-    return true;
-  }
-
-  const level = parseInt((row.querySelector('[data-field="level"]') as HTMLSelectElement)?.value || '0') as Level;
-  if (level !== p.level) return true;
-
-  const certs: string[] = [];
-  row.querySelectorAll<HTMLInputElement>('[data-cert]').forEach((cb) => {
-    if (cb.checked && cb.dataset.cert) certs.push(cb.dataset.cert);
-  });
-  const origCerts = [...p.certifications].sort();
-  const newCerts = [...certs].sort();
-  if (origCerts.length !== newCerts.length || origCerts.some((c, i) => c !== newCerts[i])) return true;
-
-  const pakalIds = collectPakalIds(row, '[data-pakal]');
-  const origPakals = [...(p.pakalIds || [])].sort();
-  const newPakals = [...pakalIds].sort();
-  if (origPakals.length !== newPakals.length || origPakals.some((c, i) => c !== newPakals[i])) return true;
-
-  if (showNotWithColumn) {
-    const notWithRaw = (row.querySelector('[data-field="notWith"]') as HTMLInputElement)?.value || '';
-    const origNotWith = store
-      .getNotWithIds(pid)
-      .map((id) => {
-        const partner = store.getParticipant(id);
-        return partner ? partner.name : '';
-      })
-      .filter(Boolean)
-      .sort()
-      .join(', ');
-    const newNotWith = notWithRaw
-      .split(',')
-      .map((n) => n.trim())
-      .filter(Boolean)
-      .sort()
-      .join(', ');
-    if (origNotWith !== newNotWith) return true;
-  }
-
-  const prefVal = (row.querySelector('[data-field="preferredTask"]') as HTMLSelectElement)?.value || '';
-  if (prefVal !== (p.preferredTaskName || '')) return true;
-
-  const newMult = parseWorkloadMultiplier(
-    (row.querySelector('[data-field="workloadMultiplier"]') as HTMLInputElement)?.value,
-  );
-  const origMult = p.workloadMultiplier ?? DEFAULT_WORKLOAD_MULTIPLIER;
-  if (Math.abs(newMult - origMult) > 1e-9) return true;
-
-  const lessPrefVal = (row.querySelector('[data-field="lessPreferredTask"]') as HTMLSelectElement)?.value || '';
-  if (lessPrefVal !== (p.lessPreferredTaskName || '')) return true;
-
-  return false;
-}
-
-/** Flag to prevent re-entrant outside-click handling. */
-let _outsideClickBusy = false;
-
-/** Stored reference so we can remove the previous listener on rerender. */
-let _currentOutsideClickHandler: ((e: MouseEvent) => void) | null = null;
 
 function getVisibleParticipants(allParticipants: Participant[] = store.getAllParticipants()): Participant[] {
   const filtered = filterGroup ? allParticipants.filter((p) => p.group === filterGroup) : allParticipants;
@@ -636,7 +317,7 @@ export function renderParticipantsTab(): string {
     html += renderSetsPanel();
   }
   // Table
-  html += `<div class="table-responsive"><table class="table table-participants${showNotWithColumn ? ' notwith-visible' : ''}">
+  html += `<div class="table-responsive"><table class="table table-participants">
     <thead><tr>
       <th class="col-select"><input type="checkbox" id="cb-select-all" title="בחר הכל" ${visibleSelectedCount > 0 && visibleSelectedCount === sorted.length ? 'checked' : ''} /></th>
       <th class="col-index">#</th>
@@ -645,26 +326,17 @@ export function renderParticipantsTab(): string {
       <th class="col-level sortable-th" data-action="sort-column" data-sort-col="level">דרגה${sortIndicator('level')}</th>
       <th class="col-certs">הסמכות</th>
       <th class="col-pakals">פק"לים</th>
-      ${showNotWithColumn ? '<th class="col-notwith">אי התאמה</th>' : ''}
       <th class="col-prefs">העדפות</th>
       <th class="col-avail">זמינות</th><th class="col-actions">פעולות</th><th class="col-expand"></th>
     </tr></thead><tbody>`;
 
   sorted.forEach((p, i) => {
-    const isEditing = editingId === p.id;
     const dateRules = store.getDateUnavailabilities(p.id);
-    const isExpanded = expandedBlackoutId === p.id;
     const totalRules = dateRules.length;
     const isSelected = selectedIds.has(p.id);
     const allPakalDefs = store.getAllPakalDefinitionsIncludeDeleted();
 
-    if (isEditing) {
-      html += renderEditRow(p, i + 1);
-      if (isExpanded) {
-        html += renderBlackoutRow(p.id);
-      }
-    } else {
-      html += `<tr data-participant-id="${p.id}" class="${isSelected ? 'row-selected' : ''}${totalRules > 0 ? ' has-unavail' : ''}">
+    html += `<tr data-participant-id="${p.id}" class="${isSelected ? 'row-selected' : ''}${totalRules > 0 ? ' has-unavail' : ''}">
         <td class="col-select"><input type="checkbox" class="cb-select-participant" data-pid="${p.id}" ${isSelected ? 'checked' : ''} /></td>
         <td class="col-index">${i + 1}</td>
         <td class="col-name" title="${escHtml(p.name)}">${hasOrphanedRefs(p) ? '<span class="badge-orphan-icon">⚠</span> ' : ''}<strong>${escHtml(p.name)}</strong>${renderUnavailChips(p.id)}</td>
@@ -672,7 +344,6 @@ export function renderParticipantsTab(): string {
         <td class="col-level">${levelBadge(p.level)}${workloadMultBadge(p.workloadMultiplier)}</td>
         <td class="col-certs">${certBadges(p.certifications)}</td>
         <td class="col-pakals">${renderPakalBadges(p, allPakalDefs)}</td>
-        ${showNotWithColumn ? `<td class="col-notwith notwith-cell">${renderNotWithBadges(p.id)}</td>` : ''}
         <td class="col-prefs">${renderPreferenceBadges(p)}</td>
         <td class="col-avail avail-cell">
           <span class="mobile-label">זמינות: </span>${p.availability.map((w) => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
@@ -683,18 +354,9 @@ export function renderParticipantsTab(): string {
         </td>
         <td class="col-expand"><button class="btn-expand-details${totalRules > 0 ? ' has-unavail-badge' : ''}" data-action="toggle-details" data-pid="${p.id}" title="פרטים">${SVG_ICONS.chevronDown}${totalRules > 0 ? `<span class="expand-unavail-count" aria-label="${totalRules} כללי אי-זמינות">${totalRules}</span>` : ''}</button></td>
       </tr>`;
-
-      // Blackout expansion row
-      if (isExpanded) {
-        html += renderBlackoutRow(p.id);
-      }
-    }
   });
 
   html += '</tbody></table></div>';
-
-  // Add participant form (inline at bottom when triggered)
-  html += renderAddForm(groups);
 
   // ── Bulk Actions Toolbar (shown when selection is non-empty) ──
   if (selectedIds.size > 0) {
@@ -717,232 +379,6 @@ export function renderParticipantsTab(): string {
   }
 
   return html;
-}
-
-function renderEditRow(p: Participant, idx: number): string {
-  const groups = store.getGroups();
-  const pakalDefs = store.getPakalDefinitions();
-  return `<tr class="row-editing" data-participant-id="${p.id}">
-    <td class="col-select"></td>
-    <td class="col-index">${idx}</td>
-    <td class="col-name">
-      <input class="input-sm" type="text" data-field="name" value="${escHtml(p.name)}" maxlength="${store.MAX_PARTICIPANT_NAME_LENGTH}" />
-    </td>
-    <td class="col-group">
-      <select class="input-sm" data-field="group" data-group-select>
-        ${groups.map((g) => `<option value="${escHtml(g)}" ${p.group === g ? 'selected' : ''}>${escHtml(g)}</option>`).join('')}
-        <option value="__new__">+ קבוצה חדשה…</option>
-      </select>
-      <input class="input-sm hidden" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
-      <span class="group-error hidden" style="color:var(--danger); font-size:0.75rem;"></span>
-    </td>
-    <td class="col-level">
-      <div class="participant-mini-fields">
-        <label class="participant-mini-field">דרגה
-          <select class="input-sm" data-field="level">
-            ${LEVEL_OPTIONS.map((l) => `<option value="${l}" ${p.level === l ? 'selected' : ''}>${l}</option>`).join('')}
-          </select>
-        </label>
-        <label class="participant-mini-field"
-               title="ערך > 1 מקטין את ההקצאות, ערך < 1 מגדיל אותן. לא משפיע על הגבלות נוקשות (זמינות, מנוחה, היתכנות).">מקדם עומס
-          <input class="input-sm participant-mult-input" type="number" step="0.1" min="0.1"
-                 data-field="workloadMultiplier"
-                 value="${p.workloadMultiplier ?? DEFAULT_WORKLOAD_MULTIPLIER}" />
-        </label>
-      </div>
-    </td>
-    <td class="col-certs">
-      <div class="cert-checkboxes">
-        ${getCertOptions()
-          .map(
-            (def) =>
-              `<label class="checkbox-label">
-            <input type="checkbox" data-cert="${def.id}" ${p.certifications.includes(def.id) ? 'checked' : ''} /> ${escHtml(def.label)}
-          </label>`,
-          )
-          .join('')}
-        ${(() => {
-          const activeIds = new Set(getCertOptions().map((d) => d.id));
-          return p.certifications
-            .filter((c) => !activeIds.has(c))
-            .map((c) => {
-              const tomb = store.getCertificationById(c);
-              const label = tomb ? tomb.label : c;
-              return `<label class="checkbox-label badge-orphan-label">
-              <input type="checkbox" data-cert="${c}" checked /> ⚠ ${escHtml(label)}
-            </label>`;
-            })
-            .join('');
-        })()}
-      </div>
-    </td>
-    <td class="col-pakals">
-      ${renderPakalCheckboxes(pakalDefs, p.pakalIds || [], p.certifications, 'data-pakal')}
-      ${(() => {
-        const activeIds = new Set(pakalDefs.map((d) => d.id));
-        return (p.pakalIds || [])
-          .filter((id) => !activeIds.has(id))
-          .map((id) => {
-            const tomb = store.getPakalById(id);
-            const label = tomb ? tomb.label : id;
-            return `<label class="checkbox-label badge-orphan-label">
-            <input type="checkbox" data-pakal="${id}" checked /> ⚠ ${escHtml(label)}
-          </label>`;
-          })
-          .join('');
-      })()}
-    </td>
-    ${
-      showNotWithColumn
-        ? `<td class="col-notwith">
-      <input class="input-sm" type="text" data-field="notWith" value="${getNotWithNamesForEdit(p.id)}" placeholder="הקלד שמות, מופרדים בפסיקים" title="שמות משתתפים מופרדים בפסיק" />
-    </td>`
-        : ''
-    }
-    <td class="col-prefs">
-      <div style="display:flex;flex-direction:column;gap:4px">
-        <label style="font-size:0.75rem;margin:0">משימה מועדפת</label>
-        ${renderTaskNameSelect('preferredTask', p.preferredTaskName)}
-        <label style="font-size:0.75rem;margin:0">עדיף שלא</label>
-        ${renderTaskNameSelect('lessPreferredTask', p.lessPreferredTaskName)}
-      </div>
-    </td>
-    <td class="col-avail avail-cell">
-      <span class="mobile-label">זמינות: </span>${p.availability.map((w) => `<small dir="ltr">${fmtTime(w.start)}–${fmtTime(w.end)}</small>`).join('<br>')}
-    </td>
-    <td class="col-actions">
-      ${(() => {
-        const dateRules = store.getDateUnavailabilities(p.id);
-        const isOpen = expandedBlackoutId === p.id;
-        const activeClass = isOpen ? ' unavail-toggle-active' : '';
-        if (dateRules.length > 0) {
-          return `<button class="btn-sm btn-outline unavail-edit-toggle${activeClass}" data-action="toggle-blackouts" data-pid="${p.id}"><span class="badge badge-sm" style="background:var(--warning)">${dateRules.length}</span> אי-זמינות ${isOpen ? '▲' : '▼'}</button>`;
-        }
-        return `<button class="btn-sm btn-outline unavail-edit-toggle${activeClass}" data-action="toggle-blackouts" data-pid="${p.id}">${isOpen ? '— סגור אי-זמינות' : '+ אי-זמינות'}</button>`;
-      })()}
-      <button class="btn-sm btn-primary" data-action="save-participant" data-pid="${p.id}">שמור</button>
-      <button class="btn-sm btn-outline" data-action="cancel-edit">ביטול</button>
-    </td>
-    <td class="col-expand"></td>
-  </tr>`;
-}
-
-function renderBlackoutRow(pid: string): string {
-  const dateRules = store.getDateUnavailabilities(pid);
-
-  let html = `<tr class="row-blackout-expansion">
-    <td colspan="${showNotWithColumn ? 12 : 11}">
-      <div class="blackout-panel">
-        <h4>כללי אי-זמינות</h4>
-        <div class="blackout-list">`;
-
-  if (dateRules.length === 0) {
-    html += '<p class="text-muted">אין כללי אי-זמינות מוגדרים.</p>';
-  } else {
-    html += '<ul>';
-    for (const r of dateRules) {
-      const label = formatRuleDayRangeLong(r);
-      const timeLabel = r.allDay
-        ? 'כל היום'
-        : `<span dir="ltr">${String(r.startHour).padStart(2, '0')}:00 – ${String(r.endHour).padStart(2, '0')}:00</span>`;
-      html += `<li>
-        <span class="constraint-type">יום קבוע</span>
-        <strong>${label}</strong> — <span>${timeLabel}</span>
-        ${r.reason ? `<span class="text-muted"> (${r.reason})</span>` : ''}
-        <button class="btn-sm btn-danger-outline" data-action="remove-date-unavail" data-pid="${pid}" data-rid="${r.id}">✕</button>
-      </li>`;
-    }
-    html += '</ul>';
-  }
-
-  const nDays = store.getScheduleDays();
-  const dayOptions = Array.from({ length: nDays }, (_, i) => `<option value="${i + 1}">יום ${i + 1}</option>`).join('');
-
-  html += `</div>
-    <h4 style="margin-top:16px">הוסף כלל אי-זמינות</h4>
-    <div class="blackout-add unified-constraint-form">
-      <span class="time-label">מיום</span>
-      <select class="input-sm" data-field="du-day-start" style="width:90px;">
-        ${dayOptions}
-      </select>
-      <span class="time-label">עד יום</span>
-      <select class="input-sm" data-field="du-day-end" style="width:90px;">
-        ${dayOptions}
-      </select>
-
-      <div class="time-inputs-group">
-        <label class="checkbox-label" style="white-space:nowrap;" data-field="du-allday-wrapper">
-          <input type="checkbox" data-field="du-allday" /> כל היום
-        </label>
-        <span class="time-label">משעה</span>
-        <input type="text" class="input-sm time-24h" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="bo-start" value="08:00" />
-        <span class="time-label">עד שעה</span>
-        <input type="text" class="input-sm time-24h" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="bo-end" value="12:00" />
-      </div>
-
-      <input type="text" class="input-sm" data-field="bo-reason" placeholder="סיבה (אופציונלי)" />
-      <button class="btn-sm btn-primary" data-action="add-unified-constraint" data-pid="${pid}">הוסף</button>
-      <span class="du-validation-error" class="hidden" style="color:#e74c3c;font-size:0.85em;margin-inline-start:6px"></span>
-    </div>
-  </div></td></tr>`;
-  return html;
-}
-
-function renderAddForm(groups: string[]): string {
-  const pakalDefs = store.getPakalDefinitions();
-  // When there are no existing groups, the select's only option is "+ new group",
-  // so the browser auto-selects __new__ without firing a change event. Render the
-  // name input visible so the user has a way to type the group name.
-  const noGroups = groups.length === 0;
-  return `
-  <div id="add-participant-form" class="add-form hidden">
-    <h4>הוסף משתתף</h4>
-    <div class="form-row">
-      <label>שם <input class="input-sm" type="text" data-field="new-name" placeholder="שם" maxlength="${store.MAX_PARTICIPANT_NAME_LENGTH}" /></label>
-      <label>קבוצה
-        <select class="input-sm" data-field="new-group" data-group-select>
-          ${groups.map((g) => `<option value="${escHtml(g)}">${escHtml(g)}</option>`).join('')}
-          <option value="__new__">+ קבוצה חדשה…</option>
-        </select>
-        <input class="input-sm${noGroups ? '' : ' hidden'}" type="text" data-field="new-group-name" placeholder="הכנס שם קבוצה" style="margin-top:4px" />
-        <span class="group-error hidden" style="color:var(--danger); font-size:0.75rem;"></span>
-      </label>
-      <label>דרגה
-        <select class="input-sm" data-field="new-level">
-          ${LEVEL_OPTIONS.map((l) => `<option value="${l}" ${l === Level.L0 ? 'selected' : ''}>${l}</option>`).join('')}
-        </select>
-      </label>
-      <label title="ערך > 1 מקטין את ההקצאות, ערך < 1 מגדיל אותן. לא משפיע על הגבלות נוקשות (זמינות, מנוחה, היתכנות).">מקדם עומס
-        <input class="input-sm participant-mult-input" type="number" step="0.1" min="0.1"
-               data-field="new-workloadMultiplier" value="${DEFAULT_WORKLOAD_MULTIPLIER}" />
-      </label>
-    </div>
-    <div class="form-row">
-      <span>הסמכות:</span>
-      ${getCertOptions()
-        .map(
-          (def, i) =>
-            `<label class="checkbox-label">
-          <input type="checkbox" data-new-cert="${def.id}" ${i === 0 ? 'checked' : ''} /> ${escHtml(def.label)}
-        </label>`,
-        )
-        .join('')}
-    </div>
-    <div class="form-row form-row-pakalim">
-      <span>פק"לים:</span>
-      <div>
-        ${renderPakalCheckboxes(pakalDefs, [], [getCertOptions()[0]?.id].filter(Boolean), 'data-new-pakal')}
-      </div>
-    </div>
-    <div class="form-row">
-      <label>מעדיף ${renderTaskNameSelect('new-preferredTask')}</label>
-      <label>פחות מועדף ${renderTaskNameSelect('new-lessPreferredTask')}</label>
-    </div>
-    <div class="form-row">
-      <button class="btn-primary btn-sm" data-action="confirm-add-participant">הוסף</button>
-      <button class="btn-sm btn-outline" data-action="cancel-add-participant">ביטול</button>
-    </div>
-  </div>`;
 }
 
 // ─── Bulk Unavailability Dialog ──────────────────────────────────────────────
@@ -1034,147 +470,6 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     rerender();
   });
 
-  // ─── Preference eligibility warnings: show on edit open if prefs already set ─
-  container.querySelectorAll<HTMLElement>('tr.row-editing').forEach((row) => {
-    recheckAllPrefWarnings(row, false);
-  });
-  const addForm = container.querySelector('#add-participant-form') as HTMLElement | null;
-  if (addForm && !addForm.classList.contains('hidden')) {
-    recheckAllPrefWarnings(addForm, true);
-  }
-
-  // ─── Preference eligibility warnings: react to select / level / cert changes ─
-  container.addEventListener('change', (e) => {
-    const target = e.target as HTMLElement;
-    const field = target.getAttribute('data-field') || '';
-
-    // Preference select changed → update just that warning
-    if (['preferredTask', 'lessPreferredTask', 'new-preferredTask', 'new-lessPreferredTask'].includes(field)) {
-      const isAdd = field.startsWith('new-');
-      const scope = isAdd ? target.closest('#add-participant-form') : target.closest('tr.row-editing');
-      if (!scope) return;
-      const { level, certifications } = readParticipantFromForm(scope, isAdd);
-      updatePrefWarning(scope, field, (target as HTMLSelectElement).value, level, certifications);
-      return;
-    }
-
-    // Level changed → recheck both preference warnings in the same row/form
-    if (field === 'level' || field === 'new-level') {
-      const isAdd = field === 'new-level';
-      const scope = isAdd ? target.closest('#add-participant-form') : target.closest('tr.row-editing');
-      if (scope) recheckAllPrefWarnings(scope, isAdd);
-      return;
-    }
-
-    // Certification checkbox changed → recheck both preference warnings
-    if (target.hasAttribute('data-cert') || target.hasAttribute('data-new-cert')) {
-      const isAdd = target.hasAttribute('data-new-cert');
-      const scope = isAdd ? target.closest('#add-participant-form') : target.closest('tr.row-editing');
-      if (scope) recheckAllPrefWarnings(scope, isAdd);
-    }
-  });
-
-  // ─── Outside-click: close editing panel (with save confirmation if dirty) ──
-  // Remove any stale handler from a previous render cycle
-  if (_currentOutsideClickHandler) {
-    document.removeEventListener('click', _currentOutsideClickHandler, true);
-    _currentOutsideClickHandler = null;
-  }
-  if (editingId) {
-    const editRow = container.querySelector('tr.row-editing') as HTMLElement | null;
-    const blackoutRow = editRow?.nextElementSibling?.classList.contains('row-blackout-expansion')
-      ? editRow.nextElementSibling
-      : null;
-    if (editRow) {
-      const onOutsideClick = async (e: MouseEvent) => {
-        // Ignore if already handling an outside click, or if a modal is open
-        if (_outsideClickBusy) return;
-        if (document.querySelector('.gm-modal-backdrop')) return;
-
-        const target = e.target as HTMLElement;
-        // Click inside the editing row or its blackout expansion — do nothing
-        if (editRow.contains(target)) return;
-        if (blackoutRow?.contains(target)) return;
-        // Click inside the tutorial overlay — keep the edit row open so the
-        // tutorial can spotlight controls inside it (the engine programmatically
-        // opens edit mode for some steps). Without this, the next click on the
-        // tutorial popover would silently close the row mid-explanation.
-        if (document.querySelector('.tutorial-root')?.contains(target)) return;
-
-        e.preventDefault();
-        e.stopPropagation();
-
-        const pid = editingId;
-        if (!pid) return;
-
-        if (!hasEditingChanges(editRow, pid)) {
-          // No changes — close immediately
-          document.removeEventListener('click', onOutsideClick, true);
-          _currentOutsideClickHandler = null;
-          editingId = null;
-          rerender();
-          return;
-        }
-
-        // Has unsaved changes — show 3-button confirmation
-        _outsideClickBusy = true;
-        try {
-          const result = await showSaveConfirm();
-          document.removeEventListener('click', onOutsideClick, true);
-          _currentOutsideClickHandler = null;
-          if (result === 'save') {
-            // Trigger the save button click
-            const saveBtn = editRow.querySelector('[data-action="save-participant"]') as HTMLElement | null;
-            if (saveBtn) saveBtn.click();
-          } else if (result === 'discard') {
-            editingId = null;
-            rerender();
-          }
-          // 'continue' → do nothing, keep panel open (re-attach listener)
-          if (result === 'continue') {
-            _currentOutsideClickHandler = onOutsideClick;
-            document.addEventListener('click', onOutsideClick, true);
-          }
-        } finally {
-          _outsideClickBusy = false;
-        }
-      };
-      // Use capture phase so we intercept before other click handlers
-      _currentOutsideClickHandler = onOutsideClick;
-      document.addEventListener('click', onOutsideClick, true);
-    }
-  }
-
-  // ─── Easter egg: triple-tap on count badge toggles "אי התאמה" column ──
-  const countBadge = container.querySelector('.tab-toolbar h2 .count') as HTMLElement | null;
-  if (countBadge) {
-    if (_pulseCountBadgeOnNextWire) {
-      _pulseCountBadgeOnNextWire = false;
-      requestAnimationFrame(() => {
-        countBadge.classList.remove('count-pulse');
-        void countBadge.offsetWidth;
-        countBadge.classList.add('count-pulse');
-        countBadge.addEventListener('animationend', () => countBadge.classList.remove('count-pulse'), { once: true });
-      });
-    }
-    let tapCount = 0;
-    let tapTimer: ReturnType<typeof setTimeout> | undefined;
-    countBadge.addEventListener('click', () => {
-      tapCount++;
-      clearTimeout(tapTimer);
-      if (tapCount >= 3) {
-        tapCount = 0;
-        showNotWithColumn = !showNotWithColumn;
-        _pulseCountBadgeOnNextWire = true;
-        rerender();
-      } else {
-        tapTimer = setTimeout(() => {
-          tapCount = 0;
-        }, 600);
-      }
-    });
-  }
-
   // ─── Bulk: Select-All checkbox ─────────────────────────────────────────────
   const selectAllCb = container.querySelector('#cb-select-all') as HTMLInputElement | null;
   if (selectAllCb) {
@@ -1250,84 +545,6 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     }
   });
 
-  // ─── Group select change handlers (show/hide + validate new-group input) ──
-  container.addEventListener('change', (e) => {
-    const target = e.target as HTMLElement;
-    if (!target.hasAttribute('data-group-select')) return;
-    const select = target as HTMLSelectElement;
-    const parent = select.parentElement!;
-    const newGroupInput = parent.querySelector('[data-field="new-group-name"]') as HTMLInputElement | null;
-    const errorSpan = parent.querySelector('.group-error') as HTMLElement | null;
-    if (select.value === '__new__') {
-      if (newGroupInput) {
-        newGroupInput.classList.remove('hidden');
-        newGroupInput.value = '';
-        setAriaInvalid(newGroupInput, false);
-        newGroupInput.focus();
-      }
-    } else {
-      if (newGroupInput) {
-        newGroupInput.classList.add('hidden');
-        newGroupInput.value = '';
-      }
-      syncGroupValidationState(newGroupInput, errorSpan, { valid: true, error: '' });
-    }
-  });
-
-  // Recurring-rule controls
-  container.addEventListener('change', (e) => {
-    const target = e.target as HTMLElement;
-    // Handle "All Day" checkbox toggle
-    if ((target as HTMLInputElement).dataset?.field === 'du-allday') {
-      const cb = target as HTMLInputElement;
-      const panel = cb.closest('.blackout-panel') || cb.closest('.inline-unavail-add');
-      if (!panel) return;
-      const startInp = panel.querySelector('[data-field="bo-start"]') as HTMLInputElement;
-      const endInp = panel.querySelector('[data-field="bo-end"]') as HTMLInputElement;
-      const timeLabels = panel.querySelectorAll('.time-label');
-
-      if (cb.checked) {
-        if (startInp) startInp.classList.add('hidden');
-        if (endInp) endInp.classList.add('hidden');
-        timeLabels.forEach((el) => el.classList.add('hidden'));
-      } else {
-        if (startInp) startInp.classList.remove('hidden');
-        if (endInp) endInp.classList.remove('hidden');
-        timeLabels.forEach((el) => el.classList.remove('hidden'));
-      }
-    }
-  });
-
-  // Live validation as user types a new group name
-  container.addEventListener('input', (e) => {
-    const target = e.target as HTMLInputElement;
-    if (target.dataset.field !== 'new-group-name') return;
-    const parent = target.closest('td, label')!;
-    const errorSpan = parent.querySelector('.group-error') as HTMLElement | null;
-    const raw = target.value;
-    if (!raw.trim()) {
-      syncGroupValidationState(target, errorSpan, { valid: true, error: '' });
-      return;
-    }
-    const result = validateGroupName(raw, store.getGroups());
-    syncGroupValidationState(target, errorSpan, result);
-  });
-
-  // Live validation for "not with" input — red-highlight invalid names
-  container.addEventListener('input', (e) => {
-    const target = e.target as HTMLInputElement;
-    if (target.dataset.field !== 'notWith') return;
-    const row = target.closest('tr')!;
-    const pid = row.dataset.participantId || '';
-    const allParticipants = store.getAllParticipants();
-    const validNames = new Set(allParticipants.filter((p) => p.id !== pid).map((p) => p.name));
-    const names = target.value.split(',').map((n) => n.trim());
-    const hasInvalid = names.some((n) => n !== '' && !validNames.has(n));
-    setAriaInvalid(target, hasInvalid);
-    target.style.color = hasInvalid ? 'var(--error, #e74c3c)' : '';
-    target.title = hasInvalid ? 'שמות לא תקינים יסומנו באדום ויתעלמו בשמירה' : 'שמות משתתפים מופרדים בפסיק';
-  });
-
   container.addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
 
@@ -1363,174 +580,18 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
       case 'add-participant': {
-        const form = container.querySelector('#add-participant-form') as HTMLElement;
-        if (form) {
-          const wasHidden = form.classList.contains('hidden');
-          form.classList.toggle('hidden', !wasHidden);
-          if (wasHidden) {
-            form.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            const nameInput = form.querySelector('[data-field="new-name"]') as HTMLInputElement | null;
-            nameInput?.focus({ preventScroll: true });
-          }
-        }
-        break;
-      }
-      case 'confirm-add-participant': {
-        const nameEl = container.querySelector('[data-field="new-name"]') as HTMLInputElement;
-        const groupEl = container.querySelector('[data-field="new-group"]') as HTMLSelectElement;
-        const levelEl = container.querySelector('[data-field="new-level"]') as HTMLSelectElement;
-        const name = nameEl?.value.trim();
-        if (!name) {
-          showToast('יש להזין שם משתתף/ת', { type: 'error' });
-          nameEl?.focus();
-          nameEl?.select();
-          return;
-        }
-        if (store.isParticipantNameTaken(name)) {
-          showToast('משתתף/ת בשם זה כבר קיים/ת', { type: 'error' });
-          nameEl?.focus();
-          nameEl?.select();
-          return;
-        }
-
-        const formEl = container.querySelector('#add-participant-form')!;
-        const newGroupInput = formEl.querySelector('[data-field="new-group-name"]') as HTMLInputElement | null;
-        const errorSpan = formEl.querySelector('.group-error') as HTMLElement | null;
-
-        const group = resolveGroupInput(groupEl?.value || '', newGroupInput, errorSpan);
-        if (group === null) return; // validation failed — error is shown inline
-
-        const level = parseInt(levelEl?.value || '0') as Level;
-        const certs: string[] = [];
-        container.querySelectorAll<HTMLInputElement>('[data-new-cert]').forEach((cb) => {
-          if (cb.checked && cb.dataset.newCert) certs.push(cb.dataset.newCert);
-        });
-        const pakalIds = collectPakalIds(container, '[data-new-pakal]');
-
-        const newPref = (container.querySelector('[data-field="new-preferredTask"]') as HTMLSelectElement)?.value || '';
-        const newLess =
-          (container.querySelector('[data-field="new-lessPreferredTask"]') as HTMLSelectElement)?.value || '';
-        if (newPref && newLess && newPref === newLess) {
-          showToast('משימה מועדפת ומשימה פחות מועדפת לא יכולות להיות זהות', { type: 'error' });
-          return;
-        }
-
-        const workloadMultiplier = parseWorkloadMultiplier(
-          (container.querySelector('[data-field="new-workloadMultiplier"]') as HTMLInputElement)?.value,
-        );
-        const newP = store.addParticipant({ name, level, certifications: certs, pakalIds, group, workloadMultiplier });
-        if (newPref || newLess) {
-          store.setTaskNamePreference(newP.id, newPref || undefined, newLess || undefined);
-        }
-
-        // Capture click anchor before rerender detaches the button DOM node.
-        let eeAnchor = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-        if (actionButton) {
-          const r = actionButton.getBoundingClientRect();
-          eeAnchor = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-        }
-
-        rerender();
-        showToast(`${name} נוסף/ה`, { type: 'success' });
-
-        const newRow = container.querySelector(`tr[data-participant-id="${newP.id}"]`);
-        triggerCharacterEffect(name, eeAnchor, newRow);
-        break;
-      }
-      case 'cancel-add-participant': {
-        const form = container.querySelector('#add-participant-form') as HTMLElement;
-        if (form) form.classList.add('hidden');
+        const result = await showParticipantEditor({ mode: 'create' });
+        if (result.saved) rerender();
         break;
       }
       case 'edit-participant': {
-        editingId = actionButton?.dataset.pid || null;
+        const pid = actionButton?.dataset.pid;
+        if (!pid) break;
+        const result = await showParticipantEditor({ mode: 'edit', participantId: pid });
+        // Re-render whether saved or not — unavailability rules may have changed
+        // even when the main draft was discarded (rules are committed live).
         rerender();
-        break;
-      }
-      case 'save-participant': {
-        const pid = actionButton?.dataset.pid!;
-        const row = container.querySelector(`tr[data-participant-id="${pid}"]`)!;
-        const nameEl = row.querySelector('[data-field="name"]') as HTMLInputElement;
-        const name = nameEl?.value.trim();
-        if (!name) {
-          showToast('יש להזין שם משתתף/ת', { type: 'error' });
-          nameEl?.focus();
-          nameEl?.select();
-          return;
-        }
-        if (store.isParticipantNameTaken(name, pid)) {
-          showToast('משתתף/ת בשם זה כבר קיים/ת', { type: 'error' });
-          nameEl?.focus();
-          nameEl?.select();
-          return;
-        }
-        const groupSel = row.querySelector('[data-field="group"]') as HTMLSelectElement;
-        const newGroupInput = row.querySelector('[data-field="new-group-name"]') as HTMLInputElement | null;
-        const errorSpan = row.querySelector('.group-error') as HTMLElement | null;
-
-        const group = resolveGroupInput(groupSel?.value || '', newGroupInput, errorSpan);
-        if (group === null) return; // validation failed
-
-        const level = parseInt((row.querySelector('[data-field="level"]') as HTMLSelectElement)?.value || '0') as Level;
-        const certs: string[] = [];
-        row.querySelectorAll<HTMLInputElement>('[data-cert]').forEach((cb) => {
-          if (cb.checked && cb.dataset.cert) certs.push(cb.dataset.cert);
-        });
-        // Orphan certs (deleted definitions) are rendered as checkboxes in the edit row,
-        // so they are already included in certs[] if the user kept them checked.
-        const pakalIds = collectPakalIds(row, '[data-pakal]');
-        const workloadMultiplier = parseWorkloadMultiplier(
-          (row.querySelector('[data-field="workloadMultiplier"]') as HTMLInputElement)?.value,
-        );
-
-        store.updateParticipant(pid, { name, group, level, certifications: certs, pakalIds, workloadMultiplier });
-
-        // Process "not with" input — only when column is visible
-        if (showNotWithColumn) {
-          const notWithRaw = (row.querySelector('[data-field="notWith"]') as HTMLInputElement)?.value || '';
-          const notWithNames = notWithRaw
-            .split(',')
-            .map((n) => n.trim())
-            .filter(Boolean);
-          const allParticipants = store.getAllParticipants();
-          const nameToId = new Map<string, string>();
-          for (const ap of allParticipants) {
-            if (ap.id !== pid) nameToId.set(ap.name, ap.id);
-          }
-          // Determine desired set of partner IDs
-          const desiredIds = new Set<string>();
-          for (const n of notWithNames) {
-            const id = nameToId.get(n);
-            if (id) desiredIds.add(id);
-          }
-          // Sync: remove pairs no longer listed, add new ones
-          const currentIds = new Set(store.getNotWithIds(pid));
-          for (const id of currentIds) {
-            if (!desiredIds.has(id)) store.removeNotWith(pid, id);
-          }
-          for (const id of desiredIds) {
-            if (!currentIds.has(id)) store.addNotWith(pid, id);
-          }
-        }
-
-        // Process task preferences
-        const prefSelect = row.querySelector('[data-field="preferredTask"]') as HTMLSelectElement | null;
-        const lessSelect = row.querySelector('[data-field="lessPreferredTask"]') as HTMLSelectElement | null;
-        const preferred = prefSelect?.value || undefined;
-        const lessPreferred = lessSelect?.value || undefined;
-        if (preferred && lessPreferred && preferred === lessPreferred) {
-          showToast('משימה מועדפת ומשימה פחות מועדפת לא יכולות להיות זהות', { type: 'error' });
-          return;
-        }
-        store.setTaskNamePreference(pid, preferred, lessPreferred);
-
-        editingId = null;
-        rerender();
-        break;
-      }
-      case 'cancel-edit': {
-        editingId = null;
-        rerender();
+        void result;
         break;
       }
       case 'remove-participant': {
@@ -1586,61 +647,9 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
       case 'toggle-blackouts': {
-        const pid = actionButton?.closest('[data-pid]')?.getAttribute('data-pid') || actionButton?.dataset.pid!;
-        expandedBlackoutId = expandedBlackoutId === pid ? null : pid;
-        rerender();
-        break;
-      }
-      case 'add-unified-constraint': {
-        const pid = actionButton?.dataset.pid!;
-        const panel = (actionButton?.closest('.blackout-panel') || actionButton?.closest('.inline-unavail-editor'))!;
-        const reason = (panel.querySelector('[data-field="bo-reason"]') as HTMLInputElement)?.value || undefined;
-        const errEl = panel.querySelector('.du-validation-error') as HTMLElement;
-        if (errEl) errEl.classList.add('hidden');
-
-        const allDay = (panel.querySelector('[data-field="du-allday"]') as HTMLInputElement)?.checked ?? false;
-        const startStr = (panel.querySelector('[data-field="bo-start"]') as HTMLInputElement)?.value || '00:00';
-        const endStr = (panel.querySelector('[data-field="bo-end"]') as HTMLInputElement)?.value || '00:00';
-        const startHour = parseInt(startStr.split(':')[0]);
-        const endHour = parseInt(endStr.split(':')[0]);
-
-        if (!allDay && startHour === endHour) {
-          if (errEl) {
-            errEl.textContent = 'שעת התחלה ושעת סיום לא יכולות להיות זהות. השתמש ב"כל היום".';
-            errEl.classList.remove('hidden');
-          }
-          return;
-        }
-
-        const dayStart = parseInt(
-          (panel.querySelector('[data-field="du-day-start"]') as HTMLSelectElement)?.value || '1',
-        );
-        const dayEndRaw = parseInt(
-          (panel.querySelector('[data-field="du-day-end"]') as HTMLSelectElement)?.value || String(dayStart),
-        );
-        if (dayEndRaw < dayStart) {
-          if (errEl) {
-            errEl.textContent = 'יום סיום חייב להיות גדול או שווה ליום ההתחלה.';
-            errEl.classList.remove('hidden');
-          }
-          return;
-        }
-        const endDayIndex = dayEndRaw > dayStart ? dayEndRaw : undefined;
-        store.addDateUnavailability(pid, {
-          dayIndex: dayStart,
-          ...(endDayIndex !== undefined ? { endDayIndex } : {}),
-          allDay,
-          startHour,
-          endHour,
-          reason,
-        });
-        rerender();
-        break;
-      }
-      case 'remove-date-unavail': {
-        const pid = target.dataset.pid!;
-        const rid = target.dataset.rid!;
-        store.removeDateUnavailability(pid, rid);
+        const pid = actionButton?.closest('[data-pid]')?.getAttribute('data-pid') || actionButton?.dataset.pid;
+        if (!pid) break;
+        await showParticipantEditor({ mode: 'edit', participantId: pid, scrollTo: 'unavailability' });
         rerender();
         break;
       }

@@ -1,6 +1,6 @@
-import { type Page, expect, test } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { expect, type Page, test } from '@playwright/test';
 
 /**
  * Tutorial walkthrough — desktop (1280×800).
@@ -77,9 +77,7 @@ async function generateSchedule(page: Page): Promise<void> {
     { timeout: 60_000 },
   );
   // Belt-and-suspenders: also let any optim overlay finish unmounting
-  await page
-    .waitForSelector('.optim-overlay', { state: 'hidden', timeout: 5000 })
-    .catch(() => {});
+  await page.waitForSelector('.optim-overlay', { state: 'hidden', timeout: 5000 }).catch(() => {});
   await page.waitForTimeout(300);
 }
 
@@ -117,12 +115,7 @@ async function captureCurrent(page: Page, trackId: string, stepIndex: number): P
   // Two frames for positioning + transition to settle (renderStep finishes
   // synchronously after innerHTML, but spotlight position is set in the same
   // tick; one rAF is enough but we use two to be safe).
-  await page.evaluate(
-    () =>
-      new Promise<void>((r) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => r())),
-      ),
-  );
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
 
   const data = await page.evaluate(() => {
     const popover = document.querySelector('.tutorial-popover');
@@ -136,12 +129,8 @@ async function captureCurrent(page: Page, trackId: string, stepIndex: number): P
       counterText: counter,
       titleText: title,
       centered,
-      popoverBox: pRect
-        ? { x: pRect.x, y: pRect.y, width: pRect.width, height: pRect.height }
-        : null,
-      spotlightBox: !centered && sRect
-        ? { x: sRect.x, y: sRect.y, width: sRect.width, height: sRect.height }
-        : null,
+      popoverBox: pRect ? { x: pRect.x, y: pRect.y, width: pRect.width, height: pRect.height } : null,
+      spotlightBox: !centered && sRect ? { x: sRect.x, y: sRect.y, width: sRect.width, height: sRect.height } : null,
       viewport: { width: window.innerWidth, height: window.innerHeight },
     };
   });
@@ -162,11 +151,7 @@ async function captureCurrent(page: Page, trackId: string, stepIndex: number): P
   };
 }
 
-async function walkTrack(
-  page: Page,
-  trackId: string,
-  expectedSteps: number,
-): Promise<StepCapture[]> {
+async function walkTrack(page: Page, trackId: string, expectedSteps: number): Promise<StepCapture[]> {
   const captures: StepCapture[] = [];
   await page.evaluate((id) => window.gmStartTutorial?.(id), trackId);
   for (let i = 0; i < expectedSteps; i++) {

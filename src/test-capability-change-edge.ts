@@ -77,7 +77,20 @@ const dummyScore: ScheduleScore = {
 
 interface MkScheduleOpts {
   capabilityLoss?: CapabilityLoss[];
-  disabledHC?: ('HC-1' | 'HC-2' | 'HC-3' | 'HC-4' | 'HC-5' | 'HC-6' | 'HC-7' | 'HC-8' | 'HC-11' | 'HC-12' | 'HC-14' | 'HC-15')[];
+  disabledHC?: (
+    | 'HC-1'
+    | 'HC-2'
+    | 'HC-3'
+    | 'HC-4'
+    | 'HC-5'
+    | 'HC-6'
+    | 'HC-7'
+    | 'HC-8'
+    | 'HC-11'
+    | 'HC-12'
+    | 'HC-14'
+    | 'HC-15'
+  )[];
 }
 
 function mkSchedule(
@@ -125,12 +138,7 @@ function buildScoreCtx(tasks: Task[], participants: Participant[]): ScoreContext
   };
 }
 
-function basicParticipant(
-  id: string,
-  certs: string[],
-  group: string = 'G',
-  level: Level = Level.L0,
-): Participant {
+function basicParticipant(id: string, certs: string[], group: string = 'G', level: Level = Level.L0): Participant {
   return {
     id,
     name: id,
@@ -381,7 +389,7 @@ section('3. sameGroupRequired interaction');
   );
   assert(
     det.affected.length === 1 && det.affected[0].assignment.id === 'a-sg-1',
-    'sameGroup: affected detector picks up only focal participant\'s slot',
+    "sameGroup: affected detector picks up only focal participant's slot",
   );
 
   // (b) planner: replacement must come from group A
@@ -534,9 +542,7 @@ section('5. infeasibleAssignmentIds correctness');
       'infeasibleIds: every returned plan is flagged isPartial',
     );
     // All plans only swap a-easy (never a-rare).
-    const allOnlyTouchEasy = result.plans.every((pl) =>
-      pl.swaps.every((sw) => sw.assignmentId === 'a-easy'),
-    );
+    const allOnlyTouchEasy = result.plans.every((pl) => pl.swaps.every((sw) => sw.assignmentId === 'a-easy'));
     assert(allOnlyTouchEasy, 'infeasibleIds: partial plans only swap the solvable slot');
   }
 }
@@ -749,13 +755,9 @@ section('9. Inject + capability-loss interaction');
   assert(r.result !== null, 'inject+capLoss: search returns a result');
   if (r.result) {
     const plans = r.result.plans;
-    const usesPInj = plans.some((pl) =>
-      pl.outcomes.some((o) => o.filled && o.participantId === 'pInj'),
-    );
+    const usesPInj = plans.some((pl) => pl.outcomes.some((o) => o.filled && o.participantId === 'pInj'));
     assert(!usesPInj, 'inject+capLoss: pInj never picked as a candidate');
-    const anyFilledByBackup = plans.some((pl) =>
-      pl.outcomes.some((o) => o.filled && o.participantId === 'pBackup'),
-    );
+    const anyFilledByBackup = plans.some((pl) => pl.outcomes.some((o) => o.filled && o.participantId === 'pBackup'));
     assert(anyFilledByBackup, 'inject+capLoss: pBackup fills the slot in some plan');
     // Cleanup
     r.result.cancel();
@@ -790,12 +792,9 @@ section('10. Rescue (single-slot) honors cap-loss');
   const pResc = basicParticipant('pResc', ['certX']); // should NOT be candidate
   const pBackup = basicParticipant('pBackup', ['certX']); // should be candidate
   const aV = mkAssignment('a-resc', 't-resc-v', 't-resc-v-s1', 'pHolder');
-  const sched = mkSchedule(
-    [tV],
-    [vacatedHolder, pResc, pBackup, basicParticipant('pNo', [])],
-    [aV],
-    { capabilityLoss: losses },
-  );
+  const sched = mkSchedule([tV], [vacatedHolder, pResc, pBackup, basicParticipant('pNo', [])], [aV], {
+    capabilityLoss: losses,
+  });
 
   const result = generateRescuePlans(
     sched,
@@ -812,13 +811,9 @@ section('10. Rescue (single-slot) honors cap-loss');
   );
   assert(result.plans.length > 0, 'rescue+capLoss: at least one plan exists (pBackup)');
   if (result.plans.length > 0) {
-    const usesPResc = result.plans.some((pl) =>
-      pl.swaps.some((sw) => sw.toParticipantId === 'pResc'),
-    );
+    const usesPResc = result.plans.some((pl) => pl.swaps.some((sw) => sw.toParticipantId === 'pResc'));
     assert(!usesPResc, 'rescue+capLoss: pResc never picked (cert lost during the task window)');
-    const usesPBackup = result.plans.some((pl) =>
-      pl.swaps.some((sw) => sw.toParticipantId === 'pBackup'),
-    );
+    const usesPBackup = result.plans.some((pl) => pl.swaps.some((sw) => sw.toParticipantId === 'pBackup'));
     assert(usesPBackup, 'rescue+capLoss: pBackup picked as a candidate');
   }
 }

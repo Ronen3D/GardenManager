@@ -5,6 +5,7 @@
  * the optimizer toward better schedules without making them invalid.
  */
 
+import { recordNotWithViolation } from '../engine/diagnostics';
 import { isLowPriority } from '../models/level-utils';
 import {
   type Assignment,
@@ -26,7 +27,6 @@ import {
   ParticipantRestProfile,
 } from '../shared/utils/rest-calculator';
 import { describeTaskInstance, operationalDateKey } from '../utils/date-utils';
-import { recordNotWithViolation } from '../engine/diagnostics';
 import { computeLowPriorityLevelPenalty } from './senior-policy';
 
 /**

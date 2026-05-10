@@ -748,7 +748,13 @@ export function validateHardConstraints(
 
       // HC-2: Certifications
       if (!disabledHC?.has('HC-2')) {
-        const certV = checkCertificationRequirement(participant, task, a.slotId, certLabelResolver, extraCapabilityLoss);
+        const certV = checkCertificationRequirement(
+          participant,
+          task,
+          a.slotId,
+          certLabelResolver,
+          extraCapabilityLoss,
+        );
         if (certV) allViolations.push(certV);
       }
 
@@ -761,7 +767,9 @@ export function validateHardConstraints(
 
     // HC-11: Forbidden certification — per-slot check
     if (!disabledHC?.has('HC-11')) {
-      allViolations.push(...checkForbiddenCertifications(task, taskAssignments, pMap, certLabelResolver, extraCapabilityLoss));
+      allViolations.push(
+        ...checkForbiddenCertifications(task, taskAssignments, pMap, certLabelResolver, extraCapabilityLoss),
+      );
     }
 
     // HC-4: Same group — use pre-indexed task assignments

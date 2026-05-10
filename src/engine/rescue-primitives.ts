@@ -369,7 +369,7 @@ function depth2(
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+          extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -395,7 +395,7 @@ function depth2(
             restRuleMap: ctx.restRuleMap,
             scheduleContext: ctx.scheduleContext,
             extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+            extraCapabilityLoss: ctx.extraCapabilityLoss,
           })
         )
           continue;
@@ -490,7 +490,7 @@ function depth3(
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+          extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -538,7 +538,7 @@ function depth3(
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+              extraCapabilityLoss: ctx.extraCapabilityLoss,
             })
           )
             continue;
@@ -574,7 +574,7 @@ function depth3(
                 restRuleMap: ctx.restRuleMap,
                 scheduleContext: ctx.scheduleContext,
                 extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+                extraCapabilityLoss: ctx.extraCapabilityLoss,
               })
             )
               continue;
@@ -696,7 +696,7 @@ function depth4(
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+          extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -741,7 +741,7 @@ function depth4(
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+              extraCapabilityLoss: ctx.extraCapabilityLoss,
             })
           )
             continue;
@@ -792,7 +792,7 @@ function depth4(
                   restRuleMap: ctx.restRuleMap,
                   scheduleContext: ctx.scheduleContext,
                   extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+                  extraCapabilityLoss: ctx.extraCapabilityLoss,
                 })
               )
                 continue;
@@ -828,7 +828,7 @@ function depth4(
                     restRuleMap: ctx.restRuleMap,
                     scheduleContext: ctx.scheduleContext,
                     extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+                    extraCapabilityLoss: ctx.extraCapabilityLoss,
                   })
                 )
                   continue;
@@ -961,7 +961,7 @@ function depth5(
           restRuleMap: ctx.restRuleMap,
           scheduleContext: ctx.scheduleContext,
           extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+          extraCapabilityLoss: ctx.extraCapabilityLoss,
         })
       )
         continue;
@@ -1006,7 +1006,7 @@ function depth5(
               restRuleMap: ctx.restRuleMap,
               scheduleContext: ctx.scheduleContext,
               extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+              extraCapabilityLoss: ctx.extraCapabilityLoss,
             })
           )
             continue;
@@ -1057,7 +1057,7 @@ function depth5(
                   restRuleMap: ctx.restRuleMap,
                   scheduleContext: ctx.scheduleContext,
                   extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+                  extraCapabilityLoss: ctx.extraCapabilityLoss,
                 })
               )
                 continue;
@@ -1112,7 +1112,7 @@ function depth5(
                       restRuleMap: ctx.restRuleMap,
                       scheduleContext: ctx.scheduleContext,
                       extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+                      extraCapabilityLoss: ctx.extraCapabilityLoss,
                     })
                   )
                     continue;
@@ -1151,7 +1151,7 @@ function depth5(
                         restRuleMap: ctx.restRuleMap,
                         scheduleContext: ctx.scheduleContext,
                         extraUnavailability: ctx.extraUnavailability,
-        extraCapabilityLoss: ctx.extraCapabilityLoss,
+                        extraCapabilityLoss: ctx.extraCapabilityLoss,
                       })
                     )
                       continue;

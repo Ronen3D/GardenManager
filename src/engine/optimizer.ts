@@ -846,8 +846,7 @@ export function greedyAssign(
       ? shuffle([...task.slots])
       : [...task.slots].sort(
           (a, b) =>
-            Math.min(...b.acceptableLevels.map((e) => e.level)) -
-            Math.min(...a.acceptableLevels.map((e) => e.level)),
+            Math.min(...b.acceptableLevels.map((e) => e.level)) - Math.min(...a.acceptableLevels.map((e) => e.level)),
         );
     for (const slot of orderedSlots) {
       // Skip if already assigned (pinned)
