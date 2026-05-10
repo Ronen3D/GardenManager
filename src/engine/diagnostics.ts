@@ -32,6 +32,18 @@ export interface AttemptRow {
   improved: boolean;
   durationMs: number;
   iterations: number;
+  /** Composite score after greedy phase, before SA. */
+  postGreedyComposite: number;
+  /** Composite score at SA loop exit, before polish. */
+  postSAComposite: number;
+  /** Best composite seen across all attempts up to and including this one. */
+  bestSoFarComposite: number;
+  /** 8-char hex FNV-1a fingerprint of the assignment vector. */
+  solutionHash: string;
+  /** Polish passes consumed by this attempt. */
+  polishPassesThisAttempt: number;
+  /** Sum of polish deltas across this attempt's polish passes. */
+  polishDeltaThisAttempt: number;
   /** Flat numeric copy of ScheduleScore — no object refs. */
   score: {
     minRestHours: number;
@@ -47,6 +59,33 @@ export interface AttemptRow {
     notWithPenalty: number;
     taskPrefPenalty: number;
   };
+}
+
+/** A single greedy-phase unfilled-slot capture. One attempt may emit multiple. */
+export interface GreedyFailureRow {
+  attempt: number;
+  taskId: string;
+  taskName: string;
+  slotId: string;
+  slotLabel: string;
+  reason: string;
+  hcCodes?: string[];
+}
+
+/** A single notWith violation captured during the final score pass of an attempt. */
+export interface NotWithViolationRow {
+  attempt: number;
+  /** Participant IDs (sorted lexicographically so {A,B} and {B,A} share an entry). */
+  a: string;
+  b: string;
+  taskId: string;
+  taskName: string;
+}
+
+/** A single (iter, temperature) sample taken during the SA loop. */
+export interface SATempSample {
+  iter: number;
+  temp: number;
 }
 
 export interface DiagSnapshot {
@@ -66,6 +105,12 @@ export interface DiagSnapshot {
     reheats: number;
     tempAtExit: number;
     itersSinceImprovementAtExit: number;
+    /** SA-loop neighbour proposals attempted (one per iteration). */
+    proposalAttempts: number;
+    /** SA-loop neighbour proposals that yielded an HC-feasible candidate. */
+    proposalsFound: number;
+    /** Periodic (iter, temp) samples taken during the SA loop. */
+    tempSamples: SATempSample[];
   };
   polish: {
     passes: number;
@@ -77,10 +122,13 @@ export interface DiagSnapshot {
     byCode: Map<string, number>;
     byTask: Map<string, number>;
     byParticipant: Map<string, number>;
-    /** True when at least one rejection was captured. False until the first
-     *  verbose-mode run records anything. */
+    /** True when at least one rejection was captured. */
     captured: boolean;
   };
+  /** Greedy-phase unfilled-slot captures across all attempts. */
+  greedyFailures: GreedyFailureRow[];
+  /** notWith violations seen on the *final* assignment of each attempt. */
+  notWithViolations: NotWithViolationRow[];
   /** True iff at least one multi-attempt run completed under this snapshot. */
   finalized: boolean;
 }
@@ -89,6 +137,31 @@ export interface DiagSnapshot {
 
 let _mode: DiagMode = 'off';
 let _snapshot: DiagSnapshot | null = null;
+
+/** Cursor: index of the attempt currently being executed. Read by
+ *  recordNotWithViolation so the soft-constraints scorer doesn't need
+ *  to know about attempt indices. Reset on resetSnapshot(). */
+let _currentAttemptIndex = 0;
+
+/** Gate flag: true only while the *final* score pass of an attempt is running.
+ *  notWith captures fire only when this is true, suppressing the millions of
+ *  transient mid-SA score evaluations that would otherwise pollute the data. */
+let _capturingFinal = false;
+
+/** Cursor: number of polish passes already attributed to prior attempts.
+ *  Used by `consumePolishProgressForAttempt` to compute per-attempt totals
+ *  via snapshot diff (zero changes to polish loop). */
+let _lastPolishPassCount = 0;
+
+/** SA proposal-rejection sampling rate. 1 = capture every event; raise to
+ *  reduce overhead at the cost of histogram precision. Calibrated empirically:
+ *  on a default 60-attempt run the rejection event count is ~6M per attempt,
+ *  and 3 Map.set calls per event made the on-mode run ~6× slower than off-mode.
+ *  Sampling 1-in-100 cuts that overhead by ~100× while leaving ample resolution
+ *  for "which HC dominates" — each bucket still gets thousands of samples per
+ *  run. Bump back to 1 only for a focused diagnostic where exact counts matter. */
+const RECORD_REJECTION_SAMPLE_RATE = 100;
+let _rejectionEventCounter = 0;
 
 function emptySnapshot(): DiagSnapshot {
   return {
@@ -103,6 +176,9 @@ function emptySnapshot(): DiagSnapshot {
       reheats: 0,
       tempAtExit: 0,
       itersSinceImprovementAtExit: 0,
+      proposalAttempts: 0,
+      proposalsFound: 0,
+      tempSamples: [],
     },
     polish: { passes: 0, replacementsPerPass: [], deltaPerPass: [] },
     attempts: [],
@@ -112,6 +188,8 @@ function emptySnapshot(): DiagSnapshot {
       byParticipant: new Map(),
       captured: false,
     },
+    greedyFailures: [],
+    notWithViolations: [],
     finalized: false,
   };
 }
@@ -137,6 +215,10 @@ export function getSnapshot(): DiagSnapshot | null {
 export function resetSnapshot(): void {
   if (_mode === 'off') return;
   _snapshot = emptySnapshot();
+  _currentAttemptIndex = 0;
+  _capturingFinal = false;
+  _lastPolishPassCount = 0;
+  _rejectionEventCounter = 0;
 }
 
 /** Mark the current snapshot as a complete run. */
@@ -166,6 +248,8 @@ export function recordSAStats(stats: {
   reheats: number;
   tempAtExit: number;
   itersSinceImprovementAtExit: number;
+  proposalAttempts: number;
+  proposalsFound: number;
 }): void {
   if (_mode === 'off' || !_snapshot) return;
   const sa = _snapshot.sa;
@@ -177,6 +261,15 @@ export function recordSAStats(stats: {
   sa.reheats += stats.reheats;
   sa.tempAtExit = stats.tempAtExit;
   sa.itersSinceImprovementAtExit = stats.itersSinceImprovementAtExit;
+  sa.proposalAttempts += stats.proposalAttempts;
+  sa.proposalsFound += stats.proposalsFound;
+}
+
+/** Capture an (iter, temperature) sample from inside the SA loop. The caller
+ *  decides the sampling cadence; this recorder just stores. */
+export function recordSATempSample(iter: number, temp: number): void {
+  if (_mode === 'off' || !_snapshot) return;
+  _snapshot.sa.tempSamples.push({ iter, temp });
 }
 
 export function recordPolishPass(replacements: number, delta: number): void {
@@ -193,11 +286,91 @@ export function recordAttempt(row: AttemptRow): void {
 
 export function recordRejection(code: string, taskId: string, participantId: string): void {
   if (_mode === 'off' || !_snapshot) return;
+  // Optional sampling: skip Map writes for (N-1)/N events to bound overhead on
+  // very hot SA loops. Sample-rate=1 is the default (capture all).
+  if (RECORD_REJECTION_SAMPLE_RATE > 1 && _rejectionEventCounter++ % RECORD_REJECTION_SAMPLE_RATE !== 0) return;
   const r = _snapshot.rejections;
   r.byCode.set(code, (r.byCode.get(code) ?? 0) + 1);
   r.byTask.set(taskId, (r.byTask.get(taskId) ?? 0) + 1);
   r.byParticipant.set(participantId, (r.byParticipant.get(participantId) ?? 0) + 1);
   r.captured = true;
+}
+
+/** Record a notWith pair co-assigned to the same togetherness group on a final
+ *  schedule. Caller MUST gate via `_capturingFinal` (see setCapturingFinal); this
+ *  recorder also enforces the gate so the soft-constraints scorer doesn't have
+ *  to. The attempt index is read from the module-local cursor. */
+export function recordNotWithViolation(a: string, b: string, taskId: string, taskName: string): void {
+  if (_mode === 'off' || !_snapshot || !_capturingFinal) return;
+  // Sort the pair so {Alice, Bob} and {Bob, Alice} don't appear as two rows.
+  const [x, y] = a < b ? [a, b] : [b, a];
+  _snapshot.notWithViolations.push({
+    attempt: _currentAttemptIndex,
+    a: x,
+    b: y,
+    taskId,
+    taskName,
+  });
+}
+
+/** Record one or more greedy-phase unfilled slots from a single attempt.
+ *  Called by the multi-attempt loop only when failures occurred. */
+export function recordGreedyFailures(
+  attempt: number,
+  failures: Array<{
+    taskId: string;
+    taskName: string;
+    slotId: string;
+    slotLabel: string;
+    reason: string;
+    hcCodes?: string[];
+  }>,
+): void {
+  if (_mode === 'off' || !_snapshot || failures.length === 0) return;
+  for (const f of failures) {
+    _snapshot.greedyFailures.push({
+      attempt,
+      taskId: f.taskId,
+      taskName: f.taskName,
+      slotId: f.slotId,
+      slotLabel: f.slotLabel,
+      reason: f.reason,
+      hcCodes: f.hcCodes,
+    });
+  }
+}
+
+// ─── Cursor setters (module-local state, gated) ─────────────────────────────
+
+/** Set the current attempt index. Called by the multi-attempt loop before each
+ *  attempt so capture sites that don't have the index in scope (notably
+ *  soft-constraints scoring) can tag their captures. */
+export function setCurrentAttemptIndex(i: number): void {
+  if (_mode === 'off') return;
+  _currentAttemptIndex = i;
+}
+
+/** Mark the start/end of the *final* score pass of an attempt. Only while this
+ *  is true does recordNotWithViolation fire — preventing pollution from the
+ *  millions of transient mid-SA score evaluations. */
+export function setCapturingFinal(flag: boolean): void {
+  if (_mode === 'off') return;
+  _capturingFinal = flag;
+}
+
+/** Compute and consume the polish progress (pass count + delta sum) since the
+ *  previous call. The multi-attempt loop calls this once per attempt to attach
+ *  per-attempt polish stats to AttemptRow. Off-mode returns zeros. */
+export function consumePolishProgressForAttempt(): { passes: number; deltaSum: number } {
+  if (_mode === 'off' || !_snapshot) return { passes: 0, deltaSum: 0 };
+  const total = _snapshot.polish.passes;
+  const start = _lastPolishPassCount;
+  let deltaSum = 0;
+  for (let k = start; k < total; k++) {
+    deltaSum += _snapshot.polish.deltaPerPass[k] ?? 0;
+  }
+  _lastPolishPassCount = total;
+  return { passes: total - start, deltaSum };
 }
 
 // ─── Public command (single entry point) ────────────────────────────────────
@@ -284,7 +457,10 @@ function printSnapshot(): void {
     `  greedy: ${fmtMs(s.phases.greedyMs)}    SA: ${fmtMs(s.phases.saMs)}    polish: ${fmtMs(s.phases.polishMs)}`,
   );
 
-  // ── Simulated annealing ──
+  // ── Score progression ──
+  printScoreProgression(s.attempts);
+
+  // ── Simulated annealing (extended with proposal-throughput + cooling) ──
   console.log('\n── Simulated annealing ──');
   console.log(`  iterations:      ${sa.iters.toLocaleString('en-US')}`);
   console.log(`  swap   accept:   ${sa.swapAccept.toLocaleString('en-US')} (${fmtPct(sa.swapAccept, swapTotal)})`);
@@ -296,6 +472,36 @@ function printSnapshot(): void {
   console.log(`  reheats:         ${sa.reheats}`);
   console.log(`  temp at exit:    ${sa.tempAtExit.toFixed(3)}`);
   console.log(`  plateau on exit: ${sa.itersSinceImprovementAtExit}`);
+
+  // Move generator throughput sub-block — exposes the "% of proposals that
+  // reached scoring" gap, the headline diagnostic for HC-bound SA loops.
+  if (sa.proposalAttempts > 0) {
+    const rejectedAtHC = sa.proposalAttempts - sa.proposalsFound;
+    console.log('  ── move generator throughput ──');
+    console.log(`    proposals attempted:   ${sa.proposalAttempts.toLocaleString('en-US')}`);
+    console.log(
+      `    proposals reached scoring: ${sa.proposalsFound.toLocaleString('en-US')} (${fmtPct(sa.proposalsFound, sa.proposalAttempts)})`,
+    );
+    console.log(
+      `    rejected at HC stage:  ${rejectedAtHC.toLocaleString('en-US')} (${fmtPct(rejectedAtHC, sa.proposalAttempts)})`,
+    );
+  }
+
+  // Cooling curve. Samples are captured every SA_TEMP_SAMPLE_INTERVAL outer
+  // iterations of every attempt — each attempt's SA loop starts from iter=0
+  // with the same initial temperature, so the captured array contains 60
+  // interleaved cooling curves. Show only the first attempt's curve since the
+  // schedule is identical by construction across attempts.
+  if (sa.tempSamples.length > 0) {
+    const firstAttempt = takeFirstAttemptSamples(sa.tempSamples);
+    console.log(
+      `  ── cooling curve (first attempt; ${sa.tempSamples.length.toLocaleString('en-US')} samples across ${s.attempts.length} attempt${s.attempts.length === 1 ? '' : 's'}) ──`,
+    );
+    const samples = downsampleTempCurve(firstAttempt, 12);
+    for (const sample of samples) {
+      console.log(`    iter ${sample.iter.toLocaleString('en-US').padStart(12, ' ')}    temp ${sample.temp.toFixed(3)}`);
+    }
+  }
 
   // ── Polish ──
   console.log(`\n── Polish (${s.polish.passes} pass${s.polish.passes === 1 ? '' : 'es'}) ──`);
@@ -309,8 +515,26 @@ function printSnapshot(): void {
     }
   }
 
-  // ── Attempts ──
-  console.log(`\n── Attempts (${s.attempts.length}) ──`);
+  // ── Solution diversity ──
+  printSolutionDiversity(s.attempts);
+
+  // ── Attempts: phase progression ──
+  console.log(`\n── Attempts: phase progression (${s.attempts.length}) ──`);
+  const phaseRows = s.attempts.map((a) => ({
+    '#': a.attempt,
+    postGreedy: a.postGreedyComposite.toFixed(2),
+    postSA: a.postSAComposite.toFixed(2),
+    final: a.compositeScore.toFixed(2),
+    saΔ: (a.postSAComposite - a.postGreedyComposite).toFixed(2),
+    polishΔ: a.polishDeltaThisAttempt.toFixed(2),
+    polishN: a.polishPassesThisAttempt,
+    bestSoFar: a.bestSoFarComposite.toFixed(2),
+    hash: a.solutionHash,
+  }));
+  console.table(phaseRows);
+
+  // ── Attempts: score components (existing table, unchanged column order) ──
+  console.log(`\n── Attempts: score components (${s.attempts.length}) ──`);
   const rows = s.attempts.map((a) => ({
     '#': a.attempt,
     score: a.compositeScore.toFixed(2),
@@ -333,11 +557,22 @@ function printSnapshot(): void {
   }));
   console.table(rows);
 
-  // ── Rejections (verbose only) ──
-  console.log('\n── Rejections ──');
+  // ── notWith violations ──
+  printNotWithViolations(s.notWithViolations, s.attempts.length);
+
+  // ── Greedy choke points ──
+  printGreedyChokePoints(s.greedyFailures, s.attempts.length);
+
+  // ── Rejections deep-dive (now active in 'on' mode, not just 'verbose') ──
+  console.log('\n── Rejections deep-dive ──');
   if (!s.rejections.captured) {
-    console.log("  (none captured — verbose mode only. Run toggleSchedulerDiag('verbose') and regenerate.)");
+    console.log('  (none captured — no eligibility rejections were recorded)');
   } else {
+    if (RECORD_REJECTION_SAMPLE_RATE > 1) {
+      console.log(
+        `  (sampled at 1-in-${RECORD_REJECTION_SAMPLE_RATE} — counts shown are the recorded sample, ratios are accurate)`,
+      );
+    }
     console.log('  By HC code:');
     console.table(sortDescAsRecord(s.rejections.byCode));
     console.log('  By task (top 20):');
@@ -347,6 +582,136 @@ function printSnapshot(): void {
   }
 
   console.log('═══════════════════════════════════════════════\n');
+}
+
+// ─── Sub-section helpers ────────────────────────────────────────────────────
+
+function printScoreProgression(attempts: AttemptRow[]): void {
+  console.log('\n── Score progression ──');
+  if (attempts.length === 0) {
+    console.log('  (no attempts recorded)');
+    return;
+  }
+  // Find the attempt that produced the global best (last `improved` row).
+  let bestAttempt = attempts[0];
+  for (const a of attempts) {
+    if (a.compositeScore > bestAttempt.compositeScore) bestAttempt = a;
+  }
+  const best = bestAttempt.compositeScore;
+  console.log(`  best:           ${best.toFixed(2)}  (attempt ${bestAttempt.attempt} of ${attempts.length})`);
+
+  if (attempts.length === 1) return; // No plateau / threshold counts on a 1-attempt run.
+
+  // Plateau: count how many attempts after the best produced no improvement.
+  const plateau = attempts.length - bestAttempt.attempt;
+  if (plateau > 0) {
+    console.log(`  plateau after:  ${plateau} attempt(s) with no improvement`);
+  }
+
+  // Threshold counts.
+  const ge99 = attempts.filter((a) => a.compositeScore >= best * 0.99).length;
+  const ge90 = attempts.filter((a) => a.compositeScore >= best * 0.9).length;
+  console.log(`  attempts ≥99% of best:   ${ge99} / ${attempts.length}`);
+  console.log(`  attempts ≥90% of best:   ${ge90} / ${attempts.length}`);
+}
+
+function printSolutionDiversity(attempts: AttemptRow[]): void {
+  console.log('\n── Solution diversity ──');
+  if (attempts.length === 0) {
+    console.log('  (no attempts recorded)');
+    return;
+  }
+  const distinct = new Set(attempts.map((a) => a.solutionHash));
+  console.log(`  unique solutions:           ${distinct.size} / ${attempts.length}`);
+
+  const zeroNotWith = attempts.filter((a) => a.score.notWithPenalty === 0);
+  if (zeroNotWith.length > 0 && attempts.length > 1) {
+    const zeroDistinct = new Set(zeroNotWith.map((a) => a.solutionHash));
+    console.log(
+      `  zero-notWith attempts:      ${zeroNotWith.length} / ${attempts.length}  (${zeroDistinct.size} unique solutions)`,
+    );
+  }
+  if (distinct.size === 1 && attempts.length > 1) {
+    console.log('  ⚠ all attempts produced an identical assignment — multi-attempt is producing duplicates');
+  }
+}
+
+function printNotWithViolations(rows: NotWithViolationRow[], totalAttempts: number): void {
+  console.log('\n── notWith violations ──');
+  if (rows.length === 0) {
+    console.log('  (none — no notWith pair was co-assigned in any final schedule)');
+    return;
+  }
+  // Aggregate by (a, b, taskName) → set of attempts.
+  const agg = new Map<string, { a: string; b: string; taskName: string; attempts: Set<number> }>();
+  for (const r of rows) {
+    const key = `${r.a}|${r.b}|${r.taskId}`;
+    const entry = agg.get(key);
+    if (entry) {
+      entry.attempts.add(r.attempt);
+    } else {
+      agg.set(key, { a: r.a, b: r.b, taskName: r.taskName, attempts: new Set([r.attempt]) });
+    }
+  }
+  const sorted = Array.from(agg.values()).sort((x, y) => y.attempts.size - x.attempts.size);
+  for (const v of sorted) {
+    console.log(`  (${v.a}, ${v.b})  on ${v.taskName}  in ${v.attempts.size} / ${totalAttempts} attempts`);
+  }
+}
+
+function printGreedyChokePoints(rows: GreedyFailureRow[], totalAttempts: number): void {
+  console.log('\n── Greedy choke points ──');
+  if (rows.length === 0) {
+    console.log('  (none — greedy filled every slot in every attempt)');
+    return;
+  }
+  // Aggregate by (taskName, slotLabel) → { attempts, top reasons }.
+  const agg = new Map<
+    string,
+    { taskName: string; slotLabel: string; attempts: Set<number>; reasons: Map<string, number> }
+  >();
+  for (const r of rows) {
+    const key = `${r.taskName}|${r.slotLabel}`;
+    let entry = agg.get(key);
+    if (!entry) {
+      entry = { taskName: r.taskName, slotLabel: r.slotLabel, attempts: new Set(), reasons: new Map() };
+      agg.set(key, entry);
+    }
+    entry.attempts.add(r.attempt);
+    entry.reasons.set(r.reason, (entry.reasons.get(r.reason) ?? 0) + 1);
+  }
+  const sorted = Array.from(agg.values()).sort((x, y) => y.attempts.size - x.attempts.size);
+  for (const v of sorted) {
+    const topReason = Array.from(v.reasons.entries()).sort((p, q) => q[1] - p[1])[0]?.[0] ?? '?';
+    console.log(
+      `  ${v.taskName} · ${v.slotLabel}:  ${v.attempts.size} / ${totalAttempts} attempts — top reason: "${topReason}"`,
+    );
+  }
+}
+
+/** Down-sample a temperature-sample list to at most `targetCount` evenly-spaced
+ *  rows for display. Always keeps the first and last samples. */
+function downsampleTempCurve(samples: SATempSample[], targetCount: number): SATempSample[] {
+  if (samples.length <= targetCount) return samples;
+  const result: SATempSample[] = [];
+  const step = (samples.length - 1) / (targetCount - 1);
+  for (let i = 0; i < targetCount; i++) {
+    result.push(samples[Math.round(i * step)]);
+  }
+  return result;
+}
+
+/** Extract the first attempt's samples from an interleaved multi-attempt array.
+ *  Attempt boundaries are detected by `iter` resetting to 0 (each attempt's SA
+ *  loop starts a fresh iter counter). Returns the prefix up to (but excluding)
+ *  the second iter=0 marker. */
+function takeFirstAttemptSamples(samples: SATempSample[]): SATempSample[] {
+  if (samples.length === 0) return samples;
+  // The first sample is iter=0 by construction. Stop at the next iter=0.
+  for (let i = 1; i < samples.length; i++) {
+    if (samples[i].iter === 0) return samples.slice(0, i);
+  }
+  return samples;
 }
 
 // ─── globalThis registration (browser console + Node REPL) ──────────────────

@@ -36,22 +36,46 @@ test.describe('Tutorial — mobile (375×812)', () => {
     expect(box!.width).toBeGreaterThanOrEqual(viewport!.width * 0.8);
   });
 
-  test('popover renders as a sheet anchored to a viewport edge on mobile', async ({ page, viewport }) => {
+  test('popover lives in the lower half of the viewport (always)', async ({ page, viewport }) => {
     if (!viewport || viewport.width > 767) test.skip();
     await page.evaluate(() => window.gmStartTutorial?.('participants'));
     const popover = page.locator('.tutorial-popover');
     await expect(popover).toBeVisible();
     const box = await popover.boundingBox();
     expect(box).toBeTruthy();
-    // Sheet: anchored to either the top OR the bottom edge of the viewport.
-    // The engine flips to a top-sheet when the spotlit target sits in the
-    // lower half of the screen so the popover doesn't occlude what it's
-    // describing — both anchors are valid, only one applies per step.
-    const flushTop = box!.y <= 4;
-    const flushBottom = box!.y + box!.height >= viewport!.height - 4;
-    expect(flushTop || flushBottom).toBe(true);
-    // Full-width on mobile
-    expect(box!.width).toBeGreaterThan(viewport!.width - 8);
+    // The mobile sheet is always bottom-anchored — either flush against the
+    // bottom edge, or "lifted" just enough to clear a low-positioned target.
+    // Both modes keep the popover in the lower portion of the screen so the
+    // user always finds it in the same zone (no top/bottom flip).
+    const popoverCenterY = box!.y + box!.height / 2;
+    expect(popoverCenterY).toBeGreaterThan(viewport!.height * 0.4);
+    // Bottom edge stays inside the viewport — no clipping above the bottom.
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height + 1);
+    // Width fills the viewport (flush) or has a small symmetric gutter (lifted).
+    expect(box!.width).toBeGreaterThan(viewport!.width - 24);
+  });
+
+  test('lifted sheet keeps target visible — nothing is occluded', async ({ page, viewport }) => {
+    if (!viewport || viewport.width > 767) test.skip();
+    // Switch to the schedule tab so the bottom-tab nav is the active context;
+    // re-launching the participants track now spotlights a tab button at the
+    // bottom of the screen — exactly the case that used to flip to top-sheet.
+    await page.click('.tutorial-banner [data-tutorial-banner-action="dismiss"]:not(.tutorial-banner-close)');
+    await page.evaluate(() => window.gmStartTutorial?.('participants'));
+    const popover = page.locator('.tutorial-popover');
+    await expect(popover).toBeVisible();
+    const popoverBox = await popover.boundingBox();
+    const target = page.locator('button.tab-btn[data-tab="participants"]');
+    await expect(target).toBeVisible();
+    const targetBox = await target.boundingBox();
+    expect(popoverBox).toBeTruthy();
+    expect(targetBox).toBeTruthy();
+    // The target's bottom edge must sit at or below the popover's bottom
+    // edge — i.e. the popover is *above* the target, not covering it.
+    // (Equality: target sits flush at viewport bottom and popover ends there too.)
+    const targetCenterY = targetBox!.y + targetBox!.height / 2;
+    const popoverBottom = popoverBox!.y + popoverBox!.height;
+    expect(targetCenterY).toBeGreaterThanOrEqual(popoverBottom - 1);
   });
 
   test('Esc closes the tutorial on mobile too', async ({ page, viewport }) => {
@@ -105,8 +129,9 @@ test.describe('Tutorial — mobile (375×812)', () => {
   test('embedded screenshot stays within bottom-sheet bounds on mobile', async ({ page, viewport }) => {
     if (!viewport || viewport.width > 767) test.skip();
     await page.evaluate(() => window.gmStartTutorial?.('schedule'));
-    // Walk to step 11 (manual-build), which embeds a screenshot
-    for (let i = 0; i < 10; i++) {
+    // s-11 (manual-build, the screenshot step) sits at index 12 — s-10b and
+    // s-10c were inserted between s-10 and s-11.
+    for (let i = 0; i < 12; i++) {
       await page.click('.tutorial-popover [data-tutorial-action="next"]');
     }
     const img = page.locator('.tutorial-popover .tutorial-screenshot');

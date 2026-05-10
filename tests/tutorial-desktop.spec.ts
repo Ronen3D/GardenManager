@@ -125,8 +125,8 @@ test.describe('Tutorial — desktop', () => {
 
   test('completing a track marks it as seen (✓ checkmark)', async ({ page }) => {
     await page.evaluate(() => window.gmStartTutorial?.('participants'));
-    // Walk through all 8 steps then exit on the last
-    for (let i = 0; i < 8; i++) {
+    // Walk through all 10 steps then exit on the last
+    for (let i = 0; i < 10; i++) {
       await page.click('.tutorial-popover [data-tutorial-action="next"]');
     }
     await expect(page.locator('.tutorial-popover')).toHaveCount(0);
@@ -150,8 +150,9 @@ test.describe('Tutorial — desktop', () => {
     // Step s-11 (manual build) has a screenshot. Walk the schedule track to it.
     await page.evaluate(() => window.gmStartTutorial?.('schedule'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
-    // Skip ahead to step 11 (index 10) by clicking המשך 10 times.
-    for (let i = 0; i < 10; i++) {
+    // s-11 is now at index 12 (s-10b and s-10c were inserted before it). Click
+    // המשך 12 times to reach it.
+    for (let i = 0; i < 12; i++) {
       await page.click('.tutorial-popover [data-tutorial-action="next"]');
     }
     const img = page.locator('.tutorial-popover .tutorial-screenshot');

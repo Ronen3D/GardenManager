@@ -207,16 +207,24 @@
     /* On mobile centred dialogs also become bottom sheets */
     bottom: 0;
   }
-  /* Top sheet: applied when the spotlit target sits in the lower half of the
-     viewport. Without this flip the bottom sheet would cover the highlighted
-     element (FAB, tab nav, etc.). */
-  .tutorial-popover.tutorial-popover-top-sheet {
-    bottom: auto !important;
-    top: 0 !important;
-    border-radius: 0 0 16px 16px;
-    border-top: none;
+  /* Lifted bottom sheet — used when the spotlit target sits in the lower
+     half of the viewport. The sheet rises just enough to keep the target
+     (with its halo) visible below it, so the user always finds the popover
+     in the same screen zone. Replaces the older top-sheet flip that broke
+     spatial continuity between steps. */
+  .tutorial-popover.tutorial-popover-lifted {
+    bottom: var(--tutorial-popover-lift, 0) !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto;
+    max-width: calc(100% - 16px);
+    max-height: var(--tutorial-popover-max-h, 60vh);
+    border-radius: 16px;
     border-bottom: 1px solid var(--border);
-    animation: tutorialSheetDown 0.25s ease;
+    /* Shadow on both sides — there's content visible above AND below the sheet */
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.5),
+      0 -8px 24px rgba(0, 0, 0, 0.35);
   }
   /* Drag handle decoration (purely visual — drag-to-dismiss is intentionally NOT wired) */
   .tutorial-popover::before {
@@ -228,15 +236,6 @@
     background: var(--text-muted);
     opacity: 0.35;
     margin: 0 auto 10px;
-  }
-  /* On the top sheet move the drag handle to the bottom for visual consistency */
-  .tutorial-popover.tutorial-popover-top-sheet::before {
-    margin: 10px auto 0;
-    order: 99;
-  }
-  .tutorial-popover.tutorial-popover-top-sheet {
-    display: flex;
-    flex-direction: column;
   }
 }
 
@@ -389,14 +388,6 @@
 @keyframes tutorialSheetUp {
   from {
     transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-@keyframes tutorialSheetDown {
-  from {
-    transform: translateY(-100%);
   }
   to {
     transform: translateY(0);

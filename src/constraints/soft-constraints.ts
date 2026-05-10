@@ -25,6 +25,7 @@ import {
   ParticipantRestProfile,
 } from '../shared/utils/rest-calculator';
 import { describeTaskInstance, operationalDateKey } from '../utils/date-utils';
+import { recordNotWithViolation } from '../engine/diagnostics';
 import { computeLowPriorityLevelPenalty } from './senior-policy';
 
 /**
@@ -481,6 +482,10 @@ export function computeNotWithPenalty(
         for (let j = i + 1; j < group.length; j++) {
           if (set.has(group[j])) {
             penalty += config.notWithPenalty;
+            // Capture violator identity for diagnostics. The recorder gates on
+            // _capturingFinal so this fires only on the optimize()-final score
+            // pass, not on millions of transient mid-SA evaluations.
+            recordNotWithViolation(group[i], group[j], taskId, task.name);
           }
         }
       }

@@ -4347,7 +4347,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.8</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4628,20 +4628,41 @@ function attachConsoleHintEasterEgg(container: HTMLElement): void {
 }
 
 function showConsoleHint(): void {
-  const code = [
-    "toggleSchedulerDiag('on')       // start collecting",
-    "toggleSchedulerDiag('verbose')  // also log eligibility rejections",
-    "toggleSchedulerDiag('show')     // print last-run report",
-    "toggleSchedulerDiag('off')      // stop",
-  ].join('\n');
+  const entries: Array<{ cmd: string; desc: string }> = [
+    { cmd: "toggleSchedulerDiag('on')", desc: 'התחל לאסוף נתוני אבחון' },
+    { cmd: "toggleSchedulerDiag('verbose')", desc: 'מצב מפורט — כולל דחיות זכאות' },
+    { cmd: "toggleSchedulerDiag('show')", desc: 'הדפס את הדו"ח של ההרצה האחרונה' },
+    { cmd: "toggleSchedulerDiag('off')", desc: 'הפסק איסוף' },
+  ];
+
+  const rowsHtml = entries
+    .map(
+      ({ cmd, desc }) => `
+      <div class="gm-console-hint-row">
+        <div class="gm-console-hint-row-text">
+          <code class="gm-console-hint-cmd">${escHtml(cmd)}</code>
+          <div class="gm-console-hint-desc">${escHtml(desc)}</div>
+        </div>
+        <button type="button" class="gm-console-hint-copy" data-cmd="${escAttr(cmd)}" aria-label="העתק פקודה" title="העתק">
+          <span class="gm-console-hint-copy-icon">📋</span>
+        </button>
+      </div>`,
+    )
+    .join('');
+
   const backdrop = document.createElement('div');
   backdrop.className = 'gm-modal-backdrop';
   backdrop.innerHTML = `
-    <div class="gm-modal-dialog gm-console-hint" role="dialog" aria-modal="true">
-      <div class="gm-console-hint-code">
-        <code>${escHtml(code)}</code>
-        <button type="button" class="gm-console-hint-copy" aria-label="העתק" title="העתק">📋</button>
+    <div class="gm-modal-dialog gm-console-hint" role="dialog" aria-modal="true" aria-labelledby="gm-console-hint-title">
+      <div class="gm-console-hint-header">
+        <div class="gm-console-hint-title-row">
+          <span class="gm-console-hint-icon" aria-hidden="true">🛠️</span>
+          <h3 id="gm-console-hint-title" class="gm-console-hint-title">אבחון מתזמן</h3>
+          <button type="button" class="gm-console-hint-close" aria-label="סגור" title="סגור">×</button>
+        </div>
+        <div class="gm-console-hint-subtitle">פתח את ה-Console (F12) והדבק אחת מהפקודות:</div>
       </div>
+      <div class="gm-console-hint-list">${rowsHtml}</div>
     </div>`;
 
   const close = (): void => {
@@ -4652,22 +4673,31 @@ function showConsoleHint(): void {
     if (e.key === 'Escape') close();
   };
 
-  const copyBtn = backdrop.querySelector('.gm-console-hint-copy') as HTMLButtonElement | null;
-  if (copyBtn) {
-    copyBtn.addEventListener('click', () => {
-      void navigator.clipboard?.writeText(code).then(
+  const copyBtns = backdrop.querySelectorAll<HTMLButtonElement>('.gm-console-hint-copy');
+  copyBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const cmd = btn.dataset.cmd ?? '';
+      if (!cmd) return;
+      void navigator.clipboard?.writeText(cmd).then(
         () => {
-          copyBtn.textContent = '✓';
+          btn.classList.add('is-copied');
+          const icon = btn.querySelector('.gm-console-hint-copy-icon');
+          if (icon) icon.textContent = '✓';
           setTimeout(() => {
-            copyBtn.textContent = '📋';
+            btn.classList.remove('is-copied');
+            if (icon) icon.textContent = '📋';
           }, 1200);
         },
         () => {
-          copyBtn.textContent = '✗';
+          const icon = btn.querySelector('.gm-console-hint-copy-icon');
+          if (icon) icon.textContent = '✗';
         },
       );
     });
-  }
+  });
+
+  const closeBtn = backdrop.querySelector('.gm-console-hint-close') as HTMLButtonElement | null;
+  closeBtn?.addEventListener('click', close);
 
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) close();

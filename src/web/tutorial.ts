@@ -493,20 +493,41 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
   const pw = _popover.offsetWidth;
   const ph = _popover.offsetHeight;
 
-  // On mobile (<=767px) the popover is a sheet via CSS — flip to top-sheet
-  // when the spotlit target sits in the lower half of the viewport, otherwise
-  // the bottom sheet would cover what we're describing (FAB, tab nav, etc.).
+  // On mobile (<=767px) the popover is a sheet via CSS, always anchored to
+  // the bottom of the viewport. When the spotlit target sits in the lower
+  // half of the screen the sheet "lifts" just enough to clear the target
+  // (with its halo + a small gap) so it stays visible below the sheet. This
+  // replaces the older top-sheet flip, which broke spatial continuity —
+  // every step the user had to re-find the popover at the opposite edge.
   if (_mql?.matches) {
+    _popover.classList.remove('tutorial-popover-top-sheet');
     const targetCenterY = rect.top + rect.height / 2;
-    if (targetCenterY > vh * 0.5) {
-      _popover.classList.add('tutorial-popover-top-sheet');
+    const inLowerHalf = targetCenterY > vh * 0.5;
+    if (inLowerHalf) {
+      const gap = 12;
+      // haloTop is where the spotlight cutout begins. Lift = how far above
+      // the viewport bottom the sheet's bottom edge sits. The sheet's bottom
+      // edge needs to be above haloTop with a `gap` so the halo is fully
+      // visible.
+      const haloTop = rect.top + rect.height / 2 - haloH / 2;
+      const lift = Math.max(0, vh - haloTop + gap);
+      // Cap the sheet's max-height so it never extends above the viewport.
+      // 16px breathing room from the top; minimum 160px so even very low
+      // targets leave a readable sheet (content scrolls inside).
+      const maxH = Math.max(160, vh - lift - 16);
+      _popover.classList.add('tutorial-popover-lifted');
+      _popover.style.setProperty('--tutorial-popover-lift', `${lift}px`);
+      _popover.style.setProperty('--tutorial-popover-max-h', `${maxH}px`);
     } else {
-      _popover.classList.remove('tutorial-popover-top-sheet');
+      _popover.classList.remove('tutorial-popover-lifted');
+      _popover.style.removeProperty('--tutorial-popover-lift');
+      _popover.style.removeProperty('--tutorial-popover-max-h');
     }
     return;
   }
-  // Desktop: clear any leftover top-sheet class from a prior mobile orientation.
+  // Desktop: clear any leftover mobile classes from a prior orientation.
   _popover.classList.remove('tutorial-popover-top-sheet');
+  _popover.classList.remove('tutorial-popover-lifted');
 
   // Resolve placement with auto-flip
   const fits = {

@@ -46,15 +46,20 @@ import { computeAllCapacities } from '../utils/capacity';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
 import {
   type AttemptRow,
+  consumePolishProgressForAttempt,
   finalizeSnapshot,
   isSchedulerDiagOn,
   isVerboseDiag,
   recordAttempt,
+  recordGreedyFailures,
   recordPhase,
   recordPolishPass,
   recordRejection,
   recordSAStats,
+  recordSATempSample,
   resetSnapshot,
+  setCapturingFinal,
+  setCurrentAttemptIndex,
 } from './diagnostics';
 import type { PhantomContext } from './phantom';
 import { getRejectionReason, isEligible } from './validator';
@@ -218,15 +223,22 @@ function isEligibleForSlot(
   restRuleMap?: Map<string, number>,
   scheduleContext?: ScheduleContext,
 ): boolean {
-  if (isVerboseDiag()) {
+  // Diag 'on' (and 'verbose') capture HC-rejection histograms; 'verbose'
+  // additionally emits per-event console logs. Both modes share the same
+  // `getRejectionReason` call — its cost is identical to `isEligible` since
+  // both wrap the same `checkEligibility` (validator.ts), so capturing the
+  // code is free relative to the boolean form.
+  if (isSchedulerDiagOn()) {
     const code = getRejectionReason(participant, task, slot, participantAssignments, taskMap, {
       disabledHC,
       restRuleMap,
       scheduleContext,
     });
     if (code) {
-      const _tag = `${participant.name} → ${task.name} [${describeSlot(slot.label, task.timeBlock)}]`;
-      console.log(`[Elig] REJECT: ${_tag} — ${code}`);
+      if (isVerboseDiag()) {
+        const _tag = `${participant.name} → ${task.name} [${describeSlot(slot.label, task.timeBlock)}]`;
+        console.log(`[Elig] REJECT: ${_tag} — ${code}`);
+      }
       recordRejection(code, task.id, participant.id);
     }
     return code === null;
@@ -1505,6 +1517,10 @@ export function localSearchOptimize(
   iterations: number;
   saMs: number;
   polishMs: number;
+  /** Composite score after the initial greedy pass (before SA). */
+  postGreedyComposite: number;
+  /** Composite score at SA exit, before `polishReplaceWithIdle` runs. */
+  postSAComposite: number;
 } {
   const current = [...assignments.map((a) => ({ ...a }))];
 
@@ -1575,6 +1591,8 @@ export function localSearchOptimize(
   };
 
   const currentScore = computeScheduleScore(tasks, participants, current, config, scoreCtx);
+  // Capture the post-greedy composite for diagnostics (cost: zero — value already exists).
+  const postGreedyComposite = currentScore.compositeScore;
   // Snapshot best independently — current is mutated in-place
   let best = current.map((a) => ({ ...a }));
   let bestScore = currentScore;
@@ -1593,6 +1611,17 @@ export function localSearchOptimize(
   let insertAccept = 0;
   let insertReject = 0;
   let reheats = 0;
+  // Move-generator throughput: counts every (i,j) pair / insert candidate the
+  // generator visits, vs. the subset that reaches scoring (i.e., passed
+  // isSwapFeasible / isEligibleForSlot + HC-4/HC-7). Surfacing the gap is what
+  // exposes proposal-generation as a bottleneck.
+  let proposalAttempts = 0;
+  let proposalsFound = 0;
+  // SA cooling-curve sampling: increment per outer loop iteration; sample temp
+  // when (outerIter % SA_TEMP_SAMPLE_INTERVAL === 0). Gated behind diag flag
+  // so off-mode pays only the increment + mod check.
+  let outerIter = 0;
+  const SA_TEMP_SAMPLE_INTERVAL = 100;
 
   const maxIter = config.maxIterations;
   const saInitialTemp = getSaInitialTemperature(tasks.length);
@@ -1615,6 +1644,12 @@ export function localSearchOptimize(
 
   while (iterations < maxIter) {
     if (Date.now() - startTime > config.maxSolverTimeMs || abortSignal?.aborted || stopSignal?.aborted) break;
+
+    // Cooling-curve sample (gated; off-mode pays only the mod check + branch).
+    if (outerIter % SA_TEMP_SAMPLE_INTERVAL === 0 && isSchedulerDiagOn()) {
+      recordSATempSample(iterations, temperature);
+    }
+    outerIter++;
 
     // Geometric temperature decay with reheating
     temperature *= SA_COOLING_RATE;
@@ -1668,6 +1703,7 @@ export function localSearchOptimize(
             [pOrder[k], pOrder[m]] = [pOrder[m], pOrder[k]];
           }
           for (const p of pOrder) {
+            proposalAttempts++;
             const pAssigns = byParticipant.get(p.id) || [];
             if (!isEligibleForSlot(p, ufTask, ufSlot, pAssigns, taskMap, disabledHC, restRuleMap, scheduleContext))
               continue;
@@ -1684,6 +1720,10 @@ export function localSearchOptimize(
               }
               if (existingGroups.size > 0 && !existingGroups.has(p.group)) continue;
             }
+
+            // Candidate cleared eligibility + HC-7 + HC-4: count it as
+            // having reached scoring.
+            proposalsFound++;
 
             // Create new assignment and score
             const newA: Assignment = {
@@ -1783,6 +1823,7 @@ export function localSearchOptimize(
 
         // Count only actual swap attempts against iteration budget
         iterations++;
+        proposalAttempts++;
         if (iterations > maxIter) break;
 
         // ── In-place swap ───────────────────────────────────────────
@@ -1822,6 +1863,9 @@ export function localSearchOptimize(
           assignmentPos.set(aj.id, { pid: oldPidJ, idx: posJ });
           continue;
         }
+
+        // Proposal cleared HC-feasibility — count it as having reached scoring.
+        proposalsFound++;
 
         // 4. Incremental score: only recompute for the two swapped participants
         //    Save state for undo
@@ -1887,6 +1931,12 @@ export function localSearchOptimize(
   // through the time elapsed before polish.
   const saExitTimeMs = Date.now();
   const saMs = saExitTimeMs - startTime;
+  // Capture post-SA / pre-polish composite. `bestScore` is the SA-tracked best;
+  // post-SA insert sweep may add to `best` afterwards without updating
+  // `bestScore`, but the slight drift (visible only when insert sweep fires) is
+  // an acceptable diagnostic-only inaccuracy in exchange for zero extra
+  // computeScheduleScore calls on the per-attempt path.
+  const postSAComposite = bestScore.compositeScore;
   recordSAStats({
     iters: iterations,
     swapAccept,
@@ -1896,6 +1946,8 @@ export function localSearchOptimize(
     reheats,
     tempAtExit: temperature,
     itersSinceImprovementAtExit: itersSinceImprovement,
+    proposalAttempts,
+    proposalsFound,
   });
 
   // ── Reconcile filledSlots with best ──────────────────────────────────────
@@ -2005,7 +2057,7 @@ export function localSearchOptimize(
   recordPhase('sa', saMs);
   recordPhase('polish', polishMs);
 
-  return { assignments: best, filledSlots, iterations, saMs, polishMs };
+  return { assignments: best, filledSlots, iterations, saMs, polishMs, postGreedyComposite, postSAComposite };
 }
 
 // ─── Post-SA Polish ──────────────────────────────────────────────────────────
@@ -2204,6 +2256,14 @@ export interface OptimizationResult {
    *  multi-attempt results these reflect the final/best attempt only.
    *  Always-on (cheap timestamp arithmetic). */
   phaseDurations: { greedyMs: number; saMs: number; polishMs: number };
+  /** Per-phase composite scores (post-greedy / post-SA / post-polish=final).
+   *  Cheap to populate (values already computed inside the pipeline) and
+   *  consumed by diagnostics — feel free to ignore in non-diag callers. */
+  phaseScores: { postGreedy: number; postSA: number; final: number };
+  /** Greedy phase's original unfilled-slot list — preserved here for
+   *  diagnostics. Differs from `unfilledSlots`: that field is the post-SA-
+   *  insert remaining set; this one captures what greedy alone left behind. */
+  greedyUnfilledSlots: UnfilledSlot[];
 }
 
 /**
@@ -2320,7 +2380,12 @@ export function optimize(
     notWithPairs: finalNotWithPairs,
     dayStartHour,
   };
+  // Mark the *final* score pass so soft-constraints scoring can capture
+  // notWith violator identities for diagnostics. Off-mode short-circuits
+  // inside setCapturingFinal — zero cost.
+  setCapturingFinal(true);
   const score = computeScheduleScore(tasks, participants, lsResult.assignments, config, finalCtx);
+  setCapturingFinal(false);
 
   return {
     assignments: lsResult.assignments,
@@ -2331,6 +2396,12 @@ export function optimize(
     durationMs: Date.now() - startTime,
     actualAttempts: 1,
     phaseDurations: { greedyMs, saMs: lsResult.saMs, polishMs: lsResult.polishMs },
+    phaseScores: {
+      postGreedy: lsResult.postGreedyComposite,
+      postSA: lsResult.postSAComposite,
+      final: score.compositeScore,
+    },
+    greedyUnfilledSlots: greedy.unfilledSlots.slice(),
   };
 }
 
@@ -2350,8 +2421,33 @@ export type MultiAttemptProgressCallback = (info: {
 
 /** Build a flat AttemptRow from an OptimizationResult. Only called when diag
  *  is on; copies primitives only (no Assignment / Task / Participant refs). */
-function makeAttemptRow(attempt: number, r: OptimizationResult, improved: boolean): AttemptRow {
+/** FNV-1a 32-bit hash of the assignment vector. Stable identity for
+ *  detecting solution duplicates across multi-attempt runs. Sorts by the
+ *  composite key (taskId|slotId|participantId) — slotId alone is non-unique
+ *  across tasks. ~O(slots) per call; only invoked once per attempt. */
+function hashAssignments(assignments: Assignment[]): string {
+  const keys = assignments
+    .map((a) => `${a.taskId}|${a.slotId}|${a.participantId}`)
+    .sort()
+    .join('\n');
+  let h = 0x811c9dc5;
+  for (let k = 0; k < keys.length; k++) {
+    h ^= keys.charCodeAt(k);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+function makeAttemptRow(
+  attempt: number,
+  r: OptimizationResult,
+  improved: boolean,
+  bestSoFarComposite: number,
+): AttemptRow {
   const s = r.score;
+  // Per-attempt polish totals derive from a snapshot diff against the previous
+  // attempt — zero changes to the polish loop itself.
+  const polishProgress = consumePolishProgressForAttempt();
   return {
     attempt,
     compositeScore: s.compositeScore,
@@ -2360,6 +2456,12 @@ function makeAttemptRow(attempt: number, r: OptimizationResult, improved: boolea
     improved,
     durationMs: r.durationMs,
     iterations: r.iterations,
+    postGreedyComposite: r.phaseScores.postGreedy,
+    postSAComposite: r.phaseScores.postSA,
+    bestSoFarComposite,
+    solutionHash: hashAssignments(r.assignments),
+    polishPassesThisAttempt: polishProgress.passes,
+    polishDeltaThisAttempt: polishProgress.deltaSum,
     score: {
       minRestHours: s.minRestHours,
       avgRestHours: s.avgRestHours,
@@ -2540,6 +2642,7 @@ export function optimizeMultiAttempt(
 
     // Task-order jitter: 0 for first attempt, 0.3 for subsequent (or bench override)
     const jitter = benchOv?.jitter ?? (i === 0 ? 0 : 0.3);
+    setCurrentAttemptIndex(i + 1);
     const result = optimize(
       attemptTasks,
       shuffledParticipants,
@@ -2563,7 +2666,23 @@ export function optimizeMultiAttempt(
     }
 
     if (diagOn) {
-      recordAttempt(makeAttemptRow(i + 1, result, improved));
+      recordAttempt(makeAttemptRow(i + 1, result, improved, best!.score.compositeScore));
+      if (result.greedyUnfilledSlots.length > 0) {
+        recordGreedyFailures(
+          i + 1,
+          result.greedyUnfilledSlots.map((u) => {
+            const t = tasks.find((tk) => tk.id === u.taskId);
+            return {
+              taskId: u.taskId,
+              taskName: t?.name ?? u.taskId,
+              slotId: u.slotId,
+              slotLabel: t?.slots.find((s) => s.slotId === u.slotId)?.label ?? u.slotId,
+              reason: u.reason,
+              hcCodes: u.hcCodes,
+            };
+          }),
+        );
+      }
     }
 
     if (onProgress) {
@@ -2718,6 +2837,7 @@ export function optimizeMultiAttemptAsync(
 
           // Task-order jitter: 0 for first attempt, 0.3 for subsequent
           const jitter = i === 0 ? 0 : 0.3;
+          setCurrentAttemptIndex(i + 1);
           const result = optimize(
             attemptTasks,
             shuffledParticipants,
@@ -2745,7 +2865,23 @@ export function optimizeMultiAttemptAsync(
           attemptsCompleted = i;
 
           if (diagOn) {
-            recordAttempt(makeAttemptRow(i, result, improved));
+            recordAttempt(makeAttemptRow(i, result, improved, best!.score.compositeScore));
+            if (result.greedyUnfilledSlots.length > 0) {
+              recordGreedyFailures(
+                i,
+                result.greedyUnfilledSlots.map((u) => {
+                  const t = tasks.find((tk) => tk.id === u.taskId);
+                  return {
+                    taskId: u.taskId,
+                    taskName: t?.name ?? u.taskId,
+                    slotId: u.slotId,
+                    slotLabel: t?.slots.find((s) => s.slotId === u.slotId)?.label ?? u.slotId,
+                    reason: u.reason,
+                    hcCodes: u.hcCodes,
+                  };
+                }),
+              );
+            }
           }
 
           if (onProgress) {

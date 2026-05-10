@@ -2325,59 +2325,161 @@ select.input-sm {
 
 /* ─── Console-hint Easter Egg ────────────────────────────────────── */
 .gm-console-hint {
-  max-width: 620px;
-  padding: 22px;
+  max-width: 560px;
+  padding: 0;
 }
-.gm-console-hint-code {
+.gm-console-hint-header {
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.gm-console-hint-title-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  padding: 12px 14px;
-  direction: ltr;
 }
-.gm-console-hint-code code {
+.gm-console-hint-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.gm-console-hint-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
   flex: 1;
+}
+.gm-console-hint-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 6px;
+  border-radius: 6px;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.gm-console-hint-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+.gm-console-hint-subtitle {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
+}
+.gm-console-hint-list {
+  padding: 12px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gm-console-hint-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 10px 12px;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.gm-console-hint-row:hover {
+  background: rgba(0, 0, 0, 0.42);
+  border-color: rgba(125, 211, 252, 0.25);
+}
+.gm-console-hint-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.gm-console-hint-cmd {
   font-family: var(--font-mono, "JetBrains Mono", "Courier New", monospace);
-  font-size: 0.85rem;
-  line-height: 1.5;
+  font-size: 0.88rem;
+  line-height: 1.4;
   letter-spacing: 0.2px;
   color: #7dd3fc;
+  direction: ltr;
+  text-align: left;
+  white-space: nowrap;
+  overflow-x: auto;
   -webkit-user-select: all;
   user-select: all;
-  text-align: left;
-  white-space: pre;
-  overflow-x: auto;
+  cursor: text;
+}
+.gm-console-hint-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted, rgba(255, 255, 255, 0.6));
+  line-height: 1.35;
 }
 .gm-console-hint-copy {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: var(--text);
   border-radius: 6px;
-  padding: 4px 9px;
+  padding: 0 10px;
+  min-width: 36px;
   cursor: pointer;
   font-size: 0.95rem;
   line-height: 1;
-  transition: background 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
   flex-shrink: 0;
+  align-self: center;
 }
 .gm-console-hint-copy:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(125, 211, 252, 0.12);
+  border-color: rgba(125, 211, 252, 0.35);
 }
-[data-theme="light"] .gm-console-hint-code {
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.1);
+.gm-console-hint-copy.is-copied {
+  background: rgba(74, 222, 128, 0.15);
+  border-color: rgba(74, 222, 128, 0.45);
+  color: #4ade80;
 }
-[data-theme="light"] .gm-console-hint-code code {
+.gm-console-hint-copy-icon {
+  display: inline-block;
+}
+
+[data-theme="light"] .gm-console-hint-header {
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .gm-console-hint-row {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .gm-console-hint-row:hover {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(3, 105, 161, 0.3);
+}
+[data-theme="light"] .gm-console-hint-cmd {
   color: #0369a1;
 }
 [data-theme="light"] .gm-console-hint-copy {
   border-color: rgba(0, 0, 0, 0.12);
 }
 [data-theme="light"] .gm-console-hint-copy:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(3, 105, 161, 0.08);
+  border-color: rgba(3, 105, 161, 0.3);
+}
+[data-theme="light"] .gm-console-hint-copy.is-copied {
+  background: rgba(22, 163, 74, 0.12);
+  border-color: rgba(22, 163, 74, 0.4);
+  color: #16a34a;
+}
+[data-theme="light"] .gm-console-hint-close {
+  color: rgba(0, 0, 0, 0.55);
+}
+[data-theme="light"] .gm-console-hint-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: rgba(0, 0, 0, 0.8);
 }
 
 /* ─── Disabled Button ────────────────────────────────── */
