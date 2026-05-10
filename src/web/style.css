@@ -8709,6 +8709,18 @@ tr.now-row-animate > td.time-cell {
 .btn-future-sos:hover {
   background: #e74c3c;
 }
+.btn-cap-change {
+  background: var(--warning);
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.btn-cap-change:hover {
+  filter: brightness(1.1);
+}
 
 /* ─── Future SOS v2: shared helpers ──────────────────────────────────── */
 
