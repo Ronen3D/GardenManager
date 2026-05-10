@@ -63,13 +63,28 @@ import { getRejectionReason, isEligible } from './validator';
 // Extracted from localSearch() for readability. Values are calibrated for the
 // Garden Manager scheduling problem; do not change without benchmarking.
 
-/** Initial temperature. e^(-50/55) ≈ 0.40 → ~40% acceptance of a -50 delta. */
-const SA_INITIAL_TEMPERATURE = 55;
+/**
+ * Initial SA temperature. Day-count-adaptive based on benchmark data
+ * (`bench-diversity-sweep.ts`, ~14h sweep across 1d..7d × {fresh, +cont}):
+ *
+ *  - ≤40 tasks (1-2 day schedules): T=55. Lowering T trended slightly
+ *    negative across all 4 measured cells (1d/1d+cont/2d/2d+cont) at p>0.16.
+ *  - ≥60 tasks (3-7 day schedules): T=5. Composite score gain ranges from
+ *    +0.6% (3d, p<0.05) to +2.0% (6-7d, p<0.001).
+ *
+ * The 40-task threshold falls at the boundary of measured signal — 41 tasks
+ * is unmeasured but extrapolates to "small enough that lowering hurts" and
+ * 60 tasks (3-day default-template) is the first regime where lowering
+ * helps significantly.
+ */
+function getSaInitialTemperature(taskCount: number): number {
+  return taskCount <= 40 ? 55 : 5;
+}
 
 /** Geometric cooling rate per iteration. */
 const SA_COOLING_RATE = 0.997;
 
-/** Iterations without improvement before reheating to SA_INITIAL_TEMPERATURE/3. */
+/** Iterations without improvement before reheating to (initial T)/3. */
 const SA_REHEAT_THRESHOLD = 500;
 
 /** Probability of attempting an unfilled-slot insert move per iteration. */
@@ -1580,8 +1595,9 @@ export function localSearchOptimize(
   let reheats = 0;
 
   const maxIter = config.maxIterations;
-  let temperature = _benchActiveSaTemp ?? SA_INITIAL_TEMPERATURE;
-  const _saInitialForReheat = _benchActiveSaTemp ?? SA_INITIAL_TEMPERATURE;
+  const saInitialTemp = getSaInitialTemperature(tasks.length);
+  let temperature = _benchActiveSaTemp ?? saInitialTemp;
+  const _saInitialForReheat = _benchActiveSaTemp ?? saInitialTemp;
   let itersSinceImprovement = 0;
 
   // Pre-allocate index order array once and shuffle in-place each pass
