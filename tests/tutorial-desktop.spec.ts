@@ -18,6 +18,15 @@ async function clearAllStorage(page: import('@playwright/test').Page): Promise<v
   });
   await page.reload();
   await page.waitForSelector('.tab-nav');
+  // Wait for the tutorial API to be wired up — without this, tests that
+  // fire window.gmStartTutorial(...) immediately after page load can
+  // sometimes land before init() has run, optional-chain to undefined,
+  // and time out waiting for a popover that was never rendered.
+  await page
+    .waitForFunction(() => typeof (window as unknown as { gmStartTutorial?: unknown }).gmStartTutorial === 'function', {
+      timeout: 10_000,
+    })
+    .catch(() => {});
 }
 
 test.describe('Tutorial — desktop', () => {

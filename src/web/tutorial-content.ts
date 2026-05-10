@@ -4,7 +4,7 @@
  * change in this file; the engine in `tutorial.ts` reads the data unchanged.
  */
 
-import type { TutorialContext, TutorialTrack } from './tutorial';
+import type { FallbackAction, TutorialContext, TutorialTrack } from './tutorial';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -14,6 +14,16 @@ const hasSchedule = (ctx: TutorialContext) => {
 };
 
 const isLiveModeOn = (ctx: TutorialContext) => ctx.isLiveModeEnabled();
+
+// Reusable fallback-action handles. The engine only renders the chip when the
+// action's prerequisite is missing (no schedule / live off / etc.), so for
+// steps that need *both* a schedule and live mode we simply offer the schedule
+// chip first; once the schedule exists the engine re-renders, the precondition
+// still fails (live is off), and on the second render we offer enable-live.
+const FA_GENERATE_SCHEDULE: FallbackAction = { kind: 'generate-schedule' };
+const FA_ENABLE_LIVE: FallbackAction = { kind: 'enable-live' };
+const FA_SEED_PARTICIPANTS: FallbackAction = { kind: 'seed-participants' };
+const FA_SEED_TEMPLATES: FallbackAction = { kind: 'seed-templates' };
 
 /** Look up a step by id within a track. Throws if missing — used by the
  * full-tour composer so renames in source tracks fail loudly at module load
@@ -39,6 +49,10 @@ const PARTICIPANTS_TRACK: TutorialTrack = {
       placement: 'bottom',
       title: 'לשונית המשתתפים',
       body: 'כאן מגדירים את כל אנשי הצוות. כל משתתף שיוגדר כאן ייכלל אוטומטית בחישוב השבצ"ק — ללא משתתפים, אין מה לשבץ.',
+      // If the user opened the tutorial on an empty roster, offer to load
+      // demo participants — without them the rest of the track points at
+      // empty rows.
+      fallbackAction: (ctx) => (!ctx.hasParticipants?.() ? FA_SEED_PARTICIPANTS : null),
     },
     {
       id: 'p-2',
@@ -97,14 +111,14 @@ const PARTICIPANTS_TRACK: TutorialTrack = {
     },
     {
       id: 'p-6b',
-      target: '.participants-table',
+      target: '.table-participants',
       placement: 'top',
       title: 'בחירה מרובה ופעולות בצובר',
       body: 'תיבות הסימון משמאל לכל שורה מאפשרות בחירה מרובה. עם בחירה ≥ 1 תופיע סרגל פעולות: <strong>מחק משתתפים</strong> ו<strong>הוסף חוסר זמינות</strong> בצובר. קיצור: לחיצה על תג קבוצה בוחרת את כל חבריה; Shift/Ctrl-click מצרפת בחירות.',
     },
     {
       id: 'p-7',
-      target: '.participants-table',
+      target: '.table-participants',
       placement: 'top',
       title: 'העדפות משימה',
       body: 'בעריכת משתתף תוכל להגדיר משימה <strong>מועדפת</strong> ו<strong>פחות-מועדפת</strong>. אלו אילוצים רכים — האופטימייזר יעדיף לכבד אותם, אך אינו מחויב לכך.',
@@ -134,6 +148,9 @@ const TASK_RULES_TRACK: TutorialTrack = {
       placement: 'bottom',
       title: 'לשונית כללי משימות',
       body: 'כאן מגדירים אילו משימות קיימות וכל כללי השיבוץ שלהן. שינויים משפיעים על השבצ"ק <strong>הבא</strong> שייווצר — שבצ"ק שכבר נוצר אינו נפגע.',
+      // Empty templates → most subsequent steps point at nothing. Offer the
+      // demo seed so the user has cards to look at.
+      fallbackAction: (ctx) => (!ctx.hasTaskTemplates?.() ? FA_SEED_TEMPLATES : null),
     },
     {
       id: 't-2',
@@ -144,22 +161,24 @@ const TASK_RULES_TRACK: TutorialTrack = {
     },
     {
       id: 't-3',
-      target: '.template-list',
-      placement: 'top',
+      target: '.template-card[data-template-id]:first-child .template-header',
+      placement: 'bottom',
       title: 'כרטיסיות התבניות',
       body: 'כל תבנית מוצגת ככרטיסייה. <strong>לחץ על הכותרת כדי להרחיב</strong> ולערוך — שם, מספר משמרות ביום, שעת התחלה ומשך. שעות התחלה וסיום של כל משמרת מחושבות אוטומטית.',
       bodyFallback: 'לאחר הוספת תבנית ראשונה, היא תופיע כאן ככרטיסייה הניתנת להרחבה ועריכה.',
-      precondition: () => !!document.querySelector('.template-card'),
+      precondition: () => !!document.querySelector('.template-card[data-template-id]'),
     },
     {
       id: 't-4',
-      target: '.template-list',
-      placement: 'top',
+      target:
+        '.template-card[data-template-id]:first-child .slot-list, .template-card[data-template-id]:first-child .template-header',
+      placement: 'inline-start',
       title: 'משבצות',
       body: 'כל תבנית מורכבת ממשבצות — כל משבצת מייצגת תפקיד אחד שיש לאייש. לכל משבצת מגדירים: <strong>רמות מותרות</strong> (לחיצה על תג רמה מחליפה בין רגיל / <strong>~</strong> עדיפות-נמוכה / כבוי), <strong>הסמכות נדרשות</strong>, ו<strong>הסמכות אסורות</strong> (פוסלות מחזיקי הסמכה ספציפית). <em>(לחץ "+ משבצת" בתוך כרטיסיית תבנית כדי להוסיף.)</em>',
       bodyFallback:
         'בכל תבנית תוכל להוסיף משבצות — כל משבצת היא תפקיד אחד עם <strong>רמות מותרות</strong> (לכל רמה: רגיל / ~ עדיפות-נמוכה / כבוי), <strong>הסמכות נדרשות</strong>, ו<strong>הסמכות אסורות</strong>.',
-      precondition: () => !!document.querySelector('.template-card'),
+      expandFirstTemplate: true,
+      precondition: () => !!document.querySelector('.template-card[data-template-id]'),
     },
     {
       id: 't-5',
@@ -280,6 +299,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       body: '✓ "ישים" — כל התנאים המחייבים עברו. ✗ "לא ישים" — יש הפרה שחובה לתקן. הציון הנומרי (נמוך = מאוזן יותר) מסכם קנסות מתנאים רכים. לחץ על תא האזהרות הכתום לקפיצה ישירה לחלונית ההפרות.',
       bodyFallback: 'לאחר יצירת שבצ"ק יופיע כאן לוח מדדים: ישימות (✓ / ✗), ציון מסכם, ומספר אזהרות.',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
     {
       id: 's-4',
@@ -290,6 +310,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       bodyFallback:
         'לאחר יצירת שבצ"ק יופיע כאן סרגל ניווט בין הימים — כל כרטיסייה = יום תפעולי. סימני אזהרה מציינים ימים עם הפרות.',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
     {
       id: 's-5',
@@ -299,6 +320,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       body: 'כל שורה = פרק זמן; כל תא = משתתף משובץ או ריק. מתחת לטבלה: תצוגת <strong>רצועות</strong> (swimlane) ו<strong>גאנט</strong>. לחיצה על שם משתתף פותחת את הכרטיס האישי שלו.',
       bodyFallback: 'טבלת השיבוץ תופיע כאן לאחר יצירת שבצ"ק. כל תא = משתתף משובץ; לחיצה על שם פותחת את הכרטיס האישי.',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
     {
       id: 's-6',
@@ -309,6 +331,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       bodyFallback:
         'בצד השבצ"ק יופיע סרגל עומס — שעות אפקטיביות לכל משתתף, צעירים ובכירים בנפרד. לחיצה על שם פותחת את הכרטיס האישי.',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
       mobileOverride: {
         target: '.sidebar-fab',
         body: 'במובייל סרגל העומס מוסתר — לחץ על הכפתור הצף בפינה לפתיחתו. מציג שעות אפקטיביות לכל משתתף; לחיצה על שם פותחת את הכרטיס האישי.',
@@ -323,6 +346,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       bodyFallback:
         'אם יהיו הפרות בשבצ"ק, חלונית ההפרות תרכז אותן כאן — הפרות מחייבות (HC) שדורשות תיקון, ואזהרות רכות (SC) שגורמות לקנסות בציון.',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
     {
       id: 's-8',
@@ -333,6 +357,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       bodyFallback:
         'בכל תא של השיבוץ יופיע כפתור ⇄ לפתיחת בורר החלפות — חופשי או הדדי, עם תצוגה מקדימה של השפעת השינוי.',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
     {
       id: 's-9',
@@ -343,6 +368,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       bodyFallback:
         'לאחר יצירת שבצ"ק יופיע כאן מתג <strong>מצב חי</strong>. בחר עוגן (יום + שעה) — שיבוצים לפניו קפואים, ושיבוצים אחריו ניתנים לעריכה, חילוץ והזרקת משימות חירום.',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
     {
       id: 's-10',
@@ -353,6 +379,9 @@ const SCHEDULE_TRACK: TutorialTrack = {
       bodyFallback:
         'הפעל מצב חי וקבע עוגן — ואז על כל משבצת פנויה בעתיד יופיע כפתור ⛑ <strong>חילוץ</strong>. האופטימייזר מציע שרשרת החלפות שממלאת את המשבצת במינימום שיבוש.',
       precondition: (ctx) => hasSchedule(ctx) && isLiveModeOn(ctx),
+      // Two-stage chip: schedule first; once a schedule exists the engine
+      // re-renders, hasSchedule is true, and we offer enable-live next.
+      fallbackAction: (ctx) => (!hasSchedule(ctx) ? FA_GENERATE_SCHEDULE : !isLiveModeOn(ctx) ? FA_ENABLE_LIVE : null),
     },
     {
       id: 's-10b',
@@ -363,6 +392,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       bodyFallback:
         'לאחר יצירת שבצ"ק יופיע כפתור 👥 <strong>תמונת מצב</strong> — תצוגה שמראה איפה כל אחד נמצא בזמן ספציפי שתבחר.',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
     {
       id: 's-10c',
@@ -380,7 +410,11 @@ const SCHEDULE_TRACK: TutorialTrack = {
       placement: 'bottom',
       title: 'בנייה ידנית',
       body: 'לחץ לפתיחת שבצ"ק ריק לאיוש ידני. בחר משבצת בטבלה — נפתח מחסן משתתפים מסונן לפי כשירות. שורת הסטטוס מציגה את התקדמות האיוש. <strong>↩ ביטול</strong> מבטל את הפעולה האחרונה.',
+      bodyFallback:
+        'לאחר יצירת שבצ"ק יופיע כפתור ✏️ <strong>בנייה ידנית</strong> — לחץ עליו לפתיחת שבצ"ק ריק לאיוש ידני, עם מחסן משתתפים מסונן לפי כשירות.',
       screenshot: { src: './tutorial/manual-warehouse.png', alt: 'מחסן המשתתפים במצב בנייה ידנית' },
+      precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
     {
       id: 's-12',
@@ -390,6 +424,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       body: 'שמור גרסאות בשם — להשוואה בין שיבוצים, או לשמירת טיוטה לפני ניסיון שינוי. תג "שונה" = השבצ"ק הנוכחי שונה מהגרסה השמורה. לכל גרסה: <strong>טען / עדכן (במקום) / שכפל / שנה שם / מחק</strong>. טעינה ועדכון בלחיצה אחת; מחיקה אינה הפיכה.',
       bodyFallback: 'לאחר יצירת שבצ"ק תוכל לשמור גרסאות בשם דרך כפתור 💾 — לכל גרסה: טען / עדכן / שכפל / שנה שם / מחק.',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
     {
       id: 's-12b',
@@ -411,6 +446,9 @@ const SCHEDULE_TRACK: TutorialTrack = {
         'במצב חי יופיע כפתור 🚨 להזרקת משימת חירום — להוספת משימה חד-פעמית באמצע השבוע, עם שיבוץ אוטומטי לפי הכי פחות שיבוש.',
       screenshot: { src: './tutorial/inject-task.png', alt: 'חלון הזרקת משימת חירום — טופס פרטי משימה ומשבצות' },
       precondition: (ctx) => hasSchedule(ctx) && isLiveModeOn(ctx),
+      // Two-stage chip: schedule first; once a schedule exists the engine
+      // re-renders, hasSchedule is true, and we offer enable-live next.
+      fallbackAction: (ctx) => (!hasSchedule(ctx) ? FA_GENERATE_SCHEDULE : !isLiveModeOn(ctx) ? FA_ENABLE_LIVE : null),
     },
     {
       id: 's-14',
@@ -421,6 +459,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       bodyFallback:
         'במצב חי, אם משתתף נעדר לחלון זמן עתידי, ניתן לסמן אי-זמינות מהכרטיס שלו. המערכת תחליף את כל השיבוצים שייפגעו בתוכנית אחת מאוחדת.',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
       mobileOverride: {
         target: '.sidebar-fab',
         body: 'במובייל פתח את הסרגל הצף ← בחר משתתף ← <strong>🆘 סמן אי-זמינות</strong>. המערכת תחליף את כל השיבוצים שייפגעו בתוכנית אחת מאוחדת.',
@@ -434,6 +473,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
       body: 'לחץ לפתיחת חלון הייצוא. <strong>PDF</strong> — תצוגה מודפסת (יומית מפורטת + סיכום שבועי). <strong>Excel</strong> — גיליון נתונים עם עמודות זמן, משימה ומשתתף. הייצוא זמין לכל שבצ"ק שנוצר, גם ללא מצב חי.',
       bodyFallback: 'לאחר יצירת שבצ"ק יופיע כאן כפתור 📤 לייצוא ל-PDF (תצוגה מודפסת) או Excel (גיליון נתונים).',
       precondition: hasSchedule,
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
   ],
 };
@@ -456,7 +496,7 @@ const ALGORITHM_TRACK: TutorialTrack = {
     },
     {
       id: 'a-2',
-      target: '#acc-tutorial',
+      target: '#acc-tutorial > [data-action="settings-accordion-toggle"]',
       placement: 'bottom',
       title: 'מרכז המדריכים',
       body: 'האקורדיון הראשון הוא ספריית המדריכים. מכאן אפשר להפעיל את הסיור הכללי או מדריכים ממוקדים — חזור לכאן בכל עת.',
@@ -675,14 +715,17 @@ const FULL_TOUR_TRACK: TutorialTrack = {
         'בתחתית לשונית "כללי משימות" יש סעיף <strong>משימות חד-פעמיות</strong> — אירועים חריגים ביום ושעה ספציפיים, שאינם חוזרים. נכנסים לשבצ"ק הבא שייווצר.',
       precondition: () => !!document.querySelector('[data-action="toggle-add-onetime"]'),
     },
-    // Bridge step before the schedule block
+    // Bridge step before the schedule block. The chip below is the recommended
+    // path — without a schedule the next ~10 steps would all show fallback
+    // text instead of real UI.
     {
       id: 'ft-schedule-intro',
       target: null,
       placement: 'center',
       title: 'הצעדים הבאים: לשונית השבצ"ק',
-      body: 'אם אין לך עדיין שבצ"ק, ניתן ללחוץ <strong>⚡ צור שבצ"ק</strong> בלשונית הבאה לפני שתמשיך — תראה את כל הלוחות שאני מתאר בפעולה. אפשר גם להמשיך עכשיו ולחזור מאוחר יותר.',
+      body: 'הסיור עומד להציג את לשונית השבצ"ק. ההסברים יהיו ברורים בהרבה אם תיצור שבצ"ק להדגמה כעת — אקח על עצמי את הקליק.',
       switchToTab: 'schedule',
+      fallbackAction: FA_GENERATE_SCHEDULE,
     },
     // Schedule subset (now includes s-12b — Day 0 / continuity is a header feature)
     { ...stepById(SCHEDULE_TRACK, 's-1'), id: 'ft-s-1' },

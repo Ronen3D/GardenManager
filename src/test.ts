@@ -5629,7 +5629,13 @@ function makeCtxWithPhantoms(
   const phantomTaskIds = new Set(phantomTasks.map((t) => t.id));
 
   return {
-    ctxClean: { taskMap: taskMapClean, pMap, assignmentsByParticipant: byParticipantClean, notWithPairs, dayStartHour: 5 },
+    ctxClean: {
+      taskMap: taskMapClean,
+      pMap,
+      assignmentsByParticipant: byParticipantClean,
+      notWithPairs,
+      dayStartHour: 5,
+    },
     ctxWithPhantoms: {
       taskMap: taskMapPhantom,
       pMap,
@@ -5647,84 +5653,155 @@ function makeCtxWithPhantoms(
 // produce IDENTICAL score components to the phantom-clean ctx.
 {
   const phbDate = new Date(2026, 1, 16);
-  const phbAvail = [
-    { start: new Date(2026, 1, 14, 0, 0), end: new Date(2026, 1, 17, 12, 0) },
-  ];
+  const phbAvail = [{ start: new Date(2026, 1, 14, 0, 0), end: new Date(2026, 1, 17, 12, 0) }];
   const phbP1: Participant = {
-    id: 'phb-p1', name: 'PhB1', level: Level.L0, certifications: ['Nitzan'],
-    group: 'A', availability: phbAvail, dateUnavailability: [],
+    id: 'phb-p1',
+    name: 'PhB1',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: phbAvail,
+    dateUnavailability: [],
   };
   const phbP2: Participant = {
-    id: 'phb-p2', name: 'PhB2', level: Level.L0, certifications: ['Nitzan'],
-    group: 'A', availability: phbAvail, dateUnavailability: [],
+    id: 'phb-p2',
+    name: 'PhB2',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: phbAvail,
+    dateUnavailability: [],
   };
   const phbT1 = createShemeshTask(createTimeBlockFromHours(phbDate, 6, 10));
   const phbT2 = createShemeshTask(createTimeBlockFromHours(phbDate, 14, 18));
   const phbAssigns: Assignment[] = [
-    { id: 'phb-a1', taskId: phbT1.id, slotId: phbT1.slots[0].slotId, participantId: phbP1.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'phb-a2', taskId: phbT2.id, slotId: phbT2.slots[0].slotId, participantId: phbP2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    {
+      id: 'phb-a1',
+      taskId: phbT1.id,
+      slotId: phbT1.slots[0].slotId,
+      participantId: phbP1.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'phb-a2',
+      taskId: phbT2.id,
+      slotId: phbT2.slots[0].slotId,
+      participantId: phbP2.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
   ];
 
   // Synthesise a phantom day-0 task and assignment landing 8 hours on phbP1.
   const day0Date = new Date(2026, 1, 15);
   const phantomTask: Task = {
-    id: 'phantom-1', name: 'P-D0', sourceName: 'שמש',
+    id: 'phantom-1',
+    name: 'P-D0',
+    sourceName: 'שמש',
     timeBlock: createTimeBlockFromHours(day0Date, 6, 14),
-    requiredCount: 0, slots: [],
-    sameGroupRequired: false, blocksConsecutive: false,
+    requiredCount: 0,
+    slots: [],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
   };
   const phantomAssign: Assignment = {
-    id: 'phantom-asgn-1', taskId: phantomTask.id, slotId: 'phantom-slot',
-    participantId: phbP1.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+    id: 'phantom-asgn-1',
+    taskId: phantomTask.id,
+    slotId: 'phantom-slot',
+    participantId: phbP1.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
   };
 
   const { ctxClean, ctxWithPhantoms } = makeCtxWithPhantoms(
-    [phbT1, phbT2], [phbP1, phbP2], phbAssigns, [phantomTask], [phantomAssign],
+    [phbT1, phbT2],
+    [phbP1, phbP2],
+    phbAssigns,
+    [phantomTask],
+    [phantomAssign],
   );
 
   const sClean = computeScheduleScore([phbT1, phbT2], [phbP1, phbP2], phbAssigns, DEFAULT_CONFIG, ctxClean);
   const sPhantom = computeScheduleScore([phbT1, phbT2], [phbP1, phbP2], phbAssigns, DEFAULT_CONFIG, ctxWithPhantoms);
 
-  assert(sClean.l0StdDev === sPhantom.l0StdDev, `phantom blindness: l0StdDev ${sClean.l0StdDev} !== ${sPhantom.l0StdDev}`);
-  assert(sClean.minRestHours === sPhantom.minRestHours, `phantom blindness: minRestHours ${sClean.minRestHours} !== ${sPhantom.minRestHours}`);
-  assert(sClean.totalPenalty === sPhantom.totalPenalty, `phantom blindness: totalPenalty ${sClean.totalPenalty} !== ${sPhantom.totalPenalty}`);
-  assert(sClean.compositeScore === sPhantom.compositeScore, `phantom blindness: compositeScore ${sClean.compositeScore} !== ${sPhantom.compositeScore}`);
-  assert(sClean.restPerGapBonus === sPhantom.restPerGapBonus, `phantom blindness: restPerGapBonus ${sClean.restPerGapBonus} !== ${sPhantom.restPerGapBonus}`);
-  assert(sClean.dailyPerParticipantStdDev === sPhantom.dailyPerParticipantStdDev, 'phantom blindness: dailyPerParticipantStdDev mismatch');
+  assert(
+    sClean.l0StdDev === sPhantom.l0StdDev,
+    `phantom blindness: l0StdDev ${sClean.l0StdDev} !== ${sPhantom.l0StdDev}`,
+  );
+  assert(
+    sClean.minRestHours === sPhantom.minRestHours,
+    `phantom blindness: minRestHours ${sClean.minRestHours} !== ${sPhantom.minRestHours}`,
+  );
+  assert(
+    sClean.totalPenalty === sPhantom.totalPenalty,
+    `phantom blindness: totalPenalty ${sClean.totalPenalty} !== ${sPhantom.totalPenalty}`,
+  );
+  assert(
+    sClean.compositeScore === sPhantom.compositeScore,
+    `phantom blindness: compositeScore ${sClean.compositeScore} !== ${sPhantom.compositeScore}`,
+  );
+  assert(
+    sClean.restPerGapBonus === sPhantom.restPerGapBonus,
+    `phantom blindness: restPerGapBonus ${sClean.restPerGapBonus} !== ${sPhantom.restPerGapBonus}`,
+  );
+  assert(
+    sClean.dailyPerParticipantStdDev === sPhantom.dailyPerParticipantStdDev,
+    'phantom blindness: dailyPerParticipantStdDev mismatch',
+  );
   assert(sClean.dailyGlobalStdDev === sPhantom.dailyGlobalStdDev, 'phantom blindness: dailyGlobalStdDev mismatch');
 }
 
 // Fixture 2: phantom assignment with sourceName == lessPreferredTaskName must
 // NOT inflate the task-name avoidance penalty. Pre-fix this leaked × 27/assn.
 {
-  const phbAvail = [
-    { start: new Date(2026, 1, 14, 0, 0), end: new Date(2026, 1, 17, 12, 0) },
-  ];
+  const phbAvail = [{ start: new Date(2026, 1, 14, 0, 0), end: new Date(2026, 1, 17, 12, 0) }];
   const prefDate = new Date(2026, 1, 16);
   const prefP: Participant = {
-    id: 'pref-p1', name: 'PrefP1', level: Level.L0, certifications: ['Nitzan'],
-    group: 'A', availability: phbAvail, dateUnavailability: [],
+    id: 'pref-p1',
+    name: 'PrefP1',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: phbAvail,
+    dateUnavailability: [],
     lessPreferredTaskName: 'שמש',
   };
   const prefT = createShemeshTask(createTimeBlockFromHours(prefDate, 6, 10));
   const realAssign: Assignment = {
-    id: 'pref-a1', taskId: prefT.id, slotId: prefT.slots[0].slotId,
-    participantId: prefP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+    id: 'pref-a1',
+    taskId: prefT.id,
+    slotId: prefT.slots[0].slotId,
+    participantId: prefP.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
   };
   // Phantom day-0 task whose sourceName == lessPreferredTaskName.
   const day0 = new Date(2026, 1, 15);
   const phPrefTask: Task = {
-    id: 'phantom-pref-1', name: 'P-D0', sourceName: 'שמש',
+    id: 'phantom-pref-1',
+    name: 'P-D0',
+    sourceName: 'שמש',
     timeBlock: createTimeBlockFromHours(day0, 6, 10),
-    requiredCount: 0, slots: [],
-    sameGroupRequired: false, blocksConsecutive: false,
+    requiredCount: 0,
+    slots: [],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
   };
   const phPrefAssign: Assignment = {
-    id: 'phantom-pref-asgn', taskId: phPrefTask.id, slotId: 'phantom-slot',
-    participantId: prefP.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+    id: 'phantom-pref-asgn',
+    taskId: phPrefTask.id,
+    slotId: 'phantom-slot',
+    participantId: prefP.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
   };
   const { ctxClean, ctxWithPhantoms } = makeCtxWithPhantoms(
-    [prefT], [prefP], [realAssign], [phPrefTask], [phPrefAssign],
+    [prefT],
+    [prefP],
+    [realAssign],
+    [phPrefTask],
+    [phPrefAssign],
   );
   const sClean = computeScheduleScore([prefT], [prefP], [realAssign], DEFAULT_CONFIG, ctxClean);
   const sPhantom = computeScheduleScore([prefT], [prefP], [realAssign], DEFAULT_CONFIG, ctxWithPhantoms);
@@ -5740,38 +5817,73 @@ function makeCtxWithPhantoms(
 // match the recomputed-from-scratch score with the same ctx.
 {
   // Same setup as Fixture 1, but exercise IncrementalScorer.build directly.
-  const { IncrementalScorer } = require('./constraints/soft-constraints') as typeof import('./constraints/soft-constraints');
-  const phbAvail = [
-    { start: new Date(2026, 1, 14, 0, 0), end: new Date(2026, 1, 17, 12, 0) },
-  ];
+  const { IncrementalScorer } =
+    require('./constraints/soft-constraints') as typeof import('./constraints/soft-constraints');
+  const phbAvail = [{ start: new Date(2026, 1, 14, 0, 0), end: new Date(2026, 1, 17, 12, 0) }];
   const phbDate = new Date(2026, 1, 16);
   const isP1: Participant = {
-    id: 'is-p1', name: 'IS1', level: Level.L0, certifications: ['Nitzan'],
-    group: 'A', availability: phbAvail, dateUnavailability: [],
+    id: 'is-p1',
+    name: 'IS1',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: phbAvail,
+    dateUnavailability: [],
   };
   const isP2: Participant = {
-    id: 'is-p2', name: 'IS2', level: Level.L0, certifications: ['Nitzan'],
-    group: 'A', availability: phbAvail, dateUnavailability: [],
+    id: 'is-p2',
+    name: 'IS2',
+    level: Level.L0,
+    certifications: ['Nitzan'],
+    group: 'A',
+    availability: phbAvail,
+    dateUnavailability: [],
   };
   const isT1 = createShemeshTask(createTimeBlockFromHours(phbDate, 6, 10));
   const isT2 = createShemeshTask(createTimeBlockFromHours(phbDate, 14, 18));
   const isAssigns: Assignment[] = [
-    { id: 'is-a1', taskId: isT1.id, slotId: isT1.slots[0].slotId, participantId: isP1.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-    { id: 'is-a2', taskId: isT2.id, slotId: isT2.slots[0].slotId, participantId: isP2.id, status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+    {
+      id: 'is-a1',
+      taskId: isT1.id,
+      slotId: isT1.slots[0].slotId,
+      participantId: isP1.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'is-a2',
+      taskId: isT2.id,
+      slotId: isT2.slots[0].slotId,
+      participantId: isP2.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
   ];
   const day0 = new Date(2026, 1, 15);
   const phantomTask: Task = {
-    id: 'phantom-is-1', name: 'P-D0', sourceName: 'שמש',
+    id: 'phantom-is-1',
+    name: 'P-D0',
+    sourceName: 'שמש',
     timeBlock: createTimeBlockFromHours(day0, 6, 14),
-    requiredCount: 0, slots: [],
-    sameGroupRequired: false, blocksConsecutive: false,
+    requiredCount: 0,
+    slots: [],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
   };
   const phantomAssign: Assignment = {
-    id: 'phantom-is-asgn', taskId: phantomTask.id, slotId: 'phantom-slot',
-    participantId: isP1.id, status: AssignmentStatus.Scheduled, updatedAt: new Date(),
+    id: 'phantom-is-asgn',
+    taskId: phantomTask.id,
+    slotId: 'phantom-slot',
+    participantId: isP1.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
   };
   const { ctxClean, ctxWithPhantoms } = makeCtxWithPhantoms(
-    [isT1, isT2], [isP1, isP2], isAssigns, [phantomTask], [phantomAssign],
+    [isT1, isT2],
+    [isP1, isP2],
+    isAssigns,
+    [phantomTask],
+    [phantomAssign],
   );
 
   const scorerClean = IncrementalScorer.build([isT1, isT2], [isP1, isP2], isAssigns, DEFAULT_CONFIG, ctxClean);
@@ -5805,6 +5917,273 @@ function makeCtxWithPhantoms(
   assert(
     newScoreClean === newScorePhantom,
     `IncrementalScorer after-swap blindness: ${newScoreClean} !== ${newScorePhantom}`,
+  );
+}
+
+// Fixture 4: IncrementalScorer must keep using an SA-updated assignmentsByTask
+// after insert moves. SA inserts add Assignment objects to byParticipant and
+// byTask, then rebuild the scorer; later swaps mutate participantId only, so
+// the task index must remain correct via shared Assignment object references.
+{
+  const { IncrementalScorer } =
+    require('./constraints/soft-constraints') as typeof import('./constraints/soft-constraints');
+  const date = new Date(2026, 1, 16);
+  const avail = [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 17, 23, 0) }];
+  const pA: Participant = {
+    id: 'ins-a',
+    name: 'Ins A',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: avail,
+    dateUnavailability: [],
+    notWithIds: ['ins-c'],
+  };
+  const pB: Participant = {
+    id: 'ins-b',
+    name: 'Ins B',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: avail,
+    dateUnavailability: [],
+  };
+  const pC: Participant = {
+    id: 'ins-c',
+    name: 'Ins C',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: avail,
+    dateUnavailability: [],
+    notWithIds: ['ins-a'],
+  };
+  const pD: Participant = {
+    id: 'ins-d',
+    name: 'Ins D',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: avail,
+    dateUnavailability: [],
+  };
+  const participants = [pA, pB, pC, pD];
+  const togetherTask: Task = {
+    id: 'ins-together',
+    name: 'Together',
+    sourceName: 'Together',
+    timeBlock: createTimeBlockFromHours(date, 6, 10),
+    requiredCount: 3,
+    slots: [
+      { slotId: 'ins-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { slotId: 'ins-s2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { slotId: 'ins-s3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    togethernessRelevant: true,
+  };
+  const otherTask: Task = {
+    id: 'ins-other',
+    name: 'Other',
+    sourceName: 'Other',
+    timeBlock: createTimeBlockFromHours(date, 14, 18),
+    requiredCount: 1,
+    slots: [{ slotId: 'ins-s4', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const tasks = [togetherTask, otherTask];
+  const inserted: Assignment = {
+    id: 'ins-a3',
+    taskId: togetherTask.id,
+    slotId: 'ins-s3',
+    participantId: pC.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+  const other: Assignment = {
+    id: 'ins-a4',
+    taskId: otherTask.id,
+    slotId: 'ins-s4',
+    participantId: pD.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+  const assignments: Assignment[] = [
+    {
+      id: 'ins-a1',
+      taskId: togetherTask.id,
+      slotId: 'ins-s1',
+      participantId: pA.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'ins-a2',
+      taskId: togetherTask.id,
+      slotId: 'ins-s2',
+      participantId: pB.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    inserted,
+    other,
+  ];
+
+  const buildCtx = (): import('./constraints/soft-constraints').ScoreContext => {
+    const taskMap = new Map(tasks.map((t) => [t.id, t]));
+    const pMap = new Map(participants.map((p) => [p.id, p]));
+    const assignmentsByParticipant = new Map<string, Assignment[]>();
+    const assignmentsByTask = new Map<string, Assignment[]>();
+    for (const a of assignments) {
+      const pList = assignmentsByParticipant.get(a.participantId);
+      if (pList) pList.push(a);
+      else assignmentsByParticipant.set(a.participantId, [a]);
+      const tList = assignmentsByTask.get(a.taskId);
+      if (tList) tList.push(a);
+      else assignmentsByTask.set(a.taskId, [a]);
+    }
+    const notWithPairs = new Map<string, Set<string>>();
+    for (const p of participants) {
+      if (p.notWithIds && p.notWithIds.length > 0) notWithPairs.set(p.id, new Set(p.notWithIds));
+    }
+    return {
+      taskMap,
+      pMap,
+      assignmentsByParticipant,
+      assignmentsByTask,
+      capacities: computeAllCapacities(participants, togetherTask.timeBlock.start, otherTask.timeBlock.end, 5),
+      notWithPairs,
+      dayStartHour: 5,
+    };
+  };
+
+  const cfg = { ...DEFAULT_CONFIG, notWithPenalty: 100 };
+  const ctx = buildCtx();
+  const fullBefore = computeScheduleScore(tasks, participants, assignments, cfg, buildCtx());
+  const scorer = IncrementalScorer.build(tasks, participants, assignments, cfg, ctx);
+  assert(fullBefore.notWithPenalty === 100, 'IncrementalScorer insert: inserted not-with conflict is scored');
+  assert(
+    Math.abs(scorer.compositeScore - fullBefore.compositeScore) < 1e-6,
+    `IncrementalScorer insert: initial score ${scorer.compositeScore} !== full ${fullBefore.compositeScore}`,
+  );
+
+  // SA-style swap after insert: mutate assignment objects and patch only the
+  // per-participant index. The per-task index remains valid by object aliasing.
+  inserted.participantId = pD.id;
+  other.participantId = pC.id;
+  ctx.assignmentsByParticipant!.set(pC.id, [other]);
+  ctx.assignmentsByParticipant!.set(pD.id, [inserted]);
+
+  const incAfter = scorer.recomputeForSwap(pC.id, pD.id);
+  const fullAfter = computeScheduleScore(tasks, participants, assignments, cfg, buildCtx());
+  assert(fullAfter.notWithPenalty === 0, 'IncrementalScorer insert: swapped conflict clears in full recompute');
+  assert(
+    Math.abs(incAfter - fullAfter.compositeScore) < 1e-6,
+    `IncrementalScorer insert: after swap ${incAfter} !== full ${fullAfter.compositeScore}`,
+  );
+}
+
+// Fixture 5: IncrementalScorer slot lookups must be task-scoped. Slot IDs are
+// only unique within a task, so a flat slotId map would cross-wire these two
+// assignments and miss the low-priority penalty on the first task.
+{
+  const { IncrementalScorer } =
+    require('./constraints/soft-constraints') as typeof import('./constraints/soft-constraints');
+  const date = new Date(2026, 1, 16);
+  const avail = [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 17, 23, 0) }];
+  const p1: Participant = {
+    id: 'slot-scope-p1',
+    name: 'Slot Scope 1',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: avail,
+    dateUnavailability: [],
+  };
+  const p2: Participant = {
+    id: 'slot-scope-p2',
+    name: 'Slot Scope 2',
+    level: Level.L0,
+    certifications: [],
+    group: 'A',
+    availability: avail,
+    dateUnavailability: [],
+  };
+  const sharedSlotId = 'shared-slot';
+  const taskLow: Task = {
+    id: 'slot-scope-low',
+    name: 'Slot Scope Low',
+    sourceName: 'Slot Scope Low',
+    timeBlock: createTimeBlockFromHours(date, 6, 10),
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: sharedSlotId,
+        acceptableLevels: [{ level: Level.L0, lowPriority: true }],
+        requiredCertifications: [],
+      },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const taskNormal: Task = {
+    id: 'slot-scope-normal',
+    name: 'Slot Scope Normal',
+    sourceName: 'Slot Scope Normal',
+    timeBlock: createTimeBlockFromHours(date, 14, 18),
+    requiredCount: 1,
+    slots: [{ slotId: sharedSlotId, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const tasks = [taskLow, taskNormal];
+  const participants = [p1, p2];
+  const assignments: Assignment[] = [
+    {
+      id: 'slot-scope-a1',
+      taskId: taskLow.id,
+      slotId: sharedSlotId,
+      participantId: p1.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'slot-scope-a2',
+      taskId: taskNormal.id,
+      slotId: sharedSlotId,
+      participantId: p2.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+  const assignmentsByParticipant = new Map<string, Assignment[]>();
+  const assignmentsByTask = new Map<string, Assignment[]>();
+  for (const a of assignments) {
+    const pList = assignmentsByParticipant.get(a.participantId);
+    if (pList) pList.push(a);
+    else assignmentsByParticipant.set(a.participantId, [a]);
+    const tList = assignmentsByTask.get(a.taskId);
+    if (tList) tList.push(a);
+    else assignmentsByTask.set(a.taskId, [a]);
+  }
+  const ctx: import('./constraints/soft-constraints').ScoreContext = {
+    taskMap: new Map(tasks.map((t) => [t.id, t])),
+    pMap: new Map(participants.map((p) => [p.id, p])),
+    assignmentsByParticipant,
+    assignmentsByTask,
+    capacities: computeAllCapacities(participants, taskLow.timeBlock.start, taskNormal.timeBlock.end, 5),
+    notWithPairs: new Map(),
+    dayStartHour: 5,
+  };
+  const cfg = { ...DEFAULT_CONFIG, lowPriorityLevelPenalty: 37 };
+  const full = computeScheduleScore(tasks, participants, assignments, cfg, ctx);
+  const scorer = IncrementalScorer.build(tasks, participants, assignments, cfg, ctx);
+  assert(full.lowPriorityPenalty === 37, 'IncrementalScorer slot scope: full score sees one low-priority slot');
+  assert(
+    Math.abs(scorer.compositeScore - full.compositeScore) < 1e-6,
+    `IncrementalScorer slot scope: ${scorer.compositeScore} !== full ${full.compositeScore}`,
   );
 }
 

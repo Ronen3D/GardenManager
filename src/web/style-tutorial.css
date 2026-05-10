@@ -125,6 +125,28 @@
   }
 }
 
+/* Fallback action chip — rendered between body and footer when the step has
+   missing prerequisite data and we offer to create it on demand. */
+.tutorial-action-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 8px;
+}
+.tutorial-btn-chip {
+  align-self: flex-start;
+}
+.tutorial-action-chip-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
 /* Footer with the three action buttons */
 .tutorial-footer {
   display: flex;

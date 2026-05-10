@@ -161,6 +161,57 @@ let currentDay = 1;
 const tutorialContext: TutorialContext = {
   getSchedule: () => currentSchedule,
   isLiveModeEnabled: () => store.getLiveModeState().enabled,
+  hasParticipants: () => store.getAllParticipants().length > 0,
+  hasTaskTemplates: () => store.getAllTaskTemplates().length > 0,
+  generateDemoSchedule: async () => {
+    // Use a fast 1-day, 10-scenario generation so the demo finishes in a
+    // few seconds. Click the existing #btn-generate so all the optim
+    // overlay / dirty-warning machinery runs through its real path.
+    const daysInput = document.querySelector<HTMLInputElement>('#input-days');
+    if (daysInput) daysInput.value = '1';
+    const scenInput = document.querySelector<HTMLInputElement>('#input-scenarios');
+    if (scenInput) scenInput.value = '10';
+    const btn = document.querySelector<HTMLButtonElement>('#btn-generate');
+    btn?.click();
+    // Wait for the optim overlay to appear-then-disappear. Cap at 60s.
+    const deadline = Date.now() + 60_000;
+    // First wait for it to appear (max 1s — generation may finish before any
+    // overlay renders for tiny problems).
+    const appearDeadline = Date.now() + 1_000;
+    while (Date.now() < appearDeadline) {
+      if (document.querySelector('.optim-overlay')) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    // Then wait for it to disappear.
+    while (Date.now() < deadline) {
+      if (!document.querySelector('.optim-overlay')) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    // One rAF for the post-generation render to settle.
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+  },
+  enableLiveModeForDemo: async () => {
+    if (store.getLiveModeState().enabled) return;
+    const chk = document.querySelector<HTMLInputElement>('#chk-live-mode');
+    chk?.click();
+    // Live-mode toggle opens an anchor confirm modal — accept defaults.
+    await new Promise((r) => setTimeout(r, 200));
+    const confirm = document.querySelector<HTMLButtonElement>('.gm-modal-dialog .btn-primary, .gm-modal .btn-primary');
+    confirm?.click();
+    await new Promise((r) => setTimeout(r, 200));
+  },
+  seedParticipants: async () => {
+    if (store.getAllParticipants().length > 0) return;
+    store.seedDefaultParticipants();
+    renderAll();
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+  },
+  seedTaskTemplates: async () => {
+    if (store.getAllTaskTemplates().length > 0) return;
+    store.seedDefaultTaskTemplates();
+    renderAll();
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+  },
 };
 
 // ─── URL hash ↔ tab/day sync ────────────────────────────────────────────────
@@ -4347,7 +4398,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.1.9</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.2.0</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>

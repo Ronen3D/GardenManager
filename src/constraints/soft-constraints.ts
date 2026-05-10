@@ -14,6 +14,7 @@ import {
   type ParticipantCapacity,
   type SchedulerConfig,
   type ScheduleScore,
+  type SlotRequirement,
   type Task,
   ViolationSeverity,
 } from '../models/types';
@@ -797,6 +798,13 @@ export class IncrementalScorer {
   private config: SchedulerConfig;
   private taskMap: Map<string, Task>;
   private assignmentsByParticipant: Map<string, Assignment[]>;
+  private slotByTaskId: Map<string, Map<string, SlotRequirement>>;
+  /**
+   * Per-task assignment index for not-with scoring. Assignment objects are
+   * shared with `assignmentsByParticipant`, so participantId swaps are visible
+   * here without rebuilding the task grouping.
+   */
+  private assignmentsByTask: ReadonlyMap<string, readonly Assignment[]>;
   /**
    * Phantom task IDs to skip during scoring iteration. Phantoms are seeded
    * into `taskMap` and `assignmentsByParticipant` for cross-boundary HC checks
@@ -871,6 +879,8 @@ export class IncrementalScorer {
     this.config = {} as SchedulerConfig;
     this.taskMap = new Map();
     this.assignmentsByParticipant = new Map();
+    this.slotByTaskId = new Map();
+    this.assignmentsByTask = new Map();
     this.capacities = new Map();
     this.dayList = [];
     this.globalDayTotals = new Map();
@@ -898,6 +908,26 @@ export class IncrementalScorer {
     scorer.taskMap = ctx.taskMap;
     scorer.phantomTaskIds = ctx.phantomTaskIds ?? new Set();
     scorer.assignmentsByParticipant = ctx.assignmentsByParticipant ?? new Map();
+    scorer.slotByTaskId = new Map();
+    for (const [taskId, task] of scorer.taskMap) {
+      const slots = new Map<string, SlotRequirement>();
+      for (const slot of task.slots) {
+        if (!slots.has(slot.slotId)) slots.set(slot.slotId, slot);
+      }
+      scorer.slotByTaskId.set(taskId, slots);
+    }
+    if (ctx.assignmentsByTask) {
+      scorer.assignmentsByTask = ctx.assignmentsByTask;
+    } else {
+      const byTask = new Map<string, Assignment[]>();
+      for (const a of assignments) {
+        if (scorer.phantomTaskIds.has(a.taskId)) continue;
+        const list = byTask.get(a.taskId);
+        if (list) list.push(a);
+        else byTask.set(a.taskId, [a]);
+      }
+      scorer.assignmentsByTask = byTask;
+    }
     scorer.capacities = ctx.capacities ?? new Map();
 
     // Collect all operational days
@@ -955,7 +985,7 @@ export class IncrementalScorer {
         if (scorer.phantomTaskIds.has(a.taskId)) continue;
         const task = ctx.taskMap.get(a.taskId);
         if (!task) continue;
-        const slot = task.slots.find((s) => s.slotId === a.slotId);
+        const slot = scorer.getSlot(a.taskId, a.slotId);
         if (slot && isLowPriority(slot.acceptableLevels, p.level)) {
           pPenalty += config.lowPriorityLevelPenalty;
         }
@@ -971,19 +1001,9 @@ export class IncrementalScorer {
     scorer._notWithPairs = ctx.notWithPairs ?? new Map();
     scorer._notWithPenalty = 0;
     if (scorer._notWithPairs.size > 0 && config.notWithPenalty > 0) {
-      // Build per-task assignment index
-      const byTask = new Map<string, Assignment[]>();
-      for (const a of assignments) {
-        let arr = byTask.get(a.taskId);
-        if (!arr) {
-          arr = [];
-          byTask.set(a.taskId, arr);
-        }
-        arr.push(a);
-      }
       // For each participant, compute their not-with penalty
       for (const p of participants) {
-        const pPenalty = scorer.computeParticipantNotWithPenalty(p.id, byTask);
+        const pPenalty = scorer.computeParticipantNotWithPenalty(p.id, scorer.assignmentsByTask);
         if (pPenalty > 0) {
           scorer._perParticipantNotWithPenalty.set(p.id, pPenalty);
           scorer._notWithPenalty += pPenalty;
@@ -1022,7 +1042,7 @@ export class IncrementalScorer {
    * in the same sub-team group is in their notWith set.
    * To avoid double-counting, only count pairs where this pid < partnerId.
    */
-  private computeParticipantNotWithPenalty(pid: string, byTask: Map<string, Assignment[]>): number {
+  private computeParticipantNotWithPenalty(pid: string, byTask: ReadonlyMap<string, readonly Assignment[]>): number {
     const myNotWith = this._notWithPairs.get(pid);
     if (!myNotWith || myNotWith.size === 0) return 0;
     let penalty = 0;
@@ -1032,14 +1052,14 @@ export class IncrementalScorer {
       const task = this.taskMap.get(a.taskId);
       if (!task?.togethernessRelevant) continue;
       // Find my sub-team group
-      const mySlot = task.slots.find((s) => s.slotId === a.slotId);
+      const mySlot = this.getSlot(a.taskId, a.slotId);
       const myTeam = mySlot?.subTeamId ?? '__all__';
       // Check co-members in the same sub-team
       const taskAssigns = byTask.get(a.taskId) || [];
       for (const other of taskAssigns) {
         if (other.participantId <= pid) continue; // only count pid < partner to avoid double-counting
         if (!myNotWith.has(other.participantId)) continue;
-        const otherSlot = task.slots.find((s) => s.slotId === other.slotId);
+        const otherSlot = this.getSlot(other.taskId, other.slotId);
         const otherTeam = otherSlot?.subTeamId ?? '__all__';
         if (myTeam === otherTeam) {
           penalty += this.config.notWithPenalty;
@@ -1047,6 +1067,10 @@ export class IncrementalScorer {
       }
     }
     return penalty;
+  }
+
+  private getSlot(taskId: string, slotId: string): SlotRequirement | undefined {
+    return this.slotByTaskId.get(taskId)?.get(slotId);
   }
 
   /**
@@ -1167,18 +1191,22 @@ export class IncrementalScorer {
   }
 
   private recomputeRestStats(): void {
-    const minRests: number[] = [];
+    let minRest = Infinity;
+    let sumRest = 0;
+    let restCount = 0;
     for (const d of this.perParticipant.values()) {
-      if (isFinite(d.minRest) && d.minRest !== Infinity) {
-        minRests.push(d.minRest);
+      if (Number.isFinite(d.minRest) && d.minRest !== Infinity) {
+        minRest = Math.min(minRest, d.minRest);
+        sumRest += d.minRest;
+        restCount++;
       }
     }
-    if (minRests.length === 0) {
+    if (restCount === 0) {
       this._globalMinRest = 0;
       this._globalAvgRest = 0;
     } else {
-      this._globalMinRest = Math.min(...minRests);
-      this._globalAvgRest = minRests.reduce((a, b) => a + b, 0) / minRests.length;
+      this._globalMinRest = minRest;
+      this._globalAvgRest = sumRest / restCount;
     }
   }
 
@@ -1323,7 +1351,7 @@ export class IncrementalScorer {
           if (this.phantomTaskIds.has(a.taskId)) continue;
           const task = this.taskMap.get(a.taskId);
           if (!task) continue;
-          const slot = task.slots.find((s) => s.slotId === a.slotId);
+          const slot = this.getSlot(a.taskId, a.slotId);
           if (slot && isLowPriority(slot.acceptableLevels, p.level)) {
             penalty += this.config.lowPriorityLevelPenalty;
           }
@@ -1361,19 +1389,16 @@ export class IncrementalScorer {
         this._savedNotWithEntries[0][1] > 0 ||
         this._savedNotWithEntries[1][1] > 0
       ) {
-        // Build per-task index for the two participants' tasks
-        const byTask = new Map<string, Assignment[]>();
-        for (const a of [...aAssigns, ...bAssigns]) {
+        // Collect task IDs touched by the swapped participants. The per-task
+        // assignment lists themselves are stable under participant swaps.
+        const affectedTaskIds = new Set<string>();
+        for (const a of aAssigns) {
           if (this.phantomTaskIds.has(a.taskId)) continue;
-          if (byTask.has(a.taskId)) continue;
-          const allTaskAssigns: Assignment[] = [];
-          for (const [, pAssigns] of this.assignmentsByParticipant) {
-            for (const pa of pAssigns) {
-              if (this.phantomTaskIds.has(pa.taskId)) continue;
-              if (pa.taskId === a.taskId) allTaskAssigns.push(pa);
-            }
-          }
-          byTask.set(a.taskId, allTaskAssigns);
+          affectedTaskIds.add(a.taskId);
+        }
+        for (const a of bAssigns) {
+          if (this.phantomTaskIds.has(a.taskId)) continue;
+          affectedTaskIds.add(a.taskId);
         }
 
         // Find co-participants in these tasks who have notWith relationships
@@ -1381,7 +1406,8 @@ export class IncrementalScorer {
         const aNotWith = this._notWithPairs.get(pidA);
         const bNotWith = this._notWithPairs.get(pidB);
         const affectedCoParticipants = new Set<string>();
-        for (const [, taskAssigns] of byTask) {
+        for (const taskId of affectedTaskIds) {
+          const taskAssigns = this.assignmentsByTask.get(taskId) || [];
           for (const ta of taskAssigns) {
             const coPid = ta.participantId;
             if (coPid === pidA || coPid === pidB) continue;
@@ -1404,31 +1430,14 @@ export class IncrementalScorer {
         }
         this._notWithPenalty -= oldTotal;
 
-        // Build extended byTask for co-participants (they may have tasks not in the swapped pair's set)
-        for (const coPid of affectedCoParticipants) {
-          const coAssigns = this.assignmentsByParticipant.get(coPid) || [];
-          for (const a of coAssigns) {
-            if (this.phantomTaskIds.has(a.taskId)) continue;
-            if (byTask.has(a.taskId)) continue;
-            const allTaskAssigns: Assignment[] = [];
-            for (const [, pAs] of this.assignmentsByParticipant) {
-              for (const pa of pAs) {
-                if (this.phantomTaskIds.has(pa.taskId)) continue;
-                if (pa.taskId === a.taskId) allTaskAssigns.push(pa);
-              }
-            }
-            byTask.set(a.taskId, allTaskAssigns);
-          }
-        }
-
         // Recompute penalties for all affected participants
-        const newPenaltyA = this.computeParticipantNotWithPenalty(pidA, byTask);
-        const newPenaltyB = this.computeParticipantNotWithPenalty(pidB, byTask);
+        const newPenaltyA = this.computeParticipantNotWithPenalty(pidA, this.assignmentsByTask);
+        const newPenaltyB = this.computeParticipantNotWithPenalty(pidB, this.assignmentsByTask);
         this._perParticipantNotWithPenalty.set(pidA, newPenaltyA);
         this._perParticipantNotWithPenalty.set(pidB, newPenaltyB);
         let newTotal = newPenaltyA + newPenaltyB;
         for (const coPid of affectedCoParticipants) {
-          const newCoPenalty = this.computeParticipantNotWithPenalty(coPid, byTask);
+          const newCoPenalty = this.computeParticipantNotWithPenalty(coPid, this.assignmentsByTask);
           this._perParticipantNotWithPenalty.set(coPid, newCoPenalty);
           newTotal += newCoPenalty;
         }

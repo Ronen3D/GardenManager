@@ -23,6 +23,33 @@ import { showToast } from './ui-modal';
 export interface TutorialContext {
   getSchedule: () => unknown | null;
   isLiveModeEnabled: () => boolean;
+  /** True when the user has at least one participant configured. */
+  hasParticipants?: () => boolean;
+  /** True when the user has at least one task template configured. */
+  hasTaskTemplates?: () => boolean;
+  /** Run a small demo schedule generation so subsequent tutorial steps have
+   * data to point at. Should resolve only after the optim-overlay clears. */
+  generateDemoSchedule?: () => Promise<void>;
+  /** Enable live mode anchored at the start of day 1 — used by inject /
+   * rescue / Future-SOS demo steps. */
+  enableLiveModeForDemo?: () => Promise<void>;
+  /** Re-seed default participants (no-op if any participant already exists). */
+  seedParticipants?: () => Promise<void>;
+  /** Re-seed default task templates (no-op if any template already exists). */
+  seedTaskTemplates?: () => Promise<void>;
+}
+
+/** Fallback action chip rendered inside the popover body when the step's data
+ * isn't there to demonstrate. Picking the chip fires the corresponding helper
+ * on the TutorialContext, then re-renders the step so the user sees the
+ * populated UI without leaving the tour. */
+export type FallbackActionKind = 'generate-schedule' | 'enable-live' | 'seed-participants' | 'seed-templates';
+export interface FallbackAction {
+  kind: FallbackActionKind;
+  /** Optional override for the chip label. Default: kind-appropriate Hebrew. */
+  label?: string;
+  /** Optional override for the explainer line under the chip. */
+  hint?: string;
 }
 
 export interface TutorialStep {
@@ -38,6 +65,13 @@ export interface TutorialStep {
   precondition?: (ctx: TutorialContext) => boolean;
   /** Optional embedded screenshot. */
   screenshot?: { src: string; alt: string };
+  /** Action chip shown in the popover when its prerequisite isn't met
+   * (e.g. "create demo schedule" when no schedule exists). Picking it runs
+   * the corresponding context helper, then re-renders the step.
+   * When a function, it is re-evaluated against the live ctx on every render
+   * — useful for steps that need *two* prerequisites in sequence
+   * (e.g. schedule first, then live mode). Return null to suppress the chip. */
+  fallbackAction?: FallbackAction | ((ctx: TutorialContext) => FallbackAction | null);
   /** Engine should `.click()` the tab button before showing this step. */
   switchToTab?: 'participants' | 'task-rules' | 'schedule' | 'algorithm';
   /** Engine should ensure these accordion ids are open before showing. */
@@ -148,7 +182,17 @@ export async function startTutorial(trackId: string, ctx: TutorialContext): Prom
     track.requiresSchedule &&
     (!ctx.getSchedule() || (ctx.getSchedule() as { assignments?: unknown[] }).assignments?.length === 0)
   ) {
-    showGuardDialog(track.guardMessage ?? 'מדריך זה דורש שבצ"ק קיים. צור שבצ"ק תחילה ונסה שוב.');
+    showGuardDialog(
+      track.guardMessage ?? 'מדריך זה דורש שבצ"ק קיים. צור שבצ"ק תחילה ונסה שוב.',
+      // Offer "create one for me" if the host wired up the helper.
+      typeof ctx.generateDemoSchedule === 'function'
+        ? async () => {
+            await ctx.generateDemoSchedule!();
+            // After successful generation, retry the start.
+            await startTutorial(trackId, ctx);
+          }
+        : undefined,
+    );
     return;
   }
 
@@ -177,9 +221,7 @@ export function exitTutorial(): void {
   // If the engine programmatically opened a participant row for edit during
   // the tutorial (expandFirstParticipant), close it on exit so the still-armed
   // outside-click handler doesn't swallow the user's next click.
-  const editCancel = document.querySelector<HTMLElement>(
-    'tr.row-editing [data-action="cancel-edit"]',
-  );
+  const editCancel = document.querySelector<HTMLElement>('tr.row-editing [data-action="cancel-edit"]');
   if (editCancel) {
     _internalClickFlag = true;
     editCancel.click();
@@ -396,12 +438,22 @@ async function renderStep(idx: number): Promise<void> {
     : '';
 
   const progressPct = Math.round(((idx + 1) / track.steps.length) * 100);
+  // Render fallback action chip when the step has one and its prerequisite
+  // isn't met. Lets the user create demo data on demand without leaving the
+  // tour — e.g. "no schedule yet → [צור עבורי שבצ"ק להדגמה]".
+  let resolvedAction: FallbackAction | null = null;
+  if (step.fallbackAction) {
+    resolvedAction = typeof step.fallbackAction === 'function' ? step.fallbackAction(_ctx) : step.fallbackAction;
+  }
+  const actionChipHtml =
+    resolvedAction && isFallbackActionApplicable(resolvedAction, _ctx) ? renderFallbackActionChip(resolvedAction) : '';
   _popover.innerHTML = `
     <div class="tutorial-step-counter">${escHtmlLite(stepCounter)}</div>
     <div class="tutorial-progress" aria-hidden="true"><div class="tutorial-progress-fill" style="width:${progressPct}%"></div></div>
     <h3 class="tutorial-title" id="tutorial-title-${escAttrLite(step.id)}">${escHtmlLite(step.title)}</h3>
     <div class="tutorial-body">${body}</div>
     ${screenshotHtml}
+    ${actionChipHtml}
     <div class="tutorial-footer">
       <button type="button" class="tutorial-btn tutorial-btn-primary${
         isLast ? ' tutorial-btn-finish' : ''
@@ -417,10 +469,12 @@ async function renderStep(idx: number): Promise<void> {
   // Wire footer button clicks (delegated)
   _popover.onclick = (e) => {
     const action = (e.target as HTMLElement)?.closest<HTMLElement>('[data-tutorial-action]')?.dataset.tutorialAction;
-    if (!action) return;
     if (action === 'next') void renderStep(_stepIdx + 1);
     else if (action === 'back') void renderStep(_stepIdx - 1);
     else if (action === 'exit') exitTutorial();
+    else if (action === 'fallback-run' && resolvedAction) {
+      void runFallbackAction(resolvedAction);
+    }
   };
 
   // Position spotlight + popover
@@ -501,19 +555,33 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
   // every step the user had to re-find the popover at the opposite edge.
   if (_mql?.matches) {
     _popover.classList.remove('tutorial-popover-top-sheet');
+    // For tall targets (taller than the usable viewport), lifting can't help —
+    // the spotlight covers the full height anyway. Default bottom sheet keeps
+    // the upper portion of the target visible above the sheet.
+    const MIN_SHEET_VISIBLE = 200;
+    if (haloH > vh - MIN_SHEET_VISIBLE) {
+      _popover.classList.remove('tutorial-popover-lifted');
+      _popover.style.removeProperty('--tutorial-popover-lift');
+      _popover.style.removeProperty('--tutorial-popover-max-h');
+      return;
+    }
     const targetCenterY = rect.top + rect.height / 2;
     const inLowerHalf = targetCenterY > vh * 0.5;
     if (inLowerHalf) {
       const gap = 12;
-      // haloTop is where the spotlight cutout begins. Lift = how far above
-      // the viewport bottom the sheet's bottom edge sits. The sheet's bottom
-      // edge needs to be above haloTop with a `gap` so the halo is fully
-      // visible.
+      // haloTop = top of the spotlight cutout. Lift = distance from viewport
+      // bottom to the sheet's bottom edge. We want the sheet's bottom edge to
+      // sit above haloTop with a small gap so the halo is fully visible.
       const haloTop = rect.top + rect.height / 2 - haloH / 2;
-      const lift = Math.max(0, vh - haloTop + gap);
-      // Cap the sheet's max-height so it never extends above the viewport.
-      // 16px breathing room from the top; minimum 160px so even very low
-      // targets leave a readable sheet (content scrolls inside).
+      const rawLift = Math.max(0, vh - haloTop + gap);
+      // CRITICAL: cap the lift so the sheet's bottom edge stays inside the
+      // viewport (lift > vh would push the entire popover above the screen).
+      // Reserve at least MIN_SHEET_VISIBLE px from the bottom so the sheet is
+      // always reachable.
+      const maxLift = Math.max(0, vh - MIN_SHEET_VISIBLE);
+      const lift = Math.min(rawLift, maxLift);
+      // Cap max-height so the sheet never extends past the viewport top.
+      // 16px breathing room; minimum 160px so the sheet stays readable.
       const maxH = Math.max(160, vh - lift - 16);
       _popover.classList.add('tutorial-popover-lifted');
       _popover.style.setProperty('--tutorial-popover-lift', `${lift}px`);
@@ -529,12 +597,28 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
   _popover.classList.remove('tutorial-popover-top-sheet');
   _popover.classList.remove('tutorial-popover-lifted');
 
+  // Use the inflated halo bounds (not the raw rect) so the popover clears the
+  // halo, not the bare element. Without this, short targets (tab buttons,
+  // single-line buttons) end up with the popover top-edge clipping the halo.
+  const haloLeft = rect.left + rect.width / 2 - haloW / 2;
+  const haloRight = haloLeft + haloW;
+  const haloTopRect = rect.top + rect.height / 2 - haloH / 2;
+  const haloBottomRect = haloTopRect + haloH;
+
+  // Clip to viewport when the target is taller/wider than the screen
+  // (schedule grid, expanded accordion). Otherwise fits.* would always be
+  // false and we'd centred-fallback with no spatial cue.
+  const visTop = Math.max(haloTopRect, 0);
+  const visBottom = Math.min(haloBottomRect, vh);
+  const visLeft = Math.max(haloLeft, 0);
+  const visRight = Math.min(haloRight, vw);
+
   // Resolve placement with auto-flip
   const fits = {
-    bottom: rect.bottom + 12 + ph <= window.innerHeight,
-    top: rect.top - 12 - ph >= 0,
-    'inline-start': rect.left - 12 - pw >= 0,
-    'inline-end': rect.right + 12 + pw <= window.innerWidth,
+    bottom: visBottom + 12 + ph <= vh,
+    top: visTop - 12 - ph >= 0,
+    'inline-start': visLeft - 12 - pw >= 0,
+    'inline-end': visRight + 12 + pw <= vw,
   } as const;
   const order: Array<keyof typeof fits> =
     placement === 'auto'
@@ -550,22 +634,110 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
   const gap = 12;
   let top = 0;
   let left = 0;
+  // Anchor on the visible-clipped halo edges so over-tall targets still get
+  // a spatially-meaningful popover position (next to the visible portion).
+  const anchorTop = Math.max(visTop, 8);
+  const anchorBottom = Math.min(visBottom, vh - 8);
+  const anchorLeft = Math.max(visLeft, 8);
+  const anchorRight = Math.min(visRight, vw - 8);
+  const anchorCenterX = (anchorLeft + anchorRight) / 2;
+  const anchorCenterY = (anchorTop + anchorBottom) / 2;
   if (chosen === 'bottom') {
-    top = rect.bottom + gap;
-    left = clamp(rect.left + rect.width / 2 - pw / 2, 8, window.innerWidth - pw - 8);
+    top = anchorBottom + gap;
+    left = clamp(anchorCenterX - pw / 2, 8, vw - pw - 8);
   } else if (chosen === 'top') {
-    top = rect.top - gap - ph;
-    left = clamp(rect.left + rect.width / 2 - pw / 2, 8, window.innerWidth - pw - 8);
+    top = anchorTop - gap - ph;
+    left = clamp(anchorCenterX - pw / 2, 8, vw - pw - 8);
   } else if (chosen === 'inline-end') {
-    top = clamp(rect.top + rect.height / 2 - ph / 2, 8, window.innerHeight - ph - 8);
-    left = rect.right + gap;
+    top = clamp(anchorCenterY - ph / 2, 8, vh - ph - 8);
+    left = anchorRight + gap;
   } else {
     /* inline-start */
-    top = clamp(rect.top + rect.height / 2 - ph / 2, 8, window.innerHeight - ph - 8);
-    left = rect.left - gap - pw;
+    top = clamp(anchorCenterY - ph / 2, 8, vh - ph - 8);
+    left = anchorLeft - gap - pw;
   }
   _popover.style.top = `${top}px`;
   _popover.style.left = `${left}px`;
+}
+
+// ─── Fallback action chips ───────────────────────────────────────────────────
+
+function fallbackActionDefaults(action: FallbackAction): { label: string; hint: string } {
+  switch (action.kind) {
+    case 'generate-schedule':
+      return {
+        label: action.label ?? '⚡ צור עבורי שבצ"ק להדגמה',
+        hint: action.hint ?? 'יום אחד, ייצור בסביבות 5 שניות. אפשר למחוק אחר כך.',
+      };
+    case 'enable-live':
+      return {
+        label: action.label ?? '🟢 הפעל מצב חי להדגמה',
+        hint: action.hint ?? 'מקבע עוגן בתחילת יום 1. ניתן לכבות מתוך לשונית השבצ"ק.',
+      };
+    case 'seed-participants':
+      return {
+        label: action.label ?? '👥 טען משתתפי דמו',
+        hint: action.hint ?? 'מחזיר את ברירת המחדל (לא מוחק משתתפים קיימים).',
+      };
+    case 'seed-templates':
+      return {
+        label: action.label ?? '📋 טען תבניות משימה דמו',
+        hint: action.hint ?? 'מחזיר את ברירת המחדל (לא מוחק תבניות קיימות).',
+      };
+  }
+}
+
+function isFallbackActionApplicable(action: FallbackAction, ctx: TutorialContext | null): boolean {
+  if (!ctx) return false;
+  switch (action.kind) {
+    case 'generate-schedule': {
+      const s = ctx.getSchedule() as { assignments?: unknown[] } | null;
+      const has = s != null && (s.assignments?.length ?? 0) > 0;
+      return !has && typeof ctx.generateDemoSchedule === 'function';
+    }
+    case 'enable-live':
+      return !ctx.isLiveModeEnabled() && typeof ctx.enableLiveModeForDemo === 'function';
+    case 'seed-participants':
+      return !ctx.hasParticipants?.() && typeof ctx.seedParticipants === 'function';
+    case 'seed-templates':
+      return !ctx.hasTaskTemplates?.() && typeof ctx.seedTaskTemplates === 'function';
+  }
+}
+
+function renderFallbackActionChip(action: FallbackAction): string {
+  const { label, hint } = fallbackActionDefaults(action);
+  return `
+    <div class="tutorial-action-chip">
+      <button type="button" class="tutorial-btn tutorial-btn-primary tutorial-btn-chip" data-tutorial-action="fallback-run">${escHtmlLite(label)}</button>
+      <span class="tutorial-action-chip-hint">${escHtmlLite(hint)}</span>
+    </div>`;
+}
+
+async function runFallbackAction(action: FallbackAction): Promise<void> {
+  if (!_ctx) return;
+  // Visible "working..." state on the chip so the user knows the click landed
+  // (schedule generation can take a few seconds).
+  const chipBtn = _popover?.querySelector<HTMLButtonElement>('.tutorial-btn-chip');
+  if (chipBtn) {
+    chipBtn.disabled = true;
+    chipBtn.textContent = '... מכין';
+  }
+  try {
+    if (action.kind === 'generate-schedule' && _ctx.generateDemoSchedule) {
+      await _ctx.generateDemoSchedule();
+    } else if (action.kind === 'enable-live' && _ctx.enableLiveModeForDemo) {
+      await _ctx.enableLiveModeForDemo();
+    } else if (action.kind === 'seed-participants' && _ctx.seedParticipants) {
+      await _ctx.seedParticipants();
+    } else if (action.kind === 'seed-templates' && _ctx.seedTaskTemplates) {
+      await _ctx.seedTaskTemplates();
+    }
+  } catch (err) {
+    console.warn('[tutorial] fallback action failed:', err);
+  }
+  // Re-render the same step — precondition should now pass and the populated
+  // UI is visible behind the popover.
+  await renderStep(_stepIdx);
 }
 
 function positionCentered(): void {
@@ -587,6 +759,20 @@ async function switchToTabProgrammatic(tab: string): Promise<void> {
   const btn = document.querySelector<HTMLButtonElement>(`.tab-btn[data-tab="${tab}"]`);
   if (!btn) return;
   if (btn.classList.contains('tab-active')) return;
+  // Defensive: a participant row left in inline-edit mode arms a
+  // capture-phase outside-click handler in tab-participants.ts that
+  // stop-propagates ANY click outside the row (including tab buttons,
+  // even ones inside .tutorial-root). If the engine programmatically
+  // expanded a row earlier (expandFirstParticipant), the next tab switch
+  // would silently fail and every downstream step would target the wrong
+  // tab. Cancel the edit first so the tab click reaches its own handler.
+  const editCancel = document.querySelector<HTMLElement>('tr.row-editing [data-action="cancel-edit"]');
+  if (editCancel) {
+    _internalClickFlag = true;
+    editCancel.click();
+    _internalClickFlag = false;
+    await rAFAsync();
+  }
   _internalClickFlag = true;
   btn.click();
   _internalClickFlag = false;
@@ -597,9 +783,24 @@ async function switchToTabProgrammatic(tab: string): Promise<void> {
 }
 
 async function expandFirstTemplateCard(): Promise<void> {
-  const card = document.querySelector<HTMLElement>('.template-card');
+  // tab-task-rules.ts mixes regular templates, one-time tasks, and the
+  // rest-rules global-settings card under the same `.template-card` class.
+  // The first card in DOM order is always the first regular template (those
+  // render first in `renderTaskRulesTab`), but scope the selector explicitly
+  // so future reordering can't silently retarget us.
+  const card = document.querySelector<HTMLElement>('.template-card[data-template-id]');
   if (!card) return;
-  if (card.classList.contains('expanded')) return;
+  // Expansion state is tracked in tab-task-rules.ts via `expandedTemplateId`,
+  // which controls whether the `.template-body` child is rendered — the card
+  // div itself never receives an `expanded` CSS class. Checking `classList`
+  // here would therefore always be false, so every expandFirstTemplate step
+  // would blindly click the header and TOGGLE the card. On consecutive steps
+  // (t-5 → t-7b in the full tour, or t-5 → t-6 → t-7b → t-8 → t-8b in the
+  // task-rules track) this collapses a previously-expanded card, the
+  // precondition then fails because the target lives in `.template-body`,
+  // and the user sees a centered fallback popover with the sleep-recovery /
+  // load-windows section gone from the page.
+  if (card.querySelector('.template-body')) return;
   const header = card.querySelector<HTMLElement>('.template-header[data-action="toggle-template"]');
   if (!header) return;
   _internalClickFlag = true;
@@ -648,9 +849,26 @@ async function returnToScheduleGrid(): Promise<void> {
 
 async function openFirstProfile(): Promise<void> {
   await returnToScheduleGrid();
-  const pid = document.querySelector<HTMLElement>(
-    '.participant-sidebar [data-pid], .schedule-grid-container [data-pid]',
-  );
+  // Profile navigation is wired via clicks on `.participant-hover[data-pid]`
+  // (app.ts onNavigateToProfile callback). The plain grid-cell `[data-pid]`
+  // anchors a tooltip / workload-popup, NOT the profile view — clicking one
+  // of those on touch devices opens the popup instead of navigating away.
+  // Prefer the sidebar's profile-link `.participant-hover`. On mobile the
+  // sidebar starts hidden behind the FAB drawer; open it first.
+  const isMobile = !!_mql?.matches;
+  if (isMobile) {
+    const fab = document.querySelector<HTMLElement>('.sidebar-fab');
+    if (fab) {
+      _internalClickFlag = true;
+      fab.click();
+      _internalClickFlag = false;
+      await waitFor('.participant-sidebar.sidebar-mobile-open', 800);
+    }
+  }
+  const pid =
+    document.querySelector<HTMLElement>('.participant-sidebar .participant-hover[data-pid]') ??
+    document.querySelector<HTMLElement>('.participant-sidebar [data-pid]') ??
+    document.querySelector<HTMLElement>('.participant-hover[data-pid]');
   if (!pid) return;
   _internalClickFlag = true;
   pid.click();
@@ -759,8 +977,8 @@ function onKeyDown(e: KeyboardEvent): void {
 
 // ─── Guard dialog (track-level precondition failure) ─────────────────────────
 
-function showGuardDialog(message: string): void {
-  // Build a centred popover-style guard with two actions.
+function showGuardDialog(message: string, onCreateForMe?: () => Promise<void>): void {
+  // Build a centred popover-style guard with up to three actions.
   const root = document.createElement('div');
   root.className = 'tutorial-root';
   const backdrop = document.createElement('div');
@@ -771,12 +989,18 @@ function showGuardDialog(message: string): void {
   popover.className = 'tutorial-popover tutorial-popover-centered';
   popover.setAttribute('role', 'alertdialog');
   popover.setAttribute('aria-modal', 'false');
+  const createBtn = onCreateForMe
+    ? '<button type="button" class="tutorial-btn tutorial-btn-primary" data-guard-action="create">⚡ צור עבורי שבצ"ק להדגמה</button>'
+    : '';
+  // When "create for me" is offered, demote "ok" to a ghost — primary should be the action.
+  const okBtnClass = onCreateForMe ? 'tutorial-btn tutorial-btn-ghost' : 'tutorial-btn tutorial-btn-primary';
   popover.innerHTML = `
     <h3 class="tutorial-title">דרוש שבצ"ק</h3>
     <div class="tutorial-body">${escHtmlLite(message)}</div>
     <div class="tutorial-footer">
+      ${createBtn}
       <button type="button" class="tutorial-btn tutorial-btn-secondary" data-guard-action="schedule">↩ עבור לשבצ"ק</button>
-      <button type="button" class="tutorial-btn tutorial-btn-primary" data-guard-action="ok">✓ הבנתי</button>
+      <button type="button" class="${okBtnClass}" data-guard-action="ok">${onCreateForMe ? 'לא עכשיו' : '✓ הבנתי'}</button>
     </div>
   `;
   root.appendChild(backdrop);
@@ -787,10 +1011,23 @@ function showGuardDialog(message: string): void {
   const close = () => root.remove();
   popover.addEventListener('click', (e) => {
     const action = (e.target as HTMLElement).closest<HTMLElement>('[data-guard-action]')?.dataset.guardAction;
-    if (action === 'schedule') {
+    if (action === 'create' && onCreateForMe) {
+      const btn = popover.querySelector<HTMLButtonElement>('[data-guard-action="create"]');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '... מכין שבצ"ק';
+      }
+      void (async () => {
+        try {
+          await onCreateForMe();
+        } finally {
+          close();
+        }
+      })();
+    } else if (action === 'schedule') {
       close();
-      const btn = document.querySelector<HTMLButtonElement>('.tab-btn[data-tab="schedule"]');
-      btn?.click();
+      const tabBtn = document.querySelector<HTMLButtonElement>('.tab-btn[data-tab="schedule"]');
+      tabBtn?.click();
     } else if (action === 'ok') {
       close();
     }

@@ -105,6 +105,40 @@ function computeRestGaps(sortedBlocks: TaggedBlock[]): number[] {
   return gaps;
 }
 
+function summarizeRestGaps(restGaps: number[]): {
+  minRest: number;
+  maxRest: number;
+  avgRest: number;
+  restPerGapBonus: number;
+} {
+  if (restGaps.length === 0) {
+    return {
+      minRest: Infinity,
+      maxRest: Infinity,
+      avgRest: Infinity,
+      restPerGapBonus: 0,
+    };
+  }
+
+  let minRest = Infinity;
+  let maxRest = -Infinity;
+  let sumRest = 0;
+  let restPerGapBonus = 0;
+  for (const gap of restGaps) {
+    minRest = Math.min(minRest, gap);
+    maxRest = Math.max(maxRest, gap);
+    sumRest += gap;
+    restPerGapBonus += Math.sqrt(Math.max(0, gap));
+  }
+
+  return {
+    minRest,
+    maxRest,
+    avgRest: sumRest / restGaps.length,
+    restPerGapBonus,
+  };
+}
+
 /**
  * Compute the rest profile for a single participant.
  */
@@ -122,20 +156,17 @@ export function computeParticipantRest(
     return sum + (tb.block.end.getTime() - tb.block.start.getTime()) / (1000 * 60 * 60);
   }, 0);
 
-  const minRest = restGaps.length > 0 ? Math.min(...restGaps) : Infinity;
-  const maxRest = restGaps.length > 0 ? Math.max(...restGaps) : Infinity;
-  const avgRest = restGaps.length > 0 ? restGaps.reduce((a, b) => a + b, 0) / restGaps.length : Infinity;
-  const restPerGapBonus = restGaps.reduce((s, g) => s + Math.sqrt(Math.max(0, g)), 0);
+  const restSummary = summarizeRestGaps(restGaps);
 
   return {
     participantId,
     restGaps,
-    minRestHours: minRest,
-    maxRestHours: maxRest,
-    avgRestHours: avgRest,
+    minRestHours: restSummary.minRest,
+    maxRestHours: restSummary.maxRest,
+    avgRestHours: restSummary.avgRest,
     totalWorkHours,
     loadBearingAssignmentCount: loadBearingBlocks.length,
-    restPerGapBonus,
+    restPerGapBonus: restSummary.restPerGapBonus,
   };
 }
 
@@ -167,20 +198,17 @@ export function computeRestFromAssignments(
 
   const restGaps = computeRestGaps(loadBearingBlocks);
 
-  const minRest = restGaps.length > 0 ? Math.min(...restGaps) : Infinity;
-  const maxRest = restGaps.length > 0 ? Math.max(...restGaps) : Infinity;
-  const avgRest = restGaps.length > 0 ? restGaps.reduce((a, b) => a + b, 0) / restGaps.length : Infinity;
-  const restPerGapBonus = restGaps.reduce((s, g) => s + Math.sqrt(Math.max(0, g)), 0);
+  const restSummary = summarizeRestGaps(restGaps);
 
   return {
     participantId,
     restGaps,
-    minRestHours: minRest,
-    maxRestHours: maxRest,
-    avgRestHours: avgRest,
+    minRestHours: restSummary.minRest,
+    maxRestHours: restSummary.maxRest,
+    avgRestHours: restSummary.avgRest,
     totalWorkHours,
     loadBearingAssignmentCount: loadBearingBlocks.length,
-    restPerGapBonus,
+    restPerGapBonus: restSummary.restPerGapBonus,
   };
 }
 
@@ -221,20 +249,31 @@ export function computeRestFairness(profiles: Map<string, ParticipantRestProfile
   stdDevRest: number;
 } {
   // Only consider participants with at least 2 non-light assignments (they have rest gaps)
-  const minRests: number[] = [];
+  let globalMin = Infinity;
+  let sumRest = 0;
+  let restCount = 0;
   for (const p of profiles.values()) {
-    if (p.restGaps.length > 0 && isFinite(p.minRestHours)) {
-      minRests.push(p.minRestHours);
+    const minRest = p.minRestHours;
+    if (p.restGaps.length > 0 && Number.isFinite(minRest)) {
+      globalMin = Math.min(globalMin, minRest);
+      sumRest += minRest;
+      restCount++;
     }
   }
 
-  if (minRests.length === 0) {
+  if (restCount === 0) {
     return { globalMinRest: Infinity, globalAvgRest: Infinity, stdDevRest: 0 };
   }
 
-  const globalMin = Math.min(...minRests);
-  const avg = minRests.reduce((a, b) => a + b, 0) / minRests.length;
-  const variance = minRests.reduce((sum, v) => sum + (v - avg) ** 2, 0) / minRests.length;
+  const avg = sumRest / restCount;
+  let varianceSum = 0;
+  for (const p of profiles.values()) {
+    const minRest = p.minRestHours;
+    if (p.restGaps.length > 0 && Number.isFinite(minRest)) {
+      varianceSum += (minRest - avg) ** 2;
+    }
+  }
+  const variance = varianceSum / restCount;
   const stdDev = Math.sqrt(variance);
 
   return {
