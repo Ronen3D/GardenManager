@@ -385,7 +385,7 @@ function getCertPakalSummary(): string {
 }
 
 function getDisplaySummary(): string {
-  return `ערכת נושא: ${getStoredTheme() === 'dark' ? 'כהה' : 'בהיר'} · ניסיונות: ${getStoredDefaultAttempts()}`;
+  return `ערכת נושא: ${getStoredTheme() === 'dark' ? 'כהה' : 'בהיר'} · ניסיונות: ${getStoredDefaultAttempts()} · ימים: ${store.getScheduleDays()}`;
 }
 
 // ─── Content Renderers ──────────────────────────────────────────────────────
@@ -616,6 +616,7 @@ function renderPakalContent(): string {
 function renderDisplayContent(): string {
   const theme = getStoredTheme();
   const defaultAttempts = getStoredDefaultAttempts();
+  const defaultDays = store.getScheduleDays();
   return `
     <h3 class="algo-section-title">תצוגה</h3>
     <p class="algo-section-desc">בחירת מראה כללי של המערכת.</p>
@@ -633,6 +634,11 @@ function renderDisplayContent(): string {
     <label class="scenarios-label" for="input-default-attempts" style="display:inline-flex;align-items:center;gap:8px">
       ניסיונות ברירת מחדל
       <input type="number" id="input-default-attempts" class="input-sm" data-action="set-default-attempts" min="1" step="1" value="${defaultAttempts}" style="width:100px" />
+    </label>
+    <p class="algo-section-desc" style="margin-top:14px">מספר ימים ברירת מחדל בשבצ"ק. ניתן לשנות גם בעת הייצור עצמו (1–7).</p>
+    <label class="scenarios-label" for="input-default-days" style="display:inline-flex;align-items:center;gap:8px">
+      ימים ברירת מחדל
+      <input type="number" id="input-default-days" class="input-sm" data-action="set-default-days" min="1" max="7" step="1" value="${defaultDays}" style="width:100px" />
     </label>`;
 }
 
@@ -1338,6 +1344,20 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         }
         inp.value = String(val);
         setDefaultAttempts(val);
+        rerender();
+        break;
+      }
+      case 'set-default-days': {
+        const inp = el as HTMLInputElement;
+        const val = parseInt(inp.value, 10);
+        if (!Number.isInteger(val) || val < 1 || val > 7) {
+          inp.value = String(store.getScheduleDays());
+          break;
+        }
+        if (val !== store.getScheduleDays()) {
+          store.setScheduleDays(val);
+        }
+        inp.value = String(val);
         rerender();
         break;
       }

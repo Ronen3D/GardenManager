@@ -516,6 +516,23 @@ let _taskSetFormMode: 'none' | 'save-as' | 'rename' = 'none';
 let _taskSetFormError = '';
 let _taskSetRenameTargetId: string | null = null;
 
+/** Full reset of module-level view state — called by the tutorial demo
+ *  orchestrator on entry/exit so an expanded template card or open panel
+ *  from a previous session doesn't leak across the demo boundary. */
+export function resetTaskRulesTabViewState(): void {
+  expandedTemplateId = null;
+  expandedOtId = null;
+  addingSlotTo = null;
+  editingSlot = null;
+  showAddOneTime = false;
+  expandedSleepRecovery.clear();
+  _pendingOtLoadFormula = undefined;
+  _taskSetPanelOpen = false;
+  _taskSetFormMode = 'none';
+  _taskSetFormError = '';
+  _taskSetRenameTargetId = null;
+}
+
 // ─── Render ──────────────────────────────────────────────────────────────────
 
 export function renderTaskRulesTab(preflight: PreflightResult): string {

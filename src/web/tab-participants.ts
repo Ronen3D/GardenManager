@@ -161,6 +161,21 @@ export function clearParticipantSelection(): void {
   _bulkDeleteDialogOpen = false;
 }
 
+/** Full reset of module-level view state. Called by the tutorial demo mode
+ *  on tour entry and exit so a filter/sort the user set during one tour
+ *  doesn't leak into the next, and the demo's full 6-participant roster
+ *  isn't accidentally filtered to one group. */
+export function resetParticipantsTabViewState(): void {
+  filterGroup = '';
+  sortColumn = '';
+  sortDirection = 'asc';
+  _setsPanelOpen = false;
+  _setsFormMode = 'none';
+  _setsFormError = '';
+  _setsRenameTargetId = null;
+  clearParticipantSelection();
+}
+
 /**
  * Async guard for tab switching: if table-edit mode has unsaved changes,
  * show a save/discard/continue dialog. Returns true if leaving is allowed.

@@ -6,7 +6,12 @@
  */
 
 import type { Assignment, Participant, ParticipantCapacity, Task } from '../models/types';
-import { computeTaskColdHours, computeTaskEffectiveHours, computeTaskHotHours } from '../shared/utils/load-weighting';
+import {
+  computeTaskColdHours,
+  computeTaskEffectiveHours,
+  computeTaskHotHours,
+  getTaskBaseLoadWeight,
+} from '../shared/utils/load-weighting';
 
 export interface TaskBreakdown {
   /** Total raw duration hours across load-bearing tasks */
@@ -27,6 +32,8 @@ export interface TaskBreakdown {
   sourceCounts: Record<string, number>;
   /** Color per source (first color seen) */
   sourceColors: Record<string, string>;
+  /** Base load weight per source (first value seen — all instances of a template share the weight) */
+  sourceBaseLoadWeights: Record<string, number>;
 }
 
 /**
@@ -41,6 +48,7 @@ export function computeTaskBreakdown(items: Iterable<{ task: Task }>): TaskBreak
   const sourceEffectiveHours: Record<string, number> = {};
   const sourceCounts: Record<string, number> = {};
   const sourceColors: Record<string, string> = {};
+  const sourceBaseLoadWeights: Record<string, number> = {};
 
   let heavyHours = 0;
   let heavyCount = 0;
@@ -58,6 +66,7 @@ export function computeTaskBreakdown(items: Iterable<{ task: Task }>): TaskBreak
     sourceEffectiveHours[key] = (sourceEffectiveHours[key] || 0) + effectiveHrs;
     sourceCounts[key] = (sourceCounts[key] || 0) + 1;
     if (!sourceColors[key]) sourceColors[key] = task.color || '#7f8c8d';
+    if (!(key in sourceBaseLoadWeights)) sourceBaseLoadWeights[key] = getTaskBaseLoadWeight(task);
     if (effectiveHrs > 0) {
       heavyHours += hrs;
       effectiveHeavyHours += effectiveHrs;
@@ -77,6 +86,7 @@ export function computeTaskBreakdown(items: Iterable<{ task: Task }>): TaskBreak
     sourceEffectiveHours,
     sourceCounts,
     sourceColors,
+    sourceBaseLoadWeights,
   };
 }
 

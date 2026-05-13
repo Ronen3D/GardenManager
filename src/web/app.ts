@@ -54,6 +54,7 @@ import { generateShiftBlocks, hourInOpDay } from '../shared/utils/time-utils';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { computeAllCapacities } from '../utils/capacity';
 import { operationalDateKey } from '../utils/date-utils';
+import { register as registerTutorialHooks } from './app-tutorial-hooks';
 import { runAutoTune, setAutoTunerTaskFactory, type TuneRecommendation } from './auto-tuner';
 import { showCapabilityChangePicker } from './capability-change-modal';
 import * as store from './config-store';
@@ -105,11 +106,12 @@ import {
   clearParticipantSelection,
   formatWorkloadMultiplier,
   renderParticipantsTab,
+  resetParticipantsTabViewState,
   wireParticipantsEvents,
 } from './tab-participants';
 import { type ProfileContext, renderProfileView, wireProfileEvents } from './tab-profile';
 import { renderTaskPanel, TASK_PANEL_EMPTY, type TaskPanelContext, wireTaskPanelEvents } from './tab-task-panel';
-import { renderTaskRulesTab, wireTaskRulesEvents } from './tab-task-rules';
+import { renderTaskRulesTab, resetTaskRulesTabViewState, wireTaskRulesEvents } from './tab-task-rules';
 import { hideTaskTooltip, hideTooltip, initTooltips, wireParticipantTooltip, wireTaskTooltip } from './tooltips';
 import {
   exposeWindowApi as exposeTutorialWindowApi,
@@ -117,6 +119,7 @@ import {
   showTutorialBanner,
   type TutorialContext,
 } from './tutorial';
+import { restoreTutorialBackupIfPresent } from './tutorial-demo';
 import {
   applyTheme,
   certBadges,
@@ -157,62 +160,11 @@ let scheduleActualAttempts = 0;
 /** Currently viewed day (1–7). Always a specific day when schedule is shown. */
 let currentDay = 1;
 
-/** Stable context handed to the tutorial engine. Functions capture live state. */
-const tutorialContext: TutorialContext = {
-  getSchedule: () => currentSchedule,
-  isLiveModeEnabled: () => store.getLiveModeState().enabled,
-  hasParticipants: () => store.getAllParticipants().length > 0,
-  hasTaskTemplates: () => store.getAllTaskTemplates().length > 0,
-  generateDemoSchedule: async () => {
-    // Use a fast 1-day, 10-scenario generation so the demo finishes in a
-    // few seconds. Click the existing #btn-generate so all the optim
-    // overlay / dirty-warning machinery runs through its real path.
-    const daysInput = document.querySelector<HTMLInputElement>('#input-days');
-    if (daysInput) daysInput.value = '1';
-    const scenInput = document.querySelector<HTMLInputElement>('#input-scenarios');
-    if (scenInput) scenInput.value = '10';
-    const btn = document.querySelector<HTMLButtonElement>('#btn-generate');
-    btn?.click();
-    // Wait for the optim overlay to appear-then-disappear. Cap at 60s.
-    const deadline = Date.now() + 60_000;
-    // First wait for it to appear (max 1s — generation may finish before any
-    // overlay renders for tiny problems).
-    const appearDeadline = Date.now() + 1_000;
-    while (Date.now() < appearDeadline) {
-      if (document.querySelector('.optim-overlay')) break;
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    // Then wait for it to disappear.
-    while (Date.now() < deadline) {
-      if (!document.querySelector('.optim-overlay')) break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    // One rAF for the post-generation render to settle.
-    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
-  },
-  enableLiveModeForDemo: async () => {
-    if (store.getLiveModeState().enabled) return;
-    const chk = document.querySelector<HTMLInputElement>('#chk-live-mode');
-    chk?.click();
-    // Live-mode toggle opens an anchor confirm modal — accept defaults.
-    await new Promise((r) => setTimeout(r, 200));
-    const confirm = document.querySelector<HTMLButtonElement>('.gm-modal-dialog .btn-primary, .gm-modal .btn-primary');
-    confirm?.click();
-    await new Promise((r) => setTimeout(r, 200));
-  },
-  seedParticipants: async () => {
-    if (store.getAllParticipants().length > 0) return;
-    store.seedDefaultParticipants();
-    renderAll();
-    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
-  },
-  seedTaskTemplates: async () => {
-    if (store.getAllTaskTemplates().length > 0) return;
-    store.seedDefaultTaskTemplates();
-    renderAll();
-    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
-  },
-};
+/** Stable context handed to the tutorial engine. Curated demo state means
+ *  the engine no longer evaluates per-step preconditions or runs fallback
+ *  actions; the context is kept around as a stable identity for the tour
+ *  banner/launcher wiring but has no fields to read. */
+const tutorialContext: TutorialContext = {};
 
 // ─── URL hash ↔ tab/day sync ────────────────────────────────────────────────
 
@@ -248,6 +200,9 @@ let _optimAbortController: AbortController | null = null;
 let _optimEarlyStopController: AbortController | null = null;
 /** True while undo/redo is executing — prevents onStoreChanged from reconciling */
 let _undoRedoInProgress = false;
+/** True while tutorial-demo is bulk-loading or restoring state — prevents
+ *  onStoreChanged from piling undo entries onto every individual mutation. */
+let _suppressOnStoreChanged = false;
 /** Parallel schedule snapshots kept in sync with the store's undo/redo stacks */
 interface ScheduleSnapshot {
   schedule: Schedule | null;
@@ -4398,7 +4353,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.2.4</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.2.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -6553,6 +6508,10 @@ function onStoreChanged(): void {
   // in doUndoRedo(), so skip here.
   if (_undoRedoInProgress) return;
 
+  // Tutorial demo bulk-loads/restores by calling store APIs in a loop;
+  // the snapshot+restore flow handles undo state itself.
+  if (_suppressOnStoreChanged) return;
+
   // Push pre-change schedule so undo can restore it alongside the store's
   // undo stack. Capture dirty flag pre-mutation.
   _scheduleUndoStack.push({
@@ -6565,6 +6524,108 @@ function onStoreChanged(): void {
   if (!currentSchedule) return;
 
   _scheduleDirty = true;
+}
+
+// ─── Tutorial demo-mode hooks ────────────────────────────────────────────────
+
+/** Reconstruct (or clear) the live engine + schedule from a saved frozen
+ *  snapshot. Mirrors the loader path inside `init()`. Passing `null` clears
+ *  both — used on tour exit when the user had no schedule before. */
+function loadScheduleFromFrozen(saved: Schedule | null): void {
+  if (!saved || !hasFrozenFields(saved)) {
+    engine = null;
+    currentSchedule = null;
+    return;
+  }
+  const frozen = saved.algorithmSettings;
+  engine = new SchedulingEngine(
+    frozen.config,
+    new Set(frozen.disabledHardConstraints),
+    new Map(Object.entries(saved.restRuleSnapshot)),
+    frozen.dayStartHour,
+  );
+  engine.setCertLabelSnapshot(saved.certLabelSnapshot);
+  engine.setPeriod(saved.periodStart, saved.periodDays);
+  engine.addParticipants(saved.participants);
+  engine.addTasks(saved.tasks);
+  engine.importSchedule(saved);
+  engine.revalidateFull();
+  currentSchedule = engine.getSchedule()!;
+  const liveMode = store.getLiveModeState();
+  if (liveMode.enabled) freezeAssignments(currentSchedule, liveMode.currentTimestamp);
+}
+
+interface AppStateSnapshotJson {
+  currentTab: TabId;
+  currentDay: number;
+  viewMode: ViewMode;
+  profileParticipantId: string | null;
+  taskPanelSourceName: string | null;
+  continuityJson: string;
+  sidebarCollapsed: boolean;
+  scheduleDirty: boolean;
+  snapshotDirty: boolean;
+  hash: string;
+}
+
+function getAppStateSnapshot(): AppStateSnapshotJson {
+  return {
+    currentTab,
+    currentDay,
+    viewMode: _viewMode,
+    profileParticipantId: _profileParticipantId,
+    taskPanelSourceName: _taskPanelSourceName,
+    continuityJson: _continuityJson,
+    sidebarCollapsed: _sidebarCollapsed,
+    scheduleDirty: _scheduleDirty,
+    snapshotDirty: _snapshotDirty,
+    hash: location.hash,
+  };
+}
+
+function applyAppStateSnapshot(s: AppStateSnapshotJson): void {
+  currentTab = s.currentTab;
+  currentDay = s.currentDay;
+  _viewMode = s.viewMode;
+  _profileParticipantId = s.profileParticipantId;
+  _taskPanelSourceName = s.taskPanelSourceName;
+  _continuityJson = s.continuityJson;
+  _sidebarCollapsed = s.sidebarCollapsed;
+  _scheduleDirty = s.scheduleDirty;
+  _snapshotDirty = s.snapshotDirty;
+  // Reset per-tab view state so demo-time interactions (filter on "קבוצה 1",
+  // expanded template card, open snapshot panel) don't leak into the
+  // post-tour view of the user's real data.
+  resetParticipantsTabViewState();
+  resetTaskRulesTabViewState();
+  // Replace, don't push — we don't want the demo→user transition to leave
+  // a back-stack entry pointing at the demo url.
+  if (s.hash && s.hash !== location.hash) {
+    history.replaceState(null, '', s.hash);
+  }
+}
+
+function setUiForDemo(): void {
+  currentTab = 'schedule';
+  currentDay = 1;
+  _viewMode = 'SCHEDULE_VIEW';
+  _profileParticipantId = null;
+  _taskPanelSourceName = null;
+  _continuityJson = '';
+  _scheduleDirty = false;
+  _snapshotDirty = false;
+  _manualBuildActive = false;
+  clearManualSelection();
+  _undoStack = [];
+  _scheduleUndoStack.length = 0;
+  _scheduleRedoStack.length = 0;
+  // Reset per-tab view state so a filter/sort/expansion left from the user's
+  // pre-tour session doesn't carry into the demo view (e.g. the participants
+  // tab showing only "קבוצה 1" because the user filtered there earlier).
+  resetParticipantsTabViewState();
+  resetTaskRulesTabViewState();
+  // Drop URL hash entirely while in demo — restore on exit overrides it.
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
 }
 
 function init(): void {
@@ -6761,6 +6822,29 @@ function init(): void {
 
     // Apply saved theme before first render to prevent flash
     applyTheme(getStoredTheme());
+
+    // Register the cross-module hooks that `tutorial-demo.ts` reaches into
+    // (snapshot/restore app state, swap out the live schedule, etc.). Done
+    // before `initStore` so a backup-restore is in place if needed.
+    registerTutorialHooks({
+      getAppStateSnapshot,
+      applyAppStateSnapshot,
+      loadScheduleFromFrozen,
+      generateTasksFromTemplates,
+      setSuppressOnStoreChanged: (v: boolean) => {
+        _suppressOnStoreChanged = v;
+      },
+      isManualBuildActive: () => _manualBuildActive,
+      hasFrozenFields,
+      setUiForDemo,
+      renderAll,
+    });
+
+    // Mid-tour reload: if the previous session was interrupted while the
+    // tutorial demo state was loaded, restore the user's snapshot before
+    // any code below reads from localStorage. The user sees their own
+    // data — no toast, no friction.
+    restoreTutorialBackupIfPresent();
 
     store.initStore();
     store.subscribe(onStoreChanged);

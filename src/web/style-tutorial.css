@@ -5,11 +5,15 @@
    ============================================================================ */
 
 /* ── Backdrop layer (sits above the page, beneath the spotlight cutout) ──── */
+/* During a tour the backdrop intercepts clicks everywhere except the
+ * spotlight halo — JavaScript updates the inline `clip-path` to cut a hole
+ * matching the halo rect, so the spotlit target stays clickable but unrelated
+ * UI underneath the dim area is blocked. */
 .tutorial-backdrop {
   position: fixed;
   inset: 0;
   z-index: 200000;
-  pointer-events: none;
+  pointer-events: auto;
   animation: tutorialFadeIn 0.2s ease;
 }
 
@@ -35,6 +39,23 @@
   left: 50%;
   width: 0;
   height: 0;
+}
+
+/* Brief attention pulse — fired when the user clicks the dim area outside
+   the spotlight to remind them where the active target is. */
+.tutorial-spotlight.tutorial-spotlight-pulse {
+  animation: tutorialSpotlightPulse 0.55s ease;
+}
+@keyframes tutorialSpotlightPulse {
+  0% {
+    outline: 0 solid rgba(255, 220, 0, 0);
+  }
+  40% {
+    outline: 4px solid rgba(255, 220, 0, 0.85);
+  }
+  100% {
+    outline: 0 solid rgba(255, 220, 0, 0);
+  }
 }
 
 /* ── Popover panel (the coach-mark) ──────────────────────────────────────── */

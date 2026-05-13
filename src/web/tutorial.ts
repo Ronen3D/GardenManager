@@ -16,41 +16,15 @@
 // Note: `tutorial-content` lazily imports types from this file (type-only, no runtime cycle).
 // We import TRACKS / getTrackById eagerly so accordion + step rendering can be synchronous.
 import { getTrackById, TRACKS } from './tutorial-content';
+import { enterTutorialDemoMode, exitTutorialDemoMode, TutorialPreflightError } from './tutorial-demo';
 import { showToast } from './ui-modal';
 
 // ─── Types (exported for tutorial-content.ts) ────────────────────────────────
 
-export interface TutorialContext {
-  getSchedule: () => unknown | null;
-  isLiveModeEnabled: () => boolean;
-  /** True when the user has at least one participant configured. */
-  hasParticipants?: () => boolean;
-  /** True when the user has at least one task template configured. */
-  hasTaskTemplates?: () => boolean;
-  /** Run a small demo schedule generation so subsequent tutorial steps have
-   * data to point at. Should resolve only after the optim-overlay clears. */
-  generateDemoSchedule?: () => Promise<void>;
-  /** Enable live mode anchored at the start of day 1 — used by inject /
-   * rescue / Future-SOS demo steps. */
-  enableLiveModeForDemo?: () => Promise<void>;
-  /** Re-seed default participants (no-op if any participant already exists). */
-  seedParticipants?: () => Promise<void>;
-  /** Re-seed default task templates (no-op if any template already exists). */
-  seedTaskTemplates?: () => Promise<void>;
-}
-
-/** Fallback action chip rendered inside the popover body when the step's data
- * isn't there to demonstrate. Picking the chip fires the corresponding helper
- * on the TutorialContext, then re-renders the step so the user sees the
- * populated UI without leaving the tour. */
-export type FallbackActionKind = 'generate-schedule' | 'enable-live' | 'seed-participants' | 'seed-templates';
-export interface FallbackAction {
-  kind: FallbackActionKind;
-  /** Optional override for the chip label. Default: kind-appropriate Hebrew. */
-  label?: string;
-  /** Optional override for the explainer line under the chip. */
-  hint?: string;
-}
+/** Reserved for forward compatibility. The tour runs against curated demo
+ *  state loaded on entry, so per-step preconditions / context callbacks
+ *  are no longer needed. */
+export type TutorialContext = Record<string, never>;
 
 export interface TutorialStep {
   id: string;
@@ -60,18 +34,8 @@ export interface TutorialStep {
   title: string;
   /** Hebrew copy. May contain limited HTML (<strong>, <em>). */
   body: string;
-  /** Used when precondition() returns false. */
-  bodyFallback?: string;
-  precondition?: (ctx: TutorialContext) => boolean;
   /** Optional embedded screenshot. */
   screenshot?: { src: string; alt: string };
-  /** Action chip shown in the popover when its prerequisite isn't met
-   * (e.g. "create demo schedule" when no schedule exists). Picking it runs
-   * the corresponding context helper, then re-renders the step.
-   * When a function, it is re-evaluated against the live ctx on every render
-   * — useful for steps that need *two* prerequisites in sequence
-   * (e.g. schedule first, then live mode). Return null to suppress the chip. */
-  fallbackAction?: FallbackAction | ((ctx: TutorialContext) => FallbackAction | null);
   /** Engine should `.click()` the tab button before showing this step. */
   switchToTab?: 'participants' | 'task-rules' | 'schedule' | 'algorithm';
   /** Engine should ensure these accordion ids are open before showing. */
@@ -82,8 +46,13 @@ export interface TutorialStep {
    * row's pencil icon). Needed for steps that point at controls only rendered
    * inside an expanded row (e.g. the unavailability editor). */
   expandFirstParticipant?: boolean;
+  /** Engine should open the *create* participant sheet. */
+  openAddParticipant?: boolean;
+  /** Engine should dispatch a synthetic `mouseover` on the target so a hover
+   *  tooltip / popover surfaces before the next step spotlights its button. */
+  hoverTarget?: boolean;
   /** Mobile-specific overrides applied when matchMedia(max-width:767px). */
-  mobileOverride?: Partial<Pick<TutorialStep, 'target' | 'placement' | 'body'>>;
+  mobileOverride?: Partial<Pick<TutorialStep, 'target' | 'placement' | 'body' | 'title'>>;
 }
 
 export interface TutorialTrack {
@@ -93,9 +62,6 @@ export interface TutorialTrack {
   description: string;
   steps: TutorialStep[];
   switchToTab?: 'participants' | 'task-rules' | 'schedule' | 'algorithm';
-  /** If true, track refuses to start without a generated schedule. */
-  requiresSchedule?: boolean;
-  guardMessage?: string;
   /** Programmatically open this overlay view before track starts. */
   enterView?: 'profile' | 'task-panel';
 }
@@ -153,15 +119,26 @@ let _backdrop: HTMLElement | null = null;
 let _spotlight: HTMLElement | null = null;
 let _popover: HTMLElement | null = null;
 let _previouslyFocused: HTMLElement | null = null;
-let _ctx: TutorialContext | null = null;
-let _userTabSwitchListener: ((e: Event) => void) | null = null;
 let _mqListener: ((e: MediaQueryListEvent) => void) | null = null;
 let _mql: MediaQueryList | null = null;
 let _resizeListener: (() => void) | null = null;
 let _scrollListener: (() => void) | null = null;
 let _scrollRafQueued = false;
 let _domObserver: MutationObserver | null = null;
+let _beforeUnloadListener: ((e: BeforeUnloadEvent) => void) | null = null;
 let _internalClickFlag = false;
+// Monotonic counter incremented on every renderStep call. Each in-flight
+// `renderStep` captures the current value at entry and checks it after every
+// await — if a newer render or `exitTutorial` started in the meantime, the
+// stale render bails before touching DOM. Without this, spamming Next throws
+// `Cannot set properties of null` when an old promise resumes after exit.
+let _renderToken = 0;
+// Most recent element a previous step requested a synthetic hover on. The
+// next step can re-fire the hover to keep tooltips alive across the
+// transition (e.g. s-8 surfaces the participant tooltip, s-8-action targets
+// `.btn-swap` inside that tooltip — without re-hover, any mouse motion or
+// scroll between the two steps dismisses the tooltip).
+let _lastHoverTarget: HTMLElement | null = null;
 
 export function getCurrentTrack(): string | null {
   return _activeTrackId;
@@ -169,7 +146,7 @@ export function getCurrentTrack(): string | null {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-export async function startTutorial(trackId: string, ctx: TutorialContext): Promise<void> {
+export async function startTutorial(trackId: string, _ctx: TutorialContext): Promise<void> {
   if (_activeTrackId) exitTutorial();
   const track = getTrackById(trackId);
   if (!track) {
@@ -177,24 +154,23 @@ export async function startTutorial(trackId: string, ctx: TutorialContext): Prom
     return;
   }
 
-  _ctx = ctx;
-
-  // Track-level guard
-  if (
-    track.requiresSchedule &&
-    (!ctx.getSchedule() || (ctx.getSchedule() as { assignments?: unknown[] }).assignments?.length === 0)
-  ) {
-    showGuardDialog(
-      track.guardMessage ?? 'מדריך זה דורש שבצ"ק קיים. צור שבצ"ק תחילה ונסה שוב.',
-      // Offer "create one for me" if the host wired up the helper.
-      typeof ctx.generateDemoSchedule === 'function'
-        ? async () => {
-            await ctx.generateDemoSchedule!();
-            // After successful generation, retry the start.
-            await startTutorial(trackId, ctx);
-          }
-        : undefined,
-    );
+  // Pre-tour gate: refuse to enter demo mode if it would discard in-memory
+  // unsaved work. Surfaces a toast and returns.
+  try {
+    enterTutorialDemoMode();
+  } catch (err) {
+    if (err instanceof TutorialPreflightError) {
+      const message =
+        err.reason === 'manual-build'
+          ? 'סיים את העריכה הידנית לפני התחלת המדריך.'
+          : err.reason === 'modal-open'
+            ? 'סגור את החלון לפני התחלת המדריך.'
+            : 'סגור את גיליון העריכה לפני התחלת המדריך.';
+      showToast(message, { type: 'warning', duration: 4500 });
+      return;
+    }
+    console.error('[tutorial] failed to load demo state:', err);
+    showToast('טעינת נתוני הדגמה נכשלה — נסה לרענן את הדף.', { type: 'error', duration: 5000 });
     return;
   }
 
@@ -219,34 +195,47 @@ export async function startTutorial(trackId: string, ctx: TutorialContext): Prom
 
 export function exitTutorial(): void {
   if (!_activeTrackId) return;
-  uninstallListeners();
-  // If the engine programmatically opened the participant editor sheet during
-  // the tutorial (expandFirstParticipant), close it on exit so the still-mounted
-  // backdrop doesn't swallow the user's next click.
-  const sheetCancel = document.querySelector<HTMLElement>('.gm-edit-sheet-v2 [data-pe-cancel]');
-  if (sheetCancel) {
-    _internalClickFlag = true;
-    sheetCancel.click();
-    _internalClickFlag = false;
-  }
-  if (_root) {
-    _root.remove();
-    _root = null;
-    _backdrop = null;
-    _spotlight = null;
-    _popover = null;
-  }
-  if (_previouslyFocused?.focus) {
-    try {
-      _previouslyFocused.focus();
-    } catch {
-      /* ignore */
+  _renderToken++;
+  try {
+    uninstallListeners();
+    // If the engine programmatically opened the participant editor sheet during
+    // the tutorial (expandFirstParticipant), close it on exit so the still-mounted
+    // backdrop doesn't swallow the user's next click.
+    const sheetCancel = document.querySelector<HTMLElement>('.gm-edit-sheet-v2 [data-pe-cancel]');
+    if (sheetCancel) {
+      _internalClickFlag = true;
+      sheetCancel.click();
+      _internalClickFlag = false;
     }
+    if (_root) {
+      _root.remove();
+      _root = null;
+      _backdrop = null;
+      _spotlight = null;
+      _popover = null;
+    }
+    markBackgroundInert(false);
+    // Hide any participant tooltip the tour surfaced via synthetic hover —
+    // the user's pointer was never inside it, so its host's mouseleave timer
+    // won't fire and the tooltip would otherwise stay until the next render.
+    document.querySelectorAll<HTMLElement>('.participant-tooltip').forEach((tt) => {
+      tt.style.display = 'none';
+    });
+    if (_previouslyFocused?.focus) {
+      try {
+        _previouslyFocused.focus();
+      } catch {
+        /* ignore */
+      }
+    }
+    _previouslyFocused = null;
+    _activeTrackId = null;
+    _stepIdx = 0;
+    _lastHoverTarget = null;
+  } finally {
+    // Always restore the user's snapshot — even if the cleanup above threw.
+    exitTutorialDemoMode();
   }
-  _previouslyFocused = null;
-  _activeTrackId = null;
-  _stepIdx = 0;
-  _ctx = null;
 }
 
 // ─── First-launch banner ─────────────────────────────────────────────────────
@@ -307,39 +296,27 @@ function removeBannerIfPresent(): void {
 
 // ─── Tutorial-launcher accordion ─────────────────────────────────────────────
 
-export function renderTutorialAccordionBody(ctx: TutorialContext): string {
+export function renderTutorialAccordionBody(_ctx: TutorialContext): string {
   const seen = new Set(getSeenTracks());
-  const hasSchedule =
-    ctx.getSchedule() != null && ((ctx.getSchedule() as { assignments?: unknown[] }).assignments?.length ?? 0) > 0;
 
   const trackButtons = TRACKS.map((t) => {
     const isSeen = seen.has(t.id);
-    const needsSchedule = !!t.requiresSchedule;
-    const blocked = needsSchedule && !hasSchedule;
     return `
-      <button type="button" class="tutorial-track-btn" data-tutorial-track="${t.id}" ${
-        needsSchedule ? 'data-requires-schedule="1"' : ''
-      } title="${escAttrLite(t.description)}">
+      <button type="button" class="tutorial-track-btn" data-tutorial-track="${t.id}" title="${escAttrLite(t.description)}">
         <span class="tutorial-track-btn-row">
           <span class="tutorial-track-icon" aria-hidden="true">${t.icon}</span>
           <span class="tutorial-track-label">${escHtmlLite(t.label)}</span>
           ${isSeen ? '<span class="tutorial-track-seen" aria-label="הושלם">✓</span>' : ''}
-          ${blocked ? '<span class="tutorial-track-warn" aria-label="דורש שבצ&quot;ק">⚠</span>' : ''}
         </span>
         <span class="tutorial-track-desc">${escHtmlLite(t.description)}</span>
       </button>
     `;
   }).join('');
 
-  const notice = !hasSchedule
-    ? '<span class="tutorial-launcher-notice">⚠ אין שבצ"ק פעיל — מדריכים המסומנים "דורש שבצ"ק" יציגו הנחיה לפני התחלה.</span>'
-    : '';
-
   return `
     <div class="tutorial-launcher-body">
-      <p class="tutorial-launcher-intro">בחר מדריך — המערכת תדריך אותך שלב אחר שלב, וניתן לצאת בכל עת. חלק מהמדריכים דורשים שבצ"ק קיים; הסיור הכללי אינו מחייב.</p>
+      <p class="tutorial-launcher-intro">בחר מדריך — המערכת תדריך אותך שלב אחר שלב, וניתן לצאת בכל עת. הסיור משתמש בנתוני הדגמה זמניים; הנתונים שלך יוחזרו אוטומטית ביציאה.</p>
       <div class="tutorial-track-list">${trackButtons}</div>
-      ${notice}
     </div>
   `;
 }
@@ -362,6 +339,10 @@ function mountOverlay(): void {
 
   _backdrop = document.createElement('div');
   _backdrop.className = 'tutorial-backdrop';
+  // Clicks on the dim area outside the spotlight hole and outside the popover
+  // hit the backdrop. Pulse the spotlight + toast once per few seconds so the
+  // user understands the tour is gating their input.
+  _backdrop.addEventListener('click', onBackdropClick);
 
   _spotlight = document.createElement('div');
   _spotlight.className = 'tutorial-spotlight tutorial-spotlight-centered';
@@ -376,12 +357,59 @@ function mountOverlay(): void {
   _root.appendChild(_spotlight);
   _root.appendChild(_popover);
   document.body.appendChild(_root);
+
+  // Mark every other top-level element as `inert` so Tab focus can't escape
+  // the popover into background UI (Undo, Delete, tab buttons, etc.) and
+  // keyboard Enter on a leaked focus can't fire real actions. Without this,
+  // the dim backdrop blocks mouse clicks but does nothing for keyboard.
+  markBackgroundInert(true);
+}
+
+const _inertedNodes: HTMLElement[] = [];
+function markBackgroundInert(on: boolean): void {
+  if (on) {
+    _inertedNodes.length = 0;
+    for (const child of Array.from(document.body.children)) {
+      if (!(child instanceof HTMLElement)) continue;
+      if (child === _root) continue;
+      // Don't inert the toast container — toasts (including the "tour active"
+      // backdrop-click toast) need to surface above the overlay.
+      if (child.classList.contains('gm-toast-container')) continue;
+      if (child.hasAttribute('inert')) continue;
+      child.setAttribute('inert', '');
+      _inertedNodes.push(child);
+    }
+  } else {
+    for (const node of _inertedNodes) {
+      node.removeAttribute('inert');
+    }
+    _inertedNodes.length = 0;
+  }
+}
+
+let _lastBackdropToastAt = 0;
+function onBackdropClick(): void {
+  // Pulse the spotlight to draw the eye back to the active target.
+  if (_spotlight) {
+    _spotlight.classList.remove('tutorial-spotlight-pulse');
+    // Force reflow so the animation restarts.
+    void _spotlight.offsetWidth;
+    _spotlight.classList.add('tutorial-spotlight-pulse');
+  }
+  // Rate-limit the toast — repeated clicks shouldn't flood notifications.
+  const now = Date.now();
+  if (now - _lastBackdropToastAt < 2500) return;
+  _lastBackdropToastAt = now;
+  showToast('המדריך פעיל — השתמש בכפתורי "המשך" / "יציאה" כדי להתקדם.', {
+    type: 'info',
+    duration: 2500,
+  });
 }
 
 // ─── Internals: render a single step ─────────────────────────────────────────
 
 async function renderStep(idx: number): Promise<void> {
-  if (!_activeTrackId || !_popover || !_spotlight || !_ctx) return;
+  if (!_activeTrackId || !_popover || !_spotlight) return;
 
   const track = getTrackById(_activeTrackId);
   if (!track) return exitTutorial();
@@ -394,40 +422,87 @@ async function renderStep(idx: number): Promise<void> {
   }
   _stepIdx = idx;
 
+  // Capture a token at the start of this render. Every await below resumes
+  // asynchronously, so by the time we touch `_popover.innerHTML` the tour may
+  // already have exited (or a newer renderStep may have started). Bail on any
+  // mismatch instead of throwing `Cannot set properties of null`.
+  const token = ++_renderToken;
+  const stillCurrent = (): boolean => token === _renderToken && !!_popover && !!_spotlight && _activeTrackId !== null;
+
   const stepRaw = track.steps[idx];
   const isMobile = !!_mql?.matches;
   const step: TutorialStep = isMobile && stepRaw.mobileOverride ? { ...stepRaw, ...stepRaw.mobileOverride } : stepRaw;
 
   // Pre-show: switch tab if requested
   if (step.switchToTab) await switchToTabProgrammatic(step.switchToTab);
+  if (!stillCurrent()) return;
+
+  // Pre-show: close the participant editor sheet if a previous step opened it
+  // and the new step doesn't need it.
+  if (!stepNeedsParticipantSheet(step)) await closeParticipantSheetIfOpen();
+  if (!stillCurrent()) return;
+
+  // Pre-show: close the mobile workload sidebar drawer if not the current target.
+  if (!stepNeedsMobileSidebar(step)) closeMobileSidebarIfOpen();
+  if (!stillCurrent()) return;
 
   // Pre-show: open accordions if requested
   if (step.openAccordion) {
     const ids = Array.isArray(step.openAccordion) ? step.openAccordion : [step.openAccordion];
-    for (const id of ids) await openAccordionProgrammatic(id);
+    for (const id of ids) {
+      await openAccordionProgrammatic(id);
+      if (!stillCurrent()) return;
+    }
   }
 
-  // Pre-show: expand first template card if requested (needed for t-5/t-6/t-8
-  // which spotlight inputs that only render inside an expanded card).
   if (step.expandFirstTemplate) await expandFirstTemplateCard();
-
-  // Pre-show: put first participant row into edit mode (needed for p-5 etc.)
+  if (!stillCurrent()) return;
   if (step.expandFirstParticipant) await expandFirstParticipantRow();
+  if (!stillCurrent()) return;
+  if (step.openAddParticipant) await openAddParticipantSheet();
+  if (!stillCurrent()) return;
 
   // Wait one rAF for any rerender / transition to settle
   await rAFAsync();
+  if (!stillCurrent()) return;
+
+  // If this tour entered a dedicated view (profile or task-panel) and the
+  // view's root has been torn down (e.g. background JS closed it), the
+  // remaining steps would walk an empty overlay over the schedule grid.
+  // Exit cleanly with a toast instead.
+  if (track.enterView === 'profile' && !document.querySelector('.profile-view-root')) {
+    showToast('המסך נסגר; המדריך נסגר.', { type: 'info', duration: 2500 });
+    exitTutorial();
+    return;
+  }
+  if (track.enterView === 'task-panel' && !document.querySelector('.task-panel-view-root')) {
+    showToast('המסך נסגר; המדריך נסגר.', { type: 'info', duration: 2500 });
+    exitTutorial();
+    return;
+  }
+
+  // If this step's target sits inside a hover-anchored popup (currently only
+  // `.participant-tooltip` after `hoverTarget: true`), re-fire the synthetic
+  // hover on the previous anchor so the popup is back in the DOM and its
+  // children resolve. Without this, any mouse motion or resize between the
+  // two steps dismisses the tooltip and we'd query a zero-rect target.
+  const stepTargetsTooltip = !!step.target && /\.participant-tooltip\b/.test(step.target);
+  if (stepTargetsTooltip && _lastHoverTarget?.isConnected) {
+    dispatchSyntheticHover(_lastHoverTarget);
+    await rAFAsync();
+    if (!stillCurrent()) return;
+  } else if (_lastHoverTarget && !step.hoverTarget && !stepTargetsTooltip) {
+    // Leaving the hover-anchored sequence — dismiss the tooltip so it doesn't
+    // linger over the next step's content (e.g. Back from s-8 to s-7 leaves
+    // the participant tooltip floating over the violations panel).
+    dispatchSyntheticLeave(_lastHoverTarget);
+    _lastHoverTarget = null;
+  }
 
   // Resolve target
   let targetEl: HTMLElement | null = null;
   if (step.target) {
     targetEl = document.querySelector<HTMLElement>(step.target);
-  }
-
-  // Apply precondition
-  let body = step.body;
-  if (step.precondition && !step.precondition(_ctx)) {
-    body = step.bodyFallback ?? step.body;
-    targetEl = null;
   }
 
   // Render popover content
@@ -438,24 +513,13 @@ async function renderStep(idx: number): Promise<void> {
         step.screenshot.alt,
       )}">`
     : '';
-
   const progressPct = Math.round(((idx + 1) / track.steps.length) * 100);
-  // Render fallback action chip when the step has one and its prerequisite
-  // isn't met. Lets the user create demo data on demand without leaving the
-  // tour — e.g. "no schedule yet → [צור עבורי שבצ"ק להדגמה]".
-  let resolvedAction: FallbackAction | null = null;
-  if (step.fallbackAction) {
-    resolvedAction = typeof step.fallbackAction === 'function' ? step.fallbackAction(_ctx) : step.fallbackAction;
-  }
-  const actionChipHtml =
-    resolvedAction && isFallbackActionApplicable(resolvedAction, _ctx) ? renderFallbackActionChip(resolvedAction) : '';
   _popover.innerHTML = `
     <div class="tutorial-step-counter">${escHtmlLite(stepCounter)}</div>
     <div class="tutorial-progress" aria-hidden="true"><div class="tutorial-progress-fill" style="width:${progressPct}%"></div></div>
     <h3 class="tutorial-title" id="tutorial-title-${escAttrLite(step.id)}">${escHtmlLite(step.title)}</h3>
-    <div class="tutorial-body">${body}</div>
+    <div class="tutorial-body">${step.body}</div>
     ${screenshotHtml}
-    ${actionChipHtml}
     <div class="tutorial-footer">
       <button type="button" class="tutorial-btn tutorial-btn-primary${
         isLast ? ' tutorial-btn-finish' : ''
@@ -474,16 +538,32 @@ async function renderStep(idx: number): Promise<void> {
     if (action === 'next') void renderStep(_stepIdx + 1);
     else if (action === 'back') void renderStep(_stepIdx - 1);
     else if (action === 'exit') exitTutorial();
-    else if (action === 'fallback-run' && resolvedAction) {
-      void runFallbackAction(resolvedAction);
-    }
   };
 
   // Position spotlight + popover
   if (targetEl) {
     scrollIntoViewIfNeeded(targetEl);
     await rAFAsync();
+    if (!stillCurrent()) return;
     positionForTarget(targetEl, step.placement === 'center' ? 'auto' : step.placement);
+    // Optional synthetic hover — surfaces the workload-popup tooltip that
+    // step `s-8` (manual swap) describes so the next step's `⇄` button has
+    // something to spotlight.
+    if (step.hoverTarget) {
+      dispatchSyntheticHover(targetEl);
+      _lastHoverTarget = targetEl;
+      // Wait one frame for the tooltip to mount, then re-aim the spotlight to
+      // include both the trigger and the surfaced tooltip. Without this, the
+      // halo sits on the tiny trigger cell while the body describes the
+      // tooltip — especially confusing on mobile where the trigger is ~50px
+      // wide and the tooltip is ~280px wide and floats elsewhere.
+      await rAFAsync();
+      if (!stillCurrent()) return;
+      const tooltip = document.querySelector<HTMLElement>('.participant-tooltip');
+      if (tooltip && tooltip.style.display !== 'none' && tooltip.offsetWidth > 0) {
+        positionForUnion(targetEl, tooltip, step.placement === 'center' ? 'auto' : step.placement);
+      }
+    }
   } else {
     positionCentered();
   }
@@ -495,20 +575,76 @@ async function renderStep(idx: number): Promise<void> {
   });
 }
 
+function dispatchSyntheticHover(el: HTMLElement): void {
+  const rect = el.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const opts: MouseEventInit = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window };
+  el.dispatchEvent(new MouseEvent('pointerover', opts));
+  el.dispatchEvent(new MouseEvent('mouseover', opts));
+  el.dispatchEvent(new MouseEvent('mouseenter', opts));
+  el.dispatchEvent(new MouseEvent('mousemove', opts));
+}
+
+function dispatchSyntheticLeave(el: HTMLElement): void {
+  const rect = el.getBoundingClientRect();
+  const opts: MouseEventInit = {
+    bubbles: true,
+    cancelable: true,
+    clientX: rect.left - 50,
+    clientY: rect.top - 50,
+    view: window,
+  };
+  el.dispatchEvent(new MouseEvent('mouseout', opts));
+  el.dispatchEvent(new MouseEvent('mouseleave', opts));
+  el.dispatchEvent(new MouseEvent('pointerout', opts));
+  el.dispatchEvent(new MouseEvent('pointerleave', opts));
+  // Hard-dismiss the tooltip directly — the host listens for mouseleave with a
+  // hide-delay timer, so a synthetic leave alone leaves the tooltip visible
+  // for a moment. The tour can't rely on the user moving their physical mouse.
+  document.querySelectorAll<HTMLElement>('.participant-tooltip').forEach((tt) => {
+    tt.style.display = 'none';
+  });
+}
+
 // ─── Positioning ─────────────────────────────────────────────────────────────
 
 function scrollIntoViewIfNeeded(el: HTMLElement): void {
-  const rect = el.getBoundingClientRect();
+  // First, walk up the scrolling-ancestor chain so any inner scroll container
+  // (e.g. the participant editor sheet's `.pe-body`) brings the target into
+  // its own visible window. The native `scrollIntoView` does this for free —
+  // we only handle the outer window scroll manually below to control the gap.
+  // Without this, targets like `[data-pe-unavail-add]` (rendered far down in
+  // the sheet body) report off-viewport rects and the spotlight falls back to
+  // centered — which then leaves a stale halo behind from the previous step.
+  el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' as ScrollBehavior });
+
   const vh = window.innerHeight;
   // On mobile the bottom-sheet popover covers ~half the viewport, so the
   // useful "above the sheet" area is roughly the top 50% — keep targets there.
   const isMobile = !!_mql?.matches;
-  // Reserve enough headroom above the target so the user can see *context*
-  // (parent label, neighbouring rows, the row above the highlighted control).
-  // Previous behaviour used scrollIntoView({block:'start'}) which slammed the
-  // target right against the top edge — no context, no spatial reference.
   const upperBound = isMobile ? vh * 0.18 : 100;
   const lowerBound = isMobile ? vh * 0.45 : vh - 100;
+
+  // If the target is inside the participant editor sheet, the bottom-sheet
+  // popover on mobile can cover the lower portion of the sheet body. Scroll
+  // the sheet's own inner scroll container so the target lands in the visible
+  // band above where the popover sits. Window-level scrollTo below has no
+  // effect on the sheet's inner scroll container.
+  if (isMobile) {
+    const sheet = el.closest('.gm-edit-sheet-v2');
+    if (sheet) {
+      const sheetScrollEl = (sheet.querySelector('.pe-body') as HTMLElement | null) ?? (sheet as HTMLElement);
+      const r = el.getBoundingClientRect();
+      const desiredFromTop = vh * 0.22;
+      const overshoot = r.top - desiredFromTop;
+      if (Math.abs(overshoot) > 4) {
+        sheetScrollEl.scrollTop += overshoot;
+      }
+    }
+  }
+
+  const rect = el.getBoundingClientRect();
   if (rect.top < upperBound || rect.bottom > lowerBound) {
     // Compute the absolute scroll position that places the target's top edge
     // at our preferred offset from the viewport top. Manual scroll instead of
@@ -519,6 +655,38 @@ function scrollIntoViewIfNeeded(el: HTMLElement): void {
     const newScrollY = window.scrollY + rect.top - desiredFromTop;
     window.scrollTo({ top: Math.max(0, newScrollY), behavior: 'instant' as ScrollBehavior });
   }
+}
+
+/** Position the spotlight to cover the union of two elements' bounding rects.
+ * Used after `hoverTarget` surfaces a tooltip — the user needs to see both the
+ * trigger that "anchors" the tooltip and the tooltip itself. */
+function positionForUnion(a: HTMLElement, b: HTMLElement, placement: TutorialStep['placement']): void {
+  const ra = a.getBoundingClientRect();
+  const rb = b.getBoundingClientRect();
+  // Synthesize a wrapper element whose rect is the union — positionForTarget
+  // reads from `getBoundingClientRect`, so the easiest reuse is to call it
+  // with an object that mimics the same API on the spotlight side. Instead
+  // we inline the relevant slice of positionForTarget for clarity.
+  if (!_spotlight || !_popover) return;
+  const top = Math.min(ra.top, rb.top);
+  const left = Math.min(ra.left, rb.left);
+  const right = Math.max(ra.right, rb.right);
+  const bottom = Math.max(ra.bottom, rb.bottom);
+  const unionRect = {
+    top,
+    left,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+    x: left,
+    y: top,
+    toJSON: () => ({}),
+  } as DOMRect;
+  // Shim: temporarily override the union element's rect via a wrapper.
+  const wrapper = document.createElement('div');
+  Object.defineProperty(wrapper, 'getBoundingClientRect', { value: () => unionRect });
+  positionForTarget(wrapper as HTMLElement, placement);
 }
 
 function positionForTarget(target: HTMLElement, placement: TutorialStep['placement']): void {
@@ -539,11 +707,20 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
   const minHalo = 24;
   const haloW = Math.max(rect.width + pad * 2, minHalo);
   const haloH = Math.max(rect.height + pad * 2, minHalo);
+  const haloTop = rect.top + rect.height / 2 - haloH / 2;
+  const haloLeftPx = rect.left + rect.width / 2 - haloW / 2;
+  // Clip the halo to the visible viewport so over-tall / over-wide targets
+  // (expanded accordions, full-width grids) render a finite halo instead of a
+  // rectangle whose edges fall outside the screen.
+  const spotlightTop = Math.max(haloTop, 0);
+  const spotlightLeft = Math.max(haloLeftPx, 0);
+  const spotlightWidth = Math.max(0, Math.min(haloLeftPx + haloW, vw) - spotlightLeft);
+  const spotlightHeight = Math.max(0, Math.min(haloTop + haloH, vh) - spotlightTop);
   _spotlight.classList.remove('tutorial-spotlight-centered');
-  _spotlight.style.top = `${rect.top + rect.height / 2 - haloH / 2}px`;
-  _spotlight.style.left = `${rect.left + rect.width / 2 - haloW / 2}px`;
-  _spotlight.style.width = `${haloW}px`;
-  _spotlight.style.height = `${haloH}px`;
+  _spotlight.style.top = `${spotlightTop}px`;
+  _spotlight.style.left = `${spotlightLeft}px`;
+  _spotlight.style.width = `${spotlightWidth}px`;
+  _spotlight.style.height = `${spotlightHeight}px`;
 
   // Popover dimensions (must measure after content render)
   _popover.classList.remove('tutorial-popover-centered');
@@ -635,7 +812,14 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
   const chosen = order.find((p) => fits[p]);
 
   if (!chosen) {
-    positionCentered();
+    // No placement leaves room for the popover next to the (clipped) halo —
+    // happens when the target spans the full viewport (expanded accordion,
+    // wide grid). Keep the clipped spotlight visible and pin the popover to
+    // the bottom of the viewport (mobile-sheet-like) so the user still has a
+    // spatial cue rather than a 0×0 centered halo.
+    _popover.classList.remove('tutorial-popover-centered');
+    _popover.style.left = `${clamp((vw - pw) / 2, 8, vw - pw - 8)}px`;
+    _popover.style.top = `${vh - ph - 12}px`;
     return;
   }
 
@@ -668,86 +852,6 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
   _popover.style.left = `${left}px`;
 }
 
-// ─── Fallback action chips ───────────────────────────────────────────────────
-
-function fallbackActionDefaults(action: FallbackAction): { label: string; hint: string } {
-  switch (action.kind) {
-    case 'generate-schedule':
-      return {
-        label: action.label ?? '⚡ צור עבורי שבצ"ק להדגמה',
-        hint: action.hint ?? 'יום אחד, ייצור בסביבות 5 שניות. אפשר למחוק אחר כך.',
-      };
-    case 'enable-live':
-      return {
-        label: action.label ?? '🟢 הפעל מצב חי להדגמה',
-        hint: action.hint ?? 'מקבע עוגן בתחילת יום 1. ניתן לכבות מתוך לשונית השבצ"ק.',
-      };
-    case 'seed-participants':
-      return {
-        label: action.label ?? '👥 טען משתתפי דמו',
-        hint: action.hint ?? 'מחזיר את ברירת המחדל (לא מוחק משתתפים קיימים).',
-      };
-    case 'seed-templates':
-      return {
-        label: action.label ?? '📋 טען תבניות משימה דמו',
-        hint: action.hint ?? 'מחזיר את ברירת המחדל (לא מוחק תבניות קיימות).',
-      };
-  }
-}
-
-function isFallbackActionApplicable(action: FallbackAction, ctx: TutorialContext | null): boolean {
-  if (!ctx) return false;
-  switch (action.kind) {
-    case 'generate-schedule': {
-      const s = ctx.getSchedule() as { assignments?: unknown[] } | null;
-      const has = s != null && (s.assignments?.length ?? 0) > 0;
-      return !has && typeof ctx.generateDemoSchedule === 'function';
-    }
-    case 'enable-live':
-      return !ctx.isLiveModeEnabled() && typeof ctx.enableLiveModeForDemo === 'function';
-    case 'seed-participants':
-      return !ctx.hasParticipants?.() && typeof ctx.seedParticipants === 'function';
-    case 'seed-templates':
-      return !ctx.hasTaskTemplates?.() && typeof ctx.seedTaskTemplates === 'function';
-  }
-}
-
-function renderFallbackActionChip(action: FallbackAction): string {
-  const { label, hint } = fallbackActionDefaults(action);
-  return `
-    <div class="tutorial-action-chip">
-      <button type="button" class="tutorial-btn tutorial-btn-primary tutorial-btn-chip" data-tutorial-action="fallback-run">${escHtmlLite(label)}</button>
-      <span class="tutorial-action-chip-hint">${escHtmlLite(hint)}</span>
-    </div>`;
-}
-
-async function runFallbackAction(action: FallbackAction): Promise<void> {
-  if (!_ctx) return;
-  // Visible "working..." state on the chip so the user knows the click landed
-  // (schedule generation can take a few seconds).
-  const chipBtn = _popover?.querySelector<HTMLButtonElement>('.tutorial-btn-chip');
-  if (chipBtn) {
-    chipBtn.disabled = true;
-    chipBtn.textContent = '... מכין';
-  }
-  try {
-    if (action.kind === 'generate-schedule' && _ctx.generateDemoSchedule) {
-      await _ctx.generateDemoSchedule();
-    } else if (action.kind === 'enable-live' && _ctx.enableLiveModeForDemo) {
-      await _ctx.enableLiveModeForDemo();
-    } else if (action.kind === 'seed-participants' && _ctx.seedParticipants) {
-      await _ctx.seedParticipants();
-    } else if (action.kind === 'seed-templates' && _ctx.seedTaskTemplates) {
-      await _ctx.seedTaskTemplates();
-    }
-  } catch (err) {
-    console.warn('[tutorial] fallback action failed:', err);
-  }
-  // Re-render the same step — precondition should now pass and the populated
-  // UI is visible behind the popover.
-  await renderStep(_stepIdx);
-}
-
 /** Re-evaluate the current step's target rect and re-run positioning, without
  * triggering a scroll. Called from the scroll listener so the spotlight halo
  * (and on desktop, the popover) follows the target as the user scrolls around
@@ -761,8 +865,6 @@ function repositionCurrentStep(): void {
   const isMobile = !!_mql?.matches;
   const step: TutorialStep = isMobile && stepRaw.mobileOverride ? { ...stepRaw, ...stepRaw.mobileOverride } : stepRaw;
   if (!step.target) return; // centered step — nothing to track
-  // Skip when the precondition gates the step into a centered fallback.
-  if (step.precondition && _ctx && !step.precondition(_ctx)) return;
   const targetEl = document.querySelector<HTMLElement>(step.target);
   if (!targetEl) return;
   positionForTarget(targetEl, step.placement === 'center' ? 'auto' : step.placement);
@@ -771,6 +873,15 @@ function repositionCurrentStep(): void {
 function positionCentered(): void {
   if (!_spotlight || !_popover) return;
   _spotlight.classList.add('tutorial-spotlight-centered');
+  // Clear inline styles from any prior positionForTarget call. The centered
+  // class sets top/left/width/height via CSS, but inline styles win — without
+  // this reset, transitioning from a positioned step (step 4 = group pill) to
+  // a centered fallback (step 5 = off-viewport target) leaves the halo stuck
+  // at the previous step's coordinates.
+  _spotlight.style.top = '';
+  _spotlight.style.left = '';
+  _spotlight.style.width = '';
+  _spotlight.style.height = '';
   _popover.classList.add('tutorial-popover-centered');
   _popover.classList.remove('tutorial-popover-top-sheet');
   _popover.style.top = '';
@@ -845,7 +956,56 @@ async function expandFirstParticipantRow(): Promise<void> {
   _internalClickFlag = false;
   // Sheet renders synchronously into the body; wait briefly for the modal
   // backdrop + dialog to mount and the focus animation to settle.
-  await waitFor('.gm-edit-sheet-v2', 800);
+  const sheet = await waitFor('.gm-edit-sheet-v2', 800);
+  if (sheet) await waitForAnimations(sheet);
+}
+
+function stepNeedsMobileSidebar(step: TutorialStep): boolean {
+  const t = step.target ?? '';
+  return t.includes('.sidebar-fab') || t.includes('.participant-sidebar');
+}
+
+function closeMobileSidebarIfOpen(): void {
+  const sidebar = document.querySelector<HTMLElement>('.participant-sidebar.sidebar-mobile-open');
+  if (sidebar) sidebar.classList.remove('sidebar-mobile-open');
+}
+
+function stepNeedsParticipantSheet(step: TutorialStep): boolean {
+  if (step.expandFirstParticipant || step.openAddParticipant) return true;
+  // Targets that live *inside* the editor sheet — `[data-pe-...]` is the
+  // sheet's namespacing convention (see participant-editor-sheet.ts).
+  const t = step.target ?? '';
+  return t.includes('.gm-edit-sheet-v2') || t.includes('[data-pe-');
+}
+
+async function closeParticipantSheetIfOpen(): Promise<void> {
+  const sheet = document.querySelector<HTMLElement>('.gm-edit-sheet-v2');
+  if (!sheet) return;
+  const cancel = sheet.querySelector<HTMLElement>('[data-pe-cancel]');
+  if (!cancel) return;
+  _internalClickFlag = true;
+  cancel.click();
+  _internalClickFlag = false;
+  // Wait for the slide-down dismissal animation so the modal backdrop is gone
+  // by the time the next step measures its target's getBoundingClientRect().
+  await waitForAnimations(sheet);
+  // Defensive: in case the dismiss is async / awaits a save-confirm prompt and
+  // the sheet is still mounted, give the DOM a tick to settle.
+  await rAFAsync();
+}
+
+async function openAddParticipantSheet(): Promise<void> {
+  // No-op if any editor sheet is already open — covers the case where the
+  // user followed step 2's instruction and clicked the highlighted button
+  // themselves before pressing המשך.
+  if (document.querySelector('.gm-edit-sheet-v2')) return;
+  const addBtn = document.querySelector<HTMLElement>('[data-action="add-participant"]');
+  if (!addBtn) return;
+  _internalClickFlag = true;
+  addBtn.click();
+  _internalClickFlag = false;
+  const sheet = await waitFor('.gm-edit-sheet-v2', 800);
+  if (sheet) await waitForAnimations(sheet);
 }
 
 async function openAccordionProgrammatic(id: string): Promise<void> {
@@ -922,25 +1082,20 @@ async function waitFor(selector: string, timeoutMs: number): Promise<HTMLElement
   return null;
 }
 
+// Wait for any in-flight CSS animations on the element (and its descendants)
+// to finish, so subsequent getBoundingClientRect() calls measure the final
+// resting position. The participant editor sheet uses gmMobileModalSlideUp
+// (0.3s); without this, the spotlight is positioned against the off-screen
+// starting frame and ends up halo-ing thin air below the viewport.
+async function waitForAnimations(el: HTMLElement): Promise<void> {
+  const anims = el.getAnimations({ subtree: true });
+  if (anims.length === 0) return;
+  await Promise.all(anims.map((a) => a.finished.catch(() => undefined)));
+}
+
 // ─── Listeners (manual tab switch, resize, DOM removal) ──────────────────────
 
 function installListeners(): void {
-  // Manual tab switch → exit silently with toast
-  _userTabSwitchListener = (e) => {
-    if (_internalClickFlag) return;
-    const target = e.target as HTMLElement;
-    const btn = target.closest<HTMLElement>('.tab-btn[data-tab]');
-    if (!btn) return;
-    // The user clicked a tab button. Schedule exit on next tick to allow
-    // the existing handler to finish first.
-    setTimeout(() => {
-      if (!_activeTrackId) return;
-      exitTutorial();
-      showToast('המדריך הופסק — ניתן להמשיך מהגדרות.', { type: 'info', duration: 3500 });
-    }, 0);
-  };
-  document.addEventListener('click', _userTabSwitchListener, true);
-
   // Esc → exit
   document.addEventListener('keydown', onKeyDown);
 
@@ -984,13 +1139,21 @@ function installListeners(): void {
     }
   });
   _domObserver.observe(document.body, { childList: true, subtree: true });
+
+  // Page-unload safety net: the durable backup written by enterTutorialDemoMode
+  // is already in localStorage, so a refresh mid-tour is harmless — init() in
+  // app.ts calls restoreTutorialBackupIfPresent() before reading any state.
+  // This listener exists to ensure any pending store save is flushed; the
+  // restore path then sees the user's most recent data, not a stale copy.
+  _beforeUnloadListener = () => {
+    // No-op body — the backup is already durable. Presence of the listener
+    // signals to readers that tour state is "in flight" but the actual
+    // restore happens on the next load.
+  };
+  window.addEventListener('beforeunload', _beforeUnloadListener);
 }
 
 function uninstallListeners(): void {
-  if (_userTabSwitchListener) {
-    document.removeEventListener('click', _userTabSwitchListener, true);
-    _userTabSwitchListener = null;
-  }
   document.removeEventListener('keydown', onKeyDown);
   if (_resizeListener) {
     window.removeEventListener('resize', _resizeListener);
@@ -1011,6 +1174,10 @@ function uninstallListeners(): void {
     _domObserver.disconnect();
     _domObserver = null;
   }
+  if (_beforeUnloadListener) {
+    window.removeEventListener('beforeunload', _beforeUnloadListener);
+    _beforeUnloadListener = null;
+  }
 }
 
 function onKeyDown(e: KeyboardEvent): void {
@@ -1019,72 +1186,6 @@ function onKeyDown(e: KeyboardEvent): void {
     e.stopPropagation();
     exitTutorial();
   }
-}
-
-// ─── Guard dialog (track-level precondition failure) ─────────────────────────
-
-function showGuardDialog(message: string, onCreateForMe?: () => Promise<void>): void {
-  // Build a centred popover-style guard with up to three actions.
-  const root = document.createElement('div');
-  root.className = 'tutorial-root';
-  const backdrop = document.createElement('div');
-  backdrop.className = 'tutorial-backdrop';
-  const spotlight = document.createElement('div');
-  spotlight.className = 'tutorial-spotlight tutorial-spotlight-centered';
-  const popover = document.createElement('div');
-  popover.className = 'tutorial-popover tutorial-popover-centered';
-  popover.setAttribute('role', 'alertdialog');
-  popover.setAttribute('aria-modal', 'false');
-  const createBtn = onCreateForMe
-    ? '<button type="button" class="tutorial-btn tutorial-btn-primary" data-guard-action="create">⚡ צור עבורי שבצ"ק להדגמה</button>'
-    : '';
-  // When "create for me" is offered, demote "ok" to a ghost — primary should be the action.
-  const okBtnClass = onCreateForMe ? 'tutorial-btn tutorial-btn-ghost' : 'tutorial-btn tutorial-btn-primary';
-  popover.innerHTML = `
-    <h3 class="tutorial-title">דרוש שבצ"ק</h3>
-    <div class="tutorial-body">${escHtmlLite(message)}</div>
-    <div class="tutorial-footer">
-      ${createBtn}
-      <button type="button" class="tutorial-btn tutorial-btn-secondary" data-guard-action="schedule">↩ עבור לשבצ"ק</button>
-      <button type="button" class="${okBtnClass}" data-guard-action="ok">${onCreateForMe ? 'לא עכשיו' : '✓ הבנתי'}</button>
-    </div>
-  `;
-  root.appendChild(backdrop);
-  root.appendChild(spotlight);
-  root.appendChild(popover);
-  document.body.appendChild(root);
-
-  const close = () => root.remove();
-  popover.addEventListener('click', (e) => {
-    const action = (e.target as HTMLElement).closest<HTMLElement>('[data-guard-action]')?.dataset.guardAction;
-    if (action === 'create' && onCreateForMe) {
-      const btn = popover.querySelector<HTMLButtonElement>('[data-guard-action="create"]');
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = '... מכין שבצ"ק';
-      }
-      void (async () => {
-        try {
-          await onCreateForMe();
-        } finally {
-          close();
-        }
-      })();
-    } else if (action === 'schedule') {
-      close();
-      const tabBtn = document.querySelector<HTMLButtonElement>('.tab-btn[data-tab="schedule"]');
-      tabBtn?.click();
-    } else if (action === 'ok') {
-      close();
-    }
-  });
-  backdrop.addEventListener('click', close);
-  document.addEventListener('keydown', function once(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      close();
-      document.removeEventListener('keydown', once);
-    }
-  });
 }
 
 // ─── Tiny helpers (avoid pulling ui-helpers; we don't trust caller input here) ─

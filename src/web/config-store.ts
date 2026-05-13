@@ -2785,7 +2785,10 @@ export function loadFromStorage(): boolean {
 
     // Restore live mode state — prefer the dedicated key (written by
     // _saveLiveMode); fall back to the legacy inlined value for users whose
-    // state blob was persisted before the split.
+    // state blob was persisted before the split. If neither source has data
+    // (common: user has never enabled live mode), reset to default so a
+    // previous in-memory `enabled:true` (e.g. left over from the tutorial demo
+    // that just exited) doesn't leak into the restored session.
     const dedicatedLive = _loadLiveMode();
     if (dedicatedLive) {
       liveModeState = dedicatedLive;
@@ -2794,6 +2797,8 @@ export function loadFromStorage(): boolean {
         enabled: state.liveMode.enabled || false,
         currentTimestamp: new Date(state.liveMode.currentTimestamp),
       };
+    } else {
+      liveModeState = { enabled: false, currentTimestamp: new Date() };
     }
 
     // Restore participants

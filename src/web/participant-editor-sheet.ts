@@ -311,7 +311,7 @@ function renderIdentitySection(draft: DraftFields): string {
     .join('');
   const isNewGroup = draft.group === '__new__' || (groups.length === 0 && !groups.includes(draft.group));
   return `
-    <div class="pe-section">
+    <div class="pe-section" data-pe-section="identity">
       <div class="pe-section-title">זהות</div>
       <div class="pe-field">
         <label class="pe-field-label" for="pe-name">שם</label>

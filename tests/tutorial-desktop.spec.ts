@@ -92,23 +92,6 @@ test.describe('Tutorial — desktop', () => {
     }
   });
 
-  test('profile + task-panel buttons show ⚠ when no schedule exists', async ({ page }) => {
-    await page.click('.tab-btn[data-tab="algorithm"]');
-    await page.click('#acc-tutorial > [data-action="settings-accordion-toggle"]');
-    const profileBtn = page.locator('.tutorial-track-btn[data-tutorial-track="profile"]');
-    const taskPanelBtn = page.locator('.tutorial-track-btn[data-tutorial-track="task-panel"]');
-    await expect(profileBtn.locator('.tutorial-track-warn')).toBeVisible();
-    await expect(taskPanelBtn.locator('.tutorial-track-warn')).toBeVisible();
-  });
-
-  test('starting profile track without schedule shows guard dialog', async ({ page }) => {
-    await page.evaluate(() => window.gmStartTutorial?.('profile'));
-    // Guard renders as a tutorial-popover with role=alertdialog
-    const guard = page.locator('.tutorial-popover[role="alertdialog"]');
-    await expect(guard).toBeVisible();
-    await expect(guard).toContainText('דרוש שבצ"ק');
-  });
-
   test('manual tab switch mid-tutorial exits silently with toast', async ({ page }) => {
     await page.evaluate(() => window.gmStartTutorial?.('participants'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();

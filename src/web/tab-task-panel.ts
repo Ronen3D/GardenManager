@@ -271,9 +271,12 @@ function renderWeekTimeline(
     return m;
   }
 
-  // Render hour ruler (every 4 hours)
+  // Render hour ruler (every 4 hours). The h=24 endpoint is omitted: it repeats
+  // the same label as h=0 (operational-day wrap) and, when anchored at 100%
+  // with translateX(-50%), overflows the lane edge — causing a spurious
+  // horizontal scrollbar on the timeline card.
   const rulerTicks: string[] = [];
-  for (let h = 0; h <= 24; h += 4) {
+  for (let h = 0; h < 24; h += 4) {
     const hourLabel = (dayStartHour + h) % 24;
     const leftPct = (h / 24) * 100;
     rulerTicks.push(`<span class="tp-ruler-tick" style="inset-inline-start:${leftPct}%">${pad2(hourLabel)}:00</span>`);

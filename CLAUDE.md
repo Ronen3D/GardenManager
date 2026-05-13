@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Primary Platform: Mobile
+
+**Mobile (phone) is the primary, dominant, and by far most common use case for this app.** Real users overwhelmingly run Garden Manager on a phone. Desktop is supported but secondary. This is a hard product rule and it shapes how every UI decision should be made:
+
+- When designing, reviewing, or modifying any UI: assume a phone viewport (≈375×812) first. A change is "done" when it looks and works correctly on mobile; desktop is a follow-up check, not the starting point.
+- When manually verifying UI changes via Playwright or the dev server, **default to the phone viewport** (`npm run test:e2e:phone`, or set viewport 375×812 in browser tooling). Only switch to desktop when desktop is the specific subject of the change.
+- Trade-offs between mobile and desktop polish should resolve in favor of mobile. If a layout cannot be equally good on both, mobile wins.
+- Touch interactions, thumb reach, small-screen density, and modal/sheet behavior on phones take precedence over equivalent desktop concerns.
+
 ## Response Language
 
 **All assistant responses to the user MUST be in English**, even when the user writes in Hebrew. This is a hard rule — do not mirror the user's input language. The project UI is Hebrew and code strings / UI copy stay in Hebrew, but conversational responses, explanations, summaries, commit messages drafted for user review, and `AskUserQuestion` prompts/options are English only. Only switch to Hebrew if the user explicitly asks for a Hebrew response in the current turn.
@@ -49,6 +58,8 @@ npx playwright test tests/navigation.spec.ts  # Single spec file
 ```
 
 E2E specs are in `tests/` and cover desktop regression, navigation, mobile schedule/modals, and touch interactions. The dev server must be running (`npm run dev`) before E2E tests.
+
+**Default verification viewport is phone (375×812).** Per the "Primary Platform: Mobile" rule, ad-hoc manual verification of UI changes (via Playwright MCP or the dev server) should start on the phone viewport. Only verify on desktop when desktop is the specific subject of the change, or as a secondary regression check after mobile passes.
 
 ## Dual-Build Architecture
 

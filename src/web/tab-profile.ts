@@ -404,7 +404,8 @@ function renderMetrics(
   schedule: Schedule,
 ): string {
   // Shared breakdown utility (R1)
-  const { effectiveHeavyHours, sourceHours, sourceCounts, sourceColors } = computeTaskBreakdown(myTasks);
+  const { effectiveHeavyHours, sourceHours, sourceCounts, sourceColors, sourceBaseLoadWeights } =
+    computeTaskBreakdown(myTasks);
 
   // Capacity-aware: render % as utilization of the participant's actual
   // available hours, not a flat numDays × 24 denominator. Falls back to the
@@ -444,12 +445,13 @@ function renderMetrics(
     if (sourceCounts[key] === 0) continue;
     const color = sourceColors[key] || '#7f8c8d';
     const barPct = (sourceHours[key] / maxHours) * 100;
+    const weight = sourceBaseLoadWeights[key] ?? 1;
     html += `<div class="breakdown-row">
       <span class="breakdown-label"><span class="badge" style="background:${color}">${key}</span></span>
       <div class="breakdown-bar-bg">
         <div class="breakdown-bar-fill" style="width:${barPct}%;background:${color}"></div>
       </div>
-      <span class="breakdown-value">${sourceCounts[key]}× · ${sourceHours[key].toFixed(1)} שעות גולמיות</span>
+      <span class="breakdown-value">${sourceCounts[key]}× · ${sourceHours[key].toFixed(1)} שעות גולמיות · משקל בסיס ${weight.toFixed(2)}</span>
     </div>`;
   }
 
