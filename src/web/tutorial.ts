@@ -689,11 +689,29 @@ function positionForUnion(a: HTMLElement, b: HTMLElement, placement: TutorialSte
   positionForTarget(wrapper as HTMLElement, placement);
 }
 
+/** RTL pages with a left-side vertical scrollbar create a coord-system gap:
+ * `getBoundingClientRect.left` is measured from the content-area's left edge
+ * (where `x=0` is the right edge of the scrollbar), but `position: fixed`'s
+ * `left` CSS property is measured from the **initial containing block**, which
+ * starts `scrollbar-width` px earlier — at the visual viewport's left edge.
+ * So writing `style.left = rect.left` lands the element `scrollbar-width` px
+ * to the left of where the user reads it visually (the spotlight ends up
+ * shifted left of its target — clearly visible at 375×815 with the DevTools
+ * scrollbar on). Add this offset to every `style.left` write for fixed-position
+ * tour elements to bridge the two systems. Returns 0 in LTR, or when the
+ * scrollbar sits on the right / is hidden. */
+function getFixedLeftCorrection(): number {
+  const sbw = window.innerWidth - document.documentElement.clientWidth;
+  if (sbw <= 0) return 0;
+  return getComputedStyle(document.documentElement).direction === 'rtl' ? sbw : 0;
+}
+
 function positionForTarget(target: HTMLElement, placement: TutorialStep['placement']): void {
   if (!_spotlight || !_popover) return;
   const rect = target.getBoundingClientRect();
   const vh = window.innerHeight;
   const vw = window.innerWidth;
+  const leftFix = getFixedLeftCorrection();
   // Off-viewport target → fall back to centered. Without this guard, the
   // spotlight box-shadow renders invisibly off-screen and the popover lands
   // at negative coordinates (e.g. above the fold).
@@ -756,7 +774,7 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
   _spotlight.classList.remove('tutorial-spotlight-centered');
   _backdrop?.classList.remove('tutorial-backdrop-centered');
   _spotlight.style.top = `${spotlightTop}px`;
-  _spotlight.style.left = `${spotlightLeft}px`;
+  _spotlight.style.left = `${spotlightLeft + leftFix}px`;
   _spotlight.style.width = `${spotlightWidth}px`;
   _spotlight.style.height = `${spotlightHeight}px`;
 
@@ -856,7 +874,7 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
     // the bottom of the viewport (mobile-sheet-like) so the user still has a
     // spatial cue rather than a 0×0 centered halo.
     _popover.classList.remove('tutorial-popover-centered');
-    _popover.style.left = `${clamp((vw - pw) / 2, 8, vw - pw - 8)}px`;
+    _popover.style.left = `${clamp((vw - pw) / 2, 8, vw - pw - 8) + leftFix}px`;
     _popover.style.top = `${vh - ph - 12}px`;
     return;
   }
@@ -887,7 +905,7 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
     left = anchorLeft - gap - pw;
   }
   _popover.style.top = `${top}px`;
-  _popover.style.left = `${left}px`;
+  _popover.style.left = `${left + leftFix}px`;
 }
 
 /** Re-evaluate the current step's target rect and re-run positioning, without
