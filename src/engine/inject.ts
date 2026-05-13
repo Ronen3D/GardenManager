@@ -1188,6 +1188,10 @@ function applyInjectionPlan(ctx: ApplyCtx, plan: InjectionPlan): StaffingReport 
   }
 
   ctx.applied = true;
+  // Injection mutated the committed schedule's assignments — any cached
+  // optimizer result on the engine is now stale and must not be used as a
+  // continuation seed.
+  ctx.engine.invalidateContinuation();
 
   return {
     task: ctx.task,

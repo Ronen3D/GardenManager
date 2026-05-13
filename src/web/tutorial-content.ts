@@ -170,7 +170,11 @@ const TASK_RULES_TRACK: TutorialTrack = {
     },
     {
       id: 't-5',
-      target: '.template-card [data-tpl-field="sameGroupRequired"]',
+      // Target the whole label row, not just the 13px input — otherwise the
+      // halo is a tiny square pinned to the LTR-left side of the row where the
+      // checkbox sits, and the Hebrew label text "נדרשת אותה קבוצה" lands
+      // outside the cutout, reading as a misaligned spotlight.
+      target: '.template-card .checkbox-label:has([data-tpl-field="sameGroupRequired"])',
       placement: 'inline-start',
       title: 'קבוצה אחידה',
       body: 'כשמסומן — כל המשובצים במשמרת חייבים להיות מאותה קבוצה. מתאים למשימות שדורשות צוות מגובש.',
@@ -178,7 +182,7 @@ const TASK_RULES_TRACK: TutorialTrack = {
     },
     {
       id: 't-6',
-      target: '.template-card [data-tpl-field="blocksConsecutive"]',
+      target: '.template-card .checkbox-label:has([data-tpl-field="blocksConsecutive"])',
       placement: 'inline-start',
       title: 'חסימת רצף',
       body: 'כשמופעל — האופטימייזר ימנע משמרות "כבדות" רצופות לאותו אדם. חיוני למשימות ארוכות; השאר כבוי למשימות קצרות.',
@@ -472,7 +476,7 @@ const ALGORITHM_TRACK: TutorialTrack = {
     },
     {
       id: 'a-5',
-      target: 'input[data-code="HC-3"]',
+      target: '.algo-toggle-item:has(input[data-code="HC-3"])',
       placement: 'inline-end',
       title: 'תנאים מחייבים — קו אדום',
       body: 'אילוצים קשים — אם מופרים, השבצ"ק פסול. בדרך-כלל אין לנטרל אותם. ⚠ "מושבת" = המערכת תדלג על הבדיקה — נטרל רק אם אתה יודע בדיוק מה אתה עושה.',

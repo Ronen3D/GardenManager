@@ -74,6 +74,14 @@ export class SchedulingEngine {
   private _periodDays?: number;
   private _certLabelSnapshot: Record<string, string> = {};
   certLabelResolver: (certId: string) => string = (id) => this._certLabelSnapshot[id] ?? id;
+  /**
+   * Last raw `OptimizationResult` committed by the optimizer. Used as the
+   * seed for `continueOptimizationAsync`. Cleared by `reset()` and by
+   * `invalidateContinuation()` (called from non-optimizer schedule mutations
+   * — rescue, Future-SOS, inject, manual swap — that would invalidate the
+   * seed's `assignments` snapshot).
+   */
+  private _lastOptimizationResult: OptimizationResult | null = null;
 
   constructor(
     config: Partial<SchedulerConfig> = {},
@@ -317,7 +325,29 @@ export class SchedulingEngine {
     this.participants.clear();
     this.tasks.clear();
     this.currentSchedule = null;
+    this._lastOptimizationResult = null;
     resetAssignmentCounter();
+  }
+
+  /**
+   * True iff a prior optimization result is cached and can seed
+   * `continueOptimizationAsync`. The web app gates the continuation modal on
+   * this so the user is never offered a continuation against a stale seed
+   * (e.g. one whose assignments have been mutated by rescue / SOS / inject /
+   * manual swap, which all call `invalidateContinuation()`).
+   */
+  hasOptimizationResultForContinuation(): boolean {
+    return this._lastOptimizationResult !== null;
+  }
+
+  /**
+   * Drop the cached optimization result so continuation is no longer
+   * offered. Call from any code path that mutates `currentSchedule` outside
+   * of `_commitOptimizationResult` (rescue, Future-SOS, inject, manual swap).
+   * Idempotent.
+   */
+  invalidateContinuation(): void {
+    this._lastOptimizationResult = null;
   }
 
   /**
@@ -424,6 +454,7 @@ export class SchedulingEngine {
     };
 
     this.currentSchedule = schedule;
+    this._lastOptimizationResult = result;
     return schedule;
   }
 
@@ -512,6 +543,98 @@ export class SchedulingEngine {
   }
 
   /**
+   * Continue searching from a prior committed schedule.
+   *
+   * Seeds the optimizer with `_lastOptimizationResult` so any attempt must
+   * strictly improve on it (per `isBetterResult`) to replace the committed
+   * schedule. On no improvement, the optimizer returns the same reference it
+   * was seeded with — we detect this with `===` and leave `currentSchedule`
+   * untouched. The cumulative attempt count is updated either way.
+   *
+   * Pre-conditions: `_lastOptimizationResult` is non-null (caller should
+   * check via `hasOptimizationResultForContinuation()`).
+   *
+   * The progress callback receives a cumulative `attempt` / `totalAttempts`
+   * — `attempt` is the (originalAttempts + optimizer-local i), `totalAttempts`
+   * is (originalAttempts + additionalAttempts). This lets the UI keep showing
+   * a single monotone counter across the original run and the continuation.
+   */
+  async continueOptimizationAsync(
+    additionalAttempts: number,
+    onProgress?: MultiAttemptProgressCallback,
+    abortSignal?: AbortSignal,
+    stopSignal?: AbortSignal,
+  ): Promise<Schedule> {
+    const seed = this._lastOptimizationResult;
+    if (!seed) {
+      throw new Error('No prior optimization result to continue from. Call generateScheduleAsync first.');
+    }
+    if (!Number.isFinite(additionalAttempts) || additionalAttempts <= 0) {
+      throw new Error('additionalAttempts must be a positive number.');
+    }
+
+    const tasks = this.getAllTasks();
+    const participants = this.getAllParticipants();
+    this._validateInputs(tasks, participants);
+
+    // Snapshot the cumulative attempt count BEFORE the call. We read this
+    // from `currentSchedule`, not from `seed.actualAttempts`, because the
+    // optimizer will mutate `seed.actualAttempts` to the call-local count
+    // at the end of this call (it has no way to distinguish a seed from a
+    // freshly-produced best).
+    const originalAttempts = this.currentSchedule?.actualAttempts ?? seed.actualAttempts ?? 0;
+    const totalAttemptsForUI = originalAttempts + additionalAttempts;
+
+    // Wrap the progress callback so the UI sees cumulative indices. The
+    // optimizer itself only knows about its own call-local i.
+    const wrappedProgress: MultiAttemptProgressCallback | undefined = onProgress
+      ? (info) =>
+          onProgress({
+            ...info,
+            attempt: originalAttempts + info.attempt,
+            totalAttempts: totalAttemptsForUI,
+          })
+      : undefined;
+
+    const result = await optimizeMultiAttemptAsync(
+      tasks,
+      participants,
+      this.config,
+      [],
+      additionalAttempts,
+      wrappedProgress,
+      this.disabledHC,
+      this.phantomContext ?? undefined,
+      this.restRuleMap,
+      this.dayStartHour,
+      this.certLabelResolver,
+      abortSignal,
+      this._scheduleContext(tasks),
+      stopSignal,
+      { seedBest: seed, continuation: true },
+    );
+
+    const continuationAttemptsCompleted = result.actualAttempts ?? 0;
+    const cumulativeAttempts = originalAttempts + continuationAttemptsCompleted;
+
+    if (result === seed) {
+      // No improvement during continuation — leave the committed schedule
+      // untouched except for the cumulative attempt count, which the UI uses
+      // to report "X attempts run in total."
+      if (this.currentSchedule) {
+        this.currentSchedule.actualAttempts = cumulativeAttempts;
+      }
+      return this.currentSchedule!;
+    }
+
+    // Strict improvement: stamp the cumulative count on the new result, then
+    // commit. _commitOptimizationResult re-builds the Schedule from `result`
+    // and updates `_lastOptimizationResult`.
+    result.actualAttempts = cumulativeAttempts;
+    return this._commitOptimizationResult(tasks, participants, result);
+  }
+
+  /**
    * Get the current schedule (if generated).
    */
   getSchedule(): Schedule | null {
@@ -527,6 +650,10 @@ export class SchedulingEngine {
    */
   importSchedule(schedule: Schedule): void {
     this.currentSchedule = schedule;
+    // The imported schedule may have been mutated since generation, or may
+    // come from localStorage (no in-memory optimizer result). Either way the
+    // continuation seed is unavailable for this schedule.
+    this._lastOptimizationResult = null;
   }
 
   /**
@@ -684,6 +811,10 @@ export class SchedulingEngine {
       return validation;
     }
 
+    // Swap committed — the prior optimization result's assignments snapshot
+    // is now stale, so continuation can no longer use it as a seed.
+    this._lastOptimizationResult = null;
+
     // Success: update score and metadata
     this.currentSchedule.score = computeScheduleScore(
       this.currentSchedule.tasks,
@@ -807,6 +938,10 @@ export class SchedulingEngine {
       }
       return validation;
     }
+
+    // Chain committed — the prior optimization result's assignments snapshot
+    // is now stale, so continuation can no longer use it as a seed.
+    this._lastOptimizationResult = null;
 
     // Success: update score and metadata
     this.currentSchedule.score = computeScheduleScore(

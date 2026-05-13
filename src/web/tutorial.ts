@@ -338,7 +338,7 @@ function mountOverlay(): void {
   _root.className = 'tutorial-root';
 
   _backdrop = document.createElement('div');
-  _backdrop.className = 'tutorial-backdrop';
+  _backdrop.className = 'tutorial-backdrop tutorial-backdrop-centered';
   // Clicks on the dim area outside the spotlight hole and outside the popover
   // hit the backdrop. Pulse the spotlight + toast once per few seconds so the
   // user understands the tour is gating their input.
@@ -701,7 +701,31 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
     positionCentered();
     return;
   }
-  const pad = 6;
+  // Halo padding around the target. Start at 6px, then shrink if a horizontal
+  // sibling sits inside that band — otherwise the halo's edge crowds the
+  // neighbor (e.g. `+ משבצת` next to `+ תת-צוות` in `.template-actions`, where
+  // the flex gap is only 8px, leaving ~2px between halo and neighbor — reads
+  // as the spotlight "leaning into" the wrong button).
+  let pad = 6;
+  {
+    const parent = target.parentElement;
+    if (parent) {
+      let minGap = Infinity;
+      for (const child of Array.from(parent.children)) {
+        if (!(child instanceof HTMLElement) || child === target) continue;
+        const cRect = child.getBoundingClientRect();
+        const vOverlap = Math.min(cRect.bottom, rect.bottom) - Math.max(cRect.top, rect.top);
+        if (vOverlap <= 0) continue;
+        if (cRect.right <= rect.left) minGap = Math.min(minGap, rect.left - cRect.right);
+        else if (cRect.left >= rect.right) minGap = Math.min(minGap, cRect.left - rect.right);
+      }
+      if (Number.isFinite(minGap)) {
+        // Split the gap evenly between halo and neighbor, floored — so a tight
+        // 8px gap yields pad=4 (4px between halo edge and neighbor edge).
+        pad = Math.max(0, Math.min(pad, Math.floor(minGap / 2)));
+      }
+    }
+  }
   // Spotlight rect (cutout) — pad up to a minimum so very thin elements
   // (e.g. range sliders are ~6px tall) still produce a visible halo.
   const minHalo = 24;
@@ -709,14 +733,28 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
   const haloH = Math.max(rect.height + pad * 2, minHalo);
   const haloTop = rect.top + rect.height / 2 - haloH / 2;
   const haloLeftPx = rect.left + rect.width / 2 - haloW / 2;
-  // Clip the halo to the visible viewport so over-tall / over-wide targets
-  // (expanded accordions, full-width grids) render a finite halo instead of a
-  // rectangle whose edges fall outside the screen.
-  const spotlightTop = Math.max(haloTop, 0);
-  const spotlightLeft = Math.max(haloLeftPx, 0);
-  const spotlightWidth = Math.max(0, Math.min(haloLeftPx + haloW, vw) - spotlightLeft);
-  const spotlightHeight = Math.max(0, Math.min(haloTop + haloH, vh) - spotlightTop);
+  // Only clip the halo to the viewport when it's *larger* than the viewport
+  // (over-tall / over-wide targets — expanded accordions, full-width grids —
+  // where an unclipped halo would push the inverse box-shadow entirely past
+  // the viewport and the dim would disappear). For normal-sized halos that
+  // happen to sit flush with an edge (e.g. the participants tab in RTL bottom
+  // nav, whose `right` is 375.2 in a 375px viewport), per-side clipping would
+  // produce an asymmetric cutout — 6px padding on one side, 0px on the other,
+  // read as a "leftward tilt". Skipping the clip lets the offscreen portion of
+  // the halo simply be invisible, while the visible portion stays centered on
+  // the target's visible portion.
+  const horizOversize = haloW > vw;
+  const vertOversize = haloH > vh;
+  const spotlightLeft = horizOversize ? Math.max(haloLeftPx, 0) : haloLeftPx;
+  const spotlightWidth = horizOversize
+    ? Math.max(0, Math.min(haloLeftPx + haloW, vw) - spotlightLeft)
+    : haloW;
+  const spotlightTop = vertOversize ? Math.max(haloTop, 0) : haloTop;
+  const spotlightHeight = vertOversize
+    ? Math.max(0, Math.min(haloTop + haloH, vh) - spotlightTop)
+    : haloH;
   _spotlight.classList.remove('tutorial-spotlight-centered');
+  _backdrop?.classList.remove('tutorial-backdrop-centered');
   _spotlight.style.top = `${spotlightTop}px`;
   _spotlight.style.left = `${spotlightLeft}px`;
   _spotlight.style.width = `${spotlightWidth}px`;
@@ -873,6 +911,7 @@ function repositionCurrentStep(): void {
 function positionCentered(): void {
   if (!_spotlight || !_popover) return;
   _spotlight.classList.add('tutorial-spotlight-centered');
+  _backdrop?.classList.add('tutorial-backdrop-centered');
   // Clear inline styles from any prior positionForTarget call. The centered
   // class sets top/left/width/height via CSS, but inline styles win — without
   // this reset, transitioning from a positioned step (step 4 = group pill) to

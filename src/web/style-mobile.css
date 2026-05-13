@@ -412,6 +412,25 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @media (max-width: 767px) {
+  /* ── Hide page-level vertical scrollbar on phone ─────────────────────── */
+  /* Real phones use overlay scrollbars that consume no layout space. Chrome
+     DevTools' "device mode" still renders a permanent 15px scrollbar at narrow
+     widths, which shrinks the html content area (clientWidth = innerWidth - 15)
+     and shifts every centered child 7.5px left of the visual viewport center.
+     The tutorial spotlight follows the target (centered in the content area),
+     the popover spans the html box (also content area), so the artifact is
+     internally consistent — but reads as a "left tilt" against the perceived
+     375/400px viewport. Hide the scrollbar so the content area matches
+     window.innerWidth and the artifact disappears. */
+  html,
+  body {
+    scrollbar-width: none;
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    display: none;
+  }
+
   /* ── Bottom Navigation Bar ───────────────────────────────────────────── */
 
   .tab-nav {

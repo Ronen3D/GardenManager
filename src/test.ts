@@ -15246,10 +15246,127 @@ console.log('\n── Scheduler Diagnostics ────────────
   assert(diag.getSnapshot() === null, 'Diag: toggling off clears snapshot');
 }
 
+// ─── Continue-from-prior-result Tests ────────────────────────────────────────
+
+async function runContinuationTests(): Promise<void> {
+  console.log('\n── Continue-from-prior-result ──────────');
+
+  // Fresh engine, isolated from earlier tests.
+  const eng = new SchedulingEngine({ maxIterations: 200, maxSolverTimeMs: 3000 });
+  const contBase = new Date(2026, 1, 15);
+  const dayWin = [{ start: new Date(2026, 1, 15, 0, 0), end: new Date(2026, 1, 16, 12, 0) }];
+  const ps: Participant[] = [];
+  for (let i = 0; i < 8; i++) {
+    ps.push({
+      id: `cp${i}`,
+      name: `Cont-${i}`,
+      level: Level.L0,
+      certifications: ['Nitzan', 'Hamama', 'Salsala'],
+      group: 'TeamA',
+      availability: dayWin,
+      dateUnavailability: [],
+    });
+  }
+  ps.push({
+    id: 'cpL3',
+    name: 'Cont-L3',
+    level: Level.L3,
+    certifications: ['Nitzan', 'Hamama'],
+    group: 'TeamA',
+    availability: dayWin,
+    dateUnavailability: [],
+  });
+  eng.addParticipants(ps);
+  eng.addTask(createHamamaTask(createTimeBlockFromHours(contBase, 6, 18)));
+  eng.addTask(createShemeshTask(createTimeBlockFromHours(contBase, 6, 10)));
+  eng.setPeriod(contBase, 1);
+
+  // Cached result is null before any generation.
+  assert(
+    eng.hasOptimizationResultForContinuation() === false,
+    'Continue: hasOptimizationResultForContinuation is false before generation',
+  );
+  let threw = false;
+  try {
+    await eng.continueOptimizationAsync(5);
+  } catch {
+    threw = true;
+  }
+  assert(threw, 'Continue: continueOptimizationAsync throws when no prior result is cached');
+
+  // Generate a baseline.
+  const baseline = await eng.generateScheduleAsync(5);
+  assert(
+    eng.hasOptimizationResultForContinuation() === true,
+    'Continue: hasOptimizationResultForContinuation is true after generateScheduleAsync',
+  );
+  assert(baseline.actualAttempts === 5, 'Continue: baseline reports actualAttempts = 5');
+  const baselineUnfilled = baseline.violations.filter((v) => v.code === 'INFEASIBLE_SLOT').length;
+  const baselineComposite = baseline.score.compositeScore;
+
+  // Continue with 5 more attempts. The returned schedule's actualAttempts must
+  // be cumulative (10), unfilled must be monotone non-increasing, and the
+  // composite score is monotone non-decreasing when unfilled count is unchanged.
+  const continued = await eng.continueOptimizationAsync(5);
+  assert(continued.actualAttempts === 10, 'Continue: cumulative actualAttempts = original 5 + continuation 5');
+  const continuedUnfilled = continued.violations.filter((v) => v.code === 'INFEASIBLE_SLOT').length;
+  assert(continuedUnfilled <= baselineUnfilled, 'Continue: unfilled count is monotone non-increasing');
+  if (continuedUnfilled === baselineUnfilled) {
+    assert(
+      continued.score.compositeScore >= baselineComposite,
+      'Continue: composite score is monotone non-decreasing on equal unfilled count',
+    );
+  }
+
+  // After invalidation, continuation is no longer offered or callable.
+  eng.invalidateContinuation();
+  assert(
+    eng.hasOptimizationResultForContinuation() === false,
+    'Continue: invalidateContinuation clears the cached seed',
+  );
+  let threwAfterInvalidate = false;
+  try {
+    await eng.continueOptimizationAsync(2);
+  } catch {
+    threwAfterInvalidate = true;
+  }
+  assert(threwAfterInvalidate, 'Continue: continueOptimizationAsync throws after invalidateContinuation');
+
+  // A manual swap should auto-invalidate (no explicit invalidate call needed).
+  await eng.generateScheduleAsync(3);
+  assert(
+    eng.hasOptimizationResultForContinuation() === true,
+    'Continue: cache restored after a new generateScheduleAsync',
+  );
+  const sched = eng.getSchedule();
+  if (sched && sched.assignments.length >= 1) {
+    const a = sched.assignments[0];
+    // Pick any other participant of the same level/group/certifications — for a
+    // small same-team pool, any free L0 with Hamama cert should be eligible.
+    const alt = ps.find((p) => p.id !== a.participantId && p.level === Level.L0);
+    if (alt) {
+      eng.swapParticipant({ assignmentId: a.id, newParticipantId: alt.id });
+      // We don't care whether the swap was actually valid — just that
+      // attempting it cleared the seed (the engine clears on success; on
+      // failure the seed is preserved, which is also fine for our purposes).
+      // To make this test deterministic, only assert when the swap succeeded.
+      const after = eng.getSchedule();
+      const swapped = after?.assignments.find((x) => x.id === a.id)?.participantId === alt.id;
+      if (swapped) {
+        assert(
+          eng.hasOptimizationResultForContinuation() === false,
+          'Continue: successful manual swap invalidates the continuation seed',
+        );
+      }
+    }
+  }
+}
+
 // ─── Async test blocks + Summary ─────────────────────────────────────────────
 
 (async () => {
   await runParticipantSetXlsxTests(assert);
+  await runContinuationTests();
 
   console.log('\n══════════════════════════════════════════');
   console.log(`  Tests: ${passed + failed} | Passed: ${passed} | Failed: ${failed}`);

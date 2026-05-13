@@ -290,6 +290,186 @@ export function showSaveConfirm(): Promise<SaveConfirmResult> {
   });
 }
 
+// ─── Continuation Modal ────────────────────────────────────────────────────
+
+export interface ContinuationModalOptions {
+  /** Number of unfilled (`INFEASIBLE_SLOT`) slots in the current schedule. */
+  unfilledCount: number;
+  /** Cumulative attempts that have been run so far across the original generation and any prior continuations. */
+  originalAttempts: number;
+  /**
+   * If true, the modal adds a soft "diminishing returns" hint to the body
+   * copy — used after consecutive no-improvement continuations.
+   */
+  diminishingReturnsHint?: boolean;
+}
+
+// Stroke-based SVG icons (matching the style of `SVG_ICONS` in ui-helpers).
+const ICON_LIGHTNING = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`;
+const ICON_SCALE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="4" x2="12" y2="20"/><line x1="5" y1="8" x2="19" y2="8"/><path d="M2 14h6l-3-6-3 6z"/><path d="M16 14h6l-3-6-3 6z"/></svg>`;
+const ICON_TARGET = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>`;
+const ICON_CHEVRON_LEAD = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>`;
+
+interface ContinuationTier {
+  value: number;
+  label: string;
+  desc: string;
+  icon: string;
+  variant: 'quick' | 'balanced' | 'deep';
+  recommended?: boolean;
+}
+
+const CONTINUATION_TIERS: readonly ContinuationTier[] = [
+  { value: 30, label: '+30 ניסיונות', desc: 'חיפוש מהיר', icon: ICON_LIGHTNING, variant: 'quick' },
+  { value: 60, label: '+60 ניסיונות', desc: 'חיפוש מאוזן', icon: ICON_SCALE, variant: 'balanced', recommended: true },
+  { value: 100, label: '+100 ניסיונות', desc: 'חיפוש עמוק', icon: ICON_TARGET, variant: 'deep' },
+];
+
+/**
+ * Prompt the user to run additional optimization attempts seeded from the
+ * current best result.
+ *
+ * Returns the additional-attempt count (positive integer) the user picked,
+ * or `null` on Cancel / Escape / backdrop click. Pressing a preset button
+ * resolves immediately with that preset's value; the custom input accepts
+ * Enter or its own confirm button. No upper cap — the user is trusted to
+ * decide how many attempts to run.
+ *
+ * Visually intentional: this prompt reuses the `.optim-overlay` / `.optim-card`
+ * shell of the optimization progress overlay so the user perceives it as a
+ * continuation of the loading flow, not a separate modal stack.
+ */
+export function showContinuationModal(opts: ContinuationModalOptions): Promise<number | null> {
+  return new Promise((resolve) => {
+    const { unfilledCount, originalAttempts, diminishingReturnsHint } = opts;
+
+    const tierCards = CONTINUATION_TIERS.map((tier) => {
+      const recommendedClass = tier.recommended ? ' optim-tier--recommended' : '';
+      // Only the recommended tier has a trailing element ("מומלץ" badge);
+      // others are intentionally trailing-empty. A chevron here would read as
+      // "expand/disclose" rather than "commit action," which is misleading.
+      const trailing = tier.recommended ? `<span class="optim-tier-badge">מומלץ</span>` : '';
+      return `
+        <button type="button" class="optim-tier optim-tier--${tier.variant}${recommendedClass}" data-value="${tier.value}">
+          <span class="optim-tier-icon">${tier.icon}</span>
+          <span class="optim-tier-main">
+            <span class="optim-tier-label">${tier.label}</span>
+            <span class="optim-tier-desc">${tier.desc}</span>
+          </span>
+          ${trailing}
+        </button>`;
+    }).join('');
+
+    const hintHtml = diminishingReturnsHint
+      ? `<p class="optim-continuation-hint">בשני המשכים האחרונים לא נמצא שיפור. ייתכן שהמשבצות הנותרות אינן ניתנות לאיוש; שקול לבדוק זמינות בהגדרת המשתתפים.</p>`
+      : '';
+
+    const unfilledLabel = unfilledCount === 1 ? 'משבצת לא מאוישת' : 'משבצות לא מאוישות';
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'optim-overlay optim-overlay--prompt';
+    backdrop.setAttribute('role', 'alertdialog');
+    backdrop.setAttribute('aria-modal', 'true');
+    backdrop.innerHTML = `
+      <div class="optim-card optim-card--prompt">
+        <div class="cube-loader-wrapper optim-cube optim-cube--paused">
+          <div class="cube-loader">
+            <div class="cube-cell" style="--cell-color:#4A90D9"></div>
+            <div class="cube-cell" style="--cell-color:#E74C3C"></div>
+            <div class="cube-cell" style="--cell-color:#F39C12"></div>
+            <div class="cube-cell" style="--cell-color:#27AE60"></div>
+            <div class="cube-cell" style="--cell-color:#8E44AD"></div>
+            <div class="cube-cell" style="--cell-color:#1ABC9C"></div>
+            <div class="cube-cell" style="--cell-color:#3498db"></div>
+            <div class="cube-cell" style="--cell-color:#e67e22"></div>
+            <div class="cube-cell" style="--cell-color:#2ecc71"></div>
+          </div>
+        </div>
+        <h3>להמשיך לחפש שבצ"ק טוב יותר?</h3>
+        <div class="optim-continuation-summary">
+          <span class="optim-continuation-hero">${unfilledCount}</span>
+          <span class="optim-continuation-sub">${unfilledLabel}</span>
+          <span class="optim-continuation-meta">מתוך ${originalAttempts} ניסיונות</span>
+        </div>
+        ${hintHtml}
+        <div class="optim-continuation-tiers">
+          ${tierCards}
+        </div>
+        <div class="optim-continuation-custom">
+          <label for="gm-continuation-custom-input">או הזן מספר:</label>
+          <input id="gm-continuation-custom-input" type="number" min="1" step="1" inputmode="numeric" placeholder="—" />
+          <button class="optim-continuation-custom-ok" disabled aria-label="אשר מספר ניסיונות מותאם">${ICON_CHEVRON_LEAD}</button>
+        </div>
+        <div class="optim-actions optim-continuation-actions">
+          <button class="btn-cancel-optim optim-continuation-dismiss">השאר כפי שהוא</button>
+        </div>
+      </div>`;
+
+    lockBodyScroll();
+    let resolved = false;
+    const close = (val: number | null) => {
+      if (resolved) return;
+      resolved = true;
+      backdrop.remove();
+      unlockBodyScroll();
+      document.removeEventListener('keydown', onKey);
+      resolve(val);
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close(null);
+    };
+    document.addEventListener('keydown', onKey);
+
+    // Tier cards resolve immediately with their preset value.
+    backdrop.querySelectorAll<HTMLButtonElement>('.optim-tier').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const v = Number(btn.dataset.value);
+        if (Number.isFinite(v) && v > 0) close(v);
+      });
+    });
+
+    // Custom input: enable the confirm button only on a valid positive integer.
+    const customInput = backdrop.querySelector<HTMLInputElement>('#gm-continuation-custom-input')!;
+    const customOk = backdrop.querySelector<HTMLButtonElement>('.optim-continuation-custom-ok')!;
+    const parseCustom = (): number | null => {
+      const raw = customInput.value.trim();
+      if (!raw) return null;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return null;
+      return n;
+    };
+    const updateCustomOk = () => {
+      customOk.disabled = parseCustom() === null;
+    };
+    customInput.addEventListener('input', updateCustomOk);
+    customInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const v = parseCustom();
+        if (v !== null) close(v);
+      }
+    });
+    customOk.addEventListener('click', () => {
+      const v = parseCustom();
+      if (v !== null) close(v);
+    });
+
+    // Dismiss / backdrop tap.
+    backdrop.querySelector('.optim-continuation-dismiss')!.addEventListener('click', () => close(null));
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) close(null);
+    });
+
+    document.body.appendChild(backdrop);
+    // Focus the recommended tier so keyboard users land on the suggested default.
+    const focusTarget =
+      (backdrop.querySelector('.optim-tier--recommended') as HTMLElement | null) ??
+      (backdrop.querySelector('.optim-tier') as HTMLElement | null);
+    focusTarget?.focus();
+  });
+}
+
 // ─── Time Picker Modal ─────────────────────────────────────────────────────
 
 export interface TimePickerOptions {

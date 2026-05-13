@@ -2539,6 +2539,21 @@ export interface EliteBoostState {
   saIntensifyTaskIds: Set<string>;
 }
 
+/**
+ * Options for `optimizeMultiAttemptAsync` continuation mode.
+ *
+ * When `seedBest` is provided the loop starts with that result as the initial
+ * `best`, so any candidate from this call must strictly improve on it to be
+ * accepted. When `continuation` is also true, the deterministic attempt-0 mode
+ * (no shuffle, no jitter, no elite boost) is suppressed — that baseline is
+ * already in the seed — and `eliteBoost` is pre-seeded from the seed's
+ * unfilled slots before the first attempt.
+ */
+export interface MultiAttemptOpts {
+  seedBest?: OptimizationResult;
+  continuation?: boolean;
+}
+
 /** @internal exported for test coverage only. */
 export function classifyUnfilledSlots(unfilled: UnfilledSlot[]): EliteBoostState {
   const state: EliteBoostState = {
@@ -2746,9 +2761,15 @@ export function optimizeMultiAttemptAsync(
   abortSignal?: AbortSignal,
   scheduleContext?: ScheduleContext,
   stopSignal?: AbortSignal,
+  opts?: MultiAttemptOpts,
 ): Promise<OptimizationResult> {
   return new Promise((resolve, reject) => {
-    let best: OptimizationResult | null = null;
+    // Continuation mode: seed `best` from the caller's prior result. Any
+    // attempt in this call must strictly beat the seed (per `isBetterResult`)
+    // to replace it, so the seed acts as a guaranteed lower bound.
+    const seedBest = opts?.seedBest;
+    const isContinuation = !!opts?.continuation;
+    let best: OptimizationResult | null = seedBest ?? null;
     let i = 0;
     let attemptsCompleted = 0;
     const totalStart = Date.now();
@@ -2761,6 +2782,13 @@ export function optimizeMultiAttemptAsync(
       boostTaskIds: new Set(),
       saIntensifyTaskIds: new Set(),
     };
+    // Continuation: pre-seed eliteBoost from the seed's unfilled slots before
+    // the first attempt. The normal `i % ELITE_INTERVAL === 0` refresh would
+    // only fire at i=20 in this call; seeding now lets attempt 1 already
+    // benefit from the hint the original run took up to 20 attempts to build.
+    if (isContinuation && best && best.unfilledSlots.length > 0) {
+      eliteBoost = classifyUnfilledSlots(best.unfilledSlots);
+    }
 
     // Build SchedulingContext once for the whole multi-attempt run — signals
     // depend only on (tasks, participants), both invariant across attempts.
@@ -2814,13 +2842,18 @@ export function optimizeMultiAttemptAsync(
                 : { boostTaskIds: new Set(), saIntensifyTaskIds: new Set() };
           }
 
-          // Shuffle participant order (first attempt uses original order)
-          const shuffledParticipants = i === 0 ? [...participants] : shuffle([...participants]);
+          // Shuffle participant order (first attempt uses original order).
+          // In continuation mode the deterministic baseline is already in
+          // `seedBest`, so even attempt 0 of this call uses shuffle.
+          const shuffledParticipants =
+            i === 0 && !isContinuation ? [...participants] : shuffle([...participants]);
 
           // Apply elite boost: every unfilled task gets priority drop; adjacency-
           // dominated tasks additionally receive SA insert-move bias (additive).
+          // In continuation mode the pre-seeded boost applies from attempt 0;
+          // in normal mode attempt 0 stays deterministic without any boost.
           const attemptTasks =
-            eliteBoost.boostTaskIds.size > 0 && i > 0
+            eliteBoost.boostTaskIds.size > 0 && (isContinuation || i > 0)
               ? tasks.map((t) =>
                   eliteBoost.boostTaskIds.has(t.id)
                     ? {
@@ -2834,8 +2867,8 @@ export function optimizeMultiAttemptAsync(
                 )
               : tasks;
 
-          // Task-order jitter: 0 for first attempt, 0.3 for subsequent
-          const jitter = i === 0 ? 0 : 0.3;
+          // Task-order jitter: 0 for first attempt (normal mode only), 0.3 otherwise.
+          const jitter = i === 0 && !isContinuation ? 0 : 0.3;
           setCurrentAttemptIndex(i + 1);
           const result = optimize(
             attemptTasks,

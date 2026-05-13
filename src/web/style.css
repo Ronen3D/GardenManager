@@ -8490,6 +8490,357 @@ tr.now-row-animate > td.time-cell {
   flex-wrap: wrap;
 }
 
+/*
+ * Continuation prompt — reuses the optimization overlay's visual language so
+ * the user perceives it as the same loading panel transitioning into "want
+ * to keep searching?" rather than a separate modal stack. The shell
+ * (.optim-overlay, .optim-card) is inherited; the rules below build a
+ * tier-card layout inside the card.
+ */
+.optim-card--prompt {
+  padding: 28px 28px 22px;
+  max-width: 380px;
+}
+
+.optim-card--prompt h3 {
+  margin: 14px 0 18px;
+  font-size: 1.05rem;
+  letter-spacing: -0.005em;
+}
+
+/* Pause the cube animation in the prompt state — the search is *paused*,
+ * awaiting user input, not actively running. */
+.optim-cube--paused .cube-loader {
+  animation-play-state: paused;
+}
+[data-theme='light'] .optim-cube--paused .cube-loader {
+  animation-play-state: paused;
+}
+
+/* ── Hero summary: big unfilled count + supporting line ────────────────── */
+.optim-continuation-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 4px 0 18px;
+  line-height: 1;
+}
+
+.optim-continuation-hero {
+  font-size: 3.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.optim-continuation-sub {
+  margin-top: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
+  opacity: 0.85;
+}
+
+.optim-continuation-meta {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.optim-continuation-hint {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin: 0 0 14px;
+  padding: 8px 10px;
+  background: rgba(245, 158, 11, 0.1);
+  border-inline-start: 3px solid rgba(245, 158, 11, 0.7);
+  border-radius: 4px;
+  text-align: start;
+  line-height: 1.5;
+}
+
+[data-theme='light'] .optim-continuation-hint {
+  background: rgba(245, 158, 11, 0.12);
+  border-inline-start-color: rgba(217, 119, 6, 0.7);
+}
+
+/* ── Tier cards ───────────────────────────────────────────────────────── */
+.optim-continuation-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.optim-tier {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  cursor: pointer;
+  text-align: start;
+  font: inherit;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.12s ease;
+}
+
+.optim-tier:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
+}
+
+.optim-tier:focus-visible {
+  outline: 2px solid rgba(74, 144, 217, 0.7);
+  outline-offset: 2px;
+}
+
+.optim-tier:active {
+  transform: translateY(0);
+}
+
+/* Icon disk — colored tint per tier variant. */
+.optim-tier-icon {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.optim-tier-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.optim-tier--quick .optim-tier-icon {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+}
+.optim-tier--balanced .optim-tier-icon {
+  background: rgba(74, 144, 217, 0.22);
+  color: #93c5fd;
+}
+.optim-tier--deep .optim-tier-icon {
+  background: rgba(168, 85, 247, 0.18);
+  color: #c4b5fd;
+}
+
+.optim-tier-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.optim-tier-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.optim-tier-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.optim-tier-badge {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #eaf3ff;
+  background: rgba(74, 144, 217, 0.5);
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(74, 144, 217, 0.7);
+}
+
+/* Recommended tier: filled accent, brighter border, soft inner glow. */
+.optim-tier--recommended {
+  background: linear-gradient(180deg, rgba(74, 144, 217, 0.22), rgba(74, 144, 217, 0.12));
+  border-color: rgba(74, 144, 217, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 12px rgba(74, 144, 217, 0.15);
+}
+.optim-tier--recommended:hover {
+  background: linear-gradient(180deg, rgba(74, 144, 217, 0.3), rgba(74, 144, 217, 0.18));
+  border-color: rgba(74, 144, 217, 0.75);
+}
+
+/* ── Custom number input ─────────────────────────────────────────────── */
+.optim-continuation-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 14px;
+  padding-top: 14px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.optim-continuation-custom label {
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.optim-continuation-custom input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.optim-continuation-custom input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.optim-continuation-custom input:focus {
+  outline: none;
+  border-color: rgba(74, 144, 217, 0.6);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.optim-continuation-custom-ok {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(74, 144, 217, 0.5);
+  border-radius: 8px;
+  background: rgba(74, 144, 217, 0.18);
+  color: #eaf3ff;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    opacity 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.optim-continuation-custom-ok svg {
+  width: 14px;
+  height: 14px;
+}
+
+.optim-continuation-custom-ok:hover:not(:disabled) {
+  background: rgba(74, 144, 217, 0.32);
+  border-color: rgba(74, 144, 217, 0.8);
+}
+
+.optim-continuation-custom-ok:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Dismiss action ──────────────────────────────────────────────────── */
+.optim-continuation-actions {
+  margin-top: 6px;
+  justify-content: center;
+}
+
+.optim-continuation-dismiss {
+  padding: 6px 18px;
+  font-size: 0.82rem;
+}
+
+/* ── Light theme overrides ──────────────────────────────────────────── */
+[data-theme='light'] .optim-tier {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(15, 23, 42, 0.1);
+  color: var(--text);
+}
+[data-theme='light'] .optim-tier:hover {
+  background: rgba(15, 23, 42, 0.06);
+  border-color: rgba(15, 23, 42, 0.18);
+}
+[data-theme='light'] .optim-tier-icon {
+  background: rgba(15, 23, 42, 0.05);
+}
+[data-theme='light'] .optim-tier--quick .optim-tier-icon {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+[data-theme='light'] .optim-tier--balanced .optim-tier-icon {
+  background: rgba(74, 144, 217, 0.16);
+  color: #1d4ed8;
+}
+[data-theme='light'] .optim-tier--deep .optim-tier-icon {
+  background: rgba(168, 85, 247, 0.14);
+  color: #7c3aed;
+}
+[data-theme='light'] .optim-tier--recommended {
+  background: linear-gradient(180deg, rgba(74, 144, 217, 0.16), rgba(74, 144, 217, 0.08));
+  border-color: rgba(74, 144, 217, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 1px 14px rgba(74, 144, 217, 0.18);
+}
+[data-theme='light'] .optim-tier--recommended:hover {
+  background: linear-gradient(180deg, rgba(74, 144, 217, 0.22), rgba(74, 144, 217, 0.12));
+  border-color: rgba(74, 144, 217, 0.75);
+}
+[data-theme='light'] .optim-tier-badge {
+  color: #ffffff;
+  background: rgba(37, 99, 235, 0.85);
+  border-color: rgba(37, 99, 235, 0.9);
+}
+[data-theme='light'] .optim-continuation-hero {
+  color: #b91c1c;
+  text-shadow: none;
+}
+[data-theme='light'] .optim-continuation-custom {
+  border-top-color: rgba(15, 23, 42, 0.08);
+}
+[data-theme='light'] .optim-continuation-custom input {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.15);
+}
+[data-theme='light'] .optim-continuation-custom input:focus {
+  border-color: rgba(74, 144, 217, 0.6);
+  background: rgba(15, 23, 42, 0.06);
+}
+[data-theme='light'] .optim-continuation-custom-ok {
+  background: rgba(74, 144, 217, 0.14);
+  border-color: rgba(74, 144, 217, 0.5);
+  color: #1d4ed8;
+}
+[data-theme='light'] .optim-continuation-custom-ok:hover:not(:disabled) {
+  background: rgba(74, 144, 217, 0.24);
+}
+
 .gm-modal-btn-danger {
   background: var(--danger) !important;
 }

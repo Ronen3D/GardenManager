@@ -138,6 +138,7 @@ import {
   showAlert,
   showBottomSheet,
   showConfirm,
+  showContinuationModal,
   showContinuityImport,
   showPrompt,
   showTimePicker,
@@ -194,6 +195,10 @@ function readHash(): void {
 }
 /** True while multi-attempt optimization is running */
 let _isOptimizing = false;
+/** True while a *continuation* of a prior run is in flight (vs. a fresh generation). Drives the overlay title swap. */
+let _isContinuation = false;
+/** Consecutive no-improvement continuations on the current schedule, drives the modal's diminishing-returns hint. Reset on fresh generate or on improvement. */
+let _noImprovementStreak = 0;
 /** AbortController for cancelling a running optimization */
 let _optimAbortController: AbortController | null = null;
 /** AbortController for stopping early and accepting the best result so far */
@@ -2458,6 +2463,7 @@ function renderOptimOverlay(): string {
 
   const { attempt, totalAttempts, bestScore, bestUnfilled, lastImproved } = _optimProgress;
   const pct = Math.round((attempt / totalAttempts) * 100);
+  const titleText = _isContinuation ? 'ממשיך לחפש שבצ"ק טוב יותר' : 'מחפש את השיבוץ האיכותי ביותר';
 
   return `<div class="optim-overlay">
     <div class="optim-card">
@@ -2474,7 +2480,7 @@ function renderOptimOverlay(): string {
           <div class="cube-cell" style="--cell-color:#2ecc71"></div>
         </div>
       </div>
-      <h3>מחפש את השיבוץ האיכותי ביותר…</h3>
+      <h3>${titleText}</h3>
       <div class="optim-progress-bar">
         <div class="optim-progress-fill" style="width:${pct}%"></div>
       </div>
@@ -2573,6 +2579,8 @@ async function doGenerate(): Promise<void> {
     showToast('לא ניתן ליצור שבצ"ק בזמן כיול אוטומטי.', { type: 'warning' });
     return;
   }
+  // Fresh generation — discard any continuation history from a prior schedule.
+  _noImprovementStreak = 0;
 
   // Defensive re-run: the button's disabled state was set at last render, so a
   // user edit between render and click could have introduced a Critical
@@ -2791,6 +2799,191 @@ async function doGenerate(): Promise<void> {
       duration: 8000,
     });
   }
+
+  await maybePromptContinuation();
+}
+
+/** Count slots reported as infeasible (unfilled) on the current schedule. */
+function countInfeasibleSlots(schedule: Schedule): number {
+  let n = 0;
+  for (const v of schedule.violations) {
+    if (v.code === 'INFEASIBLE_SLOT') n++;
+  }
+  return n;
+}
+
+/**
+ * After a generation or continuation completes, ask the user whether to run
+ * additional optimization attempts seeded from the current best. Idempotent
+ * to call repeatedly; bails out when nothing is unfilled, when the schedule
+ * is dirty, or when the engine has no cached optimization result.
+ */
+async function maybePromptContinuation(): Promise<void> {
+  if (!currentSchedule || !engine || _scheduleDirty) return;
+  if (!engine.hasOptimizationResultForContinuation()) return;
+  const unfilled = countInfeasibleSlots(currentSchedule);
+  if (unfilled === 0) {
+    // Solved — clear the streak so a future continuation chain starts fresh.
+    _noImprovementStreak = 0;
+    return;
+  }
+  const additional = await showContinuationModal({
+    unfilledCount: unfilled,
+    originalAttempts: scheduleActualAttempts,
+    diminishingReturnsHint: _noImprovementStreak >= 2,
+  });
+  if (additional === null) return;
+  await runContinuation(additional);
+}
+
+/**
+ * Run `additional` more optimization attempts seeded from the engine's
+ * cached prior result. Reuses the existing optimization overlay (with the
+ * title swapped to indicate continuation) and the existing abort / early-
+ * stop controllers. On strict improvement the new schedule replaces the
+ * old one; otherwise the schedule is left untouched except for the
+ * cumulative attempt count.
+ */
+async function runContinuation(additional: number): Promise<void> {
+  if (_isOptimizing || !engine || !currentSchedule) return;
+  if (!engine.hasOptimizationResultForContinuation()) return;
+
+  const prevScheduleRef = currentSchedule;
+  const prevUnfilled = countInfeasibleSlots(currentSchedule);
+  const baselineAttempts = scheduleActualAttempts;
+
+  _isOptimizing = true;
+  _isContinuation = true;
+  _optimAbortController = new AbortController();
+  _optimEarlyStopController = new AbortController();
+  _optimProgress = {
+    attempt: baselineAttempts,
+    totalAttempts: baselineAttempts + additional,
+    bestScore: currentSchedule.score.compositeScore,
+    bestUnfilled: prevUnfilled,
+    lastImproved: false,
+  };
+  clearAttemptScoreHistory();
+
+  // Switch to schedule tab if not already there, and show overlay.
+  currentTab = 'schedule';
+  pushHash();
+  renderAll();
+  wireOptimCancelButton();
+  wireOptimAcceptBestButton();
+
+  // Disable generate button while continuation runs.
+  const genBtn = document.getElementById('btn-generate') as HTMLButtonElement | null;
+  if (genBtn) {
+    genBtn.disabled = true;
+    genBtn.textContent = '⏳ ממשיך…';
+  }
+
+  const t0 = performance.now();
+  let wasCancelled = false;
+  let wasEarlyStopped = false;
+  let scheduleSaved = false;
+
+  // Same rAF-coalescing pattern as doGenerate — preserves improvement flashes
+  // even when multiple progress events land in the same paint frame.
+  let pendingProgress: {
+    attempt: number;
+    totalAttempts: number;
+    bestScore: number;
+    bestUnfilled: number;
+    lastImproved: boolean;
+  } | null = null;
+  let progressRafId = 0;
+
+  try {
+    const schedule = await engine.continueOptimizationAsync(
+      additional,
+      (info) => {
+        pushAttemptScore(info.attemptScore);
+        pendingProgress = {
+          attempt: info.attempt,
+          totalAttempts: info.totalAttempts,
+          bestScore: info.currentBestScore,
+          bestUnfilled: info.currentBestUnfilled,
+          lastImproved: (pendingProgress?.lastImproved ?? false) || info.improved,
+        };
+        if (progressRafId === 0) {
+          progressRafId = requestAnimationFrame(() => {
+            progressRafId = 0;
+            if (!pendingProgress) return;
+            _optimProgress = pendingProgress;
+            pendingProgress = null;
+            updateOverlay();
+          });
+        }
+      },
+      _optimAbortController.signal,
+      _optimEarlyStopController.signal,
+    );
+    wasEarlyStopped = _optimEarlyStopController.signal.aborted;
+
+    currentSchedule = schedule;
+    scheduleElapsed = Math.round(performance.now() - t0);
+    scheduleActualAttempts = schedule.actualAttempts ?? baselineAttempts + additional;
+    _snapshotDirty = true;
+    store.setActiveSnapshotId(null);
+
+    scheduleSaved = store.saveSchedule(schedule);
+
+    const liveMode = store.getLiveModeState();
+    if (liveMode.enabled) {
+      freezeAssignments(currentSchedule, liveMode.currentTimestamp);
+    }
+  } catch (err) {
+    if (_optimAbortController?.signal.aborted) {
+      wasCancelled = true;
+    } else {
+      console.error('[Scheduler] Continuation failed:', err);
+      showToast('שגיאה במהלך ההמשך.', { type: 'error' });
+    }
+  } finally {
+    if (progressRafId !== 0) {
+      cancelAnimationFrame(progressRafId);
+      progressRafId = 0;
+    }
+    pendingProgress = null;
+    _isOptimizing = false;
+    _isContinuation = false;
+    _optimProgress = null;
+    _optimAbortController = null;
+    _optimEarlyStopController = null;
+  }
+
+  renderAll();
+
+  if (wasCancelled) {
+    showToast('ההמשך בוטל', { type: 'info' });
+    return;
+  }
+
+  const improved = currentSchedule !== prevScheduleRef;
+  if (improved) {
+    _noImprovementStreak = 0;
+    const newUnfilled = countInfeasibleSlots(currentSchedule!);
+    const diff = prevUnfilled - newUnfilled;
+    const msg =
+      diff > 0
+        ? `שבצ"ק שופר: ${prevUnfilled} → ${newUnfilled} משבצות לא מאוישות`
+        : 'שבצ"ק שופר בציון הכולל';
+    showToast(msg, { type: 'success' });
+    if (!scheduleSaved) {
+      showToast('השבצ"ק שופר אך לא נשמר — נפח האחסון בדפדפן מלא.', { type: 'warning', duration: 8000 });
+    }
+  } else {
+    _noImprovementStreak++;
+    const ranLabel = wasEarlyStopped
+      ? `${scheduleActualAttempts - baselineAttempts} ניסיונות נוספים שבוצעו`
+      : `${additional} ניסיונות נוספים`;
+    showToast(`לא נמצא שיפור ב-${ranLabel}. השבצ"ק נותר כפי שהוא.`, { type: 'info' });
+  }
+
+  // Re-prompt while slots remain unfilled.
+  await maybePromptContinuation();
 }
 
 // ─── Create Empty Manual Schedule ──────────────────────────────────────────
@@ -4353,7 +4546,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.2.7</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.2.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
