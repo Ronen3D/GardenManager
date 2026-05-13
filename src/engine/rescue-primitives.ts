@@ -126,6 +126,17 @@ export interface SlotEnumerationContext {
    */
   excludeParticipantIds: Set<string>;
   /**
+   * Optional order-bias hint: when set, depth-2/3/4/5 try this participant
+   * first in the `q`/`r`/`s`/`t` candidate-role loops. Pure iteration-order
+   * bias — does not affect eligibility, exclusion, scoring, or depth caps.
+   * All existing in-loop guards (excludeParticipantIds, outer-role identity
+   * checks, isEligible) still apply unchanged. Used by capability-change to
+   * front-load focal-inclusive chains within the depth budget; harmless when
+   * the priority participant is excluded or fails eligibility (the loop just
+   * falls through to the rest of the iteration in original order).
+   */
+  priorityParticipantId?: string;
+  /**
    * Mutable scratch state used by scoreSwapSet. Lazily initialized on first
    * score call; reused across every depth-1/2/3 candidate and every slot in
    * the batch to avoid O(assignments) allocation per candidate. Callers
@@ -268,6 +279,22 @@ function participantAssignmentsExcluding(
   return base.filter((a) => !excludedAssignmentIds.has(a.id));
 }
 
+/**
+ * Move the priority participant to the front of the iteration list while
+ * preserving the relative order of all other entries. No-op when priorityId
+ * is undefined, not found in the list, or already at index 0. Allocates a
+ * single shallow copy only when reordering is needed.
+ */
+function withPriorityFirst<T extends Participant>(participants: T[], priorityId: string | undefined): T[] {
+  if (!priorityId) return participants;
+  const idx = participants.findIndex((p) => p.id === priorityId);
+  if (idx <= 0) return participants;
+  const reordered = [...participants];
+  const [pr] = reordered.splice(idx, 1);
+  reordered.unshift(pr);
+  return reordered;
+}
+
 // ─── Depth 1 ─────────────────────────────────────────────────────────────────
 
 function depth1(
@@ -374,7 +401,7 @@ function depth2(
       )
         continue;
 
-      for (const q of ctx.schedule.participants) {
+      for (const q of withPriorityFirst(ctx.schedule.participants, ctx.priorityParticipantId)) {
         // q may be the focal (vacated) participant — HC-3 via extraUnavailability
         // will reject them for in-window donor tasks while allowing reassignment
         // to outside-window donor tasks. This is the Future-SOS "reassign focal
@@ -495,7 +522,7 @@ function depth3(
       )
         continue;
 
-      for (const q of sortedParticipants) {
+      for (const q of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
         // q may be focal — HC-3 via extraUnavailability rejects them for
         // in-window donor tasks; outside-window donor tasks are a valid
         // reassignment of the focal participant (Future-SOS product intent).
@@ -543,7 +570,7 @@ function depth3(
           )
             continue;
 
-          for (const r of sortedParticipants) {
+          for (const r of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
             // r may be focal — HC-3 via extraUnavailability rejects focal
             // for in-window donor tasks; outside-window donor tasks are a
             // valid focal reassignment under Future-SOS intent.
@@ -701,7 +728,7 @@ function depth4(
       )
         continue;
 
-      for (const q of sortedParticipants) {
+      for (const q of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
         if (q.id === p.id) continue;
 
         const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
@@ -746,7 +773,7 @@ function depth4(
           )
             continue;
 
-          for (const r of sortedParticipants) {
+          for (const r of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
             if (r.id === p.id || r.id === q.id) continue;
 
             const rAssignments = ctx.assignmentsByParticipant.get(r.id) || [];
@@ -797,7 +824,7 @@ function depth4(
               )
                 continue;
 
-              for (const s of sortedParticipants) {
+              for (const s of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
                 if (s.id === p.id || s.id === q.id || s.id === r.id) continue;
 
                 const sAssignments = participantAssignmentsExcluding(ctx, s.id, new Set([donorR.id]));
@@ -966,7 +993,7 @@ function depth5(
       )
         continue;
 
-      for (const q of sortedParticipants) {
+      for (const q of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
         if (q.id === p.id) continue;
 
         const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
@@ -1011,7 +1038,7 @@ function depth5(
           )
             continue;
 
-          for (const r of sortedParticipants) {
+          for (const r of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
             if (r.id === p.id || r.id === q.id) continue;
 
             const rAssignments = ctx.assignmentsByParticipant.get(r.id) || [];
@@ -1062,7 +1089,7 @@ function depth5(
               )
                 continue;
 
-              for (const s of sortedParticipants) {
+              for (const s of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
                 if (s.id === p.id || s.id === q.id || s.id === r.id) continue;
 
                 const sAssignments = ctx.assignmentsByParticipant.get(s.id) || [];
@@ -1117,7 +1144,7 @@ function depth5(
                   )
                     continue;
 
-                  for (const t of sortedParticipants) {
+                  for (const t of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
                     if (t.id === p.id || t.id === q.id || t.id === r.id || t.id === s.id) continue;
 
                     const tAssignments = participantAssignmentsExcluding(ctx, t.id, new Set([donorS.id]));

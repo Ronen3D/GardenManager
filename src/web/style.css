@@ -9219,6 +9219,16 @@ tr.now-row-animate > td.time-cell {
   border: 1px dashed rgba(243, 156, 18, 0.6);
   letter-spacing: 0.02em;
 }
+.fsos-focal-continuity-badge {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(74, 144, 217, 0.18);
+  color: #4a90d9;
+  border: 1px solid rgba(74, 144, 217, 0.55);
+  letter-spacing: 0.02em;
+}
 .fsos-plan-reason {
   font-size: 0.8rem;
   color: var(--text-muted, #888);

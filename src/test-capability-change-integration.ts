@@ -926,6 +926,233 @@ console.log('\n── Bonus: upsertCapabilityLoss merge semantics ──');
   assert(coexist.length === 2, 'upsert: different cert set yields independent entry');
 }
 
+// ─── Test 9 — focal-continuity extension fires under deficit ────────────────
+
+console.log('\n── Test 9: focal-continuity extension fires on heavy cert-loss deficit ──');
+{
+  // Scenario: P holds a cert slot (8h, day 1 morning). Q has cert but is idle.
+  // R has TWO non-cert slots (day 1 afternoon, day 2 morning — 16h total).
+  // P loses cert → depth-1 chain hands the cert slot to Q. Without extension
+  // P is left with 0 hours and the L0 pool is wildly imbalanced (0,8,16 vs
+  // target 8 each). The extension scans, finds R's non-cert slots are focal-
+  // eligible, and lifts P back up by one. Net delta strictly positive → the
+  // extension applies.
+  const tCert = createTimeBlockFromHours(base, 6, 14);
+  const tOther1 = createTimeBlockFromHours(base, 14, 22);
+  const day2 = new Date(base.getTime() + 24 * 3600 * 1000);
+  const tOther2 = createTimeBlockFromHours(day2, 6, 14);
+
+  const taskCert: Task = {
+    id: 'fc-tCert',
+    name: 'TCert',
+    timeBlock: tCert,
+    requiredCount: 1,
+    slots: [{ slotId: 'fc-sCert', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['X'] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const taskOther1: Task = {
+    id: 'fc-tOther1',
+    name: 'TOther1',
+    timeBlock: tOther1,
+    requiredCount: 1,
+    slots: [{ slotId: 'fc-sOther1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const taskOther2: Task = {
+    id: 'fc-tOther2',
+    name: 'TOther2',
+    timeBlock: tOther2,
+    requiredCount: 1,
+    slots: [{ slotId: 'fc-sOther2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const P: Participant = {
+    id: 'fc-P',
+    name: 'P',
+    level: Level.L0,
+    certifications: ['X'],
+    group: 'G',
+    availability: wideAvail,
+    dateUnavailability: [],
+  };
+  const Q: Participant = {
+    id: 'fc-Q',
+    name: 'Q',
+    level: Level.L0,
+    certifications: ['X'],
+    group: 'G',
+    availability: wideAvail,
+    dateUnavailability: [],
+  };
+  const R: Participant = {
+    id: 'fc-R',
+    name: 'R',
+    level: Level.L0,
+    certifications: [],
+    group: 'G',
+    availability: wideAvail,
+    dateUnavailability: [],
+  };
+
+  const aCert: Assignment = {
+    id: 'fc-aCert',
+    taskId: taskCert.id,
+    slotId: 'fc-sCert',
+    participantId: P.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+  const aOther1: Assignment = {
+    id: 'fc-aOther1',
+    taskId: taskOther1.id,
+    slotId: 'fc-sOther1',
+    participantId: R.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+  const aOther2: Assignment = {
+    id: 'fc-aOther2',
+    taskId: taskOther2.id,
+    slotId: 'fc-sOther2',
+    participantId: R.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+
+  const sched = mkSchedule([taskCert, taskOther1, taskOther2], [P, Q, R], [aCert, aOther1, aOther2]);
+  const window = { start: new Date(tCert.start.getTime() - 1_000), end: new Date(tCert.end.getTime() + 1_000) };
+
+  const result = generateCapabilityChangePlans(
+    sched,
+    { participantId: P.id, lostCertifications: ['X'], window },
+    earlyAnchor,
+    {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildScoreCtx(sched.tasks, sched.participants),
+      maxPlans: 5,
+    },
+  );
+
+  assert(result.plans.length > 0, 'fc-ext: at least one plan returned');
+  const extended = result.plans.filter((p) => p.focalContinuityExtended === true);
+  assert(extended.length > 0, 'fc-ext: at least one plan is focalContinuityExtended');
+  if (extended.length > 0) {
+    const ext = extended[0];
+    assert(
+      ext.swaps.some((sw) => sw.toParticipantId === P.id),
+      'fc-ext: extended plan places focal P on at least one slot',
+    );
+    assert((ext.focalContinuityHoursAdded ?? 0) > 0, 'fc-ext: focalContinuityHoursAdded > 0');
+    assert(ext.violations.length === 0, 'fc-ext: extended plan passes full HC validation');
+  }
+}
+
+// ─── Test 10 — light cert-loss does NOT trigger extension ───────────────────
+
+console.log('\n── Test 10: light cert-loss (1 hour) does NOT trigger extension ──');
+{
+  // P holds ONE cert slot (8h) — a single shift loss. Pool is small; pool
+  // target for P is ~half. Deficit after a depth-1 swap is small; gate
+  // should NOT fire. Verifies the gate isn't over-eager.
+  const tCert = createTimeBlockFromHours(base, 6, 14);
+  const taskCert: Task = {
+    id: 'lc-tCert',
+    name: 'TCert',
+    timeBlock: tCert,
+    requiredCount: 1,
+    slots: [{ slotId: 'lc-sCert', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['X'] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  // Give P a robust amount of OTHER work so retention stays > 50% after the
+  // single cert assignment is lost. Two non-cert slots.
+  const tOther1 = createTimeBlockFromHours(base, 14, 22);
+  const day2 = new Date(base.getTime() + 24 * 3600 * 1000);
+  const tOther2 = createTimeBlockFromHours(day2, 6, 14);
+  const taskOther1: Task = {
+    id: 'lc-tO1',
+    name: 'TO1',
+    timeBlock: tOther1,
+    requiredCount: 1,
+    slots: [{ slotId: 'lc-sO1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const taskOther2: Task = {
+    id: 'lc-tO2',
+    name: 'TO2',
+    timeBlock: tOther2,
+    requiredCount: 1,
+    slots: [{ slotId: 'lc-sO2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const P: Participant = {
+    id: 'lc-P',
+    name: 'P',
+    level: Level.L0,
+    certifications: ['X'],
+    group: 'G',
+    availability: wideAvail,
+    dateUnavailability: [],
+  };
+  const Q: Participant = {
+    id: 'lc-Q',
+    name: 'Q',
+    level: Level.L0,
+    certifications: ['X'],
+    group: 'G',
+    availability: wideAvail,
+    dateUnavailability: [],
+  };
+  const aCert: Assignment = {
+    id: 'lc-aC',
+    taskId: taskCert.id,
+    slotId: 'lc-sCert',
+    participantId: P.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+  const aO1: Assignment = {
+    id: 'lc-aO1',
+    taskId: taskOther1.id,
+    slotId: 'lc-sO1',
+    participantId: P.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+  const aO2: Assignment = {
+    id: 'lc-aO2',
+    taskId: taskOther2.id,
+    slotId: 'lc-sO2',
+    participantId: P.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+  const sched = mkSchedule([taskCert, taskOther1, taskOther2], [P, Q], [aCert, aO1, aO2]);
+  const window = { start: new Date(tCert.start.getTime() - 1_000), end: new Date(tCert.end.getTime() + 1_000) };
+
+  const result = generateCapabilityChangePlans(
+    sched,
+    { participantId: P.id, lostCertifications: ['X'], window },
+    earlyAnchor,
+    {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildScoreCtx(sched.tasks, sched.participants),
+      maxPlans: 5,
+    },
+  );
+
+  assert(result.plans.length > 0, 'fc-light: at least one plan returned');
+  const top = result.plans[0];
+  // P kept 16h of work (2 of 3 assignments), retention = 16/24 = 0.67 > 0.5
+  // → gate must NOT fire on the top plan.
+  assert(top.focalContinuityExtended !== true, 'fc-light: top plan has no focal-continuity extension');
+}
+
 // ─── Summary ────────────────────────────────────────────────────────────────
 
 console.log('\n────────────────────────────────────────────────────────');

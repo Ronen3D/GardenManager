@@ -18,6 +18,7 @@ import {
 } from './constraints/hard-constraints';
 import type { ScoreContext } from './constraints/soft-constraints';
 import {
+  computeFocalWorkloadMetrics,
   findCertAffectedAssignments,
   generateCapabilityChangePlans,
   upsertCapabilityLoss,
@@ -30,10 +31,12 @@ import {
   DEFAULT_CONFIG,
   Level,
   type Participant,
+  type ParticipantCapacity,
   type Schedule,
   type SlotRequirement,
   type Task,
 } from './models/types';
+import { computeAllCapacities } from './utils/capacity';
 
 // ─── Tiny test runner ───────────────────────────────────────────────────────
 
@@ -621,6 +624,100 @@ section('generateCapabilityChangePlans smoke tests');
   } else {
     assert(true, 'infeasible: plans list empty (acceptable outcome)');
   }
+}
+
+// ─── Section 6: computeFocalWorkloadMetrics ─────────────────────────────────
+
+section('computeFocalWorkloadMetrics');
+
+{
+  // P (L0) holds 1 cert slot, Q (L0) idle, both equal capacity.
+  // Baseline: pre=8, post=8, target=4 (half the pool's 8h). Deficit=0,
+  // retention=1.
+  const p = mkParticipant({ id: 'fwm-P', name: 'P', certifications: ['X'] });
+  const q = mkParticipant({ id: 'fwm-Q', name: 'Q', certifications: ['X'] });
+  const slotX = mkSlot({ requiredCertifications: ['X'] });
+  const task = mkTask({
+    timeBlock: { start: D(2026, 4, 5, 6), end: D(2026, 4, 5, 14) },
+    slots: [slotX],
+  });
+  const a = mkAssignment(task.id, slotX.slotId, p.id);
+  const sched = mkSchedule({ tasks: [task], participants: [p, q], assignments: [a] });
+
+  // Need capacities for proportional target.
+  const caps: Map<string, ParticipantCapacity> = computeAllCapacities([p, q], D(2026, 4, 1), D(2026, 4, 30), 5);
+
+  const taskMap = new Map(sched.tasks.map((t) => [t.id, t] as const));
+
+  // 6a. Pre-plan view (no swaps applied → schedule.assignments as-is).
+  const m1 = computeFocalWorkloadMetrics(sched, p.id, sched.assignments, caps, taskMap);
+  assert(m1.preChangeEffectiveHours > 0, 'fwm: preChangeEffectiveHours > 0 (focal holds 1 cert slot)');
+  assert(m1.postPlanEffectiveHours === m1.preChangeEffectiveHours, 'fwm: post=pre when no swaps applied');
+  assert(m1.target > 0, 'fwm: target > 0 when focal has positive pool capacity');
+  assert(Math.abs(m1.retentionFraction - 1) < 1e-9, 'fwm: retention=1 when no loss');
+  assert(m1.deficit >= 0, 'fwm: deficit non-negative');
+
+  // 6b. After swap (Q takes the slot) → focal's post-plan hours drop to 0.
+  const swapped: Assignment[] = sched.assignments.map((aa) => (aa.id === a.id ? { ...aa, participantId: q.id } : aa));
+  const m2 = computeFocalWorkloadMetrics(sched, p.id, swapped, caps, taskMap);
+  assert(m2.postPlanEffectiveHours === 0, 'fwm: post=0 when focal has no remaining assignments');
+  assert(m2.retentionFraction === 0, 'fwm: retention=0 when focal lost all hours');
+  assert(m2.deficit > 0, 'fwm: deficit > 0 when focal below target');
+}
+
+// ─── Section 7: priorityParticipantId — focal-inclusive depth-2 chain found ─
+
+section('priorityParticipantId bias produces focal-inclusive plans');
+
+{
+  // P loses cert X. Q is the only cert-X holder. Q is currently assigned to a
+  // SECOND non-cert task. depth-2 chain: cert slot → Q, Q's donor → focal.
+  // Bias front-loads focal in the q-role; we assert at least one returned
+  // plan places P (focal) in Q's donor slot.
+  const p = mkParticipant({ id: 'bias-P', name: 'P', certifications: ['X'] });
+  const q = mkParticipant({ id: 'bias-Q', name: 'Q', certifications: ['X'] });
+
+  const slotCert = mkSlot({ requiredCertifications: ['X'] });
+  const taskCert = mkTask({
+    timeBlock: { start: D(2026, 4, 5, 6), end: D(2026, 4, 5, 14) },
+    slots: [slotCert],
+  });
+  const slotOther = mkSlot({ requiredCertifications: [] });
+  const taskOther = mkTask({
+    timeBlock: { start: D(2026, 4, 6, 6), end: D(2026, 4, 6, 14) },
+    slots: [slotOther],
+  });
+
+  const aCert = mkAssignment(taskCert.id, slotCert.slotId, p.id);
+  const aOther = mkAssignment(taskOther.id, slotOther.slotId, q.id);
+
+  const sched = mkSchedule({
+    tasks: [taskCert, taskOther],
+    participants: [p, q],
+    assignments: [aCert, aOther],
+  });
+
+  const earlyAnchor = D(2026, 4, 1, 0);
+  const result = generateCapabilityChangePlans(
+    sched,
+    {
+      participantId: p.id,
+      lostCertifications: ['X'],
+      window: { start: D(2026, 4, 5, 0), end: D(2026, 4, 5, 23, 59) },
+    },
+    earlyAnchor,
+    {
+      config: DEFAULT_CONFIG,
+      scoreCtx: mkScoreCtx(sched),
+      maxPlans: 5,
+    },
+  );
+
+  assert(result.plans.length >= 1, 'bias: at least 1 plan returned');
+  const focalGetsOther = result.plans.some((plan) =>
+    plan.swaps.some((sw) => sw.toParticipantId === p.id && sw.taskId === taskOther.id),
+  );
+  assert(focalGetsOther, "bias: at least one plan places focal at Q's donor (focal-inclusive depth-2)");
 }
 
 // ─── Summary ────────────────────────────────────────────────────────────────

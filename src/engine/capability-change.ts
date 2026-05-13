@@ -19,9 +19,26 @@
  */
 
 import { validateHardConstraints } from '../constraints/hard-constraints';
-import { computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
-import type { Assignment, Participant, Schedule, SchedulerConfig, Task } from '../models/types';
+import {
+  computeScheduleScore,
+  effectiveCapacity,
+  IncrementalScorer,
+  type ScoreContext,
+} from '../constraints/soft-constraints';
+import {
+  type Assignment,
+  Level,
+  type Participant,
+  type ParticipantCapacity,
+  type RescueSwap,
+  type Schedule,
+  type SchedulerConfig,
+  type Task,
+} from '../models/types';
+import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import { blocksOverlap } from '../shared/utils/time-utils';
+import { computeAllCapacities } from '../utils/capacity';
+import { describeSlot } from '../utils/date-utils';
 import { isSchedulerDiagOn } from './diagnostics';
 import {
   type AffectedAssignment,
@@ -42,6 +59,7 @@ import {
   type SlotEnumerationContext,
 } from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';
+import { isEligible } from './validator';
 
 // ─── Public Types ────────────────────────────────────────────────────────────
 
@@ -82,6 +100,124 @@ export interface GenerateCapabilityChangeOpts {
   config: SchedulerConfig;
   scoreCtx: ScoreContext;
   scheduleContext?: import('../shared/utils/time-utils').ScheduleContext;
+}
+
+// ─── Focal-continuity gate thresholds ───────────────────────────────────────
+
+/**
+ * Active focal-placement extension fires only when BOTH conditions hold:
+ *   - focal retains < 50% of their pre-change effective hours, AND
+ *   - focal is below their proportional target by > 2 effective hours.
+ *
+ * The retention check ensures the cert loss was meaningful (not a one-shift
+ * impact). The deficit check ensures the fairness gap is large enough to be
+ * worth the extra disruption — a focal with low capacity has a low target,
+ * so a small absolute deficit shouldn't trigger reshuffling valid slots.
+ *
+ * `MAX_EXTENSION_SWAPS` bounds how many extra swaps the extension may add to
+ * a single plan. Each swap must strictly improve composite score — the
+ * extension never makes a plan worse.
+ */
+const FOCAL_RETENTION_GATE = 0.5;
+const FOCAL_DEFICIT_HOURS_GATE = 2;
+const MAX_EXTENSION_SWAPS = 2;
+
+// ─── Local capacity fallback ────────────────────────────────────────────────
+
+function buildLocalCapacities(schedule: Schedule): Map<string, ParticipantCapacity> {
+  if (schedule.tasks.length === 0) return new Map();
+  let schedStart = schedule.tasks[0].timeBlock.start;
+  let schedEnd = schedule.tasks[0].timeBlock.end;
+  for (const t of schedule.tasks) {
+    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+  }
+  return computeAllCapacities(schedule.participants, schedStart, schedEnd, schedule.algorithmSettings.dayStartHour);
+}
+
+// ─── Focal workload metrics ─────────────────────────────────────────────────
+
+export interface FocalWorkloadMetrics {
+  /** Focal's effective hours in the original (pre-change) schedule. */
+  preChangeEffectiveHours: number;
+  /** Focal's effective hours after the plan's swaps are applied. */
+  postPlanEffectiveHours: number;
+  /** Focal's proportional target inside their pool (L0 or senior), post-plan. */
+  target: number;
+  /** max(0, target − postPlanEffectiveHours). */
+  deficit: number;
+  /** postPlanEffectiveHours / max(preChangeEffectiveHours, eps). 1 when pre is 0. */
+  retentionFraction: number;
+}
+
+function focalEffectiveHoursFromAssignments(
+  assignments: Assignment[],
+  focalId: string,
+  taskMap: Map<string, Task>,
+): number {
+  let h = 0;
+  for (const a of assignments) {
+    if (a.participantId !== focalId) continue;
+    const t = taskMap.get(a.taskId);
+    if (!t) continue;
+    h += computeTaskEffectiveHours(t);
+  }
+  return h;
+}
+
+/**
+ * Compute the focal participant's workload picture given a candidate plan's
+ * post-application assignment view. The proportional target follows SC-3's
+ * split-pool formula (L0 vs senior, capacity-proportional).
+ */
+export function computeFocalWorkloadMetrics(
+  schedule: Schedule,
+  focalId: string,
+  postPlanAssignments: Assignment[],
+  capacities: Map<string, ParticipantCapacity>,
+  taskMap: Map<string, Task>,
+): FocalWorkloadMetrics {
+  const preChangeEffectiveHours = focalEffectiveHoursFromAssignments(schedule.assignments, focalId, taskMap);
+  const postPlanEffectiveHours = focalEffectiveHoursFromAssignments(postPlanAssignments, focalId, taskMap);
+
+  const focal = schedule.participants.find((p) => p.id === focalId);
+  let target = 0;
+  if (focal) {
+    const isL0 = focal.level === Level.L0;
+    let poolLoad = 0;
+    let poolCapTotal = 0;
+    let focalCap = 0;
+    for (const p of schedule.participants) {
+      const pIsL0 = p.level === Level.L0;
+      if (pIsL0 !== isL0) continue;
+      const eCap = effectiveCapacity(p, capacities.get(p.id)?.totalAvailableHours ?? 0);
+      poolCapTotal += eCap;
+      if (p.id === focalId) focalCap = eCap;
+      poolLoad += focalEffectiveHoursFromAssignments(postPlanAssignments, p.id, taskMap);
+    }
+    if (poolCapTotal > 0) target = poolLoad * (focalCap / poolCapTotal);
+  }
+
+  const deficit = Math.max(0, target - postPlanEffectiveHours);
+  const retentionFraction = preChangeEffectiveHours > 0 ? postPlanEffectiveHours / preChangeEffectiveHours : 1;
+  return { preChangeEffectiveHours, postPlanEffectiveHours, target, deficit, retentionFraction };
+}
+
+// ─── Apply RescueSwap[] to assignments ──────────────────────────────────────
+
+/**
+ * Plain-swap counterpart of `applyCompositionToAssignments`. The base plan
+ * exposes `RescueSwap[]` (merged across chains), so the extension pass works
+ * off that flat list rather than rebuilding chain structures.
+ */
+function applySwapsToAssignments(schedule: Schedule, swaps: RescueSwap[]): Assignment[] {
+  if (swaps.length === 0) return schedule.assignments.map((a) => ({ ...a }));
+  const swapMap = new Map<string, string>();
+  for (const s of swaps) swapMap.set(s.assignmentId, s.toParticipantId);
+  return schedule.assignments.map((a) => {
+    const pid = swapMap.get(a.id);
+    return pid ? { ...a, participantId: pid } : { ...a };
+  });
 }
 
 // ─── Affected-set identification ────────────────────────────────────────────
@@ -132,6 +268,275 @@ export function findCertAffectedAssignments(
   affected.sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
   lockedInPast.sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
   return { affected, lockedInPast };
+}
+
+// ─── Focal-continuity extension pass ────────────────────────────────────────
+
+interface ExtensionContext {
+  schedule: Schedule;
+  focalId: string;
+  taskMap: Map<string, Task>;
+  participantMap: Map<string, Participant>;
+  capacities: Map<string, ParticipantCapacity>;
+  config: SchedulerConfig;
+  scoreCtx: ScoreContext;
+  anchor: Date;
+  affectedIds: Set<string>;
+  extraUnavailability: Array<{ participantId: string; start: Date; end: Date }>;
+  extraCapabilityLoss: NonNullable<SlotEnumerationContext['extraCapabilityLoss']>;
+  disabledHC: Set<string> | undefined;
+  restRuleMap: Map<string, number> | undefined;
+  scheduleContext: import('../shared/utils/time-utils').ScheduleContext | undefined;
+  certLabelResolver: ((c: string) => string) | undefined;
+  baselineComposite: number;
+}
+
+/**
+ * Attempt to extend a base plan with up to `MAX_EXTENSION_SWAPS` single-swap
+ * placements of the focal participant into other compatible slots. Each
+ * extension swap must strictly improve composite score. Returns a new
+ * BatchRescuePlan tagged with `focalContinuityExtended: true` when at least
+ * one extension was applied, or `null` when the gate did not fire, no
+ * eligible improving target existed, the extended composition was worse
+ * than the base plan, or the final assignments failed full HC validation.
+ *
+ * The scan uses IncrementalScorer over a fresh post-plan-view scorer so each
+ * trial is O(k) rather than O(P·A). Pattern mirrors `polishReplaceWithIdle`
+ * in the optimizer; the focal is the only "candidate" considered (we are not
+ * doing a general polish, just placing the focal).
+ */
+function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionContext): BatchRescuePlan | null {
+  // Don't extend partial / HC-violating plans — they aren't applyable as-is.
+  if (basePlan.isPartial || basePlan.violations.length > 0) return null;
+
+  const postPlanAssignments = applySwapsToAssignments(ctx.schedule, basePlan.swaps);
+
+  // Gate check uses metrics computed against the post-plan view.
+  const metrics = computeFocalWorkloadMetrics(
+    ctx.schedule,
+    ctx.focalId,
+    postPlanAssignments,
+    ctx.capacities,
+    ctx.taskMap,
+  );
+  if (metrics.retentionFraction >= FOCAL_RETENTION_GATE) return null;
+  if (metrics.deficit <= FOCAL_DEFICIT_HOURS_GATE) return null;
+
+  const focal = ctx.participantMap.get(ctx.focalId);
+  if (!focal) return null;
+
+  // Fresh indices over the post-plan view. Mutating these during trial / commit
+  // is safe because postPlanAssignments is a fresh array of shallow-copied
+  // Assignment objects — not the schedule's frozen array.
+  const byParticipant = new Map<string, Assignment[]>();
+  const byTask = new Map<string, Assignment[]>();
+  for (const a of postPlanAssignments) {
+    let pl = byParticipant.get(a.participantId);
+    if (!pl) {
+      pl = [];
+      byParticipant.set(a.participantId, pl);
+    }
+    pl.push(a);
+    let tl = byTask.get(a.taskId);
+    if (!tl) {
+      tl = [];
+      byTask.set(a.taskId, tl);
+    }
+    tl.push(a);
+  }
+
+  // Build a fresh ScoreContext for the post-plan view so the scorer's
+  // pool stats, daily totals, capacity targets, and notWith attribution
+  // all reflect post-plan reality. `opts.scoreCtx` carries the immutable
+  // bits (capacities, notWithPairs, dayStartHour, phantomTaskIds).
+  const postPlanScoreCtx: ScoreContext = {
+    ...ctx.scoreCtx,
+    taskMap: ctx.taskMap,
+    pMap: ctx.participantMap,
+    assignmentsByParticipant: byParticipant,
+    assignmentsByTask: byTask,
+    capacities: ctx.capacities,
+  };
+
+  const incScorer = IncrementalScorer.build(
+    ctx.schedule.tasks,
+    ctx.schedule.participants,
+    postPlanAssignments,
+    ctx.config,
+    postPlanScoreCtx,
+  );
+  let currentComposite = incScorer.compositeScore;
+
+  const extensionSwaps: RescueSwap[] = [];
+  const extensionTouched = new Set<string>();
+
+  for (let iter = 0; iter < MAX_EXTENSION_SWAPS; iter++) {
+    let best: {
+      a: Assignment;
+      task: Task;
+      slot: import('../models/types').SlotRequirement;
+      from: string;
+      delta: number;
+    } | null = null;
+
+    for (const a of postPlanAssignments) {
+      // Don't redo a slot the extension already grabbed.
+      if (extensionTouched.has(a.id)) continue;
+      // Don't touch slots the base plan already rearranged.
+      if (ctx.affectedIds.has(a.id)) continue;
+      // Already focal → nothing to gain.
+      if (a.participantId === ctx.focalId) continue;
+
+      const task = ctx.taskMap.get(a.taskId);
+      if (!task) continue;
+      if (!isFutureTask(task, ctx.anchor)) continue;
+      if (!isModifiableAssignment(a, ctx.taskMap, ctx.anchor)) continue;
+
+      const slot = task.slots.find((s) => s.slotId === a.slotId);
+      if (!slot) continue;
+
+      const focalAssigns = byParticipant.get(ctx.focalId) ?? [];
+      const taskAssigns = byTask.get(task.id) ?? [];
+
+      if (
+        !isEligible(focal, task, slot, focalAssigns, ctx.taskMap, {
+          checkSameGroup: true,
+          taskAssignments: taskAssigns.filter((ta) => ta.slotId !== slot.slotId),
+          participantMap: ctx.participantMap,
+          disabledHC: ctx.disabledHC,
+          restRuleMap: ctx.restRuleMap,
+          scheduleContext: ctx.scheduleContext,
+          extraUnavailability: ctx.extraUnavailability,
+          extraCapabilityLoss: ctx.extraCapabilityLoss,
+        })
+      )
+        continue;
+
+      // Trial: X → focal at this slot.
+      const incumbentPid = a.participantId;
+      const incumbentList = byParticipant.get(incumbentPid);
+      if (!incumbentList) continue;
+      const savedI = incScorer.saveParticipant(incumbentPid);
+      const savedF = incScorer.saveParticipant(ctx.focalId);
+      if (!savedI || !savedF) continue;
+
+      const idx = incumbentList.indexOf(a);
+      if (idx === -1) continue;
+      incumbentList.splice(idx, 1);
+      a.participantId = ctx.focalId;
+      let focalList = byParticipant.get(ctx.focalId);
+      if (!focalList) {
+        focalList = [];
+        byParticipant.set(ctx.focalId, focalList);
+      }
+      focalList.push(a);
+
+      const newComposite = incScorer.recomputeForSwap(incumbentPid, ctx.focalId);
+      const delta = newComposite - currentComposite;
+
+      // Undo trial.
+      a.participantId = incumbentPid;
+      const fIdx = focalList.indexOf(a);
+      if (fIdx !== -1) focalList.splice(fIdx, 1);
+      if (focalList.length === 0) byParticipant.delete(ctx.focalId);
+      incumbentList.push(a);
+      incScorer.restoreParticipant(incumbentPid, savedI);
+      incScorer.restoreParticipant(ctx.focalId, savedF);
+      incScorer.finalizeUndo();
+
+      if (delta > 1e-6 && (best === null || delta > best.delta)) {
+        best = { a, task, slot, from: incumbentPid, delta };
+      }
+    }
+
+    if (!best) break;
+
+    // Commit best.
+    const incumbentList = byParticipant.get(best.from);
+    if (!incumbentList) break;
+    const idx = incumbentList.indexOf(best.a);
+    if (idx === -1) break;
+    incumbentList.splice(idx, 1);
+    best.a.participantId = ctx.focalId;
+    let focalList = byParticipant.get(ctx.focalId);
+    if (!focalList) {
+      focalList = [];
+      byParticipant.set(ctx.focalId, focalList);
+    }
+    focalList.push(best.a);
+    currentComposite = incScorer.recomputeForSwap(best.from, ctx.focalId);
+
+    extensionSwaps.push({
+      assignmentId: best.a.id,
+      fromParticipantId: best.from,
+      toParticipantId: ctx.focalId,
+      taskId: best.task.id,
+      taskName: best.task.name,
+      slotLabel: describeSlot(best.slot.label, best.task.timeBlock),
+    });
+    extensionTouched.add(best.a.id);
+  }
+
+  if (extensionSwaps.length === 0) return null;
+
+  // Defense in depth: full HC validation on the final assignments. The
+  // incremental scan checked per-slot via isEligible, but two extension
+  // swaps could conceivably interact in a way that only the bipartite
+  // group-matching layer (HC-8) or pair-wise HC-12 across both new slots
+  // catches. Reject the extension if anything fails.
+  const validation = validateHardConstraints(
+    ctx.schedule.tasks,
+    ctx.schedule.participants,
+    postPlanAssignments,
+    ctx.disabledHC,
+    ctx.restRuleMap,
+    ctx.certLabelResolver,
+    ctx.extraUnavailability,
+    ctx.scheduleContext,
+    ctx.extraCapabilityLoss,
+  );
+  if (validation.violations.length > 0) return null;
+
+  // Final score via the full scorer for consistency with the base plan's
+  // compositeDelta calculation (incremental drift is small but we don't
+  // want comparator noise).
+  const finalScore = computeScheduleScore(
+    ctx.schedule.tasks,
+    ctx.schedule.participants,
+    postPlanAssignments,
+    ctx.config,
+    ctx.scoreCtx,
+  );
+  const compositeDelta = finalScore.compositeScore - ctx.baselineComposite;
+
+  // Strict improvement guard against the base plan — extension must earn
+  // its disruption.
+  if (compositeDelta <= basePlan.compositeDelta + 1e-6) return null;
+
+  const allSwaps = [...basePlan.swaps, ...extensionSwaps];
+  const touched = new Set<string>();
+  for (const s of allSwaps) touched.add(s.assignmentId);
+
+  let focalContinuityHoursAdded = 0;
+  for (const sw of extensionSwaps) {
+    const t = ctx.taskMap.get(sw.taskId);
+    if (!t) continue;
+    focalContinuityHoursAdded += computeTaskEffectiveHours(t);
+  }
+
+  return {
+    id: `${basePlan.id}-foc${extensionSwaps.length}`,
+    rank: 0,
+    swaps: allSwaps,
+    compositeDelta,
+    depthHistogram: { ...basePlan.depthHistogram },
+    perParticipantChanges: buildPerParticipantChanges(ctx.schedule.assignments, postPlanAssignments, touched),
+    violations: [],
+    isPartial: basePlan.isPartial,
+    fallbackDepthUsed: basePlan.fallbackDepthUsed,
+    focalContinuityExtended: true,
+    focalContinuityHoursAdded,
+  };
 }
 
 // ─── Public entry point ─────────────────────────────────────────────────────
@@ -244,7 +649,18 @@ export function generateCapabilityChangePlans(
     // Focal stays in the candidate pool — HC-2/HC-11 with the override
     // already filters them out of cert-restricted slots.
     excludeParticipantIds: new Set(),
+    // Bias inner q/r/s/t loops to try the focal first within the depth
+    // budget. Pure iteration-order hint; all eligibility/exclusion guards
+    // still apply. Surfaces focal-inclusive chains earlier in depth 3+
+    // (which has internal break caps) and is harmless at depth 2.
+    priorityParticipantId: request.participantId,
   };
+
+  // Capacities for the proportional-target computation that drives the
+  // focal-continuity gate. Reuse the engine's pre-computed map when
+  // available; otherwise derive locally from the schedule window so the
+  // gate still works in CLI/test contexts where opts.scoreCtx is minimal.
+  const capacities: Map<string, ParticipantCapacity> = opts.scoreCtx.capacities ?? buildLocalCapacities(schedule);
 
   const runStage = (
     fallbackLevel: FallbackLevel,
@@ -358,16 +774,69 @@ export function generateCapabilityChangePlans(
       });
     }
 
-    scored.sort((a, b) => {
-      const delta = b.compositeDelta - a.compositeDelta;
-      if (Math.abs(delta) > 0.1) return delta;
-      const aDisturbed = a.perParticipantChanges.length;
-      const bDisturbed = b.perParticipantChanges.length;
-      if (aDisturbed !== bDisturbed) return aDisturbed - bDisturbed;
-      return a.swaps.length - b.swaps.length;
-    });
+    // Precompute focal continuity delta per plan once for the tiebreaker.
+    // Smaller = focal closer to their proportional target post-plan.
+    const focalDeltaCache = new Map<string, number>();
+    const computeFocalDelta = (plan: BatchRescuePlan): number => {
+      const postPlanAssigns = applySwapsToAssignments(schedule, plan.swaps);
+      const m = computeFocalWorkloadMetrics(schedule, request.participantId, postPlanAssigns, capacities, taskMap);
+      return Math.abs(m.target - m.postPlanEffectiveHours);
+    };
+    for (const plan of scored) focalDeltaCache.set(plan.id, computeFocalDelta(plan));
 
-    const top = selectDiversePlans(scored, maxPlans);
+    const sortByQuality = (arr: BatchRescuePlan[]): void => {
+      arr.sort((a, b) => {
+        const delta = b.compositeDelta - a.compositeDelta;
+        if (Math.abs(delta) > 0.1) return delta;
+        // Tiebreaker: prefer plans where focal is closer to their target.
+        const aFocal = focalDeltaCache.get(a.id) ?? 0;
+        const bFocal = focalDeltaCache.get(b.id) ?? 0;
+        if (Math.abs(aFocal - bFocal) > 0.01) return aFocal - bFocal;
+        const aDisturbed = a.perParticipantChanges.length;
+        const bDisturbed = b.perParticipantChanges.length;
+        if (aDisturbed !== bDisturbed) return aDisturbed - bDisturbed;
+        return a.swaps.length - b.swaps.length;
+      });
+    };
+    sortByQuality(scored);
+
+    // Active focal-placement extension: walk the top candidates, attempt to
+    // place the focal into compatible non-affected slots when their workload
+    // deficit triggers the gate. Each extension adds at most 2 strictly-
+    // improving swaps. Variants are appended alongside the originals so
+    // diversity selection can pick whichever scores better.
+    const extCtx: ExtensionContext = {
+      schedule,
+      focalId: request.participantId,
+      taskMap,
+      participantMap,
+      capacities,
+      config: opts.config,
+      scoreCtx: opts.scoreCtx,
+      anchor,
+      affectedIds: new Set(affected.map((aa) => aa.assignment.id)),
+      extraUnavailability,
+      extraCapabilityLoss,
+      disabledHC: opts.disabledHC,
+      restRuleMap: opts.restRuleMap,
+      scheduleContext: opts.scheduleContext,
+      certLabelResolver: opts.certLabelResolver,
+      baselineComposite: baselineScore.compositeScore,
+    };
+    const extensionConsiderLimit = Math.min(scored.length, Math.max(maxPlans * 2, 6));
+    const extendedVariants: BatchRescuePlan[] = [];
+    for (let i = 0; i < extensionConsiderLimit; i++) {
+      const ext = tryFocalContinuityExtensions(scored[i], extCtx);
+      if (ext) {
+        focalDeltaCache.set(ext.id, computeFocalDelta(ext));
+        extendedVariants.push(ext);
+      }
+    }
+
+    const augmented = extendedVariants.length > 0 ? [...scored, ...extendedVariants] : scored;
+    if (extendedVariants.length > 0) sortByQuality(augmented);
+
+    const top = selectDiversePlans(augmented, maxPlans);
     for (let i = 0; i < top.length; i++) top[i].rank = i + 1;
 
     return { validPlans: top, invalidPlans: scoredInvalid, infeasibleIds, timedOut, anySolvable: true };

@@ -74,6 +74,20 @@ export interface BatchRescuePlan {
    * The UI uses this to render a "fallback mode" banner.
    */
   fallbackDepthUsed?: 4 | 5;
+  /**
+   * Set by the capability-change planner when an "active focal-placement
+   * extension" added swaps on top of the base chain composition specifically
+   * to preserve the focal participant's workload after a cert loss. Plans
+   * without an extension leave this `undefined` / `false`. The UI uses it
+   * to render a "preserved focal workload" badge.
+   */
+  focalContinuityExtended?: boolean;
+  /**
+   * Effective hours added back to the focal participant by the extension
+   * (sum of `computeTaskEffectiveHours` over extension-added assignments).
+   * Only meaningful when `focalContinuityExtended === true`.
+   */
+  focalContinuityHoursAdded?: number;
 }
 
 export interface BatchRescueResult {

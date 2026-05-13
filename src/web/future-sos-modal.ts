@@ -789,6 +789,9 @@ function renderBatchPlanCard(
   const partialBadgeHtml = plan.isPartial
     ? `<span class="fsos-partial-badge" title="תוכנית זו ממלאת רק חלק מהשיבוצים ולא ניתנת להחלה">תצוגה חלקית בלבד</span>`
     : '';
+  const focalBadgeHtml = plan.focalContinuityExtended
+    ? `<span class="fsos-focal-continuity-badge" title="התוכנית משבצת מחדש את המשתתף למשימות אחרות כדי לשמור על העומס שלו">📜 שמרנו על העומס</span>`
+    : '';
   const rankLine = `#${plan.rank}${recommended ? ' · מומלץ' : ''}`;
 
   let applyHtml = '';
@@ -806,6 +809,7 @@ function renderBatchPlanCard(
       <div class="fsos-plan-header-main">
         <span class="fsos-plan-rank">${escHtml(rankLine)}</span>
         ${partialBadgeHtml}
+        ${focalBadgeHtml}
         <span class="fsos-verdict fsos-verdict--${verdict.level}">${escHtml(verdict.label)}</span>
         <button type="button" class="fsos-plan-toggle" aria-expanded="${opts.expanded ? 'true' : 'false'}" aria-label="הרחב/הסתר פרטים">
           <span class="fsos-plan-toggle-label">פרטים</span>
