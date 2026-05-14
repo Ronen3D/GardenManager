@@ -554,6 +554,9 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
     backdrop.remove();
     unlockBodyScroll();
     document.removeEventListener('keydown', onKey);
+    if (_fsosTooltipEl && document.body.contains(_fsosTooltipEl)) {
+      _fsosTooltipEl.style.display = 'none';
+    }
   };
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') close();
@@ -563,6 +566,8 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) close();
   });
+
+  wireFsosParticipantHover(backdrop, ctx);
 
   backdrop.querySelectorAll<HTMLButtonElement>('.fsos-narrow-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -840,6 +845,9 @@ function renderSwapsGroupedByDay(
     slotLabel: string;
     fromName: string;
     toName: string;
+    fromPid: string | undefined;
+    toPid: string;
+    refTaskId: string;
     dayLabel: string;
   }
   const bySwapDayKey = new Map<string, RenderedSwap[]>();
@@ -865,6 +873,9 @@ function renderSwapsGroupedByDay(
       slotLabel: cleanSlotLabel(sw.slotLabel),
       fromName,
       toName,
+      fromPid: sw.fromParticipantId || undefined,
+      toPid: sw.toParticipantId,
+      refTaskId: sw.taskId,
       dayLabel,
     });
   }
@@ -881,15 +892,204 @@ function renderSwapsGroupedByDay(
       const timeTag = it.timeStart
         ? `<span class="fsos-ltr" dir="ltr">${escHtml(it.timeStart)}–${escHtml(it.timeEnd)}</span>`
         : '';
+      const toSpan = `<span class="fsos-participant-hover" data-pid="${escAttr(it.toPid)}" data-plan-id="${escAttr(plan.id)}" data-ref-task-id="${escAttr(it.refTaskId)}"><strong>${escHtml(it.toName)}</strong></span>`;
+      const fromSpan = it.fromPid
+        ? `<span class="fsos-participant-hover" data-pid="${escAttr(it.fromPid)}" data-plan-id="${escAttr(plan.id)}" data-ref-task-id="${escAttr(it.refTaskId)}">${escHtml(it.fromName)}</span>`
+        : escHtml(it.fromName);
       html += `<li>
         <span class="fsos-plan-swap-task">${escHtml(it.taskName)}${it.slotLabel ? ` (${escHtml(it.slotLabel)})` : ''}</span>
-        <span class="fsos-plan-swap-meta"><span class="fsos-plan-swap-names"><strong>${escHtml(it.toName)}</strong> <span class="fsos-plan-swap-arrow" dir="ltr">←</span> ${escHtml(it.fromName)}</span> ${timeTag}</span>
+        <span class="fsos-plan-swap-meta"><span class="fsos-plan-swap-names">${toSpan} <span class="fsos-plan-swap-arrow" dir="ltr">←</span> ${fromSpan}</span> ${timeTag}</span>
       </li>`;
     }
     html += '</ul></div>';
   }
   html += '</div>';
   return html;
+}
+
+// ─── Per-Participant Post-Plan Preview ───────────────────────────────────────
+
+/**
+ * Compute the 2-before / reference / 2-after window of a participant's day
+ * after the plan's swaps are applied, anchored on `referenceTaskId`. Mirrors
+ * `rescue-modal.ts → computePostSwapTasks`; duplicated locally to keep this
+ * module decoupled from rescue.
+ */
+function computePostSwapTasks(
+  participantId: string,
+  plan: BatchRescuePlan,
+  schedule: Schedule,
+  referenceTaskId: string,
+): Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> {
+  const taskMap = new Map<string, Task>();
+  for (const t of schedule.tasks) taskMap.set(t.id, t);
+
+  const myAssignmentTaskIds = new Map<string, string>();
+  for (const a of schedule.assignments) {
+    if (a.participantId === participantId) myAssignmentTaskIds.set(a.id, a.taskId);
+  }
+  for (const sw of plan.swaps) {
+    if (sw.fromParticipantId === participantId) myAssignmentTaskIds.delete(sw.assignmentId);
+    if (sw.toParticipantId === participantId) myAssignmentTaskIds.set(sw.assignmentId, sw.taskId);
+  }
+
+  const tasks: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }> = [];
+  for (const [, taskId] of myAssignmentTaskIds) {
+    const task = taskMap.get(taskId);
+    if (!task) continue;
+    tasks.push({
+      taskName: task.name,
+      start: task.timeBlock.start,
+      end: task.timeBlock.end,
+      isReference: taskId === referenceTaskId,
+    });
+  }
+  tasks.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  let refIdx = tasks.findIndex((t) => t.isReference);
+  if (refIdx === -1) {
+    // Participant left this task — anchor by the reference task's start time.
+    const refTask = taskMap.get(referenceTaskId);
+    if (refTask) {
+      const anchor = refTask.timeBlock.start.getTime();
+      refIdx = tasks.findIndex((t) => t.start.getTime() >= anchor);
+    }
+    if (refIdx === -1) refIdx = 0;
+  }
+
+  const startIdx = Math.max(0, refIdx - 2);
+  const endIdx = Math.min(tasks.length, refIdx + 3);
+  return tasks.slice(startIdx, endIdx);
+}
+
+function buildPostSwapTooltip(
+  participantName: string,
+  nextTasks: Array<{ taskName: string; start: Date; end: Date; isReference: boolean }>,
+  periodStart: Date,
+  dayStartHour: number,
+): string {
+  let html = `<div class="rescue-hover-tt-header">${escHtml(participantName)} — משימות סביב המשבצת אם יוחל</div>`;
+  if (nextTasks.length === 0) {
+    html += `<div class="rescue-hover-tt-empty">אין משימות קרובות</div>`;
+    return html;
+  }
+  const baseMidnight = new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()).getTime();
+  for (let i = 0; i < nextTasks.length; i++) {
+    const t = nextTasks[i];
+    const shifted = new Date(t.start.getTime());
+    if (shifted.getHours() < dayStartHour) shifted.setDate(shifted.getDate() - 1);
+    const shiftedMidnight = new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate()).getTime();
+    const dIdx = Math.floor((shiftedMidnight - baseMidnight) / (24 * 3600 * 1000)) + 1;
+    const dayStr = `יום ${dIdx}`;
+    const timeStr = `<span dir="ltr">${fmt(t.start)} – ${fmt(t.end)}</span>`;
+    const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
+    const refMarker = t.isReference ? ' ◄' : '';
+    html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${escHtml(stripDayPrefix(t.taskName))}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
+  }
+  return html;
+}
+
+let _fsosTooltipEl: HTMLElement | null = null;
+let _fsosTooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+function getFsosTooltipEl(): HTMLElement {
+  if (_fsosTooltipEl && document.body.contains(_fsosTooltipEl)) return _fsosTooltipEl;
+  const el = document.createElement('div');
+  el.className = 'rescue-hover-tt';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  el.addEventListener('mouseenter', () => {
+    if (_fsosTooltipHideTimer) {
+      clearTimeout(_fsosTooltipHideTimer);
+      _fsosTooltipHideTimer = null;
+    }
+  });
+  el.addEventListener('mouseleave', () => {
+    _fsosTooltipHideTimer = setTimeout(() => {
+      el.style.display = 'none';
+    }, 120);
+  });
+  _fsosTooltipEl = el;
+  return el;
+}
+
+function wireFsosParticipantHover(backdrop: HTMLElement, ctx: BatchPlansContext): void {
+  const pMap = new Map<string, Participant>();
+  for (const p of ctx.schedule.participants) pMap.set(p.id, p);
+  const isTouch = document.documentElement.classList.contains('touch-device');
+  const dayStartHour = ctx.schedule.algorithmSettings.dayStartHour;
+  const periodStart = ctx.schedule.periodStart;
+
+  const resolveContext = (target: HTMLElement) => {
+    const pid = target.dataset.pid;
+    const planId = target.dataset.planId;
+    const refTaskId = target.dataset.refTaskId;
+    if (!pid || !planId || !refTaskId) return null;
+    const plan = ctx.result.plans.find((p) => p.id === planId);
+    const participant = pMap.get(pid);
+    if (!plan || !participant) return null;
+    return { plan, participant, refTaskId };
+  };
+
+  if (isTouch) {
+    let expandedKey: string | null = null;
+    backdrop.addEventListener('click', (e) => {
+      const target = (e.target as HTMLElement).closest('.fsos-participant-hover') as HTMLElement | null;
+      if (!target) return;
+      e.stopPropagation();
+      const resolved = resolveContext(target);
+      if (!resolved) return;
+      const key = `${target.dataset.pid}|${target.dataset.planId}|${target.dataset.refTaskId}`;
+      const existing = backdrop.querySelector('.fsos-inline-preview');
+      if (existing) existing.remove();
+      if (expandedKey === key) {
+        expandedKey = null;
+        return;
+      }
+      expandedKey = key;
+      const nextTasks = computePostSwapTasks(resolved.participant.id, resolved.plan, ctx.schedule, resolved.refTaskId);
+      const detail = document.createElement('div');
+      detail.className = 'fsos-inline-preview task-inline-detail';
+      detail.innerHTML = buildPostSwapTooltip(resolved.participant.name, nextTasks, periodStart, dayStartHour);
+      target.insertAdjacentElement('afterend', detail);
+    });
+    return;
+  }
+
+  backdrop.addEventListener('mouseover', (e) => {
+    const target = (e.target as HTMLElement).closest('.fsos-participant-hover') as HTMLElement | null;
+    if (!target) return;
+    const resolved = resolveContext(target);
+    if (!resolved) return;
+    if (_fsosTooltipHideTimer) {
+      clearTimeout(_fsosTooltipHideTimer);
+      _fsosTooltipHideTimer = null;
+    }
+    const nextTasks = computePostSwapTasks(resolved.participant.id, resolved.plan, ctx.schedule, resolved.refTaskId);
+    const tooltip = getFsosTooltipEl();
+    tooltip.innerHTML = buildPostSwapTooltip(resolved.participant.name, nextTasks, periodStart, dayStartHour);
+    tooltip.style.display = 'block';
+
+    const rect = target.getBoundingClientRect();
+    let left = rect.right + 8;
+    let top = rect.top - 4;
+    const ttWidth = 260;
+    const ttHeight = tooltip.offsetHeight || 140;
+    if (left + ttWidth > window.innerWidth) left = rect.left - ttWidth - 8;
+    if (top + ttHeight > window.innerHeight) top = window.innerHeight - ttHeight - 8;
+    if (top < 4) top = 4;
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  });
+
+  backdrop.addEventListener('mouseout', (e) => {
+    const target = (e.target as HTMLElement).closest('.fsos-participant-hover') as HTMLElement | null;
+    if (!target) return;
+    _fsosTooltipHideTimer = setTimeout(() => {
+      const tooltip = getFsosTooltipEl();
+      tooltip.style.display = 'none';
+    }, 120);
+  });
 }
 
 function renderPlanDetails(plan: BatchRescuePlan, pMap: Map<string, Participant>): string {
