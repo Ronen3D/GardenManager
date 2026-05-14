@@ -28,13 +28,14 @@ npm run dev              # Vite dev server with HMR (http://localhost:5174)
 npm run build:web        # Build web bundle → dist-web/
 npm run build:node       # Compile Node backend (tsc) → dist/
 npm run test             # Run test suite (ts-node src/test.ts)
+npm run test:persistence # Persistence round-trip suite (separate tsconfig)
 npm run start            # Run Node CLI entry point
 npm run demo             # Run demo with sample data
 npm run electron:dev     # Dev mode: Vite + Electron concurrently
 npm run electron:build   # Production: Vite + tsc + electron-builder (Windows NSIS)
 ```
 
-There is no external test framework — unit tests use a custom `assert()` function in `src/test.ts` with console pass/fail output.
+There is no external test framework — unit tests use a custom `assert()` function in `src/test.ts` with console pass/fail output. `test:persistence` is a second harness compiled via `tsconfig.test-persistence.json` and covers serialize/deserialize of saved schedules.
 
 ### Linting & Formatting (Biome)
 
@@ -53,8 +54,9 @@ Biome handles both linting and formatting via `biome.json`. Most lint violations
 npm run test:e2e              # All viewports
 npm run test:e2e:desktop      # Desktop only (1280×800)
 npm run test:e2e:phone        # Phone only (375×812)
-npx playwright test --project=tablet   # Tablet (768×1024)
-npx playwright test tests/navigation.spec.ts  # Single spec file
+npx playwright test --project=tablet            # Tablet (768×1024)
+npx playwright test --project=phone-landscape   # Phone landscape (812×375, isMobile + hasTouch)
+npx playwright test tests/navigation.spec.ts    # Single spec file
 ```
 
 E2E specs are in `tests/` and cover desktop regression, navigation, mobile schedule/modals, and touch interactions. The dev server must be running (`npm run dev`) before E2E tests.

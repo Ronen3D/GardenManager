@@ -262,7 +262,11 @@ Within a tier, two further nudges apply:
 
 ### 5.2 Ordering the slots within a task (most-constrained first)
 
-Within a single task, the system fills slots from most-restrictive level downward. A slot accepting only the most senior level is filled before a slot accepting any level, because the senior pool is smaller. This avoids the classic mistake of using a senior on a slot that also accepted a junior, leaving the senior-only slot empty later.
+Within a single task, slots are filled in descending order of their **minimum accepted level**. Slot eligibility is explicit — a participant qualifies only if their level appears in the slot's `acceptableLevels` list, with no automatic "senior fills lower slots" cascade — so this min-level sort is a heuristic that treats higher levels as the scarcer pool.
+
+The scenario it protects against: within one task, one slot accepts only L4 while another accepts both L3 and L4. Both compete for the senior pool. If the wider slot were filled first, the workload-fairness sort in 5.3 might hand it an L4 on tiebreak, leaving the L4-only slot empty. Filling the L4-only slot first removes that risk. The same logic applies when a slot lists `lowPriority` to mark a senior level as last-resort backup for a junior-targeted slot.
+
+When two slots in a task have disjoint pools (e.g. one accepting only L4 and another accepting only L0), the sort still runs but cannot change the outcome. Rescue and post-generation injection use a stricter variant — they sort by actual candidate count per slot rather than by min level — but greedy construction uses the cheaper level-based proxy.
 
 ### 5.3 Choosing a participant for a slot
 
