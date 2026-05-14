@@ -14190,7 +14190,8 @@ tr.now-row-animate > td.time-cell {
 
 .wp-sparkline {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  /* grid-template-columns is set inline by buildPopupHtml — it depends on
+     periodDays and whether the day-0 continuity column is shown. */
   gap: 4px;
   height: 84px;
   margin-bottom: 12px;
@@ -14299,6 +14300,11 @@ tr.now-row-animate > td.time-cell {
 .wp-today-value {
   color: var(--accent);
   font-weight: 600;
+}
+
+.wp-actions {
+  margin-top: 12px;
+  display: flex;
 }
 
 /* ═══ Inject Emergency Task Modal ══════════════════════════════════════════ */

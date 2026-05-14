@@ -137,6 +137,8 @@ if (typeof _g.File === 'undefined') {
   };
 }
 
+// ─── Now safe to import store + data-transfer ──────────────────────────────
+import { buildPhantomContext } from './engine/phantom';
 import {
   type AlgorithmSettings,
   AssignmentStatus,
@@ -150,11 +152,12 @@ import {
   type TaskTemplate,
   ViolationSeverity,
 } from './models/types';
-// ─── Now safe to import store + data-transfer ──────────────────────────────
 import * as store from './web/config-store';
 import { exportDaySnapshot } from './web/continuity-export';
 import { matchParticipants, parseContinuitySnapshot } from './web/continuity-import';
 import * as dataTransfer from './web/data-transfer';
+import { DEFAULT_PARTICIPANT_PLAN, DEFAULT_TASK_INSTANCES } from './web/default-continuity';
+import { BACKUP_KEY, restoreTutorialBackupIfPresent } from './web/tutorial-demo';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Factory Helpers
@@ -1644,6 +1647,170 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     store.initStore();
     const lm2 = store.getLiveModeState();
     assert(!Number.isNaN(lm2.currentTimestamp.getTime()), 'I10.2: Invalid timestamp falls back to valid Date');
+  }
+
+  // ── I11: factoryReset must clear the tutorial backup key ────────────────
+  // Regression for the user-reported bug: "deleted participants, clicked
+  // reset, participants did not come back." factoryReset() used to leave
+  // BACKUP_KEY in place; on the next page-load restoreTutorialBackupIfPresent()
+  // ran before initStore() and rewrote every cleared key — silently undoing
+  // the reset.
+  console.log('\n── I11: Tutorial backup key must not survive factoryReset ───────────');
+  {
+    // 1. String equivalence — BACKUP_KEY exported from tutorial-demo must
+    //    match the literal hardcoded inside factoryReset(). Catches future
+    //    renames that would silently re-break the bug.
+    assert(
+      BACKUP_KEY === 'gardenmanager_pre_tutorial_snapshot',
+      'I11.1: BACKUP_KEY literal matches the string hardcoded in factoryReset',
+    );
+
+    // 2. Direct removal — factoryReset() must clear BACKUP_KEY.
+    store.factoryReset();
+    localStorage.clear();
+    localStorage.setItem(BACKUP_KEY, '{"version":1,"storageEntries":{},"appState":{}}');
+    store.factoryReset();
+    assert(localStorage.getItem(BACKUP_KEY) === null, 'I11.2: factoryReset removes the tutorial backup key');
+
+    // 3. End-to-end — simulate the user-reported scenario:
+    //    defaults → user-edit → tutorial snapshots state → user-edit → factory
+    //    reset → reload. Post-fix, the reload reaches seedDefault; pre-fix, the
+    //    backup is reapplied and the deleted participant stays missing.
+    store.factoryReset();
+    localStorage.clear();
+    store.initStore();
+    const defaultCount = store.getAllParticipants().length;
+    assert(defaultCount > 0, 'I11.3-setup: defaults seeded');
+
+    // User edits roster (one delete) — this mimics the state captured into
+    // BACKUP_KEY by enterTutorialDemoMode at the moment the tour was entered.
+    const firstId = store.getAllParticipants()[0].id;
+    store.removeParticipant(firstId);
+    store.saveToStorage();
+    assert(
+      store.getAllParticipants().length === defaultCount - 1,
+      'I11.3-setup: one participant removed before snapshot',
+    );
+
+    // Mimic enterTutorialDemoMode: capture every known storage key into a
+    // fake pre-tour snapshot and write it to BACKUP_KEY.
+    const captured: Record<string, string | null> = {};
+    for (const key of store.getAllStorageKeys()) {
+      captured[key] = localStorage.getItem(key);
+    }
+    const snapshot = JSON.stringify({ version: 1, storageEntries: captured, appState: {} });
+    localStorage.setItem(BACKUP_KEY, snapshot);
+
+    // User clicks factory reset, then the page reloads. Mirror init() in
+    // app.ts: restoreTutorialBackupIfPresent() runs FIRST, then initStore().
+    store.factoryReset();
+    restoreTutorialBackupIfPresent();
+    store.initStore();
+
+    const after = store.getAllParticipants().length;
+    assert(
+      after === defaultCount,
+      `I11.3: factoryReset+reload yields full default seed (got ${after}, want ${defaultCount})`,
+    );
+    assert(
+      localStorage.getItem(BACKUP_KEY) === null,
+      'I11.4: BACKUP_KEY is null after factoryReset+reload (no resurrected key)',
+    );
+  }
+
+  // ── I12: Default Day 0 continuity must match the current seed ──────────
+  // The default Day-0 ContinuitySnapshot (src/web/default-continuity.ts) is
+  // matched against the live seed by participant `name` and task `sourceName`.
+  // A silent rename in `seedDefaultParticipants` or `seedDefaultTaskTemplates`
+  // would drop phantoms during `buildPhantomContext`, weakening HC-5 / HC-12
+  // / HC-14 cross-boundary enforcement without warning.  These checks fail
+  // loudly when names, levels, certifications, groups, or sourceNames drift
+  // in either direction.
+  console.log('\n── I12: Default Day 0 continuity matches default seed ──────');
+  {
+    store.factoryReset();
+    localStorage.clear();
+    store.initStore();
+
+    const seedParticipants = store.getAllParticipants();
+    const seedTemplateNames = new Set(store.getAllTaskTemplates().map((t) => t.name));
+    const seedByName = new Map(seedParticipants.map((p) => [p.name, p]));
+
+    // ── 1. Plan ↔ seed completeness (both directions) ──
+    const planEntries = Object.entries(DEFAULT_PARTICIPANT_PLAN).flatMap(([group, entries]) =>
+      entries.map((e) => ({ group, entry: e })),
+    );
+    const planNames = new Set(planEntries.map((p) => p.entry.name));
+
+    assert(
+      planEntries.length === seedParticipants.length,
+      `I12.1: plan size matches seed (plan ${planEntries.length}, seed ${seedParticipants.length})`,
+    );
+
+    const missingFromPlan = seedParticipants.filter((p) => !planNames.has(p.name)).map((p) => p.name);
+    assert(
+      missingFromPlan.length === 0,
+      `I12.2: every seed participant has a plan entry (missing: ${missingFromPlan.join(', ') || 'none'})`,
+    );
+
+    const extraInPlan = planEntries.filter((p) => !seedByName.has(p.entry.name)).map((p) => p.entry.name);
+    assert(
+      extraInPlan.length === 0,
+      `I12.3: every plan entry exists in seed (extra: ${extraInPlan.join(', ') || 'none'})`,
+    );
+
+    // ── 2. Per-entry level / cert / group fidelity ──
+    let levelMismatch = 0;
+    let certMismatch = 0;
+    let groupMismatch = 0;
+    for (const { group, entry } of planEntries) {
+      const seedP = seedByName.get(entry.name);
+      if (!seedP) continue;
+      if (seedP.level !== entry.level) levelMismatch++;
+      if (seedP.group !== group) groupMismatch++;
+      const planCerts = [...entry.certifications].sort().join(',');
+      const seedCerts = [...seedP.certifications].sort().join(',');
+      if (planCerts !== seedCerts) certMismatch++;
+    }
+    assert(levelMismatch === 0, `I12.4: every plan level matches seed (mismatches: ${levelMismatch})`);
+    assert(certMismatch === 0, `I12.5: every plan cert set matches seed (mismatches: ${certMismatch})`);
+    assert(groupMismatch === 0, `I12.6: every plan group matches seed (mismatches: ${groupMismatch})`);
+
+    // ── 3. Every taskKey's sourceName resolves to a real template ──
+    const unresolvedSources = new Set<string>();
+    for (const { entry } of planEntries) {
+      for (const key of entry.taskKeys) {
+        const src = DEFAULT_TASK_INSTANCES[key].sourceName;
+        if (!seedTemplateNames.has(src)) unresolvedSources.add(src);
+      }
+    }
+    assert(
+      unresolvedSources.size === 0,
+      `I12.7: every taskKey sourceName resolves to a template (unresolved: ${[...unresolvedSources].join(', ') || 'none'})`,
+    );
+
+    // ── 4. Parsed snapshot + phantom builder produce zero silent drops ──
+    const json = store.getDefaultContinuityJson();
+    assert(json !== null, 'I12.8: getDefaultContinuityJson returns a snapshot once seed is in place');
+    if (json !== null) {
+      const parsed = parseContinuitySnapshot(json);
+      assert(
+        !('error' in parsed),
+        `I12.9: default continuity parses cleanly (${'error' in parsed ? parsed.error : 'ok'})`,
+      );
+      if (!('error' in parsed)) {
+        const expectedPhantoms = planEntries.reduce((sum, p) => sum + p.entry.taskKeys.length, 0);
+        assert(
+          parsed.participants.reduce((sum, p) => sum + p.assignments.length, 0) === expectedPhantoms,
+          'I12.10: parsed snapshot exposes exactly as many assignments as the plan declares',
+        );
+        const phantom = buildPhantomContext(parsed, seedParticipants);
+        assert(
+          phantom.phantomAssignments.length === expectedPhantoms,
+          `I12.11: every snapshot assignment lands a phantom (got ${phantom.phantomAssignments.length}, want ${expectedPhantoms})`,
+        );
+      }
+    }
   }
 
   console.log('\n── Persistence tests complete ───────────');

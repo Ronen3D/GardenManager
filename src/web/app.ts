@@ -145,7 +145,7 @@ import {
   showToast,
   wireCustomSelect,
 } from './ui-modal';
-import { openWorkloadPopup } from './workload-popup';
+import { initWorkloadPopup, openWorkloadPopup } from './workload-popup';
 import { computeWeeklyWorkloads } from './workload-utils';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
@@ -1420,7 +1420,7 @@ function renderScheduleTab(preflight: ReturnType<typeof runPreflight>): string {
       </span>
       <span class="toolbar-group toolbar-group--day-actions">
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-where-is-everyone" title="הצג היכן כל המשתתפים בנקודת זמן נבחרת">👥 תמונת מצב</button>` : ''}
-        ${currentSchedule && liveMode.enabled && currentDay !== 0 ? `<button class="btn-sm btn-outline btn-inject-task" id="btn-inject-task" title="הוספת משימת חירום לתמונת המצב הנוכחית" ${_isOptimizing ? 'disabled' : ''}>🚨 הוסף משימת חירום</button>` : ''}
+        ${currentSchedule && currentDay !== 0 ? `<button class="btn-sm btn-outline btn-inject-task" id="btn-inject-task" title="הוספת משימת חירום לתמונת המצב הנוכחית" ${_isOptimizing ? 'disabled' : ''}>🚨 הוסף משימת חירום</button>` : ''}
         ${currentSchedule && currentDay !== 0 ? `<button class="btn-sm btn-outline" id="btn-export-day-json" title="ייצוא מצב יום ${currentDay} כ-JSON להמשכיות">📋 ייצוא יום</button>` : ''}
         ${currentSchedule && currentDay !== 0 ? `<button class="btn-sm btn-outline" id="btn-generate-from-day" title="צור שבצ"ק חדש מסוף יום ${currentDay}">🔗 המשך מכאן</button>` : ''}
         ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-export-pdf" title="ייצוא">📤 ייצוא</button>` : ''}
@@ -4546,7 +4546,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.3.1</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.3.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -5413,7 +5413,10 @@ function wireScheduleEvents(container: HTMLElement): void {
   // ── Inject emergency task into current snapshot ──
   const injectBtn = container.querySelector('#btn-inject-task');
   if (injectBtn && currentSchedule) {
-    injectBtn.addEventListener('click', () => {
+    injectBtn.addEventListener('click', async () => {
+      if (!currentSchedule || _isOptimizing) return;
+      const anchor = await ensureLiveModeAnchor();
+      if (!anchor) return;
       if (!currentSchedule || _isOptimizing) return;
       openInjectTaskModal();
     });
@@ -6870,6 +6873,10 @@ function init(): void {
     initTooltips({
       onSwap: guardDay0(handleSwap),
       onRescue: guardDay0(openRescueModal),
+      onNavigateToProfile: navigateToProfile,
+    });
+
+    initWorkloadPopup({
       onNavigateToProfile: navigateToProfile,
     });
 

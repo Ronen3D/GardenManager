@@ -1270,29 +1270,79 @@ const taskTemplates: Map<string, TaskTemplate> = new Map();
 /**
  * Clamp task-template numeric fields to valid ranges.
  * Returns a sanitized shallow copy of only the numeric fields present in `raw`.
- *   durationHours  → 0.5 … 24   (NaN → 8)
- *   shiftsPerDay   → 1 … 12     (NaN → 1, rounded to integer)
- *   startHour      → 0 … 23     (NaN → 6, rounded to integer)
+ *   durationHours  → 0.5 … min(24, 24/shiftsPerDay)   (NaN → 8)
+ *   shiftsPerDay   → 1 … floor(24/durationHours)      (NaN → 1, rounded to integer)
+ *   startHour      → 0 … 23                           (NaN → 6, rounded to integer)
+ *
+ * `shiftsPerDay * durationHours` must not exceed 24h (a single op-day). When
+ * that product would overflow, `options.clampSide` decides which field gets
+ * clamped down: 'shiftsPerDay' (default) treats duration as the user's intent
+ * and shrinks the shift count; 'durationHours' does the inverse. `fallback*`
+ * provide the "other" field's value when it isn't in `raw` (e.g. a partial
+ * patch from `updateTaskTemplate`).
  */
 export function sanitizeTemplateNumericFields<
   T extends Partial<Pick<TaskTemplate, 'durationHours' | 'shiftsPerDay' | 'startHour'>>,
->(raw: T): T {
+>(
+  raw: T,
+  options: {
+    clampSide?: 'shiftsPerDay' | 'durationHours';
+    fallbackDurationHours?: number;
+    fallbackShiftsPerDay?: number;
+  } = {},
+): T {
   const out = { ...raw };
-  if (out.durationHours !== undefined) {
-    let v = Number(out.durationHours);
-    if (Number.isNaN(v)) v = 8;
-    out.durationHours = Math.max(0.5, Math.min(24, v));
-  }
-  if (out.shiftsPerDay !== undefined) {
-    let v = Number(out.shiftsPerDay);
-    if (Number.isNaN(v)) v = 1;
-    out.shiftsPerDay = Math.max(1, Math.min(12, Math.round(v)));
-  }
   if (out.startHour !== undefined) {
     let v = Number(out.startHour);
     if (Number.isNaN(v)) v = 6;
     out.startHour = Math.max(0, Math.min(23, Math.round(v)));
   }
+
+  const clampSide = options.clampSide ?? 'shiftsPerDay';
+  const hasDur = out.durationHours !== undefined;
+  const hasShifts = out.shiftsPerDay !== undefined;
+
+  if (clampSide === 'shiftsPerDay') {
+    // Sanitize duration first to its own range, then cap shifts by it.
+    let durEff: number;
+    if (hasDur) {
+      durEff = Number(out.durationHours);
+      if (Number.isNaN(durEff)) durEff = 8;
+      durEff = Math.max(0.5, Math.min(24, durEff));
+      out.durationHours = durEff;
+    } else {
+      durEff = options.fallbackDurationHours ?? 8;
+      if (Number.isNaN(durEff)) durEff = 8;
+      durEff = Math.max(0.5, Math.min(24, durEff));
+    }
+    if (hasShifts) {
+      let v = Number(out.shiftsPerDay);
+      if (Number.isNaN(v)) v = 1;
+      const dynMax = Math.max(1, Math.floor(24 / durEff));
+      out.shiftsPerDay = Math.max(1, Math.min(dynMax, Math.round(v)));
+    }
+  } else {
+    // clampSide === 'durationHours'. Sanitize shifts first (1..48 absolute),
+    // then cap duration by it. 48 = floor(24 / 0.5), the most shifts that fit.
+    let shiftsEff: number;
+    if (hasShifts) {
+      shiftsEff = Number(out.shiftsPerDay);
+      if (Number.isNaN(shiftsEff)) shiftsEff = 1;
+      shiftsEff = Math.max(1, Math.min(48, Math.round(shiftsEff)));
+      out.shiftsPerDay = shiftsEff;
+    } else {
+      shiftsEff = options.fallbackShiftsPerDay ?? 1;
+      if (Number.isNaN(shiftsEff)) shiftsEff = 1;
+      shiftsEff = Math.max(1, Math.min(48, Math.round(shiftsEff)));
+    }
+    if (hasDur) {
+      let v = Number(out.durationHours);
+      if (Number.isNaN(v)) v = 8;
+      const dynMax = Math.min(24, 24 / shiftsEff);
+      out.durationHours = Math.max(0.5, Math.min(dynMax, v));
+    }
+  }
+
   return out;
 }
 
@@ -1335,7 +1385,10 @@ export function updateTaskTemplate(id: string, patch: Partial<Omit<TaskTemplate,
   const tpl = taskTemplates.get(id);
   if (!tpl) return;
   pushSnapshot();
-  const sanitized = sanitizeTemplateNumericFields(patch);
+  const sanitized = sanitizeTemplateNumericFields(patch, {
+    fallbackDurationHours: tpl.durationHours,
+    fallbackShiftsPerDay: tpl.shiftsPerDay,
+  });
   patch = sanitized;
   Object.assign(tpl, patch);
   // HC-15: when shiftsPerDay shrinks, trim stale indices in the rule's
@@ -2966,6 +3019,11 @@ export function factoryReset(): void {
     localStorage.removeItem('gm-sidebar-collapsed');
     localStorage.removeItem('gardenmanager_tutorial_banner_dismissed');
     localStorage.removeItem('gardenmanager_tutorial_seen_tracks');
+    // Tutorial demo writes a pre-tour backup snapshot under this key (see
+    // BACKUP_KEY in tutorial-demo.ts). If left in place, the next page-load
+    // runs restoreTutorialBackupIfPresent() before initStore() and silently
+    // rewrites every key we just cleared — undoing the reset.
+    localStorage.removeItem('gardenmanager_pre_tutorial_snapshot');
     // A factory reset frees space, so clear the wedge latch to resume saves.
     onSaveSuccess();
   } catch (err) {

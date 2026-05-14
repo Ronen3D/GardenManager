@@ -154,4 +154,4 @@ Most rendering logic is extracted into per-tab and per-modal modules; `app.ts` o
 - `schedule-utils.ts` is pure — reads only from the `store` singleton, no app-level state.
 - `preflight.ts` runs real-time feasibility checks (skill gap, capacity, group integrity) before schedule generation.
 
-Debug helpers available in browser console: `toggleSchedulerDiag()`, `gardenWisdom()`.
+Debug helpers available in browser console: `toggleSchedulerDiag()`.

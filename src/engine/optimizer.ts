@@ -192,23 +192,6 @@ export function setBenchHooks(h: BenchHookConfig | null): void {
   _benchActiveRandomSlots = false;
 }
 
-/** 🌻 The Garden Optimizer's spirit animal */
-export function gardenWisdom(): void {
-  const wisdom = [
-    '🌱 A good schedule, like a good garden, needs room to breathe.',
-    '🌻 Every participant deserves their fair share of sunshine.',
-    '🍃 The best swap is the one that helps everyone grow.',
-    '🌿 Hard constraints are the fences that keep the garden safe.',
-    '🌸 Soft constraints are the trellises that help things flourish.',
-    '🐝 A busy scheduler is a happy scheduler.',
-  ];
-  console.log(wisdom[Math.floor(Math.random() * wisdom.length)]);
-}
-
-if (typeof globalThis !== 'undefined') {
-  (globalThis as Record<string, unknown>).gardenWisdom = gardenWisdom;
-}
-
 /**
  * R4: Thin wrapper around the shared isEligible() that adds diagnostic
  * logging when enabled.  All constraint logic lives in validator.ts.

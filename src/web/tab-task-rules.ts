@@ -71,7 +71,17 @@ function notifyIfClamped(raw: Record<string, number | undefined>, sanitized: Rec
     }
   }
   if (corrections.length) {
-    showToast(`ערכים לא תקינים תוקנו: ${corrections.join(', ')}`, { type: 'warning', duration: 5000 });
+    const rawDur = raw.durationHours;
+    const rawShifts = raw.shiftsPerDay;
+    const durOrShiftsClamped =
+      (rawDur !== undefined && sanitized.durationHours !== undefined && rawDur !== sanitized.durationHours) ||
+      (rawShifts !== undefined && sanitized.shiftsPerDay !== undefined && rawShifts !== sanitized.shiftsPerDay);
+    const productOverflow = rawDur !== undefined && rawShifts !== undefined && rawDur * rawShifts > 24;
+    const suffix = durOrShiftsClamped && productOverflow ? ' (משך × משמרות לא יכולים לחרוג מ-24 שעות ביום)' : '';
+    showToast(`ערכים לא תקינים תוקנו: ${corrections.join(', ')}${suffix}`, {
+      type: 'warning',
+      duration: 5000,
+    });
   }
 }
 
@@ -776,7 +786,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
           </label>
           <label class="tprop-field">
             <span class="tprop-field-label">משמרות/יום</span>
-            <input class="input-sm" type="number" min="1" max="12" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" />
+            <input class="input-sm" type="number" min="1" max="48" data-tpl-field="shiftsPerDay" value="${tpl.shiftsPerDay}" data-tid="${tpl.id}" />
           </label>
           <label class="tprop-field">
             <span class="tprop-field-label">שעת התחלה</span>
@@ -1009,9 +1019,11 @@ type LoadFormulaSnapshotEntryLocal = {
   rate: { kind: 'base'; value: number } | { kind: 'window'; windowId: string; windowLabel: string; value: number };
 };
 
-function renderLoadWindowsEditor(tpl: TaskTemplate): string {
-  const windows = tpl.loadWindows ?? [];
-  const taskBlocks = !!tpl.blocksConsecutive;
+function renderLoadWindowsEditor(owner: TaskTemplate | OneTimeTask, opts?: { isOneTime?: boolean }): string {
+  const isOt = !!opts?.isOneTime;
+  const idAttr = isOt ? `data-ot-id="${owner.id}"` : `data-tid="${owner.id}"`;
+  const windows = owner.loadWindows ?? [];
+  const taskBlocks = !!owner.blocksConsecutive;
   const blocksTooltip = taskBlocks
     ? 'חוסם רצף משימות מופעל ברמת המשימה — הגדרת חלון לא רלוונטית'
     : 'אם החלון נוגע בקצה המשימה (תחילה או סוף) — הגדר אותו כחוסם רצף בקצה זה';
@@ -1039,6 +1051,12 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
     for (const w of windows) {
       const checkedAttr = w.blocksAtBoundary ? 'checked' : '';
       const disabledAttr = taskBlocks ? 'disabled' : '';
+      // Load-formula 🧮/ℹ️ controls are template-only — `load-formula-modal`
+      // operates on TaskTemplate; OneTimeTask has no top-level loadFormula
+      // and no compare-and-compute path.
+      const formulaControls = isOt
+        ? ''
+        : renderLoadFormulaControls({ kind: 'window', tpl: owner as TaskTemplate, window: w, disabled: false });
       html += `<div class="lw-row" role="listitem">
         <div class="lw-time">
           <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-start" data-lwid="${w.id}" value="${fmtHm(w.startHour, w.startMinute)}" aria-label="שעת התחלה" />
@@ -1047,7 +1065,7 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
         </div>
         <div class="lw-weight">
           <input class="input-sm lw-weight-input" type="number" step="0.05" min="0" max="1" data-field="lw-edit-weight" data-lwid="${w.id}" value="${w.weight.toFixed(2)}" aria-label="משקל" />
-          ${renderLoadFormulaControls({ kind: 'window', tpl, window: w, disabled: false })}
+          ${formulaControls}
         </div>
         <div class="lw-blocks">
           <label class="checkbox-label" title="${escHtml(blocksTooltip)}">
@@ -1055,13 +1073,16 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
           </label>
         </div>
         <div class="lw-actions">
-          <button class="lw-btn lw-remove" data-action="remove-load-window" data-tid="${tpl.id}" data-lwid="${w.id}" title="מחק חלון" aria-label="מחק חלון">✕</button>
+          <button class="lw-btn lw-remove" data-action="remove-load-window" ${idAttr} data-lwid="${w.id}" title="מחק חלון" aria-label="מחק חלון">✕</button>
         </div>
       </div>`;
     }
     html += '</div>';
   }
 
+  const addComputeBtn = isOt
+    ? ''
+    : `<button class="btn-xs btn-outline lf-open-btn" type="button" data-action="add-load-window-and-compute" ${idAttr} title="הוסף וחשב לפי השוואה" aria-label="הוסף וחשב לפי השוואה">🧮</button>`;
   html += `<div class="lw-add-form add-slot-form">
     <div class="lw-add-caption">הוספת חלון חדש</div>
     <div class="lw-row lw-row-add" role="group" aria-label="הוספת חלון חדש">
@@ -1072,11 +1093,11 @@ function renderLoadWindowsEditor(tpl: TaskTemplate): string {
       </div>
       <div class="lw-weight">
         <input class="input-sm lw-weight-input" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" aria-label="משקל (0-1)" />
-        <button class="btn-xs btn-outline lf-open-btn" type="button" data-action="add-load-window-and-compute" data-tid="${tpl.id}" title="הוסף וחשב לפי השוואה" aria-label="הוסף וחשב לפי השוואה">🧮</button>
+        ${addComputeBtn}
       </div>
       <div class="lw-blocks" aria-hidden="true"></div>
       <div class="lw-actions">
-        <button class="lw-btn lw-save" data-action="add-load-window" data-tid="${tpl.id}" title="הוסף חלון" aria-label="הוסף חלון">+</button>
+        <button class="lw-btn lw-save" data-action="add-load-window" ${idAttr} title="הוסף חלון" aria-label="הוסף חלון">+</button>
       </div>
     </div>
   </div>
@@ -1418,6 +1439,8 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
       <label>תיאור: <input class="input-sm" type="text" data-ot-field="description" value="${escHtml(ot.description || '')}" data-ot-id="${ot.id}" /></label>
     </div>`;
 
+    html += renderLoadWindowsEditor(ot, { isOneTime: true });
+
     // Sub-teams
     if (ot.subTeams.length > 0) {
       html += '<h4 style="margin:12px 0 8px;">תת-צוותים</h4>';
@@ -1487,15 +1510,28 @@ function _commitTemplateProps(body: HTMLElement, tid: string): boolean {
     (body.querySelector('[data-tpl-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
   const restRuleId = (body.querySelector('[data-tpl-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
 
-  const sanitized = store.sanitizeTemplateNumericFields({
-    durationHours: dur,
-    shiftsPerDay: shifts,
-    startHour: startH,
-  });
+  // Detect which of duration/shifts the user actually edited so that — when
+  // their product would exceed 24h — the value they typed is the one that
+  // gets clamped (least surprise). If both changed (or neither), default to
+  // clamping shifts, matching the add-template flow.
+  const existingTpl = store.getTaskTemplate(tid);
+  const existingDur = existingTpl?.durationHours;
+  const existingShifts = existingTpl?.shiftsPerDay;
+  const durChanged = existingDur === undefined || Math.abs(dur - existingDur) > 1e-9;
+  const shiftsChanged = existingShifts === undefined || Math.round(shifts) !== existingShifts;
+  const clampSide: 'durationHours' | 'shiftsPerDay' = durChanged && !shiftsChanged ? 'durationHours' : 'shiftsPerDay';
+
+  const sanitized = store.sanitizeTemplateNumericFields(
+    {
+      durationHours: dur,
+      shiftsPerDay: shifts,
+      startHour: startH,
+    },
+    { clampSide },
+  );
   notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
 
   const clampedBaseLoad = Math.max(0, Math.min(1, baseLoad));
-  const existingTpl = store.getTaskTemplate(tid);
   const existingFormulaValue = existingTpl?.loadFormula?.computedValue;
   const formulaDroppedByManualEdit =
     existingFormulaValue !== undefined && Math.abs(clampedBaseLoad - existingFormulaValue) > 1e-9;
@@ -1610,10 +1646,26 @@ function _commitRestRule(row: HTMLElement, rrId: string): boolean {
   return true;
 }
 
+type LoadWindowOwnerRef = { kind: 'tpl'; id: string } | { kind: 'ot'; id: string };
+
+function _getOwnerLoadWindows(owner: LoadWindowOwnerRef): LoadWindow[] | null {
+  if (owner.kind === 'tpl') {
+    const tpl = store.getTaskTemplate(owner.id);
+    return tpl ? tpl.loadWindows || [] : null;
+  }
+  const ot = store.getOneTimeTask(owner.id);
+  return ot ? ot.loadWindows || [] : null;
+}
+
+function _setOwnerLoadWindows(owner: LoadWindowOwnerRef, loadWindows: LoadWindow[]): void {
+  if (owner.kind === 'tpl') store.updateTaskTemplate(owner.id, { loadWindows });
+  else store.updateOneTimeTask(owner.id, { loadWindows });
+}
+
 /** Read-and-commit a single load-window row. Returns false on validation error. */
-function _commitLoadWindow(body: HTMLElement, tid: string, lwid: string): boolean {
-  const tpl = store.getTaskTemplate(tid);
-  if (!tpl) return false;
+function _commitLoadWindow(body: HTMLElement, owner: LoadWindowOwnerRef, lwid: string): boolean {
+  const currentWindows = _getOwnerLoadWindows(owner);
+  if (!currentWindows) return false;
 
   const startInput = body.querySelector(`[data-field="lw-edit-start"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
   const endInput = body.querySelector(`[data-field="lw-edit-end"][data-lwid="${lwid}"]`) as HTMLInputElement | null;
@@ -1639,7 +1691,7 @@ function _commitLoadWindow(body: HTMLElement, tid: string, lwid: string): boolea
   }
 
   const candidate = { startHour: ps.h, startMinute: ps.m, endHour: pe.h, endMinute: pe.m };
-  const conflict = (tpl.loadWindows || []).find((w) => w.id !== lwid && loadWindowsOverlap(w, candidate));
+  const conflict = currentWindows.find((w) => w.id !== lwid && loadWindowsOverlap(w, candidate));
   if (conflict) {
     showToast(
       `החלון חופף לחלון קיים (${fmtHm(conflict.startHour, conflict.startMinute)}–${fmtHm(conflict.endHour, conflict.endMinute)}) — השינוי לא נשמר`,
@@ -1648,26 +1700,25 @@ function _commitLoadWindow(body: HTMLElement, tid: string, lwid: string): boolea
     return false;
   }
 
-  store.updateTaskTemplate(tid, {
-    loadWindows: (tpl.loadWindows || []).map((w) => {
-      if (w.id !== lwid) return w;
-      const nextWeight = Math.max(0, Math.min(1, weight));
-      const next: LoadWindow = {
-        ...w,
-        startHour: ps.h,
-        startMinute: ps.m,
-        endHour: pe.h,
-        endMinute: pe.m,
-        weight: nextWeight,
-        blocksAtBoundary,
-      };
-      // Manual edit of window weight clears any stored formula.
-      if (w.loadFormula && Math.abs(nextWeight - w.loadFormula.computedValue) > 1e-9) {
-        delete next.loadFormula;
-      }
-      return next;
-    }),
+  const nextWindows = currentWindows.map((w) => {
+    if (w.id !== lwid) return w;
+    const nextWeight = Math.max(0, Math.min(1, weight));
+    const next: LoadWindow = {
+      ...w,
+      startHour: ps.h,
+      startMinute: ps.m,
+      endHour: pe.h,
+      endMinute: pe.m,
+      weight: nextWeight,
+      blocksAtBoundary,
+    };
+    // Manual edit of window weight clears any stored formula.
+    if (w.loadFormula && Math.abs(nextWeight - w.loadFormula.computedValue) > 1e-9) {
+      delete next.loadFormula;
+    }
+    return next;
   });
+  _setOwnerLoadWindows(owner, nextWindows);
   return true;
 }
 
@@ -1814,11 +1865,16 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
     if (lwField && lwField.dataset.lwid) {
       const lwid = lwField.dataset.lwid;
       const body = target.closest<HTMLElement>('.template-body');
-      const card = target.closest<HTMLElement>('.template-card[data-template-id]');
-      const tid = card?.dataset.templateId;
-      if (body && tid) {
+      const tplCard = target.closest<HTMLElement>('.template-card[data-template-id]');
+      const otCard = target.closest<HTMLElement>('.template-card[data-ot-id]');
+      const owner: LoadWindowOwnerRef | null = tplCard?.dataset.templateId
+        ? { kind: 'tpl', id: tplCard.dataset.templateId }
+        : otCard?.dataset.otId
+          ? { kind: 'ot', id: otCard.dataset.otId }
+          : null;
+      if (body && owner) {
         const flashSelector = _buildFocusSelector(lwField);
-        if (_commitLoadWindow(body, tid, lwid)) {
+        if (_commitLoadWindow(body, owner, lwid)) {
           autoSaveRerender(rerender, flashSelector);
         }
       }
@@ -2142,9 +2198,16 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
       }
       case 'add-load-window':
       case 'add-load-window-and-compute': {
-        const tid = actionButton?.dataset.tid!;
-        const tpl = store.getTaskTemplate(tid);
-        if (!tpl) break;
+        const otId = actionButton?.dataset.otId;
+        const tid = actionButton?.dataset.tid;
+        const owner: LoadWindowOwnerRef | null = otId
+          ? { kind: 'ot', id: otId }
+          : tid
+            ? { kind: 'tpl', id: tid }
+            : null;
+        if (!owner) break;
+        const currentWindows = _getOwnerLoadWindows(owner);
+        if (!currentWindows) break;
         const block = actionButton?.closest('.add-slot-form');
         if (!block) break;
 
@@ -2166,7 +2229,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         }
 
         const candidate = { startHour: ps.h, startMinute: ps.m, endHour: pe.h, endMinute: pe.m };
-        const conflict = (tpl.loadWindows || []).find((w) => loadWindowsOverlap(w, candidate));
+        const conflict = currentWindows.find((w) => loadWindowsOverlap(w, candidate));
         if (conflict) {
           showToast(
             `החלון חופף לחלון קיים (${fmtHm(conflict.startHour, conflict.startMinute)}–${fmtHm(conflict.endHour, conflict.endMinute)}) — לא נוסף`,
@@ -2181,23 +2244,32 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           weight: Math.max(0, Math.min(1, weight)),
         };
 
-        store.updateTaskTemplate(tid, {
-          loadWindows: [...(tpl.loadWindows || []), newWindow],
-        });
+        _setOwnerLoadWindows(owner, [...currentWindows, newWindow]);
         rerender();
-        if (action === 'add-load-window-and-compute') {
-          openLoadFormulaModal({ kind: 'window', templateId: tid, windowId: newWindow.id });
+        // The 🧮 compute-by-comparison flow is template-only — load-formula-modal
+        // operates on TaskTemplate. The button isn't rendered for one-time tasks,
+        // but guard defensively in case of stale clicks.
+        if (action === 'add-load-window-and-compute' && owner.kind === 'tpl') {
+          openLoadFormulaModal({ kind: 'window', templateId: owner.id, windowId: newWindow.id });
         }
         break;
       }
       case 'remove-load-window': {
-        const tid = actionButton?.dataset.tid!;
+        const otId = actionButton?.dataset.otId;
+        const tid = actionButton?.dataset.tid;
         const lwid = actionButton?.dataset.lwid!;
-        const tpl = store.getTaskTemplate(tid);
-        if (!tpl) break;
-        store.updateTaskTemplate(tid, {
-          loadWindows: (tpl.loadWindows || []).filter((w) => w.id !== lwid),
-        });
+        const owner: LoadWindowOwnerRef | null = otId
+          ? { kind: 'ot', id: otId }
+          : tid
+            ? { kind: 'tpl', id: tid }
+            : null;
+        if (!owner) break;
+        const currentWindows = _getOwnerLoadWindows(owner);
+        if (!currentWindows) break;
+        _setOwnerLoadWindows(
+          owner,
+          currentWindows.filter((w) => w.id !== lwid),
+        );
         rerender();
         break;
       }

@@ -331,6 +331,7 @@ function renderIdentitySection(draft: DraftFields): string {
                  value="${escAttr(draft.newGroupName)}" maxlength="40" />
         </div>
         <span class="pe-field-error pe-group-error hidden"></span>
+        <span class="pe-field-help pe-group-info hidden"></span>
       </div>
       <div class="pe-field">
         <span class="pe-field-label">דרגה</span>
@@ -567,6 +568,7 @@ function wireIdentitySection(body: HTMLElement, draft: DraftFields, refresh: () 
   const groupSelect = body.querySelector('[data-pe-field="group"]') as HTMLSelectElement;
   const newGroupInput = body.querySelector('[data-pe-field="new-group-name"]') as HTMLInputElement;
   const groupError = body.querySelector('.pe-group-error') as HTMLElement;
+  const groupInfo = body.querySelector('.pe-group-info') as HTMLElement;
   groupSelect.addEventListener('change', () => {
     draft.group = groupSelect.value;
     if (groupSelect.value === '__new__') {
@@ -577,23 +579,34 @@ function wireIdentitySection(body: HTMLElement, draft: DraftFields, refresh: () 
       newGroupInput.value = '';
       draft.newGroupName = '';
       groupError.classList.add('hidden');
+      groupInfo.classList.add('hidden');
       newGroupInput.removeAttribute('aria-invalid');
     }
     refresh();
   });
   newGroupInput.addEventListener('input', () => {
     draft.newGroupName = newGroupInput.value;
-    if (!newGroupInput.value.trim()) {
+    const trimmed = newGroupInput.value.trim();
+    if (!trimmed) {
       groupError.classList.add('hidden');
+      groupInfo.classList.add('hidden');
       newGroupInput.removeAttribute('aria-invalid');
     } else {
       const v = validateGroupName(newGroupInput.value, store.getGroups());
       if (v.valid) {
         groupError.classList.add('hidden');
         newGroupInput.removeAttribute('aria-invalid');
+        const existing = store.getGroups().find((g) => g.toLowerCase() === trimmed.toLowerCase());
+        if (existing) {
+          groupInfo.textContent = `קבוצה "${existing}" כבר קיימת — המשתתף/ת יצורף/תצורף אליה, ולא תיווצר קבוצה חדשה.`;
+          groupInfo.classList.remove('hidden');
+        } else {
+          groupInfo.classList.add('hidden');
+        }
       } else {
         groupError.textContent = v.error;
         groupError.classList.remove('hidden');
+        groupInfo.classList.add('hidden');
         newGroupInput.setAttribute('aria-invalid', 'true');
       }
     }

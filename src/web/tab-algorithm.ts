@@ -61,7 +61,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
     fields: [
       {
         key: 'l0FairnessWeight',
-        label: 'משקל שיוויוניות כללי',
+        label: 'שיוויון עומס בכל השבצ"ק',
         min: 0,
         max: 200,
         step: 1,
@@ -72,7 +72,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
       },
       {
         key: 'seniorFairnessWeight',
-        label: 'משקל שיוויוניות סגל',
+        label: 'שיוויון עומס לסגל בכל השבצ"ק',
         min: 0,
         max: 200,
         step: 1,
@@ -82,7 +82,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
       },
       {
         key: 'dailyBalanceWeight',
-        label: 'משקל האיזון היומי',
+        label: 'שיוויון עומס יומי',
         min: 0,
         max: 200,
         step: 1,
@@ -99,7 +99,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
     fields: [
       {
         key: 'minRestWeight',
-        label: 'משקל מנוחה מינימלית',
+        label: 'הפסקה מינימלית גבוהה בין משימות',
         min: 0,
         max: 200,
         step: 1,
@@ -109,7 +109,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
       },
       {
         key: 'restPerGapWeight',
-        label: 'משקל פערי מנוחה',
+        label: 'חשיבות הפסקה בין משימות',
         min: 0,
         max: 50,
         step: 1,
@@ -121,8 +121,9 @@ const WEIGHT_GROUPS: WeightGroup[] = [
     ],
   },
   {
-    title: 'מדיניות סגל',
-    description: 'עונש רך שמופעל כשסגל משובץ למשבצת lowPriority (מוצא אחרון). חסימת דרגה קשיחה מטופלת ע״י HC-1.',
+    title: 'התאמת דרגה למשבצת',
+    description:
+      'עונש רך כשמשתתף בכל דרגה משובץ למשבצת שבה דרגתו מסומנת כעדיפות נמוכה (מוצא אחרון). לא בלעדי לסגל — חל גם כש-L0 נופל למשימה בעדיפות נמוכה לדרגתו וכו׳. חסימת דרגה קשיחה מטופלת ע״י HC-1.',
     fields: [
       {
         key: 'lowPriorityLevelPenalty',
@@ -137,9 +138,9 @@ const WEIGHT_GROUPS: WeightGroup[] = [
     ],
   },
   {
-    title: 'אי התאמה',
+    title: 'העדפות והגבלות אישיות',
     description:
-      'עונש כששני משתתפים עם העדפת "אי התאמה" משובצים יחד. אילוץ רך — האופטימייזר יעדיף להימנע, אך לא ישאיר משבצת ריקה.',
+      'אילוצים רכים ברמת המשתתף: העדפות לסוגי משימה, הימנעות מסוגי משימה, וזוגות "אי התאמה" שאינם מסתדרים. האופטימייזר יעדיף לכבד אך לא יפגע בכיסוי או שיוויון.',
     fields: [
       {
         key: 'notWithPenalty',
@@ -147,24 +148,17 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         min: 0,
         max: 5000,
         step: 50,
-        description: 'עונש לכל הפרה של העדפת "אי התאמה". ברירת מחדל 500.',
+        description: 'חשיבות ההימנעות משיבוץ משתתפים שלא מסתדרים זה עם זה.',
         detail:
           'ערך גבוה = האופטימייזר נמנע בתוקף רב יותר משיבוץ זוגות "אי התאמה" יחד באותו צוות משנה. ערך 0 מבטל את האילוץ. עונש נספר בנפרד לכל הפרה.',
       },
-    ],
-  },
-  {
-    title: 'העדפות משימה',
-    description:
-      'העדפות אישיות של משתתפים למשימות מסוימות. אילוץ רך — האופטימייזר יעדיף לכבד העדפות אבל לא יפגע בכיסוי או שיוויון.',
-    fields: [
       {
         key: 'taskNamePreferencePenalty',
         label: 'עונש אי-קיום העדפה',
         min: 0,
         max: 1000,
         step: 10,
-        description: 'עונש כשמשתתף לא משובץ לאף משימה מהסוג המועדף עליו. ברירת מחדל 50.',
+        description: 'עונש כשמשתתף לא משובץ לאף משימה מהסוג המועדף עליו.',
         detail:
           'עונש חד-פעמי למשתתף שיש לו סוג משימה מועדף אך לא שובץ אליו כלל. ערך נמוך מדי — העדפות יתעלמו. ערך גבוה מדי — יפגע בשיוויון עומס. הגדר 0 כדי לבטל.',
       },
@@ -174,7 +168,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         min: 0,
         max: 2000,
         step: 10,
-        description: 'עונש לכל שיבוץ לסוג משימה שהמשתתף מעדיף להימנע ממנו. ברירת מחדל 80.',
+        description: 'עונש לכל שיבוץ לסוג משימה שהמשתתף מעדיף להימנע ממנו.',
         detail:
           'עונש מצטבר — כל שיבוץ לסוג הלא-מועדף מוסיף עונש. חזק יותר מהעדפה חיובית כי הימנעות ממשהו לא רצוי חשובה יותר. הגדר 0 כדי לבטל.',
       },
@@ -184,7 +178,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         min: 0,
         max: 500,
         step: 5,
-        description: 'בונוס (הפחתת עונש) לכל שיבוץ לסוג משימה מועדף. ברירת מחדל 25.',
+        description: 'בונוס (הפחתת עונש) לכל שיבוץ לסוג משימה מועדף.',
         detail:
           'בונוס מצטבר — כל שיבוץ לסוג המועדף מפחית את העונש הכולל. משלים את עונש אי-קיום ההעדפה: העונש מבטיח לפחות שיבוץ אחד, הבונוס מעודד עוד. הגדר 0 כדי לבטל.',
       },
@@ -427,6 +421,7 @@ function renderGeneralSettings(dayStartHour: number): string {
 // ─── Weight Groups ──────────────────────────────────────────────────────────
 
 function renderWeightGroups(cfg: SchedulerConfig): string {
+  const scheduleDays = store.getScheduleDays();
   let html = '';
   for (const group of WEIGHT_GROUPS) {
     html += `
@@ -438,7 +433,7 @@ function renderWeightGroups(cfg: SchedulerConfig): string {
       const val = cfg[f.key];
       const defaultVal = DEFAULT_CONFIG[f.key];
       const isCustom = val !== defaultVal;
-      html += renderWeightInput(f, val, defaultVal, isCustom);
+      html += renderWeightInput(f, val, defaultVal, isCustom, scheduleDays);
     }
     html += `
       </div>
@@ -926,9 +921,24 @@ function renderPresetPanel(
 
 // ─── Weight Input Renderer ───────────────────────────────────────────────────
 
-function renderWeightInput(f: WeightField, value: number, defaultVal: number, isCustom: boolean): string {
+function renderWeightInput(
+  f: WeightField,
+  value: number,
+  defaultVal: number,
+  isCustom: boolean,
+  scheduleDays: number,
+): string {
+  // SC-8 (daily fairness) is silently zeroed when the schedule is a single
+  // operational day — dailyWorkloadImbalance early-returns on dayList.length<=1.
+  // Surface that so users tuning weights on a 1-day schedule know this slider
+  // is inert and that SC-3 (overall fairness) is the only fairness driver.
+  const isInert = f.key === 'dailyBalanceWeight' && scheduleDays === 1;
+  const inertNote = isInert
+    ? '<p class="algo-toggle-warning">⚠ בלוח של יום אחד משקל זה אינו משפיע — שיוויון העומס הכללי הוא הגורם הקובע.</p>'
+    : '';
+  const inertCardStyle = isInert ? ' style="opacity:0.55;filter:grayscale(0.4);"' : '';
   return `
-    <div class="algo-weight-card${isCustom ? ' modified' : ''}">
+    <div class="algo-weight-card${isCustom ? ' modified' : ''}"${inertCardStyle}>
       <div class="algo-weight-header">
         <label class="algo-weight-label" title="${f.description}">${f.label}</label>
         ${isCustom ? `<span class="algo-weight-default" title="ברירת מחדל: ${defaultVal}">↺ ${defaultVal}</span>` : ''}
@@ -948,6 +958,7 @@ function renderWeightInput(f: WeightField, value: number, defaultVal: number, is
                value="${value}" />
       </div>
       <p class="algo-weight-desc">${f.description}</p>
+      ${inertNote}
       ${
         f.detail
           ? `

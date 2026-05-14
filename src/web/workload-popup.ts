@@ -11,9 +11,21 @@ import { computeAllCapacities } from '../utils/capacity';
 import { getDay0HoursForParticipant } from './day0-adapter';
 import { isTouchDevice } from './responsive';
 import { computePerDayHours, hasDay0 } from './schedule-utils';
-import { escHtml, groupBadge, levelBadge } from './ui-helpers';
+import { escAttr, escHtml, groupBadge, levelBadge } from './ui-helpers';
 import { showBottomSheet } from './ui-modal';
 import { computeWeeklyWorkloads } from './workload-utils';
+
+// ─── Callback injection ─────────────────────────────────────────────────────
+
+export interface WorkloadPopupCallbacks {
+  onNavigateToProfile: (participantId: string) => void;
+}
+
+let _callbacks: WorkloadPopupCallbacks | null = null;
+
+export function initWorkloadPopup(cb: WorkloadPopupCallbacks): void {
+  _callbacks = cb;
+}
 
 // ─── Single desktop popover singleton ───────────────────────────────────────
 
@@ -100,6 +112,12 @@ function buildPopupHtml(ctx: PopupContext): string {
   }
   for (const { day, hours } of dayEntries) sparkHtml += renderCol(day, hours, false);
 
+  // Dynamic grid template: dedicated narrow auto-sized cells for the day-0
+  // column + divider (when present), then one equal-width cell per period day.
+  // Without this, day-0 + divider + 7 days = 9 children would wrap onto a
+  // second row in the static `repeat(7, 1fr)` grid and scramble the day order.
+  const sparkGridStyle = `grid-template-columns: ${ctx.day0Hours !== null ? 'auto auto ' : ''}repeat(${ctx.numDays}, 1fr);`;
+
   const todayHrs = ctx.perDay.get(ctx.currentDayIdx) || 0;
   const todayLine =
     ctx.currentDayIdx >= 1 && ctx.currentDayIdx <= ctx.numDays
@@ -132,8 +150,11 @@ function buildPopupHtml(ctx: PopupContext): string {
       <div class="wp-primary-sub">${ctx.pctOfCapacity.toFixed(1)}% מהזמינות שלך · ${ctx.loadBearingCount} משימות נושאות עומס</div>
     </div>
     <div class="wp-section-label">פיזור יומי</div>
-    <div class="wp-sparkline">${sparkHtml}</div>
+    <div class="wp-sparkline" style="${sparkGridStyle}">${sparkHtml}</div>
     ${todayLine}
+    <div class="wp-actions">
+      <button type="button" class="btn-sm btn-outline" data-wp-profile data-pid="${escAttr(p.id)}" style="width:100%">📋 צפה בפרופיל</button>
+    </div>
   `;
 }
 
@@ -200,7 +221,15 @@ export function openWorkloadPopup(
 
   if (isTouchDevice) {
     const content = `<div class="workload-popup workload-popup-sheet">${buildPopupHtml({ ...ctx, showClose: false })}</div>`;
-    showBottomSheet(content, { title: participant.name });
+    const sheet = showBottomSheet(content, { title: participant.name });
+    sheet.el.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('[data-wp-profile]') as HTMLElement | null;
+      if (!btn) return;
+      const pid = btn.dataset.pid;
+      if (!pid) return;
+      sheet.close();
+      _callbacks?.onNavigateToProfile(pid);
+    });
     return;
   }
 
@@ -238,7 +267,16 @@ export function openWorkloadPopup(
   const onDocClick = (e: MouseEvent) => {
     const t = e.target as HTMLElement;
     if (el.contains(t)) {
-      if (t.closest('[data-wp-close]')) hidePopover();
+      if (t.closest('[data-wp-close]')) {
+        hidePopover();
+        return;
+      }
+      const profileBtn = t.closest('[data-wp-profile]') as HTMLElement | null;
+      if (profileBtn) {
+        const pid = profileBtn.dataset.pid;
+        hidePopover();
+        if (pid) _callbacks?.onNavigateToProfile(pid);
+      }
       return;
     }
     if (anchor.contains(t)) return;

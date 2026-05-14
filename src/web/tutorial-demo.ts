@@ -34,7 +34,11 @@ import {
 
 // ─── Storage / snapshot types ────────────────────────────────────────────────
 
-const BACKUP_KEY = 'gardenmanager_pre_tutorial_snapshot';
+// NOTE: the literal value here is also referenced as a hardcoded string in
+// config-store.ts factoryReset(). If you rename the value, update both
+// places — the persistence test in src/test-persistence.ts asserts they
+// match and will fail loudly on drift.
+export const BACKUP_KEY = 'gardenmanager_pre_tutorial_snapshot';
 
 /** UI-pref keys outside `store.getAllStorageKeys()` that the tour may touch. */
 const EXTRA_PREF_KEYS = ['gardenmanager_theme', 'gardenmanager_default_attempts', 'gm-sidebar-collapsed'];

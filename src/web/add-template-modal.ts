@@ -82,7 +82,7 @@ function render(): void {
         <div class="form-row">
           <label>שם: <input class="input-sm" type="text" data-field="tpl-name" placeholder="שם משימה" /></label>
           <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
-          <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="12" value="1" data-field="tpl-shifts" /></label>
+          <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="48" value="1" data-field="tpl-shifts" /></label>
           <label>שעת התחלה: <input class="input-sm" type="time" step="3600" value="06:00" data-field="tpl-start" /></label>
           <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" value="${escAttr(baseLoadValue)}" data-field="tpl-base-load" /><span class="lf-controls"><button class="btn-xs btn-outline lf-open-btn" type="button" data-action="open-load-formula" title="הגדר לפי השוואה" aria-label="הגדר לפי השוואה">🧮</button></span></label>
         </div>
@@ -165,11 +165,16 @@ function handleConfirm(): void {
   const blocksConsecutive =
     (dialog.querySelector('[data-field="tpl-blocks-consecutive"]') as HTMLInputElement)?.checked ?? true;
 
-  const sanitized = store.sanitizeTemplateNumericFields({
-    durationHours: dur,
-    shiftsPerDay: shifts,
-    startHour: startH,
-  });
+  const sanitized = store.sanitizeTemplateNumericFields(
+    {
+      durationHours: dur,
+      shiftsPerDay: shifts,
+      startHour: startH,
+    },
+    // New-template add: no prior values, so the user's typed duration is the
+    // physical truth and `shiftsPerDay` is what shrinks if shifts × dur > 24h.
+    { clampSide: 'shiftsPerDay' },
+  );
   notifyIfClamped({ durationHours: dur, shiftsPerDay: shifts, startHour: startH }, sanitized);
 
   const clampedBaseLoad = Math.max(0, Math.min(1, baseLoad));
@@ -230,6 +235,16 @@ function notifyIfClamped(raw: Record<string, number | undefined>, sanitized: Rec
     }
   }
   if (corrections.length) {
-    showToast(`ערכים לא תקינים תוקנו: ${corrections.join(', ')}`, { type: 'warning', duration: 5000 });
+    const rawDur = raw.durationHours;
+    const rawShifts = raw.shiftsPerDay;
+    const durOrShiftsClamped =
+      (rawDur !== undefined && sanitized.durationHours !== undefined && rawDur !== sanitized.durationHours) ||
+      (rawShifts !== undefined && sanitized.shiftsPerDay !== undefined && rawShifts !== sanitized.shiftsPerDay);
+    const productOverflow = rawDur !== undefined && rawShifts !== undefined && rawDur * rawShifts > 24;
+    const suffix = durOrShiftsClamped && productOverflow ? ' (משך × משמרות לא יכולים לחרוג מ-24 שעות ביום)' : '';
+    showToast(`ערכים לא תקינים תוקנו: ${corrections.join(', ')}${suffix}`, {
+      type: 'warning',
+      duration: 5000,
+    });
   }
 }
