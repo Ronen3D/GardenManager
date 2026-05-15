@@ -26,6 +26,20 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
 export function renderDataTransferContent(): string {
   return `
     <div class="transfer-panel">
+      <button class="transfer-action-btn" data-action="gm-share-test-file" style="border:2px dashed #c0392b">
+        <span class="transfer-action-icon">🧪</span>
+        <span class="transfer-action-text">
+          <span class="transfer-action-title">TEST: pure file share</span>
+          <span class="transfer-action-desc">בדיקה זמנית — שיתוף קובץ זעיר</span>
+        </span>
+      </button>
+      <button class="transfer-action-btn" data-action="gm-share-test-text" style="border:2px dashed #c0392b">
+        <span class="transfer-action-icon">🧪</span>
+        <span class="transfer-action-text">
+          <span class="transfer-action-title">TEST: pure text share</span>
+          <span class="transfer-action-desc">בדיקה זמנית — שיתוף טקסט בלבד</span>
+        </span>
+      </button>
       <button class="transfer-action-btn" data-action="transfer-export">
         <span class="transfer-action-icon">📤</span>
         <span class="transfer-action-text">
@@ -58,6 +72,27 @@ export function wireDataTransferEvents(container: HTMLElement): void {
     const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (!btn) return;
     const action = btn.dataset.action;
+    // ===== TEMP PURE-SHARE TEST — REMOVE AFTER TESTING =====
+    if (action === 'gm-share-test-file') {
+      const f = new File(['hello'], 'gm-test.txt', { type: 'text/plain' });
+      navigator
+        .share({ files: [f] })
+        .then(() => alert('PURE FILE SHARE · ✓ OK (sheet opened, you picked a target)'))
+        .catch((err: unknown) =>
+          alert(`PURE FILE SHARE · ✗ ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`),
+        );
+      return;
+    }
+    if (action === 'gm-share-test-text') {
+      navigator
+        .share({ title: 'GM test', text: 'hello from Garden Manager', url: location.href })
+        .then(() => alert('PURE TEXT SHARE · ✓ OK (sheet opened, you picked a target)'))
+        .catch((err: unknown) =>
+          alert(`PURE TEXT SHARE · ✗ ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`),
+        );
+      return;
+    }
+    // ===== END TEMP =====
     if (action === 'transfer-export') openExportSheet();
     if (action === 'transfer-import') openImportFlow();
     if (action === 'transfer-import-xlsx') openXlsxImportFlow();
