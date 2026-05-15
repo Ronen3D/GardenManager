@@ -54,6 +54,20 @@ export function renderDataTransferContent(): string {
           <span class="transfer-action-desc">בדיקה — מבנה זהה לייצוא האמיתי</span>
         </span>
       </button>
+      <button class="transfer-action-btn" data-action="gm-share-test-json" style="border:2px dashed #16a085">
+        <span class="transfer-action-icon">🧪</span>
+        <span class="transfer-action-text">
+          <span class="transfer-action-title">TEST: share JSON file</span>
+          <span class="transfer-action-desc">בדיקה — קובץ application/json אמיתי</span>
+        </span>
+      </button>
+      <button class="transfer-action-btn" data-action="gm-share-test-txt-big" style="border:2px dashed #16a085">
+        <span class="transfer-action-icon">🧪</span>
+        <span class="transfer-action-text">
+          <span class="transfer-action-title">TEST: share TXT (same size)</span>
+          <span class="transfer-action-desc">בדיקה — אותו גודל, text/plain</span>
+        </span>
+      </button>
       <button class="transfer-action-btn" data-action="transfer-export">
         <span class="transfer-action-icon">📤</span>
         <span class="transfer-action-text">
@@ -144,6 +158,35 @@ export function wireDataTransferEvents(container: HTMLElement): void {
           alert('SHEET ASYNC · ✓ OK');
         } catch (er: unknown) {
           alert(`SHEET ASYNC · ✗ ${er instanceof Error ? `${er.name}: ${er.message}` : String(er)}`);
+        }
+      });
+      return;
+    }
+    if (action === 'gm-share-test-json' || action === 'gm-share-test-txt-big') {
+      // Proven-working async-chain-through-sheet structure; ONLY the file differs.
+      const asJson = action === 'gm-share-test-json';
+      const payload = JSON.stringify({ data: 'x'.repeat(8000), kind: asJson ? 'json' : 'txt' });
+      const label = asJson ? 'JSON FILE' : 'TXT (same size)';
+      const sh = showBottomSheet(
+        `<button class="transfer-action-btn" data-st="go" style="border:2px dashed #16a085"><span class="transfer-action-text"><span class="transfer-action-title">▶ הקש לשיתוף — ${label}</span></span></button>`,
+        { title: `TEST · ${label}` },
+      );
+      const innerShare = async (f: File): Promise<void> => {
+        await navigator.share({ files: [f] });
+      };
+      const outer = async (): Promise<void> => {
+        const f = asJson
+          ? new File([payload], 'gm-test.gm.json', { type: 'application/json' })
+          : new File([payload], 'gm-test.txt', { type: 'text/plain' });
+        await innerShare(f);
+      };
+      sh.el.addEventListener('click', async (ev) => {
+        if (!(ev.target as HTMLElement).closest('[data-st="go"]')) return;
+        try {
+          await outer();
+          alert(`${label} · ✓ OK`);
+        } catch (er: unknown) {
+          alert(`${label} · ✗ ${er instanceof Error ? `${er.name}: ${er.message}` : String(er)}`);
         }
       });
       return;
