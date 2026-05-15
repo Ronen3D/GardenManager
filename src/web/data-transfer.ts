@@ -155,16 +155,46 @@ export async function triggerShareOrDownload(
   const file = isBlob
     ? new File([content as Blob], filename, { type: fileMime })
     : new File([content as string], filename, { type: fileMime });
+
+  // ===== TEMP SHARE DIAGNOSTIC — REMOVE AFTER TESTING =====
+  const _diag: string[] = [];
+  _diag.push(`name=${file.name}`);
+  _diag.push(`type=${file.type || '(empty)'}`);
+  _diag.push(`size=${file.size}`);
+  _diag.push(`secureCtx=${window.isSecureContext}`);
+  _diag.push(`standalone=${window.matchMedia('(display-mode: standalone)').matches}`);
+  _diag.push(`typeof share=${typeof navigator.share}`);
+  _diag.push(`typeof canShare=${typeof navigator.canShare}`);
+  let _canShareFiles: string;
+  try {
+    _canShareFiles =
+      typeof navigator.canShare === 'function' ? String(navigator.canShare({ files: [file] })) : 'no-canShare';
+  } catch (e) {
+    _canShareFiles = `threw:${e instanceof Error ? e.name : String(e)}`;
+  }
+  _diag.push(`canShare({files})=${_canShareFiles}`);
+  let _shareOutcome = 'not-attempted';
+  // ===== END TEMP =====
+
   if (typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
     try {
       if (navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file] });
+        // ===== TEMP ===== (remove with the block above)
+        alert('GM SHARE DIAG · ✓ shared OK\n\n' + _diag.join('\n'));
+        // ===== END TEMP =====
         return;
       }
-    } catch {
+    } catch (err) {
       // User cancelled or share failed — fall through to download
+      // ===== TEMP ===== (remove with the block above)
+      _shareOutcome = `share() threw → ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`;
+      // ===== END TEMP =====
     }
   }
+  // ===== TEMP ===== (remove with the block above)
+  alert(`GM SHARE DIAG · → DOWNLOAD fallback\nshareOutcome=${_shareOutcome}\n\n` + _diag.join('\n'));
+  // ===== END TEMP =====
   // Fallback: blob download
   const blob = isBlob ? (content as Blob) : new Blob([content as string], { type: blobMime });
   const url = URL.createObjectURL(blob);
