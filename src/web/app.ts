@@ -102,6 +102,7 @@ import { attachTripleClickOpener, clearAttemptScoreHistory, pushAttemptScore } f
 import { openSwapPicker } from './swap-picker';
 import { initSwimlane, renderSwimlaneView, wireSwimlaneEvents } from './swimlane-view';
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
+import { type HomeNavTarget, renderHomeTab, wireHomeEvents } from './tab-home';
 import {
   canLeaveParticipantsTab,
   clearParticipantSelection,
@@ -118,6 +119,7 @@ import {
   exposeWindowApi as exposeTutorialWindowApi,
   isBannerDismissed as isTutorialBannerDismissed,
   showTutorialBanner,
+  startTutorial,
   type TutorialContext,
 } from './tutorial';
 import { restoreTutorialBackupIfPresent } from './tutorial-demo';
@@ -151,10 +153,10 @@ import { computeWeeklyWorkloads } from './workload-utils';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
-type TabId = 'participants' | 'task-rules' | 'schedule' | 'algorithm';
-const VALID_TABS = new Set<TabId>(['participants', 'task-rules', 'schedule', 'algorithm']);
+type TabId = 'home' | 'participants' | 'task-rules' | 'schedule' | 'algorithm';
+const VALID_TABS = new Set<TabId>(['home', 'participants', 'task-rules', 'schedule', 'algorithm']);
 
-let currentTab: TabId = 'participants';
+let currentTab: TabId = 'home';
 let engine: SchedulingEngine | null = null;
 let currentSchedule: Schedule | null = null;
 let scheduleElapsed = 0;
@@ -4568,7 +4570,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.0</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4612,6 +4614,9 @@ function renderAll(): void {
   <div class="tab-content" id="tab-content">`;
 
   switch (currentTab) {
+    case 'home':
+      html += renderHomeTab({ schedule: currentSchedule, scheduleDirty: _scheduleDirty, preflight });
+      break;
     case 'participants':
       html += renderParticipantsTab();
       break;
@@ -4647,10 +4652,19 @@ function renderAll(): void {
   wireTabNav(app);
   wireUndoRedo(app);
   wireEasterEgg(app);
+  // MUST stay after wireEasterEgg — see wireHomeTitle() doc comment.
+  wireHomeTitle(app);
   wireFactoryReset(app);
 
   const content = document.getElementById('tab-content')!;
-  if (currentTab === 'participants') {
+  if (currentTab === 'home') {
+    wireHomeEvents(content, {
+      onOpenSchedule: () => void goToTab('schedule'),
+      onGenerate: () => void doGenerate(),
+      onNavigate: (t: HomeNavTarget) => void goToTab(t),
+      onHelp: () => void startTutorial('full-tour', tutorialContext),
+    });
+  } else if (currentTab === 'participants') {
     wireParticipantsEvents(content, renderAll);
   } else if (currentTab === 'task-rules') {
     wireTaskRulesEvents(content, renderAll);
@@ -4686,22 +4700,57 @@ function applySwapAnimations(): void {
   }
 }
 
+/**
+ * Centralised tab navigation. Encapsulates the participants-tab
+ * unsaved-changes guard so every exit path — the bottom-nav buttons, the
+ * header-title → Home button, and Home's quick-links — behaves identically.
+ * No-ops when already on `tab`.
+ */
+async function goToTab(tab: TabId): Promise<void> {
+  if (tab === currentTab) return;
+  if (currentTab === 'participants') {
+    // Guard: if table-edit mode has unsaved changes, confirm before leaving
+    const canLeave = await canLeaveParticipantsTab();
+    if (!canLeave) return;
+    clearParticipantSelection();
+  }
+  // The header title is only clickable in SCHEDULE_VIEW (overlay modes return
+  // before the header renders), but reset defensively so navigation always
+  // lands on the standard tabbed layout.
+  _viewMode = 'SCHEDULE_VIEW';
+  currentTab = tab;
+  pushHash();
+  renderAll();
+}
+
 function wireTabNav(container: HTMLElement): void {
   container.querySelectorAll('.tab-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const tab = (btn as HTMLElement).dataset.tab as typeof currentTab;
-      if (tab && tab !== currentTab) {
-        // Guard: if table-edit mode has unsaved changes, confirm before leaving
-        if (currentTab === 'participants') {
-          const canLeave = await canLeaveParticipantsTab();
-          if (!canLeave) return;
-          clearParticipantSelection();
-        }
-        currentTab = tab;
-        pushHash();
-        renderAll();
-      }
+    btn.addEventListener('click', () => {
+      const tab = (btn as HTMLElement).dataset.tab as TabId;
+      if (tab) void goToTab(tab);
     });
+  });
+}
+
+/**
+ * The header brand title doubles as the Home button — Home is the default
+ * landing view, not a bottom-nav tab. Wired AFTER wireEasterEgg() so the
+ * easter-egg click counter still increments on every tap (3 rapid taps still
+ * open the egg); a single tap navigates Home, and goToTab() no-ops once
+ * already there. _easterEggClicks is module-global and survives the re-render.
+ */
+function wireHomeTitle(container: HTMLElement): void {
+  const title = container.querySelector('#app-title');
+  if (!title) return;
+  title.addEventListener('click', () => {
+    void goToTab('home');
+  });
+  title.addEventListener('keydown', (e) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key === 'Enter' || ke.key === ' ') {
+      ke.preventDefault();
+      void goToTab('home');
+    }
   });
 }
 

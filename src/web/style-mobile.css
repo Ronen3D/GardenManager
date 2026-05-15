@@ -558,6 +558,37 @@
     font-size: 0.55rem;
   }
 
+  /* ── Home screen — phone tuning ───────────────────────────────────────── */
+
+  .home-view {
+    gap: 12px;
+  }
+  .home-hero {
+    padding: 20px 16px;
+  }
+  .home-hero-headline {
+    font-size: 1.35rem;
+  }
+  .home-cta-group {
+    margin-top: 14px;
+  }
+  /* Primary CTA spans the row for a comfortable thumb target; the secondary
+     "regenerate" button wraps onto its own line below it. */
+  .home-cta.btn-primary {
+    flex: 1 1 100%;
+    min-height: 48px;
+  }
+  .home-status-strip {
+    padding: 12px 14px;
+  }
+  .home-quicklink {
+    min-height: 64px;
+    font-size: 0.72rem;
+  }
+  .home-help {
+    min-height: 44px;
+  }
+
   /* ── Schedule toolbar — ultra-compact ─────────────────────────────────── */
 
   .tab-toolbar {
