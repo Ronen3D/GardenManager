@@ -40,6 +40,20 @@ export function renderDataTransferContent(): string {
           <span class="transfer-action-desc">בדיקה זמנית — שיתוף טקסט בלבד</span>
         </span>
       </button>
+      <button class="transfer-action-btn" data-action="gm-share-test-sheet-sync" style="border:2px dashed #2980b9">
+        <span class="transfer-action-icon">🧪</span>
+        <span class="transfer-action-text">
+          <span class="transfer-action-title">TEST: sheet → sync share</span>
+          <span class="transfer-action-desc">בדיקה — דרך bottom-sheet, ללא async</span>
+        </span>
+      </button>
+      <button class="transfer-action-btn" data-action="gm-share-test-sheet-async" style="border:2px dashed #2980b9">
+        <span class="transfer-action-icon">🧪</span>
+        <span class="transfer-action-text">
+          <span class="transfer-action-title">TEST: sheet → async chain</span>
+          <span class="transfer-action-desc">בדיקה — מבנה זהה לייצוא האמיתי</span>
+        </span>
+      </button>
       <button class="transfer-action-btn" data-action="transfer-export">
         <span class="transfer-action-icon">📤</span>
         <span class="transfer-action-text">
@@ -90,6 +104,48 @@ export function wireDataTransferEvents(container: HTMLElement): void {
         .catch((err: unknown) =>
           alert(`PURE TEXT SHARE · ✗ ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`),
         );
+      return;
+    }
+    if (action === 'gm-share-test-sheet-sync') {
+      // Bottom sheet → tap item → NON-async handler → share() is first statement
+      const sh = showBottomSheet(
+        '<button class="transfer-action-btn" data-st="go" style="border:2px dashed #2980b9"><span class="transfer-action-text"><span class="transfer-action-title">▶ הקש לשיתוף (sync)</span></span></button>',
+        { title: 'TEST · sheet sync' },
+      );
+      sh.el.addEventListener('click', (ev) => {
+        if (!(ev.target as HTMLElement).closest('[data-st="go"]')) return;
+        const f = new File(['hi'], 'gm-test.txt', { type: 'text/plain' });
+        navigator
+          .share({ files: [f] })
+          .then(() => alert('SHEET SYNC · ✓ OK'))
+          .catch((er: unknown) =>
+            alert(`SHEET SYNC · ✗ ${er instanceof Error ? `${er.name}: ${er.message}` : String(er)}`),
+          );
+      });
+      return;
+    }
+    if (action === 'gm-share-test-sheet-async') {
+      // Replicates the REAL export shape: async listener → await asyncFn → await innerAsyncFn → share()
+      const sh = showBottomSheet(
+        '<button class="transfer-action-btn" data-st="go" style="border:2px dashed #2980b9"><span class="transfer-action-text"><span class="transfer-action-title">▶ הקש לשיתוף (async)</span></span></button>',
+        { title: 'TEST · sheet async' },
+      );
+      const innerShare = async (f: File): Promise<void> => {
+        await navigator.share({ files: [f] });
+      };
+      const outer = async (): Promise<void> => {
+        const f = new File(['hi'], 'gm-test.txt', { type: 'text/plain' });
+        await innerShare(f);
+      };
+      sh.el.addEventListener('click', async (ev) => {
+        if (!(ev.target as HTMLElement).closest('[data-st="go"]')) return;
+        try {
+          await outer();
+          alert('SHEET ASYNC · ✓ OK');
+        } catch (er: unknown) {
+          alert(`SHEET ASYNC · ✗ ${er instanceof Error ? `${er.name}: ${er.message}` : String(er)}`);
+        }
+      });
       return;
     }
     // ===== END TEMP =====
