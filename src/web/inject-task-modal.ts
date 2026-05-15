@@ -466,9 +466,6 @@ function renderPlanSummaryBanner(plan: InjectionPlan, result: InjectionResult): 
   if (plan.isPartial) {
     banners += `<div class="inject-banner inject-banner--warn">⚠️ תוכנית חלקית — ${plan.totalSlotCount - plan.filledCount} משבצות נותרו ללא משתתף.</div>`;
   }
-  if (plan.violations.length > 0) {
-    banners += `<div class="inject-banner inject-banner--err">⛔ התוכנית מפרה ${plan.violations.length} אילוצים קשיחים. שימוש זהיר.</div>`;
-  }
   if (result.timedOut) {
     banners += `<div class="inject-banner inject-banner--info">⏱ החיפוש הגיע למגבלת הזמן — ייתכנו תוכניות נוספות שלא נמצאו.</div>`;
   }

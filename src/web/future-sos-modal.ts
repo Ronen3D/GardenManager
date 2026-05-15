@@ -470,12 +470,11 @@ export interface BatchPlansContext {
 }
 
 interface PlanVerdict {
-  level: 'excellent' | 'good' | 'fair' | 'poor';
+  level: 'excellent' | 'good' | 'fair';
   label: string;
 }
 
 function computeVerdict(plan: BatchRescuePlan): PlanVerdict {
-  if (plan.violations.length > 0) return { level: 'poor', label: 'בעייתי' };
   const cd = plan.compositeDelta;
   if (cd >= 5) return { level: 'excellent', label: 'מצוין' };
   if (cd >= 0) return { level: 'good', label: 'טוב' };
@@ -591,16 +590,11 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
   }
 
   backdrop.querySelectorAll<HTMLButtonElement>('.fsos-apply-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       if (btn.disabled) return;
       const planId = btn.dataset.planId;
       const plan = ctx.result.plans.find((p) => p.id === planId);
       if (!plan) return;
-      // Soft-violation plans require an extra confirmation step.
-      if (plan.violations.length > 0) {
-        const ok = await showSoftViolationsSubConfirm(plan);
-        if (!ok) return;
-      }
       close();
       ctx.onApply(plan);
     });
@@ -803,10 +797,7 @@ function renderBatchPlanCard(
   if (infeasible) {
     applyHtml = `<div class="fsos-apply-infeasible">לא ניתן להחיל — יש שיבוצים ללא פתרון</div>`;
   } else {
-    const disabledAttr = '';
-    const violationHint = plan.violations.length > 0 ? ' fsos-apply-btn--warn' : '';
-    const label = plan.violations.length > 0 ? `⚠️ החל בכל זאת (${plan.violations.length} הפרות)` : '✅ החל תוכנית';
-    applyHtml = `<button class="btn-primary fsos-apply-btn${violationHint}" data-plan-id="${escAttr(plan.id)}"${disabledAttr}>${label}</button>`;
+    applyHtml = `<button class="btn-primary fsos-apply-btn" data-plan-id="${escAttr(plan.id)}">✅ החל תוכנית</button>`;
   }
 
   return `<div class="fsos-plan-card fsos-plan-card--${verdict.level}${recommended ? ' fsos-plan-card--recommended' : ''}${expandedClass}" data-plan-rank="${plan.rank}">
@@ -1116,57 +1107,5 @@ function renderPlanDetails(plan: BatchRescuePlan, pMap: Map<string, Participant>
     changesHtml += '</ul>';
   }
 
-  let violationsHtml = '';
-  if (plan.violations.length > 0) {
-    violationsHtml =
-      '<h5 class="fsos-plan-section-title fsos-plan-section-title--warn">הפרות אילוצים</h5><ul class="fsos-plan-violations">';
-    for (const v of plan.violations) {
-      violationsHtml += `<li>${escHtml(v.message)}</li>`;
-    }
-    violationsHtml += '</ul>';
-  }
-
-  return changesHtml + violationsHtml;
-}
-
-function showSoftViolationsSubConfirm(plan: BatchRescuePlan): Promise<boolean> {
-  return new Promise((resolve) => {
-    const backdrop = document.createElement('div');
-    backdrop.className = 'gm-modal-backdrop fsos-subconfirm-backdrop';
-    const lines = plan.violations
-      .map((v) => `<li><code>${escHtml(v.code)}</code> · ${escHtml(v.message)}</li>`)
-      .join('');
-    backdrop.innerHTML = `
-      <div class="gm-modal-dialog fsos-subconfirm-dialog" role="dialog" aria-modal="true">
-        <div class="gm-modal-header">
-          <span class="gm-modal-icon">⚠️</span>
-          <span class="gm-modal-title">לאשר תוכנית עם הפרות?</span>
-        </div>
-        <div class="gm-modal-body">
-          <p>בתוכנית זו נמצאו ${plan.violations.length} הפרות של אילוצים קשיחים. החלתה עלולה להשאיר את השבצ״ק במצב לא תקין.</p>
-          <ul class="fsos-plan-violations">${lines}</ul>
-        </div>
-        <div class="gm-modal-actions">
-          <button class="btn-primary gm-modal-btn-danger fsos-subconfirm-ok">כן, החל בכל זאת</button>
-          <button class="btn-sm btn-outline fsos-subconfirm-cancel">ביטול</button>
-        </div>
-      </div>`;
-    lockBodyScroll();
-    const close = (val: boolean) => {
-      backdrop.remove();
-      unlockBodyScroll();
-      document.removeEventListener('keydown', onKey);
-      resolve(val);
-    };
-    backdrop.querySelector('.fsos-subconfirm-ok')?.addEventListener('click', () => close(true));
-    backdrop.querySelector('.fsos-subconfirm-cancel')?.addEventListener('click', () => close(false));
-    backdrop.addEventListener('click', (e) => {
-      if (e.target === backdrop) close(false);
-    });
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') close(false);
-    }
-    document.addEventListener('keydown', onKey);
-    document.body.appendChild(backdrop);
-  });
+  return changesHtml;
 }

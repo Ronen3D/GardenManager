@@ -855,8 +855,9 @@ function runStage(opts: StageOpts): StageOutput {
 
 /**
  * Cascade depths 1-3 → 4 → 5 for a single (group-locked) search. Returns
- * the deepest stage with valid plans, or the deepest stage's invalid bucket
- * as a last-resort.
+ * the deepest stage with valid plans, or an empty plans list — never an
+ * invalid-bucket plan. HC-violating plans are filtered upstream by
+ * `runStage` and must never be surfaced to the UI.
  */
 function searchOneGroup(
   task: Task,
@@ -926,24 +927,20 @@ function searchOneGroup(
       if (stage3.validPlans.length > 0) {
         return { plans: stage3.validPlans, unsolvableSlotIds: stage3.unsolvableSlotIds, timedOut: stage3.timedOut };
       }
-      // Last-resort: surface the deepest invalid bucket.
-      const lastInvalid =
-        stage3.invalidPlans.length > 0
-          ? stage3.invalidPlans
-          : stage2.invalidPlans.length > 0
-            ? stage2.invalidPlans
-            : stage1.invalidPlans;
+      // No valid plan at any depth — return empty so the UI shows the
+      // "no candidate available" empty-state. HC-violating plans must never
+      // be surfaced as a last resort.
       return {
-        plans: lastInvalid,
+        plans: [],
         unsolvableSlotIds: stage3.unsolvableSlotIds,
         timedOut: stage1.timedOut || stage2.timedOut || stage3.timedOut,
       };
     }
-    // Stage 2 had no candidates anywhere — fall through to last-resort below.
+    // Stage 2 had no candidates anywhere — fall through to the empty result.
   }
 
-  // Nothing solvable at any depth.
-  return { plans: stage1.invalidPlans, unsolvableSlotIds: stage1.unsolvableSlotIds, timedOut: stage1.timedOut };
+  // Nothing solvable at any depth — return empty (never the invalid bucket).
+  return { plans: [], unsolvableSlotIds: stage1.unsolvableSlotIds, timedOut: stage1.timedOut };
 }
 
 /**
@@ -1407,14 +1404,20 @@ export function searchInjectionPlans(
         baseBudgetMs,
       );
 
+  // Defense in depth: HC-violating plans must never reach the UI. searchOneGroup
+  // and runStage already guarantee this, but we re-filter here so any future
+  // regression in the planner cannot leak invalid plans to the apply path.
+  const validPlans = searchResult.plans.filter((p) => p.violations.length === 0);
+
   // Rank and diversify.
   let ranked: InjectionPlan[];
-  if (searchResult.plans.length === 0) {
-    // Last-resort: fabricate a single all-unfilled plan so the UI has something
-    // coherent to display ("no candidate available, here's why per slot").
+  if (validPlans.length === 0) {
+    // No valid plan exists — fabricate a single all-unfilled plan so the UI
+    // has something coherent to display ("no candidate available, here's why
+    // per slot"). The apply button stays disabled because filledCount === 0.
     ranked = [buildEmptyPlan(task, slotCtx, null, schedule.assignments)];
   } else {
-    const sorted = sortPlans(searchResult.plans);
+    const sorted = sortPlans(validPlans);
     ranked = selectDiversePlans(sorted, maxPlans);
     for (let i = 0; i < ranked.length; i++) ranked[i].rank = i + 1;
   }

@@ -568,6 +568,13 @@ function getToastContainer(): HTMLElement {
   if (_toastContainer && document.body.contains(_toastContainer)) return _toastContainer;
   _toastContainer = document.createElement('div');
   _toastContainer.className = 'gm-toast-container';
+  // Polite live region — additions are announced to screen readers without
+  // interrupting the user. Error toasts override with role="alert" on the
+  // toast itself for assertive announcement. aria-atomic="false" so only the
+  // newly added toast is announced, not every toast already on screen.
+  _toastContainer.setAttribute('role', 'status');
+  _toastContainer.setAttribute('aria-live', 'polite');
+  _toastContainer.setAttribute('aria-atomic', 'false');
   document.body.appendChild(_toastContainer);
   return _toastContainer;
 }
@@ -581,6 +588,11 @@ export function showToast(message: string, opts?: ToastOptions): void {
 
   const toast = document.createElement('div');
   toast.className = `gm-toast gm-toast-${type}`;
+  // Errors escalate to assertive (announced immediately, may interrupt other
+  // speech). Non-error toasts inherit the container's polite live region.
+  if (type === 'error') {
+    toast.setAttribute('role', 'alert');
+  }
 
   const icons: Record<string, string> = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
 
@@ -590,10 +602,10 @@ export function showToast(message: string, opts?: ToastOptions): void {
   }
 
   toast.innerHTML = `
-    <span class="gm-toast-icon">${icons[type]}</span>
+    <span class="gm-toast-icon" aria-hidden="true">${icons[type]}</span>
     <span class="gm-toast-msg">${escHtml(message)}</span>
     ${actionHtml}
-    <button class="gm-toast-close">✕</button>`;
+    <button class="gm-toast-close" aria-label="סגור הודעה">✕</button>`;
 
   const dismiss = () => {
     toast.classList.add('gm-toast-exit');
@@ -636,23 +648,32 @@ export interface CustomSelectConfig {
 export function renderCustomSelect(cfg: CustomSelectConfig): string {
   const selected = cfg.options.find((o) => o.selected);
   const displayLabel = selected?.label || cfg.placeholder || '';
+  const listboxId = `${cfg.id}-listbox`;
+  const ariaLabel = cfg.placeholder ? ` aria-label="${escAttr(cfg.placeholder)}"` : '';
 
   return `
     <div class="gm-select ${cfg.className || ''}" id="${cfg.id}" data-value="${escAttr(selected?.value || '')}">
-      <button class="gm-select-trigger" type="button">
+      <button class="gm-select-trigger" type="button"
+              role="combobox"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-controls="${escAttr(listboxId)}"${ariaLabel}>
         <span class="gm-select-label">${escHtml(displayLabel)}</span>
-        <span class="gm-select-chevron">▾</span>
+        <span class="gm-select-chevron" aria-hidden="true">▾</span>
       </button>
       <div class="gm-select-dropdown">
-        ${cfg.searchable ? '<input type="text" class="gm-select-search" placeholder="🔍 חפש..." />' : ''}
-        <div class="gm-select-options">
+        ${cfg.searchable ? `<input type="text" class="gm-select-search" placeholder="🔍 חפש..." aria-label="חפש" aria-autocomplete="list" aria-controls="${escAttr(listboxId)}" />` : ''}
+        <div class="gm-select-options" role="listbox" id="${escAttr(listboxId)}" tabindex="-1">
           ${cfg.options
             .map(
-              (o) => `
-            <button class="gm-select-option ${o.selected ? 'selected' : ''}"
-                    data-value="${escAttr(o.value)}" type="button">
+              (o, i) => `
+            <div class="gm-select-option ${o.selected ? 'selected' : ''}"
+                 id="${escAttr(`${cfg.id}-opt-${i}`)}"
+                 role="option"
+                 aria-selected="${o.selected ? 'true' : 'false'}"
+                 data-value="${escAttr(o.value)}">
               ${escHtml(o.label)}
-            </button>
+            </div>
           `,
             )
             .join('')}
@@ -673,12 +694,45 @@ export function wireCustomSelect(container: HTMLElement, selectId: string, onCha
   const trigger = wrapper.querySelector('.gm-select-trigger') as HTMLElement;
   const dropdown = wrapper.querySelector('.gm-select-dropdown') as HTMLElement;
   const searchInput = wrapper.querySelector('.gm-select-search') as HTMLInputElement | null;
+  const allOptions = () => Array.from(dropdown.querySelectorAll<HTMLElement>('.gm-select-option'));
+  const visibleOptions = () => allOptions().filter((o) => o.style.display !== 'none');
+
+  let activeIndex = -1;
+  let typeBuffer = '';
+  let typeBufferTimer: number | null = null;
+
+  const setActive = (idx: number) => {
+    const opts = visibleOptions();
+    if (opts.length === 0) {
+      activeIndex = -1;
+      trigger.removeAttribute('aria-activedescendant');
+      searchInput?.removeAttribute('aria-activedescendant');
+      allOptions().forEach((o) => {
+        o.classList.remove('gm-select-option--active');
+      });
+      return;
+    }
+    const clamped = ((idx % opts.length) + opts.length) % opts.length;
+    activeIndex = clamped;
+    const target = opts[clamped];
+    allOptions().forEach((o) => {
+      o.classList.remove('gm-select-option--active');
+    });
+    target.classList.add('gm-select-option--active');
+    const targetId = target.id;
+    if (targetId) {
+      trigger.setAttribute('aria-activedescendant', targetId);
+      searchInput?.setAttribute('aria-activedescendant', targetId);
+    }
+    target.scrollIntoView({ block: 'nearest' });
+  };
 
   // Dropdown is portaled to <body> while open so its `position: fixed` is
   // measured against the viewport — any ancestor with `backdrop-filter`,
   // `transform`, `filter`, `contain`, or `will-change` would otherwise form a
   // containing block and throw the positioning off-screen.
-  const close = () => {
+  const close = (restoreFocus = false) => {
+    const wasOpen = wrapper.classList.contains('open');
     wrapper.classList.remove('open');
     dropdown.classList.remove('gm-select-dropdown--open');
     if (dropdown.parentElement !== wrapper) wrapper.appendChild(dropdown);
@@ -690,24 +744,28 @@ export function wireCustomSelect(container: HTMLElement, selectId: string, onCha
     dropdown.style.maxHeight = '';
     dropdown.style.insetInlineStart = '';
     dropdown.style.insetInlineEnd = '';
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.removeAttribute('aria-activedescendant');
+    searchInput?.removeAttribute('aria-activedescendant');
+    allOptions().forEach((o) => {
+      o.classList.remove('gm-select-option--active');
+    });
+    activeIndex = -1;
     if (_openSelect?.close === close) _openSelect = null;
+    // Return focus to the trigger if the focus is currently inside the dropdown
+    // or has been lost (body) — but not if the user clicked somewhere else.
+    if (wasOpen && restoreFocus) trigger.focus();
   };
 
-  // Toggle dropdown
-  trigger.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const wasOpen = wrapper.classList.contains('open');
+  const open = () => {
     if (_openSelect && _openSelect.close !== close) _openSelect.close();
-    if (wasOpen) {
-      close();
-      return;
-    }
     // Measure trigger BEFORE opening (always accurate, no scroll offset issues)
     const triggerRect = trigger.getBoundingClientRect();
     // Portal and show so we can measure the dropdown's natural rendered size.
     document.body.appendChild(dropdown);
     dropdown.classList.add('gm-select-dropdown--open');
     wrapper.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
     const dropW = dropdown.offsetWidth;
     const dropH = dropdown.offsetHeight;
     const vpW = window.innerWidth;
@@ -741,34 +799,222 @@ export function wireCustomSelect(container: HTMLElement, selectId: string, onCha
       searchInput.focus();
       filterOptions('');
     }
-  });
+    // Seed active to current selection (or first option)
+    const opts = visibleOptions();
+    const selectedIdx = opts.findIndex((o) => o.classList.contains('selected'));
+    setActive(selectedIdx >= 0 ? selectedIdx : 0);
+  };
 
   // Filter options on search input
   const filterOptions = (q: string) => {
     const lower = q.toLowerCase();
-    dropdown.querySelectorAll('.gm-select-option').forEach((btn) => {
-      const text = (btn as HTMLElement).textContent?.toLowerCase() || '';
-      (btn as HTMLElement).style.display = !lower || text.includes(lower) ? '' : 'none';
+    dropdown.querySelectorAll<HTMLElement>('.gm-select-option').forEach((opt) => {
+      const text = opt.textContent?.toLowerCase() || '';
+      opt.style.display = !lower || text.includes(lower) ? '' : 'none';
     });
+    // Re-seed active to first visible match after filter changes
+    const opts = visibleOptions();
+    setActive(opts.length > 0 ? 0 : -1);
   };
+
+  const commitOption = (opt: HTMLElement) => {
+    const value = opt.dataset.value || '';
+    wrapper.dataset.value = value;
+    const label = wrapper.querySelector('.gm-select-label') as HTMLElement;
+    if (label) label.textContent = opt.textContent?.trim() || '';
+    allOptions().forEach((o) => {
+      o.classList.remove('selected');
+      o.setAttribute('aria-selected', 'false');
+    });
+    opt.classList.add('selected');
+    opt.setAttribute('aria-selected', 'true');
+    close(true);
+    onChange(value);
+  };
+
+  const findByPrefix = (buffer: string): number => {
+    if (!buffer) return -1;
+    const opts = visibleOptions();
+    const lower = buffer.toLowerCase();
+    // Start from after current active, wrap around — so repeated same-letter cycles.
+    const start = activeIndex >= 0 ? activeIndex + 1 : 0;
+    for (let i = 0; i < opts.length; i++) {
+      const idx = (start + i) % opts.length;
+      if ((opts[idx].textContent?.trim().toLowerCase() || '').startsWith(lower)) return idx;
+    }
+    return -1;
+  };
+
+  const pushTypeBuffer = (ch: string) => {
+    typeBuffer += ch;
+    if (typeBufferTimer !== null) window.clearTimeout(typeBufferTimer);
+    typeBufferTimer = window.setTimeout(() => {
+      typeBuffer = '';
+      typeBufferTimer = null;
+    }, 500);
+    const idx = findByPrefix(typeBuffer);
+    if (idx >= 0) setActive(idx);
+  };
+
+  // Toggle dropdown on click. Keyboard activation (Enter/Space on a <button>)
+  // is handled in the keydown listener, which calls preventDefault() to
+  // suppress the synthesized click — so this only fires for real pointer
+  // clicks and programmatic .click() calls (assistive tech / tests).
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (wrapper.classList.contains('open')) close(false);
+    else open();
+  });
+
+  // Keyboard handler on the trigger — works whether dropdown is closed or open.
+  // When `searchable` is true and dropdown is open, the search input has focus
+  // and its own keydown handler takes over for typing.
+  trigger.addEventListener('keydown', (e) => {
+    const isOpen = wrapper.classList.contains('open');
+    const key = e.key;
+    if (!isOpen) {
+      if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Enter' || key === ' ' || key === 'Spacebar') {
+        e.preventDefault();
+        open();
+        return;
+      }
+      if (key === 'Home') {
+        e.preventDefault();
+        open();
+        setActive(0);
+        return;
+      }
+      if (key === 'End') {
+        e.preventDefault();
+        open();
+        const opts = visibleOptions();
+        setActive(opts.length - 1);
+        return;
+      }
+      if (key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        open();
+        pushTypeBuffer(key);
+        return;
+      }
+      return;
+    }
+    // Open + focus on trigger (no search). Search input handles its own keys.
+    if (key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      close(true);
+      return;
+    }
+    if (key === 'Tab') {
+      // Let Tab move focus naturally from the trigger, but close the dropdown.
+      close(false);
+      return;
+    }
+    if (key === 'ArrowDown') {
+      e.preventDefault();
+      setActive(activeIndex < 0 ? 0 : activeIndex + 1);
+      return;
+    }
+    if (key === 'ArrowUp') {
+      e.preventDefault();
+      const opts = visibleOptions();
+      setActive(activeIndex < 0 ? opts.length - 1 : activeIndex - 1);
+      return;
+    }
+    if (key === 'Home') {
+      e.preventDefault();
+      setActive(0);
+      return;
+    }
+    if (key === 'End') {
+      e.preventDefault();
+      const opts = visibleOptions();
+      setActive(opts.length - 1);
+      return;
+    }
+    if (key === 'PageDown') {
+      e.preventDefault();
+      setActive(activeIndex + 10);
+      return;
+    }
+    if (key === 'PageUp') {
+      e.preventDefault();
+      setActive(activeIndex - 10);
+      return;
+    }
+    if (key === 'Enter' || key === ' ' || key === 'Spacebar') {
+      e.preventDefault();
+      const opts = visibleOptions();
+      if (activeIndex >= 0 && opts[activeIndex]) commitOption(opts[activeIndex]);
+      return;
+    }
+    if (key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      pushTypeBuffer(key);
+    }
+  });
+
   if (searchInput) {
     searchInput.addEventListener('input', () => filterOptions(searchInput.value));
     searchInput.addEventListener('click', (e) => e.stopPropagation());
+    searchInput.addEventListener('keydown', (e) => {
+      const key = e.key;
+      if (key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        close(true);
+        return;
+      }
+      if (key === 'Tab') {
+        close(false);
+        return;
+      }
+      if (key === 'ArrowDown') {
+        e.preventDefault();
+        setActive(activeIndex < 0 ? 0 : activeIndex + 1);
+        return;
+      }
+      if (key === 'ArrowUp') {
+        e.preventDefault();
+        const opts = visibleOptions();
+        setActive(activeIndex < 0 ? opts.length - 1 : activeIndex - 1);
+        return;
+      }
+      if (key === 'Home' && e.ctrlKey) {
+        e.preventDefault();
+        setActive(0);
+        return;
+      }
+      if (key === 'End' && e.ctrlKey) {
+        e.preventDefault();
+        const opts = visibleOptions();
+        setActive(opts.length - 1);
+        return;
+      }
+      if (key === 'Enter') {
+        e.preventDefault();
+        const opts = visibleOptions();
+        if (activeIndex >= 0 && opts[activeIndex]) commitOption(opts[activeIndex]);
+      }
+    });
   }
 
-  // Select an option
+  // Select an option (mouse click)
   dropdown.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('.gm-select-option') as HTMLElement | null;
-    if (!btn) return;
+    const opt = (e.target as HTMLElement).closest('.gm-select-option') as HTMLElement | null;
+    if (!opt) return;
     e.stopPropagation();
-    const value = btn.dataset.value || '';
-    wrapper.dataset.value = value;
-    const label = wrapper.querySelector('.gm-select-label') as HTMLElement;
-    if (label) label.textContent = btn.textContent?.trim() || '';
-    dropdown.querySelectorAll('.gm-select-option').forEach((o) => o.classList.remove('selected'));
-    btn.classList.add('selected');
-    close();
-    onChange(value);
+    commitOption(opt);
+  });
+
+  // Mouse hover updates the active highlight so keyboard/mouse stay in sync.
+  dropdown.addEventListener('mousemove', (e) => {
+    const opt = (e.target as HTMLElement).closest('.gm-select-option') as HTMLElement | null;
+    if (!opt) return;
+    const opts = visibleOptions();
+    const idx = opts.indexOf(opt);
+    if (idx >= 0 && idx !== activeIndex) setActive(idx);
   });
 
   // Close on outside click (with cleanup support). Dropdown may be portaled
@@ -776,11 +1022,23 @@ export function wireCustomSelect(container: HTMLElement, selectId: string, onCha
   const closeOnOutside = (e: MouseEvent) => {
     const t = e.target as Node;
     if (wrapper.contains(t) || dropdown.contains(t)) return;
-    close();
+    close(false);
+  };
+  // Global Escape — needed when focus is somewhere other than the trigger/search
+  // (e.g. the dropdown was just opened and focus hasn't settled yet).
+  const closeOnEscape = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape') return;
+    if (!wrapper.classList.contains('open')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    close(true);
   };
   document.addEventListener('click', closeOnOutside);
+  document.addEventListener('keydown', closeOnEscape);
   _selectCleanups.set(selectId, () => {
     document.removeEventListener('click', closeOnOutside);
+    document.removeEventListener('keydown', closeOnEscape);
+    if (typeBufferTimer !== null) window.clearTimeout(typeBufferTimer);
     // If the select is torn down (re-render) while open, restore the dropdown
     // into the wrapper so it's cleaned up along with the rest of the subtree.
     if (dropdown.parentElement !== wrapper) wrapper.appendChild(dropdown);

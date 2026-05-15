@@ -19,7 +19,6 @@ import {
 } from '../index';
 import * as store from './config-store';
 import { isTouchDevice } from './responsive';
-import { violationLabel } from './schedule-utils';
 import { escAttr, escHtml, fmt, stripDayPrefix } from './ui-helpers';
 
 // ─── Context injection ──────────────────────────────────────────────────────
@@ -202,7 +201,6 @@ function showRescueModal(): void {
 
   for (const plan of plans) {
     const isRecommended = plan.rank === 1;
-    const hasViolations = plan.violations && plan.violations.length > 0;
 
     const qualityTier =
       plan.impactScore < excellentCap ? 'excellent' : plan.impactScore < fairCap ? 'fair' : 'significant';
@@ -218,7 +216,6 @@ function showRescueModal(): void {
         <span class="rescue-rank">#${plan.rank}${isRecommended ? ' <span class="rescue-recommended-tag">מומלץ ✓</span>' : ''}</span>
         <span class="rescue-quality rescue-quality--${qualityTier}">● ${qualityLabel}</span>
         <span class="rescue-swaps">${swapLabel}</span>
-        ${hasViolations ? `<span class="rescue-violations-badge" title="${plan.violations!.length} הפרות אילוצים">⚠️</span>` : ''}
       </div>
       ${
         isDeepFallback
@@ -251,36 +248,19 @@ function showRescueModal(): void {
     }
     stepsHtml += `</ol>`;
 
-    // Violations section
-    let violationsHtml = '';
-    if (hasViolations) {
-      violationsHtml = `<div class="rescue-violations-warning">
-        <span class="rescue-violations-icon">⚠️</span>
-        <span>${plan.violations!.length} הפרות אילוצים</span>
-        <details class="rescue-violations-details">
-          <summary>הצג פרטים</summary>
-          <ul>`;
-      for (const v of plan.violations!) {
-        violationsHtml += `<li dir="rtl"><code>${violationLabel(v.code)}</code> · ${v.message}</li>`;
-      }
-      violationsHtml += `</ul></details></div>`;
-    }
-
     // Plan #1: expanded by default. Others: collapsed.
     if (isRecommended) {
       html += `<div class="rescue-plan-details">
         ${stepsHtml}
-        ${violationsHtml}
       </div>`;
     } else {
       html += `<details class="rescue-plan-details rescue-plan-collapsible">
         <summary class="rescue-plan-expand">הצג פרטים</summary>
         ${stepsHtml}
-        ${violationsHtml}
       </details>`;
     }
 
-    html += `<button class="btn-apply-plan${hasViolations ? ' btn-apply-plan--warn' : ''}" data-plan-id="${plan.id}">${hasViolations ? '⚠️ החל תוכנית (יש הפרות)' : '✅ החל תוכנית'}</button>
+    html += `<button class="btn-apply-plan" data-plan-id="${plan.id}">✅ החל תוכנית</button>
     </div>`;
   }
 

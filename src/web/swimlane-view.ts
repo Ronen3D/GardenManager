@@ -264,8 +264,11 @@ function renderLane(
 
   let html = `<div class="${laneClasses}" data-participant-id="${escAttr(participant.id)}">`;
 
-  // Identity row.
-  html += `<div class="swimlane-identity">`;
+  // Identity row. role=button/tabindex=0 so keyboard users have a single,
+  // discoverable activation point for "open this participant's sheet" — the
+  // click handler treats clicks anywhere in the lane the same way, but
+  // making the full lane focusable would spam the Tab order.
+  html += `<div class="swimlane-identity" role="button" tabindex="0" aria-label="${escAttr(`פתח את כרטיס ${participant.name}`)}">`;
   html += `<span class="swimlane-id-dot" style="background:${groupColorHex}"></span>`;
   html += `<span class="swimlane-id-name">${escHtml(participant.name)}</span>`;
   html += `<span class="swimlane-id-level" style="background:${levelHex}">${levelLabel(participant.level)}</span>`;
@@ -338,6 +341,8 @@ function renderBlock(task: Task, status: AssignmentStatus | undefined, frozen: b
   let html = `<div class="${classes}" `;
   html += `style="right:${rightPct}%;width:${widthPct}%;background:${color}" `;
   html += `data-task-id="${escAttr(task.id)}" `;
+  html += `role="button" tabindex="0" `;
+  html += `aria-label="${escAttr(title)}" `;
   html += `title="${escAttr(title)}">`;
   html += `<span class="swimlane-block-label">${escHtml(label)}</span>`;
   if (frozen) html += `<span class="swimlane-block-frozen" aria-hidden="true">${SVG_ICONS.snowflake}</span>`;
@@ -441,13 +446,20 @@ export function wireSwimlaneEvents(container: HTMLElement): void {
     }
   });
 
-  // Keyboard a11y for group-header toggle.
+  // Keyboard activation for every interactive surface in the swimlane that
+  // is rendered with role="button" tabindex="0" (group header toggle, blocks,
+  // identity rows). Dispatches a synthetic click so the single delegated
+  // click handler above stays the source of truth for behavior.
   container.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
-    const header = (e.target as HTMLElement).closest('[data-group-toggle]') as HTMLElement | null;
-    if (!header) return;
+    const target = e.target as HTMLElement;
+    const activatable =
+      target.closest('[data-group-toggle]') ??
+      target.closest('.swimlane-block') ??
+      target.closest('.swimlane-identity');
+    if (!activatable) return;
     e.preventDefault();
-    header.click();
+    (activatable as HTMLElement).click();
   });
 }
 

@@ -739,11 +739,13 @@ export function generateBatchRescuePlans(
   const FALLBACK_MAX_BUDGET_MS = 10_000;
   const fallbackBudget = Math.min(FALLBACK_MAX_BUDGET_MS, timeBudgetMs * 4);
 
+  // Hard-constraint invariant: HC-violating plans are never surfaced. If no
+  // valid plan is found at any depth, return an empty plans list and let the
+  // UI present the infeasible-state modal — never promote invalidPlans here.
   const stage1 = runStage('none', timeBudgetMs);
   let finalPlans = stage1.validPlans;
   let finalInfeasible = stage1.infeasibleIds;
   let finalTimedOut = stage1.timedOut;
-  let lastInvalidBucket = stage1.invalidPlans;
   let stageAnySolvable = stage1.anySolvable;
 
   if (finalPlans.length === 0 && (stage1.anySolvable || stage1.infeasibleIds.length > 0)) {
@@ -756,7 +758,6 @@ export function generateBatchRescuePlans(
     finalPlans = stage2.validPlans;
     finalInfeasible = stage2.infeasibleIds;
     finalTimedOut = stage2.timedOut;
-    lastInvalidBucket = stage2.invalidPlans;
     stageAnySolvable = stage2.anySolvable;
   }
 
@@ -770,24 +771,6 @@ export function generateBatchRescuePlans(
     finalPlans = stage3.validPlans;
     finalInfeasible = stage3.infeasibleIds;
     finalTimedOut = stage3.timedOut;
-    lastInvalidBucket = stage3.invalidPlans;
-  }
-
-  // Last-resort: if no valid plan at any depth, surface the final stage's
-  // invalid-bucket compositions (if any). Preserves prior behavior where the
-  // UI can show a violating plan behind a confirm dialog.
-  if (finalPlans.length === 0 && lastInvalidBucket.length > 0) {
-    lastInvalidBucket.sort((a, b) => {
-      const delta = b.compositeDelta - a.compositeDelta;
-      if (Math.abs(delta) > 0.1) return delta;
-      const aDisturbed = a.perParticipantChanges.length;
-      const bDisturbed = b.perParticipantChanges.length;
-      if (aDisturbed !== bDisturbed) return aDisturbed - bDisturbed;
-      return a.swaps.length - b.swaps.length;
-    });
-    const topInvalid = selectDiversePlans(lastInvalidBucket, maxPlans);
-    for (let i = 0; i < topInvalid.length; i++) topInvalid[i].rank = i + 1;
-    finalPlans = topInvalid;
   }
 
   return {

@@ -764,13 +764,9 @@ function positionForTarget(target: HTMLElement, placement: TutorialStep['placeme
   const horizOversize = haloW > vw;
   const vertOversize = haloH > vh;
   const spotlightLeft = horizOversize ? Math.max(haloLeftPx, 0) : haloLeftPx;
-  const spotlightWidth = horizOversize
-    ? Math.max(0, Math.min(haloLeftPx + haloW, vw) - spotlightLeft)
-    : haloW;
+  const spotlightWidth = horizOversize ? Math.max(0, Math.min(haloLeftPx + haloW, vw) - spotlightLeft) : haloW;
   const spotlightTop = vertOversize ? Math.max(haloTop, 0) : haloTop;
-  const spotlightHeight = vertOversize
-    ? Math.max(0, Math.min(haloTop + haloH, vh) - spotlightTop)
-    : haloH;
+  const spotlightHeight = vertOversize ? Math.max(0, Math.min(haloTop + haloH, vh) - spotlightTop) : haloH;
   _spotlight.classList.remove('tutorial-spotlight-centered');
   _backdrop?.classList.remove('tutorial-backdrop-centered');
   _spotlight.style.top = `${spotlightTop}px`;

@@ -2828,8 +2828,7 @@ export function optimizeMultiAttemptAsync(
           // Shuffle participant order (first attempt uses original order).
           // In continuation mode the deterministic baseline is already in
           // `seedBest`, so even attempt 0 of this call uses shuffle.
-          const shuffledParticipants =
-            i === 0 && !isContinuation ? [...participants] : shuffle([...participants]);
+          const shuffledParticipants = i === 0 && !isContinuation ? [...participants] : shuffle([...participants]);
 
           // Apply elite boost: every unfilled task gets priority drop; adjacency-
           // dominated tasks additionally receive SA insert-move bias (additive).

@@ -13028,13 +13028,18 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     //     the .slice(0, 5). Without sort, reverse-order input puts tCONF LAST
     //     in p2's donor list → sliced out → depth-2 chain infeasible.
     //   p3 is free at day 1 so can fill tCONF when p2 vacates it.
+    // Local availability wide enough to cover all 8 donor days (June 1..8).
+    // The shared fsosAvail ends June 5, which would make p2's tD6..tD8
+    // pre-existing HC-3 violations and (now that invalid plans are never
+    // surfaced) make every candidate plan get filtered out.
+    const b5Avail = [{ start: new Date(2026, 4, 29), end: new Date(2026, 5, 10) }];
     const focal: Participant = {
       id: 'b5-focal',
       name: 'Focal',
       level: Level.L0,
       certifications: ['Hamama'],
       group: 'A',
-      availability: fsosAvail,
+      availability: b5Avail,
       dateUnavailability: [],
     };
     const p2: Participant = {
@@ -13043,7 +13048,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       level: Level.L0,
       certifications: ['Hamama'],
       group: 'A',
-      availability: fsosAvail,
+      availability: b5Avail,
       dateUnavailability: [],
     };
     const p3: Participant = {
@@ -13052,7 +13057,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       level: Level.L0,
       certifications: [],
       group: 'A',
-      availability: fsosAvail,
+      availability: b5Avail,
       dateUnavailability: [],
     };
 
@@ -13077,6 +13082,9 @@ console.log('\n── Future SOS (batch rescue) ──────────�
       blocksConsecutive: true,
     };
     // 7 additional donor tasks on days 2..8 — bulks p2's donor list past cap.
+    // blocksConsecutive=false so the (pre-existing) chain of 8 days doesn't
+    // surface as HC-12 violations on the candidate plan — we're testing
+    // donor-slicing sort correctness, not consecutive-heavy-work enforcement.
     const padTasks: Task[] = [];
     for (let d = 2; d <= 8; d++) {
       padTasks.push({
@@ -13086,7 +13094,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
         requiredCount: 1,
         slots: [{ slotId: `b5-sD${d}`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
         sameGroupRequired: false,
-        blocksConsecutive: true,
+        blocksConsecutive: false,
       });
     }
 

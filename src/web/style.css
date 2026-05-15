@@ -266,6 +266,37 @@ textarea {
   padding: 24px;
 }
 
+/* Remove the visible focus ring on the main landmark itself — the skip-link
+   target only needs to be programmatically focusable, not visually highlighted. */
+#app:focus {
+  outline: none;
+}
+
+/* ─── Skip-to-content link ─────────────────────────────
+   Hidden above the viewport, revealed on keyboard focus.
+   First focusable element in the DOM so keyboard users can jump past
+   the loader / chrome straight into the application content. */
+.gm-skip-link {
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+  transform: translateY(-150%);
+  transition: transform 0.15s ease-out;
+  padding: 0.6rem 1rem;
+  background: var(--accent, #27ae60);
+  color: #fff;
+  font-family: "Rubik", sans-serif;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 0 0 6px 6px;
+  z-index: 100000;
+}
+.gm-skip-link:focus {
+  transform: translateY(0);
+  outline: 2px solid #fff;
+  outline-offset: -4px;
+}
+
 /* ─── Header ─────────────────────────────────────────── */
 header {
   text-align: center;
@@ -5354,12 +5385,6 @@ tr.row-selected:hover {
   font-weight: 600;
 }
 
-.rescue-violations-badge {
-  font-size: 0.82rem;
-  margin-inline-start: auto;
-  cursor: default;
-}
-
 .rescue-steps {
   margin: 0;
   padding-inline-start: 22px;
@@ -5406,22 +5431,6 @@ tr.row-selected:hover {
   background: #219a52;
 }
 
-.btn-apply-plan--warn {
-  background: #e67e22;
-}
-.btn-apply-plan--warn:hover {
-  background: #d35400;
-}
-
-.rescue-violations-warning {
-  margin-top: 8px;
-  padding: 8px 10px;
-  background: rgba(230, 126, 34, 0.1);
-  border: 1px solid rgba(230, 126, 34, 0.35);
-  border-radius: 6px;
-  font-size: 0.82rem;
-  color: #bf6516;
-}
 .rescue-fallback-warning {
   margin-top: 6px;
   margin-bottom: 4px;
@@ -5435,27 +5444,6 @@ tr.row-selected:hover {
 }
 .rescue-plan--fallback {
   border-inline-start: 4px solid rgba(230, 126, 34, 0.55);
-}
-.rescue-violations-icon {
-  margin-inline-end: 4px;
-}
-.rescue-violations-details {
-  margin-top: 4px;
-}
-.rescue-violations-details summary {
-  cursor: pointer;
-  font-size: 0.78rem;
-  color: var(--text-muted, #666);
-}
-.rescue-violations-details ul {
-  margin: 4px 0 0;
-  padding-inline-start: 18px;
-  font-size: 0.78rem;
-  line-height: 1.5;
-}
-.rescue-violations-details code {
-  font-weight: 600;
-  color: #d35400;
 }
 
 .rescue-empty {
@@ -8515,7 +8503,7 @@ tr.now-row-animate > td.time-cell {
 .optim-cube--paused .cube-loader {
   animation-play-state: paused;
 }
-[data-theme='light'] .optim-cube--paused .cube-loader {
+[data-theme="light"] .optim-cube--paused .cube-loader {
   animation-play-state: paused;
 }
 
@@ -8566,7 +8554,7 @@ tr.now-row-animate > td.time-cell {
   line-height: 1.5;
 }
 
-[data-theme='light'] .optim-continuation-hint {
+[data-theme="light"] .optim-continuation-hint {
   background: rgba(245, 158, 11, 0.12);
   border-inline-start-color: rgba(217, 119, 6, 0.7);
 }
@@ -8779,67 +8767,67 @@ tr.now-row-animate > td.time-cell {
 }
 
 /* ── Light theme overrides ──────────────────────────────────────────── */
-[data-theme='light'] .optim-tier {
+[data-theme="light"] .optim-tier {
   background: rgba(15, 23, 42, 0.03);
   border-color: rgba(15, 23, 42, 0.1);
   color: var(--text);
 }
-[data-theme='light'] .optim-tier:hover {
+[data-theme="light"] .optim-tier:hover {
   background: rgba(15, 23, 42, 0.06);
   border-color: rgba(15, 23, 42, 0.18);
 }
-[data-theme='light'] .optim-tier-icon {
+[data-theme="light"] .optim-tier-icon {
   background: rgba(15, 23, 42, 0.05);
 }
-[data-theme='light'] .optim-tier--quick .optim-tier-icon {
+[data-theme="light"] .optim-tier--quick .optim-tier-icon {
   background: rgba(245, 158, 11, 0.16);
   color: #b45309;
 }
-[data-theme='light'] .optim-tier--balanced .optim-tier-icon {
+[data-theme="light"] .optim-tier--balanced .optim-tier-icon {
   background: rgba(74, 144, 217, 0.16);
   color: #1d4ed8;
 }
-[data-theme='light'] .optim-tier--deep .optim-tier-icon {
+[data-theme="light"] .optim-tier--deep .optim-tier-icon {
   background: rgba(168, 85, 247, 0.14);
   color: #7c3aed;
 }
-[data-theme='light'] .optim-tier--recommended {
+[data-theme="light"] .optim-tier--recommended {
   background: linear-gradient(180deg, rgba(74, 144, 217, 0.16), rgba(74, 144, 217, 0.08));
   border-color: rgba(74, 144, 217, 0.55);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.5),
     0 1px 14px rgba(74, 144, 217, 0.18);
 }
-[data-theme='light'] .optim-tier--recommended:hover {
+[data-theme="light"] .optim-tier--recommended:hover {
   background: linear-gradient(180deg, rgba(74, 144, 217, 0.22), rgba(74, 144, 217, 0.12));
   border-color: rgba(74, 144, 217, 0.75);
 }
-[data-theme='light'] .optim-tier-badge {
+[data-theme="light"] .optim-tier-badge {
   color: #ffffff;
   background: rgba(37, 99, 235, 0.85);
   border-color: rgba(37, 99, 235, 0.9);
 }
-[data-theme='light'] .optim-continuation-hero {
+[data-theme="light"] .optim-continuation-hero {
   color: #b91c1c;
   text-shadow: none;
 }
-[data-theme='light'] .optim-continuation-custom {
+[data-theme="light"] .optim-continuation-custom {
   border-top-color: rgba(15, 23, 42, 0.08);
 }
-[data-theme='light'] .optim-continuation-custom input {
+[data-theme="light"] .optim-continuation-custom input {
   background: rgba(15, 23, 42, 0.04);
   border-color: rgba(15, 23, 42, 0.15);
 }
-[data-theme='light'] .optim-continuation-custom input:focus {
+[data-theme="light"] .optim-continuation-custom input:focus {
   border-color: rgba(74, 144, 217, 0.6);
   background: rgba(15, 23, 42, 0.06);
 }
-[data-theme='light'] .optim-continuation-custom-ok {
+[data-theme="light"] .optim-continuation-custom-ok {
   background: rgba(74, 144, 217, 0.14);
   border-color: rgba(74, 144, 217, 0.5);
   color: #1d4ed8;
 }
-[data-theme='light'] .optim-continuation-custom-ok:hover:not(:disabled) {
+[data-theme="light"] .optim-continuation-custom-ok:hover:not(:disabled) {
   background: rgba(74, 144, 217, 0.24);
 }
 
@@ -9558,10 +9546,6 @@ tr.now-row-animate > td.time-cell {
   background: rgba(243, 156, 18, 0.2);
   color: #f39c12;
 }
-.fsos-verdict--poor {
-  background: rgba(231, 76, 60, 0.2);
-  color: #e74c3c;
-}
 .fsos-partial-badge {
   padding: 2px 10px;
   border-radius: 999px;
@@ -9681,9 +9665,6 @@ tr.now-row-animate > td.time-cell {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.fsos-plan-section-title--warn {
-  color: #e74c3c;
-}
 .fsos-plan-changes {
   list-style: none;
   padding: 0;
@@ -9715,16 +9696,6 @@ tr.now-row-animate > td.time-cell {
 .fsos-plan-change-removed {
   color: #e74c3c;
 }
-.fsos-plan-violations {
-  list-style: disc;
-  padding-inline-start: 20px;
-  margin: 0;
-  font-size: 0.88rem;
-  color: #e74c3c;
-}
-.fsos-plan-violations li {
-  padding: 2px 0;
-}
 
 .fsos-apply-infeasible {
   margin-top: 10px;
@@ -9739,20 +9710,6 @@ tr.now-row-animate > td.time-cell {
 .fsos-plan-card .fsos-apply-btn {
   width: 100%;
   margin-top: 10px;
-}
-.fsos-apply-btn--warn {
-  background: #f39c12;
-}
-.fsos-apply-btn--warn:hover {
-  background: #e67e22;
-}
-
-/* Sub-confirmation for soft-violation apply */
-.fsos-subconfirm-backdrop {
-  z-index: 1260;
-}
-.fsos-subconfirm-dialog {
-  max-width: 480px;
 }
 
 /* Post-apply inline strip (under the participant profile) */
@@ -10718,7 +10675,8 @@ tr.now-row-animate > td.time-cell {
   text-overflow: ellipsis;
 }
 
-.gm-select-option:hover {
+.gm-select-option:hover,
+.gm-select-option.gm-select-option--active {
   background: var(--bg-hover);
 }
 
@@ -10726,6 +10684,11 @@ tr.now-row-animate > td.time-cell {
   background: var(--accent-glow);
   color: var(--accent);
   font-weight: 600;
+}
+
+.gm-select-option.gm-select-option--active {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* Light mode overrides */

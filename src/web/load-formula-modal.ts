@@ -290,7 +290,7 @@ function render(): void {
 
   const html = `
     <div id="lf-modal-backdrop" class="lf-backdrop">
-      <div class="lf-modal" role="dialog" aria-label="הגדרת עומס לפי השוואה">
+      <div class="lf-modal" role="dialog" aria-modal="true" aria-label="הגדרת עומס לפי השוואה">
         <div class="lf-header">
           <h3>🧮 הגדר עומס לפי השוואה</h3>
           <button class="lf-close" data-lf-action="close" aria-label="סגור">✕</button>

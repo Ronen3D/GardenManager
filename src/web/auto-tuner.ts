@@ -417,7 +417,7 @@ function removeOverlay(): void {
 
 function renderOverlayHtml(): string {
   return `
-  <div class="optim-card tune-card tune-card-breathing" role="dialog" aria-label="כיול אוטומטי">
+  <div class="optim-card tune-card tune-card-breathing" role="dialog" aria-modal="true" aria-label="כיול אוטומטי">
     <div class="tune-particles" aria-hidden="true">
       <span class="tune-bubble"></span>
       <span class="tune-bubble"></span>

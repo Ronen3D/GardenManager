@@ -63,6 +63,7 @@ import { parseContinuitySnapshot } from './continuity-import';
 import { wireDataTransferEvents } from './data-transfer-ui';
 import { buildDay0Schedule } from './day0-adapter';
 import { exportDailyExcel, exportWeeklyExcel } from './excel-export';
+import { installFocusTrap } from './focus-trap';
 import {
   closeLoadingOverlay,
   openBatchPlansModal,
@@ -1834,6 +1835,15 @@ function executeManualAssignment(
 ): void {
   if (!currentSchedule || !engine) return;
 
+  // Hard-constraint invariant: a manual assignment must never persist a new
+  // HC violation. The pre-assignment check at getRejectionReason catches
+  // per-participant violations; this snapshot lets us detect global HCs
+  // (HC-8 group integrity in particular) that only surface after the mutation.
+  const frozenDisabled = new Set(currentSchedule.algorithmSettings.disabledHardConstraints);
+  const hardBefore = filterVisibleViolations(currentSchedule.violations, frozenDisabled).filter(
+    (v) => v.severity === ViolationSeverity.Error,
+  ).length;
+
   // Push undo snapshot
   pushUndo('manual', 'שיבוץ ידני');
 
@@ -1867,6 +1877,21 @@ function executeManualAssignment(
   engine.importSchedule(currentSchedule);
   clearManualSelection();
   revalidateAndRefresh();
+
+  // If the manual assignment introduced a new hard violation (one that
+  // per-participant gating cannot see), roll back via the undo entry we
+  // pushed above so HC stays truly absolute.
+  const hardAfter = currentSchedule
+    ? filterVisibleViolations(currentSchedule.violations, frozenDisabled).filter(
+        (v) => v.severity === ViolationSeverity.Error,
+      ).length
+    : hardBefore;
+  if (hardAfter > hardBefore) {
+    const undo = popUndoByKind('manual');
+    if (undo) applyUndoEntry(undo);
+    showToast('השיבוץ חורג מאילוץ קשיח — בוצע שחזור למצב הקודם.', { type: 'error', duration: 5000 });
+    return;
+  }
 
   // Descriptive toast with participant + task name
   const pName = assignedParticipant?.name || '';
@@ -2966,10 +2991,7 @@ async function runContinuation(additional: number): Promise<void> {
     _noImprovementStreak = 0;
     const newUnfilled = countInfeasibleSlots(currentSchedule!);
     const diff = prevUnfilled - newUnfilled;
-    const msg =
-      diff > 0
-        ? `שבצ"ק שופר: ${prevUnfilled} → ${newUnfilled} משבצות לא מאוישות`
-        : 'שבצ"ק שופר בציון הכולל';
+    const msg = diff > 0 ? `שבצ"ק שופר: ${prevUnfilled} → ${newUnfilled} משבצות לא מאוישות` : 'שבצ"ק שופר בציון הכולל';
     showToast(msg, { type: 'success' });
     if (!scheduleSaved) {
       showToast('השבצ"ק שופר אך לא נשמר — נפח האחסון בדפדפן מלא.', { type: 'warning', duration: 8000 });
@@ -4546,7 +4568,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.3.2</span>
+      <h1 id="app-title"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.3.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -6839,6 +6861,24 @@ function init(): void {
   try {
     // Set .touch-device / .pointer-device on <html> before first render
     initResponsive();
+
+    // Trap keyboard focus inside any element carrying aria-modal="true".
+    // Modals all bear that attribute; this is the single shared mechanism
+    // — no per-modal wiring needed.
+    installFocusTrap();
+
+    // Keyboard activation for `.participant-hover` spans. They are rendered
+    // with role="button" tabindex="0" (layout-engine.ts) so they take focus,
+    // but the multiple click handlers across app.ts are click-only. One
+    // document-level Enter/Space → navigateToProfile listener restores
+    // keyboard parity site-wide without touching every click site.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const target = (e.target as HTMLElement | null)?.closest('.participant-hover[data-pid]') as HTMLElement | null;
+      if (!target?.dataset.pid) return;
+      e.preventDefault();
+      navigateToProfile(target.dataset.pid);
+    });
 
     // Re-render when crossing the phone breakpoint so the schedule swaps
     // between mobile (swimlane-only) and desktop (swimlane + Gantt) layouts.

@@ -24,8 +24,25 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(createWindow);
-
-app.on('window-all-closed', () => {
+// Two Electron processes sharing the same userData directory race on the
+// Local Storage LevelDB and silently overwrite each other's blob — the
+// autosave writes the entire state in one shot, so the loser's edits are
+// erased without warning. Lock to one instance and focus the existing
+// window on relaunch.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
   app.quit();
-});
+} else {
+  app.on('second-instance', () => {
+    const [win] = BrowserWindow.getAllWindows();
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  });
+
+  app.whenReady().then(createWindow);
+
+  app.on('window-all-closed', () => {
+    app.quit();
+  });
+}
