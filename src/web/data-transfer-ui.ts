@@ -68,6 +68,20 @@ export function renderDataTransferContent(): string {
           <span class="transfer-action-desc">בדיקה — אותו גודל, text/plain</span>
         </span>
       </button>
+      <button class="transfer-action-btn" data-action="gm-share-test-A" style="border:2px dashed #8e44ad">
+        <span class="transfer-action-icon">🧪</span>
+        <span class="transfer-action-text">
+          <span class="transfer-action-title">TEST A: .gm.json name + text/plain</span>
+          <span class="transfer-action-desc">בדיקה — האם הסיומת לבדה חוסמת</span>
+        </span>
+      </button>
+      <button class="transfer-action-btn" data-action="gm-share-test-B" style="border:2px dashed #8e44ad">
+        <span class="transfer-action-icon">🧪</span>
+        <span class="transfer-action-text">
+          <span class="transfer-action-title">TEST B: .txt name + application/json</span>
+          <span class="transfer-action-desc">בדיקה — האם ה-MIME לבדו חוסם</span>
+        </span>
+      </button>
       <button class="transfer-action-btn" data-action="transfer-export">
         <span class="transfer-action-icon">📤</span>
         <span class="transfer-action-text">
@@ -188,6 +202,29 @@ export function wireDataTransferEvents(container: HTMLElement): void {
         } catch (er: unknown) {
           alert(`${label} · ✗ ${er instanceof Error ? `${er.name}: ${er.message}` : String(er)}`);
         }
+      });
+      return;
+    }
+    if (action === 'gm-share-test-A' || action === 'gm-share-test-B') {
+      // Isolate MIME vs extension. A: .gm.json name + text/plain MIME. B: .txt name + application/json MIME.
+      const isA = action === 'gm-share-test-A';
+      const payload = JSON.stringify({ data: 'x'.repeat(8000) });
+      const label = isA ? 'A (.gm.json + text/plain)' : 'B (.txt + application/json)';
+      const sh = showBottomSheet(
+        `<button class="transfer-action-btn" data-st="go" style="border:2px dashed #8e44ad"><span class="transfer-action-text"><span class="transfer-action-title">▶ הקש לשיתוף — ${label}</span></span></button>`,
+        { title: `TEST · ${label}` },
+      );
+      sh.el.addEventListener('click', (ev) => {
+        if (!(ev.target as HTMLElement).closest('[data-st="go"]')) return;
+        const f = isA
+          ? new File([payload], 'gm-test.gm.json', { type: 'text/plain' })
+          : new File([payload], 'gm-test.txt', { type: 'application/json' });
+        navigator
+          .share({ files: [f] })
+          .then(() => alert(`${label} · ✓ OK`))
+          .catch((er: unknown) =>
+            alert(`${label} · ✗ ${er instanceof Error ? `${er.name}: ${er.message}` : String(er)}`),
+          );
       });
       return;
     }
