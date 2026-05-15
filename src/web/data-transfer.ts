@@ -152,49 +152,30 @@ export async function triggerShareOrDownload(
   const isBlob = typeof Blob !== 'undefined' && content instanceof Blob;
   const fileMime = mimeType ?? (isBlob ? (content as Blob).type || 'application/octet-stream' : 'application/json');
   const blobMime = mimeType ?? (isBlob ? fileMime : 'application/json;charset=utf-8');
-  const file = isBlob
-    ? new File([content as Blob], filename, { type: fileMime })
-    : new File([content as string], filename, { type: fileMime });
 
-  // ===== TEMP SHARE DIAGNOSTIC — REMOVE AFTER TESTING =====
-  const _diag: string[] = [];
-  _diag.push(`name=${file.name}`);
-  _diag.push(`type=${file.type || '(empty)'}`);
-  _diag.push(`size=${file.size}`);
-  _diag.push(`secureCtx=${window.isSecureContext}`);
-  _diag.push(`standalone=${window.matchMedia('(display-mode: standalone)').matches}`);
-  _diag.push(`typeof share=${typeof navigator.share}`);
-  _diag.push(`typeof canShare=${typeof navigator.canShare}`);
-  let _canShareFiles: string;
-  try {
-    _canShareFiles =
-      typeof navigator.canShare === 'function' ? String(navigator.canShare({ files: [file] })) : 'no-canShare';
-  } catch (e) {
-    _canShareFiles = `threw:${e instanceof Error ? e.name : String(e)}`;
-  }
-  _diag.push(`canShare({files})=${_canShareFiles}`);
-  let _shareOutcome = 'not-attempted';
-  // ===== END TEMP =====
-
+  // Web Share path. Chromium's Web Share file validation independently
+  // rejects both the `.json`/`.gm.json` extension and the `application/json`
+  // MIME type with NotAllowedError — even though navigator.canShare()
+  // optimistically returns true for them. For our text exports the content
+  // is JSON but is plain text, so we share it as a `.txt` / `text/plain`
+  // File: the bytes are identical and import parses by content (not by
+  // extension), so the round-trip is unaffected. Binary blobs (xlsx) keep
+  // their real name and MIME. The download fallback below always keeps the
+  // proper `.gm.json` / `.xlsx` filename and MIME.
   if (typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
+    const shareName = isBlob ? filename : `${filename.replace(/\.gm\.json$|\.json$/i, '')}.txt`;
+    const shareFile = isBlob
+      ? new File([content as Blob], shareName, { type: fileMime })
+      : new File([content as string], shareName, { type: 'text/plain' });
     try {
-      if (navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file] });
-        // ===== TEMP ===== (remove with the block above)
-        alert('GM SHARE DIAG · ✓ shared OK\n\n' + _diag.join('\n'));
-        // ===== END TEMP =====
+      if (navigator.canShare({ files: [shareFile] })) {
+        await navigator.share({ files: [shareFile] });
         return;
       }
-    } catch (err) {
+    } catch {
       // User cancelled or share failed — fall through to download
-      // ===== TEMP ===== (remove with the block above)
-      _shareOutcome = `share() threw → ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`;
-      // ===== END TEMP =====
     }
   }
-  // ===== TEMP ===== (remove with the block above)
-  alert(`GM SHARE DIAG · → DOWNLOAD fallback\nshareOutcome=${_shareOutcome}\n\n` + _diag.join('\n'));
-  // ===== END TEMP =====
   // Fallback: blob download
   const blob = isBlob ? (content as Blob) : new Blob([content as string], { type: blobMime });
   const url = URL.createObjectURL(blob);
@@ -258,7 +239,10 @@ export function openFilePicker(): Promise<string | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json,.gm.json,application/json';
+    // `.txt` / `text/plain` included because mobile Web Share re-types our
+    // JSON exports as text/plain (see triggerShareOrDownload); import still
+    // validates by content, so accepting the broader set is safe.
+    input.accept = '.json,.gm.json,.txt,application/json,text/plain';
     let resolved = false;
     const cleanup = () => input.remove();
     input.onchange = () => {
