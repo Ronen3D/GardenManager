@@ -414,15 +414,15 @@ export function validateFullBackupPayload(payload: R): string | null {
     return 'גיבוי חסר מפתח "gardenmanager_state" — ייתכן שהקובץ חלקי או פגום.';
   }
 
-  // Validate all values are strings and parseable JSON
+  // Validate all values are strings. We must NOT require every value to be
+  // parseable JSON: localStorage legitimately holds bare scalar strings
+  // (e.g. `gardenmanager_active_preset_id` is a plain id, not JSON), and the
+  // restore path writes values back verbatim via localStorage.setItem
+  // without ever parsing them. Truncation/corruption of the main payload is
+  // still caught by the dedicated `gardenmanager_state` JSON check below.
   for (const [key, value] of Object.entries(entries)) {
     if (typeof value !== 'string') {
       return `ערך עבור מפתח "${key}" בגיבוי אינו מחרוזת.`;
-    }
-    try {
-      JSON.parse(value);
-    } catch {
-      return `ערך עבור מפתח "${key}" בגיבוי אינו JSON תקין — ייתכן שהקובץ נקטע.`;
     }
   }
 
