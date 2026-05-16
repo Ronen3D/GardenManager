@@ -560,33 +560,32 @@
 
   /* ── Home screen — phone tuning ───────────────────────────────────────── */
 
-  .home-view {
-    gap: 12px;
+  .home-card {
+    gap: 20px;
+    padding: 22px 18px;
+    border-radius: 20px;
   }
-  .home-hero {
-    padding: 20px 16px;
+  .home-title {
+    font-size: 1.32rem;
   }
-  .home-hero-headline {
-    font-size: 1.35rem;
-  }
-  .home-cta-group {
-    margin-top: 14px;
-  }
-  /* Primary CTA spans the row for a comfortable thumb target; the secondary
+  /* Primary CTA spans the row for a comfortable thumb target; the quiet
      "regenerate" button wraps onto its own line below it. */
-  .home-cta.btn-primary {
+  .home-cta {
     flex: 1 1 100%;
-    min-height: 48px;
   }
-  .home-status-strip {
-    padding: 12px 14px;
+  .home-cta2 {
+    min-height: 44px;
   }
-  .home-quicklink {
-    min-height: 64px;
-    font-size: 0.72rem;
+  .home-week-d {
+    padding: 8px 0;
   }
   .home-help {
     min-height: 44px;
+  }
+  .home-link {
+    min-height: 40px;
+    display: flex;
+    align-items: center;
   }
 
   /* ── Schedule toolbar — ultra-compact ─────────────────────────────────── */

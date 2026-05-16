@@ -2354,221 +2354,361 @@ select.input-sm {
   margin-bottom: 12px;
 }
 
-/* ─── Home Screen (landing) ──────────────────────────── */
-.home-view {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  max-width: 720px;
+/* ─── Home Screen — "warm & human" landing ───────────────
+   One calm card, not a dashboard. Personality from voice,
+   a soft week spectrum, gentle status and airy figures.
+   Home-scoped tokens: dark (desktop default) below; warm
+   cream override under [data-theme="light"] (mobile primary). */
+.home {
+  --home-surface: #201e1b;
+  --home-surface-2: #2a2622;
+  --home-ink: #efe9dd;
+  --home-muted: #a79f8f;
+  --home-line: rgba(255, 255, 255, 0.09);
+  --home-accent: #3aa873;
+  --home-accent-hover: #46b984;
+  --home-good: #79cda4;
+  --home-good-bg: rgba(58, 168, 115, 0.2);
+  --home-warn: #e3bd72;
+  --home-warn-bg: rgba(227, 189, 114, 0.16);
+  --home-attn: #e3a47f;
+  --home-attn-bg: rgba(227, 164, 127, 0.16);
+  --home-aura: rgba(120, 180, 140, 0.14);
+  --home-card-shadow: 0 14px 38px rgba(0, 0, 0, 0.34);
+
+  max-width: 560px;
   margin: 0 auto;
 }
+[data-theme="light"] .home {
+  --home-surface: #faf5ec;
+  --home-surface-2: #f2ebdd;
+  --home-ink: #3b352c;
+  --home-muted: #8c8473;
+  --home-line: rgba(70, 55, 30, 0.12);
+  --home-accent: #2f9a63;
+  --home-accent-hover: #2a8a59;
+  --home-good: #2f9a63;
+  --home-good-bg: rgba(47, 154, 99, 0.13);
+  --home-warn: #bf8a2c;
+  --home-warn-bg: rgba(214, 150, 40, 0.15);
+  --home-attn: #c2724e;
+  --home-attn-bg: rgba(194, 114, 78, 0.13);
+  --home-aura: rgba(241, 201, 138, 0.4);
+  --home-card-shadow: 0 12px 32px rgba(90, 65, 30, 0.09);
+}
 
-.home-hero {
+.home-card {
   position: relative;
   overflow: hidden;
-  border-radius: var(--radius);
-  padding: 28px 24px;
-  /* Dark scrim over the brand gradient guarantees white-text contrast on
-     the lighter end of the gradient, in both themes. */
-  background:
-    linear-gradient(135deg, rgba(15, 17, 23, 0.28), rgba(15, 17, 23, 0.06)),
-    linear-gradient(135deg, var(--accent), #67b8f7);
-  color: #fff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 12px 32px rgba(0, 0, 0, 0.22);
-}
-/* Brand cube-loader palette stripe — ties the hero to the app identity
-   (same colours as the loader cube in index.html). */
-.home-hero::before {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  top: 0;
-  height: 4px;
-  background: linear-gradient(90deg, #4a90d9, #e74c3c, #f39c12, #27ae60, #8e44ad, #1abc9c, #3498db, #e67e22, #2ecc71);
-}
-.home-hero-body {
-  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 22px;
+  padding: 28px 24px;
+  border-radius: 22px;
+  background: var(--home-surface);
+  border: 1px solid var(--home-line);
+  box-shadow: var(--home-card-shadow);
+  color: var(--home-ink);
 }
-.home-hero-eyebrow {
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.4px;
-  opacity: 0.85;
+/* Soft warm glow — atmosphere, never drama. */
+.home-aura {
+  position: absolute;
+  inset-block-start: -90px;
+  inset-inline-end: -70px;
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--home-aura), transparent 70%);
+  pointer-events: none;
+  z-index: 0;
 }
-.home-hero-headline {
-  font-size: 1.6rem;
+
+/* Content sits above the aura. Excludes .home-aura so this never clobbers
+   its position:absolute (equal specificity → later rule would win). */
+.home-card > *:not(.home-aura) {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Greeting + gentle status ──────────────────────────── */
+.home-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.home-mark {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
   font-weight: 700;
-  line-height: 1.2;
-  margin: 0;
-  color: #fff;
-  -webkit-text-fill-color: #fff;
+  margin-top: 3px;
 }
-.home-hero-sub {
+.home-mark--good {
+  color: var(--home-good);
+  background: var(--home-good-bg);
+}
+.home-mark--warn {
+  color: var(--home-warn);
+  background: var(--home-warn-bg);
+}
+.home-mark--attention {
+  color: var(--home-attn);
+  background: var(--home-attn-bg);
+}
+.home-mark--neutral {
+  color: var(--home-muted);
+  background: var(--home-surface-2);
+}
+.home-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 0;
+  color: var(--home-ink);
+  -webkit-text-fill-color: var(--home-ink);
+}
+.home-saying {
+  margin: 4px 0 0;
   font-size: 0.92rem;
-  opacity: 0.9;
+  color: var(--home-muted);
   font-variant-numeric: tabular-nums;
 }
 
-.home-cta-group {
+/* ── The week — soft spectrum (signature detail) ───────── */
+.home-week {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-top: 16px;
+  flex-direction: column;
+  gap: 7px;
 }
-.home-cta.btn-primary {
-  font-size: 1rem;
-  padding: 14px 28px;
-  border-radius: 10px;
-  background: #fff;
-  color: var(--accent);
-  font-weight: 700;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
-}
-.home-cta.btn-primary:hover {
-  background: #fff;
-  color: var(--accent-hover);
-  transform: translateY(-1px);
-}
-.home-cta.btn-primary:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-.home-cta-secondary.btn-outline {
-  border-color: rgba(255, 255, 255, 0.55);
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
-}
-.home-cta-secondary.btn-outline:hover {
-  border-color: #fff;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.18);
-}
-.home-dirty {
-  margin-top: 12px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 6px;
-  padding: 8px 12px;
-}
-
-/* Tertiary help affordance on the hero — a persistent entry point to the
-   guided tutorial (the first-launch banner gets dismissed). */
-.home-help {
-  align-self: flex-start;
-  margin-top: 14px;
-  padding: 8px 10px;
-  min-height: 40px;
-  background: transparent;
-  border: none;
-  color: rgba(255, 255, 255, 0.85);
-  font-family: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  border-radius: 6px;
-  transition:
-    color var(--transition-fast),
-    background var(--transition-fast);
-}
-.home-help:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.12);
-  text-decoration: underline;
-}
-.home-help:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.8);
-  outline-offset: 2px;
-}
-
-.home-status-strip {
+.home-week-row {
   display: flex;
-  align-items: stretch;
-  gap: 14px;
-  background: linear-gradient(135deg, rgba(26, 29, 39, 0.55), rgba(30, 34, 53, 0.55));
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius);
-  padding: 14px 18px;
-}
-.home-status-strip .kpi-strip {
-  flex: 1 1 auto;
-}
-[data-theme="light"] .home-status-strip {
-  background: rgba(255, 255, 255, 0.55);
-  border-color: rgba(0, 0, 0, 0.08);
-}
-
-.home-guide .home-guide-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-.home-guide .home-guide-actions .btn-sm {
-  display: inline-flex;
-  align-items: center;
   gap: 6px;
 }
-
-.home-stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.home-stats .score-card {
-  padding: 18px 12px;
-}
-.home-stat-muted {
-  color: var(--text-muted);
-}
-
-.home-quicklinks {
-  display: flex;
-  gap: 8px;
-}
-.home-quicklink {
+.home-week-d {
   flex: 1 1 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 14px 6px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-muted);
-  font-size: 0.8rem;
-  font-weight: 600;
+  padding: 9px 0;
+  border-radius: 13px;
+  background: var(--home-surface-2);
+}
+.home-week-d i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--wd);
+}
+.home-week-d b {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--home-muted);
+  font-variant-numeric: tabular-nums;
+}
+.home-week.is-live .home-week-d b {
+  color: var(--home-ink);
+}
+.home-week.is-planned .home-week-d {
+  opacity: 0.62;
+}
+.home-week.is-planned .home-week-d i {
+  background: transparent;
+  border: 1.5px solid var(--wd);
+}
+.home-week-cap {
+  font-size: 0.72rem;
+  color: var(--home-muted);
+  letter-spacing: 0.2px;
+}
+
+/* ── Actions ───────────────────────────────────────────── */
+.home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+.home-cta {
+  flex: 1 1 auto;
+  min-height: 50px;
+  padding: 14px 26px;
+  border: none;
+  border-radius: 15px;
+  background: var(--home-accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
   cursor: pointer;
   transition:
-    transform var(--transition-fast),
-    border-color var(--transition-fast),
-    color var(--transition-fast);
+    background var(--transition-fast),
+    transform var(--transition-fast);
 }
-.home-quicklink:hover {
-  transform: translateY(-2px);
-  border-color: var(--accent);
-  color: var(--text);
+.home-cta:hover {
+  background: var(--home-accent-hover);
+  transform: translateY(-1px);
 }
-.home-quicklink:focus-visible {
-  outline: 2px solid var(--accent);
+.home-cta:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+.home-cta2 {
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  color: var(--home-muted);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 10px;
+  transition: color var(--transition-fast);
+}
+.home-cta2:hover {
+  color: var(--home-ink);
+  text-decoration: underline;
+}
+.home-cta:focus-visible,
+.home-cta2:focus-visible,
+.home-help:focus-visible,
+.home-link:focus-visible,
+.home-linkbtn:focus-visible {
+  outline: 2px solid var(--home-accent);
   outline-offset: 2px;
 }
-.home-quicklink-icon {
-  display: inline-flex;
-  color: var(--accent);
+.home-note {
+  margin: -8px 0 0;
+  font-size: 0.82rem;
+  color: var(--home-muted);
+}
+
+/* ── Calm "what's missing" panel (no red alarm) ────────── */
+.home-guide {
+  background: var(--home-attn-bg);
+  border: 1px solid var(--home-line);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+.home-guide-title {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--home-ink);
+}
+.home-guide-list {
+  margin: 0;
+  padding-inline-start: 18px;
+  font-size: 0.88rem;
+  color: var(--home-ink);
+}
+.home-guide-list li {
+  margin: 3px 0;
+}
+.home-guide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.home-linkbtn {
+  padding: 8px 14px;
+  background: var(--home-surface);
+  border: 1px solid var(--home-line);
+  border-radius: 10px;
+  color: var(--home-ink);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+.home-linkbtn:hover {
+  border-color: var(--home-accent);
+}
+
+/* ── Airy figures (no boxed cards) ─────────────────────── */
+.home-figs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 20px;
+  border-top: 1px solid var(--home-line);
+}
+.home-fig {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.home-fig b {
+  font-size: 1.55rem;
+  font-weight: 700;
+  color: var(--home-ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.home-fig span {
+  font-size: 0.76rem;
+  color: var(--home-muted);
+}
+.home-fig-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 6px 0;
+  background: var(--home-line);
+}
+
+/* ── Quiet footer ──────────────────────────────────────── */
+.home-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+.home-help {
+  padding: 6px 2px;
+  background: transparent;
+  border: none;
+  color: var(--home-accent);
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.home-help:hover {
+  text-decoration: underline;
+}
+.home-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.home-link {
+  padding: 4px 2px;
+  background: transparent;
+  border: none;
+  color: var(--home-muted);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+.home-link:hover {
+  color: var(--home-ink);
+}
+.home-link-sep {
+  color: var(--home-line);
+  font-size: 0.85rem;
 }
 
 /* ─── Console-hint Easter Egg ────────────────────────────────────── */

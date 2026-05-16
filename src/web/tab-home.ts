@@ -1,10 +1,11 @@
 /**
- * Home Tab — task-oriented landing screen ("השבצקיסט").
+ * Home Tab — the warm, human landing screen ("השבצקיסט").
  *
  * The default landing view (not a bottom-nav tab — reached via the header
- * title, see app.ts goToTab/wireHomeTitle). Leads with the user's real job:
- * open the existing schedule or generate one, with live schedule health,
- * compact stats, and quick links into the four working areas.
+ * title, see app.ts goToTab/wireHomeTitle). Identity: calm and a little warm,
+ * speaking to the user like a competent teammate. Personality comes from voice,
+ * a soft "week" spectrum (יום 1..N), gentle status, and airy figures — not from
+ * gradients, cards, or alarms.
  *
  * Follows the tab-module convention (callback injection, no import back to
  * app.ts). app.ts owns currentTab / currentSchedule / doGenerate and injects
@@ -16,7 +17,7 @@
 import { type PreflightResult, PreflightSeverity, type Schedule, ViolationSeverity } from '../models/types';
 import * as store from './config-store';
 import { filterVisibleViolations } from './schedule-utils';
-import { escHtml, SVG_ICONS } from './ui-helpers';
+import { escHtml } from './ui-helpers';
 
 export type HomeNavTarget = 'participants' | 'task-rules' | 'schedule' | 'algorithm';
 
@@ -40,103 +41,119 @@ export interface HomeTabCallbacks {
   onHelp(): void;
 }
 
-const QUICK_LINKS: { target: HomeNavTarget; icon: string; label: string }[] = [
-  { target: 'participants', icon: SVG_ICONS.participants, label: 'משתתפים' },
-  { target: 'task-rules', icon: SVG_ICONS.tasks, label: 'משימות' },
-  { target: 'schedule', icon: SVG_ICONS.chart, label: 'שבצ"ק' },
-  { target: 'algorithm', icon: SVG_ICONS.settings, label: 'הגדרות' },
+const QUICK_LINKS: { target: HomeNavTarget; label: string }[] = [
+  { target: 'participants', label: 'משתתפים' },
+  { target: 'task-rules', label: 'משימות' },
+  { target: 'schedule', label: 'שבצ"ק' },
+  { target: 'algorithm', label: 'הגדרות' },
 ];
 
 /**
- * Status strip — only shown when a schedule exists. Mirrors the validity
- * logic of app.ts:renderWeeklyDashboard verbatim, reusing the `.kpi-*`
- * classes, but renders NO element IDs (avoids the shared `_prevKpiValues`
- * count-up cache + duplicate-ID collision with the schedule tab).
+ * Soft spectrum across the operational week — gently desaturated tints of the
+ * brand cube palette. One signature detail that ties product (the week) to
+ * identity (the cube), kept calm. Index 0..6 → יום 1..7 (scheduleDays ≤ 7).
  */
-function renderStatusStrip(schedule: Schedule): string {
-  const score = schedule.score;
+const WEEK_SPECTRUM = ['#8FB8E0', '#84CFC4', '#97D3A0', '#EFD08A', '#ECB089', '#C7A6DC', '#93C6E6'];
+
+type StatusMark = 'good' | 'warn' | 'attention' | 'neutral';
+
+interface HomeState {
+  title: string;
+  saying: string;
+  mark: StatusMark;
+}
+
+function heCount(n: number, one: string, many: string): string {
+  return n === 1 ? one : `${n} ${many}`;
+}
+
+/** Calm, spoken Hebrew that reflects the real state. Status logic mirrors
+ *  app.ts:renderWeeklyDashboard (frozen disabled set → visible violations). */
+function computeState(ctx: HomeTabContext, partCount: number, tplCount: number): HomeState {
+  const { schedule, preflight } = ctx;
+
+  if (!schedule) {
+    if (preflight.canGenerate) {
+      return {
+        title: 'בוא נבנה את השבוע',
+        saying: `${partCount} אנשים ו-${tplCount} משימות מוכנים לשיבוץ`,
+        mark: 'neutral',
+      };
+    }
+    return { title: 'עוד רגע ומתחילים', saying: 'צריך להשלים כמה הגדרות לפני בניית השבוע', mark: 'attention' };
+  }
+
   const frozenDisabled = new Set(schedule.algorithmSettings.disabledHardConstraints);
   const visible = filterVisibleViolations(schedule.violations, frozenDisabled);
   const hard = visible.filter((v) => v.severity === ViolationSeverity.Error).length;
   const warn = visible.filter((v) => v.severity === ViolationSeverity.Warning).length;
-  const feasibleClass = schedule.feasible ? 'kpi-ok' : 'kpi-error';
-  const heroIcon = schedule.feasible ? '✓' : '✗';
-  const heroLabel = schedule.feasible ? 'ישים' : 'לא ישים';
-  const scoreText = score.compositeScore.toFixed(1);
-  const isClean = schedule.feasible && hard === 0 && warn === 0;
 
-  if (isClean) {
-    return `<div class="home-status-strip">
-      <div class="kpi-hero kpi-ok kpi-hero-combined">
-        <div class="kpi-hero-status">
-          <span class="kpi-hero-icon" aria-hidden="true">${heroIcon}</span>
-          <span class="kpi-hero-label">${heroLabel}</span>
-        </div>
-        <span class="kpi-hero-divider" aria-hidden="true"></span>
-        <div class="kpi-hero-score">
-          <span class="kpi-value">${scoreText}</span>
-          <span class="kpi-label">ציון</span>
-        </div>
-      </div>
-    </div>`;
+  if (!schedule.feasible || hard > 0) {
+    return {
+      title: 'השבוע צריך עוד תשומת לב',
+      saying: `${heCount(hard, 'הפרה אחת', 'הפרות')} לתיקון`,
+      mark: 'attention',
+    };
   }
+  if (warn > 0) {
+    return {
+      title: 'השבוע כמעט מושלם',
+      saying: `${heCount(warn, 'אזהרה קלה אחת', 'אזהרות קלות')} לבדיקה`,
+      mark: 'warn',
+    };
+  }
+  return { title: 'הכול מוכן לשבוע', saying: 'השבוע תקין, ללא הפרות', mark: 'good' };
+}
 
-  const violationsCell =
-    hard > 0
-      ? `<div class="kpi-cell kpi-error"><span class="kpi-value">${hard}</span><span class="kpi-label">הפרות</span></div>`
-      : '';
-  const warningsCell =
-    warn > 0
-      ? `<div class="kpi-cell kpi-warn"><span class="kpi-value">${warn}</span><span class="kpi-label">אזהרות</span></div>`
-      : '';
+const MARK_GLYPH: Record<StatusMark, string> = { good: '✓', warn: '•', attention: '!', neutral: '•' };
 
-  return `<div class="home-status-strip">
-    <div class="kpi-hero ${feasibleClass}">
-      <span class="kpi-hero-icon" aria-hidden="true">${heroIcon}</span>
-      <span class="kpi-hero-label">${heroLabel}</span>
-    </div>
-    <div class="kpi-strip" role="group" aria-label="ציונים">
-      <div class="kpi-cell"><span class="kpi-value">${scoreText}</span><span class="kpi-label">ציון</span></div>
-      ${violationsCell}
-      ${warningsCell}
-    </div>
+function renderWeek(days: number, live: boolean): string {
+  const segs: string[] = [];
+  for (let i = 0; i < days; i++) {
+    const color = WEEK_SPECTRUM[i % WEEK_SPECTRUM.length];
+    segs.push(`<span class="home-week-d" style="--wd:${color}"><i></i><b>${i + 1}</b></span>`);
+  }
+  const cap = days === 1 ? 'יום 1' : `יום 1–${days}`;
+  return `<div class="home-week ${live ? 'is-live' : 'is-planned'}" role="img" aria-label="שבוע בן ${days} ימים">
+    <div class="home-week-row">${segs.join('')}</div>
+    <span class="home-week-cap">${cap}</span>
   </div>`;
 }
 
-/** Disabled-CTA "guide to fix it" block. Reuses the schedule-tab critical
- *  findings markup (app.ts:1443-1447) but escapes messages (they can embed
- *  user-entered template names) and adds one-tap links to the fix screens. */
-function renderGuideToFix(preflight: PreflightResult): string {
-  const crits = preflight.findings.filter((f) => f.severity === PreflightSeverity.Critical);
-  return `<div class="alert alert-error home-guide">
-    <strong>לא ניתן ליצור שיבוץ - נמצאו ${crits.length} בעיות קריטיות:</strong>
-    <ul>${crits.map((f) => `<li>${escHtml(f.message)}</li>`).join('')}</ul>
-    <div class="home-guide-actions">
-      <button type="button" class="btn-sm btn-outline" data-action="fix-tasks">${SVG_ICONS.tasks} עבור למסך פירוט משימות</button>
-      <button type="button" class="btn-sm btn-outline" data-action="fix-participants">${SVG_ICONS.participants} עבור למסך משתתפים</button>
-    </div>
-  </div>`;
-}
-
-function renderCta(ctx: HomeTabContext): string {
+function renderActions(ctx: HomeTabContext): string {
   const { schedule, scheduleDirty, preflight } = ctx;
 
   if (schedule) {
-    const dirty = scheduleDirty ? `<p class="home-dirty">⚠ השיבוץ לא מעודכן. מומלץ ליצור אותו מחדש.</p>` : '';
-    return `<div class="home-cta-group">
-      <button type="button" class="btn-primary home-cta" data-action="open">📋 פתח שבצ"ק</button>
-      <button type="button" class="btn-sm btn-outline home-cta-secondary" data-action="generate">🔄 צור מחדש</button>
+    const dirty = scheduleDirty ? `<p class="home-note">השתנו נתונים מאז — אפשר ליצור שבצ"ק מחדש.</p>` : '';
+    return `<div class="home-actions">
+      <button type="button" class="home-cta" data-action="open">פתח שבצ"ק</button>
+      <button type="button" class="home-cta2" data-action="generate">צור מחדש</button>
     </div>${dirty}`;
   }
 
   if (preflight.canGenerate) {
-    return `<div class="home-cta-group">
-      <button type="button" class="btn-primary home-cta" data-action="generate">⚡ צור שבצ"ק</button>
+    return `<div class="home-actions">
+      <button type="button" class="home-cta" data-action="generate">צור שבצ"ק</button>
     </div>`;
   }
 
-  return `<div class="home-cta-group">
-    <button type="button" class="btn-primary home-cta" data-action="generate" disabled title="תקן בעיות קריטיות בכללי המשימות תחילה">⚡ צור שבצ"ק</button>
+  return `<div class="home-actions">
+    <button type="button" class="home-cta" data-action="generate" disabled
+      title="צריך להשלים כמה הגדרות לפני בניית השבוע">צור שבצ"ק</button>
+  </div>`;
+}
+
+/** Calm "what's missing" panel (no red alarm). Escapes finding messages —
+ *  they can embed user-entered template names. */
+function renderGuide(preflight: PreflightResult): string {
+  const crits = preflight.findings.filter((f) => f.severity === PreflightSeverity.Critical);
+  return `<div class="home-guide" role="alert">
+    <p class="home-guide-title">כדי להתחיל, ${heCount(crits.length, 'צריך לסדר דבר אחד', 'צריך לסדר את הדברים האלה')}:</p>
+    <ul class="home-guide-list">${crits.map((f) => `<li>${escHtml(f.message)}</li>`).join('')}</ul>
+    <div class="home-guide-actions">
+      <button type="button" class="home-linkbtn" data-action="fix-tasks">למסך המשימות</button>
+      <button type="button" class="home-linkbtn" data-action="fix-participants">למסך המשתתפים</button>
+    </div>
   </div>`;
 }
 
@@ -147,73 +164,44 @@ export function renderHomeTab(ctx: HomeTabContext): string {
   // Frozen-snapshot rule: a generated schedule's day count is immutable on the
   // snapshot; pre-generation we show the configured value. Mirrors app.ts:4581.
   const days = schedule ? schedule.periodDays : store.getScheduleDays();
+  const st = computeState(ctx, partCount, tplCount);
+  const showGuide = !schedule && !preflight.canGenerate;
 
-  let eyebrow: string;
-  let headline: string;
-  if (schedule) {
-    eyebrow = 'ניהול שיבוצים חכם';
-    headline = schedule.feasible ? 'השבצ"ק מוכן' : 'השבצ"ק דורש תשומת לב';
-  } else if (preflight.canGenerate) {
-    eyebrow = 'ניהול שיבוצים חכם';
-    headline = 'בוא ניצור שבצ"ק';
-  } else {
-    eyebrow = 'ניהול שיבוצים חכם';
-    headline = 'כמעט מוכן';
-  }
-  const subline =
-    !schedule && !preflight.canGenerate
-      ? 'השלם את ההגדרות כדי ליצור שבצ"ק'
-      : `${days} ימים · ${partCount} משתתפים · ${tplCount} משימות`;
+  const links = QUICK_LINKS.map(
+    (l) => `<button type="button" class="home-link" data-action="nav-${l.target}">${l.label}</button>`,
+  ).join('<span class="home-link-sep" aria-hidden="true">·</span>');
 
-  const stateTile = schedule
-    ? `<div class="score-card ${schedule.feasible ? 'status-ok' : 'status-error'}">
-        <div class="score-value">${schedule.feasible ? 'ישים' : 'לא ישים'}</div>
-        <div class="score-label">מצב</div>
-      </div>`
-    : `<div class="score-card">
-        <div class="score-value home-stat-muted">—</div>
-        <div class="score-label">מצב</div>
-      </div>`;
+  return `<div class="home">
+    <section class="home-card">
+      <span class="home-aura" aria-hidden="true"></span>
 
-  return `<div class="home-view">
-    <section class="home-hero">
-      <div class="home-hero-body">
-        <p class="home-hero-eyebrow">${eyebrow}</p>
-        <h2 class="home-hero-headline">${headline}</h2>
-        <p class="home-hero-sub">${subline}</p>
-        ${renderCta(ctx)}
-        <button type="button" class="home-help" data-action="help">📖 סיור מודרך במערכת</button>
+      <div class="home-head">
+        <span class="home-mark home-mark--${st.mark}" aria-hidden="true">${MARK_GLYPH[st.mark]}</span>
+        <div class="home-head-text">
+          <h2 class="home-title">${st.title}</h2>
+          <p class="home-saying">${st.saying}</p>
+        </div>
+      </div>
+
+      ${renderWeek(days, !!schedule)}
+
+      ${renderActions(ctx)}
+
+      ${showGuide ? renderGuide(preflight) : ''}
+
+      <div class="home-figs" role="group" aria-label="נתונים">
+        <div class="home-fig"><b>${partCount}</b><span>אנשים</span></div>
+        <span class="home-fig-sep" aria-hidden="true"></span>
+        <div class="home-fig"><b>${tplCount}</b><span>משימות</span></div>
+        <span class="home-fig-sep" aria-hidden="true"></span>
+        <div class="home-fig"><b>${days}</b><span>ימים</span></div>
+      </div>
+
+      <div class="home-foot">
+        <button type="button" class="home-help" data-action="help">סיור מודרך במערכת</button>
+        <nav class="home-links" aria-label="ניווט מהיר">${links}</nav>
       </div>
     </section>
-
-    ${schedule ? renderStatusStrip(schedule) : ''}
-    ${!schedule && !preflight.canGenerate ? renderGuideToFix(preflight) : ''}
-
-    <div class="home-stats" role="group" aria-label="נתונים">
-      <div class="score-card">
-        <div class="score-value">${partCount}</div>
-        <div class="score-label">משתתפים</div>
-      </div>
-      <div class="score-card">
-        <div class="score-value">${tplCount}</div>
-        <div class="score-label">משימות</div>
-      </div>
-      <div class="score-card">
-        <div class="score-value">${days}</div>
-        <div class="score-label">ימים</div>
-      </div>
-      ${stateTile}
-    </div>
-
-    <nav class="home-quicklinks" aria-label="ניווט מהיר">
-      ${QUICK_LINKS.map(
-        (l) =>
-          `<button type="button" class="home-quicklink" data-action="nav-${l.target}">
-            <span class="home-quicklink-icon" aria-hidden="true">${l.icon}</span>
-            <span class="home-quicklink-label">${l.label}</span>
-          </button>`,
-      ).join('')}
-    </nav>
   </div>`;
 }
 
