@@ -117,7 +117,10 @@ import { renderTaskRulesTab, resetTaskRulesTabViewState, wireTaskRulesEvents } f
 import { hideTaskTooltip, hideTooltip, initTooltips, wireParticipantTooltip, wireTaskTooltip } from './tooltips';
 import {
   exposeWindowApi as exposeTutorialWindowApi,
+  isHomeWelcomeSeen,
   isBannerDismissed as isTutorialBannerDismissed,
+  markBannerDismissed,
+  markHomeWelcomeSeen,
   showTutorialBanner,
   startTutorial,
   type TutorialContext,
@@ -4570,7 +4573,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.3</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4613,9 +4616,19 @@ function renderAll(): void {
 
   <div class="tab-content" id="tab-content">`;
 
+  // First-run welcome on Home: only a genuine newcomer (tour never engaged and
+  // the welcome never shown) sees it — once ever, not on header-title return or
+  // app reopen (markHomeWelcomeSeen() below makes it one-time).
+  const homeFirstRun = currentTab === 'home' && !isTutorialBannerDismissed() && !isHomeWelcomeSeen();
+
   switch (currentTab) {
     case 'home':
-      html += renderHomeTab({ schedule: currentSchedule, scheduleDirty: _scheduleDirty, preflight });
+      html += renderHomeTab({
+        schedule: currentSchedule,
+        scheduleDirty: _scheduleDirty,
+        preflight,
+        firstRun: homeFirstRun,
+      });
       break;
     case 'participants':
       html += renderParticipantsTab();
@@ -4658,11 +4671,17 @@ function renderAll(): void {
 
   const content = document.getElementById('tab-content')!;
   if (currentTab === 'home') {
+    // Consume the one-time welcome now that it has painted (if it was shown).
+    if (homeFirstRun) markHomeWelcomeSeen();
     wireHomeEvents(content, {
       onOpenSchedule: () => void goToTab('schedule'),
       onGenerate: () => void doGenerate(),
       onNavigate: (t: HomeNavTarget) => void goToTab(t),
       onHelp: () => void startTutorial('full-tour', tutorialContext),
+      onDismissWelcome: () => {
+        markBannerDismissed();
+        renderAll();
+      },
     });
   } else if (currentTab === 'participants') {
     wireParticipantsEvents(content, renderAll);
@@ -7207,12 +7226,13 @@ function init(): void {
     // Expose programmatic tutorial entry (used by Playwright specs and deep links).
     exposeTutorialWindowApi(tutorialContext);
 
-    // First-launch tutorial banner: shown until the user dismisses it or opens
-    // the tutorial. We rely on the dedicated dismissed flag rather than checking
-    // gardenmanager_state, because seedDefaults() writes the state synchronously
-    // on first launch — making "no state" an unreliable proxy for "new user".
-    // Factory reset clears the dismissed flag, so the banner returns after reset.
-    if (!isTutorialBannerDismissed()) {
+    // First-launch tutorial banner. The Home screen has its own integrated
+    // first-run welcome (see renderHomeTab firstRun), so the generic banner is
+    // suppressed when Home is the landing tab — it only appears if the app
+    // deep-links straight to another tab on first run. Dismissed-flag rationale:
+    // seedDefaults() writes state synchronously on first launch, so "no state"
+    // is an unreliable "new user" proxy. Factory reset clears the flag.
+    if (currentTab !== 'home' && !isTutorialBannerDismissed()) {
       showTutorialBanner(tutorialContext);
     }
 

@@ -70,6 +70,7 @@ export interface TutorialTrack {
 
 const KEY_BANNER_DISMISSED = 'gardenmanager_tutorial_banner_dismissed';
 const KEY_SEEN_TRACKS = 'gardenmanager_tutorial_seen_tracks';
+const KEY_HOME_WELCOME_SEEN = 'gardenmanager_home_welcome_seen';
 
 export function isBannerDismissed(): boolean {
   try {
@@ -84,6 +85,28 @@ export function markBannerDismissed(): void {
     localStorage.setItem(KEY_BANNER_DISMISSED, '1');
   } catch {
     /* storage full — banner will reappear on next load, acceptable */
+  }
+}
+
+/**
+ * One-time gate for the home first-run welcome. Set the first time a genuine
+ * newcomer's home screen renders, so the welcome shows exactly once ever — not
+ * again on app reopen, header-title navigation, or any later re-render.
+ * Cleared by factory reset (same as the banner-dismissed flag).
+ */
+export function isHomeWelcomeSeen(): boolean {
+  try {
+    return localStorage.getItem(KEY_HOME_WELCOME_SEEN) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function markHomeWelcomeSeen(): void {
+  try {
+    localStorage.setItem(KEY_HOME_WELCOME_SEEN, '1');
+  } catch {
+    /* storage full — welcome may show again next load, acceptable */
   }
 }
 

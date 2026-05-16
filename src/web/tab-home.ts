@@ -27,6 +27,8 @@ export interface HomeTabContext {
   scheduleDirty: boolean;
   /** Shared runPreflight() result from renderAll(). */
   preflight: PreflightResult;
+  /** True only for a genuine first-time user (one-time) → show the welcome. */
+  firstRun: boolean;
 }
 
 export interface HomeTabCallbacks {
@@ -38,6 +40,8 @@ export interface HomeTabCallbacks {
   onNavigate(tab: HomeNavTarget): void;
   /** Start the guided tutorial (same entry point as the first-launch banner). */
   onHelp(): void;
+  /** Dismiss the first-run welcome ("אולי אחר כך"). */
+  onDismissWelcome(): void;
 }
 
 const QUICK_LINKS: { target: HomeNavTarget; icon: string; label: string }[] = [
@@ -144,7 +148,7 @@ function renderGuide(preflight: PreflightResult): string {
 }
 
 export function renderHomeTab(ctx: HomeTabContext): string {
-  const { schedule, scheduleDirty, preflight } = ctx;
+  const { schedule, scheduleDirty, preflight, firstRun } = ctx;
   const partCount = store.getAllParticipants().length;
   const tplCount = store.getAllTaskTemplates().length;
   // Frozen-snapshot rule: a generated schedule's day count is immutable on the
@@ -185,27 +189,46 @@ export function renderHomeTab(ctx: HomeTabContext): string {
         <span class="home-link-icon" aria-hidden="true">${l.icon}</span>${l.label}</button>`,
   ).join('');
 
+  // First-run welcome — replaces the generic top-of-page tutorial banner with
+  // a home-native, one-time greeting for genuine newcomers only.
+  const welcome = firstRun
+    ? `<div class="home-welcome" role="note">
+        <div class="home-welcome-text">
+          <strong>נעים להכיר 👋</strong>
+          <span>סיור מודרך קצר יראה לכם איך בונים שבצ"ק בכמה דקות.</span>
+        </div>
+        <div class="home-welcome-actions">
+          <button type="button" class="btn-sm btn-primary" data-action="help">📖 בואו נתחיל</button>
+          <button type="button" class="btn-sm btn-outline" data-action="dismiss-welcome">אולי אחר כך</button>
+        </div>
+      </div>`
+    : '';
+
   return `<div class="home">
+    ${welcome}
     <section class="home-panel">
       <h2 class="home-headline">${headline}</h2>
       <p class="home-sub">${sub}</p>
       ${status ? renderStatus(status) : ''}
       ${renderWeek(days, !!schedule)}
-      <div class="home-cta-row">${actions}</div>
+      <div class="home-cta-row">
+        ${actions}
+        <button type="button" class="btn-sm btn-outline home-help" data-action="help">📖 סיור מודרך</button>
+      </div>
       ${dirty}
     </section>
 
     ${!schedule && !preflight.canGenerate ? renderGuide(preflight) : ''}
 
-    <div class="home-figs" role="group" aria-label="נתונים">
-      <div class="score-card"><div class="score-value">${partCount}</div><div class="score-label">משתתפים</div></div>
-      <div class="score-card"><div class="score-value">${tplCount}</div><div class="score-label">משימות</div></div>
-      <div class="score-card"><div class="score-value">${days}</div><div class="score-label">ימים</div></div>
+    <div class="home-side">
+      <div class="home-figs" role="group" aria-label="נתונים">
+        <div class="score-card"><div class="score-value">${partCount}</div><div class="score-label">משתתפים</div></div>
+        <div class="score-card"><div class="score-value">${tplCount}</div><div class="score-label">משימות</div></div>
+        <div class="score-card"><div class="score-value">${days}</div><div class="score-label">ימים</div></div>
+      </div>
+
+      <nav class="home-links" aria-label="ניווט מהיר">${links}</nav>
     </div>
-
-    <nav class="home-links" aria-label="ניווט מהיר">${links}</nav>
-
-    <button type="button" class="btn-sm btn-outline home-help" data-action="help">📖 סיור מודרך במערכת</button>
   </div>`;
 }
 
@@ -219,6 +242,7 @@ export function wireHomeEvents(container: HTMLElement, cb: HomeTabCallbacks): vo
       else if (action === 'fix-tasks') cb.onNavigate('task-rules');
       else if (action === 'fix-participants') cb.onNavigate('participants');
       else if (action === 'help') cb.onHelp();
+      else if (action === 'dismiss-welcome') cb.onDismissWelcome();
       else if (action.startsWith('nav-')) cb.onNavigate(action.slice(4) as HomeNavTarget);
     });
   });

@@ -2541,8 +2541,114 @@ select.input-sm {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.home-help {
-  align-self: flex-start;
+
+/* First-run welcome — a calm, in-system greeting that replaces the generic
+   top-of-page tutorial banner on Home (newcomers only, one-time). */
+.home-welcome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  padding: 14px 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--accent-glow);
+}
+.home-welcome-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 220px;
+}
+.home-welcome-text strong {
+  font-size: 0.98rem;
+  color: var(--text);
+}
+.home-welcome-text span {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.home-welcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Phone / tablet (≤1024 — the priority): the rail is transparent so its
+   children flow as direct items of the .home flex column, exactly as a plain
+   single-column stack. Desktop overrides this below. */
+.home-side {
+  display: contents;
+}
+
+/* ── Desktop only (>1024) — a distinct, composed two-column layout.
+   Phone/tablet keep the single-column stack above, untouched. ── */
+@media (min-width: 1025px) {
+  .home {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(290px, 1fr);
+    grid-template-areas:
+      "welcome welcome"
+      "panel   side"
+      "guide   side";
+    align-items: start;
+    gap: 20px;
+    max-width: 1080px;
+  }
+  .home-welcome {
+    grid-area: welcome;
+  }
+  .home-panel {
+    grid-area: panel;
+    padding: 32px 34px 32px 38px;
+  }
+  .home-headline {
+    font-size: 2rem;
+  }
+  .home-sub {
+    font-size: 0.95rem;
+  }
+  .home-guide {
+    grid-area: guide;
+  }
+
+  /* Sticky info / navigation rail */
+  .home-side {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    grid-area: side;
+    position: sticky;
+    top: 24px;
+  }
+  /* Figures become a tidy vertical list in the rail */
+  .home-side .home-figs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .home-side .home-figs .score-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    text-align: start;
+  }
+  .home-side .home-figs .score-value {
+    font-size: 1.4rem;
+    margin: 0;
+  }
+  /* Quick links stack as full-width rows in the rail */
+  .home-side .home-links {
+    flex-direction: column;
+  }
+  .home-side .home-link {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 12px 16px;
+  }
 }
 
 /* ─── Console-hint Easter Egg ────────────────────────────────────── */
