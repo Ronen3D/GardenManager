@@ -4628,7 +4628,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.6</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -6211,7 +6211,7 @@ function openExportModal(): void {
   }
 
   const day0CheckboxRow = showDay0
-    ? `<div class="export-day0-row">
+    ? `<div class="export-day0-row" id="export-day0-row">
         <label class="export-day0-label">
           <input type="checkbox" id="export-include-day0" checked />
           <span>📋 כלול יום 0 (הקשר מהשבצ"ק הקודם)</span>
@@ -6306,37 +6306,42 @@ function wireExportModalEvents(): void {
   const fmtPdf = backdrop.querySelector('#fmt-pdf') as HTMLElement;
   const fmtExcel = backdrop.querySelector('#fmt-excel') as HTMLElement;
   const fmtImage = backdrop.querySelector('#fmt-image') as HTMLElement;
-  const imageRadio = backdrop.querySelector('input[name="export-format"][value="image"]') as HTMLInputElement;
   const optWeekly = backdrop.querySelector('#opt-weekly') as HTMLElement;
   const optDaily = backdrop.querySelector('#opt-daily') as HTMLElement;
   const weeklyRadio = backdrop.querySelector('input[name="export-mode"][value="weekly"]') as HTMLInputElement;
   const dailyRadio = backdrop.querySelector('input[name="export-mode"][value="daily"]') as HTMLInputElement;
   const dayPicker = backdrop.querySelector('#export-day-picker') as HTMLElement;
+  const day0Row = backdrop.querySelector('#export-day0-row') as HTMLElement | null;
 
-  // Image export is single-day only. Enforce mutual exclusivity with the
-  // weekly ("סיכום כללי") mode: choosing image forces daily and greys out
-  // weekly; choosing weekly greys out the image format.
+  // Day picker and the "כלול יום 0" checkbox are mode-exclusive: the day
+  // picker (choose a specific day, incl. יום 0) is for daily/image; the
+  // day-0 inclusion toggle ONLY affects the weekly export, so it must be
+  // hidden in daily/image mode where it would do nothing.
+  const setModeSections = (isDaily: boolean) => {
+    dayPicker.classList.toggle('hidden', !isDaily);
+    dayPicker.style.display = isDaily ? 'flex' : '';
+    if (day0Row) day0Row.style.display = isDaily ? 'none' : '';
+  };
+
+  // Image export is single-day only. The "תמונה" pill stays *always
+  // clickable* — selecting it auto-switches to daily (the modal opens on
+  // weekly by default, so a greyed image pill would look broken). While
+  // image is active the weekly option is greyed, which explains the lock.
   const applyImageConstraints = () => {
     const fmt = (backdrop.querySelector('input[name="export-format"]:checked') as HTMLInputElement)?.value;
-    let mode = (backdrop.querySelector('input[name="export-mode"]:checked') as HTMLInputElement)?.value;
+    const mode = (backdrop.querySelector('input[name="export-mode"]:checked') as HTMLInputElement)?.value;
 
     if (fmt === 'image' && mode !== 'daily') {
       dailyRadio.checked = true;
       weeklyRadio.checked = false;
       optWeekly.classList.remove('selected');
       optDaily.classList.add('selected');
-      dayPicker.classList.remove('hidden');
-      dayPicker.style.display = 'flex';
-      mode = 'daily';
+      setModeSections(true);
     }
 
     const imageSelected = fmt === 'image';
     weeklyRadio.disabled = imageSelected;
     optWeekly.classList.toggle('disabled', imageSelected);
-
-    const weeklySelected = mode === 'weekly';
-    imageRadio.disabled = weeklySelected;
-    fmtImage.classList.toggle('disabled', weeklySelected);
   };
 
   // Format radio toggle
@@ -6358,19 +6363,15 @@ function wireExportModalEvents(): void {
       const mode = (r as HTMLInputElement).value;
       optWeekly.classList.toggle('selected', mode === 'weekly');
       optDaily.classList.toggle('selected', mode === 'daily');
-      if (mode === 'daily') {
-        dayPicker.classList.remove('hidden');
-        dayPicker.style.display = 'flex';
-      } else {
-        dayPicker.classList.add('hidden');
-        dayPicker.style.display = '';
-      }
+      setModeSections(mode === 'daily');
       applyImageConstraints();
     });
   });
 
-  // Initial constraint pass: default state (pdf + weekly) ⇒ image pill greyed.
+  // Initial pass: default state is pdf + weekly ⇒ show the day-0 checkbox,
+  // hide the day picker (kept in sync with mode from here on).
   applyImageConstraints();
+  setModeSections((backdrop.querySelector('input[name="export-mode"]:checked') as HTMLInputElement)?.value === 'daily');
 
   // Wire custom select for export day picker
   wireCustomSelect(backdrop, 'gm-export-day-select', () => {});
