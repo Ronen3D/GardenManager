@@ -1,7 +1,11 @@
 // Garden Manager Service Worker
 // Caches all app assets for full offline support
 
-const CACHE_NAME = 'garden-manager-v2';
+const CACHE_NAME = 'garden-manager-v3';
+
+// Synthetic same-origin cache key used to hand a Web-Share-Target file off to
+// the page. It is NOT a real asset — see the fetch handler guards below.
+const SHARED_IMPORT_KEY = './__shared_import__';
 
 // Install: cache the app shell
 self.addEventListener('install', (event) => {
@@ -62,6 +66,38 @@ self.addEventListener('fetch', (event) => {
 
   // Only handle same-origin requests
   if (url.origin !== location.origin) return;
+
+  // Web Share Target: Android shares the exported file as a POST to
+  // `<scope>share-target` (see manifest.json `share_target`). There is no
+  // backend (static GitHub Pages), so the SW must catch the POST, stash the
+  // file text under a synthetic cache key, and redirect the client to the app
+  // with a flag it picks up on load. The redirect is the LAST awaited step, so
+  // the stash is guaranteed complete before the page reads it (no race).
+  if (event.request.method === 'POST' && url.pathname.endsWith('/share-target')) {
+    event.respondWith(
+      (async () => {
+        try {
+          const formData = await event.request.formData();
+          const file = formData.get('file');
+          const text = file && typeof file !== 'string' ? await file.text() : '';
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(
+            new Request(SHARED_IMPORT_KEY),
+            new Response(text, { headers: { 'Content-Type': 'text/plain' } })
+          );
+        } catch (e) {
+          // Swallow — the client treats a missing/empty stash as a no-op.
+          console.warn('SW: share-target stash failed:', e);
+        }
+        return Response.redirect(`${self.registration.scope}?share-target=pending`, 303);
+      })()
+    );
+    return;
+  }
+
+  // The synthetic share-import key is never a real network asset — never let
+  // the cache-first asset branch below serve or (re-)cache it.
+  if (url.pathname.endsWith('/__shared_import__')) return;
 
   // For navigation requests (HTML), use network-first so updates are picked up
   if (event.request.mode === 'navigate') {

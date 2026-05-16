@@ -6,6 +6,19 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
+  "share_target": {
+    "action": "./share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "file",
+          "accept": ["text/plain", ".txt", ".gm.json", ".json", "application/json"]
+        }
+      ]
+    }
+  },
   "theme_color": "#27ae60",
   "background_color": "#1a1a2e",
   "dir": "rtl",

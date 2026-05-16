@@ -15,6 +15,7 @@ import {
 } from '../shared/participant-set-xlsx';
 import * as store from './config-store';
 import * as transfer from './data-transfer';
+import { installNudgeShouldShow, markInstallNudgeSeen, runInstallPrompt } from './pwa-install';
 import { escHtml } from './ui-helpers';
 import { showAlert, showBottomSheet, showConfirm, showToast } from './ui-modal';
 
@@ -22,10 +23,28 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
 
 // ─── Accordion Body ─────────────────────────────────────────────────────────
 
+/**
+ * Install nudge — shown only to Android/Chromium browser-tab users who can
+ * install the PWA (gated by `installNudgeShouldShow`). Installing is what
+ * enables the system Share sheet to deliver exported files into the app.
+ */
+function renderInstallNudge(): string {
+  if (!installNudgeShouldShow()) return '';
+  return `
+    <div class="transfer-install-nudge">
+      <span class="transfer-install-nudge-text">📲 התקן את האפליקציה כדי לפתוח קבצים מיוצאים ישירות דרך "שיתוף"</span>
+      <span class="transfer-install-nudge-actions">
+        <button class="transfer-install-nudge-btn" data-action="install-pwa">התקן</button>
+        <button class="transfer-install-nudge-x" data-action="install-nudge-dismiss" aria-label="סגור">✕</button>
+      </span>
+    </div>`;
+}
+
 /** Returns the HTML for the accordion body content. */
 export function renderDataTransferContent(): string {
   return `
     <div class="transfer-panel">
+      ${renderInstallNudge()}
       <button class="transfer-action-btn" data-action="transfer-export">
         <span class="transfer-action-icon">📤</span>
         <span class="transfer-action-text">
@@ -61,6 +80,15 @@ export function wireDataTransferEvents(container: HTMLElement): void {
     if (action === 'transfer-export') openExportSheet();
     if (action === 'transfer-import') openImportFlow();
     if (action === 'transfer-import-xlsx') openXlsxImportFlow();
+    if (action === 'install-pwa') {
+      // runInstallPrompt() marks the nudge seen internally.
+      container.querySelector('.transfer-install-nudge')?.remove();
+      void runInstallPrompt();
+    }
+    if (action === 'install-nudge-dismiss') {
+      markInstallNudgeSeen();
+      container.querySelector('.transfer-install-nudge')?.remove();
+    }
   });
 }
 
@@ -365,7 +393,17 @@ async function handleExportFullBackup(): Promise<void> {
 async function openImportFlow(): Promise<void> {
   const json = await transfer.openFilePicker();
   if (!json) return; // user cancelled
+  await routeImportFromString(json);
+}
 
+/**
+ * Validate a raw export-file string and open the matching import bottom sheet.
+ * Shared by the in-app Import button (via `openImportFlow`) and the Android
+ * Web Share Target entry point (`consumePendingSharedImport` in app.ts) so a
+ * shared file behaves exactly like one picked through the file picker — same
+ * validation, same per-type confirmations, same full-backup destructive guard.
+ */
+export async function routeImportFromString(json: string): Promise<void> {
   const validation = transfer.validateImportFile(json);
   if (!validation.ok) {
     await showAlert(validation.error!, { title: 'שגיאת ייבוא', icon: '❌' });

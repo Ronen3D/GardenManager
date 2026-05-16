@@ -60,7 +60,7 @@ import { showCapabilityChangePicker } from './capability-change-modal';
 import * as store from './config-store';
 import { exportDaySnapshot } from './continuity-export';
 import { parseContinuitySnapshot } from './continuity-import';
-import { wireDataTransferEvents } from './data-transfer-ui';
+import { routeImportFromString, wireDataTransferEvents } from './data-transfer-ui';
 import { buildDay0Schedule } from './day0-adapter';
 import { exportDailyExcel, exportWeeklyExcel } from './excel-export';
 import { installFocusTrap } from './focus-trap';
@@ -77,6 +77,7 @@ import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportDailyImage, exportWeeklyOverview } from './pdf-export';
 import { type PointInTimeContext, renderPointInTimeView, wirePointInTimeEvents } from './point-in-time-view';
 import { runPreflight } from './preflight';
+import { initPwaInstallCapture } from './pwa-install';
 import { showRangePicker } from './range-picker-modal';
 import { closeRescueModal, initRescue, openRescueModal } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice, onSmallScreenChange } from './responsive';
@@ -4627,7 +4628,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.5</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -7017,6 +7018,53 @@ function setUiForDemo(): void {
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
 }
 
+/**
+ * Android Web Share Target consumer. When a user shares an exported file to
+ * the installed PWA, the service worker (public/sw.js) stashes the file text
+ * in Cache Storage and redirects here with `?share-target=pending`. Pull the
+ * stashed text, delete it, strip the query param, then run the normal import
+ * routing — identical to the user picking the file via the in-app Import
+ * button. Invalid/empty/missing payloads degrade silently or via the existing
+ * Hebrew validation error in `routeImportFromString`. One-shot: the URL param
+ * is cleared on every path and the cache key deleted, so a refresh or
+ * back/forward cannot replay the import.
+ */
+async function consumePendingSharedImport(): Promise<void> {
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.get('share-target') !== 'pending') return;
+
+    // Inverse of the setUiForDemo() precedent: there the hash is dropped and
+    // search kept; here the query param is dropped and the hash kept.
+    const clearUrl = () => history.replaceState(null, '', location.pathname + location.hash);
+
+    if (!('caches' in window)) {
+      clearUrl();
+      return;
+    }
+
+    const resp = await caches.match('./__shared_import__');
+    if (!resp) {
+      clearUrl();
+      return; // SW didn't stash (no SW yet / failed) — silent no-op
+    }
+
+    const text = await resp.text();
+    try {
+      const cache = await caches.open('garden-manager-v3');
+      await cache.delete(new Request('./__shared_import__'));
+    } catch {
+      /* best-effort cleanup — a stale entry is harmless, key is overwritten next share */
+    }
+    clearUrl();
+
+    if (!text?.trim()) return; // empty payload — silent no-op
+    await routeImportFromString(text);
+  } catch (e) {
+    console.error('Shared import failed:', e);
+  }
+}
+
 function init(): void {
   // --- Global error safety net ---
   window.onerror = (_msg, _src, _line, _col, err) => {
@@ -7030,6 +7078,10 @@ function init(): void {
   });
 
   try {
+    // Capture beforeinstallprompt as early as possible — it's a one-shot
+    // event and powers the "install to receive shared files" nudge.
+    initPwaInstallCapture();
+
     // Set .touch-device / .pointer-device on <html> before first render
     initResponsive();
 
@@ -7338,6 +7390,11 @@ function init(): void {
     if (currentTab !== 'home' && !isTutorialBannerDismissed()) {
       showTutorialBanner(tutorialContext);
     }
+
+    // Web Share Target: if the app was launched by sharing an exported file to
+    // it, run the import now (store + schedule loaded, UI rendered → bottom
+    // sheet renders correctly). Fire-and-forget; it self-clears the URL flag.
+    void consumePendingSharedImport();
 
     // Update the live clock every 30 seconds without a full re-render
     if (_liveClockInterval) clearInterval(_liveClockInterval);

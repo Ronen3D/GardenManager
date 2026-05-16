@@ -7977,6 +7977,67 @@ tr.now-row-animate > td.time-cell {
   border-color: var(--danger, #e74c3c);
 }
 
+/* ─── Install-app nudge (Web Share Target) ──────────────────────────── */
+
+.transfer-install-nudge {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid rgba(39, 174, 96, 0.3);
+  border-radius: var(--radius, 8px);
+  background: rgba(39, 174, 96, 0.1);
+  color: var(--text, #e0e0e0);
+}
+
+.transfer-install-nudge-text {
+  flex: 1;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.transfer-install-nudge-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.transfer-install-nudge-btn {
+  padding: 0.4rem 0.85rem;
+  border: none;
+  border-radius: var(--radius, 8px);
+  background: var(--success, #1d9050);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.transfer-install-nudge-btn:hover {
+  filter: brightness(1.1);
+}
+
+.transfer-install-nudge-x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted, #888);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.transfer-install-nudge-x:hover {
+  background: var(--bg-hover, #2a2a2a);
+  color: var(--text, #e0e0e0);
+}
+
 /* ─── Preference Eligibility Warning ─────────────────────────────────── */
 
 .pref-eligibility-warning {

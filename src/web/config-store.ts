@@ -3019,6 +3019,7 @@ export function factoryReset(): void {
     localStorage.removeItem('gm-sidebar-collapsed');
     localStorage.removeItem('gardenmanager_tutorial_banner_dismissed');
     localStorage.removeItem('gardenmanager_tutorial_seen_tracks');
+    localStorage.removeItem('gardenmanager_install_nudge_seen');
     // Tutorial demo writes a pre-tour backup snapshot under this key (see
     // BACKUP_KEY in tutorial-demo.ts). If left in place, the next page-load
     // runs restoreTutorialBackupIfPresent() before initStore() and silently
