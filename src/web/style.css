@@ -2354,136 +2354,77 @@ select.input-sm {
   margin-bottom: 12px;
 }
 
-/* ─── Home Screen — "warm & human" landing ───────────────
-   One calm card, not a dashboard. Personality from voice,
-   a soft week spectrum, gentle status and airy figures.
-   Home-scoped tokens: dark (desktop default) below; warm
-   cream override under [data-theme="light"] (mobile primary). */
+/* ─── Home Screen — native to the system ─────────────────
+   Built from the app's own language: a glass panel + accent
+   edge-stripe (as on the header / weekly-dashboard), the
+   kpi-* status surface, btn-primary, score-card figures and
+   alert for problems. Light/dark theming comes for free
+   from those reused components + tokens. */
 .home {
-  --home-surface: #201e1b;
-  --home-surface-2: #2a2622;
-  --home-ink: #efe9dd;
-  --home-muted: #a79f8f;
-  --home-line: rgba(255, 255, 255, 0.09);
-  --home-accent: #3aa873;
-  --home-accent-hover: #46b984;
-  --home-good: #79cda4;
-  --home-good-bg: rgba(58, 168, 115, 0.2);
-  --home-warn: #e3bd72;
-  --home-warn-bg: rgba(227, 189, 114, 0.16);
-  --home-attn: #e3a47f;
-  --home-attn-bg: rgba(227, 164, 127, 0.16);
-  --home-aura: rgba(120, 180, 140, 0.14);
-  --home-card-shadow: 0 14px 38px rgba(0, 0, 0, 0.34);
-
-  max-width: 560px;
-  margin: 0 auto;
-}
-[data-theme="light"] .home {
-  --home-surface: #faf5ec;
-  --home-surface-2: #f2ebdd;
-  --home-ink: #3b352c;
-  --home-muted: #8c8473;
-  --home-line: rgba(70, 55, 30, 0.12);
-  --home-accent: #2f9a63;
-  --home-accent-hover: #2a8a59;
-  --home-good: #2f9a63;
-  --home-good-bg: rgba(47, 154, 99, 0.13);
-  --home-warn: #bf8a2c;
-  --home-warn-bg: rgba(214, 150, 40, 0.15);
-  --home-attn: #c2724e;
-  --home-attn-bg: rgba(194, 114, 78, 0.13);
-  --home-aura: rgba(241, 201, 138, 0.4);
-  --home-card-shadow: 0 12px 32px rgba(90, 65, 30, 0.09);
-}
-
-.home-card {
-  position: relative;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  padding: 28px 24px;
-  border-radius: 22px;
-  background: var(--home-surface);
-  border: 1px solid var(--home-line);
-  box-shadow: var(--home-card-shadow);
-  color: var(--home-ink);
-}
-/* Soft warm glow — atmosphere, never drama. */
-.home-aura {
-  position: absolute;
-  inset-block-start: -90px;
-  inset-inline-end: -70px;
-  width: 240px;
-  height: 240px;
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--home-aura), transparent 70%);
-  pointer-events: none;
-  z-index: 0;
+  gap: 14px;
+  max-width: 620px;
+  margin: 0 auto;
 }
 
-/* Content sits above the aura. Excludes .home-aura so this never clobbers
-   its position:absolute (equal specificity → later rule would win). */
-.home-card > *:not(.home-aura) {
+/* Same recipe as .weekly-dashboard / .template-card — instant kinship. */
+.home-panel {
   position: relative;
-  z-index: 1;
+  overflow: hidden;
+  padding: 22px 22px 22px 26px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(135deg, rgba(26, 29, 39, 0.55), rgba(30, 34, 53, 0.55));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+[data-theme="light"] .home-panel {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+.home-panel::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 3px;
+  background: linear-gradient(to bottom, var(--accent), transparent);
+  border-radius: 3px;
 }
 
-/* ── Greeting + gentle status ──────────────────────────── */
-.home-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-.home-mark {
-  flex-shrink: 0;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.95rem;
-  font-weight: 700;
-  margin-top: 3px;
-}
-.home-mark--good {
-  color: var(--home-good);
-  background: var(--home-good-bg);
-}
-.home-mark--warn {
-  color: var(--home-warn);
-  background: var(--home-warn-bg);
-}
-.home-mark--attention {
-  color: var(--home-attn);
-  background: var(--home-attn-bg);
-}
-.home-mark--neutral {
-  color: var(--home-muted);
-  background: var(--home-surface-2);
-}
-.home-title {
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.25;
+.home-headline {
   margin: 0;
-  color: var(--home-ink);
-  -webkit-text-fill-color: var(--home-ink);
+  font-size: 1.7rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.3px;
+  background: linear-gradient(135deg, var(--accent), #67b8f7);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
-.home-saying {
-  margin: 4px 0 0;
-  font-size: 0.92rem;
-  color: var(--home-muted);
+.home-sub {
+  margin: 6px 0 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
-/* ── The week — soft spectrum (signature detail) ───────── */
-.home-week {
+.home-status {
   display: flex;
-  flex-direction: column;
-  gap: 7px;
+  align-items: stretch;
+  gap: 14px;
+  margin-top: 16px;
+}
+.home-status .kpi-strip {
+  flex: 1 1 auto;
+}
+
+/* Week — restrained cube-palette accent (the app's loader identity),
+   echoing the 3px accent edge-stripe motif. */
+.home-week {
+  margin-top: 18px;
 }
 .home-week-row {
   display: flex;
@@ -2494,122 +2435,54 @@ select.input-sm {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 9px 0;
-  border-radius: 13px;
-  background: var(--home-surface-2);
+  gap: 7px;
 }
 .home-week-d i {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
   background: var(--wd);
 }
+.home-week.is-planned .home-week-d i {
+  background: var(--border);
+}
 .home-week-d b {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  color: var(--home-muted);
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.4px;
 }
 .home-week.is-live .home-week-d b {
-  color: var(--home-ink);
-}
-.home-week.is-planned .home-week-d {
-  opacity: 0.62;
-}
-.home-week.is-planned .home-week-d i {
-  background: transparent;
-  border: 1.5px solid var(--wd);
+  color: var(--text-secondary);
 }
 .home-week-cap {
+  display: block;
+  margin-top: 8px;
   font-size: 0.72rem;
-  color: var(--home-muted);
-  letter-spacing: 0.2px;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
 }
 
-/* ── Actions ───────────────────────────────────────────── */
-.home-actions {
+.home-cta-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
+  margin-top: 20px;
 }
-.home-cta {
+.home-cta.btn-primary {
   flex: 1 1 auto;
-  min-height: 50px;
-  padding: 14px 26px;
-  border: none;
-  border-radius: 15px;
-  background: var(--home-accent);
-  color: #fff;
-  font-family: inherit;
-  font-size: 1rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    transform var(--transition-fast);
+  padding: 13px 26px;
+  font-size: 0.95rem;
 }
-.home-cta:hover {
-  background: var(--home-accent-hover);
-  transform: translateY(-1px);
-}
-.home-cta:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-}
-.home-cta2 {
-  padding: 12px 14px;
-  background: transparent;
-  border: none;
-  color: var(--home-muted);
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-  border-radius: 10px;
-  transition: color var(--transition-fast);
-}
-.home-cta2:hover {
-  color: var(--home-ink);
-  text-decoration: underline;
-}
-.home-cta:focus-visible,
-.home-cta2:focus-visible,
-.home-help:focus-visible,
-.home-link:focus-visible,
-.home-linkbtn:focus-visible {
-  outline: 2px solid var(--home-accent);
-  outline-offset: 2px;
-}
-.home-note {
-  margin: -8px 0 0;
-  font-size: 0.82rem;
-  color: var(--home-muted);
+.home-panel .dirty-notice {
+  margin-top: 14px;
+  margin-bottom: 0;
 }
 
-/* ── Calm "what's missing" panel (no red alarm) ────────── */
 .home-guide {
-  background: var(--home-attn-bg);
-  border: 1px solid var(--home-line);
-  border-radius: 14px;
-  padding: 16px 18px;
-}
-.home-guide-title {
-  margin: 0 0 8px;
-  font-size: 0.92rem;
-  font-weight: 700;
-  color: var(--home-ink);
-}
-.home-guide-list {
-  margin: 0;
-  padding-inline-start: 18px;
-  font-size: 0.88rem;
-  color: var(--home-ink);
-}
-.home-guide-list li {
-  margin: 3px 0;
+  margin-bottom: 0;
 }
 .home-guide-actions {
   display: flex;
@@ -2617,98 +2490,59 @@ select.input-sm {
   gap: 8px;
   margin-top: 12px;
 }
-.home-linkbtn {
-  padding: 8px 14px;
-  background: var(--home-surface);
-  border: 1px solid var(--home-line);
-  border-radius: 10px;
-  color: var(--home-ink);
-  font-family: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: border-color var(--transition-fast);
-}
-.home-linkbtn:hover {
-  border-color: var(--home-accent);
+.home-guide-actions .btn-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-/* ── Airy figures (no boxed cards) ─────────────────────── */
 .home-figs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding-top: 20px;
-  border-top: 1px solid var(--home-line);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
 }
-.home-fig {
+.home-figs .score-card {
+  padding: 16px 10px;
+}
+
+.home-links {
+  display: flex;
+  gap: 8px;
+}
+.home-link {
   flex: 1 1 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-}
-.home-fig b {
-  font-size: 1.55rem;
-  font-weight: 700;
-  color: var(--home-ink);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.home-fig span {
-  font-size: 0.76rem;
-  color: var(--home-muted);
-}
-.home-fig-sep {
-  width: 1px;
-  align-self: stretch;
-  margin: 6px 0;
-  background: var(--home-line);
-}
-
-/* ── Quiet footer ──────────────────────────────────────── */
-.home-foot {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  align-items: flex-start;
-}
-.home-help {
-  padding: 6px 2px;
+  gap: 6px;
+  padding: 12px 6px;
   background: transparent;
-  border: none;
-  color: var(--home-accent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
   font-family: inherit;
-  font-size: 0.88rem;
+  font-size: 0.78rem;
   font-weight: 600;
   cursor: pointer;
-}
-.home-help:hover {
-  text-decoration: underline;
-}
-.home-links {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
-.home-link {
-  padding: 4px 2px;
-  background: transparent;
-  border: none;
-  color: var(--home-muted);
-  font-family: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: color var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast);
 }
 .home-link:hover {
-  color: var(--home-ink);
+  border-color: var(--accent);
+  color: var(--text);
 }
-.home-link-sep {
-  color: var(--home-line);
-  font-size: 0.85rem;
+.home-link-icon {
+  display: inline-flex;
+  color: var(--accent);
+}
+.home-link:focus-visible,
+.home-help:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.home-help {
+  align-self: flex-start;
 }
 
 /* ─── Console-hint Easter Egg ────────────────────────────────────── */
