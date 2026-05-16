@@ -12,16 +12,28 @@
  *   └───────────┴────────────────────────┘
  *
  * All columns, rows, and table presence are derived dynamically from
- * schedule data — if a task type is absent its region collapses, and
- * if slot counts change extra columns appear automatically.
+ * schedule data. A single day is guaranteed to fit on ONE A4-landscape page:
+ * `src/shared/pdf-fit-planner.ts` decides — before anything is drawn — how many
+ * "name sub-columns" each section splits into, the font size and the cell
+ * padding, so a dense day (one task with many people per cell) collapses to a
+ * single page instead of spilling onto 3–4. Only a genuinely degenerate day
+ * (more time-rows than physically fit at the floor config) breaks across pages,
+ * and then only at whole layout-row boundaries.
  *
  * Uses jsPDF + jsPDF-AutoTable with an embedded Rubik TTF font for
  * correct Hebrew (Right-to-Left) rendering.
  */
 
 import { jsPDF } from 'jspdf';
-import autoTable, { __createTable, __drawTable, type CellDef, type UserOptions } from 'jspdf-autotable';
+import { __createTable, __drawTable, type CellDef, type UserOptions } from 'jspdf-autotable';
 import type { Schedule, Task } from '../models/types';
+import {
+  DEFAULT_LEVERS,
+  type InitialPlacement,
+  type PageGeometry,
+  planDayLayout,
+  type SectionDescriptor,
+} from '../shared/pdf-fit-planner';
 import { fmtTime } from '../utils/date-utils';
 import { triggerShareOrDownload } from './data-transfer';
 import { buildDay0Schedule } from './day0-adapter';
@@ -32,18 +44,9 @@ import {
   generateGridTemplate,
   getTaskAssignments,
   getUniqueStartTimes,
-  SectionMetrics,
-  SectionPlacement,
+  type SectionMetrics,
 } from './layout-engine';
 import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';
-
-/**
- * Resolve a task's structural section key. Mirrors `getSectionKey` in
- * `layout-engine.ts` so PDF section grouping matches the on-screen grid.
- */
-function getDisplayCategory(task: Task): string {
-  return task.sectionKey || task.sourceName || task.name || 'custom';
-}
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -51,12 +54,16 @@ const PAGE_MARGIN = 8; // mm from each edge
 const COL_GAP = 4; // mm between grid columns
 const ROW_GAP = 3; // mm between grid rows
 const TABLE_LABEL_OFFSET = 3; // mm from label text to table top
+const TIME_COL_W = 14; // mm — width of the rightmost time column
+const MIN_NAME_COL_W = 20; // mm — min readable width for one name sub-column
+const HEAD_PADDING = 1.5; // mm — per-side header cell padding (matches planner)
+const GRID_UNITS = 12; // matches layout-engine GRID_UNITS
 
 // ─── Hebrew RTL helper ───────────────────────────────────────────────────────
 
 function rtl(text: string): string {
   if (!text) return text;
-  const hebrewRange = /[\u0590-\u05FF\uFB1D-\uFB4F]/;
+  const hebrewRange = /[֐-׿יִ-ﭏ]/;
   const segments: { text: string; isHebrew: boolean }[] = [];
   let current = '';
   let currentIsHebrew = false;
@@ -120,7 +127,7 @@ function drawTitle(doc: jsPDF, dayTitle: string, daySubtitle: string): number {
 }
 
 /** Shared compact table defaults — positioned at (x, y) with a fixed width */
-function tblDefaults(doc: jsPDF, y: number, fontSize = 7): Partial<UserOptions> {
+function tblDefaults(y: number, fontSize = 7, cellPadding = 1.8): Partial<UserOptions> {
   return {
     startY: y,
     theme: 'grid',
@@ -129,7 +136,7 @@ function tblDefaults(doc: jsPDF, y: number, fontSize = 7): Partial<UserOptions> 
       fontStyle: 'normal',
       fontSize,
       halign: 'right',
-      cellPadding: { top: 1.8, bottom: 1.8, left: 1, right: 1 },
+      cellPadding: { top: cellPadding, bottom: cellPadding, left: 1, right: 1 },
       lineColor: [210, 210, 210],
       lineWidth: 0.2,
       overflow: 'ellipsize',
@@ -140,7 +147,7 @@ function tblDefaults(doc: jsPDF, y: number, fontSize = 7): Partial<UserOptions> 
       fontSize,
       halign: 'center',
       fontStyle: 'normal',
-      cellPadding: 1.5,
+      cellPadding: HEAD_PADDING,
     },
     margin: { right: PAGE_MARGIN, left: PAGE_MARGIN, top: PAGE_MARGIN, bottom: PAGE_MARGIN },
     didParseCell: (data: any) => {
@@ -149,98 +156,33 @@ function tblDefaults(doc: jsPDF, y: number, fontSize = 7): Partial<UserOptions> 
   };
 }
 
-// ─── Grid Layout Engine (powered by shared layout-engine.ts) ────────────────
-
-/** Describes a positioned table region on the page */
-interface GridRegion {
-  key: string;
-  label: string;
-  tasks: Task[];
-  color: string;
-  x: number;
-  y: number;
-  width: number;
-}
-
-/** Convert layout-engine grid template to positioned PDF regions grouped by row. */
-function computeGridLayoutSmart(dayTasks: Task[], pageW: number, topY: number): { rows: GridRegion[][] } {
-  const sections = computeSectionMetrics(dayTasks);
-  if (sections.length === 0) return { rows: [] };
-
-  const layoutRows = assignRows(sections);
-  const template = generateGridTemplate(layoutRows);
-  const usable = pageW - 2 * PAGE_MARGIN;
-  const unitWidth = usable / 12;
-
-  // Group placements by row
-  const placementMap = new Map(template.placements.map((p) => [p.sectionId, p]));
-  const rowMap = new Map<number, GridRegion[]>();
-
-  for (const section of sections) {
-    const placement = placementMap.get(section.id);
-    if (!placement) continue;
-
-    // Determine color from the first task in the section
-    const color = section.tasks[0]?.color || '#7f8c8d';
-
-    // Compute x and width from grid placement (RTL: higher colStart = more to the left on page,
-    // but CSS grid with direction:rtl handles this. For PDF, we position right-to-left manually.)
-    // In PDF RTL: rightmost section = highest x. Grid column 1 = rightmost.
-    const x = pageW - PAGE_MARGIN - (placement.colStart - 1 + placement.colSpan) * unitWidth;
-    const width = placement.colSpan * unitWidth - (placement.colSpan < 12 ? COL_GAP / 2 : 0);
-
-    const region: GridRegion = {
-      key: section.id,
-      label: section.title,
-      tasks: section.tasks,
-      color,
-      x,
-      y: topY, // Will be adjusted per-row during rendering
-      width,
-    };
-
-    if (!rowMap.has(placement.row)) rowMap.set(placement.row, []);
-    rowMap.get(placement.row)!.push(region);
-  }
-
-  // Convert to ordered array of rows
-  const rows: GridRegion[][] = [];
-  const rowNums = [...rowMap.keys()].sort((a, b) => a - b);
-  for (const rowNum of rowNums) {
-    rows.push(rowMap.get(rowNum)!);
-  }
-
-  return { rows };
-}
-
-// ─── Unified PDF Section Table Renderer ─────────────────────────────────────
+// ─── Logical Columns (single source of truth for structure + names) ──────────
 
 /**
- * Render any section's table at a given PDF region, using the same column
- * strategy logic as the on-screen layout engine. Returns the finalY.
+ * A logical strategy column for a section. The same definitions feed both the
+ * fit planner (via name *counts*) and the renderer (via name *lists*), so the
+ * predicted geometry always matches what is drawn.
  */
-function renderSectionTablePdf(
-  doc: jsPDF,
-  tasks: Task[],
-  schedule: Schedule,
-  region: GridRegion,
-  fontSize: number,
-): number {
-  if (tasks.length === 0) return region.y;
+interface LogicalColumn {
+  header: string;
+  /** rtl-shaped participant names assigned in this column at `timeNum`. */
+  namesAt: (timeNum: number) => string[];
+  /** Representative tint colour for this column's cell at `timeNum`. */
+  colorAt: (timeNum: number) => string;
+}
 
-  // Section label
-  doc.setFontSize(fontSize);
-  doc.setTextColor(80, 80, 80);
-  doc.text(rtl(region.label), region.x + region.width - 1, region.y, { align: 'right' });
-  const tableY = region.y + TABLE_LABEL_OFFSET;
-
-  // ── Infer column strategy from slot properties (mirrors layout-engine logic) ──
+/**
+ * Resolve a section's logical columns. Mirrors the on-screen layout-engine
+ * column strategy (multi-source split / sub-team / flat) but returns name
+ * arrays rather than pre-joined strings so the renderer can re-shape them into
+ * multiple name sub-columns.
+ */
+function buildLogicalColumns(section: SectionMetrics, schedule: Schedule): LogicalColumn[] {
+  const tasks = section.tasks;
   const hasTeams = tasks.some((t) => t.slots.some((s) => s.subTeamId != null));
   const hasMultipleSources = new Set(tasks.map((t) => t.sourceName || t.name)).size > 1;
   const hasSubTeams = tasks.some((t) => t.slots.some((s) => s.subTeamId));
-
-  type ColDef = { header: string; build: (timeNum: number) => { content: string; color: string } };
-  const columns: ColDef[] = [];
+  const columns: LogicalColumn[] = [];
 
   if (hasTeams || hasMultipleSources) {
     // ── Multi-source split strategy ──
@@ -253,25 +195,22 @@ function renderSectionTablePdf(
       nonTeamBySource.get(key)!.push(t);
     }
 
-    // Non-team source columns
     for (const [sourceKey, sourceTasks] of nonTeamBySource) {
       columns.push({
         header: sourceKey,
-        build: (timeNum) => {
+        namesAt: (timeNum) => {
           const atTime = sourceTasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
-          const names = atTime
-            .flatMap((tk) =>
-              getTaskAssignments(tk, schedule)
-                .filter((s) => s.participant)
-                .map((s) => rtl(s.participant!.name)),
-            )
-            .join('\n\n');
-          return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
+          return atTime.flatMap((tk) =>
+            getTaskAssignments(tk, schedule)
+              .filter((s) => s.participant)
+              .map((s) => rtl(s.participant!.name)),
+          );
         },
+        colorAt: (timeNum) =>
+          tasks.find((tk) => new Date(tk.timeBlock.start).getTime() === timeNum)?.color || '#7f8c8d',
       });
     }
 
-    // Team-based columns (deterministic order)
     const allTeamSlots = teamTasks.flatMap((tk) => tk.slots);
     const distinctTeamIds = [...new Set(allTeamSlots.map((s) => s.subTeamId).filter(Boolean))] as string[];
     distinctTeamIds.sort();
@@ -280,17 +219,16 @@ function renderSectionTablePdf(
       const label = allTeamSlots.find((s) => s.subTeamId === teamId)?.subTeamLabel ?? teamId;
       columns.push({
         header: label,
-        build: (timeNum) => {
+        namesAt: (timeNum) => {
           const atTime = teamTasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
-          const names = atTime
-            .flatMap((tk) =>
-              getTaskAssignments(tk, schedule)
-                .filter((s) => s.slot.subTeamId === teamId && s.participant)
-                .map((s) => rtl(s.participant!.name)),
-            )
-            .join('\n\n');
-          return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
+          return atTime.flatMap((tk) =>
+            getTaskAssignments(tk, schedule)
+              .filter((s) => s.slot.subTeamId === teamId && s.participant)
+              .map((s) => rtl(s.participant!.name)),
+          );
         },
+        colorAt: (timeNum) =>
+          teamTasks.find((tk) => new Date(tk.timeBlock.start).getTime() === timeNum)?.color || '#7f8c8d',
       });
     }
   } else if (hasSubTeams) {
@@ -307,10 +245,9 @@ function renderSectionTablePdf(
       }
     }
 
-    const categoryLabel = region.label;
+    const categoryLabel = section.title;
     for (let i = 0; i < subTeamIds.length; i++) {
       const stId = subTeamIds[i];
-      // Try to find a label from slot metadata
       let label: string | undefined;
       for (const t of tasks) {
         const sample = t.slots.find((s) => (s.subTeamId ?? '') === stId);
@@ -326,72 +263,214 @@ function renderSectionTablePdf(
       const capturedStId = stId;
       columns.push({
         header: label,
-        build: (timeNum) => {
+        namesAt: (timeNum) => {
           const atTime = tasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
-          const names = atTime
-            .flatMap((tk) =>
-              getTaskAssignments(tk, schedule)
-                .filter((s) => (s.slot.subTeamId ?? '') === capturedStId && s.participant)
-                .map((s) => rtl(s.participant!.name)),
-            )
-            .join('\n\n');
-          return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
+          return atTime.flatMap((tk) =>
+            getTaskAssignments(tk, schedule)
+              .filter((s) => (s.slot.subTeamId ?? '') === capturedStId && s.participant)
+              .map((s) => rtl(s.participant!.name)),
+          );
         },
+        colorAt: (timeNum) =>
+          tasks.find((tk) => new Date(tk.timeBlock.start).getTime() === timeNum)?.color || '#7f8c8d',
       });
     }
   } else {
     // ── Flat strategy ──
     columns.push({
-      header: region.label,
-      build: (timeNum) => {
+      header: section.title,
+      namesAt: (timeNum) => {
         const atTime = tasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
-        const names = atTime
-          .flatMap((tk) =>
-            getTaskAssignments(tk, schedule)
-              .filter((s) => s.participant)
-              .map((s) => rtl(s.participant!.name)),
-          )
-          .join('\n\n');
-        return { content: names || '—', color: atTime[0]?.color || '#7f8c8d' };
+        return atTime.flatMap((tk) =>
+          getTaskAssignments(tk, schedule)
+            .filter((s) => s.participant)
+            .map((s) => rtl(s.participant!.name)),
+        );
       },
+      colorAt: (timeNum) => tasks.find((tk) => new Date(tk.timeBlock.start).getTime() === timeNum)?.color || '#7f8c8d',
     });
   }
 
+  return columns;
+}
+
+// ─── Fit-to-page Layout Planning ─────────────────────────────────────────────
+
+/** A positioned, reshape-resolved section ready to render. */
+interface RenderRegion {
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  columns: LogicalColumn[];
+  uniqueTimes: number[];
+  /** Name sub-columns this section is split into (≥ 1). */
+  nameCols: number;
+}
+
+interface DayLayout {
+  rows: { row: number; regions: RenderRegion[] }[];
+  fontSize: number;
+  cellPadding: number;
+  /** 1-indexed layout rows that must start a new page (overflow only). */
+  pageBreakRows: number[];
+}
+
+/**
+ * Build the one-page layout for a day: section grouping/order from the shared
+ * layout-engine, then the pure fit planner decides reshaping + scaling so the
+ * whole day fits a single page.
+ */
+function planDayLayoutForPdf(
+  dayTasks: Task[],
+  schedule: Schedule,
+  pageW: number,
+  pageH: number,
+  topY: number,
+): DayLayout | null {
+  const sections = computeSectionMetrics(dayTasks);
+  if (sections.length === 0) return null;
+
+  const template = generateGridTemplate(assignRows(sections));
+  const placementMap = new Map(template.placements.map((p) => [p.sectionId, p]));
+
+  const meta = new Map<string, { section: SectionMetrics; columns: LogicalColumn[]; uniqueTimes: number[] }>();
+  const descriptors: SectionDescriptor[] = [];
+  const initialPlacements: InitialPlacement[] = [];
+
+  for (const section of sections) {
+    const placement = placementMap.get(section.id);
+    if (!placement) continue;
+    const columns = buildLogicalColumns(section, schedule);
+    if (columns.length === 0) continue;
+    const uniqueTimes = getUniqueStartTimes(section.tasks);
+    meta.set(section.id, { section, columns, uniqueTimes });
+    descriptors.push({
+      id: section.id,
+      displayOrder: section.displayOrder,
+      logicalColCount: columns.length,
+      nameGrid: uniqueTimes.map((tn) => columns.map((c) => c.namesAt(tn).length)),
+    });
+    initialPlacements.push({
+      sectionId: section.id,
+      row: placement.row,
+      colStart: placement.colStart,
+      colSpan: placement.colSpan,
+    });
+  }
+  if (descriptors.length === 0) return null;
+
+  const usableWidth = pageW - 2 * PAGE_MARGIN;
+  const unitWidth = usableWidth / GRID_UNITS;
+  const geometry: PageGeometry = {
+    usableWidth,
+    heightBudget: pageH - PAGE_MARGIN - topY,
+    labelOffset: TABLE_LABEL_OFFSET,
+    rowGap: ROW_GAP,
+    colGapHalf: COL_GAP / 2,
+    timeColWidth: TIME_COL_W,
+    minNameColWidth: MIN_NAME_COL_W,
+    gridUnits: GRID_UNITS,
+  };
+
+  const plan = planDayLayout({ sections: descriptors, initialPlacements, geometry, levers: DEFAULT_LEVERS });
+
+  const rowMap = new Map<number, RenderRegion[]>();
+  for (const ps of plan.sections) {
+    const m = meta.get(ps.id);
+    if (!m) continue;
+    // RTL placement: grid column 1 is rightmost (same maths as the legacy grid).
+    const x = pageW - PAGE_MARGIN - (ps.colStart - 1 + ps.colSpan) * unitWidth;
+    const region: RenderRegion = {
+      label: m.section.title,
+      x,
+      y: topY,
+      width: ps.width,
+      columns: m.columns,
+      uniqueTimes: m.uniqueTimes,
+      nameCols: Math.max(1, ps.nameCols),
+    };
+    if (!rowMap.has(ps.row)) rowMap.set(ps.row, []);
+    rowMap.get(ps.row)!.push(region);
+  }
+
+  const rows = [...rowMap.keys()].sort((a, b) => a - b).map((row) => ({ row, regions: rowMap.get(row)! }));
+
+  return { rows, fontSize: plan.fontSize, cellPadding: plan.cellPadding, pageBreakRows: plan.pageBreakRows };
+}
+
+// ─── Unified PDF Section Table Renderer ─────────────────────────────────────
+
+const emptyCellStyle = {
+  halign: 'center' as const,
+  textColor: [190, 190, 190] as [number, number, number],
+};
+const filledCellStyle = (hexColor: string) => ({
+  halign: 'center' as const,
+  fillColor: tint(hexColor) as [number, number, number],
+});
+
+/**
+ * Render one section's table. Each logical column is expanded into `nameCols`
+ * physical sub-columns; that cell's names are distributed column-major
+ * (top-to-bottom, then next sub-column) so the cell is ⌈N / nameCols⌉ lines
+ * tall instead of N. The logical header spans its sub-columns. Returns finalY.
+ */
+function renderSectionTablePdf(
+  doc: jsPDF,
+  columns: LogicalColumn[],
+  uniqueTimes: number[],
+  region: { label: string; x: number; y: number; width: number },
+  opts: { fontSize: number; cellPadding: number; nameCols: number },
+): number {
   if (columns.length === 0) return region.y;
+  const nameCols = Math.max(1, opts.nameCols);
 
-  const uniqueTimes = getUniqueStartTimes(tasks);
+  // Section label
+  doc.setFontSize(opts.fontSize);
+  doc.setTextColor(80, 80, 80);
+  doc.text(rtl(region.label), region.x + region.width - 1, region.y, { align: 'right' });
+  const tableY = region.y + TABLE_LABEL_OFFSET;
 
-  // Build header (data columns + time column rightmost)
+  // Header: one cell per logical column spanning its sub-columns + time column.
   const head: CellDef[] = [
-    ...columns.map((c) => ({ content: rtl(c.header), styles: { halign: 'center' as const } })),
-    { content: rtl('זמן'), styles: { halign: 'center' as const } },
+    ...columns.map(
+      (c) => ({ content: rtl(c.header), colSpan: nameCols, styles: { halign: 'center' as const } }) as CellDef,
+    ),
+    { content: rtl('זמן'), styles: { halign: 'center' as const } } as CellDef,
   ];
 
-  const emptyStyle = { halign: 'center' as const, textColor: [190, 190, 190] as [number, number, number] };
-  const filledStyle = (hexColor: string) => ({
-    halign: 'center' as const,
-    fillColor: tint(hexColor) as [number, number, number],
-  });
-
   const body: CellDef[][] = uniqueTimes.map((timeNum) => {
-    const time = new Date(timeNum);
-    const cells: CellDef[] = columns.map((col) => {
-      const { content, color: cellColor } = col.build(timeNum);
-      return { content, styles: content === '—' ? emptyStyle : filledStyle(cellColor) };
-    });
-    cells.push({ content: fmtTime(time), styles: { halign: 'center' as const } });
+    const cells: CellDef[] = [];
+    for (const col of columns) {
+      const names = col.namesAt(timeNum);
+      if (names.length === 0) {
+        // Genuinely unfilled — show one "—" marker, rest blank.
+        for (let j = 0; j < nameCols; j++) {
+          cells.push({ content: j === 0 ? '—' : '', styles: emptyCellStyle } as CellDef);
+        }
+      } else {
+        const color = col.colorAt(timeNum);
+        const perCol = Math.ceil(names.length / nameCols);
+        for (let j = 0; j < nameCols; j++) {
+          const bucket = names.slice(j * perCol, (j + 1) * perCol).join('\n');
+          cells.push({ content: bucket, styles: filledCellStyle(color) } as CellDef);
+        }
+      }
+    }
+    cells.push({ content: fmtTime(new Date(timeNum)), styles: { halign: 'center' as const } } as CellDef);
     return cells;
   });
 
-  // Column widths: time col = 14mm, data cols share the rest
-  const timeW = 14;
-  const dataColW = columns.length > 0 ? (region.width - timeW) / columns.length : region.width - timeW;
+  // Column widths: time col fixed, the rest split evenly across all sub-columns.
+  const physicalDataCols = columns.length * nameCols;
+  const subColW = (region.width - TIME_COL_W) / physicalDataCols;
   const colStyles: Record<number, Partial<{ cellWidth: number }>> = {};
-  for (let i = 0; i < columns.length; i++) colStyles[i] = { cellWidth: dataColW };
-  colStyles[columns.length] = { cellWidth: timeW };
+  for (let i = 0; i < physicalDataCols; i++) colStyles[i] = { cellWidth: subColW };
+  colStyles[physicalDataCols] = { cellWidth: TIME_COL_W };
 
   const tableOpts = {
-    ...tblDefaults(doc, tableY, fontSize),
+    ...tblDefaults(tableY, opts.fontSize, opts.cellPadding),
     head: [head],
     body,
     tableWidth: region.width,
@@ -407,50 +486,11 @@ function renderSectionTablePdf(
 // ─── Daily Detail Export (Grid Layout) ───────────────────────────────────────
 
 /**
- * Smart font-size selection based on schedule density.
- *
- * Considers three dimensions:
- *  1. Max time-rows in any single category (vertical pressure)
- *  2. Max names per cell — i.e. max slot count per task (cell-height pressure)
- *  3. Total unique participants assigned this day (overall density signal)
- *
- * Returns a value between 6 and 9 that keeps the layout compact.
- */
-function chooseFontSize(dayTasks: Task[], schedule: Schedule): number {
-  // Group tasks by type to measure density
-  const tasksByType = new Map<string, Task[]>();
-  for (const tk of dayTasks) {
-    const key = tk.sourceName || tk.name;
-    if (!tasksByType.has(key)) tasksByType.set(key, []);
-    tasksByType.get(key)!.push(tk);
-  }
-
-  let maxRows = 0;
-  let maxSlotsPerCell = 1;
-  for (const [, tasks] of tasksByType) {
-    if (tasks.length === 0) continue;
-    maxRows = Math.max(maxRows, getUniqueStartTimes(tasks).length);
-    for (const tk of tasks) {
-      maxSlotsPerCell = Math.max(maxSlotsPerCell, tk.slots.length);
-    }
-  }
-
-  const dayTaskIds = new Set(dayTasks.map((t) => t.id));
-  const dayAssignments = schedule.assignments.filter((a) => dayTaskIds.has(a.taskId));
-  const uniqueParticipants = new Set(dayAssignments.map((a) => a.participantId)).size;
-
-  let size = 9;
-  if (maxRows > 6 || uniqueParticipants > 30) size = Math.min(size, 8);
-  if (maxRows > 8 || uniqueParticipants > 45 || maxSlotsPerCell > 4) size = Math.min(size, 7);
-  if (maxRows > 10 || uniqueParticipants > 60) size = Math.min(size, 6);
-
-  return size;
-}
-
-/**
- * Render a single day's schedule onto the current page using the smart
- * layout engine for spatial arrangement. Sections are packed into balanced
- * rows with proportional widths — the same algorithm as the on-screen grid.
+ * Render a single day's schedule using the fit planner for spatial
+ * arrangement, scaling, and multi-name-column reshaping. The day is guaranteed
+ * to occupy exactly one page unless it is genuinely degenerate (more time-rows
+ * than physically fit at the floor config), in which case it breaks only at
+ * whole layout-row boundaries.
  */
 function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStartHour: number = 5): void {
   // Day 0 (continuity context): mark the title clearly so the printed page
@@ -461,7 +501,7 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStar
 
   const titleMain = isDay0 ? 'יום 0 — הקשר' : `יום ${dayIndex}`;
   const titleSub = isDay0 ? 'מהשבצ"ק הקודם · קריאה בלבד' : `מתוך ${numDays}`;
-  const topY = drawTitle(doc, titleMain, titleSub);
+  let topY = drawTitle(doc, titleMain, titleSub);
 
   const dayTasks = getTasksForDay(schedule, dayIndex, dayStartHour);
   if (dayTasks.length === 0) {
@@ -472,19 +512,31 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStar
   }
 
   const pageW = doc.internal.pageSize.getWidth();
-  const fontSize = chooseFontSize(dayTasks, schedule);
-  const { rows } = computeGridLayoutSmart(dayTasks, pageW, topY);
+  const pageH = doc.internal.pageSize.getHeight();
+  const layout = planDayLayoutForPdf(dayTasks, schedule, pageW, pageH, topY);
+  if (!layout) return;
 
-  // Render rows top-to-bottom; within each row, render sections side-by-side
+  const breakRows = new Set(layout.pageBreakRows);
   let currentY = topY;
-  for (const rowRegions of rows) {
+  let firstRow = true;
+  for (const { row, regions } of layout.rows) {
+    if (!firstRow && breakRows.has(row)) {
+      doc.addPage();
+      topY = drawTitle(doc, titleMain, `${titleSub} · המשך`);
+      currentY = topY;
+    }
     let rowBottomY = currentY;
-    for (const region of rowRegions) {
+    for (const region of regions) {
       region.y = currentY;
-      const bottomY = renderSectionTablePdf(doc, region.tasks, schedule, region, fontSize);
+      const bottomY = renderSectionTablePdf(doc, region.columns, region.uniqueTimes, region, {
+        fontSize: layout.fontSize,
+        cellPadding: layout.cellPadding,
+        nameCols: region.nameCols,
+      });
       rowBottomY = Math.max(rowBottomY, bottomY);
     }
     currentY = rowBottomY + ROW_GAP;
+    firstRow = false;
   }
 }
 
@@ -556,30 +608,70 @@ async function loadPdfjs() {
   return pdfjs;
 }
 
-/** Rasterise page 1 of a PDF blob to an opaque-white PNG blob. */
-async function rasterizeFirstPageToPng(pdfBlob: Blob): Promise<Blob> {
+/** Canvas → opaque-white PNG blob. */
+function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))), 'image/png'),
+  );
+}
+
+/** Render one PDF page to an opaque-white canvas at the target raster width. */
+async function renderPageToCanvas(
+  pdf: { getPage: (n: number) => Promise<any> },
+  pageNum: number,
+): Promise<HTMLCanvasElement> {
+  const page = await pdf.getPage(pageNum);
+  const baseViewport = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: RASTER_TARGET_PX / baseViewport.width });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('2D canvas context unavailable');
+  // PDF pages have no background — fill white so the PNG is opaque (no
+  // transparent halo in chat thumbnails).
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport, background: '#ffffff' }).promise;
+  return canvas;
+}
+
+/**
+ * Rasterise EVERY page of a PDF blob to a single opaque-white PNG. Normally the
+ * day fits one page (the fit planner guarantees it), so this is a single page;
+ * if a genuinely degenerate day spilled onto extra pages they are stacked
+ * vertically into one tall image so the share/download never silently drops
+ * content.
+ */
+async function rasterizeAllPagesToPng(pdfBlob: Blob): Promise<Blob> {
   const data = new Uint8Array(await pdfBlob.arrayBuffer());
   const pdfjs = await loadPdfjs();
   // Embedded Rubik font + no CID/standard fonts ⇒ no cMap/standardFont assets
   // needed ⇒ fully offline / file:// safe.
   const pdf = await pdfjs.getDocument({ data }).promise;
   try {
-    const page = await pdf.getPage(1);
-    const baseViewport = page.getViewport({ scale: 1 });
-    const viewport = page.getViewport({ scale: RASTER_TARGET_PX / baseViewport.width });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2D canvas context unavailable');
-    // PDF pages have no background — fill white so the PNG is opaque (no
-    // transparent halo in chat thumbnails).
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvasContext: ctx, viewport, background: '#ffffff' }).promise;
-    return await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))), 'image/png'),
-    );
+    const pageCount = pdf.numPages;
+    const canvases: HTMLCanvasElement[] = [];
+    for (let i = 1; i <= pageCount; i++) {
+      canvases.push(await renderPageToCanvas(pdf, i));
+    }
+    if (canvases.length === 1) return await canvasToPng(canvases[0]);
+
+    const maxW = Math.max(...canvases.map((c) => c.width));
+    const totalH = canvases.reduce((sum, c) => sum + c.height, 0);
+    const combined = document.createElement('canvas');
+    combined.width = maxW;
+    combined.height = totalH;
+    const g = combined.getContext('2d');
+    if (!g) throw new Error('2D canvas context unavailable');
+    g.fillStyle = '#ffffff';
+    g.fillRect(0, 0, combined.width, combined.height);
+    let y = 0;
+    for (const c of canvases) {
+      g.drawImage(c, 0, y);
+      y += c.height;
+    }
+    return await canvasToPng(combined);
   } finally {
     pdf.cleanup();
     await pdf.destroy();
@@ -596,7 +688,7 @@ async function rasterizeFirstPageToPng(pdfBlob: Blob): Promise<Blob> {
  */
 export async function exportDailyImage(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): Promise<void> {
   const { doc, stem } = buildDailyDoc(schedule, dayIndex, dayStartHour);
-  const png = await rasterizeFirstPageToPng(doc.output('blob'));
+  const png = await rasterizeAllPagesToPng(doc.output('blob'));
   await triggerShareOrDownload(png, `${stem}.png`, 'image/png');
 }
 
