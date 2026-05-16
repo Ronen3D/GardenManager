@@ -24,6 +24,7 @@ import {
 import { detectStale } from '../shared/utils/load-formula';
 import { initAddTemplateModal, openAddTemplateModal } from './add-template-modal';
 import * as store from './config-store';
+import { closeGroupedSlotEdit, initGroupedSlotEdit, openGroupedSlotEdit } from './grouped-slot-edit';
 import { initLoadFormulaModal, openLoadFormulaModal } from './load-formula-modal';
 import { runPreflight } from './preflight';
 import { escHtml, SVG_ICONS } from './ui-helpers';
@@ -541,6 +542,7 @@ export function resetTaskRulesTabViewState(): void {
   _taskSetFormMode = 'none';
   _taskSetFormError = '';
   _taskSetRenameTargetId = null;
+  closeGroupedSlotEdit();
 }
 
 // ─── Render ──────────────────────────────────────────────────────────────────
@@ -843,7 +845,11 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
 
     // Top-level slots
     if (tpl.slots.length > 0 || tpl.subTeams.length === 0) {
-      html += `<h4 style="margin:12px 0 8px;">משבצות${tpl.subTeams.length > 0 ? ' נוספות' : ''}</h4>`;
+      html += `<h4 style="margin:12px 0 8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">משבצות${tpl.subTeams.length > 0 ? ' נוספות' : ''}${
+        tpl.slots.length > 0
+          ? `<button class="btn-sm btn-outline" data-action="grouped-slot-edit" data-tid="${tpl.id}">✎ עריכה קבוצתית</button>`
+          : ''
+      }</h4>`;
       html += renderSlotTable(tpl.id, tpl.slots, undefined, pf);
     }
 
@@ -1119,6 +1125,7 @@ function renderSubTeam(
       <strong>${escHtml(st.name)}</strong>
       <span class="text-muted">(${st.slots.length} משבצות)</span>
       <button class="btn-sm btn-outline" data-action="add-slot-subteam" ${idAttr} data-stid="${st.id}">+ משבצת</button>
+      ${st.slots.length > 0 ? `<button class="btn-sm btn-outline" data-action="grouped-slot-edit" ${idAttr} data-stid="${st.id}">✎ עריכה קבוצתית</button>` : ''}
       <button class="btn-sm btn-danger-outline" data-action="remove-subteam" ${idAttr} data-stid="${st.id}">✕</button>
     </div>`;
 
@@ -1451,7 +1458,11 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
 
     // Top-level slots
     if (ot.slots.length > 0 || ot.subTeams.length === 0) {
-      html += `<h4 style="margin:12px 0 8px;">משבצות${ot.subTeams.length > 0 ? ' נוספות' : ''}</h4>`;
+      html += `<h4 style="margin:12px 0 8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">משבצות${ot.subTeams.length > 0 ? ' נוספות' : ''}${
+        ot.slots.length > 0
+          ? `<button class="btn-sm btn-outline" data-action="grouped-slot-edit" data-ot-id="${ot.id}">✎ עריכה קבוצתית</button>`
+          : ''
+      }</h4>`;
       html += renderSlotTable(ot.id, ot.slots, undefined, pf, { isOneTime: true });
     }
 
@@ -1800,6 +1811,7 @@ function autoSaveRerender(rerender: () => void, flashSelector?: string | null): 
 export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void): void {
   initLoadFormulaModal({ onChanged: rerender });
   initAddTemplateModal({ onCreated: rerender });
+  initGroupedSlotEdit({ rerender });
 
   container.addEventListener('input', (e) => {
     const target = e.target as HTMLInputElement;
@@ -2432,6 +2444,22 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           store.removeSlotFromTemplate(tidRs, slotId);
         }
         rerender();
+        break;
+      }
+      case 'grouped-slot-edit': {
+        const otIdGse = actionButton?.dataset.otId;
+        const tidGse = otIdGse || actionButton?.dataset.tid!;
+        const stidGse = actionButton?.dataset.stid;
+        if (editingSlot || addingSlotTo) {
+          editingSlot = null;
+          addingSlotTo = null;
+          rerender();
+        }
+        openGroupedSlotEdit({
+          kind: otIdGse ? 'ot' : 'tpl',
+          id: tidGse,
+          subTeamId: stidGse,
+        });
         break;
       }
       case 'remove-template': {

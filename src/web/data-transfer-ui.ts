@@ -32,7 +32,7 @@ function renderInstallNudge(): string {
   if (!installNudgeShouldShow()) return '';
   return `
     <div class="transfer-install-nudge">
-      <span class="transfer-install-nudge-text">📲 התקן את האפליקציה כדי לפתוח קבצים מיוצאים ישירות דרך "שיתוף"</span>
+      <span class="transfer-install-nudge-text">📲 התקן את האפליקציה כדי לפתוח קבצים ישירות דרך "שיתוף"</span>
       <span class="transfer-install-nudge-actions">
         <button class="transfer-install-nudge-btn" data-action="install-pwa">התקן</button>
         <button class="transfer-install-nudge-x" data-action="install-nudge-dismiss" aria-label="סגור">✕</button>

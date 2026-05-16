@@ -7,6 +7,12 @@
  */
 
 import {
+  applyGroupedPatchToSlot,
+  type GroupedConflict,
+  type GroupedSlotEdit,
+  validateGroupedApply,
+} from '../models/grouped-slot-edit';
+import {
   type AlgorithmPreset,
   type AlgorithmSettings,
   type AvailabilityWindow,
@@ -1809,6 +1815,66 @@ export function updateSlotInOneTimeSubTeam(otId: string, subTeamId: string, slot
   const st = ot.subTeams.find((s) => s.id === subTeamId);
   if (!st) return;
   replaceSlotIfExists(st.slots, slotId, patch);
+}
+
+export type GroupedSlotScope = { kind: 'tpl' | 'ot'; id: string; subTeamId?: string };
+
+/** Resolve the live SlotTemplate[] a grouped-edit scope points at, or undefined. */
+function resolveGroupedScopeArray(scope: GroupedSlotScope): SlotTemplate[] | undefined {
+  const owner = scope.kind === 'tpl' ? taskTemplates.get(scope.id) : oneTimeTasks.get(scope.id);
+  if (!owner) return undefined;
+  if (scope.subTeamId) {
+    return owner.subTeams.find((s) => s.id === scope.subTeamId)?.slots;
+  }
+  return owner.slots;
+}
+
+/** Read-only view of a grouped-edit scope: its slots + display names. */
+export function getGroupedSlotScopeView(
+  scope: GroupedSlotScope,
+): { slots: SlotTemplate[]; ownerName: string; subTeamName?: string } | undefined {
+  const owner = scope.kind === 'tpl' ? taskTemplates.get(scope.id) : oneTimeTasks.get(scope.id);
+  if (!owner) return undefined;
+  if (scope.subTeamId) {
+    const st = owner.subTeams.find((s) => s.id === scope.subTeamId);
+    if (!st) return undefined;
+    return { slots: st.slots.map((s) => ({ ...s })), ownerName: owner.name, subTeamName: st.name };
+  }
+  return { slots: owner.slots.map((s) => ({ ...s })), ownerName: owner.name };
+}
+
+/**
+ * Apply a grouped edit to every slot in one scope (a task/one-time-task's
+ * top-level slots, or one sub-team's slots) as a single undo-able action.
+ *
+ * Validates first (dry-run): if any slot would end with no levels or a
+ * required/forbidden cert overlap, NOTHING is mutated and the offending slots
+ * are returned. If the patch is a no-op (`changed === 0`) no snapshot is pushed
+ * and no listeners are notified (avoids a spurious undo entry / dirty toggle).
+ * Otherwise a single `pushSnapshot()` + single `notify()` wrap the whole batch.
+ */
+export function applyGroupedSlotEdit(
+  scope: GroupedSlotScope,
+  patch: GroupedSlotEdit,
+): { ok: true; changed: number } | { ok: false; offending: GroupedConflict[] } {
+  const arr = resolveGroupedScopeArray(scope);
+  if (!arr || arr.length === 0) return { ok: true, changed: 0 };
+
+  const v = validateGroupedApply(arr, patch);
+  if (!v.ok) return { ok: false, offending: v.offending };
+  if (v.changed === 0) return { ok: true, changed: 0 };
+
+  pushSnapshot();
+  _suppressSnapshot = true;
+  try {
+    for (let i = 0; i < arr.length; i++) {
+      arr[i] = applyGroupedPatchToSlot(arr[i], patch);
+    }
+  } finally {
+    _suppressSnapshot = false;
+  }
+  notify();
+  return { ok: true, changed: v.changed };
 }
 
 // ─── Seed Default Data ───────────────────────────────────────────────────────

@@ -15,6 +15,8 @@
 
 import { type PreflightResult, PreflightSeverity, type Schedule, ViolationSeverity } from '../models/types';
 import * as store from './config-store';
+import { homeInstallBannerMode } from './pwa-install';
+import { isSmallScreen } from './responsive';
 import { filterVisibleViolations } from './schedule-utils';
 import { escHtml, SVG_ICONS } from './ui-helpers';
 
@@ -42,6 +44,10 @@ export interface HomeTabCallbacks {
   onHelp(): void;
   /** Dismiss the first-run welcome ("אולי אחר כך"). */
   onDismissWelcome(): void;
+  /** Trigger the native PWA install prompt (Android/Chromium banner only). */
+  onInstall(): void;
+  /** Permanently dismiss the install banner ("✕"). */
+  onDismissInstall(): void;
 }
 
 const QUICK_LINKS: { target: HomeNavTarget; icon: string; label: string }[] = [
@@ -147,6 +153,35 @@ function renderGuide(preflight: PreflightResult): string {
   </div>`;
 }
 
+/**
+ * Mobile-only PWA install nudge. Deliberately the *last* element of Home: a
+ * calm footer-style hint that never displaces the status/CTA and never stacks
+ * with the first-run welcome at the top. Android/Chromium gets a one-tap
+ * native install button; iOS Safari gets the manual Share → Add to Home
+ * Screen instruction (no programmatic prompt exists there). Hidden on desktop
+ * and once installed/dismissed (see homeInstallBannerMode).
+ */
+function renderHomeInstallBanner(): string {
+  if (!isSmallScreen) return '';
+  const mode = homeInstallBannerMode();
+  if (!mode) return '';
+  const dismiss = `<button type="button" class="home-install-x" data-action="dismiss-install" aria-label="סגור">✕</button>`;
+  if (mode === 'android') {
+    return `<div class="home-install-banner" role="note">
+      <span class="home-install-text">📲 התקינו את האפליקציה למסך הבית — גישה מהירה וגם בלי חיבור לאינטרנט</span>
+      <span class="home-install-actions">
+        <button type="button" class="home-install-btn" data-action="install-app">התקן</button>
+        ${dismiss}
+      </span>
+    </div>`;
+  }
+  // iOS — no programmatic prompt; show the manual gesture instead.
+  return `<div class="home-install-banner" role="note">
+    <span class="home-install-text">📲 להתקנה למסך הבית: הקישו על ⬆️ "שיתוף" ואז "הוסף למסך הבית"</span>
+    <span class="home-install-actions">${dismiss}</span>
+  </div>`;
+}
+
 export function renderHomeTab(ctx: HomeTabContext): string {
   const { schedule, scheduleDirty, preflight, firstRun } = ctx;
   const partCount = store.getAllParticipants().length;
@@ -229,6 +264,8 @@ export function renderHomeTab(ctx: HomeTabContext): string {
 
       <nav class="home-links" aria-label="ניווט מהיר">${links}</nav>
     </div>
+
+    ${renderHomeInstallBanner()}
   </div>`;
 }
 
@@ -243,6 +280,8 @@ export function wireHomeEvents(container: HTMLElement, cb: HomeTabCallbacks): vo
       else if (action === 'fix-participants') cb.onNavigate('participants');
       else if (action === 'help') cb.onHelp();
       else if (action === 'dismiss-welcome') cb.onDismissWelcome();
+      else if (action === 'install-app') cb.onInstall();
+      else if (action === 'dismiss-install') cb.onDismissInstall();
       else if (action.startsWith('nav-')) cb.onNavigate(action.slice(4) as HomeNavTarget);
     });
   });

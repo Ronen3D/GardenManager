@@ -77,7 +77,7 @@ import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportDailyImage, exportWeeklyOverview } from './pdf-export';
 import { type PointInTimeContext, renderPointInTimeView, wirePointInTimeEvents } from './point-in-time-view';
 import { runPreflight } from './preflight';
-import { initPwaInstallCapture } from './pwa-install';
+import { initPwaInstallCapture, markHomeInstallSeen, runInstallPrompt } from './pwa-install';
 import { showRangePicker } from './range-picker-modal';
 import { closeRescueModal, initRescue, openRescueModal } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice, onSmallScreenChange } from './responsive';
@@ -4628,7 +4628,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.7</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4735,6 +4735,17 @@ function renderAll(): void {
       onHelp: () => void startTutorial('full-tour', tutorialContext),
       onDismissWelcome: () => {
         markBannerDismissed();
+        renderAll();
+      },
+      onInstall: () => {
+        // Mark seen first so the immediate re-render drops the banner
+        // regardless of the (async) native prompt's outcome.
+        markHomeInstallSeen();
+        void runInstallPrompt();
+        renderAll();
+      },
+      onDismissInstall: () => {
+        markHomeInstallSeen();
         renderAll();
       },
     });

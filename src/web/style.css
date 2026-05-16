@@ -2575,6 +2575,72 @@ select.input-sm {
   gap: 8px;
 }
 
+/* ─── Mobile install banner ──────────────────────────────────────────────
+   A calm footer-style hint at the very bottom of Home (see
+   tab-home.ts:renderHomeInstallBanner). Same subtle green-tinted language as
+   the Settings share-target nudge (.transfer-install-nudge), tuned as an
+   unobtrusive closing note rather than a call-out. */
+.home-install-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 2px;
+  padding: 12px 14px;
+  border: 1px solid rgba(39, 174, 96, 0.28);
+  border-radius: var(--radius);
+  background: rgba(39, 174, 96, 0.09);
+  color: var(--text);
+}
+
+.home-install-text {
+  flex: 1 1 200px;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.home-install-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.home-install-btn {
+  padding: 0.4rem 0.95rem;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--success, #1d9050);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.home-install-btn:hover {
+  filter: brightness(1.1);
+}
+
+.home-install-x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted, #888);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.home-install-x:hover {
+  background: var(--bg-hover, #2a2a2a);
+  color: var(--text, #e0e0e0);
+}
+
 /* Phone / tablet (≤1024 — the priority): the rail is transparent so its
    children flow as direct items of the .home flex column, exactly as a plain
    single-column stack. Desktop overrides this below. */
@@ -10991,6 +11057,15 @@ tr.now-row-animate > td.time-cell {
   animation: gmSelectOpen 0.15s ease;
 }
 
+/* While open the dropdown is portaled to <body>, so its base z-index (60)
+   would sit *behind* any modal that triggered it (e.g. the export modal at
+   z-index 9999) — rendering it visible but unclickable. As the actively-open,
+   user-driven popup it must be the topmost interactive layer; lift it above
+   every overlay (max in-app z-index is 100000). */
+.gm-select-dropdown.gm-select-dropdown--open {
+  z-index: 100001;
+}
+
 @keyframes gmSelectOpen {
   from {
     opacity: 0;
@@ -16629,4 +16704,137 @@ tr.now-row-animate > td.time-cell {
   .pit-row-name {
     font-size: 0.76rem;
   }
+}
+
+/* ─── Grouped Slot Edit (bottom sheet) ─────────────────────────────── */
+.gse-summary {
+  font-size: 0.82rem;
+  color: var(--text-muted, #888);
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+.gse-section {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-light, #eee);
+}
+.gse-section:last-of-type {
+  border-bottom: none;
+}
+.gse-section-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 8px;
+}
+.gse-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.gse-legend {
+  font-size: 0.74rem;
+  color: var(--text-muted, #999);
+  margin-top: 6px;
+}
+
+/* Level control: 4-state off → normal → low → mixed */
+.gse-lvl {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  min-height: 38px;
+  border-radius: 12px;
+  border: 2px solid var(--border, #d0d0d0);
+  background: transparent;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    opacity 0.15s,
+    border-color 0.15s;
+}
+.gse-lvl[data-state="off"] {
+  opacity: 0.35;
+}
+.gse-lvl[data-state="normal"] {
+  border-color: var(--accent, #3498db);
+}
+.gse-lvl[data-state="low"] {
+  border-color: #e67e22;
+}
+.gse-lvl[data-state="mixed"] {
+  border-style: dashed;
+  border-color: var(--text-muted, #999);
+}
+.gse-lvl .badge {
+  pointer-events: none;
+}
+.gse-lvl-off {
+  color: var(--text-muted, #888);
+  font-size: 0.82rem;
+}
+.gse-lp {
+  color: #e67e22;
+  font-size: 0.72rem;
+  margin-inline-start: 2px;
+  pointer-events: none;
+}
+.gse-mixed-mark {
+  color: var(--text-muted, #999);
+  font-size: 0.85rem;
+  margin-inline-start: 4px;
+  pointer-events: none;
+}
+
+/* Cert control: 3-state on → off → mixed */
+.gse-cert {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  min-height: 38px;
+  border-radius: 8px;
+  border: 2px solid var(--border, #d0d0d0);
+  background: var(--bg-card, #fff);
+  color: var(--text, #222);
+  cursor: pointer;
+  font-size: 0.85rem;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
+}
+.gse-cert-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+.gse-cert[data-state="on"] {
+  border-color: var(--accent, #3498db);
+  background: color-mix(in srgb, var(--accent, #3498db) 14%, transparent);
+}
+.gse-cert[data-state="off"] {
+  opacity: 0.45;
+}
+.gse-cert[data-state="mixed"] {
+  border-style: dashed;
+  border-color: var(--text-muted, #999);
+}
+.gse-cert > * {
+  pointer-events: none;
+}
+
+.gse-error {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger, #c0392b) 12%, transparent);
+  color: var(--danger, #c0392b);
+  font-size: 0.84rem;
+  line-height: 1.6;
 }

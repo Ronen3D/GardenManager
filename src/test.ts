@@ -15370,6 +15370,148 @@ async function runContinuationTests(): Promise<void> {
   }
 }
 
+// ─── Grouped slot edit (src/models/grouped-slot-edit.ts) ────────────────────
+
+import {
+  applyGroupedPatchToSlot,
+  computeCertAggregate,
+  computeLevelAggregate,
+  type GroupedSlotEdit,
+  validateGroupedApply,
+} from './models/grouped-slot-edit';
+import type { SlotTemplate } from './models/types';
+
+console.log('\n── Grouped slot edit ───────────────────');
+{
+  const mkSlot = (over: Partial<SlotTemplate> = {}): SlotTemplate => ({
+    id: over.id ?? 'gse-s',
+    label: over.label ?? 'משבצת',
+    acceptableLevels: over.acceptableLevels ?? [{ level: Level.L0 }],
+    requiredCertifications: over.requiredCertifications ?? [],
+    forbiddenCertifications: over.forbiddenCertifications,
+  });
+  const patch = (p: Partial<GroupedSlotEdit>): GroupedSlotEdit => ({
+    levels: p.levels ?? new Map(),
+    requiredCerts: p.requiredCerts ?? new Map(),
+    forbiddenCerts: p.forbiddenCerts ?? new Map(),
+  });
+
+  // computeLevelAggregate
+  const sNorm = mkSlot({ acceptableLevels: [{ level: Level.L0 }] });
+  const sNorm2 = mkSlot({ acceptableLevels: [{ level: Level.L0 }] });
+  const sLow = mkSlot({ acceptableLevels: [{ level: Level.L0, lowPriority: true }] });
+  const sNoL0 = mkSlot({ acceptableLevels: [{ level: Level.L2 }] });
+  assert(computeLevelAggregate([sNorm, sNorm2], Level.L0) === 'normal', 'gse-lvl: uniform normal → normal');
+  assert(computeLevelAggregate([sLow, sLow], Level.L0) === 'low', 'gse-lvl: uniform low → low');
+  assert(computeLevelAggregate([sNoL0, sNoL0], Level.L0) === 'off', 'gse-lvl: uniform absent → off');
+  assert(computeLevelAggregate([sNorm, sLow], Level.L0) === 'mixed', 'gse-lvl: normal+low → mixed');
+  assert(computeLevelAggregate([sNorm, sNoL0], Level.L0) === 'mixed', 'gse-lvl: present+absent → mixed');
+  assert(computeLevelAggregate([], Level.L0) === 'mixed', 'gse-lvl: empty group → mixed');
+
+  // computeCertAggregate
+  const sX = mkSlot({ requiredCertifications: ['X'] });
+  const sNoX = mkSlot({ requiredCertifications: [] });
+  assert(computeCertAggregate([sX, sX], 'X', 'required') === 'on', 'gse-cert: all present → on');
+  assert(computeCertAggregate([sNoX, sNoX], 'X', 'required') === 'off', 'gse-cert: none present → off');
+  assert(computeCertAggregate([sX, sNoX], 'X', 'required') === 'mixed', 'gse-cert: partial → mixed');
+  const sFbUndef = mkSlot({ forbiddenCertifications: undefined });
+  assert(
+    computeCertAggregate([sFbUndef, sFbUndef], 'X', 'forbidden') === 'off',
+    'gse-cert: undefined forbidden treated as empty → off',
+  );
+
+  // applyGroupedPatchToSlot
+  const onX = applyGroupedPatchToSlot(
+    mkSlot({ requiredCertifications: [] }),
+    patch({ requiredCerts: new Map([['X', true]]) }),
+  );
+  assert(onX.requiredCertifications.join(',') === 'X', 'gse-apply: ON adds cert');
+  const onXdup = applyGroupedPatchToSlot(
+    mkSlot({ requiredCertifications: ['X'] }),
+    patch({ requiredCerts: new Map([['X', true]]) }),
+  );
+  assert(onXdup.requiredCertifications.join(',') === 'X', 'gse-apply: ON is idempotent (no dup)');
+  const offX = applyGroupedPatchToSlot(
+    mkSlot({ requiredCertifications: ['X', 'Y'] }),
+    patch({ requiredCerts: new Map([['X', false]]) }),
+  );
+  assert(offX.requiredCertifications.join(',') === 'Y', 'gse-apply: OFF removes cert');
+  const untouched = applyGroupedPatchToSlot(mkSlot({ requiredCertifications: ['X'] }), patch({}));
+  assert(untouched.requiredCertifications.join(',') === 'X', 'gse-apply: MIXED (empty patch) leaves value');
+  const toNormal = applyGroupedPatchToSlot(
+    mkSlot({ acceptableLevels: [{ level: Level.L0, lowPriority: true }] }),
+    patch({ levels: new Map([[Level.L0, 'normal']]) }),
+  );
+  assert(
+    toNormal.acceptableLevels[0].level === Level.L0 && !toNormal.acceptableLevels[0].lowPriority,
+    'gse-apply: NORMAL clears lowPriority',
+  );
+  const toLow = applyGroupedPatchToSlot(
+    mkSlot({ acceptableLevels: [{ level: Level.L0 }] }),
+    patch({ levels: new Map([[Level.L0, 'low']]) }),
+  );
+  assert(toLow.acceptableLevels[0].lowPriority === true, 'gse-apply: LOW sets lowPriority');
+  const lvlOff = applyGroupedPatchToSlot(
+    mkSlot({ acceptableLevels: [{ level: Level.L0 }, { level: Level.L2 }] }),
+    patch({ levels: new Map([[Level.L0, 'off']]) }),
+  );
+  assert(
+    lvlOff.acceptableLevels.length === 1 && lvlOff.acceptableLevels[0].level === Level.L2,
+    'gse-apply: OFF removes the level entry',
+  );
+  const orphan = applyGroupedPatchToSlot(
+    mkSlot({ requiredCertifications: ['ORPHAN'] }),
+    patch({ requiredCerts: new Map([['X', true]]) }),
+  );
+  assert(
+    orphan.requiredCertifications.includes('ORPHAN') && orphan.requiredCertifications.includes('X'),
+    'gse-apply: orphan/non-toggled cert preserved',
+  );
+  const lblKept = applyGroupedPatchToSlot(
+    mkSlot({ label: 'מפקד', acceptableLevels: [{ level: Level.L0 }] }),
+    patch({ levels: new Map([[Level.L0, 'low']]) }),
+  );
+  assert(lblKept.label === 'מפקד', 'gse-apply: label preserved verbatim');
+  const fbEmpty = applyGroupedPatchToSlot(
+    mkSlot({ forbiddenCertifications: ['X'] }),
+    patch({ forbiddenCerts: new Map([['X', false]]) }),
+  );
+  assert(fbEmpty.forbiddenCertifications === undefined, 'gse-apply: emptied forbidden collapses to undefined');
+
+  // validateGroupedApply
+  const vEmpty = validateGroupedApply(
+    [mkSlot({ id: 's1', label: 'A', acceptableLevels: [{ level: Level.L0 }] })],
+    patch({ levels: new Map([[Level.L0, 'off']]) }),
+  );
+  assert(
+    !vEmpty.ok && vEmpty.offending[0]?.reason === 'EMPTY_LEVELS' && vEmpty.offending[0].label === 'A',
+    'gse-validate: detects EMPTY_LEVELS with label',
+  );
+  const vOverlapPatch = validateGroupedApply(
+    [mkSlot({ id: 's1' })],
+    patch({ requiredCerts: new Map([['X', true]]), forbiddenCerts: new Map([['X', true]]) }),
+  );
+  assert(
+    !vOverlapPatch.ok && vOverlapPatch.offending[0]?.reason === 'CERT_OVERLAP',
+    'gse-validate: detects CERT_OVERLAP from patch',
+  );
+  const vOverlapPre = validateGroupedApply(
+    [mkSlot({ id: 's1', forbiddenCertifications: ['X'] })],
+    patch({ requiredCerts: new Map([['X', true]]) }),
+  );
+  assert(
+    !vOverlapPre.ok && (vOverlapPre.offending[0]?.certs ?? []).includes('X'),
+    'gse-validate: CERT_OVERLAP via pre-existing forbidden + required ON',
+  );
+  const vChanged = validateGroupedApply(
+    [mkSlot({ id: 'a', requiredCertifications: ['X'] }), mkSlot({ id: 'b', requiredCertifications: [] })],
+    patch({ requiredCerts: new Map([['X', true]]) }),
+  );
+  assert(vChanged.ok && vChanged.changed === 1, 'gse-validate: changed counts only real diffs');
+  const vNoop = validateGroupedApply([mkSlot({ id: 'a' }), mkSlot({ id: 'b' })], patch({}));
+  assert(vNoop.ok && vNoop.changed === 0, 'gse-validate: all-MIXED ⇒ changed === 0');
+}
+
 // ─── Async test blocks + Summary ─────────────────────────────────────────────
 
 (async () => {
