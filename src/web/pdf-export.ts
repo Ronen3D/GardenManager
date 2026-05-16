@@ -23,6 +23,7 @@ import { jsPDF } from 'jspdf';
 import autoTable, { __createTable, __drawTable, type CellDef, type UserOptions } from 'jspdf-autotable';
 import type { Schedule, Task } from '../models/types';
 import { fmtTime } from '../utils/date-utils';
+import { triggerShareOrDownload } from './data-transfer';
 import { buildDay0Schedule } from './day0-adapter';
 import { getNumDays, getTasksForDay, tint } from './export-utils';
 import {
@@ -487,6 +488,35 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStar
   }
 }
 
+interface BuiltDailyDoc {
+  doc: jsPDF;
+  /** Filename stem (no extension): `daily-day{N}` or `daily-day0-context`. */
+  stem: string;
+}
+
+/**
+ * Build the one-page A4 landscape jsPDF document for a single day. This is the
+ * shared core of both the PDF and image single-day exports — keeping a single
+ * code path guarantees the image is pixel-identical to the PDF.
+ *
+ * dayIndex=0 renders the continuity context (read-only) from the continuity
+ * snapshot. When dayIndex=0 is passed but no continuity is attached, falls back
+ * to day 1 (mirrors the long-standing PDF behaviour).
+ */
+function buildDailyDoc(schedule: Schedule, dayIndex: number, dayStartHour: number): BuiltDailyDoc {
+  const doc = createDoc();
+  if (dayIndex === 0) {
+    const day0 = buildDay0Schedule(schedule);
+    if (day0) {
+      renderDayPage(doc, day0, 0, dayStartHour);
+      return { doc, stem: 'daily-day0-context' };
+    }
+    dayIndex = 1;
+  }
+  renderDayPage(doc, schedule, dayIndex, dayStartHour);
+  return { doc, stem: `daily-day${dayIndex}` };
+}
+
 /**
  * Export a single day's schedule as a one-page A4 landscape PDF.
  *
@@ -495,18 +525,79 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStar
  * dayIndex=0 is passed but no continuity is attached, falls back to day 1.
  */
 export function exportDailyDetail(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): void {
-  const doc = createDoc();
-  if (dayIndex === 0) {
-    const day0 = buildDay0Schedule(schedule);
-    if (day0) {
-      renderDayPage(doc, day0, 0, dayStartHour);
-      doc.save(`daily-day0-context.pdf`);
-      return;
-    }
-    dayIndex = 1;
+  const { doc, stem } = buildDailyDoc(schedule, dayIndex, dayStartHour);
+  doc.save(`${stem}.pdf`);
+}
+
+// ─── Single-Day Image Export ─────────────────────────────────────────────────
+
+/**
+ * Target pixel width of the rasterised landscape-A4 page (~150 dpi). Tuned for
+ * crisp Hebrew text on a phone and after WhatsApp re-encoding while keeping the
+ * file small. Single named constant — see plan Gate 3.
+ */
+const RASTER_TARGET_PX = 2200;
+
+/** Lazily-loaded pdf.js module + one-time inline-worker setup. */
+let _pdfWorkerReady = false;
+async function loadPdfjs() {
+  // Dynamic import keeps pdf.js (~1.4 MB) out of the main bundle — fetched only
+  // on first image export.
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  if (!_pdfWorkerReady) {
+    // `?worker&inline` base64-embeds the worker into the lazy pdf chunk and
+    // runs it as a same-origin blob: worker — no separate file / URL
+    // resolution, so it works in Vite dev, the GitHub Pages sub-path build,
+    // and packaged Electron (file://, offline) alike.
+    const PdfWorker = (await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?worker&inline')).default;
+    pdfjs.GlobalWorkerOptions.workerPort = new PdfWorker();
+    _pdfWorkerReady = true;
   }
-  renderDayPage(doc, schedule, dayIndex, dayStartHour);
-  doc.save(`daily-day${dayIndex}.pdf`);
+  return pdfjs;
+}
+
+/** Rasterise page 1 of a PDF blob to an opaque-white PNG blob. */
+async function rasterizeFirstPageToPng(pdfBlob: Blob): Promise<Blob> {
+  const data = new Uint8Array(await pdfBlob.arrayBuffer());
+  const pdfjs = await loadPdfjs();
+  // Embedded Rubik font + no CID/standard fonts ⇒ no cMap/standardFont assets
+  // needed ⇒ fully offline / file:// safe.
+  const pdf = await pdfjs.getDocument({ data }).promise;
+  try {
+    const page = await pdf.getPage(1);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: RASTER_TARGET_PX / baseViewport.width });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2D canvas context unavailable');
+    // PDF pages have no background — fill white so the PNG is opaque (no
+    // transparent halo in chat thumbnails).
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport, background: '#ffffff' }).promise;
+    return await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))), 'image/png'),
+    );
+  } finally {
+    pdf.cleanup();
+    await pdf.destroy();
+  }
+}
+
+/**
+ * Export a single day's schedule as a PNG image — the same visual output as
+ * {@link exportDailyDetail}, rasterised from the very same jsPDF document. On
+ * mobile this opens the native share sheet (WhatsApp etc.) via
+ * `triggerShareOrDownload`, falling back to a named download elsewhere.
+ *
+ * Single-day only; the weekly overview never offers this.
+ */
+export async function exportDailyImage(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): Promise<void> {
+  const { doc, stem } = buildDailyDoc(schedule, dayIndex, dayStartHour);
+  const png = await rasterizeFirstPageToPng(doc.output('blob'));
+  await triggerShareOrDownload(png, `${stem}.png`, 'image/png');
 }
 
 // ─── Weekly Overview Export ──────────────────────────────────────────────────

@@ -74,7 +74,7 @@ import {
 import { closeInjectTaskModal, initInjectTaskModal, openInjectTaskModal } from './inject-task-modal';
 import { getEffectivePakalDefinitions } from './pakal-utils';
 import { renderParticipantCard } from './participant-card';
-import { exportDailyDetail, exportWeeklyOverview } from './pdf-export';
+import { exportDailyDetail, exportDailyImage, exportWeeklyOverview } from './pdf-export';
 import { type PointInTimeContext, renderPointInTimeView, wirePointInTimeEvents } from './point-in-time-view';
 import { runPreflight } from './preflight';
 import { showRangePicker } from './range-picker-modal';
@@ -1419,7 +1419,7 @@ function renderScheduleTab(preflight: ReturnType<typeof runPreflight>): string {
       </span>
       <span class="toolbar-group toolbar-group--state">
         ${currentSchedule ? `<button class="btn-sm ${_manualBuildActive ? 'btn-primary' : 'btn-outline'}" id="btn-manual-build" title="${_manualBuildActive ? 'יציאה ממצב בנייה ידנית' : 'בנייה ידנית של שבצ"ק'}">${_manualBuildActive ? '✕ יציאה מבנייה ידנית' : '✏️ בנייה ידנית'}</button>` : ''}
-        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-storage" title="אפס להגדרות ברירת מחדל ומחק נתונים שמורים">🔄 אפס</button>` : ''}
+        ${currentSchedule ? `<button class="btn-sm btn-outline" id="btn-reset-schedule" title="אפס את מסך השבצ&quot;ק וחזור למצב שלפני יצירת השבצ&quot;ק (המשתתפים והמשימות יישמרו)">🔄 אפס</button>` : ''}
         <button class="btn-sm ${_snapshotPanelOpen ? 'btn-primary' : 'btn-outline'}" id="btn-snap-toggle" title="תמונות מצב שמורות">💾 שמירת שבצקים${store.getAllSnapshots().length > 0 ? ` (${store.getAllSnapshots().length})` : ''}</button>
         ${renderContinuityChip()}
         ${!currentSchedule && !_continuityJson.trim() ? `<button class="btn-sm btn-outline" id="btn-continuity-import" title="חיבור לשבצ"ק קודם — ייבוא נתוני המשכיות">📋 חיבור לשבצ"ק קודם</button>` : ''}
@@ -2210,6 +2210,60 @@ function loadScheduleSnapshot(snapshotId: string): void {
   store.setActiveSnapshotId(snapshotId);
 
   // 9. Re-render
+  renderAll();
+}
+
+/**
+ * Reset only the schedule screen back to the state it had *before* the user
+ * clicked "צור שבצ"ק" (the empty state). This is a *local* reset — it never
+ * touches the store's master data (participants, task templates, algorithm
+ * presets, participant/task sets) nor the named snapshot library. Contrast
+ * with the danger-zone "⚠ איפוס מערכת" button, which does a full factory reset.
+ *
+ * In-memory only (no location.reload) so `_continuityJson` is preserved.
+ */
+function resetScheduleScreen(): void {
+  // Schedule-scoped store state only — none of these touch master data.
+  store.clearSchedule(); // remove persisted gardenmanager_schedule (only that key)
+  store.setActiveSnapshotId(null); // deselect active snapshot (does NOT delete it)
+  store.setLiveModeEnabled(false); // per product decision: reset turns Live Mode off
+
+  // Drop the live engine + frozen schedule.
+  engine = null;
+  currentSchedule = null;
+  scheduleElapsed = 0;
+  scheduleActualAttempts = 0;
+  currentDay = 1;
+  _scheduleDirty = false;
+  _snapshotDirty = false;
+
+  // Clear schedule-scoped undo/redo + animation state.
+  _scheduleUndoStack.length = 0;
+  _scheduleRedoStack.length = 0;
+  _undoStack = [];
+  _pendingSwapAnimIds.clear();
+
+  // Exit manual-build mode and any overlay view.
+  _manualBuildActive = false;
+  _manualSelectedTaskId = null;
+  _manualSelectedSlotId = null;
+  _eligibleForSelectedSlot = null;
+  _viewMode = 'SCHEDULE_VIEW';
+  _profileParticipantId = null;
+  _taskPanelSourceName = null;
+  _pointInTimeTimestamp = null;
+
+  // Collapse the snapshot panel / clear its inline form.
+  _snapshotPanelOpen = false;
+  _snapshotFormMode = 'none';
+  _snapshotFormError = '';
+
+  // `_continuityJson` is intentionally preserved (input set before generation).
+
+  closeRescueModal();
+  closeInjectTaskModal();
+
+  showToast('מסך השבצ"ק אופס. המשתתפים, המשימות וההגדרות נשמרו.', { type: 'success' });
   renderAll();
 }
 
@@ -4573,7 +4627,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.4</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.4.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -6040,18 +6094,23 @@ function wireScheduleEvents(container: HTMLElement): void {
     updateLiveTimestamp();
   });
 
-  // ── Reset storage button ──
-  const resetBtn = container.querySelector('#btn-reset-storage');
+  // ── Reset schedule-screen button ──
+  const resetBtn = container.querySelector('#btn-reset-schedule');
   if (resetBtn) {
     resetBtn.addEventListener('click', async () => {
-      const ok = await showConfirm('למחוק את כל הנתונים השמורים ולטעון מחדש? לא ניתן לבטל פעולה זו.', {
-        danger: true,
-        title: 'איפוס נתונים',
-        confirmLabel: 'אפס הכל',
-      });
+      const ok = await showConfirm(
+        'פעולה זו תמחק את השבצ"ק שנוצר ותחזיר את המסך למצב שלפני יצירתו.\n' +
+          'המשתתפים, כללי המשימות, ההגדרות והשבצקים השמורים — יישמרו.\n' +
+          'לא ניתן לבטל פעולה זו.',
+        {
+          danger: true,
+          title: 'איפוס מסך השבצ"ק',
+          confirmLabel: 'אפס מסך',
+          cancelLabel: 'ביטול',
+        },
+      );
       if (ok) {
-        store.clearStorage();
-        location.reload();
+        resetScheduleScreen();
       }
     });
   }
@@ -6177,6 +6236,10 @@ function openExportModal(): void {
               <input type="radio" name="export-format" value="excel" />
               <span class="export-format-label">📊 Excel</span>
             </label>
+            <label class="export-format-option" id="fmt-image">
+              <input type="radio" name="export-format" value="image" />
+              <span class="export-format-label">🖼️ תמונה</span>
+            </label>
           </div>
           <div class="export-mode-group">
             <label class="export-mode-option selected" id="opt-weekly">
@@ -6238,24 +6301,57 @@ function wireExportModalEvents(): void {
 
   document.addEventListener('keydown', onEscape);
 
-  // Format radio toggle
+  // Format + mode element refs
   const fmtPdf = backdrop.querySelector('#fmt-pdf') as HTMLElement;
   const fmtExcel = backdrop.querySelector('#fmt-excel') as HTMLElement;
+  const fmtImage = backdrop.querySelector('#fmt-image') as HTMLElement;
+  const imageRadio = backdrop.querySelector('input[name="export-format"][value="image"]') as HTMLInputElement;
+  const optWeekly = backdrop.querySelector('#opt-weekly') as HTMLElement;
+  const optDaily = backdrop.querySelector('#opt-daily') as HTMLElement;
+  const weeklyRadio = backdrop.querySelector('input[name="export-mode"][value="weekly"]') as HTMLInputElement;
+  const dailyRadio = backdrop.querySelector('input[name="export-mode"][value="daily"]') as HTMLInputElement;
+  const dayPicker = backdrop.querySelector('#export-day-picker') as HTMLElement;
+
+  // Image export is single-day only. Enforce mutual exclusivity with the
+  // weekly ("סיכום כללי") mode: choosing image forces daily and greys out
+  // weekly; choosing weekly greys out the image format.
+  const applyImageConstraints = () => {
+    const fmt = (backdrop.querySelector('input[name="export-format"]:checked') as HTMLInputElement)?.value;
+    let mode = (backdrop.querySelector('input[name="export-mode"]:checked') as HTMLInputElement)?.value;
+
+    if (fmt === 'image' && mode !== 'daily') {
+      dailyRadio.checked = true;
+      weeklyRadio.checked = false;
+      optWeekly.classList.remove('selected');
+      optDaily.classList.add('selected');
+      dayPicker.classList.remove('hidden');
+      dayPicker.style.display = 'flex';
+      mode = 'daily';
+    }
+
+    const imageSelected = fmt === 'image';
+    weeklyRadio.disabled = imageSelected;
+    optWeekly.classList.toggle('disabled', imageSelected);
+
+    const weeklySelected = mode === 'weekly';
+    imageRadio.disabled = weeklySelected;
+    fmtImage.classList.toggle('disabled', weeklySelected);
+  };
+
+  // Format radio toggle
   const formatRadios = backdrop.querySelectorAll('input[name="export-format"]');
   formatRadios.forEach((r) => {
     r.addEventListener('change', () => {
       const fmt = (r as HTMLInputElement).value;
       fmtPdf.classList.toggle('selected', fmt === 'pdf');
       fmtExcel.classList.toggle('selected', fmt === 'excel');
+      fmtImage.classList.toggle('selected', fmt === 'image');
+      applyImageConstraints();
     });
   });
 
   // Mode radio toggle
-  const optWeekly = backdrop.querySelector('#opt-weekly') as HTMLElement;
-  const optDaily = backdrop.querySelector('#opt-daily') as HTMLElement;
-  const dayPicker = backdrop.querySelector('#export-day-picker') as HTMLElement;
   const radios = backdrop.querySelectorAll('input[name="export-mode"]');
-
   radios.forEach((r) => {
     r.addEventListener('change', () => {
       const mode = (r as HTMLInputElement).value;
@@ -6268,8 +6364,12 @@ function wireExportModalEvents(): void {
         dayPicker.classList.add('hidden');
         dayPicker.style.display = '';
       }
+      applyImageConstraints();
     });
   });
+
+  // Initial constraint pass: default state (pdf + weekly) ⇒ image pill greyed.
+  applyImageConstraints();
 
   // Wire custom select for export day picker
   wireCustomSelect(backdrop, 'gm-export-day-select', () => {});
@@ -6302,6 +6402,9 @@ function wireExportModalEvents(): void {
         } else {
           await exportDailyExcel(currentSchedule, getSelectedDay(), dayStartHour);
         }
+      } else if (selectedFormat === 'image') {
+        // Single-day only — enforced by the modal constraints above.
+        await exportDailyImage(currentSchedule, getSelectedDay(), dayStartHour);
       } else {
         if (selectedMode === 'weekly') {
           exportWeeklyOverview(currentSchedule, dayStartHour, includeDay0);

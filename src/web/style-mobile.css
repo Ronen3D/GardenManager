@@ -1523,6 +1523,19 @@
     max-width: 100%;
   }
 
+  /* Tighten so three format pills (PDF / Excel / תמונה) fit on a 375px
+     phone without wrapping or horizontal scroll. */
+  .export-format-group {
+    gap: 6px;
+  }
+  .export-format-option {
+    padding: 9px 6px;
+  }
+  .export-format-label {
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+
   /* ── Scrolling inside panels ─────────────────────────────────────────── */
 
   .gm-modal-body,

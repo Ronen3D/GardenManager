@@ -8374,10 +8374,20 @@ tr.now-row-animate > td.time-cell {
   border-color: var(--accent);
   background: rgba(108, 99, 255, 0.08);
 }
+/* Radio is visually hidden — selection is conveyed by `.selected` on the
+   label. Hiding it lets three pills (PDF / Excel / תמונה) fit on a phone. */
 .export-format-option input[type="radio"] {
-  accent-color: var(--accent);
-  width: 16px;
-  height: 16px;
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+/* Greyed-out state for incompatible options (image ⇄ weekly mutual lock). */
+.export-format-option.disabled,
+.export-mode-option.disabled {
+  opacity: 0.45;
+  pointer-events: none;
 }
 .export-format-label {
   font-size: 0.95rem;
@@ -10723,7 +10733,7 @@ tr.now-row-animate > td.time-cell {
   border-color: rgba(0, 0, 0, 0.08);
 }
 [data-theme="light"] .gm-edit-sheet-v2 .pe-checkbox:hover,
-[data-theme="light"] .gm-edit-sheet-v2 .pe-level-chip:hover,
+[data-theme="light"] .gm-edit-sheet-v2 .pe-level-chip:not(.pe-level-chip--active):hover,
 [data-theme="light"] .gm-edit-sheet-v2 .pe-mult-step:hover {
   background: rgba(0, 0, 0, 0.04);
 }
@@ -15995,8 +16005,8 @@ tr.now-row-animate > td.time-cell {
 
 /* Export dialog Day 0 row */
 .export-day0-row {
-  background: #f9fafb;
-  border: 1px dashed #cbd5e1;
+  background: var(--bg-hover);
+  border: 1px dashed var(--border);
   border-radius: 6px;
   padding: 10px 12px;
   margin-top: 8px;
@@ -16012,7 +16022,7 @@ tr.now-row-animate > td.time-cell {
   margin-top: 4px;
   margin-inline-start: 24px;
   font-size: 0.82rem;
-  color: #6b7280;
+  color: var(--text-muted);
   line-height: 1.4;
 }
 
