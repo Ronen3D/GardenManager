@@ -139,6 +139,16 @@
   margin-bottom: 4px;
 }
 
+/* Deep-tour macro caption ("מסלול N מתוך 6 · <track>"), shown above the
+   per-track step counter. Kept compact so the mobile bottom-sheet popover
+   footer stays on-screen on the longest-body steps. */
+.tutorial-tour-track {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
 /* Thin progress bar under the step counter — shows momentum at a glance,
    especially useful at the midpoint of the 28-step full tour. */
 .tutorial-progress {
@@ -430,6 +440,12 @@
 .tutorial-track-btn:hover {
   background: var(--bg-hover);
   border-color: var(--accent);
+}
+/* The two "overview" tours (curated סיור כללי + deep סיור מעמיק) carry a
+   start-edge accent rail so they read as a pair distinct from the six topic
+   tracks, without group headers. border-inline-start keeps it RTL-correct. */
+.tutorial-track-btn--overview {
+  border-inline-start: 3px solid var(--accent);
 }
 .tutorial-track-btn-row {
   display: flex;

@@ -119,18 +119,21 @@ test.describe('Tutorial — desktop', () => {
     await expect(page.locator('.tutorial-popover')).toHaveCount(0);
   });
 
-  test('tutorial accordion lists 7 tracks in הגדרות tab', async ({ page, viewport }) => {
+  test('tutorial accordion lists the 7 tracks + deep tour in הגדרות tab', async ({ page, viewport }) => {
     if (!viewport || viewport.width <= 768) test.skip();
     await page.click('.tab-btn[data-tab="algorithm"]');
     // Open the tutorial accordion (it's collapsed by default like all the others)
     await page.click('#acc-tutorial > [data-action="settings-accordion-toggle"]');
     const buttons = page.locator('.tutorial-track-btn');
-    await expect(buttons).toHaveCount(7);
-    // Verify each expected track is rendered with a stable data attribute
-    const ids = ['full-tour', 'participants', 'task-rules', 'schedule', 'algorithm', 'profile', 'task-panel'];
+    // 7 real tracks + the synthetic "deep-tour" overview entry.
+    await expect(buttons).toHaveCount(8);
+    // Verify each expected entry is rendered with a stable data attribute
+    const ids = ['full-tour', 'deep-tour', 'participants', 'task-rules', 'schedule', 'algorithm', 'profile', 'task-panel'];
     for (const id of ids) {
       await expect(page.locator(`.tutorial-track-btn[data-tutorial-track="${id}"]`)).toHaveCount(1);
     }
+    // The two overview tours carry the accent-rail modifier; topic tracks don't.
+    await expect(page.locator('.tutorial-track-btn--overview')).toHaveCount(2);
   });
 
   test('manual tab switch mid-tutorial exits silently with toast', async ({ page, viewport }) => {

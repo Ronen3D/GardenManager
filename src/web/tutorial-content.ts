@@ -695,7 +695,7 @@ const FULL_TOUR_TRACK: TutorialTrack = {
   id: 'full-tour',
   label: 'סיור כללי',
   icon: '📖',
-  description: 'כל הלשוניות · ~40 שלבים',
+  description: 'סקירה מודרכת · ~43 שלבים',
   steps: [
     // Welcome
     {
@@ -810,3 +810,25 @@ export const TRACKS: TutorialTrack[] = [
 export function getTrackById(id: string): TutorialTrack | undefined {
   return TRACKS.find((t) => t.id === id);
 }
+
+// ─── Deep tour ───────────────────────────────────────────────────────────────
+// The deep tour is not a TutorialTrack — it is a *sequence* of the six topic
+// tracks run back-to-back by the engine (see tutorial.ts). Defining the order
+// and the picker descriptor here keeps it pure data alongside TRACKS. New steps
+// added to any topic track flow into the deep tour automatically — there is no
+// curated copy to maintain (contrast FULL_TOUR_TRACK).
+export const DEEP_TOUR_SEQUENCE = [
+  'participants',
+  'task-rules',
+  'schedule',
+  'algorithm',
+  'profile',
+  'task-panel',
+] as const;
+
+export const DEEP_TOUR_DESCRIPTOR = {
+  id: 'deep-tour',
+  icon: '🧭',
+  label: 'סיור מעמיק',
+  description: 'כל ששת המסלולים במלואם · ~72 שלבים',
+} as const;

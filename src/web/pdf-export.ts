@@ -174,9 +174,11 @@ function tblDefaults(y: number, fontSize = 7, cellPadding = 1.8): Partial<UserOp
  * fit planner (via name *counts*) and the renderer (via name *lists*), so the
  * predicted geometry always matches what is drawn.
  */
-/** One participant name ready to draw: RTL-shaped text + its group colour. */
+/** One participant name ready to draw. `raw` is the un-shaped logical name
+ *  (RTL shaping + width-fit ellipsize happen at draw time, when the cell
+ *  width is known). */
 interface NameEntry {
-  text: string;
+  raw: string;
   /** Group colour (hex) — drawn as the name's text colour, mirroring the UI. */
   color: string;
 }
@@ -189,7 +191,7 @@ interface LogicalColumn {
 
 /** Resolve a participant's display name + group colour into a NameEntry. */
 function nameEntry(p: { name: string; group: string }): NameEntry {
-  return { text: rtl(p.name), color: groupColor(p.group) };
+  return { raw: p.name, color: groupColor(p.group) };
 }
 
 /**
@@ -440,9 +442,37 @@ function boldAvailable(doc: jsPDF): boolean {
 }
 
 /**
+ * RTL-shape `raw` and, if it would overflow `maxWidthMm`, truncate the logical
+ * name and append an ellipsis until it fits — the same visual contract as
+ * AutoTable's `overflow: 'ellipsize'` (which the per-name custom draw bypasses).
+ * The current doc font/size must already be set (width metrics depend on it).
+ */
+function fitRtlName(doc: jsPDF, raw: string, maxWidthMm: number, fontSizeMm: number): string {
+  const widthOf = (s: string) => doc.getStringUnitWidth(s) * fontSizeMm;
+  const full = rtl(raw);
+  if (widthOf(full) <= maxWidthMm) return full;
+  // Largest logical prefix whose shaped "prefix…" still fits.
+  let lo = 0;
+  let hi = raw.length;
+  let best = rtl('…');
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const cand = rtl(`${raw.slice(0, mid)}…`);
+    if (widthOf(cand) <= maxWidthMm) {
+      best = cand;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+/**
  * Draw one name cell's lines, each in its participant's group colour (bold at
- * small font sizes). Reproduces jspdf-autotable's exact text geometry for a
- * `valign:'top' / halign:'right'` cell so the predicted height stays exact.
+ * small font sizes), ellipsized to the cell width. Reproduces jspdf-autotable's
+ * exact text geometry for a `valign:'top' / halign:'right'` cell so the
+ * predicted height stays exact.
  */
 function drawNameCell(
   doc: jsPDF,
@@ -453,15 +483,17 @@ function drawNameCell(
 ): void {
   const fontSizeMm = fontSize / SCALE_FACTOR_MM;
   const xRight = cell.x + cell.width - cell.padding('right');
+  const maxW = cell.width - cell.padding('left') - cell.padding('right');
   // Mirror autoTableText: y = padTop + fontSize*(2 − lineHeightFactor).
   const yStart = cell.y + cell.padding('top') + fontSizeMm * (2 - LINE_HEIGHT_FACTOR);
   const lineH = fontSizeMm * LINE_HEIGHT_FACTOR;
   doc.setFontSize(fontSize);
   doc.setFont('Rubik', bold ? 'bold' : 'normal');
   for (let i = 0; i < names.length; i++) {
-    const { text, color } = names[i];
+    const { raw, color } = names[i];
     const [r, g, b] = hexToRgb(color);
     doc.setTextColor(r, g, b);
+    const text = fitRtlName(doc, raw, maxW, fontSizeMm);
     const w = doc.getStringUnitWidth(text) * fontSizeMm;
     doc.text(text, xRight - w, yStart + i * lineH);
   }
@@ -528,7 +560,7 @@ function renderSectionTablePdf(
           // Keep joined text as content so AutoTable reserves the exact
           // line-count height the planner predicted; the text is suppressed
           // in willDrawCell and re-drawn per-name (coloured) in didDrawCell.
-          cells.push({ content: bucket.map((n) => n.text).join('\n'), styles: nameCellStyle } as CellDef);
+          cells.push({ content: bucket.map((n) => rtl(n.raw)).join('\n'), styles: nameCellStyle } as CellDef);
         }
       }
     });

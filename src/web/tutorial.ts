@@ -15,7 +15,7 @@
 
 // Note: `tutorial-content` lazily imports types from this file (type-only, no runtime cycle).
 // We import TRACKS / getTrackById eagerly so accordion + step rendering can be synchronous.
-import { getTrackById, TRACKS } from './tutorial-content';
+import { DEEP_TOUR_DESCRIPTOR, DEEP_TOUR_SEQUENCE, getTrackById, TRACKS } from './tutorial-content';
 import { enterTutorialDemoMode, exitTutorialDemoMode, TutorialPreflightError } from './tutorial-demo';
 import { showToast } from './ui-modal';
 
@@ -137,6 +137,11 @@ function markTrackSeen(id: string): void {
 
 let _activeTrackId: string | null = null;
 let _stepIdx = 0;
+// Deep-tour playlist: remaining track ids to run after the current one. Empty
+// for every normal single-track tour. `_deepTour` gates the macro caption so a
+// standalone topic track never shows "מסלול N מתוך 6".
+let _trackQueue: string[] = [];
+let _deepTour = false;
 let _root: HTMLElement | null = null;
 let _backdrop: HTMLElement | null = null;
 let _spotlight: HTMLElement | null = null;
@@ -171,9 +176,17 @@ export function getCurrentTrack(): string | null {
 
 export async function startTutorial(trackId: string, _ctx: TutorialContext): Promise<void> {
   if (_activeTrackId) exitTutorial();
-  const track = getTrackById(trackId);
+
+  // 'deep-tour' is a meta id (not a TutorialTrack): expand it into a playlist
+  // of the six topic tracks. Intercepted here so every per-step path that does
+  // getTrackById(_activeTrackId) only ever sees a real track id.
+  const isDeep = trackId === 'deep-tour';
+  const sequence: string[] = isDeep ? [...DEEP_TOUR_SEQUENCE] : [];
+  const firstTrackId = isDeep ? (sequence.shift() as string) : trackId;
+
+  const track = getTrackById(firstTrackId);
   if (!track) {
-    console.warn('[tutorial] unknown track:', trackId);
+    console.warn('[tutorial] unknown track:', firstTrackId);
     return;
   }
 
@@ -201,17 +214,18 @@ export async function startTutorial(trackId: string, _ctx: TutorialContext): Pro
   markBannerDismissed();
   removeBannerIfPresent();
 
-  _activeTrackId = trackId;
+  _activeTrackId = firstTrackId;
   _stepIdx = 0;
+  // Seed the playlist only after the demo-mode preflight succeeded above, so an
+  // aborted start never leaves a stale queue behind.
+  _trackQueue = sequence;
+  _deepTour = isDeep;
   _previouslyFocused = (document.activeElement as HTMLElement) ?? null;
 
   mountOverlay();
   installListeners();
 
-  // Optional initial tab/view setup
-  if (track.switchToTab) await switchToTabProgrammatic(track.switchToTab);
-  if (track.enterView === 'profile') await openFirstProfile();
-  if (track.enterView === 'task-panel') await openFirstTaskPanel();
+  await applyTrackSetup(track);
 
   await renderStep(0);
 }
@@ -255,6 +269,10 @@ export function exitTutorial(): void {
     _activeTrackId = null;
     _stepIdx = 0;
     _lastHoverTarget = null;
+    // Clear the deep-tour playlist so an interrupt (Esc, exit button, overlay
+    // teardown, or starting another tour) cannot resume it.
+    _trackQueue = [];
+    _deepTour = false;
   } finally {
     // Always restore the user's snapshot — even if the cleanup above threw.
     exitTutorialDemoMode();
@@ -322,19 +340,36 @@ function removeBannerIfPresent(): void {
 export function renderTutorialAccordionBody(_ctx: TutorialContext): string {
   const seen = new Set(getSeenTracks());
 
-  const trackButtons = TRACKS.map((t) => {
-    const isSeen = seen.has(t.id);
-    return `
-      <button type="button" class="tutorial-track-btn" data-tutorial-track="${t.id}" title="${escAttrLite(t.description)}">
+  const card = (
+    entry: { id: string; icon: string; label: string; description: string },
+    isSeen: boolean,
+    isOverview: boolean,
+  ): string => `
+      <button type="button" class="tutorial-track-btn${
+        isOverview ? ' tutorial-track-btn--overview' : ''
+      }" data-tutorial-track="${entry.id}" title="${escAttrLite(entry.description)}">
         <span class="tutorial-track-btn-row">
-          <span class="tutorial-track-icon" aria-hidden="true">${t.icon}</span>
-          <span class="tutorial-track-label">${escHtmlLite(t.label)}</span>
+          <span class="tutorial-track-icon" aria-hidden="true">${entry.icon}</span>
+          <span class="tutorial-track-label">${escHtmlLite(entry.label)}</span>
           ${isSeen ? '<span class="tutorial-track-seen" aria-label="הושלם">✓</span>' : ''}
         </span>
-        <span class="tutorial-track-desc">${escHtmlLite(t.description)}</span>
+        <span class="tutorial-track-desc">${escHtmlLite(entry.description)}</span>
       </button>
     `;
-  }).join('');
+
+  // Flat list: the two overview tours first (full-tour, then the deep tour),
+  // both flagged --overview for the accent rail, then the six topic tracks in
+  // their original order. The deep tour is a meta entry (not in TRACKS); its
+  // ✓ derives from having completed all six topic tracks.
+  const fullTour = TRACKS.find((t) => t.id === 'full-tour');
+  const topicTracks = TRACKS.filter((t) => t.id !== 'full-tour');
+  const deepSeen = DEEP_TOUR_SEQUENCE.every((id) => seen.has(id));
+
+  const trackButtons = [
+    fullTour ? card(fullTour, seen.has(fullTour.id), true) : '',
+    card(DEEP_TOUR_DESCRIPTOR, deepSeen, true),
+    ...topicTracks.map((t) => card(t, seen.has(t.id), false)),
+  ].join('');
 
   return `
     <div class="tutorial-launcher-body">
@@ -438,8 +473,26 @@ async function renderStep(idx: number): Promise<void> {
   if (!track) return exitTutorial();
 
   if (idx < 0 || idx >= track.steps.length) {
-    // Past the end → mark as complete and exit
+    // Past the end → mark as complete. In a deep tour, advance to the next
+    // queued track WITHOUT exiting (demo state must persist across all six,
+    // restored exactly once at the very end). This branch precedes the
+    // _renderToken capture below, so the recursive renderStep(0) captures its
+    // own fresh token. idx<0 (Back before step 0) keeps the original behaviour
+    // and never advances the queue — Back is disabled at step 0 anyway.
+    const completedForward = idx >= track.steps.length;
     markTrackSeen(track.id);
+    if (completedForward && _trackQueue.length > 0) {
+      const nextId = _trackQueue.shift() as string;
+      const nextTrack = getTrackById(nextId);
+      if (nextTrack) {
+        _activeTrackId = nextId;
+        _stepIdx = 0;
+        await applyTrackSetup(nextTrack);
+        await renderStep(0);
+        return;
+      }
+      // Unknown queued id (should never happen) → fall through to clean exit.
+    }
     exitTutorial();
     return;
   }
@@ -531,6 +584,11 @@ async function renderStep(idx: number): Promise<void> {
   // Render popover content
   const stepCounter = `שלב ${idx + 1} מתוך ${track.steps.length}`;
   const isLast = idx === track.steps.length - 1;
+  // Macro progress for the deep tour: which of the six topic tracks we're in.
+  const deepOrdinal = _deepTour ? (DEEP_TOUR_SEQUENCE as readonly string[]).indexOf(track.id) + 1 : 0;
+  // The deep tour only truly ends when the current track is last AND no more
+  // tracks are queued — otherwise "✓ סיים" would lie mid-playlist.
+  const isFinalStep = isLast && _trackQueue.length === 0;
   const screenshotHtml = step.screenshot
     ? `<img class="tutorial-screenshot" src="${escAttrLite(step.screenshot.src)}" alt="${escAttrLite(
         step.screenshot.alt,
@@ -538,6 +596,13 @@ async function renderStep(idx: number): Promise<void> {
     : '';
   const progressPct = Math.round(((idx + 1) / track.steps.length) * 100);
   _popover.innerHTML = `
+    ${
+      _deepTour
+        ? `<div class="tutorial-tour-track">סיור מעמיק · מסלול ${deepOrdinal} מתוך ${DEEP_TOUR_SEQUENCE.length} · ${escHtmlLite(
+            track.label,
+          )}</div>`
+        : ''
+    }
     <div class="tutorial-step-counter">${escHtmlLite(stepCounter)}</div>
     <div class="tutorial-progress" aria-hidden="true"><div class="tutorial-progress-fill" style="width:${progressPct}%"></div></div>
     <h3 class="tutorial-title" id="tutorial-title-${escAttrLite(step.id)}">${escHtmlLite(step.title)}</h3>
@@ -545,8 +610,8 @@ async function renderStep(idx: number): Promise<void> {
     ${screenshotHtml}
     <div class="tutorial-footer">
       <button type="button" class="tutorial-btn tutorial-btn-primary${
-        isLast ? ' tutorial-btn-finish' : ''
-      }" data-tutorial-action="next">${isLast ? '✓ סיים' : '← המשך'}</button>
+        isFinalStep ? ' tutorial-btn-finish' : ''
+      }" data-tutorial-action="next">${isFinalStep ? '✓ סיים' : '← המשך'}</button>
       <button type="button" class="tutorial-btn tutorial-btn-secondary" data-tutorial-action="back" ${
         idx === 0 ? 'disabled' : ''
       }>חזרה →</button>
@@ -1095,6 +1160,16 @@ async function openAccordionProgrammatic(id: string): Promise<void> {
   _internalClickFlag = false;
   // accordion open transition is ~150ms; 220ms gives margin
   await new Promise((r) => setTimeout(r, 220));
+}
+
+// Applies a track's optional tab/view orientation. Run once at tour start and
+// again at every deep-tour track→track seam. openFirstProfile/openFirstTaskPanel
+// call returnToScheduleGrid() first, so this self-heals every seam shape
+// (tab→tab, tab→overlay, overlay→overlay).
+async function applyTrackSetup(track: TutorialTrack): Promise<void> {
+  if (track.switchToTab) await switchToTabProgrammatic(track.switchToTab);
+  if (track.enterView === 'profile') await openFirstProfile();
+  if (track.enterView === 'task-panel') await openFirstTaskPanel();
 }
 
 async function returnToScheduleGrid(): Promise<void> {

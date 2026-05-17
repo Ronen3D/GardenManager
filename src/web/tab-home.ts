@@ -40,8 +40,10 @@ export interface HomeTabCallbacks {
   onGenerate(): void;
   /** Navigate to one of the working tabs. */
   onNavigate(tab: HomeNavTarget): void;
-  /** Start the guided tutorial (same entry point as the first-launch banner). */
+  /** Start the curated guided tour (same entry point as the first-launch banner). */
   onHelp(): void;
+  /** Start the deep tour — every step of all six topic tracks back-to-back. */
+  onDeepTour(): void;
   /** Dismiss the first-run welcome ("אולי אחר כך"). */
   onDismissWelcome(): void;
   /** Trigger the native PWA install prompt (Android/Chromium banner only). */
@@ -234,6 +236,7 @@ export function renderHomeTab(ctx: HomeTabContext): string {
         </div>
         <div class="home-welcome-actions">
           <button type="button" class="btn-sm btn-primary" data-action="help">📖 בואו נתחיל</button>
+          <button type="button" class="btn-sm btn-outline" data-action="help-deep">🧭 סיור מעמיק</button>
           <button type="button" class="btn-sm btn-outline" data-action="dismiss-welcome">אולי אחר כך</button>
         </div>
       </div>`
@@ -249,6 +252,7 @@ export function renderHomeTab(ctx: HomeTabContext): string {
       <div class="home-cta-row">
         ${actions}
         <button type="button" class="btn-sm btn-outline home-help" data-action="help">📖 סיור מודרך</button>
+        <button type="button" class="btn-sm btn-outline home-help-deep" data-action="help-deep">🧭 סיור מעמיק</button>
       </div>
       ${dirty}
     </section>
@@ -279,6 +283,7 @@ export function wireHomeEvents(container: HTMLElement, cb: HomeTabCallbacks): vo
       else if (action === 'fix-tasks') cb.onNavigate('task-rules');
       else if (action === 'fix-participants') cb.onNavigate('participants');
       else if (action === 'help') cb.onHelp();
+      else if (action === 'help-deep') cb.onDeepTour();
       else if (action === 'dismiss-welcome') cb.onDismissWelcome();
       else if (action === 'install-app') cb.onInstall();
       else if (action === 'dismiss-install') cb.onDismissInstall();
