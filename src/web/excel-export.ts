@@ -21,7 +21,7 @@ import type { AssignmentStatus, Level, Participant, Schedule, SlotRequirement, T
 import { fmtTime } from '../utils/date-utils';
 import { getCategoryColorMap } from './config-store';
 import { buildDay0Schedule } from './day0-adapter';
-import { getDayWindow, getNumDays, getTasksForDay, rgbToArgb, tint } from './export-utils';
+import { getDayWindow, getTasksForDay, rgbToArgb, tint } from './export-utils';
 import { computeSectionMetrics, getTaskAssignments, getUniqueStartTimes, inferColumnStrategy } from './layout-engine';
 
 // ─── Style constants ─────────────────────────────────────────────────────────
@@ -201,7 +201,10 @@ function buildDaySheet(ws: Worksheet, schedule: Schedule, dayIndex: number, dayS
 function buildSummarySheet(ws: Worksheet, schedule: Schedule, dayStartHour: number): void {
   ws.views = [{ rightToLeft: true, state: 'frozen', ySplit: 1, xSplit: 1 }];
 
-  const numDays = getNumDays(schedule, dayStartHour);
+  // Frozen op-day count — NOT getNumDays (a task-bearing-day cardinality that,
+  // used as an absolute 1-based index bound, silently drops gappy/late op-days
+  // and breaks lock-step with the on-screen grid). See getNumDays' doc.
+  const numDays = schedule.periodDays;
 
   // Precompute day → tasks so we don't recompute per participant
   const tasksByDay: Task[][] = [];
@@ -290,7 +293,10 @@ function buildRawDataSheet(ws: Worksheet, schedule: Schedule, dayStartHour: numb
   // never reach into the live store from a schedule-screen code path.
   const certLabel = (id: string): string => schedule.certLabelSnapshot?.[id] ?? id;
 
-  const numDays = getNumDays(schedule, dayStartHour);
+  // Frozen op-day count — NOT getNumDays (a task-bearing-day cardinality that,
+  // used as an absolute 1-based index bound, silently drops gappy/late op-days
+  // and breaks lock-step with the on-screen grid). See getNumDays' doc.
+  const numDays = schedule.periodDays;
   for (let d = 1; d <= numDays; d++) {
     const dayTasks = getTasksForDay(schedule, d, dayStartHour);
     for (const task of dayTasks) {
@@ -405,7 +411,10 @@ export async function exportWeeklyExcel(
   }
 
   // 2b. One presentation sheet per real day.
-  const numDays = getNumDays(schedule, dayStartHour);
+  // Frozen op-day count — NOT getNumDays (a task-bearing-day cardinality that,
+  // used as an absolute 1-based index bound, silently drops gappy/late op-days
+  // and breaks lock-step with the on-screen grid). See getNumDays' doc.
+  const numDays = schedule.periodDays;
   for (let d = 1; d <= numDays; d++) {
     const sheetName = safeSheetName(`יום ${d}`);
     const ws = workbook.addWorksheet(sheetName);

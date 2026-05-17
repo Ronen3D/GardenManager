@@ -120,19 +120,16 @@ function mkTemplate(id: string, over: Partial<TaskTemplate> = {}): TaskTemplate 
 // ════════════════════════════════════════════════════════════════════════════
 
 function runC11(assert: AssertFn): void {
-  // REVIEW (open question under independent investigation): does the
-  // optimizer enforce Day-0 phantom (continuity) cross-boundary
-  // HC-5/HC-12/HC-14 on slots filled by the post-SA insert sweep, the same
-  // way it does on the greedy / in-loop-SA / polish paths? The two checks in
-  // Scenario A below encode one hypothesized expectation about that. They are
-  // LOGGED rather than asserted so the suite stays green while the question is
-  // investigated independently; if a change makes the expectation hold, the
-  // log flips to "now-PASS", which is the signal to convert these to real
-  // assertions.
-  const review = (cond: boolean, name: string): void => {
-    console.log(`  [REVIEW] ${cond ? 'now-holds' : 'does-not-hold'}: ${name}`);
-    assert(true, `[REVIEW — logged, not asserted] ${name}`);
-  };
+  // RESOLVED: the optimizer now enforces Day-0 phantom (continuity)
+  // cross-boundary HC-5/HC-12/HC-14 on slots filled by the post-SA insert
+  // sweep, the same way it does on the greedy / in-loop-SA / polish paths.
+  // Previously the sweep built `sweepByParticipant` from `best` without
+  // seeding `phantomContext.phantomAssignments`, so a candidate that greedy
+  // and in-loop-SA had correctly rejected for a phantom HC-12/HC-14/HC-5
+  // violation was placed by the sweep — and survived, because there is no
+  // downstream phantom-aware revalidation (optimize()'s
+  // validateHardConstraints and engine.revalidateFull() are both
+  // phantom-blind). Scenario A is the regression guard for that fix.
 
   // Anchor real schedule at April 1, 2026. R1 runs 06:00–14:00 that op-day.
   const apr1 = new Date(2026, 3, 1);
@@ -173,18 +170,67 @@ function runC11(assert: AssertFn): void {
     );
 
     const withPhantom = optimize([r1], [alice], fastConfig, [], undefined, 0, phantomCtx);
-    // Hypothesized expectation (logged, not asserted — see the REVIEW note at
-    // the top of runC11): if the phantom HC-12 were enforced for the sole
-    // candidate Alice across the schedule boundary, R1 would stay unfilled and
-    // no phantom-forbidden real assignment would be placed. Logged so the
-    // observed value is visible without gating the suite.
-    review(
+    // The phantom HC-12 is enforced for the sole candidate Alice across the
+    // schedule boundary on every fill path including the post-SA insert sweep,
+    // so R1 stays unfilled and no phantom-forbidden real assignment is placed.
+    assert(
       withPhantom.unfilledSlots.length === 1,
-      `C1.1-A: phantom HC-12 would block the only candidate → R1 unfilled (observed ${withPhantom.unfilledSlots.length} unfilled)`,
+      `C1.1-A: phantom HC-12 blocks the only candidate → R1 unfilled (observed ${withPhantom.unfilledSlots.length} unfilled)`,
     );
-    review(
+    assert(
       withPhantom.assignments.filter((a) => a.taskId === 'R1').length === 0,
       `C1.1-A: no phantom-forbidden real assignment placed for R1 (observed ${withPhantom.assignments.filter((a) => a.taskId === 'R1').length})`,
+    );
+  }
+
+  // ── Scenario A2: same defect via HC-14 (rest-rule) instead of HC-12 ──────
+  // Guards against a partial regression that only re-breaks one phantom
+  // constraint family. Both tasks are blocksConsecutive:false (so HC-12 and
+  // HC-5 cannot fire) and share a rest rule whose 10h gap the 2h phantom→R1
+  // separation violates — isolating HC-14 as the sole blocker. Alice is again
+  // the only level/cert/availability-eligible participant, so the assignment,
+  // if placed, can only have come from the post-SA insert sweep (greedy leaves
+  // it unfilled — backtracking can't evict a slotless phantom — and SA has no
+  // assignment to swap and rejects the phantom-seeded insert).
+  {
+    const ruleId = 'rr-c11';
+    const ruleMs = 10 * 3600_000;
+    const restRuleMap = new Map<string, number>([[ruleId, ruleMs]]);
+    const alice = mkP('a2-alice', 'Alice');
+    const r1: Task = {
+      ...mkTask('R1rr', r1Block.start, r1Block.end),
+      blocksConsecutive: false,
+      restRuleId: ruleId,
+    };
+    // Phantom ends 2h before R1 starts → 2h gap < 10h rest threshold.
+    const pEnd = new Date(r1Block.start.getTime() - 2 * 3600_000);
+    const pStart = new Date(pEnd.getTime() - 8 * 3600_000);
+    const rrCA: ContinuityAssignment = {
+      sourceName: 'PhantomSrc',
+      taskName: 'Phantom D0 rr',
+      timeBlock: { start: pStart.toISOString(), end: pEnd.toISOString() },
+      blocksConsecutive: false,
+      baseLoadWeight: 1,
+      restRuleId: ruleId,
+      restRuleDurationHours: 10,
+    };
+    const rrSnap = mkSnapshot('Alice', rrCA);
+
+    const noPhantom = optimize([r1], [alice], fastConfig, [], undefined, 0, undefined, restRuleMap);
+    assert(
+      noPhantom.unfilledSlots.length === 0 && noPhantom.assignments.length === 1,
+      'C1.1-A2: without phantom, sole eligible Alice fills the rest-rule task',
+    );
+
+    const phantomCtx = buildPhantomContext(rrSnap, [alice]);
+    const withPhantom = optimize([r1], [alice], fastConfig, [], undefined, 0, phantomCtx, restRuleMap);
+    assert(
+      withPhantom.unfilledSlots.length === 1,
+      `C1.1-A2: phantom HC-14 blocks the only candidate → R1 unfilled (observed ${withPhantom.unfilledSlots.length} unfilled)`,
+    );
+    assert(
+      withPhantom.assignments.filter((a) => a.taskId === 'R1rr').length === 0,
+      `C1.1-A2: no phantom-forbidden real assignment placed for R1 (observed ${withPhantom.assignments.filter((a) => a.taskId === 'R1rr').length})`,
     );
   }
 

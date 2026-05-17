@@ -232,13 +232,15 @@ export async function runPersistenceExtraTests(assert: AssertFn): Promise<void> 
   console.log('\n── WP4: persistence / frozen-snapshot / data-transfer extra ──');
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // C4.1 — REVIEW: importFullBackup pre-import-state handling on a failed
-  // restore write. Open question under independent investigation: if the
-  // restore write loop throws partway (e.g. a transient quota error), what
-  // should happen to the user's prior data? This block exercises the current
-  // behavior and pins it; the hypothesized alternative (prior data preserved
-  // or restored) is a commented-out assertion below, intentionally NOT
-  // asserted pending that investigation.
+  // C4.1 — RESOLVED: importFullBackup pre-import-state handling on a failed
+  // restore write. The prior open question ("if the restore write loop throws
+  // partway, what happens to the user's data?") was investigated and judged a
+  // real defect: factoryReset() destroyed the only copy before the (possibly
+  // failing) write, leaving the user with neither their old data nor a
+  // complete backup. importFullBackup now snapshots localStorage to the heap
+  // before factoryReset() and rolls back on any write failure. This block now
+  // asserts the corrected behavior: a mid-write quota error leaves the user's
+  // ORIGINAL data fully intact (and still reports a structured failure).
   // ═══════════════════════════════════════════════════════════════════════════
   {
     resetAll();
@@ -262,23 +264,27 @@ export async function runPersistenceExtraTests(assert: AssertFn): Promise<void> 
 
     const result = withSetItemThrowingOnCall(1, () => dataTransfer.importFullBackup(backupJson));
 
-    // Current behavior pinned (these PASS and record the observed state after
-    // a mid-write failure):
+    // A mid-write failure must still be reported as a structured failure...
     assert(result.ok === false, 'C4.1: importFullBackup reports failure on mid-write quota error');
-    const afterState = LS().getItem('gardenmanager_state');
     assert(
-      afterState === null,
-      'C4.1: current behavior — after the failed restore write, gardenmanager_state is null (pre-import data not present)',
+      typeof result.error === 'string' && result.error.length > 0,
+      'C4.1: importFullBackup returns a non-empty error string on mid-write failure',
     );
 
-    // REVIEW (hypothesized alternative, intentionally NOT asserted pending
-    // independent investigation): if importFullBackup should leave the user's
-    // prior data intact/restored after a failed restore write, this would
-    // hold. Restore it if/when that is decided correct.
-    // assert(
-    //   afterState !== null && afterState.includes('UserAlice'),
-    //   'C4.1: user data preserved/restored after a failed importFullBackup',
-    // );
+    // ...and the user's ORIGINAL data must be rolled back / preserved — not
+    // wiped — so a failed restore can never leave the user with neither their
+    // old data nor a complete backup (the resolved defect).
+    const afterState = LS().getItem('gardenmanager_state');
+    assert(
+      afterState !== null && afterState.includes('UserAlice'),
+      'C4.1: after a failed restore write, pre-import user data is preserved/restored (rollback)',
+    );
+    // The half-applied backup must not survive: a backup-only key that did not
+    // exist before the import must be gone after rollback.
+    assert(
+      LS().getItem('gardenmanager_algorithm') === null,
+      'C4.1: a backup-only key written before the failure is removed by rollback (no half-applied backup)',
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

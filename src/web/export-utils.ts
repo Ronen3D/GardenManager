@@ -40,10 +40,23 @@ export function getTasksForDay(schedule: Schedule, dayIndex: number, dayStartHou
 }
 
 /**
- * Compute how many operational days the schedule spans, grouping tasks by
- * `operationalDateKey(start)`. Must be used instead of a wall-clock span:
- * a night task that crosses midnight would otherwise inflate the count and
- * produce a phantom empty day.
+ * Count the *distinct operational days that contain at least one task*
+ * (a task-bearing-day cardinality), grouping tasks by `operationalDateKey`.
+ *
+ * ⚠️ This is NOT the number of op-days in the period and MUST NOT be used as
+ * the bound of a `for (let d = 1; d <= N; d++)` day loop. Day loops feed `d`
+ * to `getDayWindow`/`getTasksForDay`, which anchor on an *absolute* 1-based
+ * index (`periodStart + (d-1) days + dayStartHour`). A cardinality equals the
+ * max index only when task-bearing days are the contiguous prefix `1..N`; with
+ * a leading-empty or gappy distribution (e.g. periodDays=7, tasks on op-days
+ * 2..6) the loop both emits phantom empty pages for the early days AND
+ * silently drops every task-bearing op-day whose index exceeds the count
+ * (op-day 6 here). Export day loops must bound on `schedule.periodDays` — the
+ * frozen op-day count, anchored identically to `getDayWindow`, which keeps
+ * PDF/Excel in lock-step with the on-screen grid (CLAUDE.md "One day model").
+ *
+ * Retained only as a documented metric (e.g. for tests asserting the above
+ * distinction); it has no production day-loop callers by design.
  */
 export function getNumDays(schedule: Schedule, dayStartHour: number = 5): number {
   if (schedule.tasks.length === 0) return 0;

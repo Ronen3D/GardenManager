@@ -290,12 +290,15 @@ export async function runExportLayoutTests(assert: AssertFn): Promise<void> {
   console.log('── WP5 export/layout tests complete ───────────');
 }
 
-// ─── C5.1 — REVIEW: getNumDays vs periodDays as the export day-loop bound ────
-// Open question under independent investigation: which value should bound the
-// weekly Excel/PDF day loop — the distinct task-bearing-day count
-// (`getNumDays`) or the frozen op-day count (`schedule.periodDays`)? This block
-// pins the current behavior on a gappy schedule; alternative expectations are
-// kept as commented-out assertions and intentionally NOT asserted.
+// ─── C5.1 — export day-loop bound is periodDays, not getNumDays ─────────────
+// Resolved: the weekly Excel/PDF day loop MUST bound on the frozen op-day count
+// (`schedule.periodDays`), never the distinct task-bearing-day cardinality
+// (`getNumDays`). Using the cardinality as an absolute 1-based index bound
+// silently drops any task-bearing op-day whose index exceeds the count (on a
+// gappy periodDays=7 schedule with tasks on op-days 2..6, op-day 6 vanished
+// entirely) and emitted phantom empty pages for leading-empty days — and broke
+// the CLAUDE.md lock-step invariant with the on-screen grid (which iterates
+// 1..periodDays). This block asserts the corrected, gap-immune behavior.
 
 /** Reload the xlsx Blob captured from the (mocked) download path. */
 async function captureWeeklyExcel(schedule: Schedule): Promise<Workbook> {
@@ -335,14 +338,16 @@ async function captureWeeklyExcel(schedule: Schedule): Promise<Workbook> {
 async function testC51_exportDayLoopBound(assert: AssertFn): Promise<void> {
   const schedule = buildGappySchedule();
 
-  // Baseline fact (passes): on this gappy schedule `getNumDays` (the value the
-  // PDF and Excel weekly loops consume as `for (d=1;d<=numDays;d++)`) differs
-  // from `schedule.periodDays`.
-  const numDays: number = exportUtils.getNumDays(schedule, 5);
+  // Baseline fact: on this gappy schedule the task-bearing-day cardinality
+  // (`getNumDays` = 5) differs from the frozen op-day count
+  // (`periodDays` = 7). This divergence is exactly why getNumDays must NOT
+  // bound the absolute-index day loop — the assertions below prove the loop
+  // now follows periodDays and no longer drops op-day 6.
+  const cardinality: number = exportUtils.getNumDays(schedule, 5);
   const periodDays: number = schedule.periodDays;
   assert(
-    numDays === 5 && periodDays === 7 && numDays < periodDays,
-    'C5.1: getNumDays returns task-bearing-day count (5), differing from periodDays (7) on a gappy schedule',
+    cardinality === 5 && periodDays === 7 && cardinality < periodDays,
+    'C5.1: getNumDays returns task-bearing-day cardinality (5), differing from periodDays (7) on a gappy schedule',
   );
 
   // ── Excel weekly path (capture the real workbook) ──
@@ -369,52 +374,43 @@ async function testC51_exportDayLoopBound(assert: AssertFn): Promise<void> {
     });
   }
 
-  // REVIEW (alternative expectation, intentionally NOT asserted pending
-  // independent investigation): if the weekly Excel loop should iterate the
-  // full `periodDays`, these would hold. Restore them if/when that is decided
-  // correct.
-  // assert(sheetNames.includes('יום 6'), 'C5.1: weekly Excel emits a sheet for op-day 6 (has tasks)');
-  // assert(sheetNames.includes('יום 7'), 'C5.1: weekly Excel emits a sheet for op-day 7 (periodDays=7)');
-  // assert(rawDays.has(6), 'C5.1: weekly Excel raw-data sheet includes op-day 6 rows');
-  // assert(summaryDayCols === schedule.periodDays, 'C5.1: weekly Excel summary header has periodDays (7) day columns');
-
-  // Current behavior pinned (these PASS and record the observed shape so any
-  // change in behavior is detected as a deliberate change):
+  // Corrected behavior: the weekly Excel loop iterates the full frozen period
+  // (1..periodDays), so every op-day index is visited. op-day 6 (which has a
+  // task) is no longer dropped, and a sheet exists for every op-day including
+  // the legitimately-empty op-days 1 and 7.
   assert(
-    !sheetNames.includes('יום 6') && !sheetNames.includes('יום 7'),
-    'C5.1: current behavior — weekly Excel has no יום 6 / יום 7 sheet for this gappy periodDays=7 schedule',
+    sheetNames.includes('יום 6'),
+    'C5.1: weekly Excel emits a sheet for op-day 6 (has tasks — was silently dropped pre-fix)',
   );
   assert(
-    !rawDays.has(6) && rawDays.size === 4,
-    'C5.1: current behavior — raw-data sheet day column is {2,3,4,5} (op-day 6 absent)',
+    sheetNames.includes('יום 1') && sheetNames.includes('יום 7'),
+    'C5.1: weekly Excel emits a sheet for every op-day 1..periodDays (incl. empty op-days 1 & 7)',
   );
   assert(
-    summaryDayCols === numDays && summaryDayCols !== schedule.periodDays,
-    'C5.1: current behavior — summary header has getNumDays (5) day columns, not periodDays (7)',
+    rawDays.has(6) && rawDays.size === 5,
+    'C5.1: raw-data sheet day column is {2,3,4,5,6} — op-day 6 rows present',
+  );
+  assert(
+    summaryDayCols === schedule.periodDays,
+    'C5.1: summary header has periodDays (7) day columns, not the getNumDays (5) cardinality',
   );
 
   // ── PDF weekly path — static check ──
   // pdf-export.ts can't be imported here (Vite-only pdfjs worker specifier),
-  // so check statically which value `exportWeeklyOverview` uses as its
-  // `for (d=1; d<=...; d++)` page-loop bound — `getNumDays(...)` or
-  // `schedule.periodDays` (the same choice C5.1 exercises end-to-end via Excel).
+  // so check statically that `exportWeeklyOverview` bounds its
+  // `for (d=1; d<=numDays; d++)` page loop on `schedule.periodDays` and no
+  // longer references getNumDays at all (mirrors the Excel end-to-end check).
   const pdfSrc = readFileSync(join(__dirname, 'web', 'pdf-export.ts'), 'utf8');
   const weeklyIdx = pdfSrc.indexOf('export function exportWeeklyOverview');
-  const weeklyBody = weeklyIdx >= 0 ? pdfSrc.slice(weeklyIdx, weeklyIdx + 900) : '';
-  const usesGetNumDaysBound =
-    /const\s+numDays\s*=\s*getNumDays\(schedule,\s*dayStartHour\)/.test(weeklyBody) &&
+  const weeklyBody = weeklyIdx >= 0 ? pdfSrc.slice(weeklyIdx, weeklyIdx + 1200) : '';
+  const usesPeriodDaysBound =
+    /const\s+numDays\s*=\s*schedule\.periodDays/.test(weeklyBody) &&
     /for\s*\(let d = 1; d <= numDays; d\+\+\)/.test(weeklyBody) &&
-    !/d <= schedule\.periodDays/.test(weeklyBody);
+    !/getNumDays\(/.test(weeklyBody);
 
-  // REVIEW (alternative expectation, intentionally NOT asserted pending
-  // independent investigation): if the weekly PDF should iterate
-  // `schedule.periodDays`, this would hold. Restore it if/when that is decided
-  // correct.
-  // assert(/for \(let d = 1; d <= schedule\.periodDays; d\+\+\)/.test(weeklyBody),
-  //   'C5.1: weekly PDF iterates periodDays for the page loop');
   assert(
-    usesGetNumDaysBound,
-    'C5.1: current behavior — exportWeeklyOverview page-loop bound is getNumDays(...), not schedule.periodDays',
+    usesPeriodDaysBound,
+    'C5.1: exportWeeklyOverview page-loop bound is schedule.periodDays, not getNumDays(...)',
   );
 }
 

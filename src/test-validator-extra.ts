@@ -4,8 +4,9 @@
  * also self-runnable: `npx ts-node src/test-validator-extra.ts`.
  *
  * Covers:
- *  - C3.1 (P0) `previewSwap` vs globally-disabled hard constraints (behavior
- *    pinned for independent review — see the C3.1 block).
+ *  - C3.1 (P0) standalone `validator.previewSwap()` is intentionally
+ *    context-free (C3.1.a–c); the engine swap-preview path the UI actually
+ *    uses honors the engine's frozen disabled-HC set (C3.1.d regression).
  *  - C3.2 (P1) `disabledHC` round-trip suppression for HC-2/3/4/7/8/11/12.
  *  - C3.3 (P1) `collectSoftWarnings` SC-7 GROUP_MISMATCH + SC-10 family.
  *  - C3.4 (P1) SC-9 `computeNotWithPenalty` sub-team partitioning.
@@ -21,6 +22,9 @@ import {
   DEFAULT_CONFIG,
   Level,
   previewSwap,
+  type Schedule,
+  type ScheduleScore,
+  SchedulingEngine,
   type SwapRequest,
   type Task,
   validateHardConstraints,
@@ -73,18 +77,37 @@ function mkA(id: string, taskId: string, slotId: string, participantId: string):
   };
 }
 
+const DUMMY_SCORE: ScheduleScore = {
+  minRestHours: 0,
+  avgRestHours: 0,
+  restStdDev: 0,
+  totalPenalty: 0,
+  compositeScore: 0,
+  l0StdDev: 0,
+  l0AvgEffective: 0,
+  seniorStdDev: 0,
+  seniorAvgEffective: 0,
+  dailyPerParticipantStdDev: 0,
+  dailyGlobalStdDev: 0,
+  restPerGapBonus: 0,
+};
+
 // ════════════════════════════════════════════════════════════════════════════
 export async function runValidatorExtraTests(assert: AssertFn): Promise<void> {
   // ──────────────────────────────────────────────────────────────────────────
-  // C3.1 (P0) — REVIEW: previewSwap vs the globally-disabled hard-constraint set
+  // C3.1.a–c — the STANDALONE `validator.previewSwap()` helper is context-free
+  // by design.
   //
-  // Open question under independent review: when a hard constraint is in the
-  // frozen `disabledHardConstraints` set, should a manual-swap *preview*
-  // (`previewSwap`) report a swap that only that constraint would reject as
-  // valid, matching the committed engine path? This block exercises the
-  // current behavior and pins it; the hypothesized alternative behavior is
-  // recorded as a commented-out assertion below and is intentionally NOT
-  // asserted pending that investigation.
+  // `validator.previewSwap(tasks, participants, assignments, swap, …)` is a
+  // pure helper that calls `fullValidate(..., /* disabledHC */ undefined, …)`:
+  // it has no channel for a disabled-HC set and therefore always evaluates
+  // every hard constraint. This is NOT the manual-swap path the UI uses — the
+  // mobile swap UI calls the *engine* methods (`src/web/swap-picker.ts` →
+  // `engine.previewSwap` / `engine.previewSwapChain` → `engine.validate()`),
+  // which honor the engine's frozen `disabledHC`. No web/engine/electron code
+  // calls this standalone helper; only unit tests do (it is re-exported via
+  // `src/index.ts` as public API). C3.1.a–c characterize the helper in
+  // isolation; C3.1.d pins the behavior of the real engine swap-preview path.
   // ──────────────────────────────────────────────────────────────────────────
   {
     const t1: Task = {
@@ -119,7 +142,7 @@ export async function runValidatorExtraTests(assert: AssertFn): Promise<void> {
     const baselineHasHc12 = baseline.violations.some((v) => v.code === 'CONSECUTIVE_HIGH_LOAD');
     assert(
       !baseline.valid && baselineHasHc12,
-      'C3.1.a — sanity: the swap triggers HC-12 (CONSECUTIVE_HIGH_LOAD) in previewSwap',
+      'C3.1.a — sanity: the swap triggers HC-12 (CONSECUTIVE_HIGH_LOAD) in the standalone previewSwap helper',
     );
 
     // The validation layer CAN suppress HC-12 when the disabled set is passed.
@@ -133,23 +156,100 @@ export async function runValidatorExtraTests(assert: AssertFn): Promise<void> {
       'C3.1.b — validateHardConstraints honors disabled HC-12 on the post-swap set (suppression works at the validation layer)',
     );
 
-    // Current behavior pinned (PASS): the `previewSwap` signature exposes no
-    // parameter for the globally-disabled set, so even with HC-12 nominally
-    // disabled the preview still reports the swap invalid with HC-12. This
-    // assertion records the current behavior; if a change makes previewSwap
-    // honor the disabled set this assert flips, which is the signal to restore
-    // the commented-out assertion below.
-    const bugPreview = previewSwap(tasks, participants, assignments, swap);
+    // The standalone helper has no disabled-HC channel by design, so it always
+    // reports the HC-12 violation regardless of any disabled set. This is a
+    // property of the isolated pure helper, NOT a manual-swap defect: the UI
+    // never calls this function (see the section comment above) — the engine
+    // swap-preview path is covered by C3.1.d, which honors the frozen set.
+    const standalone = previewSwap(tasks, participants, assignments, swap);
     assert(
-      !bugPreview.valid && bugPreview.violations.some((v) => v.code === 'CONSECUTIVE_HIGH_LOAD'),
-      'C3.1.c — current behavior: previewSwap reports the swap invalid with HC-12 even though HC-12 is nominally disabled (no disabledHC param exists)',
+      !standalone.valid && standalone.violations.some((v) => v.code === 'CONSECUTIVE_HIGH_LOAD'),
+      'C3.1.c — the standalone previewSwap helper is context-free: it reports HC-12 (no disabledHC channel exists, by design)',
+    );
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // C3.1.d — REGRESSION: the ENGINE swap-preview path honors the engine's
+  // generation-time frozen disabled-HC set, and the preview agrees with the
+  // committed + revalidated path.
+  //
+  // This is the path the mobile swap UI actually uses
+  // (`src/web/swap-picker.ts` → `engine.previewSwap` / `engine.previewSwapChain`
+  // → `engine.validate()`). The engine captures `disabledHC` at construction
+  // (its generation-time value); `validate()` / `revalidateFull()` use that
+  // frozen set, and a later toggle in the algorithm screen does not reach an
+  // already-built engine. So a swap whose only violation is a frozen-disabled
+  // HC must preview VALID and commit/revalidate the same way.
+  // ──────────────────────────────────────────────────────────────────────────
+  {
+    const mkHeavy = (id: string, slotId: string, startH: number, endH: number): Task => ({
+      id,
+      name: id,
+      timeBlock: { start: new Date(2026, 4, 18, startH, 0), end: new Date(2026, 4, 18, endH, 0) },
+      requiredCount: 1,
+      slots: [{ slotId, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+    });
+    const t1 = mkHeavy('c31d-t1', 'c31d-s1', 6, 10);
+    const t2 = mkHeavy('c31d-t2', 'c31d-s2', 10, 14); // back-to-back with t1
+    const pA = mkP('c31d-pA');
+    const pB = mkP('c31d-pB');
+
+    const buildSchedule = (): Schedule => ({
+      id: 'c31d',
+      tasks: [t1, t2],
+      participants: [pA, pB],
+      assignments: [mkA('c31d-a1', t1.id, 'c31d-s1', pA.id), mkA('c31d-a2', t2.id, 'c31d-s2', pB.id)],
+      feasible: true,
+      score: { ...DUMMY_SCORE },
+      violations: [],
+      generatedAt: new Date(),
+      // The engine validates via its constructor-frozen `disabledHC`, not this
+      // snapshot array; kept coherent for realism.
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2026, 4, 17),
+      periodDays: 7,
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
+    });
+    // Swap pA (already on t1) onto t2 → back-to-back blocking ⇒ HC-12 only.
+    const swap: SwapRequest = { assignmentId: 'c31d-a2', newParticipantId: pA.id };
+
+    // Control: engine with NO disabled set → the engine preview path reports
+    // the HC-12 violation (the scenario genuinely triggers HC-12 via the
+    // engine, so the next assertion is a real suppression, not a vacuous pass).
+    const ctrl = new SchedulingEngine({}, undefined, undefined, 5);
+    ctrl.addParticipants([pA, pB]);
+    ctrl.importSchedule(buildSchedule());
+    const ctrlPrev = ctrl.previewSwapChain([swap]);
+    assert(
+      !ctrlPrev.valid && ctrlPrev.violations.some((v) => v.code === 'CONSECUTIVE_HIGH_LOAD'),
+      'C3.1.d — control: engine.previewSwapChain reports HC-12 when no constraint is disabled',
     );
 
-    // REVIEW (open question, intentionally NOT asserted pending independent
-    // investigation): if `previewSwap` should honor the frozen disabled set,
-    // the expected behavior would be `bugPreview.valid === true` when HC-12 is
-    // globally disabled. Restore this assertion if/when that is decided correct.
-    // assert(bugPreview.valid, 'C3.1 — previewSwap reports the swap VALID when HC-12 is globally disabled');
+    // Engine with HC-12 frozen-disabled at construction (its generation-time
+    // value): the real preview path must report the swap VALID.
+    const eng = new SchedulingEngine({}, new Set(['HC-12']), undefined, 5);
+    eng.addParticipants([pA, pB]);
+    eng.importSchedule(buildSchedule());
+    const prev = eng.previewSwapChain([swap]);
+    assert(
+      prev.valid && !prev.violations.some((v) => v.code === 'CONSECUTIVE_HIGH_LOAD'),
+      'C3.1.d — engine.previewSwapChain honors the frozen disabled HC-12 (swap previews VALID)',
+    );
+
+    // Preview ≡ commit: committing the same swap and revalidating the frozen
+    // schedule must likewise be HC-12-free — the preview agrees with the
+    // committed + revalidated path under a frozen-disabled HC.
+    const commit = eng.swapParticipantChain([swap]);
+    assert(commit.valid, 'C3.1.d — engine.swapParticipantChain commits the swap under frozen-disabled HC-12');
+    eng.revalidateFull();
+    const liveViol = eng.getSchedule()?.violations ?? [];
+    assert(
+      !liveViol.some((v) => v.code === 'CONSECUTIVE_HIGH_LOAD'),
+      'C3.1.d — revalidateFull on the committed schedule is HC-12-free (preview ≡ commit)',
+    );
   }
 
   // ──────────────────────────────────────────────────────────────────────────

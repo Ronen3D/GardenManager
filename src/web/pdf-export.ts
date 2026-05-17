@@ -37,7 +37,7 @@ import {
 import { fmtTime } from '../utils/date-utils';
 import { triggerShareOrDownload } from './data-transfer';
 import { buildDay0Schedule } from './day0-adapter';
-import { getNumDays, getTasksForDay, tint } from './export-utils';
+import { getTasksForDay, tint } from './export-utils';
 import {
   assignRows,
   computeSectionMetrics,
@@ -497,7 +497,10 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStar
   // can never be confused with a generated day. The schedule passed in for
   // d=0 is the synthetic Day-0 Schedule built from the continuity snapshot.
   const isDay0 = dayIndex === 0;
-  const numDays = isDay0 ? schedule.periodDays : getNumDays(schedule, dayStartHour);
+  // Frozen op-day count for the "מתוך N" subtitle — periodDays, never a
+  // task-bearing-day cardinality (which would print "out of 5" on a 7-day
+  // schedule whose tasks skip op-days 1/7). See getNumDays' doc.
+  const numDays = schedule.periodDays;
 
   const titleMain = isDay0 ? 'יום 0 — הקשר' : `יום ${dayIndex}`;
   const titleSub = isDay0 ? 'מהשבצ"ק הקודם · קריאה בלבד' : `מתוך ${numDays}`;
@@ -703,7 +706,11 @@ export async function exportDailyImage(schedule: Schedule, dayIndex: number, day
  */
 export function exportWeeklyOverview(schedule: Schedule, dayStartHour: number = 5, includeDay0: boolean = true): void {
   const doc = createDoc();
-  const numDays = getNumDays(schedule, dayStartHour);
+  // One page per op-day across the whole frozen period. Bounding by
+  // getNumDays (a task-bearing-day cardinality) would silently drop any
+  // op-day whose absolute index exceeds the count — e.g. periodDays=7 with
+  // tasks on op-days 2..6 loses op-day 6 entirely. See getNumDays' doc.
+  const numDays = schedule.periodDays;
   const day0 = includeDay0 ? buildDay0Schedule(schedule) : null;
   let needsAddPage = false;
 

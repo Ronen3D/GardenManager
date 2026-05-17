@@ -605,6 +605,56 @@ export function importScheduleSnapshot(json: string): ImportResult {
   return { ok: true };
 }
 
+/** Capture every current localStorage entry into a heap-held map. Used to
+ *  snapshot the pre-import state before a destructive full-backup restore so a
+ *  failed write can be rolled back. A Map is used (not a plain object) so a
+ *  literal `__proto__` storage key is captured as an ordinary key with no
+ *  prototype hazard. */
+function snapshotLocalStorage(): Map<string, string> {
+  const snap = new Map<string, string>();
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k === null) continue;
+    const v = localStorage.getItem(k);
+    if (v !== null) snap.set(k, v);
+  }
+  return snap;
+}
+
+/**
+ * Roll localStorage back to a pre-import snapshot after a failed restore
+ * write. `writtenKeys` are the keys the restore loop could have written; any
+ * that did not exist pre-import are removed, then every snapshot entry is
+ * re-written verbatim (overwriting partially-written backup values). The
+ * snapshot is exactly what was in storage before — it fit then, so re-writing
+ * it after clearing the partial backup keys does not hit quota. Returns true
+ * iff storage was fully restored. The in-memory store caches were cleared by
+ * factoryReset(); we re-hydrate them via initStore() because the failure path
+ * does NOT reload the page.
+ */
+function rollbackLocalStorage(snapshot: Map<string, string>, writtenKeys: string[]): boolean {
+  let restored = true;
+  try {
+    for (const k of writtenKeys) {
+      if (!snapshot.has(k)) localStorage.removeItem(k);
+    }
+    for (const [k, v] of snapshot) {
+      localStorage.setItem(k, v);
+    }
+  } catch {
+    // Extremely unlikely: the snapshot previously fit, and removing the
+    // partial backup keys frees space. Report it honestly rather than claim
+    // a clean restore.
+    restored = false;
+  }
+  try {
+    store.initStore();
+  } catch {
+    /* best effort — the running session may need a manual reload */
+  }
+  return restored;
+}
+
 export function importFullBackup(json: string): ImportResult {
   let raw: unknown;
   try {
@@ -619,6 +669,21 @@ export function importFullBackup(json: string): ImportResult {
     return { ok: false, error: 'נתוני גיבוי לא תקינים.' };
   }
 
+  // Snapshot the entire current localStorage BEFORE destroying anything so a
+  // failed restore can be rolled back. The snapshot lives in the JS heap, so
+  // it does not consume localStorage quota — the failure mode we guard
+  // against. If we cannot even read current storage, abort before
+  // factoryReset() rather than risk an unrecoverable wipe.
+  let snapshot: Map<string, string>;
+  try {
+    snapshot = snapshotLocalStorage();
+  } catch {
+    return { ok: false, error: 'לא ניתן לקרוא את האחסון הקיים — הייבוא בוטל כדי לא לאבד נתונים.' };
+  }
+  const restoreKeys = Object.entries(payload.storageEntries)
+    .filter(([, value]) => typeof value === 'string')
+    .map(([key]) => key);
+
   // Full overwrite: factory reset then write all entries
   store.factoryReset();
 
@@ -628,8 +693,17 @@ export function importFullBackup(json: string): ImportResult {
         localStorage.setItem(key, value);
       }
     }
-  } catch (err) {
-    return { ok: false, error: 'כתיבה לאחסון נכשלה — ייתכן שאין מספיק מקום.' };
+  } catch {
+    // Restore failed mid-write (e.g. QuotaExceededError). Roll back to the
+    // pre-import state so the user is left with their original data rather
+    // than a half-applied backup or nothing at all.
+    const restored = rollbackLocalStorage(snapshot, restoreKeys);
+    return {
+      ok: false,
+      error: restored
+        ? 'כתיבה לאחסון נכשלה — ייתכן שאין מספיק מקום. הנתונים הקודמים שוחזרו ולא אבדו.'
+        : 'כתיבה לאחסון נכשלה ושחזור הנתונים הקודמים לא הושלם. ייצא גיבוי מחדש לפני שתמשיך.',
+    };
   }
 
   // Reload the app to reinitialize from the newly-written localStorage

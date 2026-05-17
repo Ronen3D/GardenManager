@@ -1954,6 +1954,16 @@ export function localSearchOptimize(
   // try to fill every remaining unfilled slot.
   if (remainingUnfilled.length > 0) {
     const sweepByParticipant = buildAssignmentMap(best);
+    // Seed phantom assignments into the per-participant index. `best` never
+    // contains phantoms (they're not in `current`), so a fresh map built from
+    // it would be phantom-blind and let isEligibleForSlot miss cross-schedule
+    // HC-5/HC-12/HC-14 — letting this last-ditch deterministic fill place a
+    // candidate that greedy / in-loop-SA / polish all correctly rejected.
+    // Matches the seeding the other three paths already do; there is no
+    // downstream phantom-aware revalidation, so the sweep is the last guard.
+    if (phantomContext) {
+      for (const pa of phantomContext.phantomAssignments) addToAssignmentMap(sweepByParticipant, pa);
+    }
     const sweepByTask = new Map<string, Assignment[]>();
     for (const a of best) {
       const list = sweepByTask.get(a.taskId);
