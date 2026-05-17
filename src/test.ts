@@ -332,9 +332,9 @@ import { fullValidate, previewSwap } from './engine/validator';
 import {
   DEFAULT_LEVERS,
   LINE_HEIGHT_FACTOR,
+  naturalWidth,
   type PageGeometry,
   planDayLayout,
-  resolveWidth,
   SCALE_FACTOR_MM,
   sectionHeight,
 } from './shared/pdf-fit-planner';
@@ -15545,10 +15545,30 @@ console.log('\n── PDF Fit Planner ──────────────
     heightBudget: 175,
     labelOffset: 3,
     rowGap: 3,
-    colGapHalf: 2,
+    colGap: 4,
     timeColWidth: 14,
-    minNameColWidth: 22,
-    gridUnits: 12,
+    minNameColWidth: 20,
+    idealNameColWidth: 30,
+  };
+
+  type Placed = { x: number; y: number; width: number; height: number; page: number };
+  const anyOverlap = (r: Placed[]): boolean => {
+    for (let i = 0; i < r.length; i++) {
+      for (let j = i + 1; j < r.length; j++) {
+        const a = r[i];
+        const b = r[j];
+        if (a.page !== b.page) continue;
+        if (
+          a.x < b.x + b.width - 1e-6 &&
+          b.x < a.x + a.width - 1e-6 &&
+          a.y < b.y + b.height - 1e-6 &&
+          b.y < a.y + a.height - 1e-6
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
   };
 
   // (d) Height model mirrors AutoTable's formula exactly.
@@ -15556,93 +15576,61 @@ console.log('\n── PDF Fit Planner ──────────────
   const expected = lh10 + 2 * 1.5 + (3 * lh10 + 2 * 2) + (1 * lh10 + 2 * 2); // header + 3-line row + 1-line row
   const got = sectionHeight({ id: 's', displayOrder: 0, logicalColCount: 1, nameGrid: [[3], [1]] }, 1, 10, 2, 1.5);
   assert(Math.abs(got - expected) < 1e-9, 'fit-planner: sectionHeight matches AutoTable height formula');
-  assert(Math.abs(resolveWidth(12, geo) - 281) < 1e-9, 'fit-planner: full-span width = usableWidth');
-  assert(Math.abs(resolveWidth(6, geo) - (281 / 12) * 6 + 2) < 1e-9, 'fit-planner: partial-span subtracts colGapHalf');
 
-  // (a) Sparse day → best font, no reshaping, fits.
+  // naturalWidth: comfortable sub-columns, floored at min, capped at the page.
+  assert(
+    Math.abs(naturalWidth({ id: 'w', displayOrder: 0, logicalColCount: 1, nameGrid: [[1]] }, 1, geo) - (14 + 30)) <
+      1e-9,
+    'fit-planner: naturalWidth = timeCol + logical*nameCols*idealNameColWidth',
+  );
+  assert(
+    naturalWidth({ id: 'w', displayOrder: 0, logicalColCount: 4, nameGrid: [[1, 1, 1, 1]] }, 3, geo) === 281,
+    'fit-planner: naturalWidth clamps very wide sections to usableWidth',
+  );
+
+  // (a) Sparse day → best font, no reshaping, ONE page, no overlaps.
   const sparse = planDayLayout({
     sections: [
       { id: 'A', displayOrder: 0, logicalColCount: 1, nameGrid: [[1], [1]] },
       { id: 'B', displayOrder: 1, logicalColCount: 1, nameGrid: [[1], [1]] },
     ],
-    initialPlacements: [
-      { sectionId: 'A', row: 1, colStart: 1, colSpan: 12 },
-      { sectionId: 'B', row: 2, colStart: 1, colSpan: 12 },
-    ],
     geometry: geo,
     levers: DEFAULT_LEVERS,
   });
-  assert(!sparse.overflow && sparse.fontSize === 9, 'fit-planner: sparse day → font 9, fits one page');
+  assert(
+    !sparse.overflow && sparse.pageCount === 1 && sparse.fontSize === 9,
+    'fit-planner: sparse day → font 9, one page',
+  );
   assert(
     sparse.sections.every((s) => s.nameCols === 1) && sparse.predictedHeight <= geo.heightBudget,
-    'fit-planner: sparse day → no reshaping needed',
+    'fit-planner: sparse day → no reshaping, within budget',
   );
-  assert(sparse.sections.length === 2 && sparse.pageBreakRows.length === 0, 'fit-planner: sparse → single page');
+  assert(sparse.sections.length === 2 && !anyOverlap(sparse.sections), 'fit-planner: sparse → no overlap');
 
-  // (b) Dense שששש-like section (6 time rows × 9 names) → reshapes, still 1 page.
+  // (b) One dense 6-row 9-name section + a tiny one → reshape, ONE page, the
+  // tiny one backfilled (not spilled to a near-empty second page).
   const dense = planDayLayout({
     sections: [
-      {
-        id: 'SHSH',
-        displayOrder: 0,
-        logicalColCount: 1,
-        nameGrid: [[9], [9], [9], [6], [9], [9]],
-      },
+      { id: 'SHSH', displayOrder: 0, logicalColCount: 1, nameGrid: [[9], [9], [9], [6], [9], [9]] },
       { id: 'TINY', displayOrder: 1, logicalColCount: 1, nameGrid: [[2]] },
-    ],
-    initialPlacements: [
-      { sectionId: 'SHSH', row: 1, colStart: 1, colSpan: 12 },
-      { sectionId: 'TINY', row: 2, colStart: 1, colSpan: 12 },
     ],
     geometry: geo,
     levers: DEFAULT_LEVERS,
   });
   const sh = dense.sections.find((s) => s.id === 'SHSH')!;
-  assert(!dense.overflow, 'fit-planner: dense day fits one page (no overflow)');
+  assert(!dense.overflow && dense.pageCount === 1, 'fit-planner: dense day fits ONE page');
   assert(sh.nameCols > 1, 'fit-planner: dense section gets multi-name-column reshape');
   assert(dense.fontSize === 9, 'fit-planner: reshape preferred over shrinking font (stays at 9)');
-  assert(dense.predictedHeight <= geo.heightBudget, 'fit-planner: dense predicted height within budget');
-
-  // (c) Degenerate: 60 time rows cannot be reshaped away → overflow + clean breaks.
-  const manyRows = Array.from({ length: 60 }, () => [1]);
-  const degenerate = planDayLayout({
-    sections: [{ id: 'HUGE', displayOrder: 0, logicalColCount: 1, nameGrid: manyRows }],
-    initialPlacements: [{ sectionId: 'HUGE', row: 1, colStart: 1, colSpan: 12 }],
-    geometry: geo,
-    levers: DEFAULT_LEVERS,
-  });
-  assert(degenerate.overflow, 'fit-planner: degenerate day flagged overflow');
-  // Single section = single layout row, which is never split mid-table, so no
-  // row-boundary break is possible — the page-break list stays empty by design.
-  assert(degenerate.pageBreakRows.length === 0, 'fit-planner: never splits a single section mid-table');
-
-  // (c2) Many separate sections that overflow → breaks at whole-row boundaries.
-  const multi = planDayLayout({
-    sections: Array.from({ length: 8 }, (_, i) => ({
-      id: `R${i}`,
-      displayOrder: i,
-      logicalColCount: 1,
-      nameGrid: [[3], [3], [3], [3], [3]],
-    })),
-    initialPlacements: Array.from({ length: 8 }, (_, i) => ({
-      sectionId: `R${i}`,
-      row: i + 1,
-      colStart: 1,
-      colSpan: 12,
-    })),
-    geometry: geo,
-    levers: DEFAULT_LEVERS,
-  });
   assert(
-    !multi.overflow || multi.pageBreakRows.length >= 1,
-    'fit-planner: multi-section overflow breaks at row boundaries',
+    dense.predictedHeight <= geo.heightBudget && !anyOverlap(dense.sections),
+    'fit-planner: dense within budget, no overlap',
   );
 
-  // (e) Faithful reconstruction of the attached real bug report (day 1): the
-  // exact section shape that produced a 4-page PDF — a 4-sub-team adanit block,
-  // two heavy 6-time-row flat sections (shemesh, shshsh ≈ 9 names/cell), plus
-  // five tiny sections. With a realistic generateGridTemplate-style packing it
-  // MUST collapse to one page via reshape (+ scale only if needed).
+  // (e) Faithful reconstruction of the attached real bug report (day 1): a
+  // 4-sub-team adanit block, two heavy 6-time-row flat sections (shemesh,
+  // shshsh ≈ 9 names/cell), plus five tiny sections. The OLD row-band model
+  // produced a 2-page PDF with a near-empty page; the 2-D packer MUST collapse
+  // it to one page via reshape, with every tiny section backfilled on page 1.
   const realDay = planDayLayout({
     sections: [
       { id: 'adanit', displayOrder: 0, logicalColCount: 4, nameGrid: [[3, 4, 3, 3], [4, 3, 3, 3], [3, 4, 3, 3]] },
@@ -15654,25 +15642,67 @@ console.log('\n── PDF Fit Planner ──────────────
       { id: 'bi', displayOrder: 6, logicalColCount: 1, nameGrid: [[1]] },
       { id: 'dgk', displayOrder: 7, logicalColCount: 1, nameGrid: [[1]] },
     ],
-    initialPlacements: [
-      { sectionId: 'adanit', row: 1, colStart: 1, colSpan: 12 },
-      { sectionId: 'shemesh', row: 2, colStart: 1, colSpan: 12 },
-      { sectionId: 'shshsh', row: 3, colStart: 1, colSpan: 12 },
-      { sectionId: 'mamtera', row: 4, colStart: 1, colSpan: 3 },
-      { sectionId: 'gk', row: 4, colStart: 4, colSpan: 2 },
-      { sectionId: 'matara', row: 4, colStart: 6, colSpan: 3 },
-      { sectionId: 'bi', row: 4, colStart: 9, colSpan: 2 },
-      { sectionId: 'dgk', row: 4, colStart: 11, colSpan: 2 },
-    ],
     geometry: geo,
     levers: DEFAULT_LEVERS,
   });
   const realShsh = realDay.sections.find((s) => s.id === 'shshsh')!;
-  assert(!realDay.overflow, 'fit-planner: real bug-report day collapses to ONE page');
+  assert(
+    !realDay.overflow && realDay.pageCount === 1,
+    'fit-planner: real bug-report day collapses to ONE page',
+  );
   assert(realShsh.nameCols > 1, 'fit-planner: real day reshapes the heavy 9-name section');
   assert(
-    realDay.predictedHeight <= geo.heightBudget && realDay.pageBreakRows.length === 0,
-    'fit-planner: real day predicted height within a single-page budget',
+    realDay.predictedHeight <= geo.heightBudget && !anyOverlap(realDay.sections),
+    'fit-planner: real day within one-page budget, no overlap',
+  );
+  const realTinies = realDay.sections.filter((s) => ['mamtera', 'gk', 'matara', 'bi', 'dgk'].includes(s.id));
+  assert(
+    realTinies.length === 5 && realTinies.every((t) => t.page === 0),
+    'fit-planner: every tiny section backfills page 1 (no near-empty spill)',
+  );
+
+  // (c2) Eight medium sections that overflowed the OLD capped row-band model
+  // now pack onto ONE page via 2-D packing + reshape.
+  const multi = planDayLayout({
+    sections: Array.from({ length: 8 }, (_, i) => ({
+      id: `R${i}`,
+      displayOrder: i,
+      logicalColCount: 1,
+      nameGrid: [[3], [3], [3], [3], [3]],
+    })),
+    geometry: geo,
+    levers: DEFAULT_LEVERS,
+  });
+  assert(
+    !multi.overflow && multi.pageCount === 1 && !anyOverlap(multi.sections),
+    'fit-planner: 8 medium sections pack onto ONE page (old model overflowed)',
+  );
+
+  // (c) Degenerate: one atomic section taller than a full page cannot be split
+  // by us → flagged overflow + oversize (rendered via AutoTable pagination).
+  const degenerate = planDayLayout({
+    sections: [{ id: 'HUGE', displayOrder: 0, logicalColCount: 1, nameGrid: Array.from({ length: 60 }, () => [1]) }],
+    geometry: geo,
+    levers: DEFAULT_LEVERS,
+  });
+  assert(degenerate.overflow, 'fit-planner: degenerate single huge section flagged overflow');
+  assert(
+    degenerate.sections.length === 1 && degenerate.sections[0].oversize === true,
+    'fit-planner: lone over-tall section flagged oversize (AutoTable native pagination)',
+  );
+
+  // Determinism: identical input ⇒ byte-identical plan.
+  const detIn = {
+    sections: [
+      { id: 'X', displayOrder: 0, logicalColCount: 1, nameGrid: [[4], [4]] },
+      { id: 'Y', displayOrder: 1, logicalColCount: 1, nameGrid: [[2]] },
+    ],
+    geometry: geo,
+    levers: DEFAULT_LEVERS,
+  };
+  assert(
+    JSON.stringify(planDayLayout(detIn)) === JSON.stringify(planDayLayout(detIn)),
+    'fit-planner: deterministic (identical input ⇒ identical plan)',
   );
 }
 

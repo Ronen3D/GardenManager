@@ -28,36 +28,38 @@ import { jsPDF } from 'jspdf';
 import { __createTable, __drawTable, type CellDef, type UserOptions } from 'jspdf-autotable';
 import type { Schedule, Task } from '../models/types';
 import {
+  BOLD_NAME_MAX_FONT,
   DEFAULT_LEVERS,
-  type InitialPlacement,
+  LINE_HEIGHT_FACTOR,
   type PageGeometry,
   planDayLayout,
+  SCALE_FACTOR_MM,
   type SectionDescriptor,
 } from '../shared/pdf-fit-planner';
 import { fmtTime } from '../utils/date-utils';
 import { triggerShareOrDownload } from './data-transfer';
 import { buildDay0Schedule } from './day0-adapter';
-import { getTasksForDay, tint } from './export-utils';
+import { getTasksForDay, hexToRgb } from './export-utils';
 import {
-  assignRows,
   computeSectionMetrics,
-  generateGridTemplate,
   getTaskAssignments,
   getUniqueStartTimes,
   type SectionMetrics,
 } from './layout-engine';
+import { groupColor } from './ui-helpers';
+import { RUBIK_BOLD_FONT_BASE64 } from './utils/rubik-bold-font-data';
 import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const PAGE_MARGIN = 8; // mm from each edge
-const COL_GAP = 4; // mm between grid columns
-const ROW_GAP = 3; // mm between grid rows
+const COL_GAP = 4; // mm minimum horizontal gap between side-by-side sections
+const ROW_GAP = 3; // mm minimum vertical gap between stacked sections
 const TABLE_LABEL_OFFSET = 3; // mm from label text to table top
 const TIME_COL_W = 14; // mm — width of the rightmost time column
 const MIN_NAME_COL_W = 20; // mm — min readable width for one name sub-column
+const IDEAL_NAME_COL_W = 30; // mm — comfortable width for one name sub-column
 const HEAD_PADDING = 1.5; // mm — per-side header cell padding (matches planner)
-const GRID_UNITS = 12; // matches layout-engine GRID_UNITS
 
 // ─── Hebrew RTL helper ───────────────────────────────────────────────────────
 
@@ -98,6 +100,15 @@ function createDoc(): jsPDF {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   doc.addFileToVFS('Rubik-Regular.ttf', RUBIK_FONT_BASE64);
   doc.addFont('Rubik-Regular.ttf', 'Rubik', 'normal');
+  // Bold face — participant names render bold at small font sizes for
+  // legibility. If registration ever fails, name drawing falls back to the
+  // normal weight (see drawNameCell) so the export never crashes.
+  try {
+    doc.addFileToVFS('Rubik-Bold.ttf', RUBIK_BOLD_FONT_BASE64);
+    doc.addFont('Rubik-Bold.ttf', 'Rubik', 'bold');
+  } catch {
+    /* bold unavailable — names stay regular weight */
+  }
   doc.setFont('Rubik', 'normal');
   return doc;
 }
@@ -163,12 +174,22 @@ function tblDefaults(y: number, fontSize = 7, cellPadding = 1.8): Partial<UserOp
  * fit planner (via name *counts*) and the renderer (via name *lists*), so the
  * predicted geometry always matches what is drawn.
  */
+/** One participant name ready to draw: RTL-shaped text + its group colour. */
+interface NameEntry {
+  text: string;
+  /** Group colour (hex) — drawn as the name's text colour, mirroring the UI. */
+  color: string;
+}
+
 interface LogicalColumn {
   header: string;
-  /** rtl-shaped participant names assigned in this column at `timeNum`. */
-  namesAt: (timeNum: number) => string[];
-  /** Representative tint colour for this column's cell at `timeNum`. */
-  colorAt: (timeNum: number) => string;
+  /** Names assigned in this column at `timeNum` (RTL-shaped + group colour). */
+  namesAt: (timeNum: number) => NameEntry[];
+}
+
+/** Resolve a participant's display name + group colour into a NameEntry. */
+function nameEntry(p: { name: string; group: string }): NameEntry {
+  return { text: rtl(p.name), color: groupColor(p.group) };
 }
 
 /**
@@ -203,11 +224,9 @@ function buildLogicalColumns(section: SectionMetrics, schedule: Schedule): Logic
           return atTime.flatMap((tk) =>
             getTaskAssignments(tk, schedule)
               .filter((s) => s.participant)
-              .map((s) => rtl(s.participant!.name)),
+              .map((s) => nameEntry(s.participant!)),
           );
         },
-        colorAt: (timeNum) =>
-          tasks.find((tk) => new Date(tk.timeBlock.start).getTime() === timeNum)?.color || '#7f8c8d',
       });
     }
 
@@ -224,11 +243,9 @@ function buildLogicalColumns(section: SectionMetrics, schedule: Schedule): Logic
           return atTime.flatMap((tk) =>
             getTaskAssignments(tk, schedule)
               .filter((s) => s.slot.subTeamId === teamId && s.participant)
-              .map((s) => rtl(s.participant!.name)),
+              .map((s) => nameEntry(s.participant!)),
           );
         },
-        colorAt: (timeNum) =>
-          teamTasks.find((tk) => new Date(tk.timeBlock.start).getTime() === timeNum)?.color || '#7f8c8d',
       });
     }
   } else if (hasSubTeams) {
@@ -268,11 +285,9 @@ function buildLogicalColumns(section: SectionMetrics, schedule: Schedule): Logic
           return atTime.flatMap((tk) =>
             getTaskAssignments(tk, schedule)
               .filter((s) => (s.slot.subTeamId ?? '') === capturedStId && s.participant)
-              .map((s) => rtl(s.participant!.name)),
+              .map((s) => nameEntry(s.participant!)),
           );
         },
-        colorAt: (timeNum) =>
-          tasks.find((tk) => new Date(tk.timeBlock.start).getTime() === timeNum)?.color || '#7f8c8d',
       });
     }
   } else {
@@ -284,42 +299,50 @@ function buildLogicalColumns(section: SectionMetrics, schedule: Schedule): Logic
         return atTime.flatMap((tk) =>
           getTaskAssignments(tk, schedule)
             .filter((s) => s.participant)
-            .map((s) => rtl(s.participant!.name)),
+            .map((s) => nameEntry(s.participant!)),
         );
       },
-      colorAt: (timeNum) => tasks.find((tk) => new Date(tk.timeBlock.start).getTime() === timeNum)?.color || '#7f8c8d',
     });
   }
 
   return columns;
 }
 
-// ─── Fit-to-page Layout Planning ─────────────────────────────────────────────
+// ─── 2-D Fit Layout Planning ─────────────────────────────────────────────────
 
-/** A positioned, reshape-resolved section ready to render. */
+/** A positioned, reshape-resolved section ready to render (absolute mm). */
 interface RenderRegion {
   label: string;
+  /** Section/source colour — tints the section label. */
+  sectionColor: string;
   x: number;
   y: number;
   width: number;
+  /** Predicted full footprint height (label + table) — for the drift guard. */
+  height: number;
   columns: LogicalColumn[];
   uniqueTimes: number[];
   /** Name sub-columns this section is split into (≥ 1). */
   nameCols: number;
+  /** True ⇒ atomic table taller than a page; let AutoTable paginate it. */
+  oversize: boolean;
 }
 
 interface DayLayout {
-  rows: { row: number; regions: RenderRegion[] }[];
+  /** Regions grouped by 0-indexed page (one entry per PDF page). */
+  pages: RenderRegion[][];
   fontSize: number;
   cellPadding: number;
-  /** 1-indexed layout rows that must start a new page (overflow only). */
-  pageBreakRows: number[];
 }
 
+/** Neutral slate used when a section has no representative colour. */
+const LABEL_FALLBACK = '#374151';
+
 /**
- * Build the one-page layout for a day: section grouping/order from the shared
- * layout-engine, then the pure fit planner decides reshaping + scaling so the
- * whole day fits a single page.
+ * Build the layout for a day: section grouping/order from the shared
+ * layout-engine, then the pure 2-D packer decides position, reshaping and
+ * scaling so the whole day fits one page when possible (else two balanced
+ * pages). PDF-only — the on-screen grid keeps its own CSS layout.
  */
 function planDayLayoutForPdf(
   dayTasks: Task[],
@@ -328,75 +351,71 @@ function planDayLayoutForPdf(
   pageH: number,
   topY: number,
 ): DayLayout | null {
-  const sections = computeSectionMetrics(dayTasks);
+  const sections = computeSectionMetrics(dayTasks); // displayOrder-sorted
   if (sections.length === 0) return null;
 
-  const template = generateGridTemplate(assignRows(sections));
-  const placementMap = new Map(template.placements.map((p) => [p.sectionId, p]));
-
-  const meta = new Map<string, { section: SectionMetrics; columns: LogicalColumn[]; uniqueTimes: number[] }>();
+  const meta = new Map<
+    string,
+    { section: SectionMetrics; columns: LogicalColumn[]; uniqueTimes: number[]; color: string }
+  >();
   const descriptors: SectionDescriptor[] = [];
-  const initialPlacements: InitialPlacement[] = [];
 
   for (const section of sections) {
-    const placement = placementMap.get(section.id);
-    if (!placement) continue;
     const columns = buildLogicalColumns(section, schedule);
     if (columns.length === 0) continue;
     const uniqueTimes = getUniqueStartTimes(section.tasks);
-    meta.set(section.id, { section, columns, uniqueTimes });
+    meta.set(section.id, {
+      section,
+      columns,
+      uniqueTimes,
+      color: section.tasks[0]?.color || LABEL_FALLBACK,
+    });
     descriptors.push({
       id: section.id,
       displayOrder: section.displayOrder,
       logicalColCount: columns.length,
       nameGrid: uniqueTimes.map((tn) => columns.map((c) => c.namesAt(tn).length)),
     });
-    initialPlacements.push({
-      sectionId: section.id,
-      row: placement.row,
-      colStart: placement.colStart,
-      colSpan: placement.colSpan,
-    });
   }
   if (descriptors.length === 0) return null;
 
   const usableWidth = pageW - 2 * PAGE_MARGIN;
-  const unitWidth = usableWidth / GRID_UNITS;
   const geometry: PageGeometry = {
     usableWidth,
     heightBudget: pageH - PAGE_MARGIN - topY,
     labelOffset: TABLE_LABEL_OFFSET,
     rowGap: ROW_GAP,
-    colGapHalf: COL_GAP / 2,
+    colGap: COL_GAP,
     timeColWidth: TIME_COL_W,
     minNameColWidth: MIN_NAME_COL_W,
-    gridUnits: GRID_UNITS,
+    idealNameColWidth: IDEAL_NAME_COL_W,
   };
 
-  const plan = planDayLayout({ sections: descriptors, initialPlacements, geometry, levers: DEFAULT_LEVERS });
+  const plan = planDayLayout({ sections: descriptors, geometry, levers: DEFAULT_LEVERS });
 
-  const rowMap = new Map<number, RenderRegion[]>();
+  const pages: RenderRegion[][] = [];
   for (const ps of plan.sections) {
     const m = meta.get(ps.id);
     if (!m) continue;
-    // RTL placement: grid column 1 is rightmost (same maths as the legacy grid).
-    const x = pageW - PAGE_MARGIN - (ps.colStart - 1 + ps.colSpan) * unitWidth;
+    // RTL: mirror the left-origin packer x within the usable box.
+    const x = pageW - PAGE_MARGIN - ps.x - ps.width;
     const region: RenderRegion = {
       label: m.section.title,
+      sectionColor: m.color,
       x,
-      y: topY,
+      y: topY + ps.y,
       width: ps.width,
+      height: ps.height,
       columns: m.columns,
       uniqueTimes: m.uniqueTimes,
       nameCols: Math.max(1, ps.nameCols),
+      oversize: ps.oversize === true,
     };
-    if (!rowMap.has(ps.row)) rowMap.set(ps.row, []);
-    rowMap.get(ps.row)!.push(region);
+    if (!pages[ps.page]) pages[ps.page] = [];
+    pages[ps.page].push(region);
   }
 
-  const rows = [...rowMap.keys()].sort((a, b) => a - b).map((row) => ({ row, regions: rowMap.get(row)! }));
-
-  return { rows, fontSize: plan.fontSize, cellPadding: plan.cellPadding, pageBreakRows: plan.pageBreakRows };
+  return { pages: pages.filter(Boolean), fontSize: plan.fontSize, cellPadding: plan.cellPadding };
 }
 
 // ─── Unified PDF Section Table Renderer ─────────────────────────────────────
@@ -405,30 +424,80 @@ const emptyCellStyle = {
   halign: 'center' as const,
   textColor: [190, 190, 190] as [number, number, number],
 };
-const filledCellStyle = (hexColor: string) => ({
-  halign: 'center' as const,
-  fillColor: tint(hexColor) as [number, number, number],
-});
+const nameCellStyle = {
+  halign: 'right' as const,
+  valign: 'top' as const,
+};
+
+/** True if the bold Rubik face registered (createDoc's try/catch may fail). */
+function boldAvailable(doc: jsPDF): boolean {
+  try {
+    const list = doc.getFontList() as Record<string, string[]>;
+    return Array.isArray(list?.Rubik) && list.Rubik.includes('bold');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Draw one name cell's lines, each in its participant's group colour (bold at
+ * small font sizes). Reproduces jspdf-autotable's exact text geometry for a
+ * `valign:'top' / halign:'right'` cell so the predicted height stays exact.
+ */
+function drawNameCell(
+  doc: jsPDF,
+  cell: { x: number; y: number; width: number; padding: (n: string) => number },
+  names: NameEntry[],
+  fontSize: number,
+  bold: boolean,
+): void {
+  const fontSizeMm = fontSize / SCALE_FACTOR_MM;
+  const xRight = cell.x + cell.width - cell.padding('right');
+  // Mirror autoTableText: y = padTop + fontSize*(2 − lineHeightFactor).
+  const yStart = cell.y + cell.padding('top') + fontSizeMm * (2 - LINE_HEIGHT_FACTOR);
+  const lineH = fontSizeMm * LINE_HEIGHT_FACTOR;
+  doc.setFontSize(fontSize);
+  doc.setFont('Rubik', bold ? 'bold' : 'normal');
+  for (let i = 0; i < names.length; i++) {
+    const { text, color } = names[i];
+    const [r, g, b] = hexToRgb(color);
+    doc.setTextColor(r, g, b);
+    const w = doc.getStringUnitWidth(text) * fontSizeMm;
+    doc.text(text, xRight - w, yStart + i * lineH);
+  }
+}
 
 /**
  * Render one section's table. Each logical column is expanded into `nameCols`
  * physical sub-columns; that cell's names are distributed column-major
  * (top-to-bottom, then next sub-column) so the cell is ⌈N / nameCols⌉ lines
- * tall instead of N. The logical header spans its sub-columns. Returns finalY.
+ * tall instead of N. Participant names are custom-drawn per-line in their group
+ * colour (bold at small sizes) on a plain background. Returns finalY.
  */
 function renderSectionTablePdf(
   doc: jsPDF,
   columns: LogicalColumn[],
   uniqueTimes: number[],
-  region: { label: string; x: number; y: number; width: number },
+  region: {
+    label: string;
+    sectionColor: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    oversize: boolean;
+  },
   opts: { fontSize: number; cellPadding: number; nameCols: number },
 ): number {
   if (columns.length === 0) return region.y;
   const nameCols = Math.max(1, opts.nameCols);
 
-  // Section label
+  // Section label, tinted with the section colour (preserves the grouping
+  // signal the old cell-background tint used to carry).
   doc.setFontSize(opts.fontSize);
-  doc.setTextColor(80, 80, 80);
+  doc.setFont('Rubik', 'normal');
+  const [lr, lg, lb] = hexToRgb(region.sectionColor || LABEL_FALLBACK);
+  doc.setTextColor(lr, lg, lb);
   doc.text(rtl(region.label), region.x + region.width - 1, region.y, { align: 'right' });
   const tableY = region.y + TABLE_LABEL_OFFSET;
 
@@ -440,9 +509,11 @@ function renderSectionTablePdf(
     { content: rtl('זמן'), styles: { halign: 'center' as const } } as CellDef,
   ];
 
-  const body: CellDef[][] = uniqueTimes.map((timeNum) => {
+  // Per-cell name payload for the custom draw, keyed `bodyRow:physicalCol`.
+  const nameAt = new Map<string, NameEntry[]>();
+  const body: CellDef[][] = uniqueTimes.map((timeNum, rowIdx) => {
     const cells: CellDef[] = [];
-    for (const col of columns) {
+    columns.forEach((col, colIdx) => {
       const names = col.namesAt(timeNum);
       if (names.length === 0) {
         // Genuinely unfilled — show one "—" marker, rest blank.
@@ -450,14 +521,17 @@ function renderSectionTablePdf(
           cells.push({ content: j === 0 ? '—' : '', styles: emptyCellStyle } as CellDef);
         }
       } else {
-        const color = col.colorAt(timeNum);
         const perCol = Math.ceil(names.length / nameCols);
         for (let j = 0; j < nameCols; j++) {
-          const bucket = names.slice(j * perCol, (j + 1) * perCol).join('\n');
-          cells.push({ content: bucket, styles: filledCellStyle(color) } as CellDef);
+          const bucket = names.slice(j * perCol, (j + 1) * perCol);
+          nameAt.set(`${rowIdx}:${colIdx * nameCols + j}`, bucket);
+          // Keep joined text as content so AutoTable reserves the exact
+          // line-count height the planner predicted; the text is suppressed
+          // in willDrawCell and re-drawn per-name (coloured) in didDrawCell.
+          cells.push({ content: bucket.map((n) => n.text).join('\n'), styles: nameCellStyle } as CellDef);
         }
       }
-    }
+    });
     cells.push({ content: fmtTime(new Date(timeNum)), styles: { halign: 'center' as const } } as CellDef);
     return cells;
   });
@@ -469,6 +543,7 @@ function renderSectionTablePdf(
   for (let i = 0; i < physicalDataCols; i++) colStyles[i] = { cellWidth: subColW };
   colStyles[physicalDataCols] = { cellWidth: TIME_COL_W };
 
+  const bold = opts.fontSize <= BOLD_NAME_MAX_FONT && boldAvailable(doc);
   const tableOpts = {
     ...tblDefaults(tableY, opts.fontSize, opts.cellPadding),
     head: [head],
@@ -476,21 +551,39 @@ function renderSectionTablePdf(
     tableWidth: region.width,
     margin: { left: region.x, right: doc.internal.pageSize.getWidth() - region.x - region.width },
     columnStyles: colStyles,
+    // biome-ignore lint/suspicious/noExplicitAny: AutoTable hook data is untyped
+    willDrawCell: (data: any) => {
+      if (data.section === 'body' && nameAt.has(`${data.row.index}:${data.column.index}`)) {
+        data.cell.text = []; // suppress default text — custom-drawn below
+      }
+    },
+    // biome-ignore lint/suspicious/noExplicitAny: AutoTable hook data is untyped
+    didDrawCell: (data: any) => {
+      if (data.section !== 'body') return;
+      const entries = nameAt.get(`${data.row.index}:${data.column.index}`);
+      if (entries?.length) drawNameCell(doc, data.cell, entries, opts.fontSize, bold);
+    },
   };
   const table = __createTable(doc, tableOpts);
   __drawTable(doc, table);
 
-  return table.finalY ?? tableY;
+  const finalY = table.finalY ?? tableY;
+  // Dev guard: the AutoTable-exact height model must never under-predict.
+  if (!region.oversize && finalY > region.y + region.height + 0.5) {
+    console.warn(
+      `[pdf-export] height drift: "${region.label}" drawn ${(finalY - region.y).toFixed(1)}mm vs predicted ${region.height.toFixed(1)}mm`,
+    );
+  }
+  return finalY;
 }
 
-// ─── Daily Detail Export (Grid Layout) ───────────────────────────────────────
+// ─── Daily Detail Export (2-D packed layout) ─────────────────────────────────
 
 /**
- * Render a single day's schedule using the fit planner for spatial
- * arrangement, scaling, and multi-name-column reshaping. The day is guaranteed
- * to occupy exactly one page unless it is genuinely degenerate (more time-rows
- * than physically fit at the floor config), in which case it breaks only at
- * whole layout-row boundaries.
+ * Render a single day's schedule using the 2-D fit packer for spatial
+ * arrangement, scaling and multi-name-column reshaping. The day occupies one
+ * page whenever possible; a genuinely impossible day spills to a second,
+ * balanced page (never a near-empty trailing page).
  */
 function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStartHour: number = 5): void {
   // Day 0 (continuity context): mark the title clearly so the printed page
@@ -504,7 +597,7 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStar
 
   const titleMain = isDay0 ? 'יום 0 — הקשר' : `יום ${dayIndex}`;
   const titleSub = isDay0 ? 'מהשבצ"ק הקודם · קריאה בלבד' : `מתוך ${numDays}`;
-  let topY = drawTitle(doc, titleMain, titleSub);
+  const topY = drawTitle(doc, titleMain, titleSub);
 
   const dayTasks = getTasksForDay(schedule, dayIndex, dayStartHour);
   if (dayTasks.length === 0) {
@@ -519,28 +612,19 @@ function renderDayPage(doc: jsPDF, schedule: Schedule, dayIndex: number, dayStar
   const layout = planDayLayoutForPdf(dayTasks, schedule, pageW, pageH, topY);
   if (!layout) return;
 
-  const breakRows = new Set(layout.pageBreakRows);
-  let currentY = topY;
-  let firstRow = true;
-  for (const { row, regions } of layout.rows) {
-    if (!firstRow && breakRows.has(row)) {
+  layout.pages.forEach((regions, pageIdx) => {
+    if (pageIdx > 0) {
       doc.addPage();
-      topY = drawTitle(doc, titleMain, `${titleSub} · המשך`);
-      currentY = topY;
+      drawTitle(doc, titleMain, `${titleSub} · המשך`);
     }
-    let rowBottomY = currentY;
     for (const region of regions) {
-      region.y = currentY;
-      const bottomY = renderSectionTablePdf(doc, region.columns, region.uniqueTimes, region, {
+      renderSectionTablePdf(doc, region.columns, region.uniqueTimes, region, {
         fontSize: layout.fontSize,
         cellPadding: layout.cellPadding,
         nameCols: region.nameCols,
       });
-      rowBottomY = Math.max(rowBottomY, bottomY);
     }
-    currentY = rowBottomY + ROW_GAP;
-    firstRow = false;
-  }
+  });
 }
 
 interface BuiltDailyDoc {

@@ -129,6 +129,7 @@ import {
   inferColumnStrategy,
   type SectionMetrics,
 } from './web/layout-engine';
+import { DEFAULT_LEVERS, type PageGeometry, planDayLayout } from './shared/pdf-fit-planner';
 // NOTE: `src/web/pdf-export.ts` is intentionally NOT imported. It does
 // `await import('pdfjs-dist/.../pdf.worker.min.mjs?worker&inline')` — a
 // Vite-only virtual specifier that ts-node/tsc cannot resolve (TS2307), which
@@ -286,6 +287,7 @@ export async function runExportLayoutTests(assert: AssertFn): Promise<void> {
   testC55_swimlaneMath(assert);
   testC56_layoutEngine(assert);
   testC57_day0Adapter(assert);
+  testC58_pdfPacker(assert);
 
   console.log('── WP5 export/layout tests complete ───────────');
 }
@@ -895,6 +897,123 @@ function testC57_day0Adapter(assert: AssertFn): void {
   assert(
     getDay0HoursForParticipant(noNameParent, 'x') === 0,
     'C5.7: getDay0HoursForParticipant → 0 when participant name absent from snapshot',
+  );
+}
+
+// ─── C5.8 — 2-D PDF fit packer (pure; the daily-export layout contract) ──────
+// Pins the bug this WP fixes: the OLD row-band model produced a 2-page PDF
+// with a near-empty page for a dense day. The 2-D packer MUST collapse the
+// documented day to ONE page (every tiny section backfilled), and when a day
+// genuinely cannot fit, spill to exactly TWO *balanced* pages at a readable
+// font — never one full page + one near-empty page.
+
+function testC58_pdfPacker(assert: AssertFn): void {
+  // Realistic A4-landscape geometry (matches pdf-export's PageGeometry build).
+  const geo: PageGeometry = {
+    usableWidth: 281,
+    heightBudget: 175,
+    labelOffset: 3,
+    rowGap: 3,
+    colGap: 4,
+    timeColWidth: 14,
+    minNameColWidth: 20,
+    idealNameColWidth: 30,
+  };
+
+  type R = { x: number; y: number; width: number; height: number; page: number };
+  const anyOverlap = (r: R[]): boolean => {
+    for (let i = 0; i < r.length; i++) {
+      for (let j = i + 1; j < r.length; j++) {
+        const a = r[i];
+        const b = r[j];
+        if (a.page !== b.page) continue;
+        if (
+          a.x < b.x + b.width - 1e-6 &&
+          b.x < a.x + a.width - 1e-6 &&
+          a.y < b.y + b.height - 1e-6 &&
+          b.y < a.y + a.height - 1e-6
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  const pageBottoms = (r: R[]): number[] => {
+    const m = new Map<number, number>();
+    for (const s of r) m.set(s.page, Math.max(m.get(s.page) ?? 0, s.y + s.height));
+    return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+  };
+
+  // Faithful reconstruction of the attached real bug-report day: a 4-sub-team
+  // adanit block, two heavy 6-row flat sections (≈9 names/cell), five tiny
+  // sections. MUST collapse to ONE page with every tiny section on page 0.
+  const realDay = planDayLayout({
+    sections: [
+      { id: 'adanit', displayOrder: 0, logicalColCount: 4, nameGrid: [[3, 4, 3, 3], [4, 3, 3, 3], [3, 4, 3, 3]] },
+      { id: 'shemesh', displayOrder: 1, logicalColCount: 1, nameGrid: [[3], [3], [3], [3], [5], [3]] },
+      { id: 'shshsh', displayOrder: 2, logicalColCount: 1, nameGrid: [[9], [9], [9], [6], [9], [9]] },
+      { id: 'mamtera', displayOrder: 3, logicalColCount: 1, nameGrid: [[3]] },
+      { id: 'gk', displayOrder: 4, logicalColCount: 1, nameGrid: [[2]] },
+      { id: 'matara', displayOrder: 5, logicalColCount: 1, nameGrid: [[3]] },
+      { id: 'bi', displayOrder: 6, logicalColCount: 1, nameGrid: [[1]] },
+      { id: 'dgk', displayOrder: 7, logicalColCount: 1, nameGrid: [[1]] },
+    ],
+    geometry: geo,
+    levers: DEFAULT_LEVERS,
+  });
+  assert(
+    !realDay.overflow && realDay.pageCount === 1 && realDay.predictedHeight <= geo.heightBudget,
+    'C5.8: real bug-report day collapses to ONE page within budget',
+  );
+  assert(!anyOverlap(realDay.sections), 'C5.8: real day — no overlapping sections');
+  assert(
+    realDay.sections
+      .filter((s) => ['mamtera', 'gk', 'matara', 'bi', 'dgk'].includes(s.id))
+      .every((s) => s.page === 0),
+    'C5.8: every tiny section backfills page 1 (no near-empty spill)',
+  );
+
+  // Genuinely impossible day: six 30-row single-name sections (height driven
+  // purely by row count — name-column reshaping cannot shrink them). Must
+  // spill to exactly 2 pages, balanced, at the readable floor font (7).
+  const huge = planDayLayout({
+    sections: Array.from({ length: 6 }, (_, i) => ({
+      id: `S${i}`,
+      displayOrder: i,
+      logicalColCount: 1,
+      nameGrid: Array.from({ length: 30 }, () => [1]),
+    })),
+    geometry: geo,
+    levers: DEFAULT_LEVERS,
+  });
+  const bottoms = pageBottoms(huge.sections);
+  assert(
+    huge.overflow && huge.pageCount === 2,
+    'C5.8: impossible day spills to exactly 2 pages',
+  );
+  assert(
+    huge.fontSize >= 7 && bottoms.every((b) => b <= geo.heightBudget),
+    'C5.8: 2-page fallback stays readable (font ≥ 7) and within per-page budget',
+  );
+  assert(
+    bottoms.length === 2 && Math.abs(bottoms[0] - bottoms[1]) <= 20,
+    'C5.8: the two pages are balanced (no near-empty trailing page)',
+  );
+  assert(!anyOverlap(huge.sections), 'C5.8: 2-page fallback — no overlapping sections');
+
+  // Determinism: identical input ⇒ byte-identical plan (stable exports/tests).
+  const detIn = {
+    sections: [
+      { id: 'X', displayOrder: 0, logicalColCount: 1, nameGrid: [[5], [5], [5]] },
+      { id: 'Y', displayOrder: 1, logicalColCount: 1, nameGrid: [[2]] },
+    ],
+    geometry: geo,
+    levers: DEFAULT_LEVERS,
+  };
+  assert(
+    JSON.stringify(planDayLayout(detIn)) === JSON.stringify(planDayLayout(detIn)),
+    'C5.8: planner is deterministic (identical input ⇒ identical plan)',
   );
 }
 
