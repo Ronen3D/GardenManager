@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { type Page, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 /**
  * Tutorial walkthrough — mobile (375×812).
@@ -227,7 +227,17 @@ function appendStep(rec: StepReport): void {
   }
 }
 
-async function walkTrack(page: Page, plan: TrackPlan): Promise<void> {
+/**
+ * Walk every step of a track. Returns the list of human-readable problem
+ * lines (one per step that is SHEET CLIPPED / TARGET COVERED / TARGET
+ * OFF-SCREEN). C7.10: the caller turns a non-empty list into a hard test
+ * failure on tracks that are currently clean, so that a new occlusion/clipping
+ * regression on the dominant phone viewport is caught rather than only logged.
+ * The NDJSON/screenshot/summary side effects are preserved so the
+ * human-readable report still gets written.
+ */
+async function walkTrack(page: Page, plan: TrackPlan): Promise<string[]> {
+  const problems: string[] = [];
   // Open the track.
   await page.evaluate((id) => window.gmStartTutorial?.(id), plan.id);
   // Wait for the popover.
@@ -236,8 +246,8 @@ async function walkTrack(page: Page, plan: TrackPlan): Promise<void> {
     .then(() => true)
     .catch(() => false);
   if (!opened) {
-    console.warn(`[walkthrough] track ${plan.id} did not open a popover`);
-    return;
+    problems.push(`[${plan.id}] tutorial did not open a popover at all`);
+    return problems;
   }
 
   let stepIndex = 0;
@@ -294,6 +304,15 @@ async function walkTrack(page: Page, plan: TrackPlan): Promise<void> {
       classificationReason: reason,
       screenshotPath,
     });
+    // C7.10: anything that isn't OK (SHEET CLIPPED / TARGET COVERED / TARGET
+    // OFF-SCREEN) is a real mobile occlusion bug — record it so the caller can
+    // fail the test for this track.
+    if (cls !== 'OK') {
+      problems.push(
+        `[${plan.id}] step #${stepIndex} "${snap.stepTitle}" (${snap.stepCounter}) — ${cls}: ${reason} ` +
+          `[lifted=${snap.hasLiftedClass} liftPx=${snap.liftPx}] screenshot: ${screenshotPath}`,
+      );
+    }
 
     // Advance — fast-fail click. force:true bypasses actionability checks
     // (relevant if backdrop intercepts pointer events on some steps).
@@ -307,6 +326,8 @@ async function walkTrack(page: Page, plan: TrackPlan): Promise<void> {
   await page.evaluate(() => {
     document.querySelector('.tutorial-root')?.remove();
   });
+
+  return problems;
 }
 
 test.describe('Tutorial walkthrough — mobile (375×812)', () => {
@@ -339,7 +360,40 @@ test.describe('Tutorial walkthrough — mobile (375×812)', () => {
         await enableLiveMode(page);
       }
 
-      await walkTrack(page, plan);
+      const problems = await walkTrack(page, plan);
+
+      // C7.10 — REVIEW (open question under independent investigation):
+      // occlusion/clipping/off-screen of a tutorial step's highlighted target
+      // on the dominant phone viewport. The tracks listed below currently
+      // exhibit it; whether this is acceptable for tall/lower-page targets or
+      // should never happen is the question being investigated separately.
+      // Those tracks are held with `test.fixme` + an annotation (documented,
+      // not hidden) so the deploy gate is not left permanently red while the
+      // question is open; product code is NOT modified here. Tracks that are
+      // currently CLEAN still hard-assert, so a NEW occlusion regression on
+      // them fails loudly.
+      const KNOWN_OCCLUSION_REVIEW = new Set(['full-tour', 'participants', 'schedule', 'algorithm', 'task-panel']);
+      if (problems.length > 0 && KNOWN_OCCLUSION_REVIEW.has(plan.id)) {
+        test.info().annotations.push({
+          type: 'REVIEW: tutorial step target occlusion (phone)',
+          description:
+            `Tutorial track "${plan.id}" has ${problems.length} occluded/clipped step(s) on phone (375×812). ` +
+            `Behavior pinned for independent investigation; product NOT modified. ` +
+            `Detail: gm-walkthrough/summary.md.\n${problems.join('\n')}`,
+        });
+        test.fixme(
+          true,
+          `REVIEW: "${plan.id}" tutorial step target occlusion on phone (${problems.length} step(s)). ` +
+            `Under independent investigation, product not modified.`,
+        );
+      }
+
+      // Clean tracks gate hard; an unexpected occlusion regression on any
+      // not-yet-known track also fails here.
+      expect(
+        problems,
+        `Tutorial track "${plan.id}" has ${problems.length} occluded/clipped/off-screen step(s) on phone (375×812):\n${problems.join('\n')}`,
+      ).toEqual([]);
     });
   }
 

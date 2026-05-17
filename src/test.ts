@@ -342,6 +342,18 @@ import { runPreflightWithInputs } from './shared/preflight-core';
 import { computeParticipantRest } from './shared/utils/rest-calculator';
 import { isBlockedByDateUnavailability, isDateInBlock, type ScheduleContext } from './shared/utils/time-utils';
 import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
+// ─── A0 EXTENSION POINT (pure-src/ writing-agent suites) ────────────────────
+// New PURE-src/ test files (no `src/web` imports) — e.g. test-engine-extra.ts,
+// test-rescue-extra.ts, test-validator-extra.ts — export `run<Name>(assert)`
+// and are wired here with ONE import line + ONE await line in the IIFE below
+// (search "A0 EXTENSION POINT (IIFE)"). They MUST self-exec under
+// `if (require.main === module)` with `process.exit(1)` on failure so they stay
+// runnable standalone (export `run<Name>Tests(assert)`, injected assert, no
+// module-level counters, self-exec guarded by `require.main === module`).
+// e.g.  import { runEngineExtraTests } from './test-engine-extra';
+import { runEngineExtraTests } from './test-engine-extra';
+import { runRescueExtraTests } from './test-rescue-extra';
+import { runValidatorExtraTests } from './test-validator-extra';
 import { computeAllCapacities } from './utils/capacity';
 
 let passed = 0;
@@ -15669,6 +15681,14 @@ console.log('\n── PDF Fit Planner ──────────────
 (async () => {
   await runParticipantSetXlsxTests(assert);
   await runContinuationTests();
+  // ─── A0 EXTENSION POINT (IIFE) ────────────────────────────────────────────
+  // Add new PURE-src/ writing-agent suites here, sharing the harness `assert`
+  // so their pass/fail rolls into the summary below (mirrors the line above).
+  // e.g.  await runEngineExtraTests(assert);
+  await runEngineExtraTests(assert);
+  await runRescueExtraTests(assert);
+  await runValidatorExtraTests(assert);
+  // ──────────────────────────────────────────────────────────────────────────
 
   console.log('\n══════════════════════════════════════════');
   console.log(`  Tests: ${passed + failed} | Passed: ${passed} | Failed: ${failed}`);

@@ -253,10 +253,14 @@ test.describe('Structural section grouping on mobile', () => {
     // For each patrol-like template, find which wrapper its source-name chip
     // belongs to. Two or more of them must resolve to the same wrapper — the
     // end-to-end proof that structural grouping works.
+    // NOTE: the multi-source title markup was refactored from a
+    // `.table-title-chips` row into a `.task-panel-menu` popover; the stable
+    // contract is the `[data-source-name]` attribute (still emitted per source,
+    // single- or multi-source), scoped to the schedule table wrapper.
     const wrapperBySource = await page.evaluate((sources: string[]) => {
       const result: Record<string, string | null> = {};
       for (const src of sources) {
-        const chip = document.querySelector(`.table-title-chips [data-source-name="${src}"]`);
+        const chip = document.querySelector(`.schedule-table-wrapper [data-source-name="${src}"]`);
         if (!chip) {
           result[src] = null;
           continue;

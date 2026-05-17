@@ -15,7 +15,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ─── Test gate ────────────────────────────────────────────────────────────
+  # Runs the full automated suite. ANY failing step fails this job, which
+  # blocks the deploy job below (`needs: tests`). Before A0 nothing ran tests.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Node unit harness (src/test.ts).
+      - name: Unit tests (npm test)
+        run: npm test
+
+      # De-orphaned coverage suite (optimizer / constraints / capability-change
+      # / rescue-sos-inject / shared-utils).
+      - name: Coverage suite (npm run test:coverage)
+        run: npm run test:coverage
+
+      # Persistence / import-export / continuity round-trips.
+      - name: Persistence tests (npm run test:persistence)
+        run: npm run test:persistence
+
+      # Playwright phone (375×812) — mobile is the primary platform.
+      # playwright.config.ts auto-starts `npm run dev` in CI.
+      - name: Install Playwright (chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E phone tests (npm run test:e2e:phone)
+        run: npm run test:e2e:phone
+
+      - name: Upload Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
+
+  # ─── Build & deploy (gated on tests) ──────────────────────────────────────
   build-and-deploy:
+    needs: tests
     runs-on: ubuntu-latest
     environment:
       name: github-pages

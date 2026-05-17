@@ -25,6 +25,8 @@ light-*
 # Test results & reports (generated)
 test-results/
 playwright-report/
+gm-walkthrough/
+test-output/
 
 # Playwright visual regression snapshots (large PNGs)
 *-snapshots/

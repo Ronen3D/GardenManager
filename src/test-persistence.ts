@@ -158,6 +158,10 @@ import { matchParticipants, parseContinuitySnapshot } from './web/continuity-imp
 import * as dataTransfer from './web/data-transfer';
 import { DEFAULT_PARTICIPANT_PLAN, DEFAULT_TASK_INSTANCES } from './web/default-continuity';
 import { BACKUP_KEY, restoreTutorialBackupIfPresent } from './web/tutorial-demo';
+// A0 EXTENSION POINT (imports): src/web-importing writing-agent suites
+import { runPersistenceExtraTests } from './test-persistence-extra';
+import { runExportLayoutTests } from './test-export-layout';
+import { runWebUtilsTests } from './test-web-utils';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Factory Helpers
@@ -404,40 +408,57 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     assert(algoResult.ok === true, 'U2.1: Valid algorithm envelope accepted');
     assert(algoResult.exportType === 'algorithm', 'U2.1: exportType is algorithm');
 
-    // 2. Valid taskSet
-    const tsResult = dataTransfer.validateImportFile(
-      makeEnvelope('taskSet', {
-        taskSet: { name: 'test', templates: [{ id: 't1' }], oneTimeTasks: [] },
-      }),
-    );
-    assert(tsResult.ok === true, 'U2.2: Valid taskSet envelope accepted');
+    // 2-5. Real-export round-trip through validateImportFile.
+    // The previous U2.2-U2.5 fixtures were hand-written minimal envelopes that
+    // predated src/web/import-validators.ts deep validators, so they failed.
+    // Rather than blindly rewrite hand fixtures, produce GENUINE exports via
+    // the real dataTransfer.export* path the app uses and feed each through
+    // validateImportFile: if a real export is rejected the validators are at
+    // fault; if accepted the old fixtures were merely stale. The error string
+    // is surfaced in the assert label so any rejection is self-documenting.
+    // Self-contained store setup (U3/U4/U5 don't depend on store state; I1
+    // resets again).
+    store.factoryReset();
+    localStorage.clear();
+    store.initStore();
 
-    // 3. Valid participantSet
-    const psResult = dataTransfer.validateImportFile(
-      makeEnvelope('participantSet', {
-        participantSet: {
-          name: 'test',
-          participants: [{ name: 'A' }, { name: 'B' }],
-          certificationCatalog: [],
-        },
-      }),
-    );
-    assert(psResult.ok === true, 'U2.3: Valid participantSet envelope accepted');
+    // 2. Valid taskSet — real export
+    store.addTaskTemplate(makeTaskTemplateData('U2-Tmpl'));
+    store.addOneTimeTask(makeOneTimeTaskData('U2-OT', new Date(2026, 1, 1)));
+    store.addRestRule('U2-Rest', 10);
+    const u2Tset = store.saveCurrentAsTaskSet('u2-taskset', '')!;
+    const tsResult = dataTransfer.validateImportFile(dataTransfer.exportTaskSet(u2Tset.id)!);
+    assert(tsResult.ok === true, `U2.2: Real taskSet export accepted by validateImportFile — ${tsResult.error ?? 'ok'}`);
 
-    // 4. Valid scheduleSnapshot
-    const ssResult = dataTransfer.validateImportFile(
-      makeEnvelope('scheduleSnapshot', {
-        snapshot: {
-          name: 'snap',
-          schedule: { tasks: [1, 2], participants: [1] },
-        },
-      }),
+    // 3. Valid participantSet — real export
+    store.addParticipant({ name: 'U2-P', level: Level.L0, certifications: [], group: 'G' });
+    const u2Pset = store.saveCurrentAsParticipantSet('u2-pset', '')!;
+    const psResult = dataTransfer.validateImportFile(dataTransfer.exportParticipantSet(u2Pset.id)!);
+    assert(
+      psResult.ok === true,
+      `U2.3: Real participantSet export accepted by validateImportFile — ${psResult.error ?? 'ok'}`,
     );
-    assert(ssResult.ok === true, 'U2.4: Valid scheduleSnapshot envelope accepted');
 
-    // 5. Valid fullBackup
-    const fbResult = dataTransfer.validateImportFile(makeEnvelope('fullBackup', { storageEntries: { key1: 'val1' } }));
-    assert(fbResult.ok === true, 'U2.5: Valid fullBackup envelope accepted');
+    // 4. Valid scheduleSnapshot — real export
+    const u2Snap = store.saveScheduleAsSnapshot(makeSchedule(), 'u2-snap', '') as { id: string };
+    const ssResult = dataTransfer.validateImportFile(dataTransfer.exportScheduleSnapshot(u2Snap.id)!);
+    assert(
+      ssResult.ok === true,
+      `U2.4: Real scheduleSnapshot export accepted by validateImportFile — ${ssResult.error ?? 'ok'}`,
+    );
+
+    // 5. Valid fullBackup — real export
+    store.saveToStorage();
+    const fbResult = dataTransfer.validateImportFile(dataTransfer.exportFullBackup());
+    assert(
+      fbResult.ok === true,
+      `U2.5: Real fullBackup export accepted by validateImportFile — ${fbResult.error ?? 'ok'}`,
+    );
+
+    // Restore a pristine store for subsequent sections.
+    store.factoryReset();
+    localStorage.clear();
+    store.initStore();
 
     // 6. Invalid JSON
     const badJson = dataTransfer.validateImportFile('not json {{{');
@@ -1817,8 +1838,23 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
 }
 
 // ─── Standalone entry point ────────────────────────────────────────────────
+// A0 EXTENSION POINT (src/web-importing writing-agent suites):
+// New test files that need `src/web` imports — e.g. test-persistence-extra.ts,
+// test-export-layout.ts, test-web-utils.ts — run under
+// tsconfig.test-persistence.json. They export `run<Name>(assert)` and are wired
+// with ONE import line at the top + ONE `await run<Name>(assert);` line below
+// (before the summary). They MUST also self-exec under
+// `if (require.main === module)` with `process.exit(1)` on failure so they stay
+// runnable standalone (export `run<Name>Tests(assert)`, injected assert, no
+// module-level counters, self-exec guarded by `require.main === module`).
+//   e.g. (top of file)  import { runExportLayoutTests } from './test-export-layout';
 (async () => {
   await runPersistenceTests(assert);
+  // A0 EXTENSION POINT (IIFE): add new src/web-importing suites here, e.g.:
+  //   await runExportLayoutTests(assert);
+  await runPersistenceExtraTests(assert);
+  await runExportLayoutTests(assert);
+  await runWebUtilsTests(assert);
 
   console.log('\n══════════════════════════════════════════');
   console.log(`  Persistence Tests: ${passed + failed} | Passed: ${passed} | Failed: ${failed}`);

@@ -16,5 +16,15 @@
     "moduleResolution": "node16"
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/web", "src/test-persistence.ts", "src/stress-test-bulk-delete.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/web",
+    "src/test-persistence.ts",
+    "src/test-persistence-extra.ts",
+    "src/test-export-layout.ts",
+    "src/test-web-utils.ts",
+    "src/stress-test-bulk-delete.ts",
+    "src/bench-day0-vs-fresh-realstore.ts"
+  ]
 }

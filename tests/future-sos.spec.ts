@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 /**
  * Future SOS — smoke E2E.
@@ -9,7 +9,47 @@ import { expect, test } from '@playwright/test';
  * test suite because automating the three-modal sequence (time picker →
  * range picker → confirm → plans) against randomly generated schedules is
  * flaky.
+ *
+ * Generation uses the standard repo idiom (cap scenarios to 1, wait for the
+ * generate button to re-enable) instead of a fixed 10s wait — an unthrottled
+ * 60-attempt run takes far longer than 10s on the phone project, which is what
+ * made the old wait time out. On touch/phone the profile is reached via the
+ * bottom-sheet quick card's "צפה בפרופיל" button.
  */
+
+async function generateSchedule(page: Page): Promise<void> {
+  await page.click('.tab-btn[data-tab="schedule"]');
+  const input = page.locator('#input-scenarios');
+  if ((await input.count()) > 0) await input.fill('1');
+  await page.click('#btn-generate');
+  await page.waitForFunction(
+    () => {
+      const btn = document.querySelector('#btn-generate') as HTMLButtonElement | null;
+      return !!btn && !btn.disabled && !btn.textContent?.includes('מייעל');
+    },
+    { timeout: 90_000 },
+  );
+  await page.waitForSelector('.participant-hover[data-pid], [data-pid]', {
+    state: 'attached',
+    timeout: 90_000,
+  });
+  await page.waitForTimeout(400);
+}
+
+async function openFirstProfile(page: Page): Promise<void> {
+  await page.click('.tab-btn[data-tab="schedule"]');
+  const first = page.locator('.participant-hover[data-pid]').first();
+  await expect(first).toBeVisible({ timeout: 15_000 });
+  await first.click();
+  // On touch/mobile, tapping a participant opens a bottom-sheet quick card
+  // first; the profile is reached via its "📋 צפה בפרופיל" button.
+  const gotoProfile = page.locator('[data-action="goto-profile"][data-pid]').first();
+  if (await gotoProfile.isVisible({ timeout: 4_000 }).catch(() => false)) {
+    await gotoProfile.click();
+  }
+  await page.waitForSelector('.profile-view-root', { timeout: 8_000 });
+}
+
 test.describe('Future SOS — profile button', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -17,40 +57,19 @@ test.describe('Future SOS — profile button', () => {
   });
 
   test('אי זמינות עתידית button appears in participant profile after generation', async ({ page }) => {
-    // Navigate to schedule tab and generate a schedule.
-    await page.click('.tab-btn[data-tab="schedule"]');
-
-    // Click Generate (button varies by seed state; try common selectors).
-    const generateCandidates = [
-      'button#btn-generate-schedule',
-      'button[data-action="generate-schedule"]',
-      '#btn-generate',
-    ];
-    let clicked = false;
-    for (const sel of generateCandidates) {
-      if ((await page.locator(sel).count()) > 0) {
-        await page.locator(sel).first().click();
-        clicked = true;
-        break;
-      }
-    }
-    if (!clicked) {
-      // If the app renders a schedule on first load (cached), skip generation.
-      const existingGrid = await page.locator('.schedule-grid-container, .schedule-layout').count();
-      if (existingGrid === 0) test.skip();
-    }
-
-    // Wait for a participant link to be hoverable/clickable.
-    await page.waitForSelector('.participant-hover[data-pid], [data-pid]', { timeout: 10000 });
-
-    // Click the first participant to enter the profile view.
-    await page.locator('.participant-hover[data-pid]').first().click();
-    await page.waitForSelector('.profile-view-root', { timeout: 5000 });
+    test.setTimeout(150_000);
+    await generateSchedule(page);
+    await openFirstProfile(page);
 
     // The Future SOS button should be visible on the profile top bar.
     await expect(page.locator('.btn-future-sos')).toBeVisible();
   });
 
+  // Left intentionally unchanged from its original form: with a fresh,
+  // un-generated context this test gracefully `test.skip()`s (no schedule →
+  // no profile to reach), so it is GREEN-as-skip isolated. Per the audit
+  // scope (future-sos concern is the line-19 generation-wait failure only),
+  // green-isolated tests are not modified.
   test('clicking אי זמינות עתידית with live mode OFF opens the anchor time picker', async ({ page }) => {
     await page.click('.tab-btn[data-tab="schedule"]');
 

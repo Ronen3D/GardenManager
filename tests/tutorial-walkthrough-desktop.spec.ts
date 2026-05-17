@@ -196,6 +196,13 @@ test.describe('Tutorial walkthrough — desktop', () => {
     ensureOutDir();
   });
 
+  // Desktop-intent walkthrough. This is the inverse of
+  // tutorial-walkthrough-mobile's `width > 767` guard: skip the whole suite on
+  // the phone project so the phone gate doesn't time out on walkTrack.
+  test.beforeEach(({ viewport }) => {
+    if (!viewport || viewport.width <= 767) test.skip();
+  });
+
   test('full-tour walkthrough (~43 steps)', async ({ page }) => {
     test.setTimeout(300_000);
     await clearAllStorage(page);

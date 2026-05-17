@@ -78,7 +78,9 @@ test.describe('Desktop regression checks', () => {
     expect(hasPointerClass || hasTouchClass).toBe(true);
   });
 
-  test('all 4 tabs render correctly on desktop', async ({ page }) => {
+  test('all 4 tabs render correctly on desktop', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
+
     const tabs = [
       { tab: 'participants', selector: '.table-participants, .tab-toolbar' },
       { tab: 'task-rules', selector: '.tab-toolbar' },
@@ -97,7 +99,9 @@ test.describe('Desktop regression checks', () => {
     }
   });
 
-  test('bulk delete only affects visible filtered participants', async ({ page }) => {
+  test('bulk delete only affects visible filtered participants', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
+
     await page.click('.tab-btn[data-tab="participants"]');
 
     const participantRows = page.locator('.table-participants tbody tr[data-participant-id]');
@@ -120,7 +124,12 @@ test.describe('Desktop regression checks', () => {
     await expect(page.locator('.table-participants tbody tr[data-participant-id]')).toHaveCount(12);
   });
 
-  test('loading a task set restores one-time tasks and category-break settings', async ({ page }) => {
+  test('loading a task set restores one-time tasks and category-break settings', async ({
+    page,
+    viewport,
+  }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
+
     await page.click('.tab-btn[data-tab="task-rules"]');
 
     await page.click('[data-action="toggle-add-onetime"]');

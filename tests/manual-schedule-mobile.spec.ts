@@ -1,365 +1,186 @@
-import { expect, Page, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 /**
- * Mobile manual schedule creation flow test.
+ * C6.3 — Manual tap-to-assign on the phone viewport.
  *
- * Exercises the full flow: seed data → create empty schedule →
- * select slot → pick participant from bottom sheet → verify assignment.
- * Takes screenshots at each step to identify friction points.
+ * REWRITTEN from an assertion-free console.log/screenshot script into real
+ * behavioral tests. Flow:
+ *   create an empty manual schedule → tap an empty slot → the participant
+ *   bottom sheet opens with eligible candidates → tap an eligible candidate
+ *   → the slot becomes assigned to that participant + a success toast → the
+ *   manual-build counter increments → day navigation switches grid content.
+ *
+ * Every step asserts a real DOM/state change. No console.log, no early
+ * return that hides failure, no screenshot-as-assertion.
  */
 
+const PHONE_ONLY = (viewport: { width: number; height: number } | null) =>
+  !viewport || viewport.width > 500;
+
+async function freshSeed(page: Page): Promise<void> {
+  await page.goto('/');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForSelector('.tab-nav');
+}
+
+/** Create an empty manual schedule (all slots unfilled) and enter build mode. */
+async function createEmptyManualSchedule(page: Page): Promise<void> {
+  await page.click('.tab-btn[data-tab="schedule"]');
+  const emptyBtn = page.locator('#btn-create-manual-empty');
+  await expect(emptyBtn).toBeVisible();
+  await emptyBtn.tap();
+
+  await expect(page.locator('.schedule-grid-container')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('.manual-build-strip')).toBeVisible();
+  // Empty schedule → at least one empty slot must exist.
+  await expect(page.locator('.assignment-card.manual-slot-empty').first()).toBeVisible();
+}
+
+/** Assign the first eligible candidate to a given empty-slot card. */
+async function assignFirstEligible(
+  page: Page,
+  slotCard: ReturnType<Page['locator']>,
+  excludePid?: string,
+): Promise<{ pid: string; name: string; taskId: string; slotId: string }> {
+  const taskId = (await slotCard.getAttribute('data-task-id')) || '';
+  const slotId = (await slotCard.getAttribute('data-slot-id')) || '';
+  expect(taskId.length).toBeGreaterThan(0);
+  expect(slotId.length).toBeGreaterThan(0);
+
+  await slotCard.scrollIntoViewIfNeeded();
+  await slotCard.tap();
+
+  // Bottom sheet with eligible candidates.
+  const sheet = page.locator('.gm-bottom-sheet');
+  await expect(sheet).toBeVisible({ timeout: 5000 });
+  const eligible = sheet.locator('.warehouse-card.wc-eligible[data-pid]');
+  await expect(eligible.first()).toBeVisible();
+  const eligibleCount = await eligible.count();
+  expect(eligibleCount).toBeGreaterThan(0);
+
+  // Pick the first eligible candidate (optionally skipping a given pid so a
+  // second assignment uses a different, unassigned person — avoids the
+  // move-confirm dialog path entirely).
+  let chosen = eligible.first();
+  if (excludePid) {
+    for (let i = 0; i < eligibleCount; i++) {
+      const c = eligible.nth(i);
+      if ((await c.getAttribute('data-pid')) !== excludePid) {
+        chosen = c;
+        break;
+      }
+    }
+  }
+  const pid = (await chosen.getAttribute('data-pid')) || '';
+  const name = ((await chosen.locator('.wc-name').textContent()) || '').trim();
+  expect(pid.length).toBeGreaterThan(0);
+  expect(name.length).toBeGreaterThan(0);
+
+  await chosen.tap();
+
+  // Sheet closes after a successful assignment.
+  await expect(page.locator('.gm-bottom-sheet')).toHaveCount(0, { timeout: 5000 });
+
+  return { pid, name, taskId, slotId };
+}
+
 test.describe('Manual schedule creation on mobile', () => {
-  // Only run on phone project
   test.beforeEach(async ({ page, viewport }) => {
-    if (!viewport || viewport.width > 500) test.skip();
-
-    // Clear localStorage to get fresh seeded data
-    await page.goto('/');
-    await page.evaluate(() => localStorage.clear());
-    await page.reload();
-    await page.waitForSelector('.tab-nav');
+    if (PHONE_ONLY(viewport)) test.skip();
+    await freshSeed(page);
   });
 
-  test('full manual schedule creation flow', async ({ page, viewport }) => {
-    // Step 1: Navigate to schedule tab
-    await page.click('.tab-btn[data-tab="schedule"]');
-    await page.waitForTimeout(500);
-    await page.screenshot({ path: 'test-results/mobile-manual-01-schedule-tab-empty.png', fullPage: true });
+  test('C6.3 tap empty slot → pick eligible candidate → slot assigned + toast', async ({
+    page,
+  }) => {
+    await createEmptyManualSchedule(page);
 
-    // Step 2: Verify the "create manual schedule" button is visible in empty state
-    const emptyStateBtn = page.locator('#btn-create-manual-empty');
-    const toolbarBtn = page.locator('#btn-create-manual');
+    const strip = page.locator('.manual-build-status');
+    await expect(strip).toContainText('0/');
 
-    const emptyStateBtnVisible = await emptyStateBtn.isVisible().catch(() => false);
-    const toolbarBtnVisible = await toolbarBtn.isVisible().catch(() => false);
+    const firstSlot = page.locator('.assignment-card.manual-slot-empty').first();
+    const { name, taskId, slotId } = await assignFirstEligible(page, firstSlot);
 
-    console.log(`Empty state button visible: ${emptyStateBtnVisible}`);
-    console.log(`Toolbar button visible: ${toolbarBtnVisible}`);
+    // Success toast names the assignment.
+    const toast = page.locator('.gm-toast.gm-toast-success .gm-toast-msg');
+    await expect(toast.first()).toContainText('שובץ');
 
-    await page.screenshot({ path: 'test-results/mobile-manual-02-buttons-visible.png' });
-
-    // Step 3: Check toolbar overflow on mobile — is the toolbar usable?
-    const toolbar = page.locator('.schedule-toolbar');
-    if ((await toolbar.count()) > 0) {
-      const toolbarBox = await toolbar.boundingBox();
-      console.log(`Toolbar bounding box: ${JSON.stringify(toolbarBox)}`);
-      if (toolbarBox) {
-        console.log(`Toolbar height: ${toolbarBox.height}px, width: ${toolbarBox.width}px`);
-        // Flag if toolbar is taller than 200px (too many wrapped rows)
-        if (toolbarBox.height > 200) {
-          console.log('ISSUE: Toolbar is very tall on mobile — buttons overflow multiple rows');
-        }
-      }
-    }
-
-    // Step 4: Click the manual schedule button
-    if (emptyStateBtnVisible) {
-      await emptyStateBtn.click();
-    } else if (toolbarBtnVisible) {
-      await toolbarBtn.click();
-    } else {
-      // Try generating via button text
-      const btn = page.locator('button', { hasText: 'בנייה ידנית' }).first();
-      if (await btn.isVisible()) {
-        await btn.click();
-      } else {
-        console.log('CRITICAL ISSUE: No manual schedule button found on mobile');
-        await page.screenshot({ path: 'test-results/mobile-manual-02b-no-button.png', fullPage: true });
-        return;
-      }
-    }
-
-    await page.waitForTimeout(1000);
-    await page.screenshot({ path: 'test-results/mobile-manual-03-after-create.png', fullPage: true });
-
-    // Step 5: Verify schedule grid appeared
-    const gridContainer = page.locator('.schedule-grid-container');
-    const gridVisible = await gridContainer.isVisible().catch(() => false);
-    console.log(`Grid visible after create: ${gridVisible}`);
-
-    if (!gridVisible) {
-      console.log('CRITICAL ISSUE: Grid not visible after creating manual schedule');
-      return;
-    }
-
-    // Step 6: Check grid compactness
-    const gridCompact = page.locator('.schedule-grid-compact');
-    const isCompact = (await gridCompact.count()) > 0;
-    console.log(`Grid has compact class: ${isCompact}`);
-
-    // Step 7: Check manual build strip
-    const buildStrip = page.locator('.manual-build-strip');
-    const stripVisible = await buildStrip.isVisible().catch(() => false);
-    console.log(`Manual build strip visible: ${stripVisible}`);
-
-    // Step 8: Check empty slots are visible and clickable
-    const emptySlots = page.locator('.manual-slot-empty');
-    const emptySlotCount = await emptySlots.count();
-    console.log(`Empty slots visible: ${emptySlotCount}`);
-
-    await page.screenshot({ path: 'test-results/mobile-manual-04-grid-overview.png' });
-
-    if (emptySlotCount === 0) {
-      // Maybe slots have a different class — check for manual-slot-target
-      const targetSlots = page.locator('.manual-slot-target');
-      const targetCount = await targetSlots.count();
-      console.log(`Manual slot targets: ${targetCount}`);
-
-      // Or just look for any clickable slot area
-      const assignmentCards = page.locator('.assignment-card');
-      const cardCount = await assignmentCards.count();
-      console.log(`Assignment cards on page: ${cardCount}`);
-    }
-
-    // Step 9: Scroll down to see if more content is off screen
-    await page.evaluate(() => window.scrollTo(0, 500));
-    await page.waitForTimeout(300);
-    await page.screenshot({ path: 'test-results/mobile-manual-05-scrolled-down.png' });
-
-    // Step 10: Try to click on the first empty slot
-    const firstEmptySlot =
-      emptySlotCount > 0 ? emptySlots.first() : page.locator('.assignment-card[data-slot-id]').first();
-
-    if ((await firstEmptySlot.count()) > 0) {
-      // Scroll into view first
-      await firstEmptySlot.scrollIntoViewIfNeeded();
-      await page.waitForTimeout(300);
-      await page.screenshot({ path: 'test-results/mobile-manual-06-before-slot-click.png' });
-
-      // Check slot dimensions - is it large enough to tap?
-      const slotBox = await firstEmptySlot.boundingBox();
-      if (slotBox) {
-        console.log(`First slot size: ${slotBox.width}x${slotBox.height} at (${slotBox.x}, ${slotBox.y})`);
-        if (slotBox.height < 36) {
-          console.log('ISSUE: Slot height is too small for comfortable touch target (<36px)');
-        }
-        if (slotBox.width < 44) {
-          console.log('ISSUE: Slot width is too narrow for comfortable touch target (<44px)');
-        }
-      }
-
-      // Click the slot
-      await firstEmptySlot.click();
-      await page.waitForTimeout(500);
-      await page.screenshot({ path: 'test-results/mobile-manual-07-after-slot-click.png' });
-
-      // Step 11: Check if bottom sheet opened
-      const bottomSheet = page.locator('.gm-bottom-sheet');
-      const sheetVisible = await bottomSheet.isVisible().catch(() => false);
-      console.log(`Bottom sheet visible after slot click: ${sheetVisible}`);
-
-      if (sheetVisible) {
-        await page.screenshot({ path: 'test-results/mobile-manual-08-bottom-sheet.png' });
-
-        // Check bottom sheet content
-        const warehouseCards = page.locator('.gm-bottom-sheet .warehouse-card');
-        const warehouseCount = await warehouseCards.count();
-        console.log(`Warehouse cards in bottom sheet: ${warehouseCount}`);
-
-        if (warehouseCount === 0) {
-          console.log('ISSUE: Bottom sheet opened but no participant cards inside');
-          // Check for any content
-          const sheetBody = page.locator('.gm-bs-body');
-          const bodyText = await sheetBody.textContent().catch(() => '');
-          console.log(`Sheet body text: ${bodyText?.substring(0, 200)}`);
-        }
-
-        // Step 12: Check if participants are visible and tappable
-        if (warehouseCount > 0) {
-          const firstCard = warehouseCards.first();
-          const cardBox = await firstCard.boundingBox();
-          if (cardBox) {
-            console.log(`First warehouse card size: ${cardBox.width}x${cardBox.height}`);
-            if (cardBox.height < 44) {
-              console.log('ISSUE: Warehouse card too small for comfortable touch (<44px)');
-            }
-          }
-
-          // Check eligible vs ineligible styling
-          const eligibleCards = page.locator('.gm-bottom-sheet .warehouse-card:not(.warehouse-card-ineligible)');
-          const eligibleCount = await eligibleCards.count();
-          console.log(`Eligible participants: ${eligibleCount} / ${warehouseCount}`);
-
-          if (eligibleCount === 0) {
-            console.log('ISSUE: No eligible participants for this slot');
-          }
-
-          // Step 13: Click an eligible participant
-          if (eligibleCount > 0) {
-            await eligibleCards.first().click();
-            await page.waitForTimeout(500);
-            await page.screenshot({ path: 'test-results/mobile-manual-09-after-assign.png' });
-
-            // Verify assignment was made
-            const assignedCards = page.locator('.assignment-card .participant-name');
-            const assignedCount = await assignedCards.count();
-            console.log(`Assigned cards after click: ${assignedCount}`);
-
-            // Check toast
-            const toast = page.locator('.toast');
-            if ((await toast.count()) > 0) {
-              const toastText = await toast.textContent();
-              console.log(`Toast message: ${toastText}`);
-            }
-          }
-        }
-      } else {
-        console.log('ISSUE: Bottom sheet did NOT open after tapping a slot on mobile');
-        // Check if warehouse appeared inline instead
-        const inlineWarehouse = page.locator('.participant-warehouse');
-        const inlineVisible = await inlineWarehouse.isVisible().catch(() => false);
-        console.log(`Inline warehouse visible: ${inlineVisible}`);
-      }
-    } else {
-      console.log('ISSUE: No clickable slots found on the page');
-    }
-
-    // Step 14: Check day navigation
-    const dayNav = page.locator('.day-navigator');
-    if ((await dayNav.count()) > 0) {
-      const dayNavBox = await dayNav.boundingBox();
-      console.log(`Day navigator box: ${JSON.stringify(dayNavBox)}`);
-      await page.screenshot({ path: 'test-results/mobile-manual-10-day-nav.png' });
-
-      // Try navigating to day 2
-      const day2Btn = page.locator('.day-btn[data-day="2"]');
-      if ((await day2Btn.count()) > 0) {
-        await day2Btn.click();
-        await page.waitForTimeout(500);
-        await page.screenshot({ path: 'test-results/mobile-manual-11-day2.png' });
-      }
-    }
-
-    // Step 15: Check undo button
-    const undoBtn = page.locator('#btn-manual-undo');
-    if ((await undoBtn.count()) > 0) {
-      const undoBox = await undoBtn.boundingBox();
-      console.log(`Undo button box: ${JSON.stringify(undoBox)}`);
-    }
-
-    // Step 16: Final full-page screenshot
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.waitForTimeout(300);
-    await page.screenshot({ path: 'test-results/mobile-manual-12-final-state.png', fullPage: true });
-
-    // Step 17: Measure total scrollable height
-    const scrollHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-    const viewportHeight = viewport!.height;
-    console.log(
-      `Total scroll height: ${scrollHeight}px, viewport: ${viewportHeight}px, ratio: ${(scrollHeight / viewportHeight).toFixed(1)}`,
+    // The slot card is now filled with that participant and is no longer empty.
+    const assignedCard = page.locator(
+      `.assignment-card[data-task-id="${taskId}"][data-slot-id="${slotId}"]`,
     );
-    if (scrollHeight > viewportHeight * 6) {
-      console.log('ISSUE: Page is very long — user needs to scroll >6x viewport to see everything');
-    }
+    await expect(assignedCard).toHaveCount(1);
+    await expect(assignedCard).not.toHaveClass(/manual-slot-empty/);
+    await expect(assignedCard.locator('.participant-name')).toContainText(name);
+
+    // The manual-build filled counter incremented (0 → 1).
+    await expect(strip).toContainText('1/');
   });
 
-  test('toolbar layout and button accessibility on mobile', async ({ page }) => {
-    await page.click('.tab-btn[data-tab="schedule"]');
-    await page.waitForTimeout(300);
+  test('C6.3 a second assignment in another empty slot also assigns', async ({ page }) => {
+    await createEmptyManualSchedule(page);
 
-    // Check if toolbar buttons are accessible
-    const allBtns = page.locator('.schedule-toolbar button');
-    const btnCount = await allBtns.count();
-    console.log(`Total toolbar buttons: ${btnCount}`);
+    const first = await assignFirstEligible(
+      page,
+      page.locator('.assignment-card.manual-slot-empty').first(),
+    );
+    await expect(
+      page.locator(
+        `.assignment-card[data-task-id="${first.taskId}"][data-slot-id="${first.slotId}"]`,
+      ),
+    ).not.toHaveClass(/manual-slot-empty/);
+    await expect(page.locator('.manual-build-status')).toContainText('1/');
 
-    for (let i = 0; i < btnCount; i++) {
-      const btn = allBtns.nth(i);
-      const box = await btn.boundingBox();
-      const text = await btn.textContent();
-      if (box) {
-        console.log(
-          `Button "${text?.trim()}" — ${box.width.toFixed(0)}x${box.height.toFixed(0)} at (${box.x.toFixed(0)}, ${box.y.toFixed(0)})`,
-        );
-        if (box.height < 36) {
-          console.log(`  ISSUE: Button too short for touch target (${box.height.toFixed(0)}px < 36px)`);
-        }
-        // Check if button is off-screen
-        if (box.x + box.width < 0 || box.x > 375) {
-          console.log(`  ISSUE: Button is off-screen horizontally`);
-        }
-      } else {
-        console.log(`Button "${text?.trim()}" — not visible (no bounding box)`);
-      }
-    }
+    // Next remaining empty slot, a different participant.
+    const second = await assignFirstEligible(
+      page,
+      page.locator('.assignment-card.manual-slot-empty').first(),
+      first.pid,
+    );
+    expect(second.pid).not.toBe(first.pid);
 
-    await page.screenshot({ path: 'test-results/mobile-manual-toolbar-layout.png' });
+    const secondCard = page.locator(
+      `.assignment-card[data-task-id="${second.taskId}"][data-slot-id="${second.slotId}"]`,
+    );
+    await expect(secondCard).not.toHaveClass(/manual-slot-empty/);
+    await expect(secondCard.locator('.participant-name')).toContainText(second.name);
+    await expect(page.locator('.manual-build-status')).toContainText('2/');
   });
 
-  test('second assignment flow — verify repeated interaction', async ({ page }) => {
-    // Create manual schedule
-    await page.click('.tab-btn[data-tab="schedule"]');
-    await page.waitForTimeout(300);
+  test('C6.3 day navigation switches the grid content to day 2', async ({ page }) => {
+    await createEmptyManualSchedule(page);
 
-    // Click create manual schedule
-    const createBtn = page.locator('#btn-create-manual-empty, #btn-create-manual').first();
-    if (await createBtn.isVisible().catch(() => false)) {
-      await createBtn.click();
-    } else {
-      const btn = page.locator('button', { hasText: 'בנייה ידנית' }).first();
-      await btn.click();
-    }
-    await page.waitForTimeout(1000);
+    // Phone day navigator (hero) starts on day 1.
+    const heroLabel = page.locator('.day-hero-label');
+    await expect(heroLabel).toHaveText('יום 1');
 
-    // Find and click first empty slot
-    const emptySlots = page.locator('.manual-slot-empty');
-    const slotCount = await emptySlots.count();
-    console.log(`Empty slots for second test: ${slotCount}`);
+    // Capture the set of task ids rendered for day 1.
+    const day1TaskIds = await page
+      .locator('.schedule-grid-container .assignment-card[data-task-id]')
+      .evaluateAll((els) =>
+        Array.from(new Set(els.map((e) => e.getAttribute('data-task-id') || ''))).sort(),
+      );
+    expect(day1TaskIds.length).toBeGreaterThan(0);
 
-    if (slotCount < 2) {
-      console.log('Not enough empty slots for multi-assignment test');
-      return;
-    }
+    const day2Dot = page.locator('.day-hero-dot[data-day="2"]');
+    await expect(day2Dot).toBeVisible();
+    await day2Dot.tap();
 
-    // First assignment
-    await emptySlots.first().scrollIntoViewIfNeeded();
-    await emptySlots.first().click();
-    await page.waitForTimeout(500);
+    // Content (not just the active class) reflects day 2.
+    await expect(heroLabel).toHaveText('יום 2');
+    await expect(page.locator('.day-hero-dot-active')).toHaveAttribute('data-day', '2');
 
-    let sheet = page.locator('.gm-bottom-sheet');
-    if (await sheet.isVisible().catch(() => false)) {
-      const eligible = page.locator('.gm-bottom-sheet .warehouse-card:not(.warehouse-card-ineligible)');
-      if ((await eligible.count()) > 0) {
-        await eligible.first().click();
-        await page.waitForTimeout(500);
-      }
-    }
+    const day2TaskIds = await page
+      .locator('.schedule-grid-container .assignment-card[data-task-id]')
+      .evaluateAll((els) =>
+        Array.from(new Set(els.map((e) => e.getAttribute('data-task-id') || ''))).sort(),
+      );
+    expect(day2TaskIds.length).toBeGreaterThan(0);
+    // Per-day tasks have distinct ids — day 2 is a different task set.
+    expect(day2TaskIds).not.toEqual(day1TaskIds);
 
-    await page.screenshot({ path: 'test-results/mobile-manual-repeat-01-first-assign.png', fullPage: true });
-
-    // Second assignment — different slot
-    const emptySlots2 = page.locator('.manual-slot-empty');
-    const newCount = await emptySlots2.count();
-    console.log(`Empty slots after first assignment: ${newCount} (was ${slotCount})`);
-
-    if (newCount > 0) {
-      await emptySlots2.first().scrollIntoViewIfNeeded();
-      await emptySlots2.first().click();
-      await page.waitForTimeout(500);
-
-      sheet = page.locator('.gm-bottom-sheet');
-      const sheetVisible = await sheet.isVisible().catch(() => false);
-      console.log(`Bottom sheet appeared for second slot: ${sheetVisible}`);
-
-      if (sheetVisible) {
-        await page.screenshot({ path: 'test-results/mobile-manual-repeat-02-second-sheet.png' });
-
-        const eligible = page.locator('.gm-bottom-sheet .warehouse-card:not(.warehouse-card-ineligible)');
-        const eligibleCount = await eligible.count();
-        console.log(`Eligible for second slot: ${eligibleCount}`);
-
-        if (eligibleCount > 0) {
-          await eligible.first().click();
-          await page.waitForTimeout(500);
-          await page.screenshot({ path: 'test-results/mobile-manual-repeat-03-second-assign.png', fullPage: true });
-        }
-      }
-    }
-
-    // Check page scroll position wasn't lost between assignments
-    const scrollY = await page.evaluate(() => window.scrollY);
-    console.log(`Scroll position after assignments: ${scrollY}px`);
-    if (scrollY === 0 && newCount > 0) {
-      console.log('ISSUE: Page scrolled back to top after assignment — user loses context');
-    }
+    // Day 2 is also an empty manual schedule (its own unfilled slots).
+    await expect(page.locator('.assignment-card.manual-slot-empty').first()).toBeVisible();
   });
 });

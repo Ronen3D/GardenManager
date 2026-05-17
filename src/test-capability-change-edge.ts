@@ -535,7 +535,24 @@ section('5. infeasibleAssignmentIds correctness');
     result.infeasibleAssignmentIds.includes('a-rare') && !result.infeasibleAssignmentIds.includes('a-easy'),
     'infeasibleIds: rare-cert assignment infeasible, easy assignment solvable',
   );
-  assert(result.plans.length > 0, 'infeasibleIds: planner returns at least one (partial) plan');
+  // The previous form of this assertion (`result.plans.length > 0`) was an
+  // over-strict/stale expectation, not a product issue. Rationale:
+  // Scenario: `a-rare` requires a cert only `pInf` held; `pInf` loses it and
+  // NO participant can replace them. Any composed schedule therefore leaves
+  // `a-rare` assigned to the now-ineligible `pInf` → a guaranteed HC-2
+  // violation. The planner's DOCUMENTED hard invariant
+  // (src/engine/capability-change.ts:850-852) is to NEVER surface an
+  // HC-violating plan: it returns an empty `plans` list so the UI shows the
+  // infeasible-state modal. The authoritative unit suite codifies the same
+  // contract (src/test-capability-change-unit.ts:618-625: "Plans MAY contain
+  // best-effort partial plans ... OR be empty"). The pre-A0 assertion
+  // `result.plans.length > 0` contradicted both and was an over-strict/stale
+  // expectation. Correct contract: plans is EITHER empty (infeasible-state)
+  // OR a set of clean, HC-passing partials — never an HC-violating plan.
+  assert(
+    result.plans.length === 0 || result.plans.every((pl) => pl.isPartial && pl.violations.length === 0),
+    'infeasibleIds: planner returns no HC-violating plan (clean partials OR empty infeasible-state)',
+  );
   if (result.plans.length > 0) {
     assert(
       result.plans.every((pl) => pl.isPartial),

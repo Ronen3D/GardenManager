@@ -1,0 +1,12 @@
+/* Rubik variable font. Lives in a Vite-processed CSS file (imported from
+ * app.ts) rather than an inline <style> in index.html — an inline <style>
+ * triggers the vite:html-inline-proxy "No matching HTML proxy module found"
+ * build regression. The font file is in public/fonts/, so the absolute
+ * /fonts/... URL is left untouched by Vite and resolves at the site root. */
+@font-face {
+  font-family: "Rubik";
+  src: url("/fonts/Rubik-VariableFont.ttf") format("truetype");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}

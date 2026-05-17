@@ -29,17 +29,53 @@ async function clearAllStorage(page: import('@playwright/test').Page): Promise<v
     .catch(() => {});
 }
 
+/**
+ * Advance the tour by clicking "המשך" until the popover is showing the step
+ * whose id is `stepId`, then assert we actually reached it.
+ *
+ * Robustness note (C7.11): the product wires the active step id into the DOM
+ * via `.tutorial-popover[aria-labelledby="tutorial-title-<id>"]` (and the
+ * `.tutorial-title` element's matching `id`). Seeking by that stable hook
+ * instead of a hardcoded "click next ×N" count means inserting/removing tour
+ * steps before the target no longer silently retargets this test at the wrong
+ * step. No product code is changed — the attribute already exists.
+ */
+async function seekToStepId(
+  page: import('@playwright/test').Page,
+  stepId: string,
+  cap = 50,
+): Promise<void> {
+  const popover = page.locator('.tutorial-popover');
+  await expect(popover).toBeVisible();
+  const wanted = `tutorial-title-${stepId}`;
+  for (let i = 0; i < cap; i++) {
+    if ((await popover.getAttribute('aria-labelledby')) === wanted) break;
+    const next = popover.locator('[data-tutorial-action="next"]');
+    if ((await next.count()) === 0) break;
+    await next.click();
+    // renderStep is async (sheet/accordion transitions); give it a beat to
+    // rebuild the popover before re-reading the attribute.
+    await page.waitForTimeout(300);
+  }
+  // Behavioral assertion: the seek must have actually landed on the target
+  // step. If the step id was renamed/removed this fails loudly instead of
+  // screenshotting whatever random step the old fixed count happened to hit.
+  await expect(popover).toHaveAttribute('aria-labelledby', wanted);
+}
+
 test.describe('Tutorial — desktop', () => {
   test.beforeEach(async ({ page }) => {
     await clearAllStorage(page);
   });
 
-  test('first-launch banner appears on factory state', async ({ page }) => {
+  test('first-launch banner appears on factory state', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await expect(page.locator('.tutorial-banner')).toBeVisible();
     await expect(page.locator('.tutorial-banner')).toContainText('סיור מודרך');
   });
 
-  test('clicking "לא עכשיו" dismisses the banner permanently', async ({ page }) => {
+  test('clicking "לא עכשיו" dismisses the banner permanently', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await page.click('.tutorial-banner [data-tutorial-banner-action="dismiss"]:not(.tutorial-banner-close)');
     await expect(page.locator('.tutorial-banner')).toHaveCount(0);
     await page.reload();
@@ -47,7 +83,8 @@ test.describe('Tutorial — desktop', () => {
     await expect(page.locator('.tutorial-banner')).toHaveCount(0);
   });
 
-  test('clicking 📖 פתח מדריך starts the full tour', async ({ page }) => {
+  test('clicking 📖 פתח מדריך starts the full tour', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await page.click('.tutorial-banner [data-tutorial-banner-action="start"]');
     const popover = page.locator('.tutorial-popover');
     await expect(popover).toBeVisible();
@@ -56,14 +93,16 @@ test.describe('Tutorial — desktop', () => {
     await expect(page.locator('.tutorial-banner')).toHaveCount(0);
   });
 
-  test('Esc key closes the tutorial', async ({ page }) => {
+  test('Esc key closes the tutorial', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await page.evaluate(() => window.gmStartTutorial?.('participants'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.locator('.tutorial-popover')).toHaveCount(0);
   });
 
-  test('back button is disabled at step 0 and enabled after one step', async ({ page }) => {
+  test('back button is disabled at step 0 and enabled after one step', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await page.evaluate(() => window.gmStartTutorial?.('participants'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
     const backBtn = page.locator('.tutorial-popover [data-tutorial-action="back"]');
@@ -72,14 +111,16 @@ test.describe('Tutorial — desktop', () => {
     await expect(backBtn).toBeEnabled();
   });
 
-  test('יציאה מהמדריך closes the tutorial', async ({ page }) => {
+  test('יציאה מהמדריך closes the tutorial', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await page.evaluate(() => window.gmStartTutorial?.('participants'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
     await page.click('.tutorial-popover [data-tutorial-action="exit"]');
     await expect(page.locator('.tutorial-popover')).toHaveCount(0);
   });
 
-  test('tutorial accordion lists 7 tracks in הגדרות tab', async ({ page }) => {
+  test('tutorial accordion lists 7 tracks in הגדרות tab', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await page.click('.tab-btn[data-tab="algorithm"]');
     // Open the tutorial accordion (it's collapsed by default like all the others)
     await page.click('#acc-tutorial > [data-action="settings-accordion-toggle"]');
@@ -92,7 +133,8 @@ test.describe('Tutorial — desktop', () => {
     }
   });
 
-  test('manual tab switch mid-tutorial exits silently with toast', async ({ page }) => {
+  test('manual tab switch mid-tutorial exits silently with toast', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await page.evaluate(() => window.gmStartTutorial?.('participants'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
     // Click another tab — should exit tutorial
@@ -101,7 +143,8 @@ test.describe('Tutorial — desktop', () => {
     await expect(page.locator('.gm-toast')).toContainText('המדריך הופסק');
   });
 
-  test('algorithm track opens accordions programmatically', async ({ page }) => {
+  test('algorithm track opens accordions programmatically', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await page.evaluate(() => window.gmStartTutorial?.('algorithm'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
 
@@ -115,7 +158,8 @@ test.describe('Tutorial — desktop', () => {
     );
   });
 
-  test('completing a track marks it as seen (✓ checkmark)', async ({ page }) => {
+  test('completing a track marks it as seen (✓ checkmark)', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await page.evaluate(() => window.gmStartTutorial?.('participants'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
     // Walk through the whole track (length is data-driven in tutorial-content
@@ -140,7 +184,11 @@ test.describe('Tutorial — desktop', () => {
     ).toBeVisible();
   });
 
-  test('schedule track step 1 (generate button) anchors correctly even without schedule', async ({ page }) => {
+  test('schedule track step 1 (generate button) anchors correctly even without schedule', async ({
+    page,
+    viewport,
+  }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     await page.evaluate(() => window.gmStartTutorial?.('schedule'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
     // Step 1 targets #btn-generate which exists even without a schedule
@@ -153,14 +201,11 @@ test.describe('Tutorial — desktop', () => {
     // ends up below the popover's overflow-fold, which Playwright treats as
     // not-visible. Other viewports have headroom; skip the short-landscape one.
     if (viewport && viewport.height < 480) test.skip();
-    // Step s-11 (manual build) has a screenshot. Walk the schedule track to it.
+    // Step s-11 (manual build) has a screenshot. Walk the schedule track to it
+    // by seeking the step id rather than a brittle hardcoded click count.
     await page.evaluate(() => window.gmStartTutorial?.('schedule'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
-    // s-11 is now at index 12 (s-10b and s-10c were inserted before it). Click
-    // המשך 12 times to reach it.
-    for (let i = 0; i < 12; i++) {
-      await page.click('.tutorial-popover [data-tutorial-action="next"]');
-    }
+    await seekToStepId(page, 's-11');
     const img = page.locator('.tutorial-popover .tutorial-screenshot');
     // Scroll the image into view inside the popover before asserting — on the
     // smaller mobile-portrait viewport the bottom-sheet popover may need to
@@ -173,7 +218,8 @@ test.describe('Tutorial — desktop', () => {
     expect(naturalWidth).toBeGreaterThan(0);
   });
 
-  test('factory reset clears tutorial flags so banner reappears', async ({ page }) => {
+  test('factory reset clears tutorial flags so banner reappears', async ({ page, viewport }) => {
+    if (!viewport || viewport.width <= 768) test.skip();
     // Dismiss banner so we have a "previously dismissed" state to test against.
     await page.click('.tutorial-banner [data-tutorial-banner-action="dismiss"]:not(.tutorial-banner-close)');
     await expect(page.locator('.tutorial-banner')).toHaveCount(0);
