@@ -196,62 +196,62 @@ test.describe('Tutorial walkthrough — desktop', () => {
     ensureOutDir();
   });
 
-  test('full-tour walkthrough (~36 steps)', async ({ page }) => {
+  test('full-tour walkthrough (~43 steps)', async ({ page }) => {
     test.setTimeout(300_000);
     await clearAllStorage(page);
-    const captures = await walkTrack(page, 'full-tour', 36);
+    const captures = await walkTrack(page, 'full-tour', 43);
     writeCaptures('full-tour', captures);
     expect(captures.length).toBeGreaterThan(0);
   });
 
-  test('participants walkthrough (10 steps)', async ({ page }) => {
+  test('participants walkthrough (12 steps)', async ({ page }) => {
     test.setTimeout(120_000);
     await clearAllStorage(page);
-    const captures = await walkTrack(page, 'participants', 10);
+    const captures = await walkTrack(page, 'participants', 12);
     writeCaptures('participants', captures);
     expect(captures.length).toBeGreaterThan(0);
   });
 
-  test('task-rules walkthrough (12 steps)', async ({ page }) => {
+  test('task-rules walkthrough (15 steps)', async ({ page }) => {
     test.setTimeout(120_000);
     await clearAllStorage(page);
-    const captures = await walkTrack(page, 'task-rules', 12);
+    const captures = await walkTrack(page, 'task-rules', 15);
     writeCaptures('task-rules', captures);
     expect(captures.length).toBeGreaterThan(0);
   });
 
-  test('schedule walkthrough (18 steps, schedule + live mode pre-generated)', async ({ page }) => {
+  test('schedule walkthrough (22 steps, schedule + live mode pre-generated)', async ({ page }) => {
     test.setTimeout(300_000);
     await clearAllStorage(page);
     await generateSchedule(page);
     await enableLiveMode(page);
-    const captures = await walkTrack(page, 'schedule', 18);
+    const captures = await walkTrack(page, 'schedule', 22);
     writeCaptures('schedule', captures);
     expect(captures.length).toBeGreaterThan(0);
   });
 
-  test('algorithm walkthrough (9 steps)', async ({ page }) => {
+  test('algorithm walkthrough (10 steps)', async ({ page }) => {
     test.setTimeout(120_000);
     await clearAllStorage(page);
-    const captures = await walkTrack(page, 'algorithm', 9);
+    const captures = await walkTrack(page, 'algorithm', 10);
     writeCaptures('algorithm', captures);
     expect(captures.length).toBeGreaterThan(0);
   });
 
-  test('profile walkthrough (5 steps, requires schedule)', async ({ page }) => {
+  test('profile walkthrough (7 steps, requires schedule)', async ({ page }) => {
     test.setTimeout(180_000);
     await clearAllStorage(page);
     await generateSchedule(page);
-    const captures = await walkTrack(page, 'profile', 5);
+    const captures = await walkTrack(page, 'profile', 7);
     writeCaptures('profile', captures);
     expect(captures.length).toBeGreaterThan(0);
   });
 
-  test('task-panel walkthrough (5 steps, requires schedule)', async ({ page }) => {
+  test('task-panel walkthrough (6 steps, requires schedule)', async ({ page }) => {
     test.setTimeout(180_000);
     await clearAllStorage(page);
     await generateSchedule(page);
-    const captures = await walkTrack(page, 'task-panel', 5);
+    const captures = await walkTrack(page, 'task-panel', 6);
     writeCaptures('task-panel', captures);
     expect(captures.length).toBeGreaterThan(0);
   });

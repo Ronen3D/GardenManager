@@ -210,13 +210,13 @@ interface TrackPlan {
 }
 
 const TRACK_PLANS: TrackPlan[] = [
-  { id: 'full-tour', needsSchedule: false, needsLive: false, expectedSteps: 36 },
-  { id: 'participants', needsSchedule: false, needsLive: false, expectedSteps: 10 },
-  { id: 'task-rules', needsSchedule: false, needsLive: false, expectedSteps: 12 },
-  { id: 'schedule', needsSchedule: true, needsLive: true, expectedSteps: 17 },
-  { id: 'algorithm', needsSchedule: false, needsLive: false, expectedSteps: 8 },
-  { id: 'profile', needsSchedule: true, needsLive: false, expectedSteps: 5 },
-  { id: 'task-panel', needsSchedule: true, needsLive: false, expectedSteps: 5 },
+  { id: 'full-tour', needsSchedule: false, needsLive: false, expectedSteps: 43 },
+  { id: 'participants', needsSchedule: false, needsLive: false, expectedSteps: 12 },
+  { id: 'task-rules', needsSchedule: false, needsLive: false, expectedSteps: 15 },
+  { id: 'schedule', needsSchedule: true, needsLive: true, expectedSteps: 22 },
+  { id: 'algorithm', needsSchedule: false, needsLive: false, expectedSteps: 10 },
+  { id: 'profile', needsSchedule: true, needsLive: false, expectedSteps: 7 },
+  { id: 'task-panel', needsSchedule: true, needsLive: false, expectedSteps: 6 },
 ];
 
 function appendStep(rec: StepReport): void {

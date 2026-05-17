@@ -117,9 +117,18 @@ test.describe('Tutorial — desktop', () => {
 
   test('completing a track marks it as seen (✓ checkmark)', async ({ page }) => {
     await page.evaluate(() => window.gmStartTutorial?.('participants'));
-    // Walk through all 10 steps then exit on the last
-    for (let i = 0; i < 10; i++) {
-      await page.click('.tutorial-popover [data-tutorial-action="next"]');
+    await expect(page.locator('.tutorial-popover')).toBeVisible();
+    // Walk through the whole track (length is data-driven in tutorial-content
+    // and grows over time, so click "next" until the popover closes rather than
+    // hard-coding a step count). A short settle between clicks lets the async
+    // renderStep (sheet/accordion transitions) resolve before the next click —
+    // without it, rapid clicks race the transition and the tour stalls. The
+    // iteration cap is a generous safety net.
+    for (let i = 0; i < 60; i++) {
+      const next = page.locator('.tutorial-popover [data-tutorial-action="next"]');
+      if ((await next.count()) === 0) break;
+      await next.click().catch(() => {});
+      await page.waitForTimeout(350);
     }
     await expect(page.locator('.tutorial-popover')).toHaveCount(0);
 
