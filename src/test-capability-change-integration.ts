@@ -36,6 +36,7 @@ import {
   type Task,
 } from './index';
 import type { CapabilityLoss, ScheduleUnavailability } from './models/types';
+import { jsonDeserialize, jsonSerialize } from './shared/utils/json-dates';
 import { computeAllCapacities } from './utils/capacity';
 
 // ─── Local assert + summary ─────────────────────────────────────────────────
@@ -127,26 +128,11 @@ function buildScoreCtx(tasks: Task[], participants: Participant[]): ScoreContext
   };
 }
 
-// jsonSerialize / jsonDeserialize mirror the implementation in
-// src/web/config-store.ts so the persistence test stays node-runnable
-// without importing localStorage-bound module code.
-function jsonSerialize(obj: unknown): string {
-  return JSON.stringify(obj, function (this: Record<string, unknown>, key, value) {
-    const raw = this[key];
-    if (raw instanceof Date) {
-      return { __date__: raw.toISOString() };
-    }
-    return value;
-  });
-}
-function jsonDeserialize<T>(json: string): T {
-  return JSON.parse(json, (_key, value) => {
-    if (value && typeof value === 'object' && '__date__' in value) {
-      return new Date((value as { __date__: string }).__date__);
-    }
-    return value;
-  }) as T;
-}
+// jsonSerialize / jsonDeserialize are imported from the pure, DOM-free shared
+// module (src/shared/utils/json-dates.ts) — the same implementation the web
+// build uses. This file stays node-runnable because that module has zero
+// imports and no localStorage/DOM dependency; there is no longer a local copy
+// to drift from production.
 
 // ─── Test 1 — engine integration ────────────────────────────────────────────
 

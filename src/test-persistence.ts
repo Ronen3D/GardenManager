@@ -315,26 +315,27 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     assert(rtArr[0] instanceof Date && rtArr[1] instanceof Date, 'U1.3: Array of Dates survive');
     assert(rtArr[0].getTime() === arr[0].getTime(), 'U1.3: Array Date[0] value matches');
 
-    // 4. Non-Date object with __date__ key — documents current behavior
+    // 4. Non-Date object with an unparseable __date__ key.
     const fakeDate = { __date__: 'not-a-date', other: 1 };
-    const rtFake = store.jsonDeserialize<{ __date__: string; other: number }>(store.jsonSerialize(fakeDate));
-    // The replacer only wraps `instanceof Date`, so the __date__ key stays as-is in input.
-    // But the reviver sees { __date__: ... } and revives it. So the original object's __date__
-    // property gets re-serialized as a string (since it's not a Date instance, the replacer
-    // passes it through as-is), and the reviver then turns it into a Date.
-    // Actually: the replacer checks `this[key] instanceof Date`. For a plain string, it's not,
-    // so it stays as-is. The reviver then sees { __date__: 'not-a-date' } and calls new Date('not-a-date').
-    // Wait — the input object has key __date__ with value 'not-a-date'. JSON.stringify will
-    // produce {"__date__":"not-a-date","other":1}. The reviver sees the top-level object with
-    // __date__ in it and revives it as Date. So the whole object becomes a Date (invalid one).
-    // Let's just verify the behavior:
     const serialized = store.jsonSerialize(fakeDate);
-    // The serialized string should just be the plain JSON since __date__ is a string, not a Date
+    // The replacer only wraps `instanceof Date`; a plain string passes through,
+    // so the serialized form keeps __date__ as the literal string.
     const parsed = JSON.parse(serialized);
     assert(
       typeof parsed.__date__ === 'string' && parsed.__date__ === 'not-a-date',
       'U1.4: Non-Date __date__ key serializes as plain string',
     );
+    // The reviver is symmetric with the serializer: jsonSerialize only ever
+    // emits a re-parseable Date.toISOString(), so a __date__ marker that does
+    // NOT parse back to a valid Date is corrupt/foreign input and is rejected
+    // (throw) rather than propagated as an Invalid Date into engine fields.
+    let fakeRejected = false;
+    try {
+      store.jsonDeserialize<{ __date__: string; other: number }>(serialized);
+    } catch {
+      fakeRejected = true;
+    }
+    assert(fakeRejected, 'U1.4: unparseable __date__ is rejected (throws), not revived as an Invalid Date');
 
     // 5. Schedule-shaped object with multiple Date fields
     const sched = makeSchedule();

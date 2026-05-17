@@ -40,6 +40,7 @@ import {
   type TaskTemplate,
 } from '../models/types';
 import { computeTemplateSectionKey } from '../shared/layout-key';
+import { jsonDeserialize, jsonSerialize } from '../shared/utils/json-dates';
 import { buildFormula } from '../shared/utils/load-formula';
 import { hourInOpDay } from '../shared/utils/time-utils';
 import { normalizeCertificationDefinitions, sanitizeCertificationIds } from './certification-utils';
@@ -2778,43 +2779,14 @@ const STORAGE_KEY_LIVE_MODE = 'gardenmanager_live_mode';
 let _saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const SAVE_DEBOUNCE_MS = 500;
 
-/**
- * Deep-serialize dates to ISO strings in a JSON-compatible way.
- * Uses a replacer function so Date objects in nested structures are handled.
- *
- * NOTE: This serializer (with its `{ __date__: ... }` markers and matching
- * `jsonDeserialize` reviver) is used only for the Schedule blob, whose
- * shape has Dates at arbitrary nesting depths.  The state blob
- * (`saveToStorage`) uses manual `.toISOString()` + plain `JSON.parse`
- * because its structure is flat and well-known.  The two persistence
- * paths are intentionally separate — do not unify without updating both
- * the save and load sides.
- */
-export function jsonSerialize(obj: unknown): string {
-  // Must use a regular function (not arrow) so `this` is the holder object.
-  // JSON.stringify calls Date.toJSON() *before* the replacer sees the value,
-  // so `value` is already a string for Dates.  `this[key]` gives the raw Date.
-  return JSON.stringify(obj, function (key, value) {
-    const raw = this[key];
-    if (raw instanceof Date) {
-      return { __date__: raw.toISOString() };
-    }
-    return value;
-  });
-}
-
-/**
- * Deep-deserialize ISO date strings back to Date objects.
- * Uses a reviver function that matches the serialization format.
- */
-export function jsonDeserialize<T>(json: string): T {
-  return JSON.parse(json, (_key, value) => {
-    if (value && typeof value === 'object' && '__date__' in value) {
-      return new Date(value.__date__);
-    }
-    return value;
-  }) as T;
-}
+// Date-preserving JSON (de)serialization lives in a pure, DOM-free shared
+// module (imported at the top of this file) so the web build and the
+// pure-`src/` Node coverage tests share ONE implementation — no hand-maintained
+// mirror that can silently drift. This re-export keeps the historical
+// `store.jsonSerialize` / `store.jsonDeserialize` API stable for external
+// consumers; in-module call sites (loadSchedule, snapshot deep-copy, etc.) use
+// the imported bindings directly and are unchanged.
+export { jsonDeserialize, jsonSerialize };
 
 /**
  * Save the full store state to localStorage.

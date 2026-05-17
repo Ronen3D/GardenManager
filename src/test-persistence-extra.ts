@@ -1,10 +1,11 @@
 /**
  * WP4 — Persistence / continuity / frozen-snapshot / data-transfer (net-new).
  *
- * Covers C4.1–C4.6. C4.1 and C4.4 additionally pin behaviors that are under
+ * Covers C4.1–C4.6. C4.1 additionally pins a behavior that is under
  * independent review: `importFullBackup`'s pre-import-state handling on a
- * failed restore write, and `jsonDeserialize`'s handling of an unparseable
- * `__date__` value (plus a prototype-pollution safety check).
+ * failed restore write. C4.4 asserts the resolved contract that
+ * `jsonDeserialize` rejects an unparseable `__date__` value rather than
+ * propagating an Invalid Date (plus a prototype-pollution safety check).
  *
  * Group B (imports `src/web`): runs under `tsconfig.test-persistence.json` via
  * `npm run test:persistence`. Standalone:
@@ -420,31 +421,35 @@ export async function runPersistenceExtraTests(assert: AssertFn): Promise<void> 
       'C4.4: Object.prototype.polluted is undefined (direct check)',
     );
 
-    // ── Part B: REVIEW — jsonDeserialize handling of an unparseable __date__ ─
-    // Open question under independent investigation: should the reviver reject
-    // an unparseable `{__date__:...}` value, or pass it through as-is? This
-    // pins the current behavior.
-    const revived = store.jsonDeserialize('{"d":{"__date__":"garbage-not-a-date"}}') as { d: Date };
-    // Current behavior pinned (records the path executed: reviver fires on __date__).
+    // ── Part B: jsonDeserialize rejects an unparseable __date__ ─────────────
+    // Resolved (independent investigation): jsonSerialize only ever emits a
+    // re-parseable Date.toISOString() and throws on an Invalid Date, so a
+    // __date__ marker that does not parse back to a valid Date is corrupt /
+    // foreign input. The reviver is symmetric — it rejects (throws) rather than
+    // propagating an Invalid Date (getTime()===NaN, yet still `instanceof Date`,
+    // so it would slip past the hasFrozenFields() "drop & regenerate" net) into
+    // engine fields such as Schedule.periodStart / Task.timeBlock.
+    let revivedRejected = false;
+    try {
+      store.jsonDeserialize('{"d":{"__date__":"garbage-not-a-date"}}');
+    } catch {
+      revivedRejected = true;
+    }
     assert(
-      revived.d instanceof Date,
-      'C4.4: current behavior — jsonDeserialize reviver turns {__date__:garbage} into a Date object...',
+      revivedRejected,
+      'C4.4: jsonDeserialize rejects (throws on) an unparseable {__date__} rather than reviving an Invalid Date',
     );
+    // A valid __date__ still round-trips normally (the strictness is targeted).
+    const okRevived = store.jsonDeserialize('{"d":{"__date__":"2026-01-15T10:30:00.000Z"}}') as { d: Date };
     assert(
-      Number.isNaN(revived.d.getTime()),
-      'C4.4: current behavior — ...and that Date is an Invalid Date (getTime() is NaN), passed through unchecked',
+      okRevived.d instanceof Date && !Number.isNaN(okRevived.d.getTime()),
+      'C4.4: a valid __date__ still revives to a valid Date (rejection is targeted, not blanket)',
     );
-    // REVIEW (hypothesized alternative, intentionally NOT asserted pending
-    // independent investigation): if an unparseable __date__ should be
-    // rejected rather than passed through as an Invalid Date, this would hold.
-    // Restore it if/when that is decided correct.
-    // assert(
-    //   !(revived.d instanceof Date) || !Number.isNaN(revived.d.getTime()),
-    //   'C4.4: an unparseable __date__ is rejected, not propagated as Invalid Date',
-    // );
 
     // Full path: a hostile backup whose schedule blob carries a garbage
-    // __date__ becomes an Invalid Date in an engine field after load.
+    // __date__ is rejected at deserialization, so loadSchedule() returns null
+    // (its try/catch) — the app then shows no schedule and the user
+    // regenerates, instead of running on Invalid Dates in engine fields.
     resetAll();
     const poisonedSchedule = JSON.stringify({
       id: 's',
@@ -458,19 +463,10 @@ export async function runPersistenceExtraTests(assert: AssertFn): Promise<void> 
       /* tolerated */
     }
     const loadedPoison = store.loadSchedule();
-    const poisonStart = loadedPoison?.tasks?.[0]?.timeBlock?.start as unknown as Date | undefined;
     assert(
-      poisonStart instanceof Date && Number.isNaN(poisonStart.getTime()),
-      'C4.4: current behavior — a garbage __date__ in a backup ends up as an Invalid Date in task.timeBlock.start after load',
+      loadedPoison === null,
+      'C4.4: a garbage __date__ in a backup is rejected — loadSchedule() returns null, no Invalid Date reaches engine fields',
     );
-    // REVIEW (hypothesized alternative, intentionally NOT asserted pending
-    // independent investigation): if such a blob should be rejected rather
-    // than loaded with Invalid Dates into engine fields, this would hold.
-    // Restore it if/when that is decided correct.
-    // assert(
-    //   !(poisonStart instanceof Date) || !Number.isNaN(poisonStart.getTime()),
-    //   'C4.4: poisoned __date__ in a backup is rejected, not loaded as Invalid Date',
-    // );
 
     // ── Part C: deep validators reject malformed payloads ───────────────────
     const badTaskSet = JSON.stringify({
