@@ -131,7 +131,7 @@ const PARTICIPANTS_TRACK: TutorialTrack = {
   ],
 };
 
-// ─── Track: task-rules (15 steps) ────────────────────────────────────────────
+// ─── Track: task-rules (16 steps) ────────────────────────────────────────────
 
 const TASK_RULES_TRACK: TutorialTrack = {
   id: 'task-rules',
@@ -204,6 +204,14 @@ const TASK_RULES_TRACK: TutorialTrack = {
       placement: 'inline-start',
       title: 'אי התאמה',
       body: 'כשמסומן — העדפות <strong>אי-זיווג</strong> שהוגדרו בכרטיסי המשתתפים יחולו על משמרות התבנית הזו, והאופטימייזר ישתדל לא לשבץ יחד אנשים שסומנו זה מול זה. זהו <strong>אילוץ רך</strong>: כשאין ברירה הם עשויים להשתבץ יחד, וההפרה תופיע כאזהרה. ללא הפעלת המתג כאן, הגדרות אי-הזיווג אינן משפיעות על התבנית.',
+      expandFirstTemplate: true,
+    },
+    {
+      id: 't-6c',
+      target: '.template-card .checkbox-label:has([data-tpl-field="splittable"])',
+      placement: 'inline-start',
+      title: 'ניתן לפיצול',
+      body: 'כשמסומן — <strong>וגם פיצול משמרות מופעל בהגדרות האלגוריתם</strong> — המערכת רשאית לפצל <strong>מופע שלא ניתן לאייש בשלמותו</strong> לשתי משמרות שוות לשני אנשים <strong>שונים</strong>, אך ורק כדי לאייש משבצת שאחרת תישאר ריקה. בלתי תלוי ב"חוסם רצף"; ברירת המחדל כבויה — וכל עוד הוא כבוי השיבוץ מתנהג בדיוק כמו היום.',
       expandFirstTemplate: true,
     },
     {
@@ -462,7 +470,7 @@ const SCHEDULE_TRACK: TutorialTrack = {
   ],
 };
 
-// ─── Track: algorithm (settings tab — 10 steps) ──────────────────────────────
+// ─── Track: algorithm (settings tab — 12 steps) ──────────────────────────────
 
 const ALGORITHM_TRACK: TutorialTrack = {
   id: 'algorithm',
@@ -514,11 +522,27 @@ const ALGORITHM_TRACK: TutorialTrack = {
       },
     },
     {
+      id: 'a-3d',
+      target: '.algo-weight-card:has([data-action="algo-toggle-splitting"])',
+      placement: 'inline-start',
+      title: 'פיצול משמרות — הפעלה להרצה זו',
+      body: 'מתג זה מפעיל פיצול משמרות <strong>עבור ההרצה הנוכחית בלבד</strong>. כשמסומן — משימה שסומנה "<strong>ניתן לפיצול</strong>" בכללי המשימות יכולה להתפצל לשתי משמרות לשני אנשים שונים, אך ורק כדי לאייש משבצת שאחרת תישאר ריקה. כבוי = התנהגות רגילה לחלוטין (אף משמרת אינה מפוצלת). ההגדרה <strong>נקפאת על השבצ"ק</strong> שנוצר — שינוי כאן משפיע רק על השבצ"ק הבא.',
+      openAccordion: ['acc-algorithm', 'acc-general'],
+    },
+    {
       id: 'a-4',
       target: '.algo-slider[data-action="algo-weight-slider"]',
       placement: 'inline-start',
       title: 'משקלות האלגוריתם',
       body: 'כל סליידר קובע את החשיבות של גורם מסוים — איזון עומס, איזון יומי, מנוחה. שנה בהדרגה ובדוק את ההשפעה על הציון; ערך ברירת המחדל מוצג ליד כל משקל לעיון.',
+      openAccordion: ['acc-algorithm', 'acc-weights'],
+    },
+    {
+      id: 'a-4b',
+      target: '.algo-slider[data-action="algo-weight-slider"][data-key="splitPenalty"]',
+      placement: 'inline-start',
+      title: 'עונש פיצול משמרת',
+      body: 'כשפיצול מופעל, סליידר זה קובע כמה "יקר" נחשב כל פיצול. הוא <strong>אינו</strong> מחליט אם לפצל משמרת מסוימת — המערכת מפצלת רק כשאין דרך אחרת לאייש משבצת — אלא <strong>מטה את הבחירה בין ניסיונות</strong> אל פתרונות עם פחות פיצולים. ערך גבוה יותר = העדפה חזקה יותר לשבצ"ק עם כמה שפחות פיצולים.',
       openAccordion: ['acc-algorithm', 'acc-weights'],
     },
     {
@@ -695,7 +719,7 @@ const FULL_TOUR_TRACK: TutorialTrack = {
   id: 'full-tour',
   label: 'סיור כללי',
   icon: '📖',
-  description: 'סקירה מודרכת · ~43 שלבים',
+  description: 'סקירה מודרכת · ~44 שלבים',
   steps: [
     // Welcome
     {
@@ -712,11 +736,13 @@ const FULL_TOUR_TRACK: TutorialTrack = {
     { ...stepById(PARTICIPANTS_TRACK, 'p-4'), id: 'ft-p-4' },
     { ...stepById(PARTICIPANTS_TRACK, 'p-5'), id: 'ft-p-5' },
     { ...stepById(PARTICIPANTS_TRACK, 'p-8'), id: 'ft-p-8' },
-    // Task-rules subset (now includes t-7b — Sleep & Recovery is HC-15, must be in tour)
+    // Task-rules subset (now includes t-7b — Sleep & Recovery is HC-15, must be
+    // in tour — and t-6c — shift-splitting is a scheduling-behavior opt-in)
     { ...stepById(TASK_RULES_TRACK, 't-1'), id: 'ft-t-1', switchToTab: 'task-rules' },
     { ...stepById(TASK_RULES_TRACK, 't-2'), id: 'ft-t-2' },
     { ...stepById(TASK_RULES_TRACK, 't-3'), id: 'ft-t-3' },
     { ...stepById(TASK_RULES_TRACK, 't-5'), id: 'ft-t-5' },
+    { ...stepById(TASK_RULES_TRACK, 't-6c'), id: 'ft-t-6c' },
     { ...stepById(TASK_RULES_TRACK, 't-7'), id: 'ft-t-7' },
     { ...stepById(TASK_RULES_TRACK, 't-7b'), id: 'ft-t-7b' },
     { ...stepById(TASK_RULES_TRACK, 't-9'), id: 'ft-t-9' },

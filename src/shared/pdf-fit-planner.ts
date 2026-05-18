@@ -248,12 +248,7 @@ function fits(fr: FreeRect, w: number, h: number): boolean {
 }
 
 function containedIn(a: FreeRect, b: FreeRect): boolean {
-  return (
-    a.x >= b.x - EPS &&
-    a.y >= b.y - EPS &&
-    a.x + a.w <= b.x + b.w + EPS &&
-    a.y + a.h <= b.y + b.h + EPS
-  );
+  return a.x >= b.x - EPS && a.y >= b.y - EPS && a.x + a.w <= b.x + b.w + EPS && a.y + a.h <= b.y + b.h + EPS;
 }
 
 /** Lexicographic "a < b" with an epsilon tolerance per component. */
@@ -288,8 +283,7 @@ function chooseFreeRect(free: FreeRect[], w: number, h: number): FreeRect | null
 function splitFreeRects(free: FreeRect[], R: FreeRect): FreeRect[] {
   const out: FreeRect[] = [];
   for (const F of free) {
-    const overlaps =
-      R.x < F.x + F.w - EPS && R.x + R.w > F.x + EPS && R.y < F.y + F.h - EPS && R.y + R.h > F.y + EPS;
+    const overlaps = R.x < F.x + F.w - EPS && R.x + R.w > F.x + EPS && R.y < F.y + F.h - EPS && R.y + R.h > F.y + EPS;
     if (!overlaps) {
       out.push(F);
       continue;
@@ -372,7 +366,14 @@ function packBins(
 // ─── Planner ─────────────────────────────────────────────────────────────────
 
 function emptyResult(): PlanResult {
-  return { sections: [], fontSize: DEFAULT_LEVERS.fontSizes[0], cellPadding: DEFAULT_LEVERS.cellPaddings[0], predictedHeight: 0, pageCount: 1, overflow: false };
+  return {
+    sections: [],
+    fontSize: DEFAULT_LEVERS.fontSizes[0],
+    cellPadding: DEFAULT_LEVERS.cellPaddings[0],
+    predictedHeight: 0,
+    pageCount: 1,
+    overflow: false,
+  };
 }
 
 /**
@@ -387,8 +388,7 @@ export function planDayLayout(input: PlanInput): PlanResult {
   const { sections, geometry: geo, levers } = input;
   if (sections.length === 0) return emptyResult();
 
-  const capFor = (s: SectionDescriptor) =>
-    maxNameColsFor(geo.usableWidth, s.logicalColCount, geo, levers.maxNameCols);
+  const capFor = (s: SectionDescriptor) => maxNameColsFor(geo.usableWidth, s.logicalColCount, geo, levers.maxNameCols);
 
   const itemsFor = (nameCols: Map<string, number>, fontSize: number, cellPadding: number): PackItem[] =>
     sections.map((s) => {
@@ -436,11 +436,7 @@ export function planDayLayout(input: PlanInput): PlanResult {
     return null;
   };
 
-  const build = (
-    placements: PackPlacement[],
-    fontSize: number,
-    cellPadding: number,
-  ): PlanResult => {
+  const build = (placements: PackPlacement[], fontSize: number, cellPadding: number): PlanResult => {
     const pageCount = placements.reduce((m, p) => Math.max(m, p.bin + 1), 1);
     const pageBottom = new Map<number, number>();
     for (const p of placements) {

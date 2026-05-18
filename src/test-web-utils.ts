@@ -107,11 +107,7 @@ import {
   renderPakalBadges,
   sanitizePakalIds,
 } from './web/pakal-utils';
-import {
-  enterTutorialDemoMode,
-  exitTutorialDemoMode,
-  TutorialPreflightError,
-} from './web/tutorial-demo';
+import { enterTutorialDemoMode, exitTutorialDemoMode, TutorialPreflightError } from './web/tutorial-demo';
 import { DEMO_PARTICIPANTS } from './web/tutorial-demo-seed';
 import { escAttr, escHtml } from './web/ui-helpers';
 
@@ -394,12 +390,18 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
     const appStateBaseline = JSON.parse(JSON.stringify(_mockAppState));
     _lastLoadedSchedule = undefined;
 
-    const customNames = store.getAllParticipants().map((p) => p.name).sort();
+    const customNames = store
+      .getAllParticipants()
+      .map((p) => p.name)
+      .sort();
 
     enterTutorialDemoMode();
 
     // Non-vacuous: the demo really replaced the user's roster.
-    const demoNames = store.getAllParticipants().map((p) => p.name).sort();
+    const demoNames = store
+      .getAllParticipants()
+      .map((p) => p.name)
+      .sort();
     const expectedDemo = DEMO_PARTICIPANTS.map((d) => d.name).sort();
     assert(
       store.getAllParticipants().length === DEMO_PARTICIPANTS.length &&
@@ -437,25 +439,17 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
     // SECONDARY: in-memory store after exit equals a canonical reload of the
     // restored bytes — no demo residue leaked past restore.
     const afterStoreJson = snapshotStoreState();
-    assert(
-      afterStoreJson === baselineStoreJson,
-      'C7.1: store state structurally identical to pre-enter baseline',
-    );
+    assert(afterStoreJson === baselineStoreJson, 'C7.1: store state structurally identical to pre-enter baseline');
 
     // App-state (continuity etc.) restored via applyAppStateSnapshot.
     assert(
       JSON.stringify(_mockAppState) === JSON.stringify(appStateBaseline),
       'C7.1: app-state snapshot (continuity/tab) restored on exit',
     );
-    assert(
-      _mockAppState.continuityJson === 'USER-CONTINUITY-BLOB-v1',
-      'C7.1: user continuity blob restored exactly',
-    );
+    assert(_mockAppState.continuityJson === 'USER-CONTINUITY-BLOB-v1', 'C7.1: user continuity blob restored exactly');
 
     // Concrete human-meaningful survival check.
-    const restoredP1 = store
-      .getAllParticipants()
-      .find((p) => p.name === 'Custom <b>"User"</b> & אבי');
+    const restoredP1 = store.getAllParticipants().find((p) => p.name === 'Custom <b>"User"</b> & אבי');
     assert(!!restoredP1, 'C7.1: hostile-named custom participant restored verbatim');
     if (restoredP1) {
       const du = store.getDateUnavailabilities(restoredP1.id);
@@ -496,7 +490,10 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
     _presentClasses.clear();
     _manualBuildActive = true;
     let r = tryEnter();
-    assert(r.threw && r.isPreflight && r.reason === 'manual-build', 'C7.8: manual-build gate throws reason=manual-build');
+    assert(
+      r.threw && r.isPreflight && r.reason === 'manual-build',
+      'C7.8: manual-build gate throws reason=manual-build',
+    );
 
     // Gate 2: participant editor sheet open (carries BOTH .gm-edit-sheet-v2
     // AND .gm-modal-dialog, as the real DOM element does).
@@ -542,10 +539,7 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
     );
 
     // A blocked enter must not mutate the store (gate runs before side effects).
-    assert(
-      store.getAllParticipants().length === pCountBefore,
-      'C7.8: blocked enter leaves store untouched',
-    );
+    assert(store.getAllParticipants().length === pCountBefore, 'C7.8: blocked enter leaves store untouched');
 
     _manualBuildActive = false;
     _presentClasses.clear();
@@ -697,7 +691,9 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
       'C7.7: getEffectivePakalIds returns active ids in definition order',
     );
     assert(
-      getEffectivePakalDefinitions(part, fullDefs).map((d) => d.id).join(',') === 'pk-a,pk-b',
+      getEffectivePakalDefinitions(part, fullDefs)
+        .map((d) => d.id)
+        .join(',') === 'pk-a,pk-b',
       'C7.7: getEffectivePakalDefinitions filters to active defs',
     );
     assert(
@@ -751,7 +747,7 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
       'C7.2: escHtml combined entities correct & ordered',
     );
     // Single quote is intentionally NOT escaped by escHtml.
-    assert(escHtml("it's") === "it's", "C7.2: escHtml leaves single-quote untouched (documented)");
+    assert(escHtml("it's") === "it's", 'C7.2: escHtml leaves single-quote untouched (documented)');
     // Emoji + non-Latin pass through unchanged.
     assert(escHtml('שלום 🌱👍 test') === 'שלום 🌱👍 test', 'C7.2: escHtml passes emoji/Hebrew through');
     // Very long string: only specials transformed, length grows only by entities.
@@ -764,10 +760,7 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
     assert(escHtml('') === '', 'C7.2: escHtml empty string');
 
     // escAttr: same final char set, & first then " then < then >.
-    assert(
-      escAttr('&"<>') === '&amp;&quot;&lt;&gt;',
-      'C7.2: escAttr escapes &, ", <, > (ampersand first)',
-    );
+    assert(escAttr('&"<>') === '&amp;&quot;&lt;&gt;', 'C7.2: escAttr escapes &, ", <, > (ampersand first)');
     assert(
       escAttr('x" onload="evil()') === 'x&quot; onload=&quot;evil()',
       'C7.2: escAttr neutralises attribute-breakout quote',

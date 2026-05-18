@@ -184,6 +184,23 @@ const WEIGHT_GROUPS: WeightGroup[] = [
       },
     ],
   },
+  {
+    title: 'פיצול משמרות',
+    description:
+      'פיצול משמרות מאפשר למערכת, כשפיצול מופעל בהרצה זו ומשימה מסומנת "ניתן לפיצול", לפצל מופע שלא ניתן לאייש בשלמותו לשתי משמרות לשני אנשים שונים — רק כדי לאייש משבצת שאחרת תישאר ריקה.',
+    fields: [
+      {
+        key: 'splitPenalty',
+        label: 'עונש פיצול משמרת',
+        min: 0,
+        max: 5000,
+        step: 50,
+        description: 'כמה להעדיף פתרונות עם פחות פיצולים.',
+        detail:
+          'עונש לכל מופע מפוצל. בגרסה זו אינו גורם או מונע פיצול בתוך ההרצה (פיצול נעשה רק כשמשבצת לא ניתנת לאיוש) — הוא רק מטה את בחירת הניסיון הטוב ביותר לעבר פתרונות עם פחות פיצולים. ערך 0 מבטל את ההטיה.',
+      },
+    ],
+  },
 ];
 
 // ─── HC/SW Extended Descriptions ─────────────────────────────────────────────
@@ -395,6 +412,8 @@ function renderGeneralSettings(dayStartHour: number): string {
     selected: h === dayStartHour,
   }));
 
+  const splitEnabled = store.getAlgorithmSettings().splittingEnabled ?? false;
+
   return `
     <div class="algo-grid">
       <div class="algo-weight-card${isCustom ? ' modified' : ''}">
@@ -410,6 +429,15 @@ function renderGeneralSettings(dayStartHour: number): string {
           })}
         </div>
         <p class="algo-weight-desc">השבצ״ק מדבר בימים 1..N. כל יום במערכת מוגדר כ-24 שעות מהשעה הנבחרת — לדוגמה, 05:00 = יום 1 רץ מ-05:00 עד 05:00 למחרת, ו״1:00 בלילה״ שייך ליום הקודם (הזנב שאחרי חצות). שינוי כאן משפיע על תצוגת השבצ״ק, הקפאת מצב חי, איזון עומס יומי, אי-זמינות, הזרקת משימה וייצוא.</p>
+      </div>
+      <div class="algo-weight-card${splitEnabled ? ' modified' : ''}">
+        <div class="algo-weight-header">
+          <label class="algo-weight-label" title="אפשר למערכת לפצל משמרות בהרצה זו">פיצול משמרות</label>
+        </div>
+        <div class="algo-weight-controls">
+          <label class="checkbox-label"><input type="checkbox" data-action="algo-toggle-splitting" ${splitEnabled ? 'checked' : ''} /> אפשר פיצול בהרצה זו</label>
+        </div>
+        <p class="algo-weight-desc">כשמסומן — משימות שסומנו "ניתן לפיצול" יכולות להיות מפוצלות לשתי משמרות לשני אנשים שונים, אך ורק כדי לאייש משבצת שאחרת תישאר ריקה. כבוי = התנהגות רגילה (אף משמרת לא מפוצלת). ההגדרה נקפאת על השבצ״ק שנוצר.</p>
       </div>
     </div>
     <div class="settings-autotune-row">
@@ -1331,6 +1359,11 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         if ((el as HTMLInputElement).checked) set.delete(code);
         else set.add(code);
         store.setAlgorithmSettings({ disabledHardConstraints: [...set] });
+        rerender();
+        break;
+      }
+      case 'algo-toggle-splitting': {
+        store.setAlgorithmSettings({ splittingEnabled: (el as HTMLInputElement).checked });
         rerender();
         break;
       }

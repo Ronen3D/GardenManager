@@ -208,10 +208,7 @@ test.describe('6. UI/UX quality checks', () => {
         'Some tap targets render below 44×44px on phone (375×812). Behavior pinned ' +
         'for independent investigation; product NOT modified.',
     });
-    test.fixme(
-      true,
-      'REVIEW: sub-44px tap targets on phone — under independent investigation, product not modified.',
-    );
+    test.fixme(true, 'REVIEW: sub-44px tap targets on phone — under independent investigation, product not modified.');
 
     for (const tab of ALL_TABS) {
       await switchTab(page, tab);

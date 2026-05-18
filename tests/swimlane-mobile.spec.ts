@@ -131,7 +131,9 @@ async function pickSwimlaneBlock(page: Page, skip = 0): Promise<BlockPick | null
 /** Open the block bottom-sheet for a specific lane+task. */
 async function openBlockSheet(page: Page, pick: BlockPick): Promise<void> {
   const block = page
-    .locator(`.swimlane-lane[data-participant-id="${pick.participantId}"] .swimlane-block[data-task-id="${pick.taskId}"]`)
+    .locator(
+      `.swimlane-lane[data-participant-id="${pick.participantId}"] .swimlane-block[data-task-id="${pick.taskId}"]`,
+    )
     .first();
   await block.scrollIntoViewIfNeeded();
   await block.click();
@@ -144,9 +146,7 @@ async function openBlockSheet(page: Page, pick: BlockPick): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test.describe('C6.1 swimlane action sheet', () => {
-  test('(a) tap block → sheet → swap to completion changes the assignment in the DOM', async ({
-    page,
-  }) => {
+  test('(a) tap block → sheet → swap to completion changes the assignment in the DOM', async ({ page }) => {
     test.setTimeout(150_000);
     await seedAndGenerate(page);
     await expandSwimlane(page);
@@ -198,10 +198,7 @@ test.describe('C6.1 swimlane action sheet', () => {
       }
     }
 
-    expect(
-      committed,
-      'expected at least one swimlane block with an eligible, valid swap candidate',
-    ).not.toBeNull();
+    expect(committed, 'expected at least one swimlane block with an eligible, valid swap candidate').not.toBeNull();
 
     const { pick, incomingName } = committed!;
 
@@ -219,9 +216,7 @@ test.describe('C6.1 swimlane action sheet', () => {
     );
     await expect(sourceLaneBlock).toHaveCount(0);
     // And the task is still scheduled somewhere (not silently dropped).
-    await expect(
-      page.locator(`.swimlane-view .swimlane-block[data-task-id="${pick.taskId}"]`).first(),
-    ).toBeVisible();
+    await expect(page.locator(`.swimlane-view .swimlane-block[data-task-id="${pick.taskId}"]`).first()).toBeVisible();
   });
 
   test('(b) tap block → sheet → rescue entry point opens the rescue modal', async ({ page }) => {
@@ -260,9 +255,7 @@ test.describe('C6.1 swimlane action sheet', () => {
     expect(opened, 'expected the rescue modal to open from a swimlane block').toBe(true);
   });
 
-  test('(c) tap block → sheet → "go to profile" navigates to the profile view', async ({
-    page,
-  }) => {
+  test('(c) tap block → sheet → "go to profile" navigates to the profile view', async ({ page }) => {
     test.setTimeout(120_000);
     await seedAndGenerate(page);
     await expandSwimlane(page);
@@ -295,9 +288,7 @@ test.describe('C6.1 swimlane action sheet', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test.describe('C6.4 day navigation', () => {
-  test('switching to day 2 changes the rendered swimlane content (not just an active class)', async ({
-    page,
-  }) => {
+  test('switching to day 2 changes the rendered swimlane content (not just an active class)', async ({ page }) => {
     test.setTimeout(120_000);
     await seedAndGenerate(page);
     await expandSwimlane(page);
@@ -331,9 +322,7 @@ test.describe('C6.4 day navigation', () => {
     // day-scoped, not stale).
     await page.locator('.day-hero-dot[data-day="1"]').click();
     await expect(page.locator('.day-hero-label')).toHaveText(/יום\s*1\b/);
-    await expect((await page.locator('.swimlane-view .swimlane-groups').innerText()).trim()).toBe(
-      day1Sig,
-    );
+    await expect((await page.locator('.swimlane-view .swimlane-groups').innerText()).trim()).toBe(day1Sig);
   });
 });
 
@@ -342,9 +331,7 @@ test.describe('C6.4 day navigation', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test.describe('C6.6 rescue modal', () => {
-  test('rescue from a swimlane block: pick a plan and commit changes the schedule', async ({
-    page,
-  }) => {
+  test('rescue from a swimlane block: pick a plan and commit changes the schedule', async ({ page }) => {
     test.setTimeout(180_000);
     await seedAndGenerate(page);
     await enableLiveMode(page);

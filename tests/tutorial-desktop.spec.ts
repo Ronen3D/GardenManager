@@ -40,11 +40,7 @@ async function clearAllStorage(page: import('@playwright/test').Page): Promise<v
  * steps before the target no longer silently retargets this test at the wrong
  * step. No product code is changed — the attribute already exists.
  */
-async function seekToStepId(
-  page: import('@playwright/test').Page,
-  stepId: string,
-  cap = 50,
-): Promise<void> {
+async function seekToStepId(page: import('@playwright/test').Page, stepId: string, cap = 50): Promise<void> {
   const popover = page.locator('.tutorial-popover');
   await expect(popover).toBeVisible();
   const wanted = `tutorial-title-${stepId}`;
@@ -128,7 +124,16 @@ test.describe('Tutorial — desktop', () => {
     // 7 real tracks + the synthetic "deep-tour" overview entry.
     await expect(buttons).toHaveCount(8);
     // Verify each expected entry is rendered with a stable data attribute
-    const ids = ['full-tour', 'deep-tour', 'participants', 'task-rules', 'schedule', 'algorithm', 'profile', 'task-panel'];
+    const ids = [
+      'full-tour',
+      'deep-tour',
+      'participants',
+      'task-rules',
+      'schedule',
+      'algorithm',
+      'profile',
+      'task-panel',
+    ];
     for (const id of ids) {
       await expect(page.locator(`.tutorial-track-btn[data-tutorial-track="${id}"]`)).toHaveCount(1);
     }

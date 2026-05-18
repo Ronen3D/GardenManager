@@ -811,6 +811,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${tpl.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
+          <label class="checkbox-label" title="כשמופעל וגם פיצול משמרות פעיל בהגדרות האלגוריתם — המערכת רשאית לפצל מופע שלא ניתן לאייש בשלמותו לשתי משמרות לשני אנשים שונים"><input type="checkbox" data-tpl-field="splittable" data-tid="${tpl.id}" ${tpl.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
         </div>
       </section>
 
@@ -1519,6 +1520,7 @@ function _commitTemplateProps(body: HTMLElement, tid: string): boolean {
     (body.querySelector('[data-tpl-field="blocksConsecutive"]') as HTMLInputElement)?.checked || false;
   const togethernessRelevant =
     (body.querySelector('[data-tpl-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
+  const splittable = (body.querySelector('[data-tpl-field="splittable"]') as HTMLInputElement)?.checked || false;
   const restRuleId = (body.querySelector('[data-tpl-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
 
   // Detect which of duration/shifts the user actually edited so that — when
@@ -1561,6 +1563,7 @@ function _commitTemplateProps(body: HTMLElement, tid: string): boolean {
     sameGroupRequired: sameGroup,
     blocksConsecutive,
     togethernessRelevant,
+    splittable,
     restRuleId,
     ...(sleepRecovery.kind === 'set' ? { sleepRecovery: sleepRecovery.value } : {}),
     ...(sleepRecovery.kind === 'clear' ? { sleepRecovery: undefined } : {}),

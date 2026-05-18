@@ -16,8 +16,7 @@ import { expect, type Page, test } from '@playwright/test';
  * swipe-down-to-dismiss on the drag handle.
  */
 
-const PHONE_ONLY = (viewport: { width: number; height: number } | null) =>
-  !viewport || viewport.width > 500;
+const PHONE_ONLY = (viewport: { width: number; height: number } | null) => !viewport || viewport.width > 500;
 
 async function freshSeed(page: Page): Promise<void> {
   await page.goto('/');
@@ -106,9 +105,7 @@ test.describe('Swap-picker bottom sheet on mobile', () => {
   });
 
   // ── C6.2 ──────────────────────────────────────────────────────────────────
-  test('C6.2 swap-picker end-to-end: filters, mutual-swap tab, preview, commit', async ({
-    page,
-  }) => {
+  test('C6.2 swap-picker end-to-end: filters, mutual-swap tab, preview, commit', async ({ page }) => {
     await generateSchedule(page);
     await expandSwimlane(page);
 
@@ -157,14 +154,12 @@ test.describe('Swap-picker bottom sheet on mobile', () => {
     //  the displayed candidate SET changing per group + an exact round-trip
     //  restore, which is invariant regardless of the diagnostic fallback.)
     const pidSig = async (): Promise<string> =>
-      (await cards().evaluateAll((els) => els.map((e) => e.getAttribute('data-pid') || '')))
-        .sort()
-        .join(',');
+      (await cards().evaluateAll((els) => els.map((e) => e.getAttribute('data-pid') || ''))).sort().join(',');
 
     const unfilteredSig = await pidSig();
-    const groupNames = await sheet.locator('[data-filter-group]').evaluateAll((els) =>
-      els.map((e) => e.getAttribute('data-filter-group') || ''),
-    );
+    const groupNames = await sheet
+      .locator('[data-filter-group]')
+      .evaluateAll((els) => els.map((e) => e.getAttribute('data-filter-group') || ''));
     expect(groupNames.length).toBeGreaterThan(0);
 
     const groupSigs: string[] = [];
@@ -208,9 +203,7 @@ test.describe('Swap-picker bottom sheet on mobile', () => {
     // ── Mutual-swap tab ("החלפה הדדית") renders its region ──────────────────
     const tradeTab = sheet.locator('.swap-picker-tab[data-mode="trade"]');
     await tradeTab.tap();
-    await expect(sheet.locator('.swap-picker-tab[data-mode="trade"]')).toHaveClass(
-      /swap-picker-tab-active/,
-    );
+    await expect(sheet.locator('.swap-picker-tab[data-mode="trade"]')).toHaveClass(/swap-picker-tab-active/);
     await expect(sheet.locator('.swap-picker-list[data-mode="trade"]')).toBeVisible();
     // Trade mode shows either tradeable rows or the explicit "no mutual swap"
     // empty state — assert exactly one of those is present (region rendered).
@@ -222,18 +215,14 @@ test.describe('Swap-picker bottom sheet on mobile', () => {
       const tradePreview = sheet.locator('.swap-preview-panel');
       await expect(tradePreview).toBeVisible();
       await expect(tradePreview).not.toHaveClass(/swap-preview-empty/);
-      await expect(
-        sheet.locator('.swap-preview-ok, .swap-preview-bad'),
-      ).toHaveCount(1);
+      await expect(sheet.locator('.swap-preview-ok, .swap-preview-bad')).toHaveCount(1);
     } else {
       await expect(tradeEmpty).toBeVisible();
     }
 
     // ── Back to free mode → preview shows status + ▲ delta, then commit ─────
     await sheet.locator('.swap-picker-tab[data-mode="free"]').tap();
-    await expect(sheet.locator('.swap-picker-tab[data-mode="free"]')).toHaveClass(
-      /swap-picker-tab-active/,
-    );
+    await expect(sheet.locator('.swap-picker-tab[data-mode="free"]')).toHaveClass(/swap-picker-tab-active/);
 
     const confirm = sheet.locator('.swap-picker-confirm');
     let committedCandidatePid = '';
@@ -282,9 +271,7 @@ test.describe('Swap-picker bottom sheet on mobile', () => {
   });
 
   // ── C6.5 ──────────────────────────────────────────────────────────────────
-  test('C6.5 bottom sheet locks background scroll and swipe-down dismisses it', async ({
-    page,
-  }) => {
+  test('C6.5 bottom sheet locks background scroll and swipe-down dismisses it', async ({ page }) => {
     await generateSchedule(page);
     await expandSwimlane(page);
 
@@ -310,9 +297,7 @@ test.describe('Swap-picker bottom sheet on mobile', () => {
 
     // Swipe the drag handle down (> 80px) via synthetic touch events.
     await page.evaluate(() => {
-      const handle = document.querySelector(
-        '.swap-picker-sheet .gm-bs-drag-handle',
-      ) as HTMLElement | null;
+      const handle = document.querySelector('.swap-picker-sheet .gm-bs-drag-handle') as HTMLElement | null;
       if (!handle) throw new Error('drag handle not found');
       const r = handle.getBoundingClientRect();
       const x = r.left + r.width / 2;

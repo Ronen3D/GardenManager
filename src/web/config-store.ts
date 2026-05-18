@@ -1377,6 +1377,7 @@ export function addTaskTemplate(tpl: Omit<TaskTemplate, 'id'>): TaskTemplate {
     id,
     color: sanitized.color || getNextAvailableColor(),
     baseLoadWeight: sanitized.baseLoadWeight ?? 1,
+    splittable: sanitized.splittable ?? false,
     loadFormula: cloneLoadFormula(sanitized.loadFormula),
     loadWindows: (sanitized.loadWindows || []).map((w) => ({
       ...w,
@@ -3147,12 +3148,17 @@ export function getAlgorithmSettings(): AlgorithmSettings {
             ? (parsed.disabledHardConstraints as HardConstraintCode[])
             : [],
           dayStartHour: _normalizeDayStartHour(parsed.dayStartHour),
+          splittingEnabled:
+            typeof parsed.splittingEnabled === 'boolean'
+              ? parsed.splittingEnabled
+              : DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
         };
       } else {
         _algorithmSettings = {
           config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
           disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
           dayStartHour: DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
+          splittingEnabled: DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
         };
       }
     } catch {
@@ -3160,6 +3166,7 @@ export function getAlgorithmSettings(): AlgorithmSettings {
         config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
         disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
         dayStartHour: DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
+        splittingEnabled: DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
       };
     }
   }
@@ -3167,6 +3174,7 @@ export function getAlgorithmSettings(): AlgorithmSettings {
     config: { ..._algorithmSettings.config },
     disabledHardConstraints: [..._algorithmSettings.disabledHardConstraints],
     dayStartHour: _algorithmSettings.dayStartHour,
+    splittingEnabled: _algorithmSettings.splittingEnabled,
   };
 }
 
@@ -3187,6 +3195,7 @@ export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
         ? [...patch.disabledHardConstraints]
         : current.disabledHardConstraints,
     dayStartHour: nextDayStartHour,
+    splittingEnabled: patch.splittingEnabled !== undefined ? patch.splittingEnabled : current.splittingEnabled,
   };
   _saveAlgorithmSettings();
   // The op-day boundary anchors weekly blackout windows in `computeAvailability`,
@@ -3204,6 +3213,7 @@ export function resetAlgorithmSettings(): void {
     config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
     disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
     dayStartHour: DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
+    splittingEnabled: DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
   };
   _saveAlgorithmSettings();
   // Also switch active preset to Default
@@ -3302,6 +3312,7 @@ function _deepCopyPreset(p: AlgorithmPreset): AlgorithmPreset {
       config: { ...p.settings.config },
       disabledHardConstraints: [...p.settings.disabledHardConstraints],
       dayStartHour: p.settings.dayStartHour ?? DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
+      splittingEnabled: p.settings.splittingEnabled ?? DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
     },
   };
 }
@@ -3382,6 +3393,7 @@ export function loadPreset(id: string): void {
     config: { ...preset.settings.config },
     disabledHardConstraints: [...preset.settings.disabledHardConstraints],
     dayStartHour: _normalizeDayStartHour(preset.settings.dayStartHour),
+    splittingEnabled: preset.settings.splittingEnabled ?? DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
   };
   _saveAlgorithmSettings();
   _activePresetId = id;

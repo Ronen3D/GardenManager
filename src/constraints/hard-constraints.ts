@@ -16,6 +16,7 @@ import {
   ViolationSeverity,
 } from '../models/types';
 import { isTimeInsideWindow } from '../shared/utils/load-weighting';
+import { coalesceTaskRuns } from '../shared/utils/run-coalesce';
 import {
   blocksOverlap,
   isBlockedByDateUnavailability,
@@ -484,13 +485,18 @@ export function checkNoConsecutiveHighLoad(
   const violations: ConstraintViolation[] = [];
   const displayName = participantName ?? participantId;
 
-  // Collect this participant's assignments with their tasks
-  const pAssignments = assignments
+  // Collect this participant's tasks, sort by start, then coalesce contiguous
+  // same-source ≤K split runs into one block: a legal split run becomes a
+  // single element ⇒ no internal CONSECUTIVE_HIGH_LOAD; an over-K chain
+  // leaves a leftover half abutting the K-run ⇒ this walk fires it (run cap).
+  // Identity (same ref) when no task is split — zero regression. Re-wrapped
+  // as `{ task }` so the pair walk below is byte-for-byte unchanged.
+  const sortedTasks = assignments
     .filter((a) => a.participantId === participantId)
-    .map((a) => ({ assignment: a, task: taskMap.get(a.taskId)! }))
-    .filter((x) => x.task != null)
-    // Sort by task start time
-    .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
+    .map((a) => taskMap.get(a.taskId))
+    .filter((t): t is Task => t != null)
+    .sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
+  const pAssignments = coalesceTaskRuns(sortedTasks).map((task) => ({ task }));
 
   // Check each adjacent pair
   for (let i = 0; i < pAssignments.length - 1; i++) {
@@ -553,14 +559,23 @@ export function checkRestRules(
   const violations: ConstraintViolation[] = [];
   const displayName = participantName || participantId;
 
-  // Collect tasks with a valid rest rule
-  const tagged: Array<{ assignment: Assignment; task: Task }> = [];
+  // Collect tasks with a valid rest rule, sort by start, then coalesce
+  // contiguous same-source ≤K split runs. HC-14 then evaluates around
+  // COMPLETED legal runs (D14): a legal split run is one rest-unit (no
+  // internal CATEGORY_BREAK; full min-rest enforced only AFTER it). The
+  // merged run inherits its members' shared restRuleId. Identity (same ref)
+  // when no task is split — zero regression. Re-wrapped as `{ task }` so the
+  // two-phase walk below is byte-for-byte unchanged.
+  const restRuled: Task[] = [];
   for (const a of assignments) {
     if (a.participantId !== participantId) continue;
     const task = taskMap.get(a.taskId);
     if (!task || !task.restRuleId || !restRuleMap.has(task.restRuleId)) continue;
-    tagged.push({ assignment: a, task });
+    restRuled.push(task);
   }
+  if (restRuled.length < 2) return [];
+  restRuled.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
+  const tagged: Array<{ task: Task }> = coalesceTaskRuns(restRuled).map((task) => ({ task }));
   if (tagged.length < 2) return [];
 
   // Phase 1: Same-rule adjacent pairs
@@ -635,6 +650,53 @@ export function checkRestRules(
     }
   }
 
+  return violations;
+}
+
+// ─── HC-16: Split-sibling disjointness ───────────────────────────────────────
+
+/**
+ * HC-16: A participant must not hold two distinct tasks that share the same
+ * `splitGroupId` — i.e. both halves of one split occurrence. This is the
+ * aggregate counterpart of the per-placement gate in `validator.ts`; together
+ * they enforce the two-different-people product rule across every path
+ * (greedy, rescue, Future-SOS, manual). Inert when no task is split.
+ */
+export function checkSplitSiblingDisjoint(
+  participantId: string,
+  assignments: Assignment[],
+  taskMap: Map<string, Task>,
+  participantName?: string,
+): ConstraintViolation[] {
+  const violations: ConstraintViolation[] = [];
+  const displayName = participantName || participantId;
+  // splitGroupId → set of distinct task ids this participant holds in it.
+  const byGroup = new Map<string, Set<string>>();
+  for (const a of assignments) {
+    if (a.participantId !== participantId) continue;
+    const t = taskMap.get(a.taskId);
+    if (!t?.splitGroupId) continue;
+    let ids = byGroup.get(t.splitGroupId);
+    if (!ids) {
+      ids = new Set();
+      byGroup.set(t.splitGroupId, ids);
+    }
+    ids.add(t.id);
+  }
+  for (const ids of byGroup.values()) {
+    if (ids.size >= 2) {
+      const [, secondId] = [...ids];
+      violations.push(
+        violation(
+          'SPLIT_SIBLING_CONFLICT',
+          `${displayName} — שני חצאים של אותה משמרת מפוצלת`,
+          secondId,
+          undefined,
+          participantId,
+        ),
+      );
+    }
+  }
   return violations;
 }
 
@@ -881,6 +943,16 @@ export function validateHardConstraints(
       const pAssigns = assignmentsByParticipant.get(p.id) || [];
       if (pAssigns.length < 2) continue;
       allViolations.push(...checkSleepRecovery(p.id, pAssigns, tMap, p.name));
+    }
+  }
+
+  // HC-16: Split-sibling disjointness — two halves of one occurrence must go
+  // to two different participants. Inert when no task is split.
+  if (!disabledHC?.has('HC-16')) {
+    for (const p of participants) {
+      const pAssigns = assignmentsByParticipant.get(p.id) || [];
+      if (pAssigns.length < 2) continue;
+      allViolations.push(...checkSplitSiblingDisjoint(p.id, pAssigns, tMap, p.name));
     }
   }
 

@@ -705,6 +705,10 @@ function generateTasksFromTemplates(): Task[] {
   const dayStartHour = store.getDayStartHour();
   const templates = store.getAllTaskTemplates();
   const visuals = store.getTemplateVisualMap();
+  // Effective split gate: a task is splittable for THIS run only if the
+  // template opted in AND the per-run master switch is on. Frozen onto the
+  // task so the optimizer needs no separate run flag and reload is coherent.
+  const splitEnabled = store.getAlgorithmSettings().splittingEnabled ?? false;
   const allTasks: Task[] = [];
   _tSlotCounter = 0;
   _tTaskCounter = 0;
@@ -785,6 +789,7 @@ function generateTasksFromTemplates(): Task[] {
           shiftIndex: si + 1,
           sectionKey: computeTemplateSectionKey(tpl),
           color: tpl.color || v?.color || '#7f8c8d',
+          splittable: splitEnabled && (tpl.splittable ?? false),
         });
       }
     }
@@ -2178,6 +2183,7 @@ function loadScheduleSnapshot(snapshotId: string): void {
     new Set(frozen.disabledHardConstraints),
     new Map(Object.entries(loadedSchedule.restRuleSnapshot)),
     frozen.dayStartHour,
+    frozen.splittingEnabled ?? false,
   );
   engine.setCertLabelSnapshot(loadedSchedule.certLabelSnapshot);
   engine.setPeriod(loadedSchedule.periodStart, loadedSchedule.periodDays);
@@ -2696,6 +2702,7 @@ async function doGenerate(): Promise<void> {
     store.getDisabledHCSet(),
     store.buildRestRuleMap(),
     store.getDayStartHour(),
+    algoSettings.splittingEnabled,
   );
   engine.setCertLabelSnapshot(buildCertLabelSnapshot());
   engine.setPeriod(store.getScheduleDate(), store.getScheduleDays());
@@ -3087,6 +3094,7 @@ function doCreateManualSchedule(): void {
     store.getDisabledHCSet(),
     store.buildRestRuleMap(),
     store.getDayStartHour(),
+    algoSettings.splittingEnabled,
   );
   engine.setCertLabelSnapshot(buildCertLabelSnapshot());
   engine.setPeriod(store.getScheduleDate(), store.getScheduleDays());
@@ -4629,7 +4637,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.5.6</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.5.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -6947,6 +6955,7 @@ function loadScheduleFromFrozen(saved: Schedule | null): void {
     new Set(frozen.disabledHardConstraints),
     new Map(Object.entries(saved.restRuleSnapshot)),
     frozen.dayStartHour,
+    frozen.splittingEnabled ?? false,
   );
   engine.setCertLabelSnapshot(saved.certLabelSnapshot);
   engine.setPeriod(saved.periodStart, saved.periodDays);
@@ -7372,6 +7381,7 @@ function init(): void {
         new Set(frozen.disabledHardConstraints),
         new Map(Object.entries(savedSchedule.restRuleSnapshot)),
         frozen.dayStartHour,
+        frozen.splittingEnabled ?? false,
       );
       engine.setCertLabelSnapshot(savedSchedule.certLabelSnapshot);
       engine.setPeriod(savedSchedule.periodStart, savedSchedule.periodDays);

@@ -10,6 +10,10 @@
  * `runRescueExtraTests`. Standalone: `npx ts-node src/test-rescue-extra.ts`.
  */
 
+import type { ScoreContext } from './constraints/soft-constraints';
+import { generateBatchRescuePlans } from './engine/future-sos';
+import { type InjectedTaskSpec, searchInjectionPlans } from './engine/inject';
+import { generateRescuePlans } from './engine/rescue';
 import {
   type Assignment,
   AssignmentStatus,
@@ -27,10 +31,6 @@ import {
   type Task,
   unfreezeAll,
 } from './index';
-import { generateBatchRescuePlans } from './engine/future-sos';
-import { type InjectedTaskSpec, searchInjectionPlans } from './engine/inject';
-import { generateRescuePlans } from './engine/rescue';
-import type { ScoreContext } from './constraints/soft-constraints';
 import { computeAllCapacities } from './utils/capacity';
 
 type AssertFn = (condition: boolean, name: string) => void;
@@ -437,9 +437,7 @@ function runC23(assert: AssertFn): void {
       status: AssignmentStatus.Scheduled,
       updatedAt: new Date(),
     };
-    const participants = includeFreeRare
-      ? [pVac, pRare, pRare2, pPast]
-      : [pVac, pRare, pPast];
+    const participants = includeFreeRare ? [pVac, pRare, pRare2, pPast] : [pVac, pRare, pPast];
     const sched = mkSchedule([ft, ft2, pt], participants, [aVac, aFT2, aPast]);
     return sched;
   }
@@ -539,12 +537,11 @@ function runC23(assert: AssertFn): void {
     const byId = new Map(sched.assignments.map((a) => [a.id, a]));
     // Focal = pVac, window covers FT (day-2). FSOS must rescue aVac like above.
     const window = { start: new Date(2026, 5, 2, 0, 0), end: new Date(2026, 5, 3, 0, 0) };
-    const res = generateBatchRescuePlans(
-      sched,
-      { participantId: 'c23-pVac', window },
-      anchor,
-      { config: { ...DEFAULT_CONFIG }, scoreCtx: buildScoreCtx(sched.tasks, sched.participants), maxPlans: 3 },
-    );
+    const res = generateBatchRescuePlans(sched, { participantId: 'c23-pVac', window }, anchor, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildScoreCtx(sched.tasks, sched.participants),
+      maxPlans: 3,
+    });
     // Whether or not a plan is found, NONE may include a non-modifiable swap.
     const allMod = res.plans.every((p) => everySwapModifiable(p.swaps, byId, taskMap));
     assert(allMod, 'C2.3-fsos: every swap in every Future-SOS plan references a modifiable assignment');
@@ -665,10 +662,7 @@ function runC24(assert: AssertFn): void {
 
     // Move anchor back before the task → must restore Manual, NOT Scheduled.
     freezeAssignments(sched, new Date(2026, 5, 3, 0, 0));
-    assert(
-      aM().status === AssignmentStatus.Manual,
-      `C2.4: freeze-then-unfreeze restores Manual (got ${aM().status})`,
-    );
+    assert(aM().status === AssignmentStatus.Manual, `C2.4: freeze-then-unfreeze restores Manual (got ${aM().status})`);
     assert(aM().preFreezeStatus === undefined, 'C2.4: preFreezeStatus cleared after restore');
   }
 

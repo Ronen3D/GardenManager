@@ -4,11 +4,18 @@
  * Used after every manual override to verify schedule integrity.
  */
 
-import { effectivelyBlocksAt, isLevelSatisfied, validateHardConstraints } from '../constraints/hard-constraints';
+import {
+  checkNoConsecutiveHighLoad,
+  checkRestRules,
+  effectivelyBlocksAt,
+  isLevelSatisfied,
+  validateHardConstraints,
+} from '../constraints/hard-constraints';
 import { checkSleepRecoveryForPlacement } from '../constraints/sleep-recovery';
 import { collectSoftWarnings } from '../constraints/soft-constraints';
 import {
   type Assignment,
+  AssignmentStatus,
   type ConstraintViolation,
   type Level,
   type Participant,
@@ -139,7 +146,8 @@ export type RejectionCode =
   | 'HC-11' // Forbidden certification (per-slot)
   | 'HC-12' // Consecutive high-load tasks
   | 'HC-14' // Category break (5h minimum)
-  | 'HC-15'; // Sleep & recovery window after late/overnight tasks
+  | 'HC-15' // Sleep & recovery window after late/overnight tasks
+  | 'HC-16'; // Split-sibling disjointness (two halves ⇒ two different people)
 
 /** Optional context for eligibility / rejection checks. */
 export interface EligibilityOpts {
@@ -304,16 +312,67 @@ function checkEligibility(
   // HC-7: Not already assigned to this task
   if (!disabled?.has('HC-7') && participantAssignments.some((a) => a.taskId === task.id)) return 'HC-7';
 
+  // HC-16: Split-sibling disjointness — a participant may not hold BOTH halves
+  // of one split occurrence (two distinct tasks sharing `splitGroupId`). This
+  // is the chokepoint that enforces the two-different-people product rule for
+  // EVERY placement path (greedy, rescue, Future-SOS, manual). Inert unless
+  // the candidate is a split half — zero regression when splitting is off.
+  if (!disabled?.has('HC-16') && task.splitGroupId) {
+    for (const a of participantAssignments) {
+      const ot = taskMap.get(a.taskId);
+      if (ot && ot.id !== task.id && ot.splitGroupId === task.splitGroupId) return 'HC-16';
+    }
+  }
+
+  // Shift-splitting: when the candidate OR any of the participant's existing
+  // tasks is a split half, HC-12 / HC-14 must be evaluated on the COALESCED
+  // run view so this per-placement gate agrees *exactly* with the aggregate
+  // validator. Without this a legal note-6 run (½ of two adjacent occurrences,
+  // ≤ K, same source) would be spuriously rejected here — leaving fillable
+  // slots empty, i.e. the splitting feature failing in the very case it
+  // exists for. We reuse the (already coalesce-aware) aggregate functions on
+  // the prospective assignment set so the two views are consistent *by
+  // construction*. Inert + the original fast pairwise path when no split is
+  // involved → zero regression / no perf cost on the dominant path.
+  const splitsInvolved =
+    task.splitGroupId !== undefined ||
+    participantAssignments.some((a) => taskMap.get(a.taskId)?.splitGroupId !== undefined);
+  let prospective: Assignment[] | null = null;
+  let tmWithCand = taskMap;
+  if (splitsInvolved) {
+    prospective = [
+      ...participantAssignments,
+      {
+        id: '__cand__',
+        taskId: task.id,
+        slotId: slot.slotId,
+        participantId: participant.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    // The aggregate resolves tasks via taskMap; guarantee the candidate is
+    // resolvable (clone only if it isn't already present — usually it is).
+    if (!taskMap.has(task.id)) {
+      tmWithCand = new Map(taskMap);
+      tmWithCand.set(task.id, task);
+    }
+  }
+
   // HC-12: No consecutive blocking tasks
   if (!disabled?.has('HC-12')) {
-    for (const a of participantAssignments) {
-      const otherTask = taskMap.get(a.taskId);
-      if (!otherTask) continue;
-      if (otherTask.timeBlock.end.getTime() === task.timeBlock.start.getTime()) {
-        if (effectivelyBlocksAt(otherTask, 'end') && effectivelyBlocksAt(task, 'start')) return 'HC-12';
-      }
-      if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
-        if (effectivelyBlocksAt(task, 'end') && effectivelyBlocksAt(otherTask, 'start')) return 'HC-12';
+    if (prospective) {
+      if (checkNoConsecutiveHighLoad(participant.id, prospective, tmWithCand).length > 0) return 'HC-12';
+    } else {
+      for (const a of participantAssignments) {
+        const otherTask = taskMap.get(a.taskId);
+        if (!otherTask) continue;
+        if (otherTask.timeBlock.end.getTime() === task.timeBlock.start.getTime()) {
+          if (effectivelyBlocksAt(otherTask, 'end') && effectivelyBlocksAt(task, 'start')) return 'HC-12';
+        }
+        if (task.timeBlock.end.getTime() === otherTask.timeBlock.start.getTime()) {
+          if (effectivelyBlocksAt(task, 'end') && effectivelyBlocksAt(otherTask, 'start')) return 'HC-12';
+        }
       }
     }
   }
@@ -321,24 +380,28 @@ function checkEligibility(
   // HC-14: Rest rules — minimum gap between rest-rule-tagged tasks
   // Note: for overlapping tasks, gap is negative so HC-14 fires,
   // but HC-5 (double-booking) is checked first and rejects before reaching here.
-  if (!disabled?.has('HC-14') && task.restRuleId && opts?.restRuleMap?.has(task.restRuleId)) {
-    const ruleMap = opts.restRuleMap;
-    const taskDuration = ruleMap.get(task.restRuleId)!;
-    const taskStart = task.timeBlock.start.getTime();
-    const taskEnd = task.timeBlock.end.getTime();
-    for (const a of participantAssignments) {
-      const otherTask = taskMap.get(a.taskId);
-      if (!otherTask?.restRuleId || !ruleMap.has(otherTask.restRuleId)) continue;
-      // Same rule → that rule's duration; different rules → min of both
-      const threshold =
-        otherTask.restRuleId === task.restRuleId
-          ? taskDuration
-          : Math.min(taskDuration, ruleMap.get(otherTask.restRuleId)!);
-      const gap = Math.max(
-        taskStart - otherTask.timeBlock.end.getTime(),
-        otherTask.timeBlock.start.getTime() - taskEnd,
-      );
-      if (gap < threshold) return 'HC-14';
+  if (!disabled?.has('HC-14')) {
+    if (prospective && opts?.restRuleMap) {
+      if (checkRestRules(participant.id, prospective, tmWithCand, opts.restRuleMap).length > 0) return 'HC-14';
+    } else if (!prospective && task.restRuleId && opts?.restRuleMap?.has(task.restRuleId)) {
+      const ruleMap = opts.restRuleMap;
+      const taskDuration = ruleMap.get(task.restRuleId)!;
+      const taskStart = task.timeBlock.start.getTime();
+      const taskEnd = task.timeBlock.end.getTime();
+      for (const a of participantAssignments) {
+        const otherTask = taskMap.get(a.taskId);
+        if (!otherTask?.restRuleId || !ruleMap.has(otherTask.restRuleId)) continue;
+        // Same rule → that rule's duration; different rules → min of both
+        const threshold =
+          otherTask.restRuleId === task.restRuleId
+            ? taskDuration
+            : Math.min(taskDuration, ruleMap.get(otherTask.restRuleId)!);
+        const gap = Math.max(
+          taskStart - otherTask.timeBlock.end.getTime(),
+          otherTask.timeBlock.start.getTime() - taskEnd,
+        );
+        if (gap < threshold) return 'HC-14';
+      }
     }
   }
 
@@ -447,6 +510,7 @@ export const REJECTION_REASONS_HE: Record<RejectionCode, string> = {
   'HC-12': 'לא ניתן לשבץ למשימות כבדות רצופות',
   'HC-14': 'נדרשת הפסקה של 5 שעות לפחות ממשימת קטגוריה',
   'HC-15': 'בחלון השלמות שינה והתאוששות אחרי משימה מקדימה',
+  'HC-16': 'המשתתף כבר משובץ לחצי השני של אותה משמרת מפוצלת',
 };
 
 /** Candidate row for the post-generation swap picker. */

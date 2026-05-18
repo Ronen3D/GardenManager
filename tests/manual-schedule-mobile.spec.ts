@@ -14,8 +14,7 @@ import { expect, type Page, test } from '@playwright/test';
  * return that hides failure, no screenshot-as-assertion.
  */
 
-const PHONE_ONLY = (viewport: { width: number; height: number } | null) =>
-  !viewport || viewport.width > 500;
+const PHONE_ONLY = (viewport: { width: number; height: number } | null) => !viewport || viewport.width > 500;
 
 async function freshSeed(page: Page): Promise<void> {
   await page.goto('/');
@@ -91,9 +90,7 @@ test.describe('Manual schedule creation on mobile', () => {
     await freshSeed(page);
   });
 
-  test('C6.3 tap empty slot → pick eligible candidate → slot assigned + toast', async ({
-    page,
-  }) => {
+  test('C6.3 tap empty slot → pick eligible candidate → slot assigned + toast', async ({ page }) => {
     await createEmptyManualSchedule(page);
 
     const strip = page.locator('.manual-build-status');
@@ -107,9 +104,7 @@ test.describe('Manual schedule creation on mobile', () => {
     await expect(toast.first()).toContainText('שובץ');
 
     // The slot card is now filled with that participant and is no longer empty.
-    const assignedCard = page.locator(
-      `.assignment-card[data-task-id="${taskId}"][data-slot-id="${slotId}"]`,
-    );
+    const assignedCard = page.locator(`.assignment-card[data-task-id="${taskId}"][data-slot-id="${slotId}"]`);
     await expect(assignedCard).toHaveCount(1);
     await expect(assignedCard).not.toHaveClass(/manual-slot-empty/);
     await expect(assignedCard.locator('.participant-name')).toContainText(name);
@@ -121,14 +116,9 @@ test.describe('Manual schedule creation on mobile', () => {
   test('C6.3 a second assignment in another empty slot also assigns', async ({ page }) => {
     await createEmptyManualSchedule(page);
 
-    const first = await assignFirstEligible(
-      page,
-      page.locator('.assignment-card.manual-slot-empty').first(),
-    );
+    const first = await assignFirstEligible(page, page.locator('.assignment-card.manual-slot-empty').first());
     await expect(
-      page.locator(
-        `.assignment-card[data-task-id="${first.taskId}"][data-slot-id="${first.slotId}"]`,
-      ),
+      page.locator(`.assignment-card[data-task-id="${first.taskId}"][data-slot-id="${first.slotId}"]`),
     ).not.toHaveClass(/manual-slot-empty/);
     await expect(page.locator('.manual-build-status')).toContainText('1/');
 
@@ -158,9 +148,7 @@ test.describe('Manual schedule creation on mobile', () => {
     // Capture the set of task ids rendered for day 1.
     const day1TaskIds = await page
       .locator('.schedule-grid-container .assignment-card[data-task-id]')
-      .evaluateAll((els) =>
-        Array.from(new Set(els.map((e) => e.getAttribute('data-task-id') || ''))).sort(),
-      );
+      .evaluateAll((els) => Array.from(new Set(els.map((e) => e.getAttribute('data-task-id') || ''))).sort());
     expect(day1TaskIds.length).toBeGreaterThan(0);
 
     const day2Dot = page.locator('.day-hero-dot[data-day="2"]');
@@ -173,9 +161,7 @@ test.describe('Manual schedule creation on mobile', () => {
 
     const day2TaskIds = await page
       .locator('.schedule-grid-container .assignment-card[data-task-id]')
-      .evaluateAll((els) =>
-        Array.from(new Set(els.map((e) => e.getAttribute('data-task-id') || ''))).sort(),
-      );
+      .evaluateAll((els) => Array.from(new Set(els.map((e) => e.getAttribute('data-task-id') || ''))).sort());
     expect(day2TaskIds.length).toBeGreaterThan(0);
     // Per-day tasks have distinct ids — day 2 is a different task set.
     expect(day2TaskIds).not.toEqual(day1TaskIds);

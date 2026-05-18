@@ -341,7 +341,6 @@ import {
 import { runPreflightWithInputs } from './shared/preflight-core';
 import { computeParticipantRest } from './shared/utils/rest-calculator';
 import { isBlockedByDateUnavailability, isDateInBlock, type ScheduleContext } from './shared/utils/time-utils';
-import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
 // ─── A0 EXTENSION POINT (pure-src/ writing-agent suites) ────────────────────
 // New PURE-src/ test files (no `src/web` imports) — e.g. test-engine-extra.ts,
 // test-rescue-extra.ts, test-validator-extra.ts — export `run<Name>(assert)`
@@ -352,9 +351,12 @@ import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
 // module-level counters, self-exec guarded by `require.main === module`).
 // e.g.  import { runEngineExtraTests } from './test-engine-extra';
 import { runEngineExtraTests } from './test-engine-extra';
+import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
 import { runRescueExtraTests } from './test-rescue-extra';
+import { runShiftSplitTests } from './test-shift-split';
 import { runValidatorExtraTests } from './test-validator-extra';
 import { computeAllCapacities } from './utils/capacity';
+import { runShiftSplitE2ETests } from './validate-shift-split-e2e';
 
 let passed = 0;
 let failed = 0;
@@ -15633,7 +15635,16 @@ console.log('\n── PDF Fit Planner ──────────────
   // it to one page via reshape, with every tiny section backfilled on page 1.
   const realDay = planDayLayout({
     sections: [
-      { id: 'adanit', displayOrder: 0, logicalColCount: 4, nameGrid: [[3, 4, 3, 3], [4, 3, 3, 3], [3, 4, 3, 3]] },
+      {
+        id: 'adanit',
+        displayOrder: 0,
+        logicalColCount: 4,
+        nameGrid: [
+          [3, 4, 3, 3],
+          [4, 3, 3, 3],
+          [3, 4, 3, 3],
+        ],
+      },
       { id: 'shemesh', displayOrder: 1, logicalColCount: 1, nameGrid: [[3], [3], [3], [3], [5], [3]] },
       { id: 'shshsh', displayOrder: 2, logicalColCount: 1, nameGrid: [[9], [9], [9], [6], [9], [9]] },
       { id: 'mamtera', displayOrder: 3, logicalColCount: 1, nameGrid: [[3]] },
@@ -15646,10 +15657,7 @@ console.log('\n── PDF Fit Planner ──────────────
     levers: DEFAULT_LEVERS,
   });
   const realShsh = realDay.sections.find((s) => s.id === 'shshsh')!;
-  assert(
-    !realDay.overflow && realDay.pageCount === 1,
-    'fit-planner: real bug-report day collapses to ONE page',
-  );
+  assert(!realDay.overflow && realDay.pageCount === 1, 'fit-planner: real bug-report day collapses to ONE page');
   assert(realShsh.nameCols > 1, 'fit-planner: real day reshapes the heavy 9-name section');
   assert(
     realDay.predictedHeight <= geo.heightBudget && !anyOverlap(realDay.sections),
@@ -15718,6 +15726,8 @@ console.log('\n── PDF Fit Planner ──────────────
   await runEngineExtraTests(assert);
   await runRescueExtraTests(assert);
   await runValidatorExtraTests(assert);
+  await runShiftSplitTests(assert);
+  await runShiftSplitE2ETests(assert);
   // ──────────────────────────────────────────────────────────────────────────
 
   console.log('\n══════════════════════════════════════════');

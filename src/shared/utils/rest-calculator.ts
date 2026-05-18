@@ -25,6 +25,7 @@
 
 import type { Assignment, Participant, Task, TimeBlock } from '../../models/types';
 import { computeTaskEffectiveHours } from './load-weighting';
+import { coalesceTaskRuns } from './run-coalesce';
 import { gapHours } from './time-utils';
 
 /** A load-bearing time block tagged with its HC-12 blocking flag. */
@@ -74,15 +75,19 @@ function getLoadBearingBlocks(
   assignments: Assignment[],
   taskMap: Map<string, Task>,
 ): TaggedBlock[] {
-  const blocks: TaggedBlock[] = [];
+  const lbTasks: Task[] = [];
   for (const a of assignments) {
     if (a.participantId !== participantId) continue;
     const task = taskMap.get(a.taskId);
     if (!task) continue;
     if (computeTaskEffectiveHours(task) === 0) continue;
-    blocks.push({ block: task.timeBlock, blocksConsecutive: task.blocksConsecutive });
+    lbTasks.push(task);
   }
-  return blocks.sort((a, b) => a.block.start.getTime() - b.block.start.getTime());
+  lbTasks.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
+  // Coalesce contiguous same-source ≤K split runs so a legal split run scores
+  // exactly like the single unsplit shift. Identity (same ref) when no splits.
+  const eff = coalesceTaskRuns(lbTasks);
+  return eff.map((t) => ({ block: t.timeBlock, blocksConsecutive: t.blocksConsecutive }));
 }
 
 /**
@@ -180,7 +185,7 @@ export function computeRestFromAssignments(
   taskMap: Map<string, Task>,
   phantomTaskIds?: Set<string>,
 ): ParticipantRestProfile {
-  const loadBearingBlocks: TaggedBlock[] = [];
+  const lbTasks: Task[] = [];
   let totalWorkHours = 0;
 
   for (const a of pAssignments) {
@@ -189,12 +194,20 @@ export function computeRestFromAssignments(
     if (!task) continue;
     if (computeTaskEffectiveHours(task) === 0) continue;
     const hours = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / (1000 * 60 * 60);
-    loadBearingBlocks.push({ block: task.timeBlock, blocksConsecutive: task.blocksConsecutive });
+    lbTasks.push(task);
+    // Sum over pre-coalesce tasks so totalWorkHours is byte-identical
+    // regardless of coalescing (a merged run's span == Σ member spans anyway).
     totalWorkHours += hours;
   }
 
-  // Sort by start time (in-place — loadBearingBlocks is a local array)
-  loadBearingBlocks.sort((a, b) => a.block.start.getTime() - b.block.start.getTime());
+  // Sort by start, then coalesce contiguous same-source ≤K split runs so a
+  // legal split run yields the same rest signal as the unsplit shift.
+  // Identity (same ref) when no task is split — zero-regression path.
+  lbTasks.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
+  const loadBearingBlocks: TaggedBlock[] = coalesceTaskRuns(lbTasks).map((t) => ({
+    block: t.timeBlock,
+    blocksConsecutive: t.blocksConsecutive,
+  }));
 
   const restGaps = computeRestGaps(loadBearingBlocks);
 

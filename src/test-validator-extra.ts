@@ -18,17 +18,17 @@ import {
   AssignmentStatus,
   type AvailabilityWindow,
   collectSoftWarnings,
-  type Participant,
   DEFAULT_CONFIG,
   Level,
+  type Participant,
   previewSwap,
   type Schedule,
   type ScheduleScore,
   SchedulingEngine,
   type SwapRequest,
   type Task,
-  validateHardConstraints,
   ViolationSeverity,
+  validateHardConstraints,
 } from './index';
 
 type AssertFn = (condition: boolean, name: string) => void;
@@ -36,9 +36,7 @@ type AssertFn = (condition: boolean, name: string) => void;
 // ─── Builders ────────────────────────────────────────────────────────────────
 
 const BASE = new Date(2026, 4, 17); // op-day anchor; calendar irrelevant
-const WIDE: AvailabilityWindow[] = [
-  { start: new Date(2026, 4, 17, 0, 0), end: new Date(2026, 4, 27, 0, 0) },
-];
+const WIDE: AvailabilityWindow[] = [{ start: new Date(2026, 4, 17, 0, 0), end: new Date(2026, 4, 27, 0, 0) }];
 
 function mkP(
   id: string,
@@ -272,7 +270,10 @@ export async function runValidatorExtraTests(assert: AssertFn): Promise<void> {
     const p = mkP('c32-2-p'); // no certs
     const a = [mkA('c32-2-a', task.id, 'c32-2-s', p.id)];
     const base = validateHardConstraints([task], [p], a);
-    assert(base.violations.some((v) => v.code === 'CERT_MISSING'), 'C3.2 HC-2.a — CERT_MISSING reported at baseline');
+    assert(
+      base.violations.some((v) => v.code === 'CERT_MISSING'),
+      'C3.2 HC-2.a — CERT_MISSING reported at baseline',
+    );
     const gated = validateHardConstraints([task], [p], a, new Set(['HC-2']));
     assert(
       !gated.violations.some((v) => v.code === 'CERT_MISSING'),
@@ -522,9 +523,7 @@ export async function runValidatorExtraTests(assert: AssertFn): Promise<void> {
       'C3.3.a — SC-7 GROUP_MISMATCH emitted once for the mixed-group sameGroupRequired task (Warning severity)',
     );
 
-    const lessPref = warnings.filter(
-      (w) => w.code === 'LESS_PREFERRED_ASSIGNMENT' && w.participantId === pLess.id,
-    );
+    const lessPref = warnings.filter((w) => w.code === 'LESS_PREFERRED_ASSIGNMENT' && w.participantId === pLess.id);
     assert(
       lessPref.length === 1 && lessPref[0].taskId === taskH.id,
       'C3.3.b — SC-10 LESS_PREFERRED_ASSIGNMENT emitted for participant assigned to their less-preferred task name',
@@ -538,9 +537,7 @@ export async function runValidatorExtraTests(assert: AssertFn): Promise<void> {
       'C3.3.c — SC-10 PREFERRED_NAME_UNAVAILABLE emitted when preferredTaskName is absent from the schedule',
     );
 
-    const notSatisfied = warnings.filter(
-      (w) => w.code === 'PREFERRED_NOT_SATISFIED' && w.participantId === pPref.id,
-    );
+    const notSatisfied = warnings.filter((w) => w.code === 'PREFERRED_NOT_SATISFIED' && w.participantId === pPref.id);
     assert(
       notSatisfied.length === 1,
       'C3.3.d — SC-10 PREFERRED_NOT_SATISFIED emitted when an existing preferredTaskName is never assigned',

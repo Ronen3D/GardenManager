@@ -218,6 +218,25 @@ export interface Task {
    * the store. Excluded from orphan detection.
    */
   injectedPostGeneration?: boolean;
+  /**
+   * Shift-splitting (Shape A). When a splittable occurrence is realized as
+   * two halves, both halves carry the SAME `splitGroupId` (= the original
+   * occurrence's task id) and distinct `splitPart` (1 = first half, 2 =
+   * second). Absent ⇒ a normal whole task (today's exact path). Serializable;
+   * split state lives entirely here, so frozen snapshots need no migration.
+   */
+  splitGroupId?: string;
+  /** 1 = first half [start,mid], 2 = second half [mid,end]. Set iff `splitGroupId`. */
+  splitPart?: 1 | 2;
+  /** Original (pre-split) occurrence duration in ms. K for the run-coalescer. */
+  splitOriginalMs?: number;
+  /**
+   * EFFECTIVE splittability for this run: set at generation to
+   * `template.splittable && AlgorithmSettings.splittingEnabled`. The optimizer
+   * may realize an unfillable occurrence with this `true` as two halves.
+   * Absent/false ⇒ never split (today's behavior). Half-tasks inherit it.
+   */
+  splittable?: boolean;
 }
 
 // ─── Assignment ──────────────────────────────────────────────────────────────
@@ -394,6 +413,9 @@ export interface ScheduleScore {
   /** SC-10 task-name preference penalty contribution to totalPenalty.
    *  Optional so older serialized schedules deserialize cleanly. */
   taskPrefPenalty?: number;
+  /** Shift-split penalty contribution (config.splitPenalty × split-occurrence
+   *  count). Run-constant in v1. Optional so older schedules deserialize. */
+  splitPenalty?: number;
   /** Penalty for disrupting existing assignments (rescue mode only) */
   disruptionPenalty?: number;
 }
@@ -449,6 +471,9 @@ export interface SchedulerConfig {
   taskNameAvoidancePenalty: number;
   /** Bonus (penalty reduction) per assignment to participant's preferred task name */
   taskNamePreferenceBonus: number;
+  /** Penalty per shift-split occurrence. v1: drives no in-run decision — only
+   *  biases multi-attempt selection toward fewer-split solutions. */
+  splitPenalty: number;
 }
 
 export const DEFAULT_CONFIG: SchedulerConfig = {
@@ -470,6 +495,11 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   taskNamePreferencePenalty: 140,
   taskNameAvoidancePenalty: 27,
   taskNamePreferenceBonus: 7,
+  // Tie-breaker scale: large enough that, among equally-feasible attempts,
+  // one with fewer splits wins; ~1/100 of UNFILLED_SLOT_PENALTY (50000) so a
+  // split that fills an otherwise-unfillable slot is still hugely net-positive
+  // and is never discouraged. Comparable to a soft-preference miss.
+  splitPenalty: 500,
 };
 
 // ─── Algorithm Settings (user-configurable control panel) ────────────────────
@@ -487,7 +517,8 @@ export type HardConstraintCode =
   | 'HC-11' // Forbidden certification (per-slot)
   | 'HC-12' // No consecutive high-load
   | 'HC-14' // Minimum category break (5h)
-  | 'HC-15'; // Sleep & recovery window after late/overnight tasks
+  | 'HC-15' // Sleep & recovery window after late/overnight tasks
+  | 'HC-16'; // Split-sibling disjointness (two halves ⇒ two different people)
 
 /** Full algorithm settings: weights + constraint toggles */
 export interface AlgorithmSettings {
@@ -497,6 +528,14 @@ export interface AlgorithmSettings {
   disabledHardConstraints: HardConstraintCode[];
   /** Hour (0-23) that defines the start of an operational "day". Default 5 (05:00). */
   dayStartHour: number;
+  /**
+   * Per-run shift-splitting master switch. Optional and treated as `false`
+   * when absent — so legacy serialized snapshots/presets deserialize cleanly
+   * with no migration (the frozen-snapshot back-compat rule). When false/absent
+   * templates marked `splittable` are still never split, preserving today's
+   * exact behavior. Frozen onto the schedule like `disabledHardConstraints`.
+   */
+  splittingEnabled?: boolean;
 }
 
 /** Human-readable labels for hard constraints */
@@ -513,6 +552,7 @@ export const HC_LABELS: Record<HardConstraintCode, string> = {
   'HC-12': 'ללא עומס רצוף',
   'HC-14': 'הפסקה מינימלית בין משימות קטגוריה',
   'HC-15': 'השלמות שינה והתאוששות',
+  'HC-16': 'פיצול משמרת — חצאים לאנשים שונים',
 };
 
 /** Build the HC-14 label (generic — rest rules are now per-rule). */
@@ -534,6 +574,7 @@ export const ALL_HC_CODES: HardConstraintCode[] = [
   'HC-12',
   'HC-14',
   'HC-15',
+  'HC-16',
 ];
 
 /** Factory default algorithm settings */
@@ -541,6 +582,7 @@ export const DEFAULT_ALGORITHM_SETTINGS: AlgorithmSettings = {
   config: { ...DEFAULT_CONFIG },
   disabledHardConstraints: [],
   dayStartHour: 5,
+  splittingEnabled: false,
 };
 
 // ─── Algorithm Presets ───────────────────────────────────────────────────────
@@ -847,6 +889,13 @@ export interface TaskTemplate {
   color?: string;
   /** Display ordering within the schedule grid. Lower = earlier (rightmost in RTL). */
   displayOrder?: number;
+  /**
+   * Shift-splitting opt-in. When true AND the per-run
+   * `AlgorithmSettings.splittingEnabled` is on, the optimizer may realize an
+   * unfillable occurrence of this template as two equal halves worked by two
+   * different participants. Independent of `blocksConsecutive`. Default false.
+   */
+  splittable?: boolean;
 }
 
 // ─── One-Time Task Definition ───────────────────────────────────────────────

@@ -124,10 +124,7 @@ test.describe('Desktop regression checks', () => {
     await expect(page.locator('.table-participants tbody tr[data-participant-id]')).toHaveCount(12);
   });
 
-  test('loading a task set restores one-time tasks and category-break settings', async ({
-    page,
-    viewport,
-  }) => {
+  test('loading a task set restores one-time tasks and category-break settings', async ({ page, viewport }) => {
     if (!viewport || viewport.width <= 768) test.skip();
 
     await page.click('.tab-btn[data-tab="task-rules"]');

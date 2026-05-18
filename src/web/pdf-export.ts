@@ -40,12 +40,7 @@ import { fmtTime } from '../utils/date-utils';
 import { triggerShareOrDownload } from './data-transfer';
 import { buildDay0Schedule } from './day0-adapter';
 import { getTasksForDay, hexToRgb } from './export-utils';
-import {
-  computeSectionMetrics,
-  getTaskAssignments,
-  getUniqueStartTimes,
-  type SectionMetrics,
-} from './layout-engine';
+import { computeSectionMetrics, getTaskAssignments, getUniqueStartTimes, type SectionMetrics } from './layout-engine';
 import { groupColor } from './ui-helpers';
 import { RUBIK_BOLD_FONT_BASE64 } from './utils/rubik-bold-font-data';
 import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';

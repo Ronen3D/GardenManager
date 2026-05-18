@@ -70,6 +70,8 @@ export class SchedulingEngine {
   private phantomContext: PhantomContext | null = null;
   private restRuleMap?: Map<string, number>;
   private dayStartHour: number;
+  /** Per-run shift-splitting master switch (frozen onto the schedule). */
+  private splittingEnabled: boolean;
   private _periodStart?: Date;
   private _periodDays?: number;
   private _certLabelSnapshot: Record<string, string> = {};
@@ -88,11 +90,13 @@ export class SchedulingEngine {
     disabledHC?: Set<string>,
     restRuleMap?: Map<string, number>,
     dayStartHour: number = 5,
+    splittingEnabled = false,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.disabledHC = disabledHC;
     this.restRuleMap = restRuleMap;
     this.dayStartHour = dayStartHour;
+    this.splittingEnabled = splittingEnabled;
     // Reset assignment counter so IDs start fresh for each new engine instance.
     resetAssignmentCounter();
   }
@@ -105,6 +109,11 @@ export class SchedulingEngine {
   /** Frozen set of disabled hard-constraint codes captured at engine construction. */
   getDisabledHC(): Set<string> | undefined {
     return this.disabledHC;
+  }
+
+  /** Frozen per-run shift-splitting switch captured at engine construction. */
+  getSplittingEnabled(): boolean {
+    return this.splittingEnabled;
   }
 
   /** Frozen rest-rule map (ruleId → minimum gap hours) captured at engine construction. */
@@ -373,7 +382,17 @@ export class SchedulingEngine {
    * builds the Schedule object, and commits it to engine state.
    * Eliminates duplication between generateSchedule / generateScheduleAsync.
    */
-  private _commitOptimizationResult(tasks: Task[], participants: Participant[], result: OptimizationResult): Schedule {
+  private _commitOptimizationResult(
+    inputTasks: Task[],
+    participants: Participant[],
+    result: OptimizationResult,
+  ): Schedule {
+    // The optimizer may have realized a different task set (feasibility split
+    // replacing an occurrence with two halves). Everything below — week-end,
+    // validation, soft warnings, period resolution, and the FROZEN
+    // `schedule.tasks` — must use the realized list so they all agree.
+    // Identical reference to `inputTasks` when nothing was split.
+    const tasks = result.tasks ?? inputTasks;
     // Compute week end from latest task
     let maxEnd = 0;
     for (const t of tasks) {
@@ -444,6 +463,7 @@ export class SchedulingEngine {
         config: { ...this.config },
         disabledHardConstraints: [...((this.disabledHC ?? new Set()) as Set<HardConstraintCode>)],
         dayStartHour: this.dayStartHour,
+        splittingEnabled: this.splittingEnabled,
       },
       periodStart,
       periodDays,
@@ -577,6 +597,13 @@ export class SchedulingEngine {
     const participants = this.getAllParticipants();
     this._validateInputs(tasks, participants);
 
+    // Continue from the seed's REALIZED task set: if the prior committed
+    // schedule split an occurrence, `seed.assignments` reference half-task
+    // ids absent from a freshly re-derived whole-task list. Basing the
+    // continuation on `seed.tasks` keeps the seed coherent. Identical
+    // reference to `tasks` when nothing was split.
+    const baseTasks = seed.tasks ?? tasks;
+
     // Snapshot the cumulative attempt count BEFORE the call. We read this
     // from `currentSchedule`, not from `seed.actualAttempts`, because the
     // optimizer will mutate `seed.actualAttempts` to the call-local count
@@ -597,7 +624,7 @@ export class SchedulingEngine {
       : undefined;
 
     const result = await optimizeMultiAttemptAsync(
-      tasks,
+      baseTasks,
       participants,
       this.config,
       [],
@@ -609,7 +636,7 @@ export class SchedulingEngine {
       this.dayStartHour,
       this.certLabelResolver,
       abortSignal,
-      this._scheduleContext(tasks),
+      this._scheduleContext(baseTasks),
       stopSignal,
       { seedBest: seed, continuation: true },
     );
@@ -631,7 +658,7 @@ export class SchedulingEngine {
     // commit. _commitOptimizationResult re-builds the Schedule from `result`
     // and updates `_lastOptimizationResult`.
     result.actualAttempts = cumulativeAttempts;
-    return this._commitOptimizationResult(tasks, participants, result);
+    return this._commitOptimizationResult(baseTasks, participants, result);
   }
 
   /**

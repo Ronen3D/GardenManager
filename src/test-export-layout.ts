@@ -21,7 +21,7 @@ type AssertFn = (condition: boolean, name: string) => void;
 //  src/web import touches these globals)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-let _simulateQuotaError = false;
+const _simulateQuotaError = false;
 
 class MemoryStorage {
   private _data = new Map<string, string>();
@@ -118,6 +118,7 @@ import {
   type SlotRequirement,
   type Task,
 } from './models/types';
+import { DEFAULT_LEVERS, type PageGeometry, planDayLayout } from './shared/pdf-fit-planner';
 import * as store from './web/config-store';
 import { buildDay0Schedule, getDay0HoursForParticipant, isDay0Foreign } from './web/day0-adapter';
 import { exportWeeklyExcel } from './web/excel-export';
@@ -129,7 +130,6 @@ import {
   inferColumnStrategy,
   type SectionMetrics,
 } from './web/layout-engine';
-import { DEFAULT_LEVERS, type PageGeometry, planDayLayout } from './shared/pdf-fit-planner';
 // NOTE: `src/web/pdf-export.ts` is intentionally NOT imported. It does
 // `await import('pdfjs-dist/.../pdf.worker.min.mjs?worker&inline')` — a
 // Vite-only virtual specifier that ts-node/tsc cannot resolve (TS2307), which
@@ -410,10 +410,7 @@ async function testC51_exportDayLoopBound(assert: AssertFn): Promise<void> {
     /for\s*\(let d = 1; d <= numDays; d\+\+\)/.test(weeklyBody) &&
     !/getNumDays\(/.test(weeklyBody);
 
-  assert(
-    usesPeriodDaysBound,
-    'C5.1: exportWeeklyOverview page-loop bound is schedule.periodDays, not getNumDays(...)',
-  );
+  assert(usesPeriodDaysBound, 'C5.1: exportWeeklyOverview page-loop bound is schedule.periodDays, not getNumDays(...)');
 }
 
 // ─── C5.2 — getDayWindow anchor agreement (hard CLAUDE.md invariant) ─────────
@@ -422,7 +419,11 @@ function testC52_anchorAgreement(assert: AssertFn): void {
   // Tasks deliberately start *later* than dayStartHour so a `min(task.start)`
   // anchor would be detectably wrong.
   const b = frozenBase();
-  const t1 = mkTask('t1', new Date(b.getFullYear(), b.getMonth(), b.getDate(), 11, 0).getTime(), opDayStart(1) + 6 * HOUR);
+  const t1 = mkTask(
+    't1',
+    new Date(b.getFullYear(), b.getMonth(), b.getDate(), 11, 0).getTime(),
+    opDayStart(1) + 6 * HOUR,
+  );
   const schedule = mkSchedule({ tasks: [t1], periodDays: 5 });
   const dsh = schedule.algorithmSettings.dayStartHour;
 
@@ -525,7 +526,10 @@ async function testC54_calendarOmission(assert: AssertFn): Promise<void> {
     });
   }
 
-  assert(calendarLeak === null, `C5.4: no DD/MM-style calendar date in summary/raw sheets (${calendarLeak ?? 'clean'})`);
+  assert(
+    calendarLeak === null,
+    `C5.4: no DD/MM-style calendar date in summary/raw sheets (${calendarLeak ?? 'clean'})`,
+  );
   assert(weekdayLeak === null, `C5.4: no weekday name leaks in summary/raw sheets (${weekdayLeak ?? 'clean'})`);
 
   // Positive shape check: summary header columns are strictly `יום N`.
@@ -574,8 +578,14 @@ function testC55_swimlaneMath(assert: AssertFn): void {
     clippedTail !== null && clippedTail.endMs === t0 + DAY_MS,
     'C5.5: clipBandToDay clamps the trailing edge to window end',
   );
-  assert(clipBandToDay(t0 + DAY_MS + HOUR, t0 + DAY_MS + 2 * HOUR, win) === null, 'C5.5: clipBandToDay → null when no overlap');
-  assert(clipBandToDay(t0 + 5 * HOUR, t0 + 5 * HOUR, win) === null, 'C5.5: clipBandToDay → null for a zero-length band');
+  assert(
+    clipBandToDay(t0 + DAY_MS + HOUR, t0 + DAY_MS + 2 * HOUR, win) === null,
+    'C5.5: clipBandToDay → null when no overlap',
+  );
+  assert(
+    clipBandToDay(t0 + 5 * HOUR, t0 + 5 * HOUR, win) === null,
+    'C5.5: clipBandToDay → null for a zero-length band',
+  );
 
   // getUnavailabilityBandsForDay — allDay, midnight-wrap, FSOS source.
   const sched = mkSchedule({ periodDays: 3 });
@@ -657,13 +667,37 @@ function testC55_swimlaneMath(assert: AssertFn): void {
     participants: [pHrs],
     tasks: [spanTask, insideTask, outsideTask],
     assignments: [
-      { id: 'a1', taskId: 'span', slotId: 'sp', participantId: 'ph', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'a2', taskId: 'ins', slotId: 'in', participantId: 'ph', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
-      { id: 'a3', taskId: 'out', slotId: 'ou', participantId: 'ph', status: AssignmentStatus.Scheduled, updatedAt: new Date() },
+      {
+        id: 'a1',
+        taskId: 'span',
+        slotId: 'sp',
+        participantId: 'ph',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'a2',
+        taskId: 'ins',
+        slotId: 'in',
+        participantId: 'ph',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'a3',
+        taskId: 'out',
+        slotId: 'ou',
+        participantId: 'ph',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
     ],
   });
   const hrs = totalAssignedHoursForDay(schedHrs, 'ph', 1);
-  assert(Math.abs(hrs - 7) < 1e-9, 'C5.5: totalAssignedHoursForDay clips to window (4h span + 3h inside, 0 outside = 7h)');
+  assert(
+    Math.abs(hrs - 7) < 1e-9,
+    'C5.5: totalAssignedHoursForDay clips to window (4h span + 3h inside, 0 outside = 7h)',
+  );
 }
 
 // ─── C5.6 — layout-engine (shared by on-screen grid + PDF + Excel) ──────────
@@ -722,7 +756,10 @@ function testC56_layoutEngine(assert: AssertFn): void {
 
   // inferColumnStrategy — flat vs multi-source split.
   const flatCols = inferColumnStrategy([flatTask1])([flatTask1]);
-  assert(flatCols.length === 1 && flatCols[0].key === 'all', 'C5.6: inferColumnStrategy → flat (single source, no sub-team)');
+  assert(
+    flatCols.length === 1 && flatCols[0].key === 'all',
+    'C5.6: inferColumnStrategy → flat (single source, no sub-team)',
+  );
 
   const teamTask = mkTask('tt', startA, startA + HOUR, {
     sectionKey: 'aruga',
@@ -735,8 +772,16 @@ function testC56_layoutEngine(assert: AssertFn): void {
     'C5.6: inferColumnStrategy → multi-source split when slots carry subTeamId',
   );
 
-  const srcX = mkTask('sx', startA, startA + HOUR, { sectionKey: 'sec', sourceName: 'X', slots: [mkSlot({ slotId: 'x' })] });
-  const srcY = mkTask('sy', startA, startA + HOUR, { sectionKey: 'sec', sourceName: 'Y', slots: [mkSlot({ slotId: 'y' })] });
+  const srcX = mkTask('sx', startA, startA + HOUR, {
+    sectionKey: 'sec',
+    sourceName: 'X',
+    slots: [mkSlot({ slotId: 'x' })],
+  });
+  const srcY = mkTask('sy', startA, startA + HOUR, {
+    sectionKey: 'sec',
+    sourceName: 'Y',
+    slots: [mkSlot({ slotId: 'y' })],
+  });
   const multiCols = inferColumnStrategy([srcX, srcY])([srcX, srcY]);
   assert(
     multiCols.length === 2 && multiCols.every((c) => c.key.startsWith('source-')),
@@ -885,7 +930,10 @@ function testC57_day0Adapter(assert: AssertFn): void {
   // → clipped to Jan3 22:00→Jan4 05:00 = 7h.
   const h = getDay0HoursForParticipant(parent, 'real-1');
   assert(Math.abs(h - 7) < 1e-9, 'C5.7: getDay0HoursForParticipant clips snapshot task to the Day-0 window (7h)');
-  assert(getDay0HoursForParticipant(mkSchedule(), 'real-1') === 0, 'C5.7: getDay0HoursForParticipant → 0 without continuity');
+  assert(
+    getDay0HoursForParticipant(mkSchedule(), 'real-1') === 0,
+    'C5.7: getDay0HoursForParticipant → 0 without continuity',
+  );
   assert(
     getDay0HoursForParticipant(parent, 'no-such-id') === 0,
     'C5.7: getDay0HoursForParticipant → 0 for an unknown participant id',
@@ -950,7 +998,16 @@ function testC58_pdfPacker(assert: AssertFn): void {
   // sections. MUST collapse to ONE page with every tiny section on page 0.
   const realDay = planDayLayout({
     sections: [
-      { id: 'adanit', displayOrder: 0, logicalColCount: 4, nameGrid: [[3, 4, 3, 3], [4, 3, 3, 3], [3, 4, 3, 3]] },
+      {
+        id: 'adanit',
+        displayOrder: 0,
+        logicalColCount: 4,
+        nameGrid: [
+          [3, 4, 3, 3],
+          [4, 3, 3, 3],
+          [3, 4, 3, 3],
+        ],
+      },
       { id: 'shemesh', displayOrder: 1, logicalColCount: 1, nameGrid: [[3], [3], [3], [3], [5], [3]] },
       { id: 'shshsh', displayOrder: 2, logicalColCount: 1, nameGrid: [[9], [9], [9], [6], [9], [9]] },
       { id: 'mamtera', displayOrder: 3, logicalColCount: 1, nameGrid: [[3]] },
@@ -968,9 +1025,7 @@ function testC58_pdfPacker(assert: AssertFn): void {
   );
   assert(!anyOverlap(realDay.sections), 'C5.8: real day — no overlapping sections');
   assert(
-    realDay.sections
-      .filter((s) => ['mamtera', 'gk', 'matara', 'bi', 'dgk'].includes(s.id))
-      .every((s) => s.page === 0),
+    realDay.sections.filter((s) => ['mamtera', 'gk', 'matara', 'bi', 'dgk'].includes(s.id)).every((s) => s.page === 0),
     'C5.8: every tiny section backfills page 1 (no near-empty spill)',
   );
 
@@ -988,10 +1043,7 @@ function testC58_pdfPacker(assert: AssertFn): void {
     levers: DEFAULT_LEVERS,
   });
   const bottoms = pageBottoms(huge.sections);
-  assert(
-    huge.overflow && huge.pageCount === 2,
-    'C5.8: impossible day spills to exactly 2 pages',
-  );
+  assert(huge.overflow && huge.pageCount === 2, 'C5.8: impossible day spills to exactly 2 pages');
   assert(
     huge.fontSize >= 7 && bottoms.every((b) => b <= geo.heightBudget),
     'C5.8: 2-page fallback stays readable (font ≥ 7) and within per-page budget',

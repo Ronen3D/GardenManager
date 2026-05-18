@@ -143,6 +143,10 @@ export function checkSleepRecoveryForPlacement(
   for (const a of participantAssignments) {
     const other = taskMap.get(a.taskId);
     if (!other || other.id === candidate.id) continue;
+    // HC-15 (D18): a split half never recovery-flags its own sibling for the
+    // same participant. Defense-in-depth — with HC-16 active siblings never
+    // co-occur; inert when no task is split.
+    if (other.splitGroupId !== undefined && other.splitGroupId === candidate.splitGroupId) continue;
     const window = getRecoveryWindow(other);
     if (!window) continue;
     if (hasLoadDuringOverlap(candidate, window)) return true;
@@ -191,6 +195,9 @@ export function checkSleepRecovery(
     const hours = trigger.sleepRecovery?.recoveryHours ?? 0;
     for (const other of own) {
       if (other.id === trigger.id) continue;
+      // HC-15 (D18): a split half never recovery-flags its own sibling for
+      // the same participant. Inert when no task is split.
+      if (other.splitGroupId !== undefined && other.splitGroupId === trigger.splitGroupId) continue;
       if (!hasLoadDuringOverlap(other, window)) continue;
       const pairKey = trigger.id < other.id ? `${trigger.id}|${other.id}` : `${other.id}|${trigger.id}`;
       if (reported.has(pairKey)) continue;

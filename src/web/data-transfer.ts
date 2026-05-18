@@ -19,6 +19,7 @@ import type {
   TaskSet,
   TaskSetExportPayload,
 } from '../models/types';
+import { DEFAULT_ALGORITHM_SETTINGS } from '../models/types';
 import * as store from './config-store';
 import {
   validateAlgorithmPayload,
@@ -474,6 +475,7 @@ export function importAlgorithm(json: string, mode: 'replace' | 'add-preset'): I
         config: { ...p.settings.config },
         disabledHardConstraints: [...p.settings.disabledHardConstraints],
         dayStartHour: p.settings.dayStartHour,
+        splittingEnabled: p.settings.splittingEnabled ?? DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
       },
     }));
     const ok = store.replaceAlgorithmSettingsAndPresets(
@@ -496,6 +498,7 @@ export function importAlgorithm(json: string, mode: 'replace' | 'add-preset'): I
       config: { ...payload.currentSettings.config },
       disabledHardConstraints: [...payload.currentSettings.disabledHardConstraints],
       dayStartHour: payload.currentSettings.dayStartHour,
+      splittingEnabled: payload.currentSettings.splittingEnabled ?? DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
     },
     createdAt: Date.now(),
   };

@@ -111,10 +111,7 @@ test.describe('Mobile config CRUD + emergency flows (phone)', () => {
 
     // Pick an existing seeded group so the create can be confirmed.
     const groupSelect = sheet.locator('[data-pe-field="group"]');
-    const firstGroupValue = await groupSelect
-      .locator('option')
-      .first()
-      .getAttribute('value');
+    const firstGroupValue = await groupSelect.locator('option').first().getAttribute('value');
     await groupSelect.selectOption(firstGroupValue ?? { index: 0 });
 
     await sheet.locator('[data-pe-save]').first().click();

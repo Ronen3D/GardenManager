@@ -203,10 +203,10 @@ test.describe('Tutorial walkthrough — desktop', () => {
     if (!viewport || viewport.width <= 767) test.skip();
   });
 
-  test('full-tour walkthrough (~43 steps)', async ({ page }) => {
+  test('full-tour walkthrough (~44 steps)', async ({ page }) => {
     test.setTimeout(300_000);
     await clearAllStorage(page);
-    const captures = await walkTrack(page, 'full-tour', 43);
+    const captures = await walkTrack(page, 'full-tour', 44);
     writeCaptures('full-tour', captures);
     expect(captures.length).toBeGreaterThan(0);
   });
@@ -219,10 +219,10 @@ test.describe('Tutorial walkthrough — desktop', () => {
     expect(captures.length).toBeGreaterThan(0);
   });
 
-  test('task-rules walkthrough (15 steps)', async ({ page }) => {
+  test('task-rules walkthrough (16 steps)', async ({ page }) => {
     test.setTimeout(120_000);
     await clearAllStorage(page);
-    const captures = await walkTrack(page, 'task-rules', 15);
+    const captures = await walkTrack(page, 'task-rules', 16);
     writeCaptures('task-rules', captures);
     expect(captures.length).toBeGreaterThan(0);
   });
@@ -237,10 +237,10 @@ test.describe('Tutorial walkthrough — desktop', () => {
     expect(captures.length).toBeGreaterThan(0);
   });
 
-  test('algorithm walkthrough (10 steps)', async ({ page }) => {
+  test('algorithm walkthrough (12 steps)', async ({ page }) => {
     test.setTimeout(120_000);
     await clearAllStorage(page);
-    const captures = await walkTrack(page, 'algorithm', 10);
+    const captures = await walkTrack(page, 'algorithm', 12);
     writeCaptures('algorithm', captures);
     expect(captures.length).toBeGreaterThan(0);
   });

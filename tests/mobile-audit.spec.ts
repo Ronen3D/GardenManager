@@ -457,10 +457,7 @@ test.describe('6. Schedule tab — empty state', () => {
     expect(noOverflow).toBe(true);
   });
 
-  test('toolbar-right does not cause horizontal overflow on empty schedule', async ({
-    page,
-    viewport,
-  }) => {
+  test('toolbar-right does not cause horizontal overflow on empty schedule', async ({ page, viewport }) => {
     // Regression guard: `.toolbar-right` must wrap on phone (flex-wrap) so the
     // empty-state schedule screen never overflows the 375px viewport.
     const toolbarRight = page.locator('.toolbar-right');
@@ -650,10 +647,7 @@ test.describe('7. Schedule tab — with generated schedule', () => {
     expect(scrollW).toBeLessThanOrEqual(viewport!.width);
   });
 
-  test('enabling live-mode controls does not introduce horizontal overflow', async ({
-    page,
-    viewport,
-  }) => {
+  test('enabling live-mode controls does not introduce horizontal overflow', async ({ page, viewport }) => {
     // Was console.log-only. Live mode injects day/hour pickers into the
     // toolbar; the mobile-first contract is that the toolbar still wraps and
     // the document does not overflow 375px.
@@ -993,10 +987,7 @@ test.describe('13. Availability inspector', () => {
     await generateSchedule(page);
   });
 
-  test('availability inspector strip opens without horizontal overflow', async ({
-    page,
-    viewport,
-  }) => {
+  test('availability inspector strip opens without horizontal overflow', async ({ page, viewport }) => {
     // The stale `.availability-inline` / `.day-window` selectors never matched
     // the current `.avail-strip` UI, so these were permanent no-ops. Drive the
     // real collapsible strip instead.
@@ -1010,10 +1001,7 @@ test.describe('13. Availability inspector', () => {
     expect(scrollW).toBeLessThanOrEqual(viewport!.width);
   });
 
-  test('availability inspector controls stay within the phone viewport', async ({
-    page,
-    viewport,
-  }) => {
+  test('availability inspector controls stay within the phone viewport', async ({ page, viewport }) => {
     await page.locator('.avail-strip[data-action="open-avail-strip"]').click();
     const inputsRow = page.locator('.avail-strip-inputs-row');
     await expect(inputsRow).toBeVisible();

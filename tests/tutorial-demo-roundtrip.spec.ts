@@ -67,9 +67,7 @@ test.describe('Tutorial demo round-trip — phone', () => {
     // no-op and the rest of the assertions would be meaningless. The
     // 'participants' track switches to the participants tab, so the (smaller)
     // demo roster is rendered behind the tour overlay.
-    await expect
-      .poll(async () => page.locator(PARTICIPANT_ROWS).count(), { timeout: 10_000 })
-      .toBeLessThan(realCount);
+    await expect.poll(async () => page.locator(PARTICIPANT_ROWS).count(), { timeout: 10_000 }).toBeLessThan(realCount);
     const demoCount = await page.locator(PARTICIPANT_ROWS).count();
     expect(demoCount).toBeGreaterThan(0);
 
@@ -108,9 +106,7 @@ test.describe('Tutorial demo round-trip — phone', () => {
     await page.evaluate(() => window.gmStartTutorial?.('participants'));
     await expect(page.locator('.tutorial-popover')).toBeVisible();
     // Confirm demo took effect before the interruption.
-    await expect
-      .poll(async () => page.locator(PARTICIPANT_ROWS).count(), { timeout: 10_000 })
-      .toBeLessThan(realCount);
+    await expect.poll(async () => page.locator(PARTICIPANT_ROWS).count(), { timeout: 10_000 }).toBeLessThan(realCount);
 
     // Hard interruption: reload the page while the tour (demo data) is active.
     await page.reload();

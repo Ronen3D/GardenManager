@@ -152,16 +152,16 @@ import {
   type TaskTemplate,
   ViolationSeverity,
 } from './models/types';
+import { runExportLayoutTests } from './test-export-layout';
+// A0 EXTENSION POINT (imports): src/web-importing writing-agent suites
+import { runPersistenceExtraTests } from './test-persistence-extra';
+import { runWebUtilsTests } from './test-web-utils';
 import * as store from './web/config-store';
 import { exportDaySnapshot } from './web/continuity-export';
 import { matchParticipants, parseContinuitySnapshot } from './web/continuity-import';
 import * as dataTransfer from './web/data-transfer';
 import { DEFAULT_PARTICIPANT_PLAN, DEFAULT_TASK_INSTANCES } from './web/default-continuity';
 import { BACKUP_KEY, restoreTutorialBackupIfPresent } from './web/tutorial-demo';
-// A0 EXTENSION POINT (imports): src/web-importing writing-agent suites
-import { runPersistenceExtraTests } from './test-persistence-extra';
-import { runExportLayoutTests } from './test-export-layout';
-import { runWebUtilsTests } from './test-web-utils';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Factory Helpers
@@ -429,7 +429,10 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     store.addRestRule('U2-Rest', 10);
     const u2Tset = store.saveCurrentAsTaskSet('u2-taskset', '')!;
     const tsResult = dataTransfer.validateImportFile(dataTransfer.exportTaskSet(u2Tset.id)!);
-    assert(tsResult.ok === true, `U2.2: Real taskSet export accepted by validateImportFile — ${tsResult.error ?? 'ok'}`);
+    assert(
+      tsResult.ok === true,
+      `U2.2: Real taskSet export accepted by validateImportFile — ${tsResult.error ?? 'ok'}`,
+    );
 
     // 3. Valid participantSet — real export
     store.addParticipant({ name: 'U2-P', level: Level.L0, certifications: [], group: 'G' });

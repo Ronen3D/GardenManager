@@ -612,6 +612,27 @@ export interface ScoreContext {
  * When `ctx` is provided, reuses pre-built maps instead of constructing
  * them from scratch — eliminates ~5 redundant O(P×A) scans per call.
  */
+/**
+ * Number of shift-split occurrences in a task set = count of first-half
+ * (`splitPart === 1`) tasks. Each split occurrence produces exactly one `#a`
+ * half, so this equals the number of distinct `splitGroupId`s. Zero (and
+ * therefore zero penalty) for any task set with no splits — which keeps the
+ * composite byte-identical to pre-feature behavior when splitting is off.
+ */
+export function countSplitOccurrences(tasks: Task[]): number {
+  let n = 0;
+  for (const t of tasks) if (t.splitPart === 1) n++;
+  return n;
+}
+
+/** Total shift-split penalty (run-constant in v1). */
+function splitPenaltyTotal(tasks: Task[], config: SchedulerConfig): number {
+  const w = config.splitPenalty;
+  if (!w) return 0;
+  const n = countSplitOccurrences(tasks);
+  return n === 0 ? 0 : w * n;
+}
+
 export function computeScheduleScore(
   tasks: Task[],
   participants: Participant[],
@@ -708,6 +729,12 @@ export function computeScheduleScore(
     ctx?.phantomTaskIds,
   );
 
+  // Shift-split penalty — run-constant (no in-run splitting in v1). Kept out
+  // of `totalPenalty` (which is the SC-6/9/10 bucket the breakdown panel
+  // splits) and subtracted directly in the composite, mirrored exactly in
+  // IncrementalScorer.deriveComposite. Zero when no task is split.
+  const splitPenalty = splitPenaltyTotal(tasks, config);
+
   const totalPenalty = lowPriorityPenalty + notWithPenalty + taskPrefPenalty;
 
   // SC-8: Daily workload balance — pass pre-built data + capacities
@@ -732,7 +759,8 @@ export function computeScheduleScore(
     config.l0FairnessWeight * wlSplit.l0StdDev -
     config.seniorFairnessWeight * wlSplit.seniorStdDev -
     config.dailyBalanceWeight * (dailyBalance.dailyPerParticipantStdDev + dailyBalance.dailyGlobalStdDev) -
-    totalPenalty;
+    totalPenalty -
+    splitPenalty;
 
   return {
     minRestHours: minRest,
@@ -750,6 +778,7 @@ export function computeScheduleScore(
     lowPriorityPenalty,
     notWithPenalty,
     taskPrefPenalty,
+    splitPenalty,
   };
 }
 
@@ -868,6 +897,11 @@ export class IncrementalScorer {
   // Saved task preference state for undo
   private _savedTaskPrefTotal = 0;
   private _savedTaskPrefEntries: [string, number][] = [];
+  // Shift-split penalty — run-constant (no in-run splitting in v1: splitting
+  // only happens in greedy, before build()). Set once in build(), never
+  // touched by recomputeForSwap/undo (participant swaps don't change which
+  // tasks are split), so no per-participant / save-restore machinery needed.
+  private _splitPenalty = 0;
 
   // Current composite score
   compositeScore = 0;
@@ -1026,6 +1060,11 @@ export class IncrementalScorer {
         }
       }
     }
+
+    // Shift-split penalty — run-constant: the split set is fixed before
+    // build() (splitting only happens in greedy in v1), so this is computed
+    // once here and never updated by recomputeForSwap/undo.
+    scorer._splitPenalty = splitPenaltyTotal(tasks, config);
 
     // Compute rest statistics
     scorer.recomputeRestStats();
@@ -1279,7 +1318,8 @@ export class IncrementalScorer {
       this.config.dailyBalanceWeight * (dailyPP + dailyGlobal) -
       this._lowPriorityPenalty -
       this._notWithPenalty -
-      this._taskPrefPenalty
+      this._taskPrefPenalty -
+      this._splitPenalty
     );
   }
 

@@ -21,7 +21,14 @@
  */
 
 import { findMaxMatching, type SlotCandidates } from '../constraints/group-matching';
-import { effectivelyBlocksAt, isLevelSatisfied, validateHardConstraints } from '../constraints/hard-constraints';
+import {
+  checkNoConsecutiveHighLoad as aggregateHc12,
+  checkRestRules as aggregateHc14,
+  checkSplitSiblingDisjoint,
+  effectivelyBlocksAt,
+  isLevelSatisfied,
+  validateHardConstraints,
+} from '../constraints/hard-constraints';
 import { checkSleepRecoveryForPlacement } from '../constraints/sleep-recovery';
 import { computeScheduleScore, IncrementalScorer, type ScoreContext } from '../constraints/soft-constraints';
 import {
@@ -696,6 +703,11 @@ export function greedyAssign(
   assignments: Assignment[];
   unfilledSlots: UnfilledSlot[];
   pinnedIds: Set<string>;
+  /** The task list greedy operated on. Same reference as the `tasks` arg
+   *  unless a feasibility split replaced an occurrence with two halves
+   *  (Stage 4). Callers thread THIS into SA/scoring/validation/result so the
+   *  whole pipeline agrees on the realized task set. */
+  tasks: Task[];
 } {
   const taskMap = new Map<string, Task>();
   for (const t of tasks) taskMap.set(t.id, t);
@@ -1090,7 +1102,222 @@ export function greedyAssign(
     }
   }
 
-  return { assignments, unfilledSlots, pinnedIds };
+  // Stage 4 — feasibility split: for any splittable occurrence that ended up
+  // with an unfilled slot, try realizing it as two equal halves worked by two
+  // DIFFERENT participants. Pure post-pass: byte-identical to today when
+  // splitting is off / nothing splittable was left unfilled.
+  const effTasks = applyFeasibilitySplits({
+    tasks,
+    taskMap,
+    participants,
+    assignments,
+    assignmentsByParticipant,
+    workload,
+    dailyWorkload,
+    unfilledSlots,
+    disabledHC,
+    restRuleMap,
+    dayStartHour,
+    scheduleContext,
+    capacities,
+    sameGroupEligibleCount,
+  });
+
+  return { assignments, unfilledSlots, pinnedIds, tasks: effTasks };
+}
+
+/** Context for the post-greedy feasibility-split pass. */
+export interface FeasibilitySplitCtx {
+  tasks: Task[];
+  taskMap: Map<string, Task>;
+  participants: Participant[];
+  assignments: Assignment[];
+  assignmentsByParticipant: Map<string, Assignment[]>;
+  workload: Map<string, number>;
+  dailyWorkload: Map<string, Map<string, number>>;
+  unfilledSlots: UnfilledSlot[];
+  disabledHC?: Set<string>;
+  restRuleMap?: Map<string, number>;
+  dayStartHour: number;
+  scheduleContext?: ScheduleContext;
+  capacities?: Map<string, ParticipantCapacity>;
+  sameGroupEligibleCount?: Map<string, number>;
+}
+
+/**
+ * Build one half (`#a` first, `#b` second) of a splittable occurrence.
+ * Slots are deep-copied with a per-half-unique slotId suffix; all behavior
+ * fields (incl. sleepRecovery + shiftIndex per D17) are inherited so each
+ * half independently triggers HC-15 from its own end. `sectionKey` is the
+ * parent's so the grid/exports render one section. `splitOriginalMs` = the
+ * pre-split occurrence span (K for the run-coalescer).
+ */
+export function makeSplitHalf(T: Task, part: 1 | 2, startMs: number, endMs: number): Task {
+  const suffix = part === 1 ? '#a' : '#b';
+  return {
+    ...T,
+    id: `${T.id}${suffix}`,
+    name: `${T.name} (${part}/2)`,
+    timeBlock: { start: new Date(startMs), end: new Date(endMs) },
+    slots: T.slots.map((s) => ({ ...s, slotId: `${s.slotId}${suffix}` })),
+    requiredCount: T.slots.length,
+    sleepRecovery: T.sleepRecovery
+      ? { ...T.sleepRecovery, triggerShifts: [...T.sleepRecovery.triggerShifts] }
+      : undefined,
+    splitGroupId: T.id,
+    splitPart: part,
+    splitOriginalMs: T.timeBlock.end.getTime() - T.timeBlock.start.getTime(),
+  };
+}
+
+export function applyFeasibilitySplits(ctx: FeasibilitySplitCtx): Task[] {
+  const {
+    tasks,
+    taskMap,
+    participants,
+    assignments,
+    assignmentsByParticipant,
+    workload,
+    dailyWorkload,
+    unfilledSlots,
+    disabledHC,
+    restRuleMap,
+    dayStartHour,
+    scheduleContext,
+    capacities,
+    sameGroupEligibleCount,
+  } = ctx;
+
+  // Candidate occurrences: splittable, not same-group, not already a half,
+  // long enough to halve, and left with ≥1 unfilled slot by greedy.
+  const unfilledTaskIds = new Set(unfilledSlots.map((u) => u.taskId));
+  if (unfilledTaskIds.size === 0) return tasks;
+
+  let working: Task[] | null = null; // lazily cloned only if a split commits
+
+  const effHours = (t: Task) => computeTaskEffectiveHours(t);
+  const removeAssignment = (a: Assignment): void => {
+    const idx = assignments.indexOf(a);
+    if (idx !== -1) assignments.splice(idx, 1);
+    const list = assignmentsByParticipant.get(a.participantId);
+    if (list) {
+      const li = list.indexOf(a);
+      if (li !== -1) list.splice(li, 1);
+    }
+  };
+  const addLoad = (pid: string, t: Task): void => {
+    const e = effHours(t);
+    workload.set(pid, (workload.get(pid) || 0) + e);
+    const dk = operationalDateKey(t.timeBlock.start, dayStartHour);
+    let pd = dailyWorkload.get(pid);
+    if (!pd) {
+      pd = new Map();
+      dailyWorkload.set(pid, pd);
+    }
+    pd.set(dk, (pd.get(dk) || 0) + e);
+  };
+  const subLoad = (pid: string, t: Task): void => {
+    const e = effHours(t);
+    workload.set(pid, (workload.get(pid) || 0) - e);
+    const dk = operationalDateKey(t.timeBlock.start, dayStartHour);
+    const pd = dailyWorkload.get(pid);
+    if (pd) pd.set(dk, (pd.get(dk) || 0) - e);
+  };
+
+  for (const taskId of unfilledTaskIds) {
+    const T = taskMap.get(taskId);
+    if (!T || !T.splittable || T.sameGroupRequired || T.splitGroupId) continue;
+    const startMs = T.timeBlock.start.getTime();
+    const endMs = T.timeBlock.end.getTime();
+    const midMs = startMs + Math.floor((endMs - startMs) / 2);
+    if (midMs <= startMs || midMs >= endMs) continue; // too short to halve
+
+    const Ta = makeSplitHalf(T, 1, startMs, midMs);
+    const Tb = makeSplitHalf(T, 2, midMs, endMs);
+
+    // Snapshot & detach T's existing assignments (filled slots, if any). The
+    // SAME objects are re-pushed on failure so state restores exactly.
+    const tAssigns = assignments.filter((a) => a.taskId === T.id);
+    for (const a of tAssigns) {
+      removeAssignment(a);
+      subLoad(a.participantId, T);
+    }
+    taskMap.delete(T.id);
+    taskMap.set(Ta.id, Ta);
+    taskMap.set(Tb.id, Tb);
+
+    const newAssigns: Assignment[] = [];
+    const taHolders = new Set<string>();
+    let ok = true;
+
+    for (const half of [Ta, Tb] as const) {
+      const exclude = half === Tb ? taHolders : null; // two-different-people
+      for (const slot of half.slots) {
+        const cands = getEligibleCandidates(
+          half,
+          slot,
+          participants,
+          assignmentsByParticipant,
+          taskMap,
+          workload,
+          dailyWorkload,
+          disabledHC,
+          sameGroupEligibleCount,
+          restRuleMap,
+          dayStartHour,
+          scheduleContext,
+          capacities,
+        );
+        const chosen = exclude ? cands.find((c) => !exclude.has(c.id)) : cands[0];
+        if (!chosen) {
+          ok = false;
+          break;
+        }
+        const na: Assignment = {
+          id: nextAssignmentId(),
+          taskId: half.id,
+          slotId: slot.slotId,
+          participantId: chosen.id,
+          status: AssignmentStatus.Scheduled,
+          updatedAt: new Date(),
+        };
+        assignments.push(na);
+        addToAssignmentMap(assignmentsByParticipant, na);
+        addLoad(chosen.id, half);
+        newAssigns.push(na);
+        if (half === Ta) taHolders.add(chosen.id);
+      }
+      if (!ok) break;
+    }
+
+    if (ok) {
+      // Commit: replace T with [Ta, Tb] in the task list, drop T's unfilled
+      // entries, discard T's old (detached) assignments.
+      working = working ?? [...tasks];
+      const wi = working.findIndex((t) => t.id === T.id);
+      if (wi !== -1) working.splice(wi, 1, Ta, Tb);
+      for (let i = unfilledSlots.length - 1; i >= 0; i--) {
+        if (unfilledSlots[i].taskId === T.id) unfilledSlots.splice(i, 1);
+      }
+    } else {
+      // Revert: undo half assignments, restore T and its original assignments.
+      for (const na of newAssigns) {
+        removeAssignment(na);
+        subLoad(na.participantId, taskMap.get(na.taskId)!);
+      }
+      taskMap.delete(Ta.id);
+      taskMap.delete(Tb.id);
+      taskMap.set(T.id, T);
+      for (const a of tAssigns) {
+        assignments.push(a);
+        addToAssignmentMap(assignmentsByParticipant, a);
+        addLoad(a.participantId, T);
+      }
+      // T's unfilled entries are left intact ⇒ exactly today's behavior.
+    }
+  }
+
+  return working ?? tasks;
 }
 
 /**
@@ -1357,10 +1584,40 @@ export function isSwapFeasible(
     if (!checkDoubleBooking(pI.id) || !checkDoubleBooking(pJ.id)) return false;
   }
 
-  // HC-12: No consecutive blocking tasks for both affected participants
-  // Uses module-level _hcScratch to avoid per-call .map().filter() allocations.
+  // Shift-splitting: does either swapped participant's POST-swap list contain
+  // a split half? Only then must HC-12/HC-14 use the coalesced run view (and
+  // HC-16 apply). Cheap predicate; keeps the dominant non-split SA path on the
+  // hand-optimized `_hcScratch` fast path (zero regression / no perf cost).
+  const hasSplitInList = (pid: string): boolean => {
+    const raw = byParticipant.get(pid) || [];
+    for (let i = 0; i < raw.length; i++) {
+      if (taskMap.get(raw[i].taskId)?.splitGroupId !== undefined) return true;
+    }
+    return false;
+  };
+  const splitI = hasSplitInList(pI.id);
+  const splitJ = hasSplitInList(pJ.id);
+
+  // HC-16: Split-sibling disjointness — a pairwise swap must never leave one
+  // participant holding BOTH halves of a split occurrence. SA's own gate
+  // (this function) is the only thing standing between an accepted swap and
+  // the committed schedule, so without this SA could accept a swap the
+  // aggregate validator then flags SPLIT_SIBLING_CONFLICT — an invalid
+  // schedule returned by the optimizer. Inert when no split is involved.
+  if (!disabledHC?.has('HC-16')) {
+    if (splitI && checkSplitSiblingDisjoint(pI.id, byParticipant.get(pI.id) || [], taskMap).length > 0) return false;
+    if (splitJ && checkSplitSiblingDisjoint(pJ.id, byParticipant.get(pJ.id) || [], taskMap).length > 0) return false;
+  }
+
+  // HC-12: No consecutive blocking tasks for both affected participants.
+  // Split involved → delegate to the coalesce-aware aggregate so SA agrees
+  // with the final validator (a legal note-6 run must not be rejected).
+  // Otherwise the module-level `_hcScratch` fast path (no allocations).
   if (!disabledHC?.has('HC-12')) {
-    const checkConsecutiveHighLoad = (pid: string): boolean => {
+    const checkConsecutiveHighLoad = (pid: string, hasSplit: boolean): boolean => {
+      if (hasSplit) {
+        return aggregateHc12(pid, byParticipant.get(pid) || [], taskMap).length === 0;
+      }
       const raw = byParticipant.get(pid) || [];
       _hcScratch.length = 0;
       for (let i = 0; i < raw.length; i++) {
@@ -1378,7 +1635,7 @@ export function isSwapFeasible(
       }
       return true;
     };
-    if (!checkConsecutiveHighLoad(pI.id) || !checkConsecutiveHighLoad(pJ.id)) return false;
+    if (!checkConsecutiveHighLoad(pI.id, splitI) || !checkConsecutiveHighLoad(pJ.id, splitJ)) return false;
   }
 
   // HC-14: Rest rules — minimum gap between rest-rule-tagged tasks
@@ -1386,7 +1643,12 @@ export function isSwapFeasible(
   if (!disabledHC?.has('HC-14') && restRuleMap && restRuleMap.size > 0) {
     let maxRestDurMs = 0;
     for (const d of restRuleMap.values()) if (d > maxRestDurMs) maxRestDurMs = d;
-    const checkRestRules = (pid: string): boolean => {
+    const checkRestRules = (pid: string, hasSplit: boolean): boolean => {
+      // Split involved → coalesce-aware aggregate so SA agrees with the final
+      // validator (a legal split run is one rest-unit, not a 0-gap violation).
+      if (hasSplit) {
+        return aggregateHc14(pid, byParticipant.get(pid) || [], taskMap, restRuleMap).length === 0;
+      }
       const raw = byParticipant.get(pid) || [];
       _hcScratch.length = 0;
       for (let i = 0; i < raw.length; i++) {
@@ -1440,7 +1702,7 @@ export function isSwapFeasible(
       }
       return true;
     };
-    if (!checkRestRules(pI.id) || !checkRestRules(pJ.id)) return false;
+    if (!checkRestRules(pI.id, splitI) || !checkRestRules(pJ.id, splitJ)) return false;
   }
 
   // HC-15: Sleep & Recovery — only the new placement can introduce a violation.
@@ -1493,6 +1755,11 @@ export function localSearchOptimize(
   saIntensifyTaskIds?: Set<string>,
   scheduleContext?: ScheduleContext,
   stopSignal?: AbortSignal,
+  /** Task count used to seed the SA initial temperature. Defaults to
+   *  `tasks.length`. `optimize()` passes the PRE-split count so a feasibility
+   *  split that grows the list cannot silently fall off the 40-task
+   *  temperature cliff (`getSaInitialTemperature`). Inert when equal. */
+  preSplitTaskCount?: number,
 ): {
   assignments: Assignment[];
   filledSlots: Array<{ taskId: string; slotId: string }>;
@@ -1606,7 +1873,7 @@ export function localSearchOptimize(
   const SA_TEMP_SAMPLE_INTERVAL = 100;
 
   const maxIter = config.maxIterations;
-  const saInitialTemp = getSaInitialTemperature(tasks.length);
+  const saInitialTemp = getSaInitialTemperature(preSplitTaskCount ?? tasks.length);
   let temperature = _benchActiveSaTemp ?? saInitialTemp;
   const _saInitialForReheat = _benchActiveSaTemp ?? saInitialTemp;
   let itersSinceImprovement = 0;
@@ -2256,6 +2523,15 @@ export interface OptimizationResult {
    *  diagnostics. Differs from `unfilledSlots`: that field is the post-SA-
    *  insert remaining set; this one captures what greedy alone left behind. */
   greedyUnfilledSlots: UnfilledSlot[];
+  /**
+   * The realized task set this result was scored/validated against. Equals
+   * the input `tasks` reference unless a feasibility split (Stage 4) replaced
+   * an occurrence with two halves. Consumers (`_commitOptimizationResult`,
+   * `continueOptimizationAsync`) read `result.tasks ?? tasks` so the frozen
+   * schedule, validation and continuation seed all use the same list.
+   * Optional: older/seed results without it fall back to the input list.
+   */
+  tasks?: Task[];
 }
 
 /**
@@ -2315,9 +2591,16 @@ export function optimize(
   const greedyMs = Date.now() - greedyStartMs;
   recordPhase('greedy', greedyMs);
 
-  // Phase 2: Local search improvement (also tries to fill unfilled slots)
+  // The realized task set: identical reference to `tasks` unless a Stage-4
+  // feasibility split replaced an occurrence with two halves. Every post-
+  // greedy phase (SA, validation, scoring, result) must agree on THIS list.
+  const effectiveTasks = greedy.tasks;
+
+  // Phase 2: Local search improvement (also tries to fill unfilled slots).
+  // `tasks.length` (pre-split) seeds the SA temperature so a split that grows
+  // the list cannot fall off the 40-task cliff.
   const lsResult = localSearchOptimize(
-    tasks,
+    effectiveTasks,
     participants,
     greedy.assignments,
     config,
@@ -2331,6 +2614,7 @@ export function optimize(
     saIntensifyTaskIds,
     scheduleContext,
     stopSignal,
+    tasks.length,
   );
 
   // Remove slots that SA managed to fill. Match on (taskId, slotId) — slotId
@@ -2344,7 +2628,7 @@ export function optimize(
   // the scheduler's post-optimize validation reports HC-14 violations in
   // `schedule.violations`. That split let `violations` and `feasible` disagree.
   const validation = validateHardConstraints(
-    tasks,
+    effectiveTasks,
     participants,
     lsResult.assignments,
     disabledHC,
@@ -2366,7 +2650,7 @@ export function optimize(
     }
   }
   const finalCtx: ScoreContext = {
-    taskMap: new Map(tasks.map((t) => [t.id, t])),
+    taskMap: new Map(effectiveTasks.map((t) => [t.id, t])),
     pMap: new Map(participants.map((p) => [p.id, p])),
     capacities: finalCapacities,
     notWithPairs: finalNotWithPairs,
@@ -2376,7 +2660,7 @@ export function optimize(
   // notWith violator identities for diagnostics. Off-mode short-circuits
   // inside setCapturingFinal — zero cost.
   setCapturingFinal(true);
-  const score = computeScheduleScore(tasks, participants, lsResult.assignments, config, finalCtx);
+  const score = computeScheduleScore(effectiveTasks, participants, lsResult.assignments, config, finalCtx);
   setCapturingFinal(false);
 
   return {
@@ -2394,6 +2678,9 @@ export function optimize(
       final: score.compositeScore,
     },
     greedyUnfilledSlots: greedy.unfilledSlots.slice(),
+    // The realized task set (= input `tasks` unless a feasibility split ran).
+    // `_commitOptimizationResult` / continuation read `result.tasks ?? tasks`.
+    tasks: effectiveTasks,
   };
 }
 

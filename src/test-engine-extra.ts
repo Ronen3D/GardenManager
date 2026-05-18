@@ -8,6 +8,8 @@
  * `runEngineExtraTests`. Standalone: `npx ts-node src/test-engine-extra.ts`.
  */
 
+import { optimize } from './engine/optimizer';
+import { buildPhantomContext } from './engine/phantom';
 import {
   type Assignment,
   createTimeBlockFromHours,
@@ -17,8 +19,8 @@ import {
   type SchedulerConfig,
   type Task,
 } from './index';
-import { buildPhantomContext } from './engine/phantom';
-import { optimize } from './engine/optimizer';
+import type { ContinuityAssignment, ContinuitySnapshot } from './models/continuity-schema';
+import type { LoadFormula, LoadFormulaComponent, TaskTemplate } from './models/types';
 import {
   buildFormula,
   buildSnapshot,
@@ -27,15 +29,6 @@ import {
   resolveRateValue,
   validateFormula,
 } from './shared/utils/load-formula';
-import type {
-  ContinuityAssignment,
-  ContinuitySnapshot,
-} from './models/continuity-schema';
-import type {
-  LoadFormula,
-  LoadFormulaComponent,
-  TaskTemplate,
-} from './models/types';
 
 type AssertFn = (condition: boolean, name: string) => void;
 
@@ -305,9 +298,7 @@ function runC12(assert: AssertFn): void {
   const tplBase = mkTemplate('ref-base', { baseLoadWeight: 0.5 });
   const tplWin = mkTemplate('ref-win', {
     baseLoadWeight: 0.2,
-    loadWindows: [
-      { id: 'w1', startHour: 10, startMinute: 0, endHour: 14, endMinute: 0, weight: 0.8 },
-    ],
+    loadWindows: [{ id: 'w1', startHour: 10, startMinute: 0, endHour: 14, endMinute: 0, weight: 0.8 }],
   });
   const tplClamp = mkTemplate('ref-clamp', { baseLoadWeight: 1.5 });
   const templates = new Map<string, TaskTemplate>([
@@ -338,23 +329,14 @@ function runC12(assert: AssertFn): void {
       validateFormula([], editingId, templates).ok === false,
       'C1.2: validateFormula rejects empty component list',
     );
-    const selfRef: LoadFormulaComponent[] = [
-      { refTemplateId: editingId, refRate: { kind: 'base' }, hours: 2 },
-    ];
-    assert(
-      validateFormula(selfRef, editingId, templates).ok === false,
-      'C1.2: validateFormula rejects self-reference',
-    );
-    const zeroHours: LoadFormulaComponent[] = [
-      { refTemplateId: tplBase.id, refRate: { kind: 'base' }, hours: 0 },
-    ];
+    const selfRef: LoadFormulaComponent[] = [{ refTemplateId: editingId, refRate: { kind: 'base' }, hours: 2 }];
+    assert(validateFormula(selfRef, editingId, templates).ok === false, 'C1.2: validateFormula rejects self-reference');
+    const zeroHours: LoadFormulaComponent[] = [{ refTemplateId: tplBase.id, refRate: { kind: 'base' }, hours: 0 }];
     assert(
       validateFormula(zeroHours, editingId, templates).ok === false,
       'C1.2: validateFormula rejects non-positive hours',
     );
-    const deletedRef: LoadFormulaComponent[] = [
-      { refTemplateId: 'gone', refRate: { kind: 'base' }, hours: 2 },
-    ];
+    const deletedRef: LoadFormulaComponent[] = [{ refTemplateId: 'gone', refRate: { kind: 'base' }, hours: 2 }];
     assert(
       validateFormula(deletedRef, editingId, templates).ok === false,
       'C1.2: validateFormula rejects reference to a deleted template',
@@ -366,9 +348,7 @@ function runC12(assert: AssertFn): void {
       validateFormula(deletedWin, editingId, templates).ok === false,
       'C1.2: validateFormula rejects reference to a deleted hot window',
     );
-    const emptyRef: LoadFormulaComponent[] = [
-      { refTemplateId: '', refRate: { kind: 'base' }, hours: 2 },
-    ];
+    const emptyRef: LoadFormulaComponent[] = [{ refTemplateId: '', refRate: { kind: 'base' }, hours: 2 }];
     assert(
       validateFormula(emptyRef, editingId, templates).ok === false,
       'C1.2: validateFormula rejects empty refTemplateId by default',
@@ -377,14 +357,10 @@ function runC12(assert: AssertFn): void {
       validateFormula(emptyRef, editingId, templates, undefined, { ignoreEmptyRefs: true }).ok === true,
       'C1.2: validateFormula accepts empty refTemplateId when ignoreEmptyRefs',
     );
-    const good: LoadFormulaComponent[] = [
-      { refTemplateId: tplBase.id, refRate: { kind: 'base' }, hours: 4 },
-    ];
+    const good: LoadFormulaComponent[] = [{ refTemplateId: tplBase.id, refRate: { kind: 'base' }, hours: 4 }];
     assert(validateFormula(good, editingId, templates).ok === true, 'C1.2: validateFormula accepts a valid formula');
     // Invalid lhsExtras propagates a rejection even when RHS is valid.
-    const badLhs: LoadFormulaComponent[] = [
-      { refTemplateId: 'gone', refRate: { kind: 'base' }, hours: 1 },
-    ];
+    const badLhs: LoadFormulaComponent[] = [{ refTemplateId: 'gone', refRate: { kind: 'base' }, hours: 1 }];
     assert(
       validateFormula(good, editingId, templates, badLhs).ok === false,
       'C1.2: validateFormula rejects when an lhsExtras component is invalid',
@@ -394,9 +370,7 @@ function runC12(assert: AssertFn): void {
   // ── buildFormula + resolveRateValue → expected baseLoadWeight ──
   let formula: LoadFormula;
   {
-    const comps: LoadFormulaComponent[] = [
-      { refTemplateId: tplBase.id, refRate: { kind: 'base' }, hours: 4 },
-    ];
+    const comps: LoadFormulaComponent[] = [{ refTemplateId: tplBase.id, refRate: { kind: 'base' }, hours: 4 }];
     // (4h × 0.5) / targetHours(4) = 0.5
     formula = buildFormula(comps, templates, 4);
     assert(
@@ -445,9 +419,7 @@ function runC12(assert: AssertFn): void {
 
   // ── detectStale ──
   {
-    const comps: LoadFormulaComponent[] = [
-      { refTemplateId: tplBase.id, refRate: { kind: 'base' }, hours: 4 },
-    ];
+    const comps: LoadFormulaComponent[] = [{ refTemplateId: tplBase.id, refRate: { kind: 'base' }, hours: 4 }];
     const f = buildFormula(comps, templates, 4);
     const fresh = detectStale(f, templates);
     assert(fresh.stale === false, 'C1.2: detectStale → not stale immediately after buildFormula');
@@ -472,9 +444,7 @@ function runC12(assert: AssertFn): void {
 
   // ── detectLhsExtrasStale ──
   {
-    const rhs: LoadFormulaComponent[] = [
-      { refTemplateId: tplBase.id, refRate: { kind: 'base' }, hours: 4 },
-    ];
+    const rhs: LoadFormulaComponent[] = [{ refTemplateId: tplBase.id, refRate: { kind: 'base' }, hours: 4 }];
     const noLhs = buildFormula(rhs, templates, 4);
     const r = detectLhsExtrasStale(noLhs, templates);
     assert(

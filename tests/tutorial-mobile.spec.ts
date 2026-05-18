@@ -36,11 +36,7 @@ async function clearAllStorage(page: import('@playwright/test').Page): Promise<v
  * hardcoded "click next ×N" count, so inserting/removing earlier tour steps no
  * longer silently points this test at the wrong step. No product code changes.
  */
-async function seekToStepId(
-  page: import('@playwright/test').Page,
-  stepId: string,
-  cap = 50,
-): Promise<void> {
+async function seekToStepId(page: import('@playwright/test').Page, stepId: string, cap = 50): Promise<void> {
   const popover = page.locator('.tutorial-popover');
   await expect(popover).toBeVisible();
   const wanted = `tutorial-title-${stepId}`;
