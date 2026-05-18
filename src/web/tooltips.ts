@@ -104,18 +104,9 @@ export function buildParticipantTooltipContent(
   // Workload data
   const numDays = store.getScheduleDays();
 
-  // Build breakdown using shared utility (R1)
-  let bd = {
-    heavyHours: 0,
-    heavyCount: 0,
-    effectiveHeavyHours: 0,
-    hotHours: 0,
-    coldHours: 0,
-    sourceHours: {} as Record<string, number>,
-    sourceEffectiveHours: {} as Record<string, number>,
-    sourceCounts: {} as Record<string, number>,
-    sourceColors: {} as Record<string, string>,
-  };
+  // Build breakdown using shared utility (R1). Only the effective-hours total
+  // feeds this popup now — the per-task breakdown rows were removed.
+  let bd = { effectiveHeavyHours: 0 };
   if (schedule) {
     const taskMap = new Map<string, Task>();
     for (const t of schedule.tasks) taskMap.set(t.id, t);
@@ -125,7 +116,7 @@ export function buildParticipantTooltipContent(
       .filter((x) => x.task);
     bd = computeTaskBreakdown(myItems);
   }
-  const { heavyHours, effectiveHeavyHours, sourceHours, sourceEffectiveHours, sourceCounts, sourceColors } = bd;
+  const { effectiveHeavyHours } = bd;
 
   // R7 + capacity-aware: render % as utilization of the participant's actual
   // available hours, matching the sidebar / profile / popup. Falls back to
@@ -153,18 +144,6 @@ export function buildParticipantTooltipContent(
       : '<span class="tt-dim">אין</span>';
   const pakalHtml = renderPakalBadges(p, store.getAllPakalDefinitionsIncludeDeleted(), 'אין');
 
-  // Build per-task breakdown rows (only show sources with count > 0)
-  const breakdownRows = Object.keys(sourceCounts)
-    .filter((key) => sourceCounts[key] > 0)
-    .map((key) => {
-      const color = sourceColors[key] || '#7f8c8d';
-      return `<div class="tt-row">
-        <span class="tt-label"><span style="color:${color};font-weight:600">${key}</span></span>
-        <span class="tt-value">${sourceCounts[key]}× · ${sourceEffectiveHours[key].toFixed(1)} שע' אפקטיביות</span>
-      </div>`;
-    })
-    .join('');
-
   // Build action buttons for the Group row (if we have slot context)
   let actionsHtml = '';
   if (slotCtx && !slotCtx.isFrozen) {
@@ -186,8 +165,6 @@ export function buildParticipantTooltipContent(
     <div class="tt-row"><span class="tt-label">קבוצה</span><span class="tt-value" style="color:${groupColor(p.group)}">${p.group}</span></div>
     <div class="tt-row"><span class="tt-label">הסמכות</span><span class="tt-value">${certsHtml}</span></div>
     <div class="tt-row tt-row-wrap"><span class="tt-label">פק"לים</span><span class="tt-value">${pakalHtml}</span></div>
-    <div class="tt-divider"></div>
-    ${breakdownRows}
     <div class="tt-divider"></div>
     <div class="tt-kpi" title="סה&quot;כ שעות אפקטיביות · ${pctOfCapacity.toFixed(1)}% מתוך ${denom.toFixed(0)} שעות זמינות">
       <div class="tt-kpi-main">
