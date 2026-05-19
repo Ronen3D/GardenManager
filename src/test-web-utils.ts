@@ -8,6 +8,8 @@
  *  - C7.8  tutorial-demo.assertSafeToEnterDemo gates + sheet-vs-modal precedence
  *  - C7.9  delete-participant cascade (dateUnavailability + not-with) + undo
  *  - C7.2  escHtml / escAttr exact output + a render site does not emit raw <script>
+ *  - C7.10 cross-day split day-bucketing (residual + halves share the
+ *          occurrence op-day; non-split / non-boundary unchanged)
  *
  * Convention: export `runWebUtilsTests(assert)`, injected assert, no
  * module-level counters, standalone self-exec guarded by
@@ -94,7 +96,11 @@ import {
   type PakalDefinition,
   type Participant,
   type Schedule,
+  type Task,
 } from './models/types';
+import { taskOpDayEnd, taskOpDayStart } from './utils/date-utils';
+import { getNumDays, getTasksForDay } from './web/export-utils';
+import { taskDayIndex, taskIntersectsDay } from './web/schedule-utils';
 import * as appHost from './web/app-tutorial-hooks';
 import { normalizeCertificationDefinitions, sanitizeCertificationIds } from './web/certification-utils';
 import * as store from './web/config-store';
@@ -789,6 +795,87 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
       !html.includes('<script>') && html.includes('&lt;script&gt;steal()&lt;/script&gt;'),
       'C7.2: render site escapes hostile label (no raw <script> in DOM string)',
     );
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // C7.10 — Cross-day split bucketing: a split occurrence's residual + halves
+  // share ONE op-day page (the occurrence's), never scattered onto `#b`'s
+  // midpoint day. Non-split + non-boundary splits unchanged; row-key (real
+  // timeBlock.start) untouched.
+  // ───────────────────────────────────────────────────────────────────────────
+  console.log('\n── C7.10: cross-day split day-bucketing ──');
+  {
+    const periodStart = new Date(2026, 5, 1, 0, 0, 0, 0); // June 1; dayStartHour 5
+    const dsh = 5;
+    const EIGHT_H = 8 * 3600000;
+    const sl = () => [{ slotId: 's', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }];
+    const base = { sourceName: 'g', requiredCount: 1, sameGroupRequired: false, blocksConsecutive: false };
+    // Occurrence X: 02:00–10:00 June 2 — STARTS in the pre-dayStartHour tail
+    // (op-day 1 = [Jun1 05:00, Jun2 05:00)); its midpoint 06:00 is op-day 2.
+    const xStart = new Date(2026, 5, 2, 2, 0);
+    const xEnd = new Date(2026, 5, 2, 10, 0);
+    const xMid = new Date(2026, 5, 2, 6, 0);
+    const Xr: Task = { ...base, id: 'X', name: 'X', timeBlock: { start: xStart, end: xEnd }, slots: sl() };
+    const Xa: Task = {
+      ...base, id: 'X::X-s1#a', name: 'X (1/2)', timeBlock: { start: xStart, end: xMid }, slots: sl(),
+      splitGroupId: 'X::X-s1', splitPart: 1, splitOriginalMs: EIGHT_H, splitOccurrenceId: 'X',
+    };
+    const Xb: Task = {
+      ...base, id: 'X::X-s1#b', name: 'X (2/2)', timeBlock: { start: xMid, end: xEnd }, slots: sl(),
+      splitGroupId: 'X::X-s1', splitPart: 2, splitOriginalMs: EIGHT_H, splitOccurrenceId: 'X',
+    };
+    // Occurrence Y: 10:00–18:00 June 2 — fully inside op-day 2 (no boundary).
+    const yStart = new Date(2026, 5, 2, 10, 0);
+    const yEnd = new Date(2026, 5, 2, 18, 0);
+    const yMid = new Date(2026, 5, 2, 14, 0);
+    const Ya: Task = {
+      ...base, id: 'Y::Y-s1#a', name: 'Y (1/2)', timeBlock: { start: yStart, end: yMid }, slots: sl(),
+      splitGroupId: 'Y::Y-s1', splitPart: 1, splitOriginalMs: EIGHT_H, splitOccurrenceId: 'Y',
+    };
+    const Yb: Task = {
+      ...base, id: 'Y::Y-s1#b', name: 'Y (2/2)', timeBlock: { start: yMid, end: yEnd }, slots: sl(),
+      splitGroupId: 'Y::Y-s1', splitPart: 2, splitOriginalMs: EIGHT_H, splitOccurrenceId: 'Y',
+    };
+    const P: Task = { ...base, id: 'P', name: 'P', timeBlock: { start: new Date(2026, 5, 2, 12, 0), end: new Date(2026, 5, 2, 14, 0) }, slots: sl() };
+    const sched = { periodStart, tasks: [Xr, Xa, Xb, Ya, Yb, P] } as unknown as Schedule;
+
+    // Helper return values.
+    assert(taskOpDayStart(Xr).getTime() === xStart.getTime(), 'C7.10: residual/non-split → timeBlock.start unchanged');
+    assert(taskOpDayStart(Xa).getTime() === xStart.getTime(), 'C7.10: #a → timeBlock.start (already = occurrence start)');
+    assert(
+      taskOpDayStart(Xb).getTime() === xStart.getTime() && taskOpDayStart(Xb).getTime() !== Xb.timeBlock.start.getTime(),
+      'C7.10: #b re-anchored to occurrence start (≠ its midpoint timeBlock.start)',
+    );
+    assert(taskOpDayEnd(Xb).getTime() === xEnd.getTime(), 'C7.10: #b op-day-end = occurrence end');
+    assert(taskOpDayEnd(P).getTime() === P.timeBlock.end.getTime(), 'C7.10: non-split op-day-end unchanged');
+    assert(Xb.timeBlock.start.getTime() === xMid.getTime(), 'C7.10: row-key untouched — #b.timeBlock.start still the midpoint');
+
+    // Export bucketing (PDF/XLSX funnel): all of X on op-day 1, none on day 2.
+    const d1 = new Set(getTasksForDay(sched, 1, dsh).map((t) => t.id));
+    const d2 = new Set(getTasksForDay(sched, 2, dsh).map((t) => t.id));
+    assert(d1.has('X') && d1.has('X::X-s1#a') && d1.has('X::X-s1#b'), 'C7.10: residual + both halves export on the occurrence op-day (1)');
+    assert(!d2.has('X') && !d2.has('X::X-s1#a') && !d2.has('X::X-s1#b'), 'C7.10: NONE of X scattered onto the midpoint day (2) — the bug is fixed');
+    // Non-boundary split Y + plain P unchanged (still op-day 2, together).
+    assert(d2.has('Y::Y-s1#a') && d2.has('Y::Y-s1#b'), 'C7.10: non-boundary split — both halves stay together (unchanged)');
+    assert(d2.has('P') && !d1.has('P'), 'C7.10: non-split task bucketing unchanged');
+
+    // Day-index + intersection: a split fragment behaves IDENTICALLY to the
+    // residual / equivalent unsplit shift for day membership.
+    assert(
+      taskDayIndex(Xb, dsh, periodStart) === taskDayIndex(Xr, dsh, periodStart) &&
+        taskDayIndex(Xa, dsh, periodStart) === taskDayIndex(Xr, dsh, periodStart),
+      'C7.10: taskDayIndex — #a, #b, residual all resolve to the same op-day',
+    );
+    assert(
+      taskIntersectsDay(Xb, 1, dsh, periodStart) === taskIntersectsDay(Xr, 1, dsh, periodStart) &&
+        taskIntersectsDay(Xb, 2, dsh, periodStart) === taskIntersectsDay(Xr, 2, dsh, periodStart),
+      'C7.10: taskIntersectsDay — #b ≡ residual on every op-day (fragment ≡ unsplit)',
+    );
+    assert(
+      taskDayIndex(Yb, dsh, periodStart) === taskDayIndex(Ya, dsh, periodStart),
+      'C7.10: non-boundary split — #a/#b same day index (unchanged)',
+    );
+    assert(getNumDays(sched, dsh) === 2, 'C7.10: getNumDays counts occurrence op-days (X→1, Y/P→2) not the midpoint day');
   }
 
   console.log('\n── test-web-utils complete ──────────────');

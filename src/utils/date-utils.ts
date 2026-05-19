@@ -2,6 +2,8 @@
  * Shared date utility functions.
  */
 
+import type { Task } from '../models/types';
+
 /** Format a Date as HH:MM (24h). */
 export function fmtTime(d: Date): string {
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
@@ -96,4 +98,48 @@ export function operationalDateKey(d: Date, dayStartHour: number): string {
     return calendarDateKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1));
   }
   return calendarDateKey(d);
+}
+
+/**
+ * The OCCURRENCE start a task should be bucketed to a display/export op-day by.
+ *
+ * Splitting is slot-level: a second-half (`#b`, `splitPart === 2`) runs
+ * `[occurrenceMidpoint, occurrenceEnd]`, so its own `timeBlock.start` is the
+ * midpoint — which can fall in a different op-day than the rest of the
+ * occurrence when the shift starts in the pre-`dayStartHour` tail. For
+ * DAY-PAGE membership a split fragment belongs to its occurrence's op-day
+ * (where the residual, `#a`, and the equivalent unsplit shift display), NOT
+ * the midpoint's. The occurrence start is recovered exactly from the half:
+ * `#b`.end === occurrence end and `splitOriginalMs` === the full
+ * (pre-split) occurrence duration, so `end − splitOriginalMs` is the
+ * occurrence start. Every other task — non-split, residual (no
+ * `splitGroupId`), and `#a` (whose `timeBlock.start` already IS the
+ * occurrence start) — returns `timeBlock.start` unchanged ⇒ zero behaviour
+ * change off the split-`#b` path. WITHIN-day row placement still uses the
+ * real `timeBlock.start` (the midpoint), so `#b` renders at its true time
+ * row on the occurrence's page — exactly as a non-boundary split already does.
+ */
+export function taskOpDayStart(task: Task): Date {
+  if (
+    task.splitGroupId !== undefined &&
+    task.splitPart === 2 &&
+    task.splitOriginalMs !== undefined
+  ) {
+    return new Date(task.timeBlock.end.getTime() - task.splitOriginalMs);
+  }
+  return task.timeBlock.start;
+}
+
+/**
+ * The occurrence END for op-day membership. For ANY split fragment the
+ * effective span is the whole occurrence `[occStart, occStart +
+ * splitOriginalMs]`, so intersection-based day filters treat a fragment
+ * exactly like the unsplit occurrence (and like the residual, which already
+ * spans `[start, end]`). Non-split tasks return `timeBlock.end` unchanged.
+ */
+export function taskOpDayEnd(task: Task): Date {
+  if (task.splitGroupId !== undefined && task.splitOriginalMs !== undefined) {
+    return new Date(taskOpDayStart(task).getTime() + task.splitOriginalMs);
+  }
+  return task.timeBlock.end;
 }

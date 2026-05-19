@@ -1,5 +1,6 @@
 import { addDays } from 'date-fns';
 import { type LiveModeState, type Schedule, Task } from '../models/types';
+import { taskOpDayStart } from '../utils/date-utils';
 import { type ManualBuildRenderCtx, renderScheduleGridV2 } from './layout-engine';
 
 // ─── Main View Export ────────────────────────────────────────────────────────
@@ -31,7 +32,9 @@ export function renderScheduleGrid(
   const endTimeNum = dayEnd.getTime();
 
   const dayTasks = schedule.tasks.filter((t) => {
-    const s = new Date(t.timeBlock.start).getTime();
+    // Split fragments bucket to their occurrence's op-day so a split shift's
+    // residual + halves never scatter across day pages (non-split unchanged).
+    const s = taskOpDayStart(t).getTime();
     return s >= startTimeNum && s < endTimeNum;
   });
 

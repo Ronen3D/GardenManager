@@ -54,7 +54,7 @@ import { computeTemplateSectionKey, oneTimeSectionKey } from '../shared/layout-k
 import { generateShiftBlocks, hourInOpDay } from '../shared/utils/time-utils';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { computeAllCapacities } from '../utils/capacity';
-import { operationalDateKey } from '../utils/date-utils';
+import { operationalDateKey, taskOpDayStart } from '../utils/date-utils';
 import { register as registerTutorialHooks } from './app-tutorial-hooks';
 import { runAutoTune, setAutoTunerTaskFactory, type TuneRecommendation } from './auto-tuner';
 import { showCapabilityChangePicker } from './capability-change-modal';
@@ -1591,7 +1591,9 @@ function renderParticipantWarehouse(schedule: Schedule): string {
   const dayTaskIds = new Set(
     schedule.tasks
       .filter((t) => {
-        const s = new Date(t.timeBlock.start).getTime();
+        // Split fragments count toward their occurrence's op-day (non-split
+        // unchanged) so the warehouse "today" tally matches the grid.
+        const s = taskOpDayStart(t).getTime();
         return s >= dayStart.getTime() && s < dayEnd.getTime();
       })
       .map((t) => t.id),
@@ -4637,7 +4639,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.5.9</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.6.0</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>

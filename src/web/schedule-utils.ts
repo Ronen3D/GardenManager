@@ -8,6 +8,7 @@
 
 import type { AssignmentStatus, ConstraintViolation, Schedule, Task } from '../index';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import { taskOpDayEnd, taskOpDayStart } from '../utils/date-utils';
 import * as store from './config-store';
 import { fmt } from './ui-helpers';
 
@@ -69,7 +70,10 @@ export function getDayWindow(dayIndex: number, dayStartHour?: number, baseDate?:
  */
 export function taskIntersectsDay(task: Task, dayIndex: number, dayStartHour?: number, baseDate?: Date): boolean {
   const { start, end } = getDayWindow(dayIndex, dayStartHour, baseDate);
-  return task.timeBlock.start.getTime() < end.getTime() && task.timeBlock.end.getTime() > start.getTime();
+  // Split fragments use their OCCURRENCE span so they appear on exactly the
+  // op-day(s) the unsplit shift would (and the residual already does) — never
+  // scattered onto the midpoint's day. Non-split: identical to before.
+  return taskOpDayStart(task).getTime() < end.getTime() && taskOpDayEnd(task).getTime() > start.getTime();
 }
 
 /**
@@ -79,7 +83,9 @@ export function taskIntersectsDay(task: Task, dayIndex: number, dayStartHour?: n
  */
 export function taskDayIndex(task: Task, dayStartHour: number, baseDate: Date): number {
   const anchor = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0);
-  const diffMs = task.timeBlock.start.getTime() - anchor.getTime();
+  // Bucket split fragments by their occurrence start (so `#b` shares its
+  // siblings' day index); non-split tasks are unchanged.
+  const diffMs = taskOpDayStart(task).getTime() - anchor.getTime();
   return Math.floor(diffMs / 86400000) + 1;
 }
 

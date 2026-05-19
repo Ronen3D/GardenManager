@@ -11,6 +11,7 @@
  */
 
 import type { Assignment, LoadWindow, Participant, Schedule, SlotRequirement, Task } from '../models/types';
+import { taskOpDayStart } from '../utils/date-utils';
 import { certBadge, escHtml, fmt, groupColor, LEVEL_COLORS, levelBadge, taskBadge } from './ui-helpers';
 
 // ─── Context ─────────────────────────────────────────────────────────────────
@@ -229,7 +230,9 @@ function renderNeedsAttention(
 
 function dayIndexOf(task: Task, baseDate: Date, dayStartHour: number): number {
   const start = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0);
-  const diffMs = task.timeBlock.start.getTime() - start.getTime();
+  // Split fragments resolve to their occurrence's op-day index (so `#b`
+  // stacks/timelines with its siblings); non-split tasks unchanged.
+  const diffMs = taskOpDayStart(task).getTime() - start.getTime();
   return Math.floor(diffMs / 86400000) + 1;
 }
 

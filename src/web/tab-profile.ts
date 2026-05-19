@@ -11,6 +11,7 @@
 
 import type { Assignment, Participant, Schedule, Task } from '../models/types';
 import { computeParticipantCapacity } from '../utils/capacity';
+import { taskOpDayStart } from '../utils/date-utils';
 import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
 import { formatWorkloadMultiplier } from './tab-participants';
@@ -236,10 +237,13 @@ function renderPersonalAgenda(
     // Anchor each task to the day it STARTS in (no duplicates across days).
     // Cross-day tasks are displayed once, with a visual indicator.
     const dayTasks = myTasks
-      .filter(
-        ({ task }) =>
-          task.timeBlock.start.getTime() >= dayStart.getTime() && task.timeBlock.start.getTime() < dayEnd.getTime(),
-      )
+      .filter(({ task }) => {
+        // Anchor split fragments to their occurrence's op-day so a split
+        // assignment shows on the same agenda day as its siblings
+        // (non-split: identical to the prior start-based filter).
+        const s = taskOpDayStart(task).getTime();
+        return s >= dayStart.getTime() && s < dayEnd.getTime();
+      })
       .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
 
     const dayLabel = `יום ${d}`;

@@ -9,7 +9,7 @@
 
 import { addDays } from 'date-fns';
 import type { Schedule, Task } from '../models/types';
-import { operationalDateKey } from '../utils/date-utils';
+import { operationalDateKey, taskOpDayStart } from '../utils/date-utils';
 
 // ─── Day windowing ───────────────────────────────────────────────────────────
 
@@ -34,7 +34,10 @@ export function getDayWindow(
 export function getTasksForDay(schedule: Schedule, dayIndex: number, dayStartHour: number = 5): Task[] {
   const { start, end } = getDayWindow(schedule, dayIndex, dayStartHour);
   return schedule.tasks.filter((t) => {
-    const s = new Date(t.timeBlock.start).getTime();
+    // A split fragment is bucketed to its OCCURRENCE's op-day (so the
+    // residual + `#a` + `#b` of one shift always export on the same page);
+    // non-split tasks use their own start exactly as before.
+    const s = taskOpDayStart(t).getTime();
     return s >= start.getTime() && s < end.getTime();
   });
 }
@@ -62,7 +65,7 @@ export function getNumDays(schedule: Schedule, dayStartHour: number = 5): number
   if (schedule.tasks.length === 0) return 0;
   const keys = new Set<string>();
   for (const t of schedule.tasks) {
-    keys.add(operationalDateKey(new Date(t.timeBlock.start), dayStartHour));
+    keys.add(operationalDateKey(taskOpDayStart(t), dayStartHour));
   }
   return keys.size;
 }
