@@ -21,7 +21,7 @@
  * No plan may touch frozen assignments.
  */
 
-import { validateHardConstraints } from '../constraints/hard-constraints';
+import { sameGroupUnitTaskIds, validateHardConstraints } from '../constraints/hard-constraints';
 import { computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
 import type {
   Assignment,
@@ -956,7 +956,19 @@ export function generateRescuePlans(
     excludeIds: Set<string>,
     extraAssignments?: Array<{ slotId: string; participantId: string }>,
   ): Assignment[] {
-    const base = (assignmentsByTaskIndex.get(taskId) || []).filter((a) => !excludeIds.has(a.id));
+    // Link-aware: for a SPLIT same-group occurrence the HC-4 precheck must see
+    // assignees across the whole residual+halves unit so chain enumeration
+    // doesn't waste budget on cross-group candidates the final validator will
+    // reject. `[taskId]` fast path for every normal task (zero behaviour
+    // change when nothing is a split same-group fragment).
+    const qt = taskMap.get(taskId);
+    const unitIds = qt ? sameGroupUnitTaskIds(qt, taskMap.values()) : [taskId];
+    const base: Assignment[] = [];
+    for (const tid of unitIds) {
+      for (const a of assignmentsByTaskIndex.get(tid) || []) {
+        if (!excludeIds.has(a.id)) base.push(a);
+      }
+    }
     if (extraAssignments) {
       for (const ea of extraAssignments) {
         base.push({ id: '__virtual__', taskId, slotId: ea.slotId, participantId: ea.participantId } as Assignment);

@@ -142,10 +142,14 @@ function makeEngine(splittingEnabled: boolean): SchedulingEngine {
   return eng;
 }
 
-const guardGroupId = `guard-d${CONFLICT_DAY}`;
+const guardGroupId = `guard-d${CONFLICT_DAY}`; // original occurrence id
+const guardSlotId = `${guardGroupId}-s`; // its single slot
+const guardSplitGid = `${guardGroupId}::${guardSlotId}`; // per-slot split group id
+const halfAId = `${guardSplitGid}#a`;
+const halfBId = `${guardSplitGid}#b`;
 function isConflictGuardUnfilled(sched: Schedule): boolean {
-  // No assignment exists for the conflict-day guard occurrence (whole or halves).
-  return !sched.assignments.some((a) => a.taskId === guardGroupId || a.taskId.startsWith(`${guardGroupId}#`));
+  // No assignment exists for the conflict-day guard occurrence (whole or per-slot halves).
+  return !sched.assignments.some((a) => a.taskId === guardGroupId || a.taskId.startsWith(`${guardGroupId}::`));
 }
 
 // ─── S1 — OFF leaves it unfilled; ON splits into two legal halves ────────────
@@ -170,16 +174,20 @@ function scenarioS1(assert: AssertFn): { onSchedule: Schedule } {
   const onEng = makeEngine(true);
   const on = onEng.generateSchedule();
 
-  const halfA = on.tasks.find((t) => t.id === `${guardGroupId}#a`);
-  const halfB = on.tasks.find((t) => t.id === `${guardGroupId}#b`);
+  const halfA = on.tasks.find((t) => t.id === halfAId);
+  const halfB = on.tasks.find((t) => t.id === halfBId);
   assert(!!halfA && !!halfB, 'ON: conflict-day guard occurrence was realized as two halves (#a, #b)');
   assert(
     !on.tasks.some((t) => t.id === guardGroupId),
-    'ON: the original whole conflict-day guard task is gone (replaced by halves)',
+    'ON: the single-slot occurrence has no residual — original whole guard task is gone (replaced by halves)',
   );
   assert(
-    halfA?.splitGroupId === guardGroupId && halfB?.splitGroupId === guardGroupId,
-    'ON: both halves share splitGroupId = original occurrence id',
+    halfA?.splitGroupId === guardSplitGid && halfB?.splitGroupId === guardSplitGid,
+    'ON: both halves share splitGroupId = split-SLOT pair (occurrenceId::slotId)',
+  );
+  assert(
+    halfA?.splitOccurrenceId === guardGroupId && halfB?.splitOccurrenceId === guardGroupId,
+    'ON: both halves share splitOccurrenceId = original occurrence id',
   );
   assert(
     halfA?.splitPart === 1 && halfB?.splitPart === 2 && halfA?.splitOriginalMs === 4 * H,
@@ -187,11 +195,11 @@ function scenarioS1(assert: AssertFn): { onSchedule: Schedule } {
   );
 
   // Other guard days must NOT have been split (only the unfillable one is).
-  const otherSplit = on.tasks.filter((t) => t.splitGroupId && t.splitGroupId !== guardGroupId);
+  const otherSplit = on.tasks.filter((t) => t.splitOccurrenceId && t.splitOccurrenceId !== guardGroupId);
   assert(otherSplit.length === 0, 'ON: only the unfillable occurrence split — the other 4 guard days stay whole');
 
-  const aAsg = on.assignments.filter((a) => a.taskId === `${guardGroupId}#a`);
-  const bAsg = on.assignments.filter((a) => a.taskId === `${guardGroupId}#b`);
+  const aAsg = on.assignments.filter((a) => a.taskId === halfAId);
+  const bAsg = on.assignments.filter((a) => a.taskId === halfBId);
   assert(aAsg.length === 1 && bAsg.length === 1, 'ON: both halves are filled (one assignment each)');
   const pa = aAsg[0]?.participantId;
   const pb = bAsg[0]?.participantId;
@@ -221,8 +229,8 @@ function scenarioS1(assert: AssertFn): { onSchedule: Schedule } {
 function scenarioS2(assert: AssertFn, onEng: SchedulingEngine): void {
   console.log('\n── S2: manual swap cannot create a same-person split ──');
   const sched = onEng.getSchedule()!;
-  const aAsg = sched.assignments.find((a) => a.taskId === `${guardGroupId}#a`)!;
-  const bAsg = sched.assignments.find((a) => a.taskId === `${guardGroupId}#b`)!;
+  const aAsg = sched.assignments.find((a) => a.taskId === halfAId)!;
+  const bAsg = sched.assignments.find((a) => a.taskId === halfBId)!;
   const aHolder = aAsg.participantId;
   const bHolder = bAsg.participantId;
 
@@ -267,8 +275,8 @@ function scenarioS2(assert: AssertFn, onEng: SchedulingEngine): void {
 function scenarioS3(assert: AssertFn, onEng: SchedulingEngine): void {
   console.log('\n── S3: Rescue respects HC-16 ──');
   const sched = onEng.getSchedule()!;
-  const aAsg = sched.assignments.find((a) => a.taskId === `${guardGroupId}#a`)!;
-  const bHolder = sched.assignments.find((a) => a.taskId === `${guardGroupId}#b`)!.participantId;
+  const aAsg = sched.assignments.find((a) => a.taskId === halfAId)!;
+  const bHolder = sched.assignments.find((a) => a.taskId === halfBId)!.participantId;
   const anchor = D(1, 0);
 
   const result = generateRescuePlans(
@@ -287,7 +295,7 @@ function scenarioS3(assert: AssertFn, onEng: SchedulingEngine): void {
   );
 
   const offending = result.plans.filter((pl) =>
-    pl.swaps.some((s) => s.taskId === `${guardGroupId}#a` && s.toParticipantId === bHolder),
+    pl.swaps.some((s) => s.taskId === halfAId && s.toParticipantId === bHolder),
   );
   assert(offending.length === 0, `S3: no Rescue plan moves the #b holder (${bHolder}) into the #a slot`);
   const anyHc16 = result.plans.some((pl) => pl.violations.some((x) => x.code === 'SPLIT_SIBLING_CONFLICT'));
@@ -324,9 +332,9 @@ function scenarioS3(assert: AssertFn, onEng: SchedulingEngine): void {
 function scenarioS4(assert: AssertFn, onEng: SchedulingEngine): void {
   console.log('\n── S4: Future-SOS respects HC-16 ──');
   const sched = onEng.getSchedule()!;
-  const aAsg = sched.assignments.find((a) => a.taskId === `${guardGroupId}#a`)!;
+  const aAsg = sched.assignments.find((a) => a.taskId === halfAId)!;
   const aHolder = aAsg.participantId;
-  const bHolder = sched.assignments.find((a) => a.taskId === `${guardGroupId}#b`)!.participantId;
+  const bHolder = sched.assignments.find((a) => a.taskId === halfBId)!.participantId;
   const anchor = D(1, 0);
   const window = { start: D(CONFLICT_DAY, 13), end: D(CONFLICT_DAY, 17) };
 
@@ -360,7 +368,7 @@ function scenarioS4(assert: AssertFn, onEng: SchedulingEngine): void {
     'S4: Future-SOS correctly identifies the #a half as an affected assignment',
   );
   const offending = res.plans.filter((pl) =>
-    pl.swaps.some((s) => s.taskId === `${guardGroupId}#a` && s.toParticipantId === bHolder),
+    pl.swaps.some((s) => s.taskId === halfAId && s.toParticipantId === bHolder),
   );
   assert(offending.length === 0, `S4: no Future-SOS plan moves the #b holder (${bHolder}) into the #a slot`);
   const anyHc16 = res.plans.some((pl) => pl.violations.some((x) => x.code === 'SPLIT_SIBLING_CONFLICT'));
@@ -408,7 +416,7 @@ function scenarioS5(assert: AssertFn): void {
   const rTasks = onResult.tasks ?? onTasks;
   const splitDays = new Set(rTasks.filter((t) => t.splitGroupId).map((t) => t.splitGroupId));
   assert(
-    rTasks.some((t) => t.id === `${guardGroupId}#a`),
+    rTasks.some((t) => t.id === halfAId),
     'S5: best multi-attempt result splits the conflict-day guard',
   );
   assert(splitDays.size === 1, 'S5: best result split exactly ONE occurrence (parsimony holds under multi-attempt)');
@@ -450,7 +458,7 @@ export async function runShiftSplitE2ETests(assert: AssertFn): Promise<void> {
   // S2–S4 reuse a single ON engine so they operate on a real generated split.
   const onEng = makeEngine(true);
   const re = onEng.generateSchedule();
-  if (!re.tasks.some((t) => t.id === `${guardGroupId}#a`)) {
+  if (!re.tasks.some((t) => t.id === halfAId)) {
     assert(false, 'E2E: ON regeneration must split the conflict-day guard (precondition for S2–S4)');
   } else {
     scenarioS2(assert, onEng);

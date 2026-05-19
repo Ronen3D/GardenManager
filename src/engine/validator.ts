@@ -9,6 +9,7 @@ import {
   checkRestRules,
   effectivelyBlocksAt,
   isLevelSatisfied,
+  sameGroupUnitTaskIds,
   validateHardConstraints,
 } from '../constraints/hard-constraints';
 import { checkSleepRecoveryForPlacement } from '../constraints/sleep-recovery';
@@ -469,7 +470,12 @@ export function getEligibleParticipantsForSlot(
   const pMap = new Map<string, Participant>();
   for (const p of participants) pMap.set(p.id, p);
 
-  const taskAssignments = currentAssignments.filter((a) => a.taskId === task.id);
+  // Link-aware: for a SPLIT same-group occurrence the HC-4 precheck must see
+  // assignees across the whole residual+halves unit, not just this fragment —
+  // so it agrees with the link-aware final validator (otherwise the picker
+  // would show wrong-group candidates as eligible / waste rescue budget).
+  const sgUnit = new Set(sameGroupUnitTaskIds(task, taskMap.values()));
+  const taskAssignments = currentAssignments.filter((a) => sgUnit.has(a.taskId));
 
   return participants.filter((p) => {
     // Build participant's assignments excluding ONLY the current slot (not
@@ -510,7 +516,7 @@ export const REJECTION_REASONS_HE: Record<RejectionCode, string> = {
   'HC-12': 'לא ניתן לשבץ למשימות כבדות רצופות',
   'HC-14': 'נדרשת הפסקה של 5 שעות לפחות ממשימת קטגוריה',
   'HC-15': 'בחלון השלמות שינה והתאוששות אחרי משימה מקדימה',
-  'HC-16': 'המשתתף כבר משובץ לחצי השני של אותה משמרת מפוצלת',
+  'HC-16': 'המשתתף כבר משובץ לחצי השני של אותה משבצת מפוצלת',
 };
 
 /** Candidate row for the post-generation swap picker. */
@@ -547,7 +553,12 @@ export function getCandidatesWithEligibility(
   const pMap = new Map<string, Participant>();
   for (const p of participants) pMap.set(p.id, p);
 
-  const taskAssignments = currentAssignments.filter((a) => a.taskId === task.id);
+  // Link-aware: for a SPLIT same-group occurrence the HC-4 precheck must see
+  // assignees across the whole residual+halves unit, not just this fragment —
+  // so it agrees with the link-aware final validator (otherwise the picker
+  // would show wrong-group candidates as eligible / waste rescue budget).
+  const sgUnit = new Set(sameGroupUnitTaskIds(task, taskMap.values()));
+  const taskAssignments = currentAssignments.filter((a) => sgUnit.has(a.taskId));
 
   return participants.map((p) => {
     // See note in getEligibleParticipantsForSlot: exclude only the CURRENT

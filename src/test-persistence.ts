@@ -973,33 +973,40 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
       acceptableLevels: [{ level: Level.L0 }],
       requiredCertifications: [],
     });
+    const occId = 'g-d1';
+    const slotId = 'g-slot-1';
+    const splitGid = `${occId}::${slotId}`;
+    const aId = `${splitGid}#a`;
+    const bId = `${splitGid}#b`;
     const splitSched = makeSchedule({
       tasks: [
         {
-          id: 'g-d1#a',
+          id: aId,
           name: 'Guard D1 (1/2)',
           sourceName: 'Guard',
           timeBlock: { start: tStart, end: tMid },
           requiredCount: 1,
-          slots: [halfSlot('g-slot-1#a')],
+          slots: [halfSlot(`${slotId}#a`)],
           sameGroupRequired: false,
           blocksConsecutive: true,
-          splitGroupId: 'g-d1',
+          splitGroupId: splitGid,
           splitPart: 1,
           splitOriginalMs: origMs,
+          splitOccurrenceId: occId,
         },
         {
-          id: 'g-d1#b',
+          id: bId,
           name: 'Guard D1 (2/2)',
           sourceName: 'Guard',
           timeBlock: { start: tMid, end: tEnd },
           requiredCount: 1,
-          slots: [halfSlot('g-slot-1#b')],
+          slots: [halfSlot(`${slotId}#b`)],
           sameGroupRequired: false,
           blocksConsecutive: true,
-          splitGroupId: 'g-d1',
+          splitGroupId: splitGid,
           splitPart: 2,
           splitOriginalMs: origMs,
+          splitOccurrenceId: occId,
         },
       ],
       participants: [
@@ -1025,16 +1032,16 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
       assignments: [
         {
           id: 'as-a',
-          taskId: 'g-d1#a',
-          slotId: 'g-slot-1#a',
+          taskId: aId,
+          slotId: `${slotId}#a`,
           participantId: 'p-1',
           status: AssignmentStatus.Scheduled,
           updatedAt,
         },
         {
           id: 'as-b',
-          taskId: 'g-d1#b',
-          slotId: 'g-slot-1#b',
+          taskId: bId,
+          slotId: `${slotId}#b`,
           participantId: 'p-2',
           status: AssignmentStatus.Scheduled,
           updatedAt,
@@ -1046,12 +1053,16 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     const ls = store.loadSchedule();
     assert(ls !== null, 'I2b.1: split schedule loads non-null');
 
-    const ta = ls?.tasks.find((t) => t.id === 'g-d1#a');
-    const tbHalf = ls?.tasks.find((t) => t.id === 'g-d1#b');
-    assert(!!ta && !!tbHalf, 'I2b.2: both half-task ids (#a/#b) survive the round-trip');
+    const ta = ls?.tasks.find((t) => t.id === aId);
+    const tbHalf = ls?.tasks.find((t) => t.id === bId);
+    assert(!!ta && !!tbHalf, 'I2b.2: both slot-qualified half-task ids (#a/#b) survive the round-trip');
     assert(
-      ta?.splitGroupId === 'g-d1' && tbHalf?.splitGroupId === 'g-d1',
-      'I2b.2: splitGroupId preserved on both halves',
+      ta?.splitGroupId === splitGid && tbHalf?.splitGroupId === splitGid,
+      'I2b.2: per-slot splitGroupId (occurrenceId::slotId) preserved on both halves',
+    );
+    assert(
+      ta?.splitOccurrenceId === occId && tbHalf?.splitOccurrenceId === occId,
+      'I2b.2: splitOccurrenceId preserved on both halves',
     );
     assert(ta?.splitPart === 1 && tbHalf?.splitPart === 2, 'I2b.2: splitPart preserved (1 / 2)');
     assert(
@@ -1068,8 +1079,8 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     );
 
     // The locked product rule — two DIFFERENT participants — survives reload.
-    const pa = ls?.assignments.find((a) => a.taskId === 'g-d1#a')?.participantId;
-    const pb = ls?.assignments.find((a) => a.taskId === 'g-d1#b')?.participantId;
+    const pa = ls?.assignments.find((a) => a.taskId === aId)?.participantId;
+    const pb = ls?.assignments.find((a) => a.taskId === bId)?.participantId;
     assert(
       !!pa && !!pb && pa !== pb,
       'I2b.4: reloaded split is still staffed by two different participants (HC-16 invariant intact)',
@@ -1084,6 +1095,146 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
         ls?.periodStart instanceof Date &&
         typeof ls?.periodDays === 'number',
       'I2b.5: frozen-snapshot fields intact → reloaded split schedule survives the load gate',
+    );
+
+    // ── I2b-mixed: a single occurrence with one WHOLE slot (residual) + one
+    //    SPLIT slot, round-tripped. Proves the slot-level model persists: the
+    //    residual carries NO split metadata, the split slot's halves do. ──
+    store.factoryReset();
+    localStorage.clear();
+    const mOcc = 'm-d2';
+    const mWholeSlot = 'm-slot-A';
+    const mSplitSlot = 'm-slot-B';
+    const mSplitGid = `${mOcc}::${mSplitSlot}`;
+    const mixedSched = makeSchedule({
+      tasks: [
+        {
+          // Residual whole-slot task — keeps the occurrence id, NO split fields.
+          id: mOcc,
+          name: 'Mixed D2',
+          sourceName: 'Guard',
+          timeBlock: { start: tStart, end: tEnd },
+          requiredCount: 1,
+          slots: [halfSlot(mWholeSlot)],
+          sameGroupRequired: false,
+          blocksConsecutive: true,
+        },
+        {
+          id: `${mSplitGid}#a`,
+          name: 'Mixed D2 (1/2)',
+          sourceName: 'Guard',
+          timeBlock: { start: tStart, end: tMid },
+          requiredCount: 1,
+          slots: [halfSlot(`${mSplitSlot}#a`)],
+          sameGroupRequired: false,
+          blocksConsecutive: true,
+          splitGroupId: mSplitGid,
+          splitPart: 1,
+          splitOriginalMs: origMs,
+          splitOccurrenceId: mOcc,
+        },
+        {
+          id: `${mSplitGid}#b`,
+          name: 'Mixed D2 (2/2)',
+          sourceName: 'Guard',
+          timeBlock: { start: tMid, end: tEnd },
+          requiredCount: 1,
+          slots: [halfSlot(`${mSplitSlot}#b`)],
+          sameGroupRequired: false,
+          blocksConsecutive: true,
+          splitGroupId: mSplitGid,
+          splitPart: 2,
+          splitOriginalMs: origMs,
+          splitOccurrenceId: mOcc,
+        },
+      ],
+      participants: [
+        {
+          id: 'p-1',
+          name: 'Alice',
+          level: Level.L0,
+          certifications: [],
+          group: 'A',
+          availability: [{ start: tStart, end: tEnd }],
+          dateUnavailability: [],
+        },
+        {
+          id: 'p-2',
+          name: 'Bob',
+          level: Level.L0,
+          certifications: [],
+          group: 'A',
+          availability: [{ start: tStart, end: tEnd }],
+          dateUnavailability: [],
+        },
+        {
+          id: 'p-3',
+          name: 'Carol',
+          level: Level.L0,
+          certifications: [],
+          group: 'A',
+          availability: [{ start: tStart, end: tEnd }],
+          dateUnavailability: [],
+        },
+      ],
+      assignments: [
+        {
+          id: 'as-w',
+          taskId: mOcc,
+          slotId: mWholeSlot,
+          participantId: 'p-3',
+          status: AssignmentStatus.Scheduled,
+          updatedAt,
+        },
+        {
+          id: 'as-ma',
+          taskId: `${mSplitGid}#a`,
+          slotId: `${mSplitSlot}#a`,
+          participantId: 'p-1',
+          status: AssignmentStatus.Scheduled,
+          updatedAt,
+        },
+        {
+          id: 'as-mb',
+          taskId: `${mSplitGid}#b`,
+          slotId: `${mSplitSlot}#b`,
+          participantId: 'p-2',
+          status: AssignmentStatus.Scheduled,
+          updatedAt,
+        },
+      ],
+    });
+
+    assert(store.saveSchedule(mixedSched) === true, 'I2b-mixed: mixed whole+split schedule saves');
+    const lm = store.loadSchedule();
+    assert(lm !== null, 'I2b-mixed: mixed schedule loads non-null');
+    const resid = lm?.tasks.find((t) => t.id === mOcc);
+    const mha = lm?.tasks.find((t) => t.id === `${mSplitGid}#a`);
+    const mhb = lm?.tasks.find((t) => t.id === `${mSplitGid}#b`);
+    assert(
+      !!resid && resid.splitGroupId === undefined && resid.splitOccurrenceId === undefined,
+      'I2b-mixed: residual whole-slot task survives with NO split metadata',
+    );
+    assert(
+      !!mha && !!mhb && mha.splitGroupId === mSplitGid && mhb.splitGroupId === mSplitGid,
+      'I2b-mixed: only the split slot’s halves carry the per-slot splitGroupId',
+    );
+    assert(
+      mha?.splitOccurrenceId === mOcc && mhb?.splitOccurrenceId === mOcc,
+      'I2b-mixed: halves keep splitOccurrenceId tying them to the residual occurrence',
+    );
+    const wHolder = lm?.assignments.find((a) => a.taskId === mOcc)?.participantId;
+    const maH = lm?.assignments.find((a) => a.taskId === `${mSplitGid}#a`)?.participantId;
+    const mbH = lm?.assignments.find((a) => a.taskId === `${mSplitGid}#b`)?.participantId;
+    assert(
+      wHolder === 'p-3' && !!maH && !!mbH && maH !== mbH && maH !== wHolder && mbH !== wHolder,
+      'I2b-mixed: whole-slot holder + two different split-half holders, all distinct, survive reload',
+    );
+    assert(
+      lm?.algorithmSettings?.config !== undefined &&
+        lm?.periodStart instanceof Date &&
+        typeof lm?.periodDays === 'number',
+      'I2b-mixed: frozen-snapshot fields intact → mixed split schedule survives the load gate',
     );
   }
 

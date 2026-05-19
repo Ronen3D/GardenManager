@@ -238,6 +238,27 @@ export function checkSameGroup(task: Task, assignedParticipants: Participant[]):
 }
 
 /**
+ * Task ids that form ONE same-group unit for HC-4 / HC-8 purposes.
+ *
+ * For a normal task this is just `[task.id]` (zero behaviour change — the
+ * fast path for every non-split / non-same-group task). For a SPLIT
+ * `sameGroupRequired` occurrence the residual whole-slot task and every
+ * per-split-slot half share a `sameGroupLinkId`; strict same-group requires
+ * the WHOLE occurrence to be one group, so any per-placement / SA HC-4
+ * precheck must consider assignees across ALL linked fragments — not just the
+ * single fragment task id. This mirrors what the aggregate
+ * `validateHardConstraints` already does via its link-union, keeping the
+ * optimizer's prechecks in agreement with the authoritative final validator.
+ */
+export function sameGroupUnitTaskIds(task: Task, tasks: Iterable<Task>): string[] {
+  const link = task.sameGroupLinkId;
+  if (link === undefined) return [task.id];
+  const ids: string[] = [];
+  for (const t of tasks) if (t.sameGroupLinkId === link) ids.push(t.id);
+  return ids.length > 0 ? ids : [task.id];
+}
+
+/**
  * HC-11: Forbidden certification check — participants holding a certification
  * listed in a slot's forbiddenCertifications are forbidden from that slot.
  *
@@ -435,6 +456,72 @@ export function checkGroupFeasibility(
     }
     const desc = parts.length > 0 ? `נדרש: ${parts.join(' + ')}` : 'אין מספיק משתתפים בקבוצה';
     violations.push(violation('GROUP_INSUFFICIENT', `${describeTaskInstance(task)} \u200F— ${desc}`, task.id, slotId));
+  }
+  return violations;
+}
+
+/**
+ * HC-8 for a SPLIT `sameGroupRequired` occurrence. When a slot is split, the
+ * occurrence becomes several tasks — the residual whole-slot task plus a pair
+ * of half-tasks per split slot — all sharing one `sameGroupLinkId`. Strict
+ * same-group requires the WHOLE occurrence (every surviving whole slot and
+ * both halves of every split slot) to be coverable by ONE group. This unions
+ * all linked tasks' slots into a single bipartite-matching problem (slot ids
+ * are globally unique across the union — a base slot is either whole on the
+ * residual or split into suffixed half ids, never both) and is evaluated
+ * exactly once per link. Mirrors {@link checkGroupFeasibility}'s level/cert
+ * predicate and `disabledHC` handling.
+ */
+export function checkGroupFeasibilityLinked(
+  linkedTasks: Task[],
+  groupParticipants: Participant[],
+  certLabelResolver: (certId: string) => string = (id) => id,
+  disabledHC?: Set<string>,
+): ConstraintViolation[] {
+  const enforceLevel = !disabledHC?.has('HC-1');
+  const enforceReqCert = !disabledHC?.has('HC-2');
+  const enforceForbiddenCert = !disabledHC?.has('HC-11');
+
+  const slotInputs: SlotCandidates[] = [];
+  const slotMeta = new Map<string, { task: Task; slot: SlotRequirement }>();
+  for (const t of linkedTasks) {
+    for (const slot of t.slots) {
+      slotInputs.push({
+        slotId: slot.slotId,
+        candidates: groupParticipants
+          .filter((p) => {
+            if (enforceLevel && !slot.acceptableLevels.some((e) => e.level === p.level)) return false;
+            if (enforceReqCert) {
+              for (const cert of slot.requiredCertifications) {
+                if (!p.certifications.includes(cert)) return false;
+              }
+            }
+            if (enforceForbiddenCert && slot.forbiddenCertifications?.some((c) => p.certifications.includes(c)))
+              return false;
+            return true;
+          })
+          .map((p) => p.id),
+      });
+      slotMeta.set(slot.slotId, { task: t, slot });
+    }
+  }
+
+  const result = findMaxMatching(slotInputs);
+  if (result.unfilled.length === 0) return [];
+
+  const violations: ConstraintViolation[] = [];
+  for (const slotId of result.unfilled) {
+    const meta = slotMeta.get(slotId);
+    const parts: string[] = [];
+    if (meta && enforceLevel) {
+      parts.push(meta.slot.acceptableLevels.map((e) => `דרגה ${e.level}`).join('/'));
+    }
+    if (meta && enforceReqCert && meta.slot.requiredCertifications.length > 0) {
+      parts.push(meta.slot.requiredCertifications.map(certLabelResolver).join(', '));
+    }
+    const desc = parts.length > 0 ? `נדרש: ${parts.join(' + ')}` : 'אין מספיק משתתפים בקבוצה';
+    const repTask = meta ? meta.task : linkedTasks[0];
+    violations.push(violation('GROUP_INSUFFICIENT', `${describeTaskInstance(repTask)} ‏— ${desc}`, repTask.id, slotId));
   }
   return violations;
 }
@@ -689,7 +776,7 @@ export function checkSplitSiblingDisjoint(
       violations.push(
         violation(
           'SPLIT_SIBLING_CONFLICT',
-          `${displayName} — שני חצאים של אותה משמרת מפוצלת`,
+          `${displayName} — שני חצאים של אותה משבצת מפוצלת`,
           secondId,
           undefined,
           participantId,
@@ -742,6 +829,24 @@ export function validateHardConstraints(
     }
     pList.push(a);
   }
+
+  // HC-8 split linkage: tasks of one split `sameGroupRequired` occurrence
+  // share a `sameGroupLinkId`. They are validated ONCE as a union (not per
+  // task) so the whole occurrence — residual whole slots + every split slot's
+  // halves — must come from a single group. Inert when nothing is split.
+  const tasksBySameGroupLink = new Map<string, Task[]>();
+  for (const t of tasks) {
+    if (t.sameGroupLinkId !== undefined) {
+      let l = tasksBySameGroupLink.get(t.sameGroupLinkId);
+      if (!l) {
+        l = [];
+        tasksBySameGroupLink.set(t.sameGroupLinkId, l);
+      }
+      l.push(t);
+    }
+  }
+  const processedSameGroupLinks = new Set<string>();
+  const processedSameGroupLinksHc4 = new Set<string>();
 
   for (const task of tasks) {
     const taskAssignments = assignmentsByTask.get(task.id) || [];
@@ -834,22 +939,61 @@ export function validateHardConstraints(
       );
     }
 
-    // HC-4: Same group — use pre-indexed task assignments
+    // HC-4: Same group — use pre-indexed task assignments. For a SPLIT
+    // sameGroupRequired occurrence the per-task view is blind (each residual /
+    // half task holds one person), so strict same-group must be checked once
+    // across the whole linked unit: the union of all linked tasks' assignees
+    // must be a single group.
     if (!disabledHC?.has('HC-4')) {
-      const assignedParticipants = taskAssignments
-        .map((a) => pMap.get(a.participantId))
-        .filter((p): p is Participant => p !== undefined);
-      allViolations.push(...checkSameGroup(task, assignedParticipants));
+      const linkId = task.sameGroupLinkId;
+      if (linkId !== undefined && task.sameGroupRequired) {
+        if (!processedSameGroupLinksHc4.has(linkId)) {
+          processedSameGroupLinksHc4.add(linkId);
+          const linked = tasksBySameGroupLink.get(linkId) || [task];
+          const linkedPIds = new Set<string>();
+          for (const lt of linked) {
+            for (const a of assignmentsByTask.get(lt.id) || []) linkedPIds.add(a.participantId);
+          }
+          const unionParticipants = participants.filter((p) => linkedPIds.has(p.id));
+          allViolations.push(...checkSameGroup(task, unionParticipants));
+        }
+        // Already covered by the link-union check ⇒ no per-task HC-4.
+      } else {
+        const assignedParticipants = taskAssignments
+          .map((a) => pMap.get(a.participantId))
+          .filter((p): p is Participant => p !== undefined);
+        allViolations.push(...checkSameGroup(task, assignedParticipants));
+      }
     }
 
     // HC-8: Group feasibility for sameGroupRequired tasks
     if (!disabledHC?.has('HC-8') && task.sameGroupRequired) {
-      const assignedPIds = new Set(taskAssignments.map((a) => a.participantId));
-      const assignedParticipants = participants.filter((p) => assignedPIds.has(p.id));
-      if (assignedParticipants.length > 0) {
-        const group = assignedParticipants[0].group;
-        const groupMembers = participants.filter((p) => p.group === group);
-        allViolations.push(...checkGroupFeasibility(task, groupMembers, certLabelResolver, disabledHC));
+      const linkId = task.sameGroupLinkId;
+      if (linkId !== undefined) {
+        // Split same-group occurrence: validate the whole linked unit once.
+        if (!processedSameGroupLinks.has(linkId)) {
+          processedSameGroupLinks.add(linkId);
+          const linked = tasksBySameGroupLink.get(linkId) || [task];
+          const linkedPIds = new Set<string>();
+          for (const lt of linked) {
+            for (const a of assignmentsByTask.get(lt.id) || []) linkedPIds.add(a.participantId);
+          }
+          const assignedParticipants = participants.filter((p) => linkedPIds.has(p.id));
+          if (assignedParticipants.length > 0) {
+            const group = assignedParticipants[0].group;
+            const groupMembers = participants.filter((p) => p.group === group);
+            allViolations.push(...checkGroupFeasibilityLinked(linked, groupMembers, certLabelResolver, disabledHC));
+          }
+        }
+        // Already covered by the union check above ⇒ no per-task HC-8.
+      } else {
+        const assignedPIds = new Set(taskAssignments.map((a) => a.participantId));
+        const assignedParticipants = participants.filter((p) => assignedPIds.has(p.id));
+        if (assignedParticipants.length > 0) {
+          const group = assignedParticipants[0].group;
+          const groupMembers = participants.filter((p) => p.group === group);
+          allViolations.push(...checkGroupFeasibility(task, groupMembers, certLabelResolver, disabledHC));
+        }
       }
     }
   }
@@ -898,33 +1042,17 @@ export function validateHardConstraints(
     }
   }
 
-  // HC-12: No consecutive high-load tasks — use pre-indexed participant assignments
+  // HC-12: No consecutive high-load tasks. Delegate to the coalesce-aware
+  // standalone (mirrors HC-14/HC-15/HC-16 below) so the final aggregate
+  // agrees with the optimizer's per-placement / SA paths: a legal split
+  // run coalesces to one block instead of a false CONSECUTIVE_HIGH_LOAD.
+  // Run-coalescer identity guarantee => byte-identical when nothing is
+  // split (zero regression).
   if (!disabledHC?.has('HC-12')) {
     for (const p of participants) {
       const pAssigns = assignmentsByParticipant.get(p.id) || [];
       if (pAssigns.length < 2) continue;
-      const sorted = pAssigns
-        .map((a) => ({ assignment: a, task: tMap.get(a.taskId)! }))
-        .filter((x) => x.task != null)
-        .sort((a, b) => a.task.timeBlock.start.getTime() - b.task.timeBlock.start.getTime());
-      for (let i = 0; i < sorted.length - 1; i++) {
-        const cur = sorted[i];
-        const nxt = sorted[i + 1];
-        if (cur.task.id === nxt.task.id) continue;
-        const gap = nxt.task.timeBlock.start.getTime() - cur.task.timeBlock.end.getTime();
-        if (gap > 0) continue;
-        if (effectivelyBlocksAt(cur.task, 'end') && effectivelyBlocksAt(nxt.task, 'start')) {
-          allViolations.push(
-            violation(
-              'CONSECUTIVE_HIGH_LOAD',
-              `${p.name} \u200F— "${describeTaskBidi(cur.task)}" \u200F→ "${describeTaskBidi(nxt.task)}"`,
-              nxt.task.id,
-              undefined,
-              p.id,
-            ),
-          );
-        }
-      }
+      allViolations.push(...checkNoConsecutiveHighLoad(p.id, pAssigns, tMap, p.name));
     }
   }
 

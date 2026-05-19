@@ -143,10 +143,16 @@ export function checkSleepRecoveryForPlacement(
   for (const a of participantAssignments) {
     const other = taskMap.get(a.taskId);
     if (!other || other.id === candidate.id) continue;
-    // HC-15 (D18): a split half never recovery-flags its own sibling for the
-    // same participant. Defense-in-depth — with HC-16 active siblings never
-    // co-occur; inert when no task is split.
+    // HC-15 (D18): work belonging to the SAME original occurrence never
+    // recovery-flags itself. Two halves of one split slot (same
+    // `splitGroupId`) — defense-in-depth, HC-16 keeps siblings apart — and
+    // two halves of DIFFERENT slots of the same occurrence (same
+    // `splitOccurrenceId`, a legitimate continuous run HC-16 allows) are both
+    // exempt: together they are exactly the unsplit occurrence, whose
+    // recovery window legitimately starts at the occurrence end. Inert when
+    // no task is split.
     if (other.splitGroupId !== undefined && other.splitGroupId === candidate.splitGroupId) continue;
+    if (other.splitOccurrenceId !== undefined && other.splitOccurrenceId === candidate.splitOccurrenceId) continue;
     const window = getRecoveryWindow(other);
     if (!window) continue;
     if (hasLoadDuringOverlap(candidate, window)) return true;
@@ -158,6 +164,14 @@ export function checkSleepRecoveryForPlacement(
     for (const a of participantAssignments) {
       const other = taskMap.get(a.taskId);
       if (!other || other.id === candidate.id) continue;
+      // Same exemptions as Direction 1 / the aggregate `checkSleepRecovery`:
+      // work of the SAME original occurrence never recovery-flags itself —
+      // same split slot (`splitGroupId`) or different slots of the same
+      // occurrence (`splitOccurrenceId`, a legitimate continuous run HC-16
+      // allows). Without this, per-placement/SA HC-15 would be order-dependent
+      // and over-strict vs the final validator. Inert when no task is split.
+      if (other.splitGroupId !== undefined && other.splitGroupId === candidate.splitGroupId) continue;
+      if (other.splitOccurrenceId !== undefined && other.splitOccurrenceId === candidate.splitOccurrenceId) continue;
       if (hasLoadDuringOverlap(other, ownWindow)) return true;
     }
   }
@@ -195,9 +209,12 @@ export function checkSleepRecovery(
     const hours = trigger.sleepRecovery?.recoveryHours ?? 0;
     for (const other of own) {
       if (other.id === trigger.id) continue;
-      // HC-15 (D18): a split half never recovery-flags its own sibling for
-      // the same participant. Inert when no task is split.
+      // HC-15 (D18): work of the SAME original occurrence never
+      // recovery-flags itself — same split slot (`splitGroupId`) or different
+      // slots of the same occurrence (`splitOccurrenceId`, a legitimate
+      // continuous run). Inert when no task is split.
       if (other.splitGroupId !== undefined && other.splitGroupId === trigger.splitGroupId) continue;
+      if (other.splitOccurrenceId !== undefined && other.splitOccurrenceId === trigger.splitOccurrenceId) continue;
       if (!hasLoadDuringOverlap(other, window)) continue;
       const pairKey = trigger.id < other.id ? `${trigger.id}|${other.id}` : `${other.id}|${trigger.id}`;
       if (reported.has(pairKey)) continue;

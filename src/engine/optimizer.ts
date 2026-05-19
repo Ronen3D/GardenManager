@@ -27,6 +27,7 @@ import {
   checkSplitSiblingDisjoint,
   effectivelyBlocksAt,
   isLevelSatisfied,
+  sameGroupUnitTaskIds,
   validateHardConstraints,
 } from '../constraints/hard-constraints';
 import { checkSleepRecoveryForPlacement } from '../constraints/sleep-recovery';
@@ -1145,28 +1146,38 @@ export interface FeasibilitySplitCtx {
 }
 
 /**
- * Build one half (`#a` first, `#b` second) of a splittable occurrence.
- * Slots are deep-copied with a per-half-unique slotId suffix; all behavior
+ * Build one half (`#a` first, `#b` second) of a single split SLOT of an
+ * occurrence. Splitting is slot-level: each call carries exactly ONE slot
+ * (deep-copied with a per-half-unique slotId suffix), so an occurrence can
+ * keep some slots whole while splitting others independently. All behavior
  * fields (incl. sleepRecovery + shiftIndex per D17) are inherited so each
  * half independently triggers HC-15 from its own end. `sectionKey` is the
- * parent's so the grid/exports render one section. `splitOriginalMs` = the
- * pre-split occurrence span (K for the run-coalescer).
+ * parent's so the grid/exports render one section. `splitGroupId` keys the
+ * split-SLOT pair (`${taskId}::${slotId}`) so HC-16 enforces two-different-
+ * people per split slot; `splitOccurrenceId` ties every half of the same
+ * occurrence together for HC-15's same-occurrence exemption;
+ * `splitOriginalMs` = the pre-split occurrence span (K for the run-coalescer).
+ * A `sameGroupRequired` parent also stamps `sameGroupLinkId` so HC-8 treats
+ * the residual + all halves as one same-group unit.
  */
-export function makeSplitHalf(T: Task, part: 1 | 2, startMs: number, endMs: number): Task {
+export function makeSplitHalf(T: Task, part: 1 | 2, startMs: number, endMs: number, slot: SlotRequirement): Task {
   const suffix = part === 1 ? '#a' : '#b';
+  const splitGroupId = `${T.id}::${slot.slotId}`;
   return {
     ...T,
-    id: `${T.id}${suffix}`,
+    id: `${splitGroupId}${suffix}`,
     name: `${T.name} (${part}/2)`,
     timeBlock: { start: new Date(startMs), end: new Date(endMs) },
-    slots: T.slots.map((s) => ({ ...s, slotId: `${s.slotId}${suffix}` })),
-    requiredCount: T.slots.length,
+    slots: [{ ...slot, slotId: `${slot.slotId}${suffix}` }],
+    requiredCount: 1,
     sleepRecovery: T.sleepRecovery
       ? { ...T.sleepRecovery, triggerShifts: [...T.sleepRecovery.triggerShifts] }
       : undefined,
-    splitGroupId: T.id,
+    splitGroupId,
     splitPart: part,
     splitOriginalMs: T.timeBlock.end.getTime() - T.timeBlock.start.getTime(),
+    splitOccurrenceId: T.id,
+    sameGroupLinkId: T.sameGroupRequired ? T.id : undefined,
   };
 }
 
@@ -1188,10 +1199,18 @@ export function applyFeasibilitySplits(ctx: FeasibilitySplitCtx): Task[] {
     sameGroupEligibleCount,
   } = ctx;
 
-  // Candidate occurrences: splittable, not same-group, not already a half,
-  // long enough to halve, and left with ≥1 unfilled slot by greedy.
-  const unfilledTaskIds = new Set(unfilledSlots.map((u) => u.taskId));
-  if (unfilledTaskIds.size === 0) return tasks;
+  // Per-occurrence set of slotIds greedy left unfilled (slot-level: a slot is
+  // split independently, others of the same occurrence may stay whole).
+  const unfilledByTask = new Map<string, Set<string>>();
+  for (const u of unfilledSlots) {
+    let s = unfilledByTask.get(u.taskId);
+    if (!s) {
+      s = new Set();
+      unfilledByTask.set(u.taskId, s);
+    }
+    s.add(u.slotId);
+  }
+  if (unfilledByTask.size === 0) return tasks;
 
   let working: Task[] | null = null; // lazily cloned only if a split commits
 
@@ -1223,52 +1242,225 @@ export function applyFeasibilitySplits(ctx: FeasibilitySplitCtx): Task[] {
     const pd = dailyWorkload.get(pid);
     if (pd) pd.set(dk, (pd.get(dk) || 0) - e);
   };
+  const clearUnfilled = (taskId: string, slotId: string): void => {
+    for (let i = unfilledSlots.length - 1; i >= 0; i--) {
+      if (unfilledSlots[i].taskId === taskId && unfilledSlots[i].slotId === slotId) {
+        unfilledSlots.splice(i, 1);
+      }
+    }
+  };
+  const groupOf = new Map<string, string>();
+  for (const p of participants) groupOf.set(p.id, p.group);
+  const eligIds = (task: Task, slot: SlotRequirement, pool: Participant[]): Participant[] =>
+    getEligibleCandidates(
+      task,
+      slot,
+      pool,
+      assignmentsByParticipant,
+      taskMap,
+      workload,
+      dailyWorkload,
+      disabledHC,
+      sameGroupEligibleCount,
+      restRuleMap,
+      dayStartHour,
+      scheduleContext,
+      capacities,
+    );
 
-  for (const taskId of unfilledTaskIds) {
+  /**
+   * Strict same-group split. `assignSameGroupTask` is all-or-nothing, so an
+   * unfilled `sameGroupRequired` occurrence has only pinned assignments (if
+   * any). Pick a single group that can cover the whole occurrence with the
+   * fewest split slots (whole-first parsimony via two `findMaxMatching`
+   * passes), then realize residual + per-split-slot halves all tagged with a
+   * shared `sameGroupLinkId`. Returns the `working`-list replacements, or
+   * null when no group can realize it (occurrence left unfilled — today's
+   * behavior).
+   */
+  const splitSameGroup = (
+    T: Task,
+    unfilledIds: Set<string>,
+    startMs: number,
+    midMs: number,
+    endMs: number,
+  ): Task[] | null => {
+    const existing = assignments.filter((a) => a.taskId === T.id);
+    const pinnedSlotIds = new Set(existing.map((a) => a.slotId));
+    const usedIds = new Set(existing.map((a) => a.participantId));
+    let requiredGroup: string | undefined;
+    {
+      const gs = new Set<string>();
+      for (const a of existing) {
+        const g = groupOf.get(a.participantId);
+        if (g) gs.add(g);
+      }
+      if (gs.size === 1) requiredGroup = [...gs][0];
+    }
+
+    const slotsToFill = T.slots.filter((s) => !pinnedSlotIds.has(s.slotId) && unfilledIds.has(s.slotId));
+    if (slotsToFill.length === 0) return null;
+
+    const groupMembers = new Map<string, Participant[]>();
+    for (const p of participants) {
+      const l = groupMembers.get(p.group);
+      if (l) l.push(p);
+      else groupMembers.set(p.group, [p]);
+    }
+    const allGroups = [...groupMembers.keys()];
+    const groupsToTry = requiredGroup ? [requiredGroup] : allGroups;
+    // Fairness ordering: lightest-loaded group first (mirrors
+    // assignSameGroupTask); random tiebreak for multi-attempt diversity.
+    const grng = new Map<string, number>();
+    for (const g of groupsToTry) grng.set(g, Math.random());
+    groupsToTry.sort((ga, gb) => {
+      const wa = (groupMembers.get(ga) || []).reduce((s, p) => s + (workload.get(p.id) || 0), 0);
+      const wb = (groupMembers.get(gb) || []).reduce((s, p) => s + (workload.get(p.id) || 0), 0);
+      if (wa !== wb) return wa - wb;
+      return (grng.get(ga) || 0) - (grng.get(gb) || 0);
+    });
+
+    const candIds = (task: Task, slot: SlotRequirement, members: Participant[]): string[] =>
+      eligIds(task, slot, members)
+        .map((p) => p.id)
+        .filter((id) => !usedIds.has(id));
+
+    for (const group of groupsToTry) {
+      const members = groupMembers.get(group) || [];
+      if (members.length === 0) continue;
+
+      // Tier 1: maximum WHOLE coverage by this group → split only the rest.
+      const m1 = findMaxMatching(slotsToFill.map((s) => ({ slotId: s.slotId, candidates: candIds(T, s, members) })));
+      const splitSet = new Set(m1.unfilled);
+      // Group covers everything whole ⇒ not a split case (and unreachable:
+      // assignSameGroupTask would already have committed it). Try next group.
+      if (splitSet.size === 0) continue;
+
+      const halves = new Map<string, { Sa: Task; Sb: Task }>();
+      for (const s of slotsToFill) {
+        if (splitSet.has(s.slotId)) {
+          halves.set(s.slotId, {
+            Sa: makeSplitHalf(T, 1, startMs, midMs, s),
+            Sb: makeSplitHalf(T, 2, midMs, endMs, s),
+          });
+        }
+      }
+      // Tier 2: re-match the full expanded set (whole + #a/#b sub-slots).
+      const expanded: SlotCandidates[] = [];
+      for (const s of slotsToFill) {
+        const hv = halves.get(s.slotId);
+        if (hv) {
+          expanded.push({ slotId: `${s.slotId}#a`, candidates: candIds(hv.Sa, hv.Sa.slots[0], members) });
+          expanded.push({ slotId: `${s.slotId}#b`, candidates: candIds(hv.Sb, hv.Sb.slots[0], members) });
+        } else {
+          expanded.push({ slotId: s.slotId, candidates: candIds(T, s, members) });
+        }
+      }
+      const m2 = findMaxMatching(expanded);
+      if (m2.unfilled.length > 0) continue; // this group can't realize it
+
+      // ── Realize with `group` ──
+      const survivingSlots = T.slots.filter((s) => !splitSet.has(s.slotId));
+      const replacements: Task[] = [];
+      if (survivingSlots.length > 0) {
+        const Tr: Task = {
+          ...T,
+          slots: survivingSlots,
+          requiredCount: survivingSlots.length,
+          sameGroupLinkId: T.id,
+        };
+        taskMap.set(T.id, Tr);
+        replacements.push(Tr);
+      } else {
+        taskMap.delete(T.id);
+      }
+      for (const s of slotsToFill) {
+        const hv = halves.get(s.slotId);
+        if (hv) {
+          taskMap.set(hv.Sa.id, hv.Sa);
+          taskMap.set(hv.Sb.id, hv.Sb);
+          for (const [half, key] of [
+            [hv.Sa, `${s.slotId}#a`],
+            [hv.Sb, `${s.slotId}#b`],
+          ] as const) {
+            const pid = m2.assignments.get(key);
+            if (!pid) continue;
+            const hSlot = half.slots[0];
+            const na: Assignment = {
+              id: nextAssignmentId(),
+              taskId: half.id,
+              slotId: hSlot.slotId,
+              participantId: pid,
+              status: AssignmentStatus.Scheduled,
+              updatedAt: new Date(),
+            };
+            assignments.push(na);
+            addToAssignmentMap(assignmentsByParticipant, na);
+            addLoad(pid, half);
+          }
+          replacements.push(hv.Sa, hv.Sb);
+        } else {
+          const pid = m2.assignments.get(s.slotId);
+          if (pid) {
+            const na: Assignment = {
+              id: nextAssignmentId(),
+              taskId: T.id, // stays on the residual (Tr.id === T.id)
+              slotId: s.slotId,
+              participantId: pid,
+              status: AssignmentStatus.Scheduled,
+              updatedAt: new Date(),
+            };
+            assignments.push(na);
+            addToAssignmentMap(assignmentsByParticipant, na);
+            addLoad(pid, T); // full occurrence span ⇒ full load
+          }
+        }
+        clearUnfilled(T.id, s.slotId);
+      }
+      return replacements;
+    }
+    return null; // no group could realize the split
+  };
+
+  for (const [taskId, unfilledIds] of unfilledByTask) {
     const T = taskMap.get(taskId);
-    if (!T || !T.splittable || T.sameGroupRequired || T.splitGroupId) continue;
+    if (!T || !T.splittable || T.splitGroupId) continue;
     const startMs = T.timeBlock.start.getTime();
     const endMs = T.timeBlock.end.getTime();
     const midMs = startMs + Math.floor((endMs - startMs) / 2);
     if (midMs <= startMs || midMs >= endMs) continue; // too short to halve
 
-    const Ta = makeSplitHalf(T, 1, startMs, midMs);
-    const Tb = makeSplitHalf(T, 2, midMs, endMs);
-
-    // Snapshot & detach T's existing assignments (filled slots, if any). The
-    // SAME objects are re-pushed on failure so state restores exactly.
-    const tAssigns = assignments.filter((a) => a.taskId === T.id);
-    for (const a of tAssigns) {
-      removeAssignment(a);
-      subLoad(a.participantId, T);
+    if (T.sameGroupRequired) {
+      const replacements = splitSameGroup(T, unfilledIds, startMs, midMs, endMs);
+      if (replacements) {
+        working = working ?? [...tasks];
+        const wi = working.findIndex((t) => t.id === T.id);
+        if (wi !== -1) working.splice(wi, 1, ...replacements);
+      }
+      continue;
     }
-    taskMap.delete(T.id);
-    taskMap.set(Ta.id, Ta);
-    taskMap.set(Tb.id, Tb);
 
-    const newAssigns: Assignment[] = [];
-    const taHolders = new Set<string>();
-    let ok = true;
+    // ── Non-same-group: split each unfilled slot independently. Filled slots
+    // (and unfilled slots whose split fails) stay whole on the residual Tr. ──
+    const committedHalves: Task[] = [];
+    const splitSlotIds = new Set<string>();
+    for (const slot of T.slots) {
+      if (!unfilledIds.has(slot.slotId)) continue; // filled / not flagged ⇒ stays whole
+      const Sa = makeSplitHalf(T, 1, startMs, midMs, slot);
+      const Sb = makeSplitHalf(T, 2, midMs, endMs, slot);
+      taskMap.set(Sa.id, Sa);
+      taskMap.set(Sb.id, Sb);
 
-    for (const half of [Ta, Tb] as const) {
-      const exclude = half === Tb ? taHolders : null; // two-different-people
-      for (const slot of half.slots) {
-        const cands = getEligibleCandidates(
-          half,
-          slot,
-          participants,
-          assignmentsByParticipant,
-          taskMap,
-          workload,
-          dailyWorkload,
-          disabledHC,
-          sameGroupEligibleCount,
-          restRuleMap,
-          dayStartHour,
-          scheduleContext,
-          capacities,
-        );
-        const chosen = exclude ? cands.find((c) => !exclude.has(c.id)) : cands[0];
+      const slotAssigns: Assignment[] = [];
+      const aHolders = new Set<string>();
+      let ok = true;
+      for (const half of [Sa, Sb] as const) {
+        const hSlot = half.slots[0];
+        const cands = eligIds(half, hSlot, participants);
+        // Two-different-people per split slot (HC-16). Belt-and-suspenders:
+        // the per-placement HC-16 gate already filters the #a holder out of
+        // #b's candidates whenever HC-16 is active.
+        const chosen = half === Sb ? cands.find((c) => !aHolders.has(c.id)) : cands[0];
         if (!chosen) {
           ok = false;
           break;
@@ -1276,7 +1468,7 @@ export function applyFeasibilitySplits(ctx: FeasibilitySplitCtx): Task[] {
         const na: Assignment = {
           id: nextAssignmentId(),
           taskId: half.id,
-          slotId: slot.slotId,
+          slotId: hSlot.slotId,
           participantId: chosen.id,
           status: AssignmentStatus.Scheduled,
           updatedAt: new Date(),
@@ -1284,37 +1476,43 @@ export function applyFeasibilitySplits(ctx: FeasibilitySplitCtx): Task[] {
         assignments.push(na);
         addToAssignmentMap(assignmentsByParticipant, na);
         addLoad(chosen.id, half);
-        newAssigns.push(na);
-        if (half === Ta) taHolders.add(chosen.id);
+        slotAssigns.push(na);
+        if (half === Sa) aHolders.add(chosen.id);
       }
-      if (!ok) break;
+
+      if (ok) {
+        committedHalves.push(Sa, Sb);
+        splitSlotIds.add(slot.slotId);
+        clearUnfilled(T.id, slot.slotId);
+      } else {
+        // Revert just this slot; leave it whole on Tr with its unfilled entry
+        // intact ⇒ exactly today's per-slot fallback.
+        for (const na of slotAssigns) {
+          removeAssignment(na);
+          subLoad(na.participantId, taskMap.get(na.taskId)!);
+        }
+        taskMap.delete(Sa.id);
+        taskMap.delete(Sb.id);
+      }
     }
 
-    if (ok) {
-      // Commit: replace T with [Ta, Tb] in the task list, drop T's unfilled
-      // entries, discard T's old (detached) assignments.
-      working = working ?? [...tasks];
-      const wi = working.findIndex((t) => t.id === T.id);
-      if (wi !== -1) working.splice(wi, 1, Ta, Tb);
-      for (let i = unfilledSlots.length - 1; i >= 0; i--) {
-        if (unfilledSlots[i].taskId === T.id) unfilledSlots.splice(i, 1);
-      }
+    if (committedHalves.length === 0) continue; // nothing split for this occurrence
+
+    const survivingSlots = T.slots.filter((s) => !splitSlotIds.has(s.slotId));
+    const replacements: Task[] = [];
+    if (survivingSlots.length > 0) {
+      // Residual keeps surviving slots + their (untouched) assignments since
+      // Tr.id === T.id. Never mutate T (S5 zero-contamination).
+      const Tr: Task = { ...T, slots: survivingSlots, requiredCount: survivingSlots.length };
+      taskMap.set(T.id, Tr);
+      replacements.push(Tr);
     } else {
-      // Revert: undo half assignments, restore T and its original assignments.
-      for (const na of newAssigns) {
-        removeAssignment(na);
-        subLoad(na.participantId, taskMap.get(na.taskId)!);
-      }
-      taskMap.delete(Ta.id);
-      taskMap.delete(Tb.id);
-      taskMap.set(T.id, T);
-      for (const a of tAssigns) {
-        assignments.push(a);
-        addToAssignmentMap(assignmentsByParticipant, a);
-        addLoad(a.participantId, T);
-      }
-      // T's unfilled entries are left intact ⇒ exactly today's behavior.
+      taskMap.delete(T.id);
     }
+    replacements.push(...committedHalves);
+    working = working ?? [...tasks];
+    const wi = working.findIndex((t) => t.id === T.id);
+    if (wi !== -1) working.splice(wi, 1, ...replacements);
   }
 
   return working ?? tasks;
@@ -1557,11 +1755,16 @@ export function isSwapFeasible(
     const checkSameGroupForTask = (taskId: string): boolean => {
       const task = taskMap.get(taskId);
       if (!task || !task.sameGroupRequired) return true;
-      const taskAssigns = byTask.get(taskId) || [];
+      // Link-aware: for a SPLIT same-group occurrence the assignees live across
+      // the residual + half fragments, so consider the whole `sameGroupLinkId`
+      // unit (not just this fragment) — otherwise SA would accept a cross-group
+      // swap the link-aware final validator then rejects (GROUP_MISMATCH).
       const groups = new Set<string>();
-      for (const a of taskAssigns) {
-        const p = pMap.get(a.participantId);
-        if (p) groups.add(p.group);
+      for (const tid of sameGroupUnitTaskIds(task, taskMap.values())) {
+        for (const a of byTask.get(tid) || []) {
+          const p = pMap.get(a.participantId);
+          if (p) groups.add(p.group);
+        }
       }
       return groups.size <= 1;
     };
@@ -1960,12 +2163,16 @@ export function localSearchOptimize(
             const taskAssigns = byTask.get(uf.taskId) || [];
             if (taskAssigns.some((a) => a.participantId === p.id)) continue;
 
-            // HC-4: Same-group constraint for insert moves
+            // HC-4: Same-group constraint for insert moves. Link-aware so a
+            // SPLIT same-group occurrence is judged across its whole
+            // residual+halves unit (consistent with the final validator).
             if (!disabledHC?.has('HC-4') && ufTask.sameGroupRequired) {
               const existingGroups = new Set<string>();
-              for (const a of taskAssigns) {
-                const ep = pMap.get(a.participantId);
-                if (ep) existingGroups.add(ep.group);
+              for (const tid of sameGroupUnitTaskIds(ufTask, taskMap.values())) {
+                for (const a of byTask.get(tid) || []) {
+                  const ep = pMap.get(a.participantId);
+                  if (ep) existingGroups.add(ep.group);
+                }
               }
               if (existingGroups.size > 0 && !existingGroups.has(p.group)) continue;
             }

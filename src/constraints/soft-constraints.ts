@@ -613,11 +613,15 @@ export interface ScoreContext {
  * them from scratch — eliminates ~5 redundant O(P×A) scans per call.
  */
 /**
- * Number of shift-split occurrences in a task set = count of first-half
- * (`splitPart === 1`) tasks. Each split occurrence produces exactly one `#a`
- * half, so this equals the number of distinct `splitGroupId`s. Zero (and
- * therefore zero penalty) for any task set with no splits — which keeps the
+ * Number of SPLIT SLOTS in a task set = count of first-half
+ * (`splitPart === 1`) tasks. Splitting is slot-level: each split SLOT yields
+ * exactly one `#a` half, so this equals the number of distinct (per-slot)
+ * `splitGroupId`s — an occurrence with two split slots counts as two. The
+ * split penalty scales per split slot (more fragmentation ⇒ stronger
+ * parsimony pressure), which is the intended slot-level semantic. Zero (and
+ * therefore zero penalty) for any task set with no splits — keeping the
  * composite byte-identical to pre-feature behavior when splitting is off.
+ * (Name kept for stability; it predates the slot-level model.)
  */
 export function countSplitOccurrences(tasks: Task[]): number {
   let n = 0;

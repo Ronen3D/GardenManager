@@ -11,6 +11,7 @@
  * pagination and UI-oriented scoring.
  */
 
+import { sameGroupUnitTaskIds } from '../constraints/hard-constraints';
 import { computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
 import type {
   Assignment,
@@ -223,7 +224,18 @@ function taskAssignmentsFor(
   excludeIds: Set<string>,
   extraAssignments?: Array<{ slotId: string; participantId: string }>,
 ): Assignment[] {
-  const base = (ctx.assignmentsByTask.get(taskId) || []).filter((a) => !excludeIds.has(a.id));
+  // Link-aware: a SPLIT same-group occurrence's assignees span its
+  // residual+halves fragments, so the HC-4 precheck during chain enumeration
+  // must consider the whole `sameGroupLinkId` unit (consistent with the
+  // link-aware final validator). `[taskId]` fast path for any normal task.
+  const qt = ctx.taskMap.get(taskId);
+  const unitIds = qt ? sameGroupUnitTaskIds(qt, ctx.taskMap.values()) : [taskId];
+  const base: Assignment[] = [];
+  for (const tid of unitIds) {
+    for (const a of ctx.assignmentsByTask.get(tid) || []) {
+      if (!excludeIds.has(a.id)) base.push(a);
+    }
+  }
   if (extraAssignments) {
     for (const ea of extraAssignments) {
       // Unique per-virtual ID — same-task depth-3 chains can inject two

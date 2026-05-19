@@ -219,17 +219,41 @@ export interface Task {
    */
   injectedPostGeneration?: boolean;
   /**
-   * Shift-splitting (Shape A). When a splittable occurrence is realized as
-   * two halves, both halves carry the SAME `splitGroupId` (= the original
-   * occurrence's task id) and distinct `splitPart` (1 = first half, 2 =
-   * second). Absent ⇒ a normal whole task (today's exact path). Serializable;
-   * split state lives entirely here, so frozen snapshots need no migration.
+   * Shift-splitting (slot-level). When an individual SLOT of a splittable
+   * occurrence is realized as two halves, both halves carry the SAME
+   * `splitGroupId` — which identifies the split SLOT pair as
+   * `` `${originalTaskId}::${slotId}` `` (NOT the whole occurrence) — and
+   * distinct `splitPart` (1 = first half, 2 = second). One occurrence may have
+   * some slots whole and others split; two split slots of the same occurrence
+   * get distinct `splitGroupId`s. HC-16 keys on `splitGroupId`, so the
+   * two-different-people rule applies per split slot. Absent ⇒ a normal whole
+   * task (today's exact path). Serializable; split state lives entirely here,
+   * so frozen snapshots need no migration.
    */
   splitGroupId?: string;
   /** 1 = first half [start,mid], 2 = second half [mid,end]. Set iff `splitGroupId`. */
   splitPart?: 1 | 2;
   /** Original (pre-split) occurrence duration in ms. K for the run-coalescer. */
   splitOriginalMs?: number;
+  /**
+   * Original (pre-split) occurrence `Task.id`, set on every split half. Unlike
+   * `splitGroupId` (per split SLOT), this is shared by ALL halves originating
+   * from the same occurrence. Used by HC-15 to exempt same-occurrence work
+   * from each other's recovery windows (a person legitimately holding two
+   * halves of different slots of one occurrence is doing one continuous shift).
+   * Absent ⇒ not a split half.
+   */
+  splitOccurrenceId?: string;
+  /**
+   * Set only when a `sameGroupRequired` occurrence is split: the residual
+   * whole-slot task and every per-split-slot half originating from that
+   * occurrence carry the same `sameGroupLinkId` (= the original occurrence
+   * `Task.id`). HC-8 treats all tasks sharing a `sameGroupLinkId` as ONE
+   * same-group unit (union bipartite matching, processed once) so the whole
+   * occurrence — whole slots and both halves of every split slot — must come
+   * from a single group. Absent ⇒ ordinary per-task HC-8.
+   */
+  sameGroupLinkId?: string;
   /**
    * EFFECTIVE splittability for this run: set at generation to
    * `template.splittable && AlgorithmSettings.splittingEnabled`. The optimizer
@@ -582,7 +606,7 @@ export const DEFAULT_ALGORITHM_SETTINGS: AlgorithmSettings = {
   config: { ...DEFAULT_CONFIG },
   disabledHardConstraints: [],
   dayStartHour: 5,
-  splittingEnabled: false,
+  splittingEnabled: true,
 };
 
 // ─── Algorithm Presets ───────────────────────────────────────────────────────
@@ -609,6 +633,7 @@ export const DEFAULT_PRESET: AlgorithmPreset = {
     config: { ...DEFAULT_CONFIG },
     disabledHardConstraints: [],
     dayStartHour: 5,
+    splittingEnabled: true,
   },
   builtIn: true,
   createdAt: 0,

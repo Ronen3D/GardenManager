@@ -9,7 +9,12 @@
  * Run: npx ts-node src/test-shift-split.ts
  */
 
-import { checkNoConsecutiveHighLoad, checkRestRules, checkSplitSiblingDisjoint } from './constraints/hard-constraints';
+import {
+  checkNoConsecutiveHighLoad,
+  checkRestRules,
+  checkSplitSiblingDisjoint,
+  validateHardConstraints,
+} from './constraints/hard-constraints';
 import { checkSleepRecovery, checkSleepRecoveryForPlacement, getRecoveryWindow } from './constraints/sleep-recovery';
 import { countSplitOccurrences } from './constraints/soft-constraints';
 import {
@@ -19,7 +24,7 @@ import {
   makeSplitHalf,
   type UnfilledSlot,
 } from './engine/optimizer';
-import { isEligible } from './engine/validator';
+import { getCandidatesWithEligibility, isEligible } from './engine/validator';
 import { type Assignment, AssignmentStatus, Level, type Participant, type Task, type TimeBlock } from './models/types';
 import { coalesceTaskRuns, hasAnySplit } from './shared/utils/run-coalesce';
 
@@ -178,16 +183,25 @@ function ctxFor(T: Task, participants: Participant[], unfilled: boolean): Feasib
 }
 
 function runFeasibilitySplit(assert: AssertFn): void {
-  // makeSplitHalf shape.
+  // makeSplitHalf shape (slot-level: one slot per half, slot-qualified ids).
   const T0 = splitTask('T0', 0, 4, true);
-  const ha = makeSplitHalf(T0, 1, BASE, BASE + 2 * H);
-  const hb = makeSplitHalf(T0, 2, BASE + 2 * H, BASE + 4 * H);
-  assert(ha.id === 'T0#a' && hb.id === 'T0#b', 'half ids #a/#b');
-  assert(ha.splitGroupId === 'T0' && hb.splitGroupId === 'T0', 'halves share splitGroupId = occurrence id');
+  const s0 = T0.slots[0];
+  const ha = makeSplitHalf(T0, 1, BASE, BASE + 2 * H, s0);
+  const hb = makeSplitHalf(T0, 2, BASE + 2 * H, BASE + 4 * H, s0);
+  assert(ha.id === 'T0::T0-s#a' && hb.id === 'T0::T0-s#b', 'half ids slot-qualified #a/#b');
+  assert(
+    ha.splitGroupId === 'T0::T0-s' && hb.splitGroupId === 'T0::T0-s',
+    'halves share splitGroupId = split-SLOT pair (taskId::slotId)',
+  );
+  assert(
+    ha.splitOccurrenceId === 'T0' && hb.splitOccurrenceId === 'T0',
+    'halves share splitOccurrenceId = original occurrence id',
+  );
   assert(ha.splitPart === 1 && hb.splitPart === 2, 'splitPart 1/2');
   assert(ha.splitOriginalMs === 4 * H, 'splitOriginalMs = original occurrence span');
   assert(dur(ha) === 2 * H && dur(hb) === 2 * H, 'each half is 2h');
-  assert(ha.slots[0].slotId !== T0.slots[0].slotId, 'half slot id suffixed (unique within half)');
+  assert(ha.slots.length === 1 && hb.slots.length === 1, 'each half carries exactly its one slot');
+  assert(ha.slots[0].slotId !== s0.slotId, 'half slot id suffixed (unique within half)');
   assert(ha.sourceName === 'guard' && ha.blocksConsecutive === true, 'half inherits source/blocks');
 
   // A. Feasibility split: nobody covers full 4h, but P1 covers ½, P2 covers ½.
@@ -195,7 +209,10 @@ function runFeasibilitySplit(assert: AssertFn): void {
   const ctxA = ctxFor(TA, [part('P1', -1, 2), part('P2', 2, 5)], true);
   const outA = applyFeasibilitySplits(ctxA);
   assert(outA !== ctxA.tasks, 'A: task list replaced (split committed)');
-  assert(outA.length === 2 && outA.every((t) => t.splitGroupId === 'TA'), 'A: TA → two halves');
+  assert(
+    outA.length === 2 && outA.every((t) => t.splitGroupId === 'TA::TA-s'),
+    'A: single-slot TA → residual dropped, two per-slot halves',
+  );
   assert(ctxA.assignments.length === 2, 'A: both half-slots filled');
   const aPids = new Set(ctxA.assignments.map((x) => x.participantId));
   assert(aPids.size === 2, 'A: two DIFFERENT participants (P1, P2)');
@@ -219,7 +236,7 @@ function runFeasibilitySplit(assert: AssertFn): void {
   const ctxD = ctxFor(TD, [part('P1', -1, 2)], true); // P1 covers only first half
   const outD = applyFeasibilitySplits(ctxD);
   assert(outD === ctxD.tasks, 'D: infeasible split → same task array reference (reverted)');
-  assert(ctxD.taskMap.get('TD') === TD && !ctxD.taskMap.has('TD#a'), 'D: original task restored in taskMap');
+  assert(ctxD.taskMap.get('TD') === TD && !ctxD.taskMap.has('TD::TD-s#a'), 'D: original task restored in taskMap');
   assert(ctxD.assignments.length === 0, 'D: no leftover half assignments after revert');
   assert(ctxD.unfilledSlots.length === 1, "D: original unfilled entry preserved (today's behavior)");
 
@@ -453,8 +470,8 @@ function runHc15Splits(assert: AssertFn): void {
     shiftIndex: 1,
     splittable: true,
   };
-  const Ga = makeSplitHalf(parent, 1, BASE, BASE + 2 * H); // 0h–2h
-  const Gb = makeSplitHalf(parent, 2, BASE + 2 * H, BASE + 4 * H); // 2h–4h
+  const Ga = makeSplitHalf(parent, 1, BASE, BASE + 2 * H, parent.slots[0]); // 0h–2h
+  const Gb = makeSplitHalf(parent, 2, BASE + 2 * H, BASE + 4 * H, parent.slots[0]); // 2h–4h
 
   // The rule (and its triggerShifts array) is deep-copied, not shared.
   assert(
@@ -664,6 +681,588 @@ function runHc12CrossSource(assert: AssertFn): void {
   );
 }
 
+// ─── Slot-level splitting (multi-slot occurrences) ───────────────────────────
+
+/** Multi-slot task: nSlots L0 slots, ids `${id}-s{i}`. */
+function mkMulti(
+  id: string,
+  startH: number,
+  endH: number,
+  nSlots: number,
+  o: { splittable?: boolean; sameGroup?: boolean } = {},
+): Task {
+  return {
+    id,
+    name: id,
+    sourceName: 'guard',
+    timeBlock: tb(startH, endH),
+    requiredCount: nSlots,
+    slots: Array.from({ length: nSlots }, (_, i) => ({
+      slotId: `${id}-s${i}`,
+      acceptableLevels: [{ level: Level.L0 }],
+      requiredCertifications: [],
+    })),
+    sameGroupRequired: o.sameGroup ?? false,
+    blocksConsecutive: false,
+    splittable: o.splittable ?? true,
+  };
+}
+/** Participant with one availability window and an explicit group. */
+function partG(id: string, aS: number, aE: number, group: string): Participant {
+  return {
+    id,
+    name: id,
+    level: Level.L0,
+    certifications: [],
+    group,
+    availability: [{ start: new Date(BASE + aS * H), end: new Date(BASE + aE * H) }],
+    dateUnavailability: [],
+  };
+}
+function baseCtx(
+  tasks: Task[],
+  participants: Participant[],
+  unfilled: Array<[string, string]>,
+  preAssigned: Assignment[] = [],
+): FeasibilitySplitCtx {
+  const abp = new Map<string, Assignment[]>();
+  for (const a of preAssigned) {
+    const l = abp.get(a.participantId) ?? [];
+    l.push(a);
+    abp.set(a.participantId, l);
+  }
+  return {
+    tasks: [...tasks],
+    taskMap: new Map(tasks.map((t) => [t.id, t] as const)),
+    participants,
+    assignments: [...preAssigned],
+    assignmentsByParticipant: abp,
+    workload: new Map(),
+    dailyWorkload: new Map(),
+    unfilledSlots: unfilled.map(([taskId, slotId]) => ({ taskId, slotId, reason: 'test', hcCodes: [] })),
+    dayStartHour: 5,
+  };
+}
+
+/** (a)+(c)+(h): one slot stays whole (one person) while another slot of the
+ *  SAME occurrence splits between two different people. */
+function runSlotLevelMixed(assert: AssertFn): void {
+  const T = mkMulti('M', 0, 4, 2); // slots M-s0, M-s1
+  const P0 = part('P0', -1, 5); // can cover the WHOLE 4h slot
+  const P1 = part('P1', -1, 2); // first half only
+  const P2 = part('P2', 2, 5); // second half only
+  const pre = asg('M', 'P0');
+  pre.slotId = 'M-s0'; // s0 pre-filled whole; s1 left unfilled → must split
+  const ctx = baseCtx([T], [P0, P1, P2], [['M', 'M-s1']], [pre]);
+  const out = applyFeasibilitySplits(ctx);
+
+  const resid = out.find((t) => t.id === 'M');
+  assert(
+    !!resid && resid.slots.length === 1 && resid.slots[0].slotId === 'M-s0',
+    '(a) residual keeps the whole slot s0 (occurrence id unchanged)',
+  );
+  assert(
+    resid?.splitGroupId === undefined && resid?.splitOccurrenceId === undefined,
+    '(a) residual carries NO split metadata (it is a normal whole task)',
+  );
+  const ha = out.find((t) => t.id === 'M::M-s1#a');
+  const hb = out.find((t) => t.id === 'M::M-s1#b');
+  assert(
+    ha?.splitGroupId === 'M::M-s1' && hb?.splitGroupId === 'M::M-s1',
+    '(a) only slot s1 was split into a per-slot half pair',
+  );
+  assert(
+    ha?.splitOccurrenceId === 'M' && hb?.splitOccurrenceId === 'M',
+    '(a) halves keep splitOccurrenceId = M (ties them to the residual)',
+  );
+  assert(out.length === 3, '(a) occurrence → [residual, s1#a, s1#b]');
+
+  const mAsg = ctx.assignments.find((x) => x.taskId === 'M');
+  assert(
+    mAsg?.participantId === 'P0' && mAsg?.slotId === 'M-s0',
+    '(a) the whole-slot assignment is untouched (P0 still on M/M-s0)',
+  );
+  const pa = ctx.assignments.find((a) => a.taskId === 'M::M-s1#a')?.participantId;
+  const pb = ctx.assignments.find((a) => a.taskId === 'M::M-s1#b')?.participantId;
+  assert(
+    !!pa && !!pb && pa !== pb && pa !== 'P0' && pb !== 'P0',
+    '(c) split slot covered by two DIFFERENT people, neither is the whole-slot holder',
+  );
+
+  const om = new Map(out.map((t) => [t.id, t] as const));
+  for (const pid of ['P0', pa!, pb!]) {
+    assert(
+      checkSplitSiblingDisjoint(pid, ctx.assignments, om, pid).length === 0,
+      `(h) ${pid} holds no two split siblings`,
+    );
+  }
+  const v = validateHardConstraints(out, [P0, P1, P2], ctx.assignments, undefined, new Map());
+  const bad = v.violations.filter((x) => ['HC-5', 'HC-7', 'SPLIT_SIBLING_CONFLICT'].includes(x.code));
+  assert(bad.length === 0, '(c)/(h) full validate: no HC-5 (whole vs halves disjoint), HC-7, or HC-16');
+}
+
+/** (b)+(e): two slots of one occurrence split independently (distinct
+ *  per-slot splitGroupIds, no cross-slot people exclusion); all slots split
+ *  ⇒ residual dropped; countSplitOccurrences counts split SLOTS. */
+function runSlotLevelMultiSplit(assert: AssertFn): void {
+  const T = mkMulti('N', 0, 4, 2); // N-s0, N-s1, both unfilled
+  const A0 = part('A0', -1, 2);
+  const B0 = part('B0', 2, 5);
+  const A1 = part('A1', -1, 2);
+  const B1 = part('B1', 2, 5);
+  const ctx = baseCtx(
+    [T],
+    [A0, B0, A1, B1],
+    [
+      ['N', 'N-s0'],
+      ['N', 'N-s1'],
+    ],
+  );
+  const out = applyFeasibilitySplits(ctx);
+  assert(!out.some((t) => t.id === 'N'), '(e) every slot split ⇒ residual dropped (no whole task left)');
+  assert(
+    out.length === 4 && out.every((t) => t.splitOccurrenceId === 'N'),
+    '(b) occurrence → 4 half-tasks (two independent split slots)',
+  );
+  const gids = new Set(out.map((t) => t.splitGroupId));
+  assert(
+    gids.has('N::N-s0') && gids.has('N::N-s1') && gids.size === 2,
+    '(b) two DISTINCT per-slot splitGroupIds (slots split independently)',
+  );
+  assert(ctx.assignments.length === 4, '(b) all four half-slots filled');
+  assert(
+    countSplitOccurrences(out) === 2,
+    '(e) countSplitOccurrences = number of split SLOTS (2) — splitPenalty scales per split slot',
+  );
+  const om = new Map(out.map((t) => [t.id, t] as const));
+  for (const p of [A0, B0, A1, B1]) {
+    assert(
+      checkSplitSiblingDisjoint(p.id, ctx.assignments, om, p.id).length === 0,
+      `(b) ${p.id} holds no two halves of the SAME split slot`,
+    );
+  }
+}
+
+/** (d): one person legitimately holds s0#a + s1#b of the SAME occurrence — a
+ *  continuous run HC-16 allows (different split slots). HC-15 must NOT
+ *  recovery-flag it (splitOccurrenceId exemption) and aggregate HC-12 must be
+ *  clean (run-coalescer + the step-7 delegation). */
+function runHc15CrossSlotSameOccurrence(assert: AssertFn): void {
+  const parent: Task = {
+    id: 'OCC',
+    name: 'OCC',
+    sourceName: 'guard',
+    timeBlock: tb(0, 4),
+    requiredCount: 2,
+    slots: [
+      { slotId: 'OCC-s0', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      { slotId: 'OCC-s1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: true, // would fire HC-12 if not coalesced
+    baseLoadWeight: 1,
+    sleepRecovery: { triggerShifts: [1], recoveryHours: 6 },
+    shiftIndex: 1,
+    splittable: true,
+  };
+  const s0a = makeSplitHalf(parent, 1, BASE, BASE + 2 * H, parent.slots[0]); // [0,2]
+  const s1b = makeSplitHalf(parent, 2, BASE + 2 * H, BASE + 4 * H, parent.slots[1]); // [2,4]
+  assert(
+    s0a.splitGroupId !== s1b.splitGroupId,
+    '(d) different split slots ⇒ different splitGroupId (HC-16 does not bind them)',
+  );
+  assert(
+    s0a.splitOccurrenceId === 'OCC' && s1b.splitOccurrenceId === 'OCC',
+    '(d) same occurrence ⇒ shared splitOccurrenceId',
+  );
+  const tm = new Map<string, Task>([
+    [s0a.id, s0a],
+    [s1b.id, s1b],
+  ]);
+  const ha = asg(s0a.id, 'P');
+  ha.slotId = s0a.slots[0].slotId;
+  const hb = asg(s1b.id, 'P');
+  hb.slotId = s1b.slots[0].slotId;
+  const held = [ha, hb];
+  assert(
+    checkSleepRecovery('P', held, tm, 'P').length === 0,
+    '(d) HC-15 clean: same-occurrence continuous run is exempt (splitOccurrenceId)',
+  );
+  assert(
+    checkNoConsecutiveHighLoad('P', held, tm).length === 0,
+    '(d) aggregate HC-12 clean: contiguous ≤K same-occurrence run coalesces to one block',
+  );
+  assert(
+    coalesceTaskRuns([s0a, s1b]).length === 1,
+    '(d) the two same-occurrence halves coalesce into one full-occurrence block',
+  );
+}
+
+/** (i): strict same-group split — residual whole slot + both halves of the
+ *  split slot must all come from ONE group; a mixed-group realization is
+ *  rejected (HC-4 link-union → GROUP_MISMATCH); the all-slots-split variant
+ *  (no residual anchor) is still validated exactly once. */
+function runSameGroupStrictSplit(assert: AssertFn): void {
+  const T = mkMulti('SG', 0, 4, 2, { sameGroup: true });
+  const M1 = partG('M1', -1, 5, 'g1'); // whole-capable
+  const M2 = partG('M2', -1, 2, 'g1'); // 1st half
+  const M3 = partG('M3', 2, 5, 'g1'); // 2nd half
+  const G2X = partG('G2X', 100, 101, 'g2'); // never available in [0,4]
+  const ctx = baseCtx(
+    [T],
+    [M1, M2, M3, G2X],
+    [
+      ['SG', 'SG-s0'],
+      ['SG', 'SG-s1'],
+    ],
+  );
+  const out = applyFeasibilitySplits(ctx);
+
+  const resid = out.find((t) => t.id === 'SG');
+  const splitHalves = out.filter((t) => t.splitOccurrenceId === 'SG');
+  assert(splitHalves.length === 2, '(i) exactly one slot was split (1 half pair)');
+  assert(
+    !!resid && resid.slots.length === 1 && resid.sameGroupLinkId === 'SG',
+    '(i) residual whole slot carries sameGroupLinkId = occurrence id',
+  );
+  assert(
+    splitHalves.every((t) => t.sameGroupLinkId === 'SG'),
+    '(i) both halves carry the same sameGroupLinkId',
+  );
+  const grpOf = (pid: string) => [M1, M2, M3, G2X].find((p) => p.id === pid)!.group;
+  const groups = new Set(ctx.assignments.map((a) => grpOf(a.participantId)));
+  assert(
+    ctx.assignments.length === 3 && groups.size === 1 && groups.has('g1'),
+    '(i) all three coverers (whole + both halves) are from the SAME group g1',
+  );
+  const vOk = validateHardConstraints(out, [M1, M2, M3, G2X], ctx.assignments, undefined, new Map());
+  assert(
+    vOk.violations.filter((x) => x.code === 'GROUP_INSUFFICIENT' || x.code === 'GROUP_MISMATCH').length === 0,
+    '(i) HC-8/HC-4 link-union accept the strict one-group split',
+  );
+
+  // Mixed-group realization is rejected by the HC-4 link-union.
+  const Z = partG('Z', -1, 5, 'gZ');
+  const cross = ctx.assignments.map((a) => ({ ...a }));
+  const crossA = cross.find((a) => a.taskId.endsWith('#a'))!;
+  crossA.participantId = 'Z';
+  const vBad = validateHardConstraints(out, [M1, M2, M3, G2X, Z], cross, undefined, new Map());
+  assert(
+    vBad.violations.some((x) => x.code === 'GROUP_MISMATCH'),
+    '(i) HC-4 link-union REJECTS a mixed-group realization of a split occurrence',
+  );
+
+  // All-slots-split variant: no member covers the slot whole ⇒ residual
+  // dropped; HC-8/HC-4 still validate the link exactly once (no anchor).
+  const T2 = mkMulti('SG2', 0, 4, 1, { sameGroup: true });
+  const N2 = partG('N2', -1, 2, 'h1');
+  const N3 = partG('N3', 2, 5, 'h1');
+  const c2 = baseCtx([T2], [N2, N3], [['SG2', 'SG2-s0']]);
+  const o2 = applyFeasibilitySplits(c2);
+  assert(
+    !o2.some((t) => t.id === 'SG2') && o2.length === 2,
+    '(i) all-slots-split ⇒ residual dropped, only the half pair remains',
+  );
+  assert(
+    o2.every((t) => t.sameGroupLinkId === 'SG2'),
+    '(i) halves still carry sameGroupLinkId with no residual anchor',
+  );
+  const v2 = validateHardConstraints(o2, [N2, N3], c2.assignments, undefined, new Map());
+  assert(
+    v2.violations.filter((x) => x.code === 'GROUP_INSUFFICIENT' || x.code === 'GROUP_MISMATCH').length === 0,
+    '(i) HC-8/HC-4 link processed once even when the residual is absent',
+  );
+}
+
+// ─── Review regressions: optimizer/precheck ≡ final validator ───────────────
+
+const l0Slot = (sid: string) => ({
+  slotId: sid,
+  acceptableLevels: [{ level: Level.L0 }],
+  requiredCertifications: [] as string[],
+});
+/** A split sameGroupRequired occurrence O: residual `Tr` (whole slot O-s0) +
+ *  half pair for slot O-s1, all sharing `sameGroupLinkId='O'`. */
+function splitSameGroupOccurrence(): { Tr: Task; Sa: Task; Sb: Task } {
+  const common = {
+    name: 'O',
+    sourceName: 'O',
+    sameGroupRequired: true,
+    blocksConsecutive: false,
+  };
+  const Tr: Task = {
+    ...common,
+    id: 'O',
+    timeBlock: tb(0, 4),
+    requiredCount: 1,
+    slots: [l0Slot('O-s0')],
+    sameGroupLinkId: 'O',
+  };
+  const Sa: Task = {
+    ...common,
+    id: 'O::O-s1#a',
+    name: 'O (1/2)',
+    timeBlock: tb(0, 2),
+    requiredCount: 1,
+    slots: [l0Slot('O-s1#a')],
+    splitGroupId: 'O::O-s1',
+    splitPart: 1,
+    splitOriginalMs: 4 * H,
+    splitOccurrenceId: 'O',
+    sameGroupLinkId: 'O',
+  };
+  const Sb: Task = {
+    ...Sa,
+    id: 'O::O-s1#b',
+    name: 'O (2/2)',
+    timeBlock: tb(2, 4),
+    slots: [l0Slot('O-s1#b')],
+    splitPart: 2,
+  };
+  return { Tr, Sa, Sb };
+}
+function asgS(taskId: string, slotId: string, pid: string): Assignment {
+  return {
+    id: `as-${taskId}-${pid}`,
+    taskId,
+    slotId,
+    participantId: pid,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(BASE),
+  };
+}
+
+/** (k) Bug A — SA `isSwapFeasible` HC-4 must be LINK-aware: a swap that puts a
+ *  wrong-group participant onto any fragment of a split sameGroupRequired
+ *  occurrence must be rejected (else SA emits a schedule the link-aware final
+ *  validator flags GROUP_MISMATCH — optimizer ≢ final). */
+function runSameGroupSplitSwapGate(assert: AssertFn): void {
+  const { Tr, Sa, Sb } = splitSameGroupOccurrence();
+  const U: Task = {
+    id: 'U',
+    name: 'U',
+    sourceName: 'U',
+    timeBlock: tb(10, 12),
+    requiredCount: 1,
+    slots: [l0Slot('U-s')],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const taskMap = new Map<string, Task>([Tr, Sa, Sb, U].map((t) => [t.id, t] as const));
+  const A = partG('A', -1, 14, 'g1');
+  const B = partG('B', -1, 14, 'g1');
+  const C = partG('C', -1, 14, 'g1');
+  const Z = partG('Z', -1, 14, 'g2');
+  const pMap = new Map<string, Participant>([A, B, C, Z].map((p) => [p.id, p] as const));
+
+  // Post-swap world: B (was on Sa) ↔ Z (was on U) ⇒ Z(g2) now on the split
+  // same-group fragment Sa; the link unit O spans groups {g1, g2}.
+  const aA = asgS('O', 'O-s0', 'A');
+  const aSa = asgS('O::O-s1#a', 'O-s1#a', 'Z'); // post-swap owner
+  const aC = asgS('O::O-s1#b', 'O-s1#b', 'C');
+  const aU = asgS('U', 'U-s', 'B'); // post-swap owner
+  const candidate = [aA, aSa, aC, aU];
+  const byParticipant = new Map<string, Assignment[]>([
+    ['A', [aA]],
+    ['Z', [aSa]],
+    ['C', [aC]],
+    ['B', [aU]],
+  ]);
+  const byTask = new Map<string, Assignment[]>([
+    ['O', [aA]],
+    ['O::O-s1#a', [aSa]],
+    ['O::O-s1#b', [aC]],
+    ['U', [aU]],
+  ]);
+  // idxI = Sa (now Z), idxJ = U (now B).
+  assert(
+    !isSwapFeasible(candidate, 1, 3, taskMap, pMap, byParticipant, byTask),
+    '(k) SA isSwapFeasible REJECTS a cross-group swap onto a split same-group fragment (link-aware HC-4)',
+  );
+  // Final validator agrees → optimizer ≡ final (the property the fix restores).
+  const v = validateHardConstraints([Tr, Sa, Sb, U], [A, B, C, Z], candidate, undefined, new Map());
+  assert(
+    v.violations.some((x) => x.code === 'GROUP_MISMATCH'),
+    '(k) final validateHardConstraints also flags GROUP_MISMATCH on that state (consistency)',
+  );
+
+  // Control: a GROUP-PRESERVING swap — replace the residual O-s0 holder A(g1)
+  // with another g1 member D (D was on an unrelated task V). The link O stays
+  // all-g1, so the link-aware HC-4 must NOT over-reject it.
+  const V: Task = {
+    id: 'V',
+    name: 'V',
+    sourceName: 'V',
+    timeBlock: tb(6, 8),
+    requiredCount: 1,
+    slots: [l0Slot('V-s')],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const taskMap2 = new Map<string, Task>([Tr, Sa, Sb, V].map((t) => [t.id, t] as const));
+  const D = partG('D', -1, 14, 'g1');
+  const pMap2 = new Map<string, Participant>([A, B, C, D].map((p) => [p.id, p] as const));
+  const cO = asgS('O', 'O-s0', 'D'); // post-swap: D(g1) now on residual O-s0
+  const cSa = asgS('O::O-s1#a', 'O-s1#a', 'B');
+  const cSb = asgS('O::O-s1#b', 'O-s1#b', 'C');
+  const cV = asgS('V', 'V-s', 'A'); // post-swap: A now on V
+  const cand2 = [cO, cSa, cSb, cV];
+  const bp2 = new Map<string, Assignment[]>([
+    ['D', [cO]],
+    ['B', [cSa]],
+    ['C', [cSb]],
+    ['A', [cV]],
+  ]);
+  const bt2 = new Map<string, Assignment[]>([
+    ['O', [cO]],
+    ['O::O-s1#a', [cSa]],
+    ['O::O-s1#b', [cSb]],
+    ['V', [cV]],
+  ]);
+  // Swap O-s0 (now D) ↔ V (now A): the link unit O = {D,B,C} all g1.
+  assert(
+    isSwapFeasible(cand2, 0, 3, taskMap2, pMap2, bp2, bt2),
+    '(k) control: a group-preserving swap on a split same-group link is still ACCEPTED (no over-rejection)',
+  );
+}
+
+/** (l) Bug B — `checkSleepRecoveryForPlacement` Direction 2 must apply the
+ *  same `splitOccurrenceId` exemption as Direction 1 / the aggregate, so a
+ *  legitimate same-occurrence continuous run is HC-15-clean regardless of
+ *  placement order (per-placement ≡ aggregate). */
+function runHc15Dir2SameOccurrence(assert: AssertFn): void {
+  const parent: Task = {
+    id: 'OCC',
+    name: 'OCC',
+    sourceName: 'guard',
+    timeBlock: tb(0, 4),
+    requiredCount: 2,
+    slots: [l0Slot('OCC-s0'), l0Slot('OCC-s1')],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    baseLoadWeight: 1,
+    sleepRecovery: { triggerShifts: [1], recoveryHours: 6 },
+    shiftIndex: 1,
+    splittable: true,
+  };
+  const s0a = makeSplitHalf(parent, 1, BASE, BASE + 2 * H, parent.slots[0]); // [0,2]
+  const s1b = makeSplitHalf(parent, 2, BASE + 2 * H, BASE + 4 * H, parent.slots[1]); // [2,4]
+  const tm = new Map<string, Task>([
+    [s0a.id, s0a],
+    [s1b.id, s1b],
+  ]);
+  const hold1b = [asgS(s1b.id, s1b.slots[0].slotId, 'P')];
+  const hold0a = [asgS(s0a.id, s0a.slots[0].slotId, 'P')];
+  // Direction 2 (candidate triggers ownWindow, existing is the loaded task):
+  // placing s0a while already holding the later s1b of the SAME occurrence.
+  assert(
+    checkSleepRecoveryForPlacement(s0a, hold1b, tm) === false,
+    '(l) HC-15 Direction-2 exempt: place s0#a while holding same-occurrence s1#b → NOT flagged',
+  );
+  // Direction 1 (existing triggers, candidate is the loaded task): the
+  // mirror order — already clean before, must remain clean.
+  assert(
+    checkSleepRecoveryForPlacement(s1b, hold0a, tm) === false,
+    '(l) HC-15 Direction-1 exempt: place s1#b while holding same-occurrence s0#a → NOT flagged',
+  );
+  // Per-placement now ≡ aggregate (which was already clean).
+  assert(
+    checkSleepRecovery('P', [asgS(s0a.id, s0a.slots[0].slotId, 'P'), asgS(s1b.id, s1b.slots[0].slotId, 'P')], tm, 'P')
+      .length === 0,
+    '(l) aggregate HC-15 clean for the same-occurrence run (per-placement ≡ aggregate)',
+  );
+  // s0a/s1b are L0, P always-available, non-blocking, no cert/rest rule, and
+  // HC-5/7/16 don't bind a same-occurrence cross-slot pair ⇒ HC-15 is the
+  // ONLY possible blocker, so `isEligible === true` proves it's exempt.
+  const P = partG('P', -1, 14, 'g1');
+  assert(
+    isEligible(P, s0a, s0a.slots[0], hold1b, tm) === true && isEligible(P, s1b, s1b.slots[0], hold0a, tm) === true,
+    '(l) isEligible HC-15 clean in BOTH placement orders for the same-occurrence run',
+  );
+  // Negative control: an UNRELATED loaded task inside s0#a's recovery window
+  // (different occurrence, no splitOccurrenceId) must STILL be rejected by
+  // Direction 2 — the exemption must not over-broaden.
+  const interfere: Task = {
+    id: 'X',
+    name: 'X',
+    sourceName: 'patrol',
+    timeBlock: tb(3, 4),
+    requiredCount: 1,
+    slots: [l0Slot('X-s')],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    baseLoadWeight: 1,
+  };
+  const tm2 = new Map<string, Task>([
+    [s0a.id, s0a],
+    [interfere.id, interfere],
+  ]);
+  assert(
+    checkSleepRecoveryForPlacement(s0a, [asgS(interfere.id, 'X-s', 'P')], tm2) === true,
+    '(l) negative control: Direction-2 still flags an unrelated loaded task in the recovery window',
+  );
+}
+
+/** (m) Bug A (per-placement side) — `getCandidatesWithEligibility` must be
+ *  LINK-aware for a split sameGroupRequired occurrence: a wrong-group
+ *  candidate for an unfilled fragment slot is greyed with HC-4 (so the swap
+ *  picker / rescue enumeration agree with the final validator). */
+function runPerPlacementHc4Link(assert: AssertFn): void {
+  const { Tr, Sa, Sb } = splitSameGroupOccurrence();
+  const A = partG('A', -1, 14, 'g1');
+  const B = partG('B', -1, 14, 'g1');
+  const G1c = partG('G1c', -1, 14, 'g1');
+  const G2 = partG('G2', -1, 14, 'g2');
+  // Tr/O-s0 and Sa/O-s1#a filled by g1; Sb/O-s1#b UNFILLED.
+  const current = [asgS('O', 'O-s0', 'A'), asgS('O::O-s1#a', 'O-s1#a', 'B')];
+  const rows = getCandidatesWithEligibility(Sb, 'O-s1#b', [A, B, G1c, G2], current, [Tr, Sa, Sb]);
+  const g2row = rows.find((r) => r.participant.id === 'G2');
+  const g1row = rows.find((r) => r.participant.id === 'G1c');
+  assert(
+    g2row?.eligible === false && g2row?.rejectionCode === 'HC-4',
+    '(m) wrong-group candidate for a split same-group fragment is greyed HC-4 (link-aware precheck)',
+  );
+  assert(g1row?.eligible === true, '(m) a same-group candidate remains eligible (no over-rejection)');
+
+  // Zero-regression control: a NORMAL (non-same-group) task is unaffected by
+  // the link logic — any-group candidate stays eligible.
+  const plain: Task = {
+    id: 'PL',
+    name: 'PL',
+    sourceName: 'PL',
+    timeBlock: tb(0, 4),
+    requiredCount: 1,
+    slots: [l0Slot('PL-s')],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const prows = getCandidatesWithEligibility(plain, 'PL-s', [A, G2], [], [plain]);
+  assert(
+    prows.find((r) => r.participant.id === 'G2')?.eligible === true,
+    '(m) control: non-same-group task — link logic inert, any-group candidate eligible',
+  );
+}
+
+/** (j): the HC-12 aggregate fix is byte-identical for non-split schedules
+ *  (zero regression) — adjacent blocking whole tasks still flagged, a gap
+ *  still clears. */
+function runHc12AggFixIsolation(assert: AssertFn): void {
+  const w1 = gTask('AW1', 0, 4);
+  const w2 = gTask('AW2', 4, 8);
+  const p = part('P', -1, 14);
+  const vio = validateHardConstraints([w1, w2], [p], [asg(w1.id, 'P'), asg(w2.id, 'P')], undefined, new Map());
+  assert(
+    vio.violations.some((x) => x.code === 'CONSECUTIVE_HIGH_LOAD'),
+    '(j) non-split adjacent blocking tasks still flagged by aggregate HC-12 (zero regression)',
+  );
+  const w3 = gTask('AW3', 6, 10);
+  const vio2 = validateHardConstraints([w1, w3], [p], [asg(w1.id, 'P'), asg(w3.id, 'P')], undefined, new Map());
+  assert(
+    !vio2.violations.some((x) => x.code === 'CONSECUTIVE_HIGH_LOAD'),
+    '(j) non-adjacent tasks → no aggregate HC-12 (unchanged behavior)',
+  );
+}
+
 export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   console.log('\n── Shift-Split: run-coalesce primitive ──');
   runCoalesce(assert);
@@ -681,6 +1280,22 @@ export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   runMultiSplit(assert);
   console.log('── Shift-Split: cross-source HC-12 (no coalesce hole) ──');
   runHc12CrossSource(assert);
+  console.log('── Shift-Split: slot-level — whole + split coexist (a/c/h) ──');
+  runSlotLevelMixed(assert);
+  console.log('── Shift-Split: slot-level — independent multi-slot split (b/e) ──');
+  runSlotLevelMultiSplit(assert);
+  console.log('── Shift-Split: HC-15/HC-12 cross-slot same-occurrence run (d) ──');
+  runHc15CrossSlotSameOccurrence(assert);
+  console.log('── Shift-Split: strict same-group split (i) ──');
+  runSameGroupStrictSplit(assert);
+  console.log('── Shift-Split: HC-12 aggregate fix isolation (j) ──');
+  runHc12AggFixIsolation(assert);
+  console.log('── Shift-Split: SA same-group split swap gate — link-aware HC-4 (k) ──');
+  runSameGroupSplitSwapGate(assert);
+  console.log('── Shift-Split: HC-15 Direction-2 same-occurrence exemption (l) ──');
+  runHc15Dir2SameOccurrence(assert);
+  console.log('── Shift-Split: per-placement HC-4 link-aware (m) ──');
+  runPerPlacementHc4Link(assert);
 }
 
 if (require.main === module) {

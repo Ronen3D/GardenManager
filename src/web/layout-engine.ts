@@ -528,7 +528,7 @@ function renderAssignmentCard(
   // that self-evident on a phone without tapping for the tooltip.
   const splitBadge =
     task.splitGroupId !== undefined
-      ? `<span class="split-badge" title="משמרת מפוצלת — חצי משמרת (פוצלה כדי לאייש משבצת שאחרת הייתה ריקה)">½</span>`
+      ? `<span class="split-badge" title="משבצת מפוצלת — חצי משבצת (פוצלה כדי לאייש משבצת שאחרת הייתה ריקה)">½</span>`
       : '';
 
   let content = '';

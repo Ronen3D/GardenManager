@@ -431,7 +431,7 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
   // two different people.
   const splitNotice =
     task.splitGroupId !== undefined
-      ? `<div class="ttt-split-note">½ משמרת זו פוצלה לשתי משמרות לשני אנשים שונים כדי לאייש משבצת שאחרת הייתה נשארת ריקה.</div>`
+      ? `<div class="ttt-split-note">½ משבצת זו פוצלה לשני חצאים לשני אנשים שונים כדי לאייש משבצת שאחרת הייתה נשארת ריקה.</div>`
       : '';
 
   const sourceName = task.sourceName || task.name;
