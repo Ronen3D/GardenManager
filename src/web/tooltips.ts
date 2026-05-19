@@ -426,6 +426,14 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
     teammatesHtml += '</div>';
   }
 
+  // One-line explanation when this task is half of a split occurrence, so a
+  // user (esp. on mobile) understands why one shift appears as two rows with
+  // two different people.
+  const splitNotice =
+    task.splitGroupId !== undefined
+      ? `<div class="ttt-split-note">½ משמרת זו פוצלה לשתי משמרות לשני אנשים שונים כדי לאייש משבצת שאחרת הייתה נשארת ריקה.</div>`
+      : '';
+
   const sourceName = task.sourceName || task.name;
   const openPanelBtn = sourceName
     ? `<div class="ttt-actions">
@@ -442,6 +450,7 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
       <span dir="ltr">${startStr} – ${endStr}</span>
       <span class="ttt-dur">${hrs.toFixed(1)} שע'</span>
     </div>
+    ${splitNotice}
     <div class="ttt-divider"></div>
     <div class="ttt-section-label">צוות משמרת (${taskAssignments.length})</div>
     ${teammatesHtml}

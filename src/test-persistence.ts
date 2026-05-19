@@ -956,6 +956,138 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // I2b. Split-Occurrence Schedule Save/Load Round-Trip
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n── I2b: Split Schedule Save/Load ────────');
+  {
+    store.factoryReset();
+    localStorage.clear();
+
+    const tStart = new Date('2026-03-15T06:00:00Z');
+    const tMid = new Date('2026-03-15T10:00:00Z');
+    const tEnd = new Date('2026-03-15T14:00:00Z');
+    const origMs = tEnd.getTime() - tStart.getTime();
+    const updatedAt = new Date('2026-03-15T10:00:00Z');
+    const halfSlot = (sid: string) => ({
+      slotId: sid,
+      acceptableLevels: [{ level: Level.L0 }],
+      requiredCertifications: [],
+    });
+    const splitSched = makeSchedule({
+      tasks: [
+        {
+          id: 'g-d1#a',
+          name: 'Guard D1 (1/2)',
+          sourceName: 'Guard',
+          timeBlock: { start: tStart, end: tMid },
+          requiredCount: 1,
+          slots: [halfSlot('g-slot-1#a')],
+          sameGroupRequired: false,
+          blocksConsecutive: true,
+          splitGroupId: 'g-d1',
+          splitPart: 1,
+          splitOriginalMs: origMs,
+        },
+        {
+          id: 'g-d1#b',
+          name: 'Guard D1 (2/2)',
+          sourceName: 'Guard',
+          timeBlock: { start: tMid, end: tEnd },
+          requiredCount: 1,
+          slots: [halfSlot('g-slot-1#b')],
+          sameGroupRequired: false,
+          blocksConsecutive: true,
+          splitGroupId: 'g-d1',
+          splitPart: 2,
+          splitOriginalMs: origMs,
+        },
+      ],
+      participants: [
+        {
+          id: 'p-1',
+          name: 'Alice',
+          level: Level.L0,
+          certifications: [],
+          group: 'A',
+          availability: [{ start: tStart, end: tEnd }],
+          dateUnavailability: [],
+        },
+        {
+          id: 'p-2',
+          name: 'Bob',
+          level: Level.L0,
+          certifications: [],
+          group: 'A',
+          availability: [{ start: tStart, end: tEnd }],
+          dateUnavailability: [],
+        },
+      ],
+      assignments: [
+        {
+          id: 'as-a',
+          taskId: 'g-d1#a',
+          slotId: 'g-slot-1#a',
+          participantId: 'p-1',
+          status: AssignmentStatus.Scheduled,
+          updatedAt,
+        },
+        {
+          id: 'as-b',
+          taskId: 'g-d1#b',
+          slotId: 'g-slot-1#b',
+          participantId: 'p-2',
+          status: AssignmentStatus.Scheduled,
+          updatedAt,
+        },
+      ],
+    });
+
+    assert(store.saveSchedule(splitSched) === true, 'I2b.1: split schedule saves');
+    const ls = store.loadSchedule();
+    assert(ls !== null, 'I2b.1: split schedule loads non-null');
+
+    const ta = ls?.tasks.find((t) => t.id === 'g-d1#a');
+    const tbHalf = ls?.tasks.find((t) => t.id === 'g-d1#b');
+    assert(!!ta && !!tbHalf, 'I2b.2: both half-task ids (#a/#b) survive the round-trip');
+    assert(
+      ta?.splitGroupId === 'g-d1' && tbHalf?.splitGroupId === 'g-d1',
+      'I2b.2: splitGroupId preserved on both halves',
+    );
+    assert(ta?.splitPart === 1 && tbHalf?.splitPart === 2, 'I2b.2: splitPart preserved (1 / 2)');
+    assert(
+      ta?.splitOriginalMs === origMs && tbHalf?.splitOriginalMs === origMs,
+      'I2b.2: splitOriginalMs preserved (= original occurrence span, the run-coalescer cap K)',
+    );
+    assert(
+      ta?.timeBlock.start instanceof Date && ta?.timeBlock.end instanceof Date,
+      'I2b.3: half timeBlock revived as Date objects',
+    );
+    assert(
+      ta?.timeBlock.end.getTime() === tbHalf?.timeBlock.start.getTime(),
+      'I2b.3: halves remain contiguous at the midpoint after reload',
+    );
+
+    // The locked product rule — two DIFFERENT participants — survives reload.
+    const pa = ls?.assignments.find((a) => a.taskId === 'g-d1#a')?.participantId;
+    const pb = ls?.assignments.find((a) => a.taskId === 'g-d1#b')?.participantId;
+    assert(
+      !!pa && !!pb && pa !== pb,
+      'I2b.4: reloaded split is still staffed by two different participants (HC-16 invariant intact)',
+    );
+
+    // Frozen-snapshot gate (app.ts hasFrozenFields) still passes → a reloaded
+    // split schedule is NOT discarded as pre-schema.
+    assert(
+      ls?.algorithmSettings?.config !== undefined &&
+        ls?.restRuleSnapshot !== undefined &&
+        ls?.certLabelSnapshot !== undefined &&
+        ls?.periodStart instanceof Date &&
+        typeof ls?.periodDays === 'number',
+      'I2b.5: frozen-snapshot fields intact → reloaded split schedule survives the load gate',
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // I3. Undo/Redo Stack Mechanics
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('\n── I3: Undo/Redo Mechanics ──────────────');

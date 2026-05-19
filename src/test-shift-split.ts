@@ -9,11 +9,9 @@
  * Run: npx ts-node src/test-shift-split.ts
  */
 
-import {
-  checkNoConsecutiveHighLoad,
-  checkRestRules,
-  checkSplitSiblingDisjoint,
-} from './constraints/hard-constraints';
+import { checkNoConsecutiveHighLoad, checkRestRules, checkSplitSiblingDisjoint } from './constraints/hard-constraints';
+import { checkSleepRecovery, checkSleepRecoveryForPlacement, getRecoveryWindow } from './constraints/sleep-recovery';
+import { countSplitOccurrences } from './constraints/soft-constraints';
 import {
   applyFeasibilitySplits,
   type FeasibilitySplitCtx,
@@ -21,9 +19,9 @@ import {
   makeSplitHalf,
   type UnfilledSlot,
 } from './engine/optimizer';
+import { isEligible } from './engine/validator';
 import { type Assignment, AssignmentStatus, Level, type Participant, type Task, type TimeBlock } from './models/types';
 import { coalesceTaskRuns, hasAnySplit } from './shared/utils/run-coalesce';
-import { isEligible } from './engine/validator';
 
 type AssertFn = (condition: boolean, name: string) => void;
 
@@ -430,6 +428,242 @@ function runSwapFeasHc16(assert: AssertFn): void {
   );
 }
 
+// ─── Hardening: HC-15 sleep & recovery on split halves ──────────────────────
+
+/**
+ * A split half must independently trigger HC-15 from its OWN end (D17), be
+ * exempt from its sibling's recovery window (D18), and still bite for any
+ * unrelated loaded task placed inside that window. The late half (#b) ends at
+ * the original occurrence end so its window is identical to the unsplit
+ * whole's — splitting is never *less* restrictive than not splitting.
+ */
+function runHc15Splits(assert: AssertFn): void {
+  // Parent guard occurrence 0h–4h with a recovery rule on shift 1.
+  const parent: Task = {
+    id: 'GR',
+    name: 'GR',
+    sourceName: 'guard',
+    timeBlock: tb(0, 4),
+    requiredCount: 1,
+    slots: [{ slotId: 'GR-s', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false, // isolate HC-15 from HC-12
+    baseLoadWeight: 1,
+    sleepRecovery: { triggerShifts: [1], recoveryHours: 6 },
+    shiftIndex: 1,
+    splittable: true,
+  };
+  const Ga = makeSplitHalf(parent, 1, BASE, BASE + 2 * H); // 0h–2h
+  const Gb = makeSplitHalf(parent, 2, BASE + 2 * H, BASE + 4 * H); // 2h–4h
+
+  // The rule (and its triggerShifts array) is deep-copied, not shared.
+  assert(
+    !!Ga.sleepRecovery && Ga.sleepRecovery !== parent.sleepRecovery,
+    'HC-15: half carries a distinct sleepRecovery copy (no shared ref)',
+  );
+  assert(
+    Ga.sleepRecovery?.triggerShifts !== parent.sleepRecovery?.triggerShifts,
+    'HC-15: triggerShifts array is deep-copied per half',
+  );
+  assert(Ga.shiftIndex === 1 && Gb.shiftIndex === 1, 'HC-15: shiftIndex inherited onto both halves (rule still fires)');
+
+  // Each half independently triggers a recovery window from ITS OWN end.
+  const wA = getRecoveryWindow(Ga);
+  const wB = getRecoveryWindow(Gb);
+  const wWhole = getRecoveryWindow(parent);
+  assert(
+    !!wA && wA.start.getTime() === BASE + 2 * H && wA.end.getTime() === BASE + 8 * H,
+    'HC-15: #a recovery window = [its own end, +6h) = [2h, 8h)',
+  );
+  assert(
+    !!wB && wB.start.getTime() === BASE + 4 * H && wB.end.getTime() === BASE + 10 * H,
+    'HC-15: #b recovery window = [its own end, +6h) = [4h, 10h)',
+  );
+  assert(
+    !!wWhole && wWhole.start.getTime() === wB?.start.getTime() && wWhole.end.getTime() === wB?.end.getTime(),
+    'HC-15: late half (#b) window identical to the unsplit whole (split never less restrictive)',
+  );
+
+  // An unrelated loaded task inside #a's recovery window is rejected for the
+  // #a holder. interfere=[3h,4h] ⊂ [2h,8h); not adjacent to Ga and not
+  // overlapping it, so ONLY HC-15 can be the cause of rejection.
+  const interfere: Task = {
+    id: 'X',
+    name: 'X',
+    sourceName: 'patrol',
+    timeBlock: tb(3, 4),
+    requiredCount: 1,
+    slots: [{ slotId: 'X-s', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    baseLoadWeight: 1,
+  };
+  const tm = new Map<string, Task>([
+    [Ga.id, Ga],
+    [Gb.id, Gb],
+    [interfere.id, interfere],
+  ]);
+  assert(
+    checkSleepRecoveryForPlacement(interfere, [asg(Ga.id, 'P')], tm),
+    'HC-15: a loaded task inside the split half’s recovery window is flagged (still enforced)',
+  );
+  const P = part('P', -1, 14);
+  assert(
+    !isEligible(P, interfere, interfere.slots[0], [asg(Ga.id, 'P')], tm),
+    'HC-15: per-placement isEligible rejects that placement (chokepoint coverage for split halves)',
+  );
+
+  // Sibling exemption (D18): #b is never recovery-flagged by #a (and v.v.) for
+  // the same person, so the two halves of one occurrence never self-violate.
+  assert(
+    !checkSleepRecoveryForPlacement(Gb, [asg(Ga.id, 'P')], tm),
+    'HC-15: sibling half is exempt from the other half’s recovery window (D18)',
+  );
+  assert(
+    checkSleepRecovery('P', [asg(Ga.id, 'P'), asg(Gb.id, 'P')], tm, 'P').length === 0,
+    'HC-15: aggregate raises no sleep-recovery violation between two siblings (D18)',
+  );
+}
+
+// ─── Hardening: multiple splittable occurrences in one schedule ──────────────
+
+/**
+ * Two independent splittable occurrences left unfilled by greedy both split,
+ * each into two DIFFERENT participants, with no cross-contamination and a
+ * clean split-sibling check. `countSplitOccurrences` counts each occurrence
+ * exactly once (via `splitPart === 1`) — the same signal `splitPenalty` uses,
+ * so the penalty scales per occurrence, not per half.
+ */
+function runMultiSplit(assert: AssertFn): void {
+  const T1 = splitTask('T1', 0, 4, true);
+  const T2 = splitTask('T2', 6, 10, true);
+  const participants = [
+    part('P1', -1, 2), // T1#a [0,2]
+    part('P2', 2, 5), // T1#b [2,4]
+    part('P3', 5, 8), // T2#a [6,8]
+    part('P4', 8, 11), // T2#b [8,10]
+  ];
+  const taskMap = new Map<string, Task>([
+    [T1.id, T1],
+    [T2.id, T2],
+  ]);
+  const ctx: FeasibilitySplitCtx = {
+    tasks: [T1, T2],
+    taskMap,
+    participants,
+    assignments: [],
+    assignmentsByParticipant: new Map(),
+    workload: new Map(),
+    dailyWorkload: new Map(),
+    unfilledSlots: [
+      { taskId: T1.id, slotId: T1.slots[0].slotId, reason: 'test', hcCodes: [] },
+      { taskId: T2.id, slotId: T2.slots[0].slotId, reason: 'test', hcCodes: [] },
+    ],
+    dayStartHour: 5,
+  };
+  const out = applyFeasibilitySplits(ctx);
+
+  assert(out.length === 4, 'multi-split: both occurrences split → 4 half-tasks');
+  assert(
+    countSplitOccurrences(out) === 2,
+    'multi-split: countSplitOccurrences = 2 (one per occurrence; splitPenalty scales per occurrence not per half)',
+  );
+  assert(ctx.assignments.length === 4, 'multi-split: all four half-slots filled');
+  assert(ctx.unfilledSlots.length === 0, 'multi-split: both original unfilled entries cleared');
+
+  // Each occurrence's two halves go to two different people; nobody holds two
+  // siblings (HC-16 invariant across multiple independent splits).
+  const outMap = new Map(out.map((t) => [t.id, t]));
+  for (const pid of ['P1', 'P2', 'P3', 'P4']) {
+    const held = ctx.assignments.filter((a) => a.participantId === pid);
+    assert(
+      checkSplitSiblingDisjoint(pid, held, outMap, pid).length === 0,
+      `multi-split: ${pid} holds no two split siblings`,
+    );
+  }
+  const g1 = ctx.assignments.filter((a) => a.taskId.startsWith('T1'));
+  const g2 = ctx.assignments.filter((a) => a.taskId.startsWith('T2'));
+  assert(
+    g1.length === 2 && g1[0].participantId !== g1[1].participantId,
+    'multi-split: occurrence T1 split across two different participants',
+  );
+  assert(
+    g2.length === 2 && g2[0].participantId !== g2[1].participantId,
+    'multi-split: occurrence T2 split across two different participants',
+  );
+}
+
+// ─── Hardening: split helps one task but the half still pressures elsewhere ──
+
+/**
+ * Splitting only coalesces SAME-source runs. A split half abutting an
+ * adjacent DIFFERENT-source heavy task (or a different-source split half)
+ * must STILL be rejected by HC-12 — the run-coalescer must not create a hole
+ * where splitting one task silently legalises back-to-back heavy work with
+ * an unrelated one. Same-source continuation stays allowed (note-6 contrast).
+ */
+function runHc12CrossSource(assert: AssertFn): void {
+  const heavy = (id: string, sH: number, eH: number, src: string, gid?: string): Task => ({
+    id,
+    name: id,
+    sourceName: src,
+    timeBlock: tb(sH, eH),
+    requiredCount: 1,
+    slots: [{ slotId: `${id}-s`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: true,
+    splitGroupId: gid,
+    splitPart: gid ? 2 : undefined,
+    splitOriginalMs: gid ? 4 * H : undefined,
+  });
+  const P = part('P', -1, 14);
+
+  // Late guard half [2h,4h]; a DIFFERENT-source heavy WHOLE task starts the
+  // instant it ends → not coalesced (different source) → HC-12 must fire.
+  const gB = heavy('G#b', 2, 4, 'guard', 'G');
+  const pat = heavy('PAT', 4, 8, 'patrol');
+  const tmA = new Map<string, Task>([
+    [gB.id, gB],
+    [pat.id, pat],
+  ]);
+  assert(
+    !isEligible(P, pat, pat.slots[0], [asg(gB.id, 'P')], tmA),
+    'cross-source: split half then adjacent different-source heavy whole → HC-12 still rejects',
+  );
+  assert(
+    !isEligible(P, gB, gB.slots[0], [asg(pat.id, 'P')], tmA),
+    'cross-source: reverse order (whole then abutting split half) → HC-12 still rejects',
+  );
+  assert(
+    checkNoConsecutiveHighLoad('P', [asg(gB.id, 'P'), asg(pat.id, 'P')], tmA).length > 0,
+    'cross-source: aggregate HC-12 agrees (per-placement ≡ aggregate, no coalesce hole)',
+  );
+
+  // Two DIFFERENT-source split halves back-to-back → still rejected (splitting
+  // patrol does not legalise it abutting a split guard half).
+  const qA = heavy('Q#a', 4, 6, 'patrol', 'Q');
+  const tmB = new Map<string, Task>([
+    [gB.id, gB],
+    [qA.id, qA],
+  ]);
+  assert(
+    !isEligible(P, qA, qA.slots[0], [asg(gB.id, 'P')], tmB),
+    'cross-source: split guard half then split patrol half (different sources) → HC-12 still rejects',
+  );
+
+  // Contrast / no over-rejection: SAME-source next-occurrence half continues
+  // the legal ≤K run and is correctly ALLOWED (note-6).
+  const g2A = heavy('G2#a', 4, 6, 'guard', 'G2');
+  const tmC = new Map<string, Task>([
+    [gB.id, gB],
+    [g2A.id, g2A],
+  ]);
+  assert(
+    isEligible(P, g2A, g2A.slots[0], [asg(gB.id, 'P')], tmC),
+    'cross-source contrast: same-source contiguous ≤K half is still ACCEPTED (no over-rejection)',
+  );
+}
+
 export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   console.log('\n── Shift-Split: run-coalesce primitive ──');
   runCoalesce(assert);
@@ -441,6 +675,12 @@ export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   runPerPlacementCoalescing(assert);
   console.log('── Shift-Split: HC-16 in SA swap gate ──');
   runSwapFeasHc16(assert);
+  console.log('── Shift-Split: HC-15 sleep & recovery on split halves ──');
+  runHc15Splits(assert);
+  console.log('── Shift-Split: multiple splittable occurrences ──');
+  runMultiSplit(assert);
+  console.log('── Shift-Split: cross-source HC-12 (no coalesce hole) ──');
+  runHc12CrossSource(assert);
 }
 
 if (require.main === module) {

@@ -4837,6 +4837,16 @@ tr.row-rest td {
   font-weight: 600;
   color: var(--text);
 }
+.ttt-split-note {
+  margin-top: 6px;
+  padding: 5px 7px;
+  border-radius: 4px;
+  background: var(--accent-glow);
+  border-inline-start: 3px solid var(--warning);
+  color: var(--text);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
 .ttt-divider {
   height: 1px;
   background: var(--border);
@@ -6835,6 +6845,25 @@ tr.now-row-animate > td.time-cell {
   gap: 4px;
   font-size: 0.7rem;
   color: var(--text-muted);
+}
+
+/* Split-occurrence cue — a half-task (one half of a shift split to fill an
+   otherwise-empty slot). Amber "notice" tone, readable on a phone. */
+.split-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 0.72rem;
+  line-height: 1;
+  min-width: 13px;
+  padding: 1px 4px;
+  border-radius: 8px;
+  background: var(--warning);
+  color: #fff;
+  margin-inline-start: 4px;
+  flex-shrink: 0;
 }
 
 .empty-slot-label {

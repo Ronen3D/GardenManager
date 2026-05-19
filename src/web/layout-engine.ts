@@ -523,6 +523,14 @@ function renderAssignmentCard(
     ? `data-assignment-id="${assignment.id}" data-task-id="${task.id}" data-slot-id="${slot.slotId}"`
     : `data-slot-id="${slot.slotId}" data-task-id="${task.id}"`;
 
+  // Split-occurrence cue: a half-task (`splitGroupId` set) is one half of a
+  // shift that was split to fill an otherwise-empty slot. The "½" badge makes
+  // that self-evident on a phone without tapping for the tooltip.
+  const splitBadge =
+    task.splitGroupId !== undefined
+      ? `<span class="split-badge" title="משמרת מפוצלת — חצי משמרת (פוצלה כדי לאייש משבצת שאחרת הייתה ריקה)">½</span>`
+      : '';
+
   let content = '';
 
   if (participant) {
@@ -537,6 +545,7 @@ function renderAssignmentCard(
         </span>
       </div>
       <div class="card-details">
+        ${splitBadge}
         ${isFrozen ? `<span title="מוקפא">${SVG_ICONS.snowflake}</span>` : ''}
         ${isSelected && isManualActive && !isFrozen ? '<button class="btn-manual-remove" data-action="manual-remove" title="הסר שיבוץ">✕ הסר</button>' : ''}
       </div>
@@ -549,7 +558,7 @@ function renderAssignmentCard(
       const certs = slot.requiredCertifications;
       slotHint = `<div class="manual-slot-hint">${levels ? `${levels}` : ''}${certs.length ? ' ' + certBadges(certs, '') : ''}</div>`;
     }
-    content = `<div class="empty-slot-label">${escHtml(slot.label || task.name)}</div>${slotHint}`;
+    content = `<div class="empty-slot-label">${escHtml(slot.label || task.name)}${splitBadge}</div>${slotHint}`;
   }
 
   return `
