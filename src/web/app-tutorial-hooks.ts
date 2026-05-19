@@ -12,7 +12,10 @@ import type { Schedule, Task } from '../index';
 
 /** JSON-safe snapshot of `app.ts` in-memory state captured at tour start. */
 export interface AppStateSnapshotJson {
-  currentTab: 'participants' | 'task-rules' | 'schedule' | 'algorithm';
+  // Mirrors app.ts `TabId` exactly (incl. 'home') so getAppStateSnapshot can
+  // faithfully capture/restore whatever tab the user was on when the tour
+  // started — narrowing here would silently drop a 'home' restore.
+  currentTab: 'home' | 'participants' | 'task-rules' | 'schedule' | 'algorithm';
   currentDay: number;
   viewMode: 'SCHEDULE_VIEW' | 'PROFILE_VIEW' | 'TASK_PANEL_VIEW' | 'POINT_IN_TIME_VIEW';
   profileParticipantId: string | null;

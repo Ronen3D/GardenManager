@@ -154,6 +154,8 @@ interface RunResult {
   iterations: number;
   saMs: number;
   actualAttempts: number;
+  /** Split SLOTS in the realized schedule (count of `#a` halves). 0 for OFF. */
+  splitSlots: number;
 }
 
 function totalSlotsOf(tasks: Task[]): number {
@@ -170,10 +172,16 @@ function runOnce(
   restRuleMap: Map<string, number>,
   attempts: number,
   dayStartHour: number,
+  splitOn: boolean,
 ): RunResult {
   // Fresh scenario each run: generateWeeklyTasks resets internal id counters,
   // so tasks/ids are identical run-to-run (deterministic baseline).
   const { tasks, participants } = buildScenario(baseDate, days, poolSize);
+  // ON column: stamp the effective `splittable` flag the web layer would
+  // freeze (splittingEnabled && template.splittable). sameGroup occurrences
+  // are skipped by structuralRefine and handled feasibility-only by Stage-4
+  // exactly as today, so flagging all is a realistic ON workload.
+  if (splitOn) for (const t of tasks) t.splittable = true;
   setBenchHooks(null);
   const t0 = Date.now();
   const result: OptimizationResult = optimizeMultiAttempt(
@@ -191,6 +199,9 @@ function runOnce(
     dayStartHour,
   );
   const durationMs = Date.now() - t0;
+  const realized = result.tasks ?? tasks;
+  let splitSlots = 0;
+  for (const tk of realized) if (tk.splitPart === 1) splitSlots++;
   return {
     durationMs,
     compositeScore: result.score.compositeScore,
@@ -201,6 +212,7 @@ function runOnce(
     iterations: result.iterations,
     saMs: result.phaseDurations.saMs,
     actualAttempts: result.actualAttempts,
+    splitSlots,
   };
 }
 
@@ -263,7 +275,7 @@ function main(): void {
   process.stdout.write(`Running ${RUNS} OFF runs `);
   const runs: RunResult[] = [];
   for (let r = 0; r < RUNS; r++) {
-    runs.push(runOnce(baseDate, DAYS, POOL, config, restRuleMap, ATTEMPTS, dayStartHour));
+    runs.push(runOnce(baseDate, DAYS, POOL, config, restRuleMap, ATTEMPTS, dayStartHour, false));
     process.stdout.write('.');
   }
   console.log(' done.\n');
@@ -309,6 +321,62 @@ function main(): void {
   console.log(`  composite : ${runs.map((r) => fmt(r.compositeScore, 1)).join(', ')}`);
   console.log(`  unfilled  : ${runs.map((r) => r.unfilled).join(', ')}`);
   console.log(`  runtime   : ${runs.map((r) => fmt(r.durationMs, 0)).join(', ')}`);
+
+  // ── ON column (Phase 2: quality split/merge enabled) ────────────────────
+  process.stdout.write(`\nRunning ${RUNS} ON runs `);
+  const onRuns: RunResult[] = [];
+  for (let r = 0; r < RUNS; r++) {
+    onRuns.push(runOnce(baseDate, DAYS, POOL, config, restRuleMap, ATTEMPTS, dayStartHour, true));
+    process.stdout.write('.');
+  }
+  console.log(' done.\n');
+
+  console.log('─── ON (splitting enabled) ────────────────────────────────────────────────');
+  line(
+    'runtime (ms)',
+    onRuns.map((r) => r.durationMs),
+    0,
+  );
+  line(
+    'composite',
+    onRuns.map((r) => r.compositeScore),
+  );
+  line(
+    'unfilled slots',
+    onRuns.map((r) => r.unfilled),
+    1,
+  );
+  line(
+    'split slots',
+    onRuns.map((r) => r.splitSlots),
+    1,
+  );
+  const onFeas = onRuns.filter((r) => r.feasible).length;
+  console.log(`  ${'feasible runs'.padEnd(22)} ${onFeas}/${onRuns.length}`);
+
+  // ── Regression bar (approved plan E4 / D20) ─────────────────────────────
+  const BASE_COMPOSITE_MEAN = 1995.6;
+  const BASE_COMPOSITE_SD = 277.5;
+  const offComposite = mean(runs.map((r) => r.compositeScore));
+  const offUnfilled = mean(runs.map((r) => r.unfilled));
+  const onUnfilled = mean(onRuns.map((r) => r.unfilled));
+  const onComposite = mean(onRuns.map((r) => r.compositeScore));
+  const offWithin = Math.abs(offComposite - BASE_COMPOSITE_MEAN) <= 1.5 * BASE_COMPOSITE_SD;
+  const onUnfilledOk = onUnfilled <= offUnfilled + 1e-9;
+  const runtimeRatio = mean(onRuns.map((r) => r.durationMs)) / Math.max(1, mean(runs.map((r) => r.durationMs)));
+  console.log('\n─── Verdict ───────────────────────────────────────────────────────────────');
+  console.log(
+    `  OFF composite within ≈1.5σ of pre-feature baseline (${fmt(BASE_COMPOSITE_MEAN, 1)}±${fmt(BASE_COMPOSITE_SD, 1)}):` +
+      ` ${offWithin ? 'PASS' : 'FAIL'}  (OFF mean ${fmt(offComposite, 1)})`,
+  );
+  console.log(
+    `  ON unfilled ≤ OFF unfilled: ${onUnfilledOk ? 'PASS' : 'FAIL'}` +
+      `  (ON ${fmt(onUnfilled, 1)} vs OFF ${fmt(offUnfilled, 1)})`,
+  );
+  console.log(
+    `  ON composite vs OFF: ${fmt(onComposite - offComposite, 1)} (≥0 ⇒ quality not regressed)` +
+      `   ·   ON/OFF runtime ×${fmt(runtimeRatio, 2)}`,
+  );
   console.log('═══════════════════════════════════════════════════════════════════════════');
 }
 

@@ -1347,6 +1347,7 @@ async function handleQuickAdd(rerender: () => void): Promise<void> {
         pakalIds: [],
         preferredTaskName: '',
         lessPreferredTaskName: '',
+        workloadMultiplier: DEFAULT_WORKLOAD_MULTIPLIER,
         status: 'new',
         errors: new Map(),
         selected: false,

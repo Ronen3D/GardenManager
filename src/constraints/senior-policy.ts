@@ -13,6 +13,7 @@
 
 import { isAcceptedLevel, isLowPriority } from '../models/level-utils';
 import type { Assignment, Level, Participant, SchedulerConfig, SlotRequirement, Task } from '../models/types';
+import { fragmentShare } from '../shared/utils/load-weighting';
 
 // ─── Natural-role detection ──────────────────────────────────────────────────
 
@@ -66,7 +67,11 @@ export function computeLowPriorityLevelPenalty(
     if (!slot) continue;
 
     if (isLowPriority(slot.acceptableLevels, p.level)) {
-      totalPenalty += config.lowPriorityLevelPenalty;
+      // Fragment-scaled: two lowPriority halves of one split slot cost one
+      // whole's penalty, not two. fragmentShare === 1 for any non-split task
+      // ⇒ byte-identical when nothing is split. Must stay in lockstep with
+      // the IncrementalScorer's per-participant low-priority recompute.
+      totalPenalty += config.lowPriorityLevelPenalty * fragmentShare(task);
     }
   }
 

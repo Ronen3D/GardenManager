@@ -51,7 +51,7 @@ import {
   type ScheduleContext,
 } from '../shared/utils/time-utils';
 import { computeAllCapacities } from '../utils/capacity';
-import { describeSlot, operationalDateKey } from '../utils/date-utils';
+import { describeSlot, operationalDateKey, taskOpDayStart } from '../utils/date-utils';
 import {
   type AttemptRow,
   consumePolishProgressForAttempt,
@@ -1227,7 +1227,10 @@ export function applyFeasibilitySplits(ctx: FeasibilitySplitCtx): Task[] {
   const addLoad = (pid: string, t: Task): void => {
     const e = effHours(t);
     workload.set(pid, (workload.get(pid) || 0) + e);
-    const dk = operationalDateKey(t.timeBlock.start, dayStartHour);
+    // Bucket a split `#b` (whose timeBlock.start is the occurrence midpoint)
+    // to its occurrence op-day so these greedy load maps agree with the
+    // taskOpDayStart-based SC-8 scorer. Non-split / `#a` / residual unchanged.
+    const dk = operationalDateKey(taskOpDayStart(t), dayStartHour);
     let pd = dailyWorkload.get(pid);
     if (!pd) {
       pd = new Map();
@@ -1238,7 +1241,7 @@ export function applyFeasibilitySplits(ctx: FeasibilitySplitCtx): Task[] {
   const subLoad = (pid: string, t: Task): void => {
     const e = effHours(t);
     workload.set(pid, (workload.get(pid) || 0) - e);
-    const dk = operationalDateKey(t.timeBlock.start, dayStartHour);
+    const dk = operationalDateKey(taskOpDayStart(t), dayStartHour);
     const pd = dailyWorkload.get(pid);
     if (pd) pd.set(dk, (pd.get(dk) || 0) - e);
   };
@@ -1965,6 +1968,11 @@ export function localSearchOptimize(
   preSplitTaskCount?: number,
 ): {
   assignments: Assignment[];
+  /** The realized task set. Same reference as the input `tasks` unless the
+   *  post-polish structural-refine pass committed a quality split or a merge;
+   *  `optimize()` reads `lsResult.tasks ?? greedy.tasks` so validation,
+   *  scoring and the frozen schedule all agree on this list. */
+  tasks: Task[];
   filledSlots: Array<{ taskId: string; slotId: string }>;
   iterations: number;
   saMs: number;
@@ -2523,7 +2531,72 @@ export function localSearchOptimize(
   recordPhase('sa', saMs);
   recordPhase('polish', polishMs);
 
-  return { assignments: best, filledSlots, iterations, saMs, polishMs, postGreedyComposite, postSAComposite };
+  // ── Post-polish structural refinement (quality split / merge) ──────────
+  // Runs BETWEEN SA invocations so the SA loop's task set (and thus the
+  // run-constant IncrementalScorer._splitPenalty) is never mutated mid-search
+  // (Option B). Identity fast path returns the same refs when nothing is
+  // splittable/split ⇒ zero added cost and byte-identical with splitting off.
+  const sr = structuralRefine(
+    best,
+    tasks,
+    participants,
+    config,
+    pinnedIds,
+    pMap,
+    phantomContext,
+    disabledHC,
+    restRuleMap,
+    dayStartHour,
+    capacities,
+    notWithPairs,
+    scheduleContext,
+  );
+  let resultTasks = tasks;
+  let resultAssignments = best;
+  if (sr.changed) {
+    resultTasks = sr.tasks;
+    resultAssignments = sr.assignments;
+    // Bounded refinement on the NEW frozen list: a single deterministic
+    // polish pass re-staffs the fresh fragments globally (replace-with-idle,
+    // strict-improvement, HC-safe). It builds its own indices from the passed
+    // assignments and rebuilds the scorer (so _splitPenalty is re-derived for
+    // the new split count). Conservative substitute for a second cold SA — it
+    // captures the global re-staffing payoff without the runtime / invariant
+    // risk of mutating the SA core.
+    const refinedTaskMap = new Map<string, Task>();
+    for (const t of resultTasks) refinedTaskMap.set(t.id, t);
+    if (phantomContext) for (const pt of phantomContext.phantomTasks) refinedTaskMap.set(pt.id, pt);
+    polishReplaceWithIdle(
+      resultAssignments,
+      resultTasks,
+      participants,
+      config,
+      pinnedIds,
+      refinedTaskMap,
+      pMap,
+      phantomContext,
+      disabledHC,
+      restRuleMap,
+      dayStartHour,
+      capacities,
+      notWithPairs,
+      startTime,
+      abortSignal,
+      stopSignal,
+      scheduleContext,
+    );
+  }
+
+  return {
+    assignments: resultAssignments,
+    tasks: resultTasks,
+    filledSlots,
+    iterations,
+    saMs,
+    polishMs,
+    postGreedyComposite,
+    postSAComposite,
+  };
 }
 
 // ─── Post-SA Polish ──────────────────────────────────────────────────────────
@@ -2708,6 +2781,344 @@ function polishReplaceWithIdle(
   }
 }
 
+// ─── Post-Polish Structural Refinement (quality split / merge) ───────────────
+
+/** Anti-oscillation: an occurrence is touched at most once per optimize()
+ *  run, and the sweep runs at most this many passes (mirrors
+ *  MAX_POLISH_PASSES' bounded-deterministic shape). */
+const MAX_STRUCTURAL_PASSES = 2;
+/** Strict-improvement margin (polish's convention). The economic gate is
+ *  `config.splitPenalty` itself — already inside the composite via
+ *  `countSplitOccurrences` — so this is only a churn guard. */
+const STRUCT_EPS = 1e-6;
+
+/**
+ * Deterministic structural refinement, run AFTER `polishReplaceWithIdle`,
+ * BETWEEN SA invocations (the SA loop never sees a changed task set, so the
+ * run-constant `IncrementalScorer._splitPenalty` stays valid — Option B).
+ *
+ * Two operations, MERGE first then QUALITY-SPLIT, each committed only on a
+ * strict full-`computeScheduleScore` composite improvement (the re-based
+ * `splitPenalty` is inside that composite, so it is the real gate):
+ *  - MERGE  — collapse a split slot's `#a`/`#b` back to one whole slot worked
+ *             by ONE person (drops that slot's split penalty). The natural
+ *             anti-proliferation guard; also reclaims feasibility splits SA
+ *             later made unnecessary.
+ *  - SPLIT  — realise every slot of a fully-filled `splittable` occurrence as
+ *             two halves worked by two different people, when the
+ *             fairness/rest/balance gain beats `splitPenalty`.
+ *
+ * Scope: NON-`sameGroupRequired` occurrences only. Same-group occurrences are
+ * left exactly as today (feasibility-only via Stage-4) so the strict
+ * same-group link-union cannot be violated by a post-greedy move — a safe
+ * subset of Option B; extendable later via the Stage-4 group-cover matcher.
+ *
+ * Safety: a candidate is viable ONLY if every affected slot is fully staffed
+ * by HC-eligible participants (`isEligibleForSlot` — the authoritative
+ * per-placement check incl. HC-16/12/14/15/5/1). Structural moves never
+ * create an unfilled slot, so the soft-only composite (which does not see
+ * unfilled slots) can't be fooled into accepting a hidden gap.
+ *
+ * Identity fast path: when no task is `splittable` and none is already split,
+ * returns the SAME `tasks`/`assignments` refs, `changed:false` — zero cost,
+ * byte-identical to splitting-off behaviour.
+ */
+export function structuralRefine(
+  best: Assignment[],
+  tasks: Task[],
+  participants: Participant[],
+  config: SchedulerConfig,
+  pinnedIds: Set<string>,
+  pMap: Map<string, Participant>,
+  phantomContext: PhantomContext | undefined,
+  disabledHC: Set<string> | undefined,
+  restRuleMap: Map<string, number> | undefined,
+  dayStartHour: number,
+  capacities: Map<string, ParticipantCapacity>,
+  notWithPairs: Map<string, Set<string>>,
+  scheduleContext: ScheduleContext | undefined,
+): { tasks: Task[]; assignments: Assignment[]; changed: boolean } {
+  // Identity fast path — nothing splittable and nothing already split.
+  let anySplittable = false;
+  let anySplit = false;
+  for (const t of tasks) {
+    if (t.splittable) anySplittable = true;
+    if (t.splitGroupId !== undefined) anySplit = true;
+    if (anySplittable && anySplit) break;
+  }
+  if (!anySplittable && !anySplit) return { tasks, assignments: best, changed: false };
+
+  const isPinnedLike = (a: Assignment): boolean =>
+    pinnedIds.has(a.id) || a.status === AssignmentStatus.Manual || a.status === AssignmentStatus.Frozen;
+
+  const buildByParticipant = (asgs: Assignment[]): Map<string, Assignment[]> => {
+    const m = buildAssignmentMap(asgs);
+    if (phantomContext) for (const pa of phantomContext.phantomAssignments) addToAssignmentMap(m, pa);
+    return m;
+  };
+  const taskMapOf = (ts: Task[]): Map<string, Task> => {
+    const m = new Map<string, Task>();
+    for (const t of ts) m.set(t.id, t);
+    if (phantomContext) for (const pt of phantomContext.phantomTasks) m.set(pt.id, pt);
+    return m;
+  };
+  const compositeOf = (ts: Task[], asgs: Assignment[]): number => {
+    const tm = taskMapOf(ts);
+    const bp = buildByParticipant(asgs);
+    const bt = new Map<string, Assignment[]>();
+    for (const a of asgs) {
+      const l = bt.get(a.taskId);
+      if (l) l.push(a);
+      else bt.set(a.taskId, [a]);
+    }
+    const ctx: ScoreContext = {
+      taskMap: tm,
+      pMap,
+      assignmentsByParticipant: bp,
+      assignmentsByTask: bt,
+      capacities,
+      notWithPairs,
+      dayStartHour,
+      phantomTaskIds: phantomContext?.phantomTaskIds,
+    };
+    return computeScheduleScore(ts, participants, asgs, config, ctx).compositeScore;
+  };
+  // Deterministic least-loaded-eligible pick (no Math.random — multi-attempt
+  // determinism). `exclude` enforces HC-16's two-different-people per split
+  // slot at selection time (isEligibleForSlot re-checks it authoritatively).
+  // `candTasks` MUST be the full candidate task set: checkEligibility resolves
+  // the participant's OTHER assignments via taskMap (HC-5 double-booking,
+  // HC-12/HC-14/HC-15/HC-16) — a single-task map would silently skip every
+  // cross-task hard constraint and let an infeasible staffing through.
+  const pickEligible = (
+    task: Task,
+    slot: SlotRequirement,
+    candTasks: Task[],
+    asgs: Assignment[],
+    loadByPid: Map<string, number>,
+    exclude: string | null,
+  ): Participant | null => {
+    const bp = buildByParticipant(asgs);
+    const tm = taskMapOf(candTasks);
+    let bestP: Participant | null = null;
+    let bestLoad = Number.POSITIVE_INFINITY;
+    for (const p of participants) {
+      if (exclude !== null && p.id === exclude) continue;
+      if (!isEligibleForSlot(p, task, slot, bp.get(p.id) || [], tm, disabledHC, restRuleMap, scheduleContext)) {
+        continue;
+      }
+      const load = loadByPid.get(p.id) ?? 0;
+      if (load < bestLoad - 1e-9 || (Math.abs(load - bestLoad) <= 1e-9 && (bestP === null || p.id < bestP.id))) {
+        bestLoad = load;
+        bestP = p;
+      }
+    }
+    return bestP;
+  };
+  const loadMapOf = (asgs: Assignment[], tm: Map<string, Task>): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const a of asgs) {
+      const t = tm.get(a.taskId);
+      if (!t) continue;
+      m.set(a.participantId, (m.get(a.participantId) ?? 0) + computeTaskEffectiveHours(t));
+    }
+    return m;
+  };
+
+  let workTasks = tasks;
+  let workAsgs = best;
+  let changed = false;
+  const touched = new Set<string>(); // occurrence ids modified this run
+
+  for (let pass = 0; pass < MAX_STRUCTURAL_PASSES; pass++) {
+    let committedThisPass = false;
+    let baseComposite = compositeOf(workTasks, workAsgs);
+
+    // ── MERGE first ──────────────────────────────────────────────────────
+    // Group the split halves present in workTasks by splitGroupId.
+    const pairs = new Map<string, { a?: Task; b?: Task }>();
+    for (const t of workTasks) {
+      if (t.splitGroupId === undefined || t.splitPart === undefined) continue;
+      let e = pairs.get(t.splitGroupId);
+      if (!e) {
+        e = {};
+        pairs.set(t.splitGroupId, e);
+      }
+      if (t.splitPart === 1) e.a = t;
+      else e.b = t;
+    }
+    for (const sgId of [...pairs.keys()].sort()) {
+      const { a: Sa, b: Sb } = pairs.get(sgId)!;
+      if (!Sa || !Sb) continue;
+      const occId = Sa.splitOccurrenceId;
+      if (occId === undefined || touched.has(occId)) continue;
+      // Same-group splits are out of scope (left exactly as Stage-4 made them).
+      if (Sa.sameGroupRequired || Sa.sameGroupLinkId !== undefined) continue;
+      const residual = workTasks.find((t) => t.id === occId && t.splitGroupId === undefined);
+      // Occurrence task ids whose assignments must be free of pin/Manual/Frozen.
+      const occTaskIds = new Set<string>([Sa.id, Sb.id]);
+      if (residual) occTaskIds.add(residual.id);
+      if (workAsgs.some((x) => occTaskIds.has(x.taskId) && isPinnedLike(x))) continue;
+
+      // Reconstruct the whole slot from #a's slot (slotId === base + '#a').
+      const halfSlot = Sa.slots[0];
+      const baseSlotId = halfSlot.slotId.slice(0, -2);
+      const wholeSlot: SlotRequirement = { ...halfSlot, slotId: baseSlotId };
+
+      let candTasks: Task[];
+      let wholeTaskId: string;
+      let wholeTask: Task;
+      if (residual) {
+        const merged: Task = {
+          ...residual,
+          slots: [...residual.slots, wholeSlot],
+          requiredCount: residual.slots.length + 1,
+        };
+        wholeTask = merged;
+        wholeTaskId = merged.id;
+        candTasks = workTasks.filter((t) => t.id !== Sa.id && t.id !== Sb.id && t.id !== residual.id);
+        candTasks.push(merged);
+      } else {
+        // No residual task for this occurrence (single-slot occurrence whose
+        // residual Stage-4 dropped, OR every slot is split so no id===occId
+        // task exists). Reconstruct THIS slot as a fresh whole task keyed by
+        // the occurrence id — structurally identical to a Stage-4 residual
+        // (id===occId, no split fields), so any still-split sibling slots stay
+        // valid as a slot-level mixed whole+split occurrence. Never mutate.
+        const whole: Task = {
+          ...Sa,
+          id: occId,
+          name: Sa.name.replace(/ \(1\/2\)$/, ''),
+          timeBlock: { start: new Date(Sa.timeBlock.start), end: new Date(Sb.timeBlock.end) },
+          slots: [wholeSlot],
+          requiredCount: 1,
+          splitGroupId: undefined,
+          splitPart: undefined,
+          splitOriginalMs: undefined,
+          splitOccurrenceId: undefined,
+          sameGroupLinkId: undefined,
+        };
+        wholeTask = whole;
+        wholeTaskId = whole.id;
+        candTasks = workTasks.filter((t) => t.id !== Sa.id && t.id !== Sb.id);
+        candTasks.push(whole);
+      }
+
+      // Drop the two half-assignments; staff the reconstructed whole slot with
+      // ONE eligible participant. No eligible participant ⇒ the merge would
+      // create an unfilled slot (which the soft composite cannot see) ⇒ skip.
+      const candAsgs = workAsgs.filter((x) => x.taskId !== Sa.id && x.taskId !== Sb.id);
+      const loadByPid = loadMapOf(candAsgs, taskMapOf(candTasks));
+      const chosen = pickEligible(wholeTask, wholeSlot, candTasks, candAsgs, loadByPid, null);
+      if (!chosen) continue;
+      candAsgs.push({
+        id: nextAssignmentId(),
+        taskId: wholeTaskId,
+        slotId: wholeSlot.slotId,
+        participantId: chosen.id,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      });
+
+      const candComposite = compositeOf(candTasks, candAsgs);
+      if (candComposite > baseComposite + STRUCT_EPS) {
+        workTasks = candTasks;
+        workAsgs = candAsgs;
+        changed = true;
+        committedThisPass = true;
+        touched.add(occId);
+        baseComposite = candComposite;
+      }
+    }
+
+    // ── QUALITY SPLIT ────────────────────────────────────────────────────
+    const splitCandidates = workTasks
+      .filter(
+        (t) =>
+          t.splittable === true &&
+          t.splitGroupId === undefined &&
+          t.sameGroupRequired !== true &&
+          !touched.has(t.id) &&
+          t.slots.length > 0,
+      )
+      .sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+
+    for (const T of splitCandidates) {
+      const startMs = T.timeBlock.start.getTime();
+      const endMs = T.timeBlock.end.getTime();
+      const midMs = startMs + Math.floor((endMs - startMs) / 2);
+      if (midMs <= startMs || midMs >= endMs) continue; // too short to halve
+
+      // Every slot of T must currently be filled (quality split only re-shapes
+      // a feasible whole occurrence; unfilled slots are Stage-4's job) and free
+      // of pin/Manual/Frozen.
+      const tAssigns = workAsgs.filter((x) => x.taskId === T.id);
+      if (tAssigns.length < T.slots.length) continue;
+      if (tAssigns.some(isPinnedLike)) continue;
+      const filledSlotIds = new Set(tAssigns.map((x) => x.slotId));
+      if (!T.slots.every((s) => filledSlotIds.has(s.slotId))) continue;
+
+      // Build the candidate: drop T + its assignments, add #a/#b per slot,
+      // staff each with two DIFFERENT eligible people (least-loaded).
+      const halves: Task[] = [];
+      for (const s of T.slots) {
+        halves.push(makeSplitHalf(T, 1, startMs, midMs, s));
+        halves.push(makeSplitHalf(T, 2, midMs, endMs, s));
+      }
+      const candTasks = workTasks.filter((t) => t.id !== T.id).concat(halves);
+      let candAsgs = workAsgs.filter((x) => x.taskId !== T.id);
+      let feasible = true;
+      for (const s of T.slots) {
+        const Sa = halves.find((h) => h.splitPart === 1 && h.slots[0].slotId === `${s.slotId}#a`)!;
+        const Sb = halves.find((h) => h.splitPart === 2 && h.slots[0].slotId === `${s.slotId}#b`)!;
+        const la = loadMapOf(candAsgs, taskMapOf(candTasks));
+        const pa = pickEligible(Sa, Sa.slots[0], candTasks, candAsgs, la, null);
+        if (!pa) {
+          feasible = false;
+          break;
+        }
+        candAsgs = candAsgs.concat({
+          id: nextAssignmentId(),
+          taskId: Sa.id,
+          slotId: Sa.slots[0].slotId,
+          participantId: pa.id,
+          status: AssignmentStatus.Scheduled,
+          updatedAt: new Date(),
+        });
+        const lb = loadMapOf(candAsgs, taskMapOf(candTasks));
+        const pb = pickEligible(Sb, Sb.slots[0], candTasks, candAsgs, lb, pa.id);
+        if (!pb) {
+          feasible = false;
+          break;
+        }
+        candAsgs = candAsgs.concat({
+          id: nextAssignmentId(),
+          taskId: Sb.id,
+          slotId: Sb.slots[0].slotId,
+          participantId: pb.id,
+          status: AssignmentStatus.Scheduled,
+          updatedAt: new Date(),
+        });
+      }
+      if (!feasible) continue;
+
+      const candComposite = compositeOf(candTasks, candAsgs);
+      if (candComposite > baseComposite + STRUCT_EPS) {
+        workTasks = candTasks;
+        workAsgs = candAsgs;
+        changed = true;
+        committedThisPass = true;
+        touched.add(T.id);
+        baseComposite = candComposite;
+      }
+    }
+
+    if (!committedThisPass) break;
+  }
+
+  return { tasks: workTasks, assignments: workAsgs, changed };
+}
+
 // ─── Main Optimize Function ──────────────────────────────────────────────────
 
 export interface OptimizationResult {
@@ -2798,9 +3209,11 @@ export function optimize(
   const greedyMs = Date.now() - greedyStartMs;
   recordPhase('greedy', greedyMs);
 
-  // The realized task set: identical reference to `tasks` unless a Stage-4
-  // feasibility split replaced an occurrence with two halves. Every post-
-  // greedy phase (SA, validation, scoring, result) must agree on THIS list.
+  // The SA-input task set: identical reference to `tasks` unless a Stage-4
+  // feasibility split replaced an occurrence with two halves. The post-polish
+  // structural-refine pass may further change the realized list (quality
+  // split / merge) — see `realizedTasks` below; validation, scoring and the
+  // result must all agree on THAT list.
   const effectiveTasks = greedy.tasks;
 
   // Phase 2: Local search improvement (also tries to fill unfilled slots).
@@ -2824,6 +3237,12 @@ export function optimize(
     tasks.length,
   );
 
+  // The realized task set after greedy Stage-4 AND the post-polish structural
+  // refinement (quality split / merge). Same ref as `effectiveTasks` when the
+  // structural pass committed nothing. Validation, final scoring and the
+  // result all use THIS list so they agree with `lsResult.assignments`.
+  const realizedTasks = lsResult.tasks ?? effectiveTasks;
+
   // Remove slots that SA managed to fill. Match on (taskId, slotId) — slotId
   // alone is only unique within a task, so two unfilled tasks can share an id.
   const filledKeys = new Set(lsResult.filledSlots.map((fk) => `${fk.taskId}|${fk.slotId}`));
@@ -2835,7 +3254,7 @@ export function optimize(
   // the scheduler's post-optimize validation reports HC-14 violations in
   // `schedule.violations`. That split let `violations` and `feasible` disagree.
   const validation = validateHardConstraints(
-    effectiveTasks,
+    realizedTasks,
     participants,
     lsResult.assignments,
     disabledHC,
@@ -2857,7 +3276,7 @@ export function optimize(
     }
   }
   const finalCtx: ScoreContext = {
-    taskMap: new Map(effectiveTasks.map((t) => [t.id, t])),
+    taskMap: new Map(realizedTasks.map((t) => [t.id, t])),
     pMap: new Map(participants.map((p) => [p.id, p])),
     capacities: finalCapacities,
     notWithPairs: finalNotWithPairs,
@@ -2867,7 +3286,7 @@ export function optimize(
   // notWith violator identities for diagnostics. Off-mode short-circuits
   // inside setCapturingFinal — zero cost.
   setCapturingFinal(true);
-  const score = computeScheduleScore(effectiveTasks, participants, lsResult.assignments, config, finalCtx);
+  const score = computeScheduleScore(realizedTasks, participants, lsResult.assignments, config, finalCtx);
   setCapturingFinal(false);
 
   return {
@@ -2885,9 +3304,10 @@ export function optimize(
       final: score.compositeScore,
     },
     greedyUnfilledSlots: greedy.unfilledSlots.slice(),
-    // The realized task set (= input `tasks` unless a feasibility split ran).
+    // The realized task set (input `tasks`, possibly + Stage-4 feasibility
+    // splits, possibly + post-polish quality split/merge).
     // `_commitOptimizationResult` / continuation read `result.tasks ?? tasks`.
-    tasks: effectiveTasks,
+    tasks: realizedTasks,
   };
 }
 

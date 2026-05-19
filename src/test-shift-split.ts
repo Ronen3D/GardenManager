@@ -15,17 +15,34 @@ import {
   checkSplitSiblingDisjoint,
   validateHardConstraints,
 } from './constraints/hard-constraints';
+import { computeLowPriorityLevelPenalty } from './constraints/senior-policy';
 import { checkSleepRecovery, checkSleepRecoveryForPlacement, getRecoveryWindow } from './constraints/sleep-recovery';
-import { countSplitOccurrences } from './constraints/soft-constraints';
+import {
+  computeNotWithPenalty,
+  computeScheduleScore,
+  computeTaskNamePreferencePenalty,
+  countSplitOccurrences,
+} from './constraints/soft-constraints';
 import {
   applyFeasibilitySplits,
   type FeasibilitySplitCtx,
   isSwapFeasible,
   makeSplitHalf,
+  structuralRefine,
   type UnfilledSlot,
 } from './engine/optimizer';
 import { getCandidatesWithEligibility, isEligible } from './engine/validator';
-import { type Assignment, AssignmentStatus, Level, type Participant, type Task, type TimeBlock } from './models/types';
+import {
+  type Assignment,
+  AssignmentStatus,
+  DEFAULT_CONFIG,
+  Level,
+  type Participant,
+  type SchedulerConfig,
+  type Task,
+  type TimeBlock,
+} from './models/types';
+import { fragmentShare } from './shared/utils/load-weighting';
 import { coalesceTaskRuns, hasAnySplit } from './shared/utils/run-coalesce';
 
 type AssertFn = (condition: boolean, name: string) => void;
@@ -1263,6 +1280,399 @@ function runHc12AggFixIsolation(assert: AssertFn): void {
   );
 }
 
+// ── Phase 2: scoring honesty + structural refine (quality split / merge) ─────
+function runPhase2(assert: AssertFn): void {
+  const approx = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+  const asg = (taskId: string, slotId: string, pid: string): Assignment => ({
+    id: `a-${taskId}-${slotId}-${pid}`,
+    taskId,
+    slotId,
+    participantId: pid,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(BASE),
+  });
+  // Task with explicit L0 slots (mk defaults to acceptableLevels:[]).
+  const l0Task = (id: string, sH: number, eH: number, nSlots = 1, splittable = false): Task => ({
+    id,
+    name: id,
+    sourceName: 'guard',
+    timeBlock: tb(sH, eH),
+    requiredCount: nSlots,
+    slots: Array.from({ length: nSlots }, (_, i) => ({
+      slotId: `${id}-s${i}`,
+      acceptableLevels: [{ level: Level.L0 }],
+      requiredCertifications: [],
+    })),
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    splittable,
+  });
+
+  // (a) fragmentShare — identity for non-split, time-proportional for halves.
+  {
+    const T = l0Task('FS', 0, 12);
+    const Sa = makeSplitHalf(T, 1, tb(0, 12).start.getTime(), tb(6, 6).start.getTime(), T.slots[0]);
+    const Sb = makeSplitHalf(T, 2, tb(6, 6).start.getTime(), tb(0, 12).end.getTime(), T.slots[0]);
+    assert(fragmentShare(T) === 1, '(p2) fragmentShare = 1 for a non-split task (identity)');
+    assert(
+      approx(fragmentShare(Sa), 0.5) && approx(fragmentShare(Sb), 0.5),
+      '(p2) fragmentShare = 0.5 for each equal half; halves sum to 1',
+    );
+  }
+
+  // (b) SC-9 not-with — byte-identical when not split, 0 across one split slot,
+  //     overlap-proportional across overlapping fragments of one occurrence.
+  {
+    const cfg: SchedulerConfig = { ...DEFAULT_CONFIG };
+    // The app always stores not-with symmetrically (the UI syncs both
+    // directions); the shared kernel keeps the legacy directional detection
+    // so non-split scoring stays byte-identical, and aggregate ≡ Σ twin holds
+    // by construction regardless.
+    const nw = new Map([
+      ['p1', new Set(['p2'])],
+      ['p2', new Set(['p1'])],
+    ]);
+    // Non-split: one occurrence, two slots, p1 & p2 co-present full span.
+    const W: Task = { ...l0Task('W', 0, 12, 2), togethernessRelevant: true };
+    const wAsg = [asg('W', 'W-s0', 'p1'), asg('W', 'W-s1', 'p2')];
+    const nonSplit = computeNotWithPenalty(wAsg, cfg, new Map([['W', W]]), new Map([['W', wAsg]]), nw);
+    assert(approx(nonSplit, cfg.notWithPenalty), '(p2) SC-9 non-split pair = full notWithPenalty (byte-identical)');
+
+    // Same split SLOT: #a [0,6] / #b [6,12] — disjoint ⇒ never co-present ⇒ 0.
+    const T: Task = { ...l0Task('OCC', 0, 12, 1), togethernessRelevant: true };
+    const Sa = makeSplitHalf(T, 1, tb(0, 12).start.getTime(), tb(6, 6).start.getTime(), T.slots[0]);
+    const Sb = makeSplitHalf(T, 2, tb(6, 6).start.getTime(), tb(0, 12).end.getTime(), T.slots[0]);
+    const sAsg = [asg(Sa.id, Sa.slots[0].slotId, 'p1'), asg(Sb.id, Sb.slots[0].slotId, 'p2')];
+    const sameSlot = computeNotWithPenalty(
+      sAsg,
+      cfg,
+      new Map([
+        [Sa.id, Sa],
+        [Sb.id, Sb],
+      ]),
+      new Map([
+        [Sa.id, [sAsg[0]]],
+        [Sb.id, [sAsg[1]]],
+      ]),
+      nw,
+    );
+    assert(sameSlot === 0, '(p2) SC-9 not-with pair split across one slot #a/#b = 0 (never co-present)');
+
+    // Overlapping fragments of ONE occurrence: residual slot [0,12] + #a [0,6]
+    // ⇒ overlap 6h of 12h ⇒ half the penalty.
+    const R: Task = { ...l0Task('OCC2', 0, 12, 1), togethernessRelevant: true };
+    const Ta: Task = { ...l0Task('OCC2', 0, 12, 1), togethernessRelevant: true };
+    const A = makeSplitHalf(Ta, 1, tb(0, 12).start.getTime(), tb(6, 6).start.getTime(), Ta.slots[0]);
+    const oAsg = [asg('OCC2', 'OCC2-s0', 'p2'), asg(A.id, A.slots[0].slotId, 'p1')];
+    const prop = computeNotWithPenalty(
+      oAsg,
+      cfg,
+      new Map<string, Task>([
+        ['OCC2', R],
+        [A.id, A],
+      ]),
+      new Map([
+        ['OCC2', [oAsg[0]]],
+        [A.id, [oAsg[1]]],
+      ]),
+      nw,
+    );
+    assert(
+      approx(prop, cfg.notWithPenalty * 0.5),
+      '(p2) SC-9 overlap-proportional across one occurrence (½ overlap ⇒ ½ penalty)',
+    );
+  }
+
+  // (c) SC-6 low-priority — fragment-scaled.
+  {
+    const cfg: SchedulerConfig = { ...DEFAULT_CONFIG };
+    const lpTask = (id: string): Task => ({
+      ...l0Task(id, 0, 12, 1),
+      slots: [
+        { slotId: `${id}-s0`, acceptableLevels: [{ level: Level.L0, lowPriority: true }], requiredCertifications: [] },
+      ],
+    });
+    const p1 = part('p1', 0, 24);
+    const p2 = part('p2', 0, 24);
+    const Tw = lpTask('LPW');
+    const whole = computeLowPriorityLevelPenalty([p1], [asg('LPW', 'LPW-s0', 'p1')], [Tw], cfg);
+    assert(approx(whole, cfg.lowPriorityLevelPenalty), '(p2) SC-6 whole lowPriority = full penalty (byte-identical)');
+    const Tt = lpTask('LPS');
+    const Sa = makeSplitHalf(Tt, 1, tb(0, 12).start.getTime(), tb(6, 6).start.getTime(), Tt.slots[0]);
+    const Sb = makeSplitHalf(Tt, 2, tb(6, 6).start.getTime(), tb(0, 12).end.getTime(), Tt.slots[0]);
+    const half = computeLowPriorityLevelPenalty([p1], [asg(Sa.id, Sa.slots[0].slotId, 'p1')], [Sa], cfg);
+    assert(approx(half, cfg.lowPriorityLevelPenalty * 0.5), '(p2) SC-6 one lowPriority half = ½ penalty');
+    const both = computeLowPriorityLevelPenalty(
+      [p1, p2],
+      [asg(Sa.id, Sa.slots[0].slotId, 'p1'), asg(Sb.id, Sb.slots[0].slotId, 'p2')],
+      [Sa, Sb],
+      cfg,
+    );
+    assert(
+      approx(both, cfg.lowPriorityLevelPenalty),
+      '(p2) SC-6 both lowPriority halves of one slot = exactly one whole penalty (no double-charge)',
+    );
+  }
+
+  // (d) SC-10 task preference — avoidance & bonus fragment-scaled, binary kept.
+  {
+    const cfg: SchedulerConfig = { ...DEFAULT_CONFIG };
+    const avoider: Participant = { ...part('av', 0, 24), lessPreferredTaskName: 'guard' };
+    const fan: Participant = { ...part('fan', 0, 24), preferredTaskName: 'guard' };
+    const Tw = l0Task('PW', 0, 12, 1);
+    const wholeAvoid = computeTaskNamePreferencePenalty(
+      [avoider],
+      cfg,
+      new Map([['PW', Tw]]),
+      new Map([['av', [asg('PW', 'PW-s0', 'av')]]]),
+    );
+    assert(approx(wholeAvoid, cfg.taskNameAvoidancePenalty), '(p2) SC-10 whole avoidance = full (byte-identical)');
+    const Tt = l0Task('PS', 0, 12, 1);
+    const Sa = makeSplitHalf(Tt, 1, tb(0, 12).start.getTime(), tb(6, 6).start.getTime(), Tt.slots[0]);
+    const halfAvoid = computeTaskNamePreferencePenalty(
+      [avoider],
+      cfg,
+      new Map([[Sa.id, Sa]]),
+      new Map([['av', [asg(Sa.id, Sa.slots[0].slotId, 'av')]]]),
+    );
+    assert(approx(halfAvoid, cfg.taskNameAvoidancePenalty * 0.5), '(p2) SC-10 half avoidance = ½ (no double-charge)');
+    // Fan on a single half: bonus is ½, and the binary "got their preferred"
+    // is still satisfied (no +taskNamePreferencePenalty miss).
+    const halfFan = computeTaskNamePreferencePenalty(
+      [fan],
+      cfg,
+      new Map([[Sa.id, Sa]]),
+      new Map([['fan', [asg(Sa.id, Sa.slots[0].slotId, 'fan')]]]),
+    );
+    assert(
+      approx(halfFan, -cfg.taskNamePreferenceBonus * 0.5),
+      '(p2) SC-10 half preferred = ½ bonus AND binary preference satisfied (no miss penalty)',
+    );
+  }
+
+  // (e) structuralRefine — identity fast path (no splittable, no split).
+  {
+    const T = l0Task('NS', 0, 12, 1, /*splittable*/ false);
+    const best = [asg('NS', 'NS-s0', 'p1')];
+    const tasks = [T];
+    const ps = [part('p1', 0, 24)];
+    const r = structuralRefine(
+      best,
+      tasks,
+      ps,
+      { ...DEFAULT_CONFIG },
+      new Set(),
+      new Map(ps.map((p) => [p.id, p])),
+      undefined,
+      undefined,
+      undefined,
+      5,
+      new Map(),
+      new Map(),
+      undefined,
+    );
+    assert(
+      r.changed === false && r.tasks === tasks && r.assignments === best,
+      '(p2) structuralRefine identity fast path: same refs, changed=false',
+    );
+  }
+
+  // (f) structuralRefine — quality split: penalty IS the gate (commit at 0, reject when huge).
+  {
+    const ps = [part('p1', 0, 24), part('p2', 0, 24), part('p3', 0, 24)];
+    const pMap = new Map(ps.map((p) => [p.id, p]));
+    const mkScenario = () => {
+      const T = l0Task('Q', 0, 12, 1, true);
+      return { tasks: [T], best: [asg('Q', 'Q-s0', 'p1')] };
+    };
+    const s1 = mkScenario();
+    const commit = structuralRefine(
+      s1.best,
+      s1.tasks,
+      ps,
+      { ...DEFAULT_CONFIG, splitPenalty: 0 },
+      new Set(),
+      pMap,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      new Map(),
+      new Map(),
+      undefined,
+    );
+    const halves = commit.tasks.filter((t) => t.splitGroupId !== undefined);
+    assert(
+      commit.changed === true && halves.length === 2 && !commit.tasks.some((t) => t.id === 'Q'),
+      '(p2) structuralRefine commits a quality split when it strictly improves (splitPenalty 0)',
+    );
+    assert(
+      new Set(commit.assignments.filter((a) => a.taskId.startsWith('Q::')).map((a) => a.participantId)).size === 2,
+      '(p2) the two halves go to two DIFFERENT people (HC-16 honoured at selection)',
+    );
+    const s2 = mkScenario();
+    const reject = structuralRefine(
+      s2.best,
+      s2.tasks,
+      ps,
+      { ...DEFAULT_CONFIG, splitPenalty: 1e9 },
+      new Set(),
+      pMap,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      new Map(),
+      new Map(),
+      undefined,
+    );
+    assert(
+      reject.changed === false && reject.tasks === s2.tasks,
+      '(p2) structuralRefine REJECTS the same split when splitPenalty is prohibitive (penalty is the gate)',
+    );
+  }
+
+  // (g) structuralRefine — merge a degenerate split back when penalty no longer earned.
+  {
+    const ps = [part('p1', 0, 24), part('p2', 0, 24)];
+    const pMap = new Map(ps.map((p) => [p.id, p]));
+    const T = l0Task('M', 0, 12, 1, true);
+    const Sa = makeSplitHalf(T, 1, tb(0, 12).start.getTime(), tb(6, 6).start.getTime(), T.slots[0]);
+    const Sb = makeSplitHalf(T, 2, tb(6, 6).start.getTime(), tb(0, 12).end.getTime(), T.slots[0]);
+    const best = [asg(Sa.id, Sa.slots[0].slotId, 'p1'), asg(Sb.id, Sb.slots[0].slotId, 'p2')];
+    const r = structuralRefine(
+      best,
+      [Sa, Sb],
+      ps,
+      { ...DEFAULT_CONFIG, splitPenalty: 1e9 },
+      new Set(),
+      pMap,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      new Map(),
+      new Map(),
+      undefined,
+    );
+    assert(
+      r.changed === true && r.tasks.length === 1 && r.tasks[0].id === 'M' && r.tasks[0].splitGroupId === undefined,
+      '(p2) structuralRefine MERGES a degenerate split back into the whole occurrence when the penalty is no longer earned',
+    );
+    assert(
+      r.assignments.filter((a) => a.taskId === 'M').length === 1 && !r.assignments.some((a) => a.taskId.includes('#')),
+      '(p2) merge leaves exactly one whole assignment and no #a/#b fragments',
+    );
+  }
+
+  // (h) structuralRefine — merge self-guard: never create an unfilled slot.
+  {
+    const ps = [part('p1', 0, 24), part('p2', 0, 24)]; // all L0
+    const pMap = new Map(ps.map((p) => [p.id, p]));
+    // Whole slot requires L4 — nobody eligible ⇒ merge must be skipped (the
+    // soft composite can't see an unfilled slot, so the guard is structural).
+    const T: Task = {
+      ...l0Task('U', 0, 12, 1, true),
+      slots: [{ slotId: 'U-s0', acceptableLevels: [{ level: Level.L4 }], requiredCertifications: [] }],
+    };
+    const Sa = makeSplitHalf(T, 1, tb(0, 12).start.getTime(), tb(6, 6).start.getTime(), T.slots[0]);
+    const Sb = makeSplitHalf(T, 2, tb(6, 6).start.getTime(), tb(0, 12).end.getTime(), T.slots[0]);
+    const best = [asg(Sa.id, Sa.slots[0].slotId, 'p1'), asg(Sb.id, Sb.slots[0].slotId, 'p2')];
+    const r = structuralRefine(
+      best,
+      [Sa, Sb],
+      ps,
+      { ...DEFAULT_CONFIG, splitPenalty: 1e9 },
+      new Set(),
+      pMap,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      new Map(),
+      new Map(),
+      undefined,
+    );
+    assert(
+      r.changed === false,
+      '(p2) structuralRefine does NOT merge when the whole slot has no eligible participant (no hidden unfilled slot)',
+    );
+  }
+
+  // (i) structuralRefine — a pinned occurrence is never split.
+  {
+    const ps = [part('p1', 0, 24), part('p2', 0, 24), part('p3', 0, 24)];
+    const pMap = new Map(ps.map((p) => [p.id, p]));
+    const T = l0Task('PIN', 0, 12, 1, true);
+    const a = asg('PIN', 'PIN-s0', 'p1');
+    const r = structuralRefine(
+      [a],
+      [T],
+      ps,
+      { ...DEFAULT_CONFIG, splitPenalty: 0 },
+      new Set([a.id]),
+      pMap,
+      undefined,
+      undefined,
+      undefined,
+      5,
+      new Map(),
+      new Map(),
+      undefined,
+    );
+    assert(r.changed === false, '(p2) structuralRefine never splits a pinned/Manual/Frozen occurrence');
+  }
+
+  // (j) structuralRefine — cross-task HC is enforced during staffing.
+  // Regression guard for the bug where pickEligible passed a single-task
+  // taskMap, so checkEligibility could not resolve a candidate's OTHER
+  // assignments ⇒ HC-5/12/14/15 silently skipped. Q[0,12] is splittable;
+  // only p2 is available for the #a half [0,6] (p1/p3 unavailable then).
+  // With a conflicting BLK[0,6] on p2 the only #a candidate is double-booked,
+  // so the split MUST be refused; remove BLK and the same split commits —
+  // proving the refusal was the HC-5 check, not an unrelated block.
+  {
+    const ps = [part('p1', 6, 24), part('p2', 0, 24), part('p3', 6, 24)];
+    const pMap = new Map(ps.map((p) => [p.id, p]));
+    const refine = (tasks: Task[], best: Assignment[]) =>
+      structuralRefine(
+        best,
+        tasks,
+        ps,
+        { ...DEFAULT_CONFIG, splitPenalty: 0 },
+        new Set(),
+        pMap,
+        undefined,
+        undefined,
+        undefined,
+        5,
+        new Map(),
+        new Map(),
+        undefined,
+      );
+    const Q = l0Task('Q', 0, 12, 1, true);
+    const BLK = l0Task('BLK', 0, 6, 1, false);
+    const withConflict = refine(
+      [Q, BLK],
+      [asg('Q', 'Q-s0', 'p1'), asg('BLK', 'BLK-s0', 'p2')],
+    );
+    assert(
+      withConflict.changed === false && !withConflict.tasks.some((t) => t.splitGroupId !== undefined),
+      '(p2) quality split REFUSED when the only eligible half-staffing would double-book (HC-5 enforced via full taskMap)',
+    );
+    const noConflict = refine([Q], [asg('Q', 'Q-s0', 'p1')]);
+    const halves = noConflict.tasks.filter((t) => t.splitGroupId !== undefined);
+    assert(
+      noConflict.changed === true && halves.length === 2,
+      '(p2) the SAME split commits once the HC-5 conflict is removed (control — refusal was the HC check)',
+    );
+    assert(
+      validateHardConstraints(noConflict.tasks, ps, noConflict.assignments, undefined).violations.length === 0,
+      '(p2) the committed split is HC-valid (no double-booking / cross-task violation)',
+    );
+  }
+}
+
 export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   console.log('\n── Shift-Split: run-coalesce primitive ──');
   runCoalesce(assert);
@@ -1296,6 +1706,8 @@ export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   runHc15Dir2SameOccurrence(assert);
   console.log('── Shift-Split: per-placement HC-4 link-aware (m) ──');
   runPerPlacementHc4Link(assert);
+  console.log('── Shift-Split: Phase 2 — scoring honesty + quality split/merge (p2) ──');
+  runPhase2(assert);
 }
 
 if (require.main === module) {

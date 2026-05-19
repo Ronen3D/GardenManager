@@ -19,14 +19,14 @@ import {
   type Task,
   ViolationSeverity,
 } from '../models/types';
-import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import { computeTaskEffectiveHours, fragmentShare } from '../shared/utils/load-weighting';
 import {
   computeAllRestProfiles,
   computeRestFairness,
   computeRestFromAssignments,
   ParticipantRestProfile,
 } from '../shared/utils/rest-calculator';
-import { describeTaskInstance, operationalDateKey } from '../utils/date-utils';
+import { describeTaskInstance, operationalDateKey, taskOpDayStart } from '../utils/date-utils';
 import { computeLowPriorityLevelPenalty } from './senior-policy';
 
 /**
@@ -208,9 +208,13 @@ export function dailyWorkloadImbalance(
   const taskMap = prebuiltTaskMap ?? new Map(tasks.map((t) => [t.id, t]));
 
   // ── Collect all operational days present in the schedule ──
+  // Bucket by the OCCURRENCE op-day (taskOpDayStart) so a split `#b` whose
+  // midpoint crossed the dayStartHour boundary lands on the same day as its
+  // residual / `#a` / the equivalent unsplit shift. Non-split tasks return
+  // `timeBlock.start` unchanged ⇒ byte-identical when nothing is split.
   const allDays = new Set<string>();
   for (const t of tasks) {
-    allDays.add(operationalDateKey(t.timeBlock.start, dayStartHour));
+    allDays.add(operationalDateKey(taskOpDayStart(t), dayStartHour));
   }
   const dayList = [...allDays].sort();
   if (dayList.length <= 1) {
@@ -241,7 +245,7 @@ export function dailyWorkloadImbalance(
       if (phantomTaskIds?.has(a.taskId)) continue;
       const task = taskMap.get(a.taskId);
       if (!task) continue;
-      const dk = operationalDateKey(task.timeBlock.start, dayStartHour);
+      const dk = operationalDateKey(taskOpDayStart(task), dayStartHour);
       const idx = dayIndex.get(dk);
       if (idx === undefined) continue;
       const eff = computeTaskEffectiveHours(task);
@@ -435,62 +439,145 @@ export function collectSoftWarnings(
 
 // ─── SC-9: "Not With" Togetherness Penalty ──────────────────────────────────
 
-/**
- * Given a togethernessRelevant task and its assignments, return groups of
- * participant IDs that are considered "together" for the not-with constraint.
- * Groups are determined by sub-team: slots sharing the same subTeamId form
- * one group; slots with no subTeamId are all in one group.
- */
-function getTogetherGroups(task: Task, taskAssignments: Assignment[]): string[][] {
-  if (!task.togethernessRelevant) return [];
-  const groups = new Map<string, string[]>();
-  for (const a of taskAssignments) {
-    const slot = task.slots.find((s) => s.slotId === a.slotId);
-    const key = slot?.subTeamId ?? '__all__';
-    let arr = groups.get(key);
-    if (!arr) {
-      arr = [];
-      groups.set(key, arr);
-    }
-    arr.push(a.participantId);
-  }
-  return [...groups.values()];
+/** Sub-team a (task, slot) belongs to; slots without a subTeamId share the
+ *  catch-all group. */
+function subTeamOf(task: Task, slotId: string): string {
+  return task.slots.find((s) => s.slotId === slotId)?.subTeamId ?? '__all__';
 }
 
 /**
- * SC-9: Compute penalty for "not with" pair violations across all
- * togethernessRelevant tasks. Each co-assignment of a not-with pair
- * within the same sub-team group incurs config.notWithPenalty once.
+ * Group togethernessRelevant fragments by OCCURRENCE: a split occurrence's
+ * residual + every `#a`/`#b` half share `splitOccurrenceId ?? id`, and a
+ * non-split task is its own single-fragment occurrence — so the grouping (and
+ * therefore every downstream value) is byte-identical to the pre-split
+ * per-task model when nothing is split.
+ */
+function groupAssignmentsByOccurrence(
+  assignmentsByTask: ReadonlyMap<string, readonly Assignment[]>,
+  taskMap: ReadonlyMap<string, Task>,
+): Map<string, Assignment[]> {
+  const byOcc = new Map<string, Assignment[]>();
+  for (const [taskId, taskAssigns] of assignmentsByTask) {
+    const task = taskMap.get(taskId);
+    if (!task?.togethernessRelevant) continue;
+    const occId = task.splitOccurrenceId ?? task.id;
+    let arr = byOcc.get(occId);
+    if (!arr) {
+      arr = [];
+      byOcc.set(occId, arr);
+    }
+    for (const a of taskAssigns) arr.push(a);
+  }
+  return byOcc;
+}
+
+/**
+ * SC-9 shared kernel — the SINGLE source of truth for the not-with penalty so
+ * the aggregate `computeNotWithPenalty` and the IncrementalScorer twin cannot
+ * drift (the recurring scorer-drift hazard). `occAssigns` are all assignments
+ * of ONE occurrence. For every not-with pair the contribution is
+ *
+ *   notWithPenalty × (Σ time the pair is SIMULTANEOUSLY present in the SAME
+ *                     sub-team across the occurrence's fragments ÷ occ span)
+ *
+ * and each unordered pair is emitted exactly once via
+ * `cb(lowPid, highPid, amount, …)` keyed by participant-id order. The
+ * aggregate sums every emission; the twin sums emissions whose `lowPid` is the
+ * scored participant — so Σ twin ≡ aggregate by construction, independent of
+ * whether `notWithPairs` is symmetric.
+ *
+ * Non-split occurrence (one fragment over the whole task, one assignee per
+ * slot): overlap = full span, ratio = 1 ⇒ amount = notWithPenalty — exactly
+ * the pre-split per-pair value. Same-slot `#a`/`#b`: disjoint half-open
+ * intervals ⇒ overlap 0 ⇒ no contribution (the pair is genuinely never
+ * co-present, the product-confirmed semantic).
+ */
+function forEachOccurrenceNotWithContrib(
+  occAssigns: readonly Assignment[],
+  taskMap: ReadonlyMap<string, Task>,
+  notWithPairs: ReadonlyMap<string, Set<string>>,
+  notWithPenalty: number,
+  cb: (lowPid: string, highPid: string, amount: number, sampleTaskId: string, sampleTaskName: string) => void,
+): void {
+  if (occAssigns.length < 2 || notWithPenalty <= 0 || notWithPairs.size === 0) return;
+  const n = occAssigns.length;
+  const pid: string[] = new Array(n);
+  const team: string[] = new Array(n);
+  const start = new Float64Array(n);
+  const end = new Float64Array(n);
+  let occSpan = 0;
+  for (let i = 0; i < n; i++) {
+    const a = occAssigns[i];
+    const t = taskMap.get(a.taskId);
+    if (!t) {
+      pid[i] = '';
+      continue;
+    }
+    const s = t.timeBlock.start.getTime();
+    const e = t.timeBlock.end.getTime();
+    pid[i] = a.participantId;
+    team[i] = subTeamOf(t, a.slotId);
+    start[i] = s;
+    end[i] = e;
+    const span = t.splitOriginalMs ?? e - s;
+    if (span > occSpan) occSpan = span;
+  }
+  if (occSpan <= 0) return;
+  // Accumulate overlap per unordered not-with pair. A valid schedule has ≤1
+  // fragment per participant per occurrence, but accumulating keeps the result
+  // order-independent if that ever changes.
+  const acc = new Map<string, { low: string; high: string; ov: number; tid: string; tn: string }>();
+  for (let i = 0; i < n; i++) {
+    if (pid[i] === '') continue;
+    const set = notWithPairs.get(pid[i]);
+    if (!set) continue;
+    for (let j = i + 1; j < n; j++) {
+      if (pid[j] === '' || pid[i] === pid[j] || team[i] !== team[j] || !set.has(pid[j])) continue;
+      const ov = Math.min(end[i], end[j]) - Math.max(start[i], start[j]);
+      if (ov <= 0) continue;
+      const low = pid[i] < pid[j] ? pid[i] : pid[j];
+      const high = pid[i] < pid[j] ? pid[j] : pid[i];
+      const key = `${low}|${high}`;
+      const prev = acc.get(key);
+      if (prev) prev.ov += ov;
+      else {
+        const t = taskMap.get(occAssigns[i].taskId);
+        acc.set(key, { low, high, ov, tid: occAssigns[i].taskId, tn: t?.name ?? '' });
+      }
+    }
+  }
+  for (const e of acc.values()) cb(e.low, e.high, notWithPenalty * (e.ov / occSpan), e.tid, e.tn);
+}
+
+/**
+ * SC-9: total "not with" penalty — overlap-proportional per occurrence (see
+ * `forEachOccurrenceNotWithContrib`). Byte-identical to the pre-split
+ * per-task model when nothing is split.
  */
 export function computeNotWithPenalty(
-  assignments: Assignment[],
+  _assignments: Assignment[],
   config: SchedulerConfig,
   taskMap: Map<string, Task>,
   assignmentsByTask: Map<string, Assignment[]>,
   notWithPairs: Map<string, Set<string>>,
 ): number {
   if (config.notWithPenalty <= 0 || notWithPairs.size === 0) return 0;
+  const byOcc = groupAssignmentsByOccurrence(assignmentsByTask, taskMap);
   let penalty = 0;
-  for (const [taskId, taskAssigns] of assignmentsByTask) {
-    const task = taskMap.get(taskId);
-    if (!task?.togethernessRelevant) continue;
-    const groups = getTogetherGroups(task, taskAssigns);
-    for (const group of groups) {
-      // Check all pairs in this sub-team group
-      for (let i = 0; i < group.length; i++) {
-        const set = notWithPairs.get(group[i]);
-        if (!set) continue;
-        for (let j = i + 1; j < group.length; j++) {
-          if (set.has(group[j])) {
-            penalty += config.notWithPenalty;
-            // Capture violator identity for diagnostics. The recorder gates on
-            // _capturingFinal so this fires only on the optimize()-final score
-            // pass, not on millions of transient mid-SA evaluations.
-            recordNotWithViolation(group[i], group[j], taskId, task.name);
-          }
-        }
-      }
-    }
+  for (const occAssigns of byOcc.values()) {
+    forEachOccurrenceNotWithContrib(
+      occAssigns,
+      taskMap,
+      notWithPairs,
+      config.notWithPenalty,
+      (low, high, amount, tid, tn) => {
+        penalty += amount;
+        // Diagnostics: the pair IS co-present (overlap > 0). Gated on
+        // _capturingFinal inside the recorder so it fires only on the
+        // optimize()-final score pass, not transient mid-SA evaluations.
+        recordNotWithViolation(low, high, tid, tn);
+      },
+    );
   }
   return penalty;
 }
@@ -535,13 +622,16 @@ export function computeTaskNamePreferencePenalty(
     const pAssigns = assignmentsByParticipant.get(p.id) || [];
     if (pAssigns.length === 0) continue;
 
-    // Avoidance: per-assignment penalty for less-preferred task name
+    // Avoidance: per-assignment penalty for less-preferred task name.
+    // Scaled by fragmentShare so a split half of a disliked task costs a
+    // time-proportional share (½ + ½ of one occurrence = one whole, not two).
+    // fragmentShare === 1 for any non-split task ⇒ byte-identical when off.
     if (p.lessPreferredTaskName && config.taskNameAvoidancePenalty > 0) {
       for (const a of pAssigns) {
         if (phantomTaskIds?.has(a.taskId)) continue;
         const task = taskMap.get(a.taskId);
         if (task && task.sourceName === p.lessPreferredTaskName) {
-          penalty += config.taskNameAvoidancePenalty;
+          penalty += config.taskNameAvoidancePenalty * fragmentShare(task);
         }
       }
     }
@@ -558,13 +648,18 @@ export function computeTaskNamePreferencePenalty(
       }
     }
 
-    // Preference bonus: per-assignment reward for preferred task name
+    // Preference bonus: per-assignment reward for preferred task name,
+    // fragment-scaled so two people splitting a preferred shift get ½ bonus
+    // each (= one whole bonus total) rather than a full bonus each. The
+    // binary "got their preferred at all" check above is intentionally NOT
+    // scaled — per the product decision a half still satisfies the
+    // preference. fragmentShare === 1 for non-split ⇒ unchanged when off.
     if (p.preferredTaskName && config.taskNamePreferenceBonus > 0) {
       for (const a of pAssigns) {
         if (phantomTaskIds?.has(a.taskId)) continue;
         const task = taskMap.get(a.taskId);
         if (task && task.sourceName === p.preferredTaskName) {
-          penalty -= config.taskNamePreferenceBonus;
+          penalty -= config.taskNamePreferenceBonus * fragmentShare(task);
         }
       }
     }
@@ -839,6 +934,16 @@ export class IncrementalScorer {
    */
   private assignmentsByTask: ReadonlyMap<string, readonly Assignment[]>;
   /**
+   * Per-OCCURRENCE assignment index (key = `splitOccurrenceId ?? taskId`) for
+   * the overlap-proportional SC-9. Built once in `build()` from the same
+   * Assignment objects as `assignmentsByTask`; those objects are shared so
+   * participant swaps are visible without rebuilding, and the split set is
+   * frozen for the scorer's lifetime (Option B) so the key→list structure is
+   * invariant across SA swaps. Identical to the per-task grouping — and unused
+   * beyond it — when nothing is split.
+   */
+  private assignmentsByOccurrence: Map<string, Assignment[]> = new Map();
+  /**
    * Phantom task IDs to skip during scoring iteration. Phantoms are seeded
    * into `taskMap` and `assignmentsByParticipant` for cross-boundary HC checks
    * but must NOT contribute to score components (l0StdDev, minRest, penalties)
@@ -966,13 +1071,16 @@ export class IncrementalScorer {
       }
       scorer.assignmentsByTask = byTask;
     }
+    // Occurrence index for SC-9 (same shared Assignment objects ⇒ stays
+    // consistent under participant swaps exactly like assignmentsByTask).
+    scorer.assignmentsByOccurrence = groupAssignmentsByOccurrence(scorer.assignmentsByTask, scorer.taskMap);
     scorer.capacities = ctx.capacities ?? new Map();
 
     // Collect all operational days
     const dsh = ctx.dayStartHour ?? 5;
     scorer._dayStartHour = dsh;
     const allDays = new Set<string>();
-    for (const t of tasks) allDays.add(operationalDateKey(t.timeBlock.start, dsh));
+    for (const t of tasks) allDays.add(operationalDateKey(taskOpDayStart(t), dsh));
     scorer.dayList = [...allDays].sort();
 
     // Init global day totals
@@ -1025,7 +1133,8 @@ export class IncrementalScorer {
         if (!task) continue;
         const slot = scorer.getSlot(a.taskId, a.slotId);
         if (slot && isLowPriority(slot.acceptableLevels, p.level)) {
-          pPenalty += config.lowPriorityLevelPenalty;
+          // Fragment-scaled — lockstep with computeLowPriorityLevelPenalty.
+          pPenalty += config.lowPriorityLevelPenalty * fragmentShare(task);
         }
       }
       if (pPenalty > 0) {
@@ -1041,7 +1150,7 @@ export class IncrementalScorer {
     if (scorer._notWithPairs.size > 0 && config.notWithPenalty > 0) {
       // For each participant, compute their not-with penalty
       for (const p of participants) {
-        const pPenalty = scorer.computeParticipantNotWithPenalty(p.id, scorer.assignmentsByTask);
+        const pPenalty = scorer.computeParticipantNotWithPenalty(p.id);
         if (pPenalty > 0) {
           scorer._perParticipantNotWithPenalty.set(p.id, pPenalty);
           scorer._notWithPenalty += pPenalty;
@@ -1080,34 +1189,40 @@ export class IncrementalScorer {
   }
 
   /**
-   * Compute not-with penalty attributed to a specific participant.
-   * For each togethernessRelevant task they're in, check if any co-member
-   * in the same sub-team group is in their notWith set.
-   * To avoid double-counting, only count pairs where this pid < partnerId.
+   * Not-with penalty attributed to `pid` — the lower-id half of each pair's
+   * overlap-proportional contribution (the SAME `forEachOccurrenceNotWithContrib`
+   * kernel the aggregate uses, so Σ over all pids ≡ the aggregate exactly).
+   *
+   * NOTE: no `!myNotWith` early-out — a pair can be emitted because the OTHER
+   * participant declared `pid`, yet be attributed to `pid` as the lower id, so
+   * `pid` must run the kernel even when it declares nobody. Each occurrence is
+   * processed once for `pid` (seenOcc), reading the occurrence-level index so
+   * cross-fragment co-presence (residual ↔ half, half ↔ half of other slots)
+   * is seen — a per-task index would miss it.
    */
-  private computeParticipantNotWithPenalty(pid: string, byTask: ReadonlyMap<string, readonly Assignment[]>): number {
-    const myNotWith = this._notWithPairs.get(pid);
-    if (!myNotWith || myNotWith.size === 0) return 0;
+  private computeParticipantNotWithPenalty(pid: string): number {
+    if (this._notWithPairs.size === 0 || this.config.notWithPenalty <= 0) return 0;
     let penalty = 0;
     const pAssigns = this.assignmentsByParticipant.get(pid) || [];
+    const seenOcc = new Set<string>();
     for (const a of pAssigns) {
       if (this.phantomTaskIds.has(a.taskId)) continue;
       const task = this.taskMap.get(a.taskId);
       if (!task?.togethernessRelevant) continue;
-      // Find my sub-team group
-      const mySlot = this.getSlot(a.taskId, a.slotId);
-      const myTeam = mySlot?.subTeamId ?? '__all__';
-      // Check co-members in the same sub-team
-      const taskAssigns = byTask.get(a.taskId) || [];
-      for (const other of taskAssigns) {
-        if (other.participantId <= pid) continue; // only count pid < partner to avoid double-counting
-        if (!myNotWith.has(other.participantId)) continue;
-        const otherSlot = this.getSlot(other.taskId, other.slotId);
-        const otherTeam = otherSlot?.subTeamId ?? '__all__';
-        if (myTeam === otherTeam) {
-          penalty += this.config.notWithPenalty;
-        }
-      }
+      const occId = task.splitOccurrenceId ?? task.id;
+      if (seenOcc.has(occId)) continue;
+      seenOcc.add(occId);
+      const occAssigns = this.assignmentsByOccurrence.get(occId);
+      if (!occAssigns) continue;
+      forEachOccurrenceNotWithContrib(
+        occAssigns,
+        this.taskMap,
+        this._notWithPairs,
+        this.config.notWithPenalty,
+        (low, _high, amount) => {
+          if (low === pid) penalty += amount;
+        },
+      );
     }
     return penalty;
   }
@@ -1129,13 +1244,15 @@ export class IncrementalScorer {
 
     let penalty = 0;
 
-    // Avoidance: per-assignment penalty
+    // Avoidance: per-assignment penalty, fragment-scaled (mirror of the
+    // aggregate computeTaskNamePreferencePenalty — must stay in lockstep or
+    // SA optimises a different objective than the final score).
     if (p.lessPreferredTaskName && this.config.taskNameAvoidancePenalty > 0) {
       for (const a of pAssigns) {
         if (this.phantomTaskIds.has(a.taskId)) continue;
         const task = this.taskMap.get(a.taskId);
         if (task && task.sourceName === p.lessPreferredTaskName) {
-          penalty += this.config.taskNameAvoidancePenalty;
+          penalty += this.config.taskNameAvoidancePenalty * fragmentShare(task);
         }
       }
     }
@@ -1152,13 +1269,14 @@ export class IncrementalScorer {
       }
     }
 
-    // Preference bonus: per-assignment reward for preferred task name
+    // Preference bonus: per-assignment reward, fragment-scaled (mirror of the
+    // aggregate). Binary "has preferred" above is intentionally unscaled.
     if (p.preferredTaskName && this.config.taskNamePreferenceBonus > 0) {
       for (const a of pAssigns) {
         if (this.phantomTaskIds.has(a.taskId)) continue;
         const task = this.taskMap.get(a.taskId);
         if (task && task.sourceName === p.preferredTaskName) {
-          penalty -= this.config.taskNamePreferenceBonus;
+          penalty -= this.config.taskNamePreferenceBonus * fragmentShare(task);
         }
       }
     }
@@ -1176,7 +1294,11 @@ export class IncrementalScorer {
       if (!task) continue;
       const eff = computeTaskEffectiveHours(task);
       effectiveHours += eff;
-      const dk = operationalDateKey(task.timeBlock.start, this._dayStartHour);
+      // Bucket by occurrence op-day (taskOpDayStart) so a split `#b` whose
+      // midpoint crossed the dayStartHour boundary lands with its residual /
+      // `#a`. Mirrors the aggregate dailyWorkloadImbalance. Non-split tasks
+      // return timeBlock.start unchanged ⇒ byte-identical when off.
+      const dk = operationalDateKey(taskOpDayStart(task), this._dayStartHour);
       dailyLoads.set(dk, (dailyLoads.get(dk) || 0) + eff);
     }
 
@@ -1397,7 +1519,8 @@ export class IncrementalScorer {
           if (!task) continue;
           const slot = this.getSlot(a.taskId, a.slotId);
           if (slot && isLowPriority(slot.acceptableLevels, p.level)) {
-            penalty += this.config.lowPriorityLevelPenalty;
+            // Fragment-scaled — lockstep with computeLowPriorityLevelPenalty.
+            penalty += this.config.lowPriorityLevelPenalty * fragmentShare(task);
           }
         }
         return penalty;
@@ -1433,30 +1556,40 @@ export class IncrementalScorer {
         this._savedNotWithEntries[0][1] > 0 ||
         this._savedNotWithEntries[1][1] > 0
       ) {
-        // Collect task IDs touched by the swapped participants. The per-task
-        // assignment lists themselves are stable under participant swaps.
-        const affectedTaskIds = new Set<string>();
+        // Collect OCCURRENCES touched by the swapped participants. SC-9 is
+        // occurrence-scoped (a split occurrence's residual + halves form one
+        // unit), so a per-task scan would miss a co-participant on a different
+        // fragment of the same occurrence. assignmentsByOccurrence is stable
+        // under participant swaps (shared Assignment objects, frozen split
+        // set) exactly like assignmentsByTask. Non-split ⇒ occId === taskId ⇒
+        // identical set to the pre-split per-task collection.
+        const affectedOccIds = new Set<string>();
         for (const a of aAssigns) {
           if (this.phantomTaskIds.has(a.taskId)) continue;
-          affectedTaskIds.add(a.taskId);
+          const t = this.taskMap.get(a.taskId);
+          if (t?.togethernessRelevant) affectedOccIds.add(t.splitOccurrenceId ?? t.id);
         }
         for (const a of bAssigns) {
           if (this.phantomTaskIds.has(a.taskId)) continue;
-          affectedTaskIds.add(a.taskId);
+          const t = this.taskMap.get(a.taskId);
+          if (t?.togethernessRelevant) affectedOccIds.add(t.splitOccurrenceId ?? t.id);
         }
 
-        // Find co-participants in these tasks who have notWith relationships
-        // with pidA or pidB and whose penalty attribution could be affected.
+        // Co-participants in those occurrences whose lower-id attribution could
+        // shift when pidA/pidB move. notWith may be asymmetric and the
+        // attributee is min(pid, partner), so include EITHER declaration
+        // direction — a superset is safe (recompute is idempotent for
+        // unchanged participants and every mutated entry is saved for undo).
         const aNotWith = this._notWithPairs.get(pidA);
         const bNotWith = this._notWithPairs.get(pidB);
         const affectedCoParticipants = new Set<string>();
-        for (const taskId of affectedTaskIds) {
-          const taskAssigns = this.assignmentsByTask.get(taskId) || [];
-          for (const ta of taskAssigns) {
+        for (const occId of affectedOccIds) {
+          const occAssigns = this.assignmentsByOccurrence.get(occId) || [];
+          for (const ta of occAssigns) {
             const coPid = ta.participantId;
             if (coPid === pidA || coPid === pidB) continue;
-            // pidC is affected if it has a notWith relationship with pidA or pidB
-            if (aNotWith?.has(coPid) || bNotWith?.has(coPid)) {
+            const coNotWith = this._notWithPairs.get(coPid);
+            if (aNotWith?.has(coPid) || bNotWith?.has(coPid) || coNotWith?.has(pidA) || coNotWith?.has(pidB)) {
               affectedCoParticipants.add(coPid);
             }
           }
@@ -1475,13 +1608,13 @@ export class IncrementalScorer {
         this._notWithPenalty -= oldTotal;
 
         // Recompute penalties for all affected participants
-        const newPenaltyA = this.computeParticipantNotWithPenalty(pidA, this.assignmentsByTask);
-        const newPenaltyB = this.computeParticipantNotWithPenalty(pidB, this.assignmentsByTask);
+        const newPenaltyA = this.computeParticipantNotWithPenalty(pidA);
+        const newPenaltyB = this.computeParticipantNotWithPenalty(pidB);
         this._perParticipantNotWithPenalty.set(pidA, newPenaltyA);
         this._perParticipantNotWithPenalty.set(pidB, newPenaltyB);
         let newTotal = newPenaltyA + newPenaltyB;
         for (const coPid of affectedCoParticipants) {
-          const newCoPenalty = this.computeParticipantNotWithPenalty(coPid, this.assignmentsByTask);
+          const newCoPenalty = this.computeParticipantNotWithPenalty(coPid);
           this._perParticipantNotWithPenalty.set(coPid, newCoPenalty);
           newTotal += newCoPenalty;
         }

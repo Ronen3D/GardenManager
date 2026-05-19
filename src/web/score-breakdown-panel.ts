@@ -218,14 +218,14 @@ function buildBreakdownRows(score: ScheduleScore, config: SchedulerConfig): Brea
     });
   }
 
-  // Shift-split penalty — run-constant cost (config.splitPenalty × number of
-  // split occurrences). Included so the term sum reconstructs compositeScore
-  // when a schedule has splits; zero/dimmed otherwise.
+  // Shift-split penalty — cost (config.splitPenalty × number of split slots).
+  // Included so the term sum reconstructs compositeScore when a schedule has
+  // splits; zero/dimmed otherwise.
   const sp = score.splitPenalty ?? 0;
   rows.push({
     id: 'splitPenalty',
     label: 'פיצול משמרות',
-    subtitle: 'קנס לכל מופע משמרת שפוצל לשני חצאים (כדי לאייש משבצת שאחרת תישאר ריקה).',
+    subtitle: 'קנס לכל משבצת שפוצלה לשני חצאים — הסף שפיצול לשיפור איכות חייב לעבור.',
     code: 'SPLIT',
     group: 'cost',
     signedWeight: -1,

@@ -1063,10 +1063,12 @@ function testC58_pdfPacker(assert: AssertFn): void {
     geometry: geo,
     levers: DEFAULT_LEVERS,
   };
-  assert(
-    JSON.stringify(planDayLayout(detIn)) === JSON.stringify(planDayLayout(detIn)),
-    'C5.8: planner is deterministic (identical input ⇒ identical plan)',
-  );
+  // Two independent runs on identical input must produce identical plans.
+  // Bound to separate consts so the determinism check isn't a literal
+  // self-compare (Biome noSelfCompare) while keeping the exact intent.
+  const detRun1 = JSON.stringify(planDayLayout(detIn));
+  const detRun2 = JSON.stringify(planDayLayout(detIn));
+  assert(detRun1 === detRun2, 'C5.8: planner is deterministic (identical input ⇒ identical plan)');
 }
 
 // ─── Standalone entry point ─────────────────────────────────────────────────

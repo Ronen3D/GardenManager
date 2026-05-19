@@ -15708,10 +15708,11 @@ console.log('\n── PDF Fit Planner ──────────────
     geometry: geo,
     levers: DEFAULT_LEVERS,
   };
-  assert(
-    JSON.stringify(planDayLayout(detIn)) === JSON.stringify(planDayLayout(detIn)),
-    'fit-planner: deterministic (identical input ⇒ identical plan)',
-  );
+  // Separate consts (not a literal self-compare) — keeps the determinism
+  // intent while satisfying Biome noSelfCompare.
+  const fitDetRun1 = JSON.stringify(planDayLayout(detIn));
+  const fitDetRun2 = JSON.stringify(planDayLayout(detIn));
+  assert(fitDetRun1 === fitDetRun2, 'fit-planner: deterministic (identical input ⇒ identical plan)');
 }
 
 // ─── Async test blocks + Summary ─────────────────────────────────────────────

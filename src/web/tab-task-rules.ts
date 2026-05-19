@@ -811,7 +811,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${tpl.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
-          <label class="checkbox-label" title="כשמופעל וגם פיצול משמרות פעיל בהגדרות האלגוריתם — המערכת רשאית לפצל מופע שלא ניתן לאייש בשלמותו לשתי משמרות לשני אנשים שונים"><input type="checkbox" data-tpl-field="splittable" data-tid="${tpl.id}" ${tpl.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
+          <label class="checkbox-label" title="כשמופעל וגם פיצול משמרות פעיל בהגדרות האלגוריתם — המערכת רשאית לפצל מופע לשתי משמרות לשני אנשים שונים, גם לאיוש משבצת שאחרת תישאר ריקה וגם כשהפיצול משפר משמעותית את האיכות (עונש הפיצול קובע את הסף)"><input type="checkbox" data-tpl-field="splittable" data-tid="${tpl.id}" ${tpl.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
         </div>
       </section>
 

@@ -136,7 +136,8 @@ type TunedKey =
   | 'notWithPenalty'
   | 'taskNamePreferencePenalty'
   | 'taskNameAvoidancePenalty'
-  | 'taskNamePreferenceBonus';
+  | 'taskNamePreferenceBonus'
+  | 'splitPenalty';
 
 interface Dim {
   key: TunedKey;
@@ -162,6 +163,11 @@ const BASE_DIMS: Dim[] = [
   { key: 'taskNamePreferencePenalty', min: 1, max: 1000, integer: true },
   { key: 'taskNameAvoidancePenalty', min: 1, max: 1000, integer: true },
   { key: 'taskNamePreferenceBonus', min: 1, max: 500, integer: true },
+  // The in-run quality-split gate. Log-scaled like the other penalty dims;
+  // range brackets the 1000 default both ways so the tuner can make the
+  // dataset split more freely or hardly at all. Pruned when nothing is
+  // splittable (see buildFingerprint).
+  { key: 'splitPenalty', min: 100, max: 20000, integer: true },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -174,6 +180,10 @@ interface Fingerprint {
   notWithPairCount: number;
   preferenceCount: number; // participants with any task-name preference
   lowPrioritySlotCount: number;
+  /** Occurrences whose frozen effective `splittable` flag is on (= a
+   *  splittable template AND splittingEnabled). Zero ⇒ splitting can never
+   *  happen this run ⇒ splitPenalty is pruned from the search. */
+  splittableTaskCount: number;
   /** The dims we actually search over (pruned). */
   activeDims: Dim[];
   summaryHebrew: string;
@@ -198,10 +208,15 @@ function buildFingerprint(participants: Participant[], tasks: Task[]): Fingerpri
   }
 
   let lowPrioritySlotCount = 0;
+  let splittableTaskCount = 0;
   for (const t of tasks) {
     for (const s of t.slots) {
       if (s.acceptableLevels.some((e) => e.lowPriority)) lowPrioritySlotCount++;
     }
+    // `Task.splittable` is the frozen effective flag (template.splittable &&
+    // splittingEnabled), stamped at generation — so this is 0 when splitting
+    // is off OR no template is splittable, exactly the prune condition.
+    if (t.splittable) splittableTaskCount++;
   }
 
   const seniorCount = (levelCounts.L2 ?? 0) + (levelCounts.L3 ?? 0) + (levelCounts.L4 ?? 0);
@@ -220,6 +235,7 @@ function buildFingerprint(participants: Participant[], tasks: Task[]): Fingerpri
       continue;
     if (d.key === 'lowPriorityLevelPenalty' && lowPrioritySlotCount === 0) continue;
     if (d.key === 'seniorFairnessWeight' && seniorCount === 0) continue;
+    if (d.key === 'splitPenalty' && splittableTaskCount === 0) continue;
 
     // Shape ranges based on dataset density
     const shaped: Dim = { ...d };
@@ -234,6 +250,7 @@ function buildFingerprint(participants: Participant[], tasks: Task[]): Fingerpri
   if (seniorCount > 0) parts.push(`${seniorCount} סגל`);
   if (notWithPairCount > 0) parts.push(`${notWithPairCount} זוגות "אי התאמה"`);
   if (preferenceCount > 0) parts.push(`${preferenceCount} העדפות משימה`);
+  if (splittableTaskCount > 0) parts.push(`${splittableTaskCount} ניתנות לפיצול`);
   parts.push(`${tasks.length} משימות`);
   const summaryHebrew = parts.join(' · ');
 
@@ -243,6 +260,7 @@ function buildFingerprint(participants: Participant[], tasks: Task[]): Fingerpri
     notWithPairCount,
     preferenceCount,
     lowPrioritySlotCount,
+    splittableTaskCount,
     activeDims,
     summaryHebrew,
   };

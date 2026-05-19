@@ -495,8 +495,14 @@ export interface SchedulerConfig {
   taskNameAvoidancePenalty: number;
   /** Bonus (penalty reduction) per assignment to participant's preferred task name */
   taskNamePreferenceBonus: number;
-  /** Penalty per shift-split occurrence. v1: drives no in-run decision — only
-   *  biases multi-attempt selection toward fewer-split solutions. */
+  /** Penalty per split SLOT (one `#a`/`#b` pair). A REAL in-run optimizer
+   *  cost: the structural-refine pass only commits a quality split when the
+   *  composite gain strictly exceeds this, and merges a split back when it no
+   *  longer earns it. Higher ⇒ the system splits a fillable shift only when
+   *  the fairness/rest/balance gain clearly outweighs it. Tunable (auto-tuner
+   *  dimension). Feasibility splits — filling an otherwise-empty slot worth
+   *  UNFILLED_SLOT_PENALTY (50000) — stay hugely net-positive at any sane
+   *  value and are never discouraged. */
   splitPenalty: number;
 }
 
@@ -519,11 +525,12 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   taskNamePreferencePenalty: 140,
   taskNameAvoidancePenalty: 27,
   taskNamePreferenceBonus: 7,
-  // Tie-breaker scale: large enough that, among equally-feasible attempts,
-  // one with fewer splits wins; ~1/100 of UNFILLED_SLOT_PENALTY (50000) so a
-  // split that fills an otherwise-unfillable slot is still hugely net-positive
-  // and is never discouraged. Comparable to a soft-preference miss.
-  splitPenalty: 500,
+  // In-run quality gate (Moderate appetite, product-chosen). A quality split
+  // must buy more composite than this to be committed; large enough that
+  // splitting stays uncommon, small relative to UNFILLED_SLOT_PENALTY (50000)
+  // so feasibility splits remain hugely net-positive. The auto-tuner explores
+  // it per dataset.
+  splitPenalty: 1000,
 };
 
 // ─── Algorithm Settings (user-configurable control panel) ────────────────────

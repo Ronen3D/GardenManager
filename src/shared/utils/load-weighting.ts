@@ -230,6 +230,27 @@ export function computeTaskEffectiveHours(task: Task): number {
 }
 
 /**
+ * Fraction of the original (pre-split) occurrence that this task instance
+ * covers in time. For a non-split task (no `splitOriginalMs`) this is exactly
+ * `1`, so every caller that multiplies a per-assignment soft cost by
+ * `fragmentShare` stays byte-identical when nothing is split. For a split
+ * half it is `(this fragment's span) / (occurrence span)` — equal halves give
+ * `0.5` each and a residual + halves of one occurrence sum back to `1`.
+ *
+ * Used by the split-honesty soft-scoring fixes (SC-6 low-priority, SC-10 task
+ * preference bonus / avoidance) so a half assignment contributes a
+ * time-proportional share of a per-assignment cost rather than a full one.
+ * Per-occurrence facts (e.g. SC-10's binary "got their preferred") are NOT
+ * scaled — they are deduplicated across fragments by their callers instead.
+ */
+export function fragmentShare(task: Task): number {
+  if (!task.splitOriginalMs) return 1;
+  const span = task.timeBlock.end.getTime() - task.timeBlock.start.getTime();
+  if (span <= 0) return 0;
+  return span / task.splitOriginalMs;
+}
+
+/**
  * Return hours counted at 100% load ("Hot Time").
  *
  * - Non-Kruv heavy tasks (no loadWindows, baseLoadWeight=1): entire duration is hot.
