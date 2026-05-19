@@ -11,7 +11,7 @@ import { computeParticipantCapacity } from '../utils/capacity';
 import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
 import { isTouchDevice } from './responsive';
-import { escHtml, fmt, groupColor, LEVEL_COLORS, SVG_ICONS } from './ui-helpers';
+import { escHtml, fmt, getSplitDisplay, groupColor, LEVEL_COLORS, splitInfoBlock, SVG_ICONS } from './ui-helpers';
 import { showBottomSheet } from './ui-modal';
 import { computeTaskBreakdown } from './workload-utils';
 
@@ -134,6 +134,16 @@ export function buildParticipantTooltipContent(
   }
   const pctOfCapacity = denom > 0 ? (effectiveHeavyHours / denom) * 100 : 0;
 
+  // Split context: when this card is one half of a split shift, spell out the
+  // full shift, this half's window, and who covers the other half. This is the
+  // primary phone surface for split — a grid card tap opens this sheet.
+  let splitHtml = '';
+  if (slotCtx?.taskId && schedule) {
+    const splitTask = schedule.tasks.find((t) => t.id === slotCtx.taskId);
+    const sd = splitTask ? getSplitDisplay(splitTask, schedule) : null;
+    if (sd) splitHtml = `<div class="tt-divider"></div>${splitInfoBlock(sd)}`;
+  }
+
   const certsHtml =
     p.certifications.length > 0
       ? p.certifications
@@ -173,6 +183,7 @@ export function buildParticipantTooltipContent(
       </div>
       <span class="tt-kpi-pct tt-kpi-pct-${pctOfCapacity > 70 ? 'danger' : pctOfCapacity > 50 ? 'warning' : 'ok'}">${pctOfCapacity.toFixed(1)}%</span>
     </div>
+    ${splitHtml}
     ${isTouchDevice ? `<div class="tt-divider"></div><div class="tt-row"><button class="btn-sm btn-outline" data-action="goto-profile" data-pid="${p.id}" style="width:100%">📋 צפה בפרופיל</button></div>` : ''}
   `;
 }
@@ -426,13 +437,13 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
     teammatesHtml += '</div>';
   }
 
-  // One-line explanation when this task is half of a split occurrence, so a
-  // user (esp. on mobile) understands why one shift appears as two rows with
-  // two different people.
-  const splitNotice =
-    task.splitGroupId !== undefined
-      ? `<div class="ttt-split-note">½ משבצת זו פוצלה לשני חצאים לשני אנשים שונים כדי לאייש משבצת שאחרת הייתה נשארת ריקה.</div>`
-      : '';
+  // When this task is one half of a split shift, replace the raw "(1/2)" name
+  // with the clean template name and append a structured, low-key block that
+  // states the full shift, this half, and who covers the other half — so a
+  // user (esp. on mobile) understands why one shift shows as two people.
+  const sd = getSplitDisplay(task, schedule);
+  const headerName = sd ? task.sourceName || task.name : task.name;
+  const splitNotice = sd ? splitInfoBlock(sd) : '';
 
   const sourceName = task.sourceName || task.name;
   const openPanelBtn = sourceName
@@ -443,7 +454,7 @@ function buildTaskTooltipContent(taskId: string, schedule: Schedule | null): str
 
   return `
     <div class="ttt-header">
-      <span class="ttt-task-name" style="border-inline-start:3px solid ${taskColor};padding-inline-start:8px">${escHtml(task.name)}</span>
+      <span class="ttt-task-name" style="border-inline-start:3px solid ${taskColor};padding-inline-start:8px">${escHtml(headerName)}</span>
       <span class="badge badge-sm" style="background:${taskColor}">${escHtml(task.sourceName || task.name)}</span>
     </div>
     <div class="ttt-time">

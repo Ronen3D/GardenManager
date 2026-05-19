@@ -7,6 +7,7 @@
  */
 
 import { Level } from '../models/types';
+import type { Schedule, Task } from '../models/types';
 import { fmtTime, stripTaskNameAffixes } from '../utils/date-utils';
 import { getCertColor, getCertificationById, getCertLabel, getTemplateVisualMap } from './config-store';
 
@@ -144,6 +145,99 @@ export function escHtml(s: string): string {
 /** Escape a string for safe HTML attribute interpolation. */
 export function escAttr(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ─── Shift-Split Display Helpers ────────────────────────────────────────────
+
+export interface SplitDisplay {
+  /** 1 = first half, 2 = second half. */
+  part: 1 | 2;
+  /** Human ordinal: "חצי ראשון" / "חצי שני". */
+  halfLabel: string;
+  /** This half's coverage window, "HH:MM–HH:MM". */
+  thisWindow: string;
+  /** Full (pre-split) shift window, "HH:MM–HH:MM". */
+  fullWindow: string;
+  /** The sibling half's coverage window, when resolvable from the schedule. */
+  otherWindow?: string;
+  /** Name(s) covering the other half (normally exactly one). */
+  otherNames: string[];
+}
+
+/**
+ * Resolve display metadata for a split-half task; returns `null` for ordinary
+ * whole tasks. `splitOriginalMs` + `splitPart` alone reconstruct the full
+ * pre-split window (part 1 is anchored at the original start, part 2 at the
+ * original end), so the sibling lookup — keyed on the shared `splitGroupId` —
+ * is only needed to name who covers the other half.
+ */
+export function getSplitDisplay(task: Task, schedule?: Schedule | null): SplitDisplay | null {
+  if (task.splitGroupId === undefined || (task.splitPart !== 1 && task.splitPart !== 2)) {
+    return null;
+  }
+  const part = task.splitPart;
+  const startMs = task.timeBlock.start.getTime();
+  const endMs = task.timeBlock.end.getTime();
+  const origMs = task.splitOriginalMs ?? (endMs - startMs) * 2;
+  const fullStartMs = part === 1 ? startMs : endMs - origMs;
+  const fullEndMs = part === 1 ? startMs + origMs : endMs;
+
+  const otherNames: string[] = [];
+  let otherWindow: string | undefined;
+  if (schedule) {
+    const other = schedule.tasks.find(
+      (t) => t.splitGroupId === task.splitGroupId && t.splitPart !== part,
+    );
+    if (other) {
+      otherWindow = `${fmt(other.timeBlock.start)}–${fmt(other.timeBlock.end)}`;
+      const nameById = new Map(schedule.participants.map((p) => [p.id, p.name] as const));
+      for (const a of schedule.assignments) {
+        if (a.taskId !== other.id) continue;
+        const nm = nameById.get(a.participantId);
+        if (nm) otherNames.push(nm);
+      }
+    }
+  }
+
+  return {
+    part,
+    halfLabel: part === 1 ? 'חצי ראשון' : 'חצי שני',
+    thisWindow: `${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}`,
+    fullWindow: `${fmt(new Date(fullStartMs))}–${fmt(new Date(fullEndMs))}`,
+    otherWindow,
+    otherNames,
+  };
+}
+
+/**
+ * Compact, low-key "½" pill — the at-a-glance cue that a slot was split.
+ * Calm by design (a feature detail, not a warning); the full story lives in
+ * the tap target's {@link splitInfoBlock}.
+ */
+export function splitBadge(): string {
+  return `<span class="split-badge" title="משבצת זו פוצלה לשני חצאים בין שני אנשים — הקש לפרטים">½</span>`;
+}
+
+/**
+ * Structured, quiet split explainer for tap targets (grid bottom sheet, task
+ * tooltip): the full shift, this half, and who covers the other half — so a
+ * normal user understands why one shift shows as two people.
+ */
+export function splitInfoBlock(sd: SplitDisplay): string {
+  const other =
+    sd.otherNames.length > 0
+      ? `${escHtml(sd.otherNames.join(', '))}${
+          sd.otherWindow ? ` <span class="split-info-time" dir="ltr">${sd.otherWindow}</span>` : ''
+        }`
+      : sd.otherWindow
+        ? `<span class="split-info-time" dir="ltr">${sd.otherWindow}</span>`
+        : 'טרם אויש';
+  return `<div class="split-info">
+    <div class="split-info-title">½ משבצת מפוצלת · ${sd.halfLabel}</div>
+    <div class="split-info-row"><span class="split-info-k">משמרת מלאה</span><span class="split-info-v" dir="ltr">${sd.fullWindow}</span></div>
+    <div class="split-info-row"><span class="split-info-k">החצי הזה</span><span class="split-info-v" dir="ltr">${sd.thisWindow}</span></div>
+    <div class="split-info-row"><span class="split-info-k">החצי השני</span><span class="split-info-v">${other}</span></div>
+  </div>`;
 }
 
 // ─── Theme Utilities ────────────────────────────────────────────────────────

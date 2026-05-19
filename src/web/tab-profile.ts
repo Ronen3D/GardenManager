@@ -15,7 +15,7 @@ import { taskOpDayStart } from '../utils/date-utils';
 import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
 import { formatWorkloadMultiplier } from './tab-participants';
-import { certBadge, escHtml, fmt, groupBadge, levelBadge, stripDayPrefix, taskBadge } from './ui-helpers';
+import { certBadge, escHtml, fmt, groupBadge, levelBadge, splitBadge, stripDayPrefix, taskBadge } from './ui-helpers';
 import { computeTaskBreakdown } from './workload-utils';
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -284,6 +284,7 @@ function renderPersonalAgenda(
           <div class="agenda-task-time" dir="ltr">${fmt(task.timeBlock.start)} – ${fmt(task.timeBlock.end)}</div>
           <div class="agenda-task-info">
             ${taskBadge(task)}
+            ${task.splitGroupId !== undefined ? splitBadge() : ''}
             ${crossDayBadge}
           </div>
           ${sosHtml}

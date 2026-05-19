@@ -494,11 +494,29 @@ export function generateGridTemplate(rows: LayoutRow[]): GridTemplate {
 
 // ─── Card Renderer ──────────────────────────────────────────────────────────
 
+/**
+ * One name span for a card. `frozen` only adds the data flag used by the
+ * tooltip/swap wiring — it never changes the visible text.
+ */
+function cardNameSpan(
+  p: Participant | undefined,
+  a: Assignment | undefined,
+  taskId: string,
+  frozen: boolean,
+): string {
+  if (!p) return `<span class="split-empty" title="חצי לא מאויש">—</span>`;
+  const hover = a
+    ? `data-pid="${p.id}" data-assignment-id="${a.id}" data-task-id="${taskId}"${frozen ? ' data-frozen="1"' : ''}`
+    : `data-pid="${p.id}"`;
+  return `<span class="participant-name participant-hover" role="button" tabindex="0" ${hover} style="color:${groupColor(p.group)}">${escHtml(p.name)}</span>`;
+}
+
 function renderAssignmentCard(
   slot: SlotRequirement,
   assignment: Assignment | undefined,
   participant: Participant | undefined,
   task: Task,
+  schedule: Schedule,
   liveMode: LiveModeState,
   manualCtx?: ManualBuildRenderCtx,
 ): string {
@@ -507,6 +525,38 @@ function renderAssignmentCard(
   const isConflict = assignment?.status === AssignmentStatus.Conflict;
   const isManualActive = manualCtx?.active === true;
   const isSelected = isManualActive && manualCtx.selectedTaskId === task.id && manualCtx.selectedSlotId === slot.slotId;
+
+  // ── Split slot: render the pair as ONE card "firstHalf / secondHalf" ──
+  // The two halves are separate tasks at adjacent windows; showing them as
+  // two scattered ½-tagged cards is noisy. Instead the part-1 task draws a
+  // single card with both names (first = first half, second = second half);
+  // the part-2 task folds into it (renders nothing). Manual-build never has
+  // split tasks, so that path is left untouched.
+  if (task.splitGroupId !== undefined && !isManualActive) {
+    if (task.splitPart === 2) return ''; // folded into the part-1 card
+    const sib = schedule.tasks.find(
+      (t) => t.splitGroupId === task.splitGroupId && t.splitPart === 2,
+    );
+    if (sib) {
+      const sb = getTaskAssignments(sib, schedule)[0];
+      const aFrozen = liveMode.enabled && !isFutureTask(task, liveMode.currentTimestamp);
+      const bFrozen = liveMode.enabled && !isFutureTask(sib, liveMode.currentTimestamp);
+      let pairClass = 'assignment-card assignment-card-split';
+      if (isConflict || sb?.assignment?.status === AssignmentStatus.Conflict) pairClass += ' status-conflict';
+      else if (aFrozen && bFrozen) pairClass += ' status-frozen';
+      const nameA = participant?.name ?? '—';
+      const nameB = sb?.participant?.name ?? '—';
+      return `
+    <div class="${pairClass}" data-assignment-id="${assignment?.id ?? ''}" data-task-id="${task.id}" data-slot-id="${slot.slotId}"
+      title="משבצת מפוצלת בין שני אנשים — ${escHtml(nameA)} (חצי ראשון) / ${escHtml(nameB)} (חצי שני). הקש על שם לפרטי החלוקה.">
+      <div class="card-header card-split-pair">
+        ${cardNameSpan(participant, assignment, task.id, aFrozen)}<span class="split-sep" aria-hidden="true">/</span>${cardNameSpan(sb?.participant, sb?.assignment, sib.id, bFrozen)}
+      </div>
+    </div>
+  `;
+    }
+    // Sibling missing (data anomaly): fall through to a plain single card.
+  }
 
   let cardClass = 'assignment-card';
   if (isConflict) cardClass += ' status-conflict';
@@ -523,14 +573,6 @@ function renderAssignmentCard(
     ? `data-assignment-id="${assignment.id}" data-task-id="${task.id}" data-slot-id="${slot.slotId}"`
     : `data-slot-id="${slot.slotId}" data-task-id="${task.id}"`;
 
-  // Split-occurrence cue: a half-task (`splitGroupId` set) is one half of a
-  // shift that was split to fill an otherwise-empty slot. The "½" badge makes
-  // that self-evident on a phone without tapping for the tooltip.
-  const splitBadge =
-    task.splitGroupId !== undefined
-      ? `<span class="split-badge" title="משבצת מפוצלת — חצי משבצת (פוצלה כדי לאייש משבצת שאחרת הייתה ריקה)">½</span>`
-      : '';
-
   let content = '';
 
   if (participant) {
@@ -545,7 +587,6 @@ function renderAssignmentCard(
         </span>
       </div>
       <div class="card-details">
-        ${splitBadge}
         ${isFrozen ? `<span title="מוקפא">${SVG_ICONS.snowflake}</span>` : ''}
         ${isSelected && isManualActive && !isFrozen ? '<button class="btn-manual-remove" data-action="manual-remove" title="הסר שיבוץ">✕ הסר</button>' : ''}
       </div>
@@ -558,7 +599,7 @@ function renderAssignmentCard(
       const certs = slot.requiredCertifications;
       slotHint = `<div class="manual-slot-hint">${levels ? `${levels}` : ''}${certs.length ? ' ' + certBadges(certs, '') : ''}</div>`;
     }
-    content = `<div class="empty-slot-label">${escHtml(slot.label || task.name)}${splitBadge}</div>${slotHint}`;
+    content = `<div class="empty-slot-label">${escHtml(slot.label || task.name)}</div>${slotHint}`;
   }
 
   return `
@@ -600,7 +641,7 @@ export function renderSectionTable(
           const allSlots = getTaskAssignments(task, schedule);
           const matched = col.matchSlots(task, allSlots);
           return matched.map((s) =>
-            renderAssignmentCard(s.slot, s.assignment, s.participant, task, liveMode, manualCtx),
+            renderAssignmentCard(s.slot, s.assignment, s.participant, task, schedule, liveMode, manualCtx),
           );
         });
         return `<td class="task-cell">${cellCards.join('')}</td>`;

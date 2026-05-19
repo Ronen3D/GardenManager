@@ -4837,16 +4837,6 @@ tr.row-rest td {
   font-weight: 600;
   color: var(--text);
 }
-.ttt-split-note {
-  margin-top: 6px;
-  padding: 5px 7px;
-  border-radius: 4px;
-  background: var(--accent-glow);
-  border-inline-start: 3px solid var(--warning);
-  color: var(--text);
-  font-size: 0.74rem;
-  line-height: 1.35;
-}
 .ttt-divider {
   height: 1px;
   background: var(--border);
@@ -6847,23 +6837,90 @@ tr.now-row-animate > td.time-cell {
   color: var(--text-muted);
 }
 
-/* Split-occurrence cue — a half-task (one half of a shift split to fill an
-   otherwise-empty slot). Amber "notice" tone, readable on a phone. */
+/* Split cue — one half of a shift split between two people. A calm,
+   informational pill (a useful feature detail, not a warning), still
+   legible at a glance on a phone. */
 .split-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-style: normal;
-  font-weight: 700;
+  font-weight: 600;
   font-size: 0.72rem;
   line-height: 1;
   min-width: 13px;
-  padding: 1px 4px;
+  padding: 1px 5px;
   border-radius: 8px;
-  background: var(--warning);
-  color: #fff;
+  background: var(--accent-glow);
+  color: var(--info);
+  border: 1px solid var(--border);
   margin-inline-start: 4px;
   flex-shrink: 0;
+}
+
+/* Structured, low-key split explainer used in tap targets (grid bottom
+   sheet, task tooltip). Quiet info tone — not the warning border it used
+   to carry. */
+.split-info {
+  margin-top: 6px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: var(--accent-glow);
+  border-inline-start: 3px solid var(--info);
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+.split-info-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.split-info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.split-info-row + .split-info-row {
+  margin-top: 2px;
+}
+.split-info-k {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.split-info-v {
+  text-align: end;
+  font-weight: 600;
+}
+.split-info-time {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+/* Inline split note in the rescue modal context line. */
+.rescue-split-note {
+  color: var(--text-muted);
+  font-size: 0.86em;
+}
+
+/* Split slot in the schedule grid: one card, "firstHalf / secondHalf".
+   First name = first half, second = second half; each name is its own tap
+   target for the half/window breakdown. The slash carries the meaning, so
+   no extra badge is needed — clean by design. */
+.card-split-pair {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 2px 5px;
+}
+.split-sep {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.74rem;
+  line-height: 1.2;
+}
+.split-empty {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.78rem;
+  line-height: 1.2;
 }
 
 .empty-slot-label {
@@ -14169,6 +14226,49 @@ tr.now-row-animate > td.time-cell {
   font-size: 0.82rem;
   padding: 6px 8px;
   min-height: 28px;
+}
+/* Split shift in the day-stack: one parent block (full window + "מפוצלת")
+   with its two halves nested under it — a calm hierarchy, not a warning. */
+.tp-mobile-shift-split {
+  border-inline-start: 3px solid var(--info);
+}
+.tp-split-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: var(--accent-glow);
+  color: var(--info);
+  border: 1px solid var(--border);
+}
+.tp-split-halves {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-inline-start: 10px;
+  padding-inline-start: 10px;
+  border-inline-start: 2px solid var(--border);
+}
+.tp-split-half {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tp-split-half-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tp-split-half-ord {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.tp-split-half-time {
+  font-weight: 700;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
 }
 .tp-subteam-group {
   border: 1.5px solid #2c3e50;

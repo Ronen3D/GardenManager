@@ -12,7 +12,7 @@
 
 import type { Assignment, LoadWindow, Participant, Schedule, SlotRequirement, Task } from '../models/types';
 import { taskOpDayStart } from '../utils/date-utils';
-import { certBadge, escHtml, fmt, groupColor, LEVEL_COLORS, levelBadge, taskBadge } from './ui-helpers';
+import { certBadge, escHtml, fmt, groupColor, LEVEL_COLORS, levelBadge, splitBadge, taskBadge } from './ui-helpers';
 
 // ─── Context ─────────────────────────────────────────────────────────────────
 
@@ -212,10 +212,11 @@ function renderNeedsAttention(
     .map(({ task, slot, dayIndex }) => {
       const slotLabel = slot.subTeamLabel || slot.label || 'משבצת';
       const timeRange = `${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}`;
+      const splitCue = task.splitGroupId !== undefined ? splitBadge() : '';
       return `<li class="tp-needs-item">
         <span class="tp-needs-day">יום ${dayIndex}</span>
         <span class="tp-needs-time" dir="ltr">${timeRange}</span>
-        <span class="tp-needs-slot">${escHtml(slotLabel)}</span>
+        <span class="tp-needs-slot">${escHtml(slotLabel)}${splitCue}</span>
       </li>`;
     })
     .join('');
@@ -391,11 +392,14 @@ function renderShiftBlock(
   if (ghost) classes.push('tp-shift-continues');
 
   const timeLabel = `${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}`;
+  // Two halves of a split shift render as two separate blocks at adjacent
+  // windows — a calm ½ cue stops that reading as the shift scheduled twice.
+  const splitCue = task.splitGroupId !== undefined ? splitBadge() : '';
   return `<div class="${classes.join(' ')}"
     data-task-id="${escHtml(task.id)}"
     style="inset-inline-start:${leftPct}%;width:${widthPct}%;--tp-shift-color:${task.color || '#7f8c8d'}"
     title="${escHtml(task.name)} · ${timeLabel}${ghost ? ' (המשך)' : ''}">
-    ${ghost ? '<span class="tp-shift-ghost-label">↩ המשך</span>' : `<span class="tp-shift-time" dir="ltr">${timeLabel}</span>`}
+    ${ghost ? '<span class="tp-shift-ghost-label">↩ המשך</span>' : `<span class="tp-shift-time" dir="ltr">${timeLabel}</span>${splitCue}`}
     <div class="tp-shift-slots">${slotsHtml}</div>
   </div>`;
 }
@@ -509,29 +513,79 @@ function renderDayStack(
     });
     const open = d === firstTaskDay || dayHasUnfilled;
 
+    // Group split halves under one parent block so a split shift reads as a
+    // single shift (full window) with two nested halves — visually distinct
+    // from a standalone whole shift. Non-split tasks are blocks of their own.
+    type Block = { kind: 'whole'; task: Task } | { kind: 'split'; a: Task; b: Task };
+    const blocks: Block[] = [];
+    const seenSplitGroups = new Set<string>();
+    for (const task of dayTasks) {
+      if (task.splitGroupId === undefined) {
+        blocks.push({ kind: 'whole', task });
+        continue;
+      }
+      if (seenSplitGroups.has(task.splitGroupId)) continue; // sibling folded in
+      seenSplitGroups.add(task.splitGroupId);
+      const sib = dayTasks.find((t) => t.splitGroupId === task.splitGroupId && t.id !== task.id);
+      if (!sib) {
+        blocks.push({ kind: 'whole', task }); // anomaly: render the lone half
+        continue;
+      }
+      const a = task.splitPart === 1 ? task : sib;
+      const b = task.splitPart === 1 ? sib : task;
+      blocks.push({ kind: 'split', a, b });
+    }
+
+    const renderHot = (task: Task): string =>
+      shiftHotOverlaps(task)
+        .map(
+          (r) =>
+            `<span class="tp-shift-hot-badge" dir="ltr" title="עומס מוגבר">🔥 ${fmt(r.start)}–${fmt(r.end)}</span>`,
+        )
+        .join('');
+    const slotRowsOf = (task: Task): string => {
+      const assignMap = new Map((assignmentsByTask.get(task.id) || []).map((a) => [a.slotId, a]));
+      return renderGroupedSlots(task, assignMap, pMap, ctx);
+    };
+
     let shiftsHtml = '';
-    if (dayTasks.length === 0) {
+    if (blocks.length === 0) {
       shiftsHtml = '<p class="text-muted tp-day-empty">אין משמרות ביום זה</p>';
     } else {
-      shiftsHtml = dayTasks
-        .map((task) => {
-          const timeLabel = `${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}`;
-          const hotRanges = shiftHotOverlaps(task);
-          const hotBadges = hotRanges
-            .map(
-              (r) =>
-                `<span class="tp-shift-hot-badge" dir="ltr" title="עומס מוגבר">🔥 ${fmt(r.start)}–${fmt(r.end)}</span>`,
-            )
-            .join('');
-          const assignments = assignmentsByTask.get(task.id) || [];
-          const assignMap = new Map(assignments.map((a) => [a.slotId, a]));
-          const slotRows = renderGroupedSlots(task, assignMap, pMap, ctx);
-          return `<div class="tp-mobile-shift">
+      shiftsHtml = blocks
+        .map((block) => {
+          if (block.kind === 'whole') {
+            const { task } = block;
+            const timeLabel = `${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}`;
+            return `<div class="tp-mobile-shift">
             <div class="tp-mobile-shift-header">
               <span class="tp-mobile-shift-time" dir="ltr">${timeLabel}</span>
-              ${hotBadges}
+              ${renderHot(task)}
             </div>
-            <div class="tp-mobile-slots">${slotRows}</div>
+            <div class="tp-mobile-slots">${slotRowsOf(task)}</div>
+          </div>`;
+          }
+          // Split block: parent = full shift window + "מפוצלת"; nested halves.
+          const { a, b } = block;
+          const fullLabel = `${fmt(a.timeBlock.start)}–${fmt(b.timeBlock.end)}`;
+          const half = (t: Task, ord: string): string =>
+            `<div class="tp-split-half">
+              <div class="tp-split-half-head">
+                <span class="tp-split-half-ord">${ord}</span>
+                <span class="tp-split-half-time" dir="ltr">${fmt(t.timeBlock.start)}–${fmt(t.timeBlock.end)}</span>
+                ${renderHot(t)}
+              </div>
+              <div class="tp-mobile-slots">${slotRowsOf(t)}</div>
+            </div>`;
+          return `<div class="tp-mobile-shift tp-mobile-shift-split">
+            <div class="tp-mobile-shift-header">
+              <span class="tp-mobile-shift-time" dir="ltr">${fullLabel}</span>
+              <span class="tp-split-tag" title="המשמרת פוצלה לשני חצאים בין שני אנשים">משמרת מפוצלת</span>
+            </div>
+            <div class="tp-split-halves">
+              ${half(a, 'חצי ראשון')}
+              ${half(b, 'חצי שני')}
+            </div>
           </div>`;
         })
         .join('');
@@ -540,7 +594,7 @@ function renderDayStack(
     dayCards.push(`<details class="tp-day-card" ${open ? 'open' : ''}>
       <summary class="tp-day-card-summary">
         <span class="tp-day-card-title">יום ${d}</span>
-        <span class="tp-day-card-count">${dayTasks.length} משמרות</span>
+        <span class="tp-day-card-count">${blocks.length} משמרות</span>
       </summary>
       <div class="tp-day-card-body">${shiftsHtml}</div>
     </details>`);

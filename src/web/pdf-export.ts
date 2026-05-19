@@ -40,7 +40,12 @@ import { fmtTime } from '../utils/date-utils';
 import { triggerShareOrDownload } from './data-transfer';
 import { buildDay0Schedule } from './day0-adapter';
 import { getTasksForDay, hexToRgb } from './export-utils';
-import { computeSectionMetrics, getTaskAssignments, getUniqueStartTimes, type SectionMetrics } from './layout-engine';
+import {
+  type AssignedSlot,
+  computeSectionMetrics,
+  getTaskAssignments,
+  type SectionMetrics,
+} from './layout-engine';
 import { groupColor } from './ui-helpers';
 import { RUBIK_BOLD_FONT_BASE64 } from './utils/rubik-bold-font-data';
 import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';
@@ -190,6 +195,57 @@ function nameEntry(p: { name: string; group: string }): NameEntry {
 }
 
 /**
+ * Row start-times for a section. A split slot is shown as ONE row at the full
+ * shift window, so the second half (`splitPart === 2`) does NOT contribute its
+ * mid-point start time — it is folded into the first half's row. (If the
+ * first half is somehow absent, the second half keeps its own row so the
+ * assignment is never silently dropped.)
+ */
+function sectionRowTimes(tasks: Task[]): number[] {
+  const times = new Set<number>();
+  for (const t of tasks) {
+    if (t.splitGroupId !== undefined && t.splitPart === 2) {
+      const hasPart1 = tasks.some((x) => x.splitGroupId === t.splitGroupId && x.splitPart === 1);
+      if (hasPart1) continue;
+    }
+    times.add(new Date(t.timeBlock.start).getTime());
+  }
+  return [...times].sort((a, b) => a - b);
+}
+
+/**
+ * Names for one column at one time row. Mirrors the on-screen grid's split
+ * merge: a split first-half slot renders as a single "firstHalf / secondHalf"
+ * entry (the sibling second half folds in and is never drawn on its own);
+ * non-split slots are unchanged. `accept` applies the column's slot filter.
+ */
+function columnNameEntries(
+  tasksAtTime: Task[],
+  schedule: Schedule,
+  accept: (s: AssignedSlot) => boolean,
+): NameEntry[] {
+  const out: NameEntry[] = [];
+  for (const tk of tasksAtTime) {
+    if (tk.splitGroupId !== undefined && tk.splitPart === 2) continue; // folded into part-1
+    if (tk.splitGroupId !== undefined && tk.splitPart === 1) {
+      const a = getTaskAssignments(tk, schedule).find((s) => s.participant && accept(s));
+      if (!a) continue; // this column doesn't own the split slot
+      const sib = schedule.tasks.find(
+        (t) => t.splitGroupId === tk.splitGroupId && t.splitPart === 2,
+      );
+      const b = sib ? getTaskAssignments(sib, schedule).find((s) => s.participant) : undefined;
+      const nameB = b?.participant?.name ?? '—';
+      out.push({ raw: `${a.participant!.name} / ${nameB}`, color: groupColor(a.participant!.group) });
+      continue;
+    }
+    for (const s of getTaskAssignments(tk, schedule)) {
+      if (s.participant && accept(s)) out.push(nameEntry(s.participant));
+    }
+  }
+  return out;
+}
+
+/**
  * Resolve a section's logical columns. Mirrors the on-screen layout-engine
  * column strategy (multi-source split / sub-team / flat) but returns name
  * arrays rather than pre-joined strings so the renderer can re-shape them into
@@ -218,11 +274,7 @@ function buildLogicalColumns(section: SectionMetrics, schedule: Schedule): Logic
         header: sourceKey,
         namesAt: (timeNum) => {
           const atTime = sourceTasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
-          return atTime.flatMap((tk) =>
-            getTaskAssignments(tk, schedule)
-              .filter((s) => s.participant)
-              .map((s) => nameEntry(s.participant!)),
-          );
+          return columnNameEntries(atTime, schedule, () => true);
         },
       });
     }
@@ -237,11 +289,7 @@ function buildLogicalColumns(section: SectionMetrics, schedule: Schedule): Logic
         header: label,
         namesAt: (timeNum) => {
           const atTime = teamTasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
-          return atTime.flatMap((tk) =>
-            getTaskAssignments(tk, schedule)
-              .filter((s) => s.slot.subTeamId === teamId && s.participant)
-              .map((s) => nameEntry(s.participant!)),
-          );
+          return columnNameEntries(atTime, schedule, (s) => s.slot.subTeamId === teamId);
         },
       });
     }
@@ -279,11 +327,7 @@ function buildLogicalColumns(section: SectionMetrics, schedule: Schedule): Logic
         header: label,
         namesAt: (timeNum) => {
           const atTime = tasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
-          return atTime.flatMap((tk) =>
-            getTaskAssignments(tk, schedule)
-              .filter((s) => (s.slot.subTeamId ?? '') === capturedStId && s.participant)
-              .map((s) => nameEntry(s.participant!)),
-          );
+          return columnNameEntries(atTime, schedule, (s) => (s.slot.subTeamId ?? '') === capturedStId);
         },
       });
     }
@@ -293,11 +337,7 @@ function buildLogicalColumns(section: SectionMetrics, schedule: Schedule): Logic
       header: section.title,
       namesAt: (timeNum) => {
         const atTime = tasks.filter((tk) => new Date(tk.timeBlock.start).getTime() === timeNum);
-        return atTime.flatMap((tk) =>
-          getTaskAssignments(tk, schedule)
-            .filter((s) => s.participant)
-            .map((s) => nameEntry(s.participant!)),
-        );
+        return columnNameEntries(atTime, schedule, () => true);
       },
     });
   }
@@ -360,7 +400,7 @@ function planDayLayoutForPdf(
   for (const section of sections) {
     const columns = buildLogicalColumns(section, schedule);
     if (columns.length === 0) continue;
-    const uniqueTimes = getUniqueStartTimes(section.tasks);
+    const uniqueTimes = sectionRowTimes(section.tasks);
     meta.set(section.id, {
       section,
       columns,

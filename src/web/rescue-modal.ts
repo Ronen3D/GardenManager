@@ -19,7 +19,7 @@ import {
 } from '../index';
 import * as store from './config-store';
 import { isTouchDevice } from './responsive';
-import { escAttr, escHtml, fmt, stripDayPrefix } from './ui-helpers';
+import { escAttr, escHtml, fmt, getSplitDisplay, stripDayPrefix } from './ui-helpers';
 
 // ─── Context injection ──────────────────────────────────────────────────────
 
@@ -296,11 +296,16 @@ function showRescueModal(): void {
   wireRescueModalEvents();
 }
 
-/** Task label for swap steps: clean template name + time range, e.g. "שמש 13:00–17:00". */
+/** Task label for swap steps: clean template name + time range, e.g. "שמש 13:00–17:00".
+ *  For a split half, makes clear only half the shift is being filled. */
 function taskLabel(task: Task | undefined, fallbackName: string): string {
   const name = task?.sourceName ?? stripDayPrefix(task?.name ?? fallbackName);
   if (!task) return name;
-  return `${name} <span dir="ltr">${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}</span>`;
+  const sd = getSplitDisplay(task);
+  const splitNote = sd
+    ? ` <span class="split-badge">½</span> <span class="rescue-split-note">${sd.halfLabel} · מתוך משמרת <span dir="ltr">${sd.fullWindow}</span></span>`
+    : '';
+  return `${name} <span dir="ltr">${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}</span>${splitNote}`;
 }
 
 function getRescueTooltipEl(): HTMLElement {
