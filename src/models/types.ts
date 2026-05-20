@@ -970,6 +970,13 @@ export interface OneTimeTask {
   displayOrder?: number;
   /** Custom notes / description. */
   description?: string;
+  /**
+   * Shift-splitting opt-in. When true AND the per-run
+   * `AlgorithmSettings.splittingEnabled` is on, the optimizer may realize an
+   * unfillable slot of this one-time task as two equal halves worked by two
+   * different participants. Independent of `blocksConsecutive`. Default false.
+   */
+  splittable?: boolean;
 }
 
 // ─── Multi-Day Schedule Types ────────────────────────────────────────────────

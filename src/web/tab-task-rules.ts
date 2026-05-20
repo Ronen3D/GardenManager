@@ -1433,6 +1433,7 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
       <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-ot-field="baseLoadWeight" value="${(ot.baseLoadWeight ?? 1).toFixed(2)}" data-ot-id="${ot.id}" /></label>
       <label class="checkbox-label"><input type="checkbox" data-ot-field="sameGroupRequired" data-ot-id="${ot.id}" ${ot.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
       <label class="checkbox-label"><input type="checkbox" data-ot-field="blocksConsecutive" data-ot-id="${ot.id}" ${ot.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
+      <label class="checkbox-label" title="כשמופעל וגם פיצול משמרות פעיל בהגדרות האלגוריתם — המערכת רשאית לפצל מופע לשתי משמרות לשני אנשים שונים, גם לאיוש משבצת שאחרת תישאר ריקה וגם כשהפיצול משפר משמעותית את האיכות (עונש הפיצול קובע את הסף)"><input type="checkbox" data-ot-field="splittable" data-ot-id="${ot.id}" ${ot.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
       <label>כלל מרווח: <select class="input-sm" data-ot-field="restRuleId" data-ot-id="${ot.id}">
         <option value=""${!ot.restRuleId ? ' selected' : ''}>ללא</option>
         ${store
@@ -1602,6 +1603,7 @@ function _commitOneTimeProps(body: HTMLElement, otId: string): boolean {
   const sameGroup = (body.querySelector('[data-ot-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
   const blocksConsecutive =
     (body.querySelector('[data-ot-field="blocksConsecutive"]') as HTMLInputElement)?.checked ?? true;
+  const splittable = (body.querySelector('[data-ot-field="splittable"]') as HTMLInputElement)?.checked || false;
   const otRestRuleId = (body.querySelector('[data-ot-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
   const desc = (body.querySelector('[data-ot-field="description"]') as HTMLInputElement)?.value.trim();
 
@@ -1626,6 +1628,7 @@ function _commitOneTimeProps(body: HTMLElement, otId: string): boolean {
     sameGroupRequired: sameGroup,
     baseLoadWeight: Math.max(0, Math.min(1, baseLoad)),
     blocksConsecutive,
+    splittable,
     restRuleId: otRestRuleId,
     ...(otSleepRecovery.kind === 'set' ? { sleepRecovery: otSleepRecovery.value } : {}),
     ...(otSleepRecovery.kind === 'clear' ? { sleepRecovery: undefined } : {}),
