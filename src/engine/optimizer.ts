@@ -2886,20 +2886,24 @@ export function structuralRefine(
   // Deterministic least-loaded-eligible pick (no Math.random — multi-attempt
   // determinism). `exclude` enforces HC-16's two-different-people per split
   // slot at selection time (isEligibleForSlot re-checks it authoritatively).
-  // `candTasks` MUST be the full candidate task set: checkEligibility resolves
-  // the participant's OTHER assignments via taskMap (HC-5 double-booking,
-  // HC-12/HC-14/HC-15/HC-16) — a single-task map would silently skip every
-  // cross-task hard constraint and let an infeasible staffing through.
+  // `tm` MUST be the full candidate task map (built via `taskMapOf`):
+  // checkEligibility resolves the participant's OTHER assignments via taskMap
+  // (HC-5 double-booking, HC-12/HC-14/HC-15/HC-16) — a single-task map would
+  // silently skip every cross-task hard constraint and let an infeasible
+  // staffing through. `bp` MUST be the per-participant assignment index
+  // built via `buildByParticipant` (which seeds phantom assignments). Callers
+  // hoist both out of inner loops to avoid rebuilding maps that haven't
+  // changed; when a placement is committed inside a loop, callers update `bp`
+  // incrementally via `addToAssignmentMap` to keep it in sync with the
+  // assignment list passed to subsequent picks.
   const pickEligible = (
     task: Task,
     slot: SlotRequirement,
-    candTasks: Task[],
-    asgs: Assignment[],
+    tm: Map<string, Task>,
+    bp: Map<string, Assignment[]>,
     loadByPid: Map<string, number>,
     exclude: string | null,
   ): Participant | null => {
-    const bp = buildByParticipant(asgs);
-    const tm = taskMapOf(candTasks);
     let bestP: Participant | null = null;
     let bestLoad = Number.POSITIVE_INFINITY;
     for (const p of participants) {
@@ -3008,8 +3012,10 @@ export function structuralRefine(
       // ONE eligible participant. No eligible participant ⇒ the merge would
       // create an unfilled slot (which the soft composite cannot see) ⇒ skip.
       const candAsgs = workAsgs.filter((x) => x.taskId !== Sa.id && x.taskId !== Sb.id);
-      const loadByPid = loadMapOf(candAsgs, taskMapOf(candTasks));
-      const chosen = pickEligible(wholeTask, wholeSlot, candTasks, candAsgs, loadByPid, null);
+      const candTm = taskMapOf(candTasks);
+      const candBp = buildByParticipant(candAsgs);
+      const loadByPid = loadMapOf(candAsgs, candTm);
+      const chosen = pickEligible(wholeTask, wholeSlot, candTm, candBp, loadByPid, null);
       if (!chosen) continue;
       candAsgs.push({
         id: nextAssignmentId(),
@@ -3060,6 +3066,9 @@ export function structuralRefine(
 
       // Build the candidate: drop T + its assignments, add #a/#b per slot,
       // staff each with two DIFFERENT eligible people (least-loaded).
+      // `halves` is appended in slot-major order — halves[2i] is the #a half
+      // and halves[2i+1] is the #b half of T.slots[i] — so the per-slot loop
+      // reads them by position rather than by `.find` over the slotId suffix.
       const halves: Task[] = [];
       for (const s of T.slots) {
         halves.push(makeSplitHalf(T, 1, startMs, midMs, s));
@@ -3067,38 +3076,49 @@ export function structuralRefine(
       }
       const candTasks = workTasks.filter((t) => t.id !== T.id).concat(halves);
       let candAsgs = workAsgs.filter((x) => x.taskId !== T.id);
+      // `candTasks` is stable across the slot loop (only `candAsgs` grows),
+      // so the task map is built once. `candBp` (per-participant assignment
+      // index) is built once and updated incrementally via
+      // `addToAssignmentMap` after each #a/#b placement, so the next pick
+      // sees the participant's freshly-added half without a full rebuild.
+      const candTm = taskMapOf(candTasks);
+      const candBp = buildByParticipant(candAsgs);
       let feasible = true;
-      for (const s of T.slots) {
-        const Sa = halves.find((h) => h.splitPart === 1 && h.slots[0].slotId === `${s.slotId}#a`)!;
-        const Sb = halves.find((h) => h.splitPart === 2 && h.slots[0].slotId === `${s.slotId}#b`)!;
-        const la = loadMapOf(candAsgs, taskMapOf(candTasks));
-        const pa = pickEligible(Sa, Sa.slots[0], candTasks, candAsgs, la, null);
+      for (let i = 0; i < T.slots.length; i++) {
+        const Sa = halves[2 * i];
+        const Sb = halves[2 * i + 1];
+        const la = loadMapOf(candAsgs, candTm);
+        const pa = pickEligible(Sa, Sa.slots[0], candTm, candBp, la, null);
         if (!pa) {
           feasible = false;
           break;
         }
-        candAsgs = candAsgs.concat({
+        const newAsgA: Assignment = {
           id: nextAssignmentId(),
           taskId: Sa.id,
           slotId: Sa.slots[0].slotId,
           participantId: pa.id,
           status: AssignmentStatus.Scheduled,
           updatedAt: new Date(),
-        });
-        const lb = loadMapOf(candAsgs, taskMapOf(candTasks));
-        const pb = pickEligible(Sb, Sb.slots[0], candTasks, candAsgs, lb, pa.id);
+        };
+        candAsgs = candAsgs.concat(newAsgA);
+        addToAssignmentMap(candBp, newAsgA);
+        const lb = loadMapOf(candAsgs, candTm);
+        const pb = pickEligible(Sb, Sb.slots[0], candTm, candBp, lb, pa.id);
         if (!pb) {
           feasible = false;
           break;
         }
-        candAsgs = candAsgs.concat({
+        const newAsgB: Assignment = {
           id: nextAssignmentId(),
           taskId: Sb.id,
           slotId: Sb.slots[0].slotId,
           participantId: pb.id,
           status: AssignmentStatus.Scheduled,
           updatedAt: new Date(),
-        });
+        };
+        candAsgs = candAsgs.concat(newAsgB);
+        addToAssignmentMap(candBp, newAsgB);
       }
       if (!feasible) continue;
 
