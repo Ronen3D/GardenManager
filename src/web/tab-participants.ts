@@ -9,7 +9,7 @@ import type { CertificationDefinition, Participant } from '../models/types';
 import { fmtTime } from '../utils/date-utils';
 import * as store from './config-store';
 import { openParticipantSetFormatSheet, openXlsxImportFlow } from './data-transfer-ui';
-import { triggerCharacterFarewell } from './easter-eggs';
+import { triggerCharacterEffect, triggerCharacterFarewell } from './easter-eggs';
 import { renderPakalBadges } from './pakal-utils';
 import { showParticipantEditor } from './participant-editor-sheet';
 import {
@@ -596,7 +596,39 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       }
       case 'add-participant': {
         const result = await showParticipantEditor({ mode: 'create' });
-        if (result.saved) rerender();
+        if (result.saved) {
+          rerender();
+          // After rerender() the original `container` is detached — query the
+          // live document for the fresh row. When the row is in the viewport,
+          // anchor the burst there. Otherwise jitter a random point inside the
+          // central area of the viewport — never a corner — so successive
+          // additions don't bunch at one fixed pixel.
+          if (result.participantId) {
+            const newP = store.getParticipant(result.participantId);
+            if (newP) {
+              const newRow = document.querySelector(`tr[data-participant-id="${newP.id}"]`);
+              const cx = window.innerWidth / 2;
+              const cy = window.innerHeight / 2;
+              const jitterX = (Math.random() - 0.5) * window.innerWidth * 0.4;
+              const jitterY = (Math.random() - 0.5) * window.innerHeight * 0.25;
+              let anchor = { x: cx + jitterX, y: cy + jitterY };
+              if (newRow) {
+                const r = newRow.getBoundingClientRect();
+                const inViewport =
+                  r.width > 0 &&
+                  r.height > 0 &&
+                  r.top >= 0 &&
+                  r.left >= 0 &&
+                  r.bottom <= window.innerHeight &&
+                  r.right <= window.innerWidth;
+                if (inViewport) {
+                  anchor = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                }
+              }
+              triggerCharacterEffect(newP.name, anchor, newRow);
+            }
+          }
+        }
         break;
       }
       case 'edit-participant': {

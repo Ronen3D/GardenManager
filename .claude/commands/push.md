@@ -61,6 +61,8 @@ You are performing a push workflow for the GardenManager project. Follow these s
    | HC-11 | (injected emergency conflict) | "emergency-task conflict" |
    | HC-12 | "too many consecutive shifts" | "consecutive-shift limit" |
    | HC-14 | "not enough rest between shifts" | "rest-gap violation" |
+   | HC-15 | "this person needs recovery time after their last shift" | "post-shift recovery violation" |
+   | HC-16 | "the two halves of a split shift were given to the same person" | "split-shift duplicate-person rule" |
    | SC-3 / SC-6 / SC-7 / SC-8 / SC-9 / SC-10 | fairness / rest / workload warnings (not blocking) | "fairness warning" or "workload warning" (pick by context) |
 
 4. Compose a concise commit message in this format:

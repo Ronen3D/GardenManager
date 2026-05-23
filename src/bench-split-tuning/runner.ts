@@ -110,6 +110,10 @@ export function runOnce(scenario: BuiltScenario, params: RunParams): RunResult {
       undefined,
       undefined,
       scenario.dayStartHour,
+      // The split-tuning bench measures Phase-2 quality splits against
+      // `splitPenalty` — treat the engine as quality mode so structuralRefine
+      // runs both arms exactly as production.
+      true,
     ),
   );
   const runtimeMs = Date.now() - t0;

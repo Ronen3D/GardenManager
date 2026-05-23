@@ -187,7 +187,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
   {
     title: 'פיצול משמרות',
     description:
-      'פיצול משמרות מאפשר למערכת, כשפיצול מופעל בהרצה זו ומשימה מסומנת "ניתן לפיצול", לפצל מופע לשתי משמרות לשני אנשים שונים — גם כדי לאייש משבצת שאחרת תישאר ריקה וגם כשהפיצול משפר משמעותית הוגנות/מנוחה/איזון. המערכת גם מאחה פיצול בחזרה למשמרת שלמה כשהוא כבר לא משתלם.',
+      'כשמופעל מצב "השלמת איוש ושיפור איכות", המערכת רשאית לפצל מופע של משימה שסומנה "ניתן לפיצול" לשתי משמרות שמאויישות על־ידי שני אנשים שונים — גם כדי לאייש משבצת שאחרת תישאר ריקה, וגם כשהפיצול מביא לשיפור משמעותי בהוגנות, במנוחה או באיזון. כשהפיצול כבר אינו משתלם, המערכת מאחה אותו בחזרה למשמרת שלמה.',
     fields: [
       {
         key: 'splitPenalty',
@@ -195,9 +195,9 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         min: 0,
         max: 20000,
         step: 50,
-        description: 'כמה השיפור באיכות צריך לעלות על מחיר הפיצול.',
+        description: 'הסף שקובע כמה השיפור באיכות צריך לעלות על מחיר הפיצול.',
         detail:
-          'קנס לכל משבצת מפוצלת, ומהווה את הסף הכלכלי האמיתי: המערכת מפצלת משמרת שניתן לאייש בשלמותה רק כשהשיפור בציון עולה על הקנס, ומאחה פיצול בחזרה כשהוא כבר לא מצדיק את הקנס. ערך גבוה ⇒ פיצול נדיר יותר. פיצול שמונע משבצת ריקה משתלם תמיד ואינו מורתע. נכלל בכיול האוטומטי.',
+          'קנס שמוטל על כל משבצת מפוצלת, ומשמש כסף הכלכלי בפועל: המערכת תפצל משמרת שניתן לאייש בשלמותה רק כאשר השיפור בציון עולה על הקנס, ותאחה פיצול בחזרה כשהוא כבר אינו מצדיק את הקנס. ערך גבוה יותר ⇒ פיצול נדיר יותר. פיצול שמונע משבצת ריקה משתלם תמיד ואינו מורתע. הקנס נכלל בכיול האוטומטי.',
       },
     ],
   },
@@ -413,7 +413,25 @@ function renderGeneralSettings(dayStartHour: number): string {
     selected: h === dayStartHour,
   }));
 
-  const splitEnabled = store.getAlgorithmSettings().splittingEnabled ?? false;
+  const splittingMode = store.getAlgorithmSettings().splittingMode ?? 'quality';
+  const modeIsCustom = splittingMode !== 'quality';
+  const modeOptions: Array<{ value: 'off' | 'feasibility' | 'quality'; label: string; desc: string }> = [
+    {
+      value: 'off',
+      label: 'כבוי',
+      desc: 'המערכת לא תפצל אף משמרת. כל משמרת מאוישת על־ידי אדם אחד.',
+    },
+    {
+      value: 'feasibility',
+      label: 'השלמת איוש בלבד',
+      desc: 'פיצול יתבצע רק כשבלעדיו תישאר משבצת ריקה. ברגע שהפיצול כבר אינו נחוץ לאיוש — המערכת מאחה אותו בחזרה למשמרת שלמה.',
+    },
+    {
+      value: 'quality',
+      label: 'השלמת איוש ושיפור איכות',
+      desc: 'פיצול יתבצע גם כדי להשלים איוש וגם כדי לשפר הוגנות, מנוחה ואיזון. כשהפיצול כבר אינו משתלם, המערכת מאחה אותו בחזרה — ועונש הפיצול הוא הסף שקובע מתי הוא נחשב משתלם.',
+    },
+  ];
 
   return `
     <div class="algo-grid">
@@ -431,14 +449,25 @@ function renderGeneralSettings(dayStartHour: number): string {
         </div>
         <p class="algo-weight-desc">השבצ״ק מדבר בימים 1..N. כל יום במערכת מוגדר כ-24 שעות מהשעה הנבחרת — לדוגמה, 05:00 = יום 1 רץ מ-05:00 עד 05:00 למחרת, ו״1:00 בלילה״ שייך ליום הקודם (הזנב שאחרי חצות). שינוי כאן משפיע על תצוגת השבצ״ק, הקפאת מצב חי, איזון עומס יומי, אי-זמינות, הזרקת משימה וייצוא.</p>
       </div>
-      <div class="algo-weight-card${splitEnabled ? ' modified' : ''}">
+      <div class="algo-weight-card${modeIsCustom ? ' modified' : ''}" data-card="splitting-mode">
         <div class="algo-weight-header">
-          <label class="algo-weight-label" title="אפשר למערכת לפצל משמרות בהרצה זו">פיצול משמרות</label>
+          <label class="algo-weight-label" title="בחר באיזו מידה המערכת תפצל משמרות בהרצה זו">פיצול משמרות</label>
         </div>
-        <div class="algo-weight-controls">
-          <label class="checkbox-label"><input type="checkbox" data-action="algo-toggle-splitting" ${splitEnabled ? 'checked' : ''} /> אפשר פיצול בהרצה זו</label>
+        <p class="algo-weight-desc">קבע באיזו מידה המערכת תפצל משמרות שסומנו "ניתן לפיצול". ההגדרה נקפאת על השבצ״ק שייווצר ולא תשתנה במהלכו.</p>
+        <div class="algo-toggle-list">
+          ${modeOptions
+            .map(
+              (opt) => `
+            <label class="algo-toggle-item${splittingMode === opt.value ? '' : ' disabled'}">
+              <input type="radio" name="algo-splitting-mode" data-action="algo-set-splitting-mode" data-mode="${opt.value}" ${splittingMode === opt.value ? 'checked' : ''} />
+              <div class="algo-toggle-content">
+                <span class="algo-toggle-label">${opt.label}</span>
+                <span class="algo-toggle-desc">${opt.desc}</span>
+              </div>
+            </label>`,
+            )
+            .join('')}
         </div>
-        <p class="algo-weight-desc">כשמסומן — משימות שסומנו "ניתן לפיצול" יכולות להיות מפוצלות לשתי משמרות לשני אנשים שונים: גם כדי לאייש משבצת שאחרת תישאר ריקה, וגם כשהפיצול משפר משמעותית את האיכות (עונש הפיצול קובע את הסף). כבוי = התנהגות רגילה (אף משמרת לא מפוצלת). ההגדרה נקפאת על השבצ״ק שנוצר.</p>
       </div>
     </div>
     <div class="settings-autotune-row">
@@ -451,8 +480,14 @@ function renderGeneralSettings(dayStartHour: number): string {
 
 function renderWeightGroups(cfg: SchedulerConfig): string {
   const scheduleDays = store.getScheduleDays();
+  const splittingMode = store.getAlgorithmSettings().splittingMode ?? 'quality';
   let html = '';
   for (const group of WEIGHT_GROUPS) {
+    // The splitPenalty group is only meaningful when quality splits run
+    // (`splittingMode === 'quality'`). In `off` mode no task is splittable
+    // and in `feasibility` mode splitPenalty is substituted with 0 — so the
+    // slider would have no effect. Hide it rather than show a dead control.
+    if (group.title === 'פיצול משמרות' && splittingMode !== 'quality') continue;
     html += `
     <div class="algo-section" style="border:none;box-shadow:none;padding:0.5rem 0;margin-bottom:0.5rem;background:transparent;">
       <h3 class="algo-section-title">${group.title}</h3>
@@ -1363,9 +1398,12 @@ export function wireAlgorithmEvents(container: HTMLElement, rerender: () => void
         rerender();
         break;
       }
-      case 'algo-toggle-splitting': {
-        store.setAlgorithmSettings({ splittingEnabled: (el as HTMLInputElement).checked });
-        rerender();
+      case 'algo-set-splitting-mode': {
+        const mode = (el as HTMLInputElement).dataset.mode as 'off' | 'feasibility' | 'quality' | undefined;
+        if (mode === 'off' || mode === 'feasibility' || mode === 'quality') {
+          store.setAlgorithmSettings({ splittingMode: mode });
+          rerender();
+        }
         break;
       }
       case 'algo-weight-input': {

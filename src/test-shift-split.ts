@@ -1470,6 +1470,7 @@ function runPhase2(assert: AssertFn): void {
       new Map(),
       new Map(),
       undefined,
+      true,
     );
     assert(
       r.changed === false && r.tasks === tasks && r.assignments === best,
@@ -1500,6 +1501,7 @@ function runPhase2(assert: AssertFn): void {
       new Map(),
       new Map(),
       undefined,
+      true,
     );
     const halves = commit.tasks.filter((t) => t.splitGroupId !== undefined);
     assert(
@@ -1525,6 +1527,7 @@ function runPhase2(assert: AssertFn): void {
       new Map(),
       new Map(),
       undefined,
+      true,
     );
     assert(
       reject.changed === false && reject.tasks === s2.tasks,
@@ -1554,6 +1557,7 @@ function runPhase2(assert: AssertFn): void {
       new Map(),
       new Map(),
       undefined,
+      true,
     );
     assert(
       r.changed === true && r.tasks.length === 1 && r.tasks[0].id === 'M' && r.tasks[0].splitGroupId === undefined,
@@ -1592,6 +1596,7 @@ function runPhase2(assert: AssertFn): void {
       new Map(),
       new Map(),
       undefined,
+      true,
     );
     assert(
       r.changed === false,
@@ -1619,6 +1624,7 @@ function runPhase2(assert: AssertFn): void {
       new Map(),
       new Map(),
       undefined,
+      true,
     );
     assert(r.changed === false, '(p2) structuralRefine never splits a pinned/Manual/Frozen occurrence');
   }
@@ -1649,6 +1655,7 @@ function runPhase2(assert: AssertFn): void {
         new Map(),
         new Map(),
         undefined,
+        true,
       );
     const Q = l0Task('Q', 0, 12, 1, true);
     const BLK = l0Task('BLK', 0, 6, 1, false);

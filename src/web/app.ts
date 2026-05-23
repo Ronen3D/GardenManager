@@ -706,9 +706,9 @@ function generateTasksFromTemplates(): Task[] {
   const templates = store.getAllTaskTemplates();
   const visuals = store.getTemplateVisualMap();
   // Effective split gate: a task is splittable for THIS run only if the
-  // template opted in AND the per-run master switch is on. Frozen onto the
+  // template opted in AND the per-run mode is not 'off'. Frozen onto the
   // task so the optimizer needs no separate run flag and reload is coherent.
-  const splitEnabled = store.getAlgorithmSettings().splittingEnabled ?? false;
+  const splitEnabled = (store.getAlgorithmSettings().splittingMode ?? 'quality') !== 'off';
   const allTasks: Task[] = [];
   _tSlotCounter = 0;
   _tTaskCounter = 0;
@@ -2186,7 +2186,7 @@ function loadScheduleSnapshot(snapshotId: string): void {
     new Set(frozen.disabledHardConstraints),
     new Map(Object.entries(loadedSchedule.restRuleSnapshot)),
     frozen.dayStartHour,
-    frozen.splittingEnabled ?? false,
+    frozen.splittingMode ?? 'quality',
   );
   engine.setCertLabelSnapshot(loadedSchedule.certLabelSnapshot);
   engine.setPeriod(loadedSchedule.periodStart, loadedSchedule.periodDays);
@@ -2705,7 +2705,7 @@ async function doGenerate(): Promise<void> {
     store.getDisabledHCSet(),
     store.buildRestRuleMap(),
     store.getDayStartHour(),
-    algoSettings.splittingEnabled,
+    algoSettings.splittingMode,
   );
   engine.setCertLabelSnapshot(buildCertLabelSnapshot());
   engine.setPeriod(store.getScheduleDate(), store.getScheduleDays());
@@ -2896,7 +2896,11 @@ async function doGenerate(): Promise<void> {
     });
   }
 
-  await maybePromptContinuation();
+  // Skip the "run more attempts?" prompt when the user explicitly stopped
+  // early — they already chose to take the current best.
+  if (!wasEarlyStopped) {
+    await maybePromptContinuation();
+  }
 }
 
 /** Count slots reported as infeasible (unfilled) on the current schedule. */
@@ -3075,8 +3079,11 @@ async function runContinuation(additional: number): Promise<void> {
     showToast(`לא נמצא שיפור ב-${ranLabel}. השבצ"ק נותר כפי שהוא.`, { type: 'info' });
   }
 
-  // Re-prompt while slots remain unfilled.
-  await maybePromptContinuation();
+  // Re-prompt while slots remain unfilled — unless the user explicitly
+  // stopped early, in which case they've already chosen to stop searching.
+  if (!wasEarlyStopped) {
+    await maybePromptContinuation();
+  }
 }
 
 // ─── Create Empty Manual Schedule ──────────────────────────────────────────
@@ -3097,7 +3104,7 @@ function doCreateManualSchedule(): void {
     store.getDisabledHCSet(),
     store.buildRestRuleMap(),
     store.getDayStartHour(),
-    algoSettings.splittingEnabled,
+    algoSettings.splittingMode,
   );
   engine.setCertLabelSnapshot(buildCertLabelSnapshot());
   engine.setPeriod(store.getScheduleDate(), store.getScheduleDays());
@@ -3131,6 +3138,7 @@ function doCreateManualSchedule(): void {
       config: { ...algoSettings.config },
       disabledHardConstraints: [...algoSettings.disabledHardConstraints],
       dayStartHour: algoSettings.dayStartHour,
+      splittingMode: algoSettings.splittingMode,
     },
     periodStart: store.getScheduleDate(),
     periodDays: store.getScheduleDays(),
@@ -3254,6 +3262,7 @@ function formatWeightKey(key: string): string {
     taskNamePreferencePenalty: 'עונש אי-קיום העדפה',
     taskNameAvoidancePenalty: 'עונש שיבוץ לא-מועדף',
     taskNamePreferenceBonus: 'בונוס שיבוץ מועדף',
+    splitPenalty: 'עונש פיצול משמרת',
   };
   return labels[key] ?? key;
 }
@@ -3804,7 +3813,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
     anchor,
   );
 
-  const config = engine.getConfig();
+  const config = engine.getEffectiveConfig();
   const scoreCtx = engine.buildScoreContext();
   if (!scoreCtx) return;
 
@@ -4224,7 +4233,7 @@ async function handleProfileCapabilityChange(participantId: string): Promise<voi
 
   const certsLabel = lostCertifications.map(certResolver).join(', ');
 
-  const config = engine.getConfig();
+  const config = engine.getEffectiveConfig();
   const scoreCtx = engine.buildScoreContext();
   if (!scoreCtx) return;
 
@@ -4640,7 +4649,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.6.5</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.6.6</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -6958,7 +6967,7 @@ function loadScheduleFromFrozen(saved: Schedule | null): void {
     new Set(frozen.disabledHardConstraints),
     new Map(Object.entries(saved.restRuleSnapshot)),
     frozen.dayStartHour,
-    frozen.splittingEnabled ?? false,
+    frozen.splittingMode ?? 'quality',
   );
   engine.setCertLabelSnapshot(saved.certLabelSnapshot);
   engine.setPeriod(saved.periodStart, saved.periodDays);
@@ -7384,7 +7393,7 @@ function init(): void {
         new Set(frozen.disabledHardConstraints),
         new Map(Object.entries(savedSchedule.restRuleSnapshot)),
         frozen.dayStartHour,
-        frozen.splittingEnabled ?? false,
+        frozen.splittingMode ?? 'quality',
       );
       engine.setCertLabelSnapshot(savedSchedule.certLabelSnapshot);
       engine.setPeriod(savedSchedule.periodStart, savedSchedule.periodDays);

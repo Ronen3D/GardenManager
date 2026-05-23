@@ -128,7 +128,7 @@ export function openRescueModal(assignmentId: string): void {
     engine?.getRestRuleMap(),
     engine?.getDayStartHour() ?? currentSchedule.algorithmSettings.dayStartHour,
     engine?.getCertLabelResolver() ?? ((id: string) => id),
-    engine?.getConfig(),
+    engine?.getEffectiveConfig(),
     engine?.buildScoreContext(),
     engine?.getScheduleContext(),
   );
@@ -486,7 +486,7 @@ function wireRescueModalEvents(): void {
       engine?.getRestRuleMap(),
       engine?.getDayStartHour() ?? currentSchedule.algorithmSettings.dayStartHour,
       engine?.getCertLabelResolver() ?? ((id: string) => id),
-      engine?.getConfig(),
+      engine?.getEffectiveConfig(),
       engine?.buildScoreContext(),
       engine?.getScheduleContext(),
     );

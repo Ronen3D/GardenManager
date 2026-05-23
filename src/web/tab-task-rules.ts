@@ -811,7 +811,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${tpl.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
-          <label class="checkbox-label" title="כשמופעל וגם פיצול משמרות פעיל בהגדרות האלגוריתם — המערכת רשאית לפצל מופע לשתי משמרות לשני אנשים שונים, גם לאיוש משבצת שאחרת תישאר ריקה וגם כשהפיצול משפר משמעותית את האיכות (עונש הפיצול קובע את הסף)"><input type="checkbox" data-tpl-field="splittable" data-tid="${tpl.id}" ${tpl.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
+          <label class="checkbox-label" title="כשמסומן וגם נבחר אחד ממצבי הפיצול בהגדרות האלגוריתם — המערכת רשאית לפצל מופע של המשימה לשתי משמרות שמאויישות על־ידי שני אנשים שונים: כדי לאייש משבצת שאחרת תישאר ריקה, ובמצב 'השלמת איוש ושיפור איכות' גם כדי לשפר את איכות הלוח (עונש הפיצול קובע את הסף)"><input type="checkbox" data-tpl-field="splittable" data-tid="${tpl.id}" ${tpl.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
         </div>
       </section>
 
@@ -1433,7 +1433,7 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
       <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-ot-field="baseLoadWeight" value="${(ot.baseLoadWeight ?? 1).toFixed(2)}" data-ot-id="${ot.id}" /></label>
       <label class="checkbox-label"><input type="checkbox" data-ot-field="sameGroupRequired" data-ot-id="${ot.id}" ${ot.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
       <label class="checkbox-label"><input type="checkbox" data-ot-field="blocksConsecutive" data-ot-id="${ot.id}" ${ot.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
-      <label class="checkbox-label" title="כשמופעל וגם פיצול משמרות פעיל בהגדרות האלגוריתם — המערכת רשאית לפצל מופע לשתי משמרות לשני אנשים שונים, גם לאיוש משבצת שאחרת תישאר ריקה וגם כשהפיצול משפר משמעותית את האיכות (עונש הפיצול קובע את הסף)"><input type="checkbox" data-ot-field="splittable" data-ot-id="${ot.id}" ${ot.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
+      <label class="checkbox-label" title="כשמסומן וגם נבחר אחד ממצבי הפיצול בהגדרות האלגוריתם — המערכת רשאית לפצל את המשימה לשתי משמרות שמאויישות על־ידי שני אנשים שונים: כדי לאייש משבצת שאחרת תישאר ריקה, ובמצב 'השלמת איוש ושיפור איכות' גם כדי לשפר את איכות הלוח (עונש הפיצול קובע את הסף)"><input type="checkbox" data-ot-field="splittable" data-ot-id="${ot.id}" ${ot.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
       <label>כלל מרווח: <select class="input-sm" data-ot-field="restRuleId" data-ot-id="${ot.id}">
         <option value=""${!ot.restRuleId ? ' selected' : ''}>ללא</option>
         ${store

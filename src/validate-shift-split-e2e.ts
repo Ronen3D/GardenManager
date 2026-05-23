@@ -133,12 +133,15 @@ function buildParticipants(): Participant[] {
   return [ga, gb, ...generals];
 }
 
-function makeEngine(splittingEnabled: boolean, configPatch?: Partial<typeof DEFAULT_CONFIG>): SchedulingEngine {
+function makeEngine(
+  splittingMode: 'off' | 'feasibility' | 'quality',
+  configPatch?: Partial<typeof DEFAULT_CONFIG>,
+): SchedulingEngine {
   const restRuleMap = new Map<string, number>([[REST_RULE, 4 * H]]);
-  const eng = new SchedulingEngine({ ...DEFAULT_CONFIG, ...configPatch }, undefined, restRuleMap, 5, splittingEnabled);
+  const eng = new SchedulingEngine({ ...DEFAULT_CONFIG, ...configPatch }, undefined, restRuleMap, 5, splittingMode);
   eng.setPeriod(PERIOD_START, DAYS);
   eng.addParticipants(buildParticipants());
-  eng.addTasks(buildTasks(splittingEnabled));
+  eng.addTasks(buildTasks(splittingMode !== 'off'));
   return eng;
 }
 
@@ -158,7 +161,7 @@ function scenarioS1(assert: AssertFn): { onSchedule: Schedule } {
   console.log('\n── S1: OFF unfilled  vs  ON split (two different people, clean) ──');
 
   // OFF
-  const offEng = makeEngine(false);
+  const offEng = makeEngine('off');
   const off = offEng.generateSchedule();
   const offGuardAssigns = off.assignments.filter((a) => a.taskId.startsWith(guardGroupId));
   assert(isConflictGuardUnfilled(off), 'OFF: conflict-day guard occurrence is left UNFILLED (no whole, no halves)');
@@ -175,7 +178,7 @@ function scenarioS1(assert: AssertFn): { onSchedule: Schedule } {
   // unfillable occurrence is split"). With the production default of
   // splitPenalty=1, Phase-2 also splits other occurrences for quality,
   // which is correct behavior but obscures the Stage-4-only signal.
-  const onEng = makeEngine(true, { splitPenalty: 1000 });
+  const onEng = makeEngine('quality', { splitPenalty: 1000 });
   const on = onEng.generateSchedule();
 
   const halfA = on.tasks.find((t) => t.id === halfAId);
@@ -464,7 +467,7 @@ export async function runShiftSplitE2ETests(assert: AssertFn): Promise<void> {
   console.log('\n── Shift-Split E2E: real engine paths (5 op-days · 18 participants) ──');
   const { onSchedule } = scenarioS1(assert);
   // S2–S4 reuse a single ON engine so they operate on a real generated split.
-  const onEng = makeEngine(true);
+  const onEng = makeEngine('quality');
   const re = onEng.generateSchedule();
   if (!re.tasks.some((t) => t.id === halfAId)) {
     assert(false, 'E2E: ON regeneration must split the conflict-day guard (precondition for S2–S4)');

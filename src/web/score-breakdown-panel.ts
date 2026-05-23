@@ -225,7 +225,7 @@ function buildBreakdownRows(score: ScheduleScore, config: SchedulerConfig): Brea
   rows.push({
     id: 'splitPenalty',
     label: 'פיצול משמרות',
-    subtitle: 'קנס לכל משבצת שפוצלה לשני חצאים — הסף שפיצול לשיפור איכות חייב לעבור.',
+    subtitle: 'קנס לכל משבצת שפוצלה לשני חצאים — הסף שעליו צריך פיצול לשיפור איכות לעבור כדי להיחשב משתלם.',
     code: 'SPLIT',
     group: 'cost',
     signedWeight: -1,

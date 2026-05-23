@@ -191,10 +191,6 @@ async function runEditor(opts: ParticipantEditorOptions): Promise<ParticipantEdi
 
     const isDirty = (): boolean => !draftsEqual(draft, original);
 
-    const refreshSaveDirty = () => {
-      saveBtn.classList.toggle('pe-save--dirty', isDirty());
-    };
-
     const renderUnavailabilitySectionInto = (host: HTMLElement) => {
       if (!participantId) return;
       host.innerHTML = renderUnavailabilitySection(participantId);
@@ -208,22 +204,19 @@ async function runEditor(opts: ParticipantEditorOptions): Promise<ParticipantEdi
     }
 
     // Wire identity / skills / pairings — all draft-only updates.
-    wireIdentitySection(bodyEl, draft, refreshSaveDirty);
-    wireSkillsSection(bodyEl, draft, refreshSaveDirty, participantId);
-    wirePairingsSection(bodyEl, draft, refreshSaveDirty, participantId);
+    wireIdentitySection(bodyEl, draft);
+    wireSkillsSection(bodyEl, draft, participantId);
+    wirePairingsSection(bodyEl, draft, participantId);
 
     // Initial preference-eligibility check (renders any warning text).
     refreshEligibilityWarnings(bodyEl, draft);
 
-    // Save button (header + footer share the same handler).
     const onSaveClick = async () => {
       const ok = await commitDraft(draft, participantId, bodyEl);
       if (!ok) return;
       close({ saved: true, participantId: ok.participantId });
     };
     saveBtn.addEventListener('click', onSaveClick);
-    const saveBtnBottom = backdrop.querySelector('[data-pe-save-bottom]') as HTMLButtonElement | null;
-    saveBtnBottom?.addEventListener('click', onSaveClick);
 
     // Cancel / X / Esc / backdrop tap → save-confirm if dirty.
     // Unavailability rule changes are committed live (each rule is its own
@@ -266,8 +259,6 @@ async function runEditor(opts: ParticipantEditorOptions): Promise<ParticipantEdi
       });
     }
 
-    refreshSaveDirty();
-
     // Focus the name input on open
     requestAnimationFrame(() => {
       const nameInput = bodyEl.querySelector('[data-pe-field="name"]') as HTMLInputElement | null;
@@ -287,9 +278,6 @@ function renderShell(isCreate: boolean, draft: DraftFields): string {
       <div class="pe-header">
         <button class="pe-close" data-pe-close type="button" aria-label="סגור">✕</button>
         <span class="pe-title" id="pe-title">${escHtml(title)}</span>
-        <button class="btn-primary btn-sm pe-save" data-pe-save type="button">
-          <span class="pe-save-dot" aria-hidden="true"></span>${escHtml(saveLabel)}
-        </button>
       </div>
       <div class="pe-body" data-pe-body>
         ${renderIdentitySection(draft)}
@@ -299,7 +287,7 @@ function renderShell(isCreate: boolean, draft: DraftFields): string {
       </div>
       <div class="pe-footer">
         <button class="btn-sm btn-outline" data-pe-cancel type="button">ביטול</button>
-        <button class="btn-primary btn-sm pe-save" data-pe-save-bottom type="button">${escHtml(saveLabel)}</button>
+        <button class="btn-primary btn-sm pe-save" data-pe-save type="button">${escHtml(saveLabel)}</button>
       </div>
     </div>`;
 }
@@ -556,12 +544,11 @@ function countFutureSosFor(_participantId: string): number {
 
 // ───────────────────────────── Wiring ─────────────────────────────
 
-function wireIdentitySection(body: HTMLElement, draft: DraftFields, refresh: () => void): void {
+function wireIdentitySection(body: HTMLElement, draft: DraftFields): void {
   // Name
   const nameInput = body.querySelector('[data-pe-field="name"]') as HTMLInputElement;
   nameInput.addEventListener('input', () => {
     draft.name = nameInput.value;
-    refresh();
   });
 
   // Group
@@ -582,7 +569,6 @@ function wireIdentitySection(body: HTMLElement, draft: DraftFields, refresh: () 
       groupInfo.classList.add('hidden');
       newGroupInput.removeAttribute('aria-invalid');
     }
-    refresh();
   });
   newGroupInput.addEventListener('input', () => {
     draft.newGroupName = newGroupInput.value;
@@ -610,7 +596,6 @@ function wireIdentitySection(body: HTMLElement, draft: DraftFields, refresh: () 
         newGroupInput.setAttribute('aria-invalid', 'true');
       }
     }
-    refresh();
   });
 
   // Level chips
@@ -624,7 +609,6 @@ function wireIdentitySection(body: HTMLElement, draft: DraftFields, refresh: () 
         c.setAttribute('aria-checked', active ? 'true' : 'false');
       });
       refreshEligibilityWarnings(body, draft);
-      refresh();
     });
   });
 
@@ -632,7 +616,6 @@ function wireIdentitySection(body: HTMLElement, draft: DraftFields, refresh: () 
   const multInput = body.querySelector('[data-pe-field="workloadMultiplier"]') as HTMLInputElement;
   multInput.addEventListener('input', () => {
     draft.workloadMultiplier = parseWorkloadMultiplier(multInput.value);
-    refresh();
   });
   body.querySelectorAll<HTMLButtonElement>('[data-pe-mult-step]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -640,17 +623,11 @@ function wireIdentitySection(body: HTMLElement, draft: DraftFields, refresh: () 
       const next = Math.max(0.1, +(draft.workloadMultiplier + 0.1 * step).toFixed(2));
       draft.workloadMultiplier = next;
       multInput.value = formatWorkloadMultiplier(next);
-      refresh();
     });
   });
 }
 
-function wireSkillsSection(
-  body: HTMLElement,
-  draft: DraftFields,
-  refresh: () => void,
-  _participantId: string | undefined,
-): void {
+function wireSkillsSection(body: HTMLElement, draft: DraftFields, _participantId: string | undefined): void {
   // Certifications
   body.querySelectorAll<HTMLInputElement>('[data-pe-cert]').forEach((cb) => {
     cb.addEventListener('change', () => {
@@ -658,7 +635,6 @@ function wireSkillsSection(
       if (cb.checked) draft.certifications.add(id);
       else draft.certifications.delete(id);
       refreshEligibilityWarnings(body, draft);
-      refresh();
     });
   });
 
@@ -668,7 +644,6 @@ function wireSkillsSection(
       const id = cb.dataset.pePakal!;
       if (cb.checked) draft.pakalIds.add(id);
       else draft.pakalIds.delete(id);
-      refresh();
     });
   });
 
@@ -677,22 +652,15 @@ function wireSkillsSection(
   prefSel.addEventListener('change', () => {
     draft.preferredTaskName = prefSel.value;
     refreshEligibilityWarnings(body, draft);
-    refresh();
   });
   const lessSel = body.querySelector('[data-pe-field="lessPreferredTaskName"]') as HTMLSelectElement;
   lessSel.addEventListener('change', () => {
     draft.lessPreferredTaskName = lessSel.value;
     refreshEligibilityWarnings(body, draft);
-    refresh();
   });
 }
 
-function wirePairingsSection(
-  body: HTMLElement,
-  draft: DraftFields,
-  refresh: () => void,
-  participantId: string | undefined,
-): void {
+function wirePairingsSection(body: HTMLElement, draft: DraftFields, participantId: string | undefined): void {
   const host = body.querySelector('[data-pe-notwith]') as HTMLElement;
   const rerenderNotWith = () => {
     const candidates = store.getAllParticipants();
@@ -708,7 +676,6 @@ function wirePairingsSection(
         const id = btn.dataset.peNotwithRemove!;
         draft.notWithIds.delete(id);
         rerenderNotWith();
-        refresh();
       });
     });
     const addSel = host.querySelector('[data-pe-notwith-add]') as HTMLSelectElement | null;
@@ -718,7 +685,6 @@ function wirePairingsSection(
         if (!id) return;
         draft.notWithIds.add(id);
         rerenderNotWith();
-        refresh();
       });
     }
   };

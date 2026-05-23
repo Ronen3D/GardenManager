@@ -9,6 +9,7 @@
 import { validateHardConstraints } from '../constraints/hard-constraints';
 import { collectSoftWarnings, computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
 import {
+  type AlgorithmSettings,
   type Assignment,
   AssignmentStatus,
   type ConstraintViolation,
@@ -25,6 +26,7 @@ import {
 import type { ScheduleContext } from '../shared/utils/time-utils';
 import { computeAllCapacities } from '../utils/capacity';
 import { describeTaskInstance } from '../utils/date-utils';
+import { getEffectiveConfig } from './effective-config';
 import {
   type MultiAttemptProgressCallback,
   type OptimizationResult,
@@ -70,8 +72,8 @@ export class SchedulingEngine {
   private phantomContext: PhantomContext | null = null;
   private restRuleMap?: Map<string, number>;
   private dayStartHour: number;
-  /** Per-run shift-splitting master switch (frozen onto the schedule). */
-  private splittingEnabled: boolean;
+  /** Per-run shift-splitting mode (frozen onto the schedule). */
+  private splittingMode: AlgorithmSettings['splittingMode'];
   private _periodStart?: Date;
   private _periodDays?: number;
   private _certLabelSnapshot: Record<string, string> = {};
@@ -90,13 +92,13 @@ export class SchedulingEngine {
     disabledHC?: Set<string>,
     restRuleMap?: Map<string, number>,
     dayStartHour: number = 5,
-    splittingEnabled = false,
+    splittingMode: AlgorithmSettings['splittingMode'] = 'off',
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.disabledHC = disabledHC;
     this.restRuleMap = restRuleMap;
     this.dayStartHour = dayStartHour;
-    this.splittingEnabled = splittingEnabled;
+    this.splittingMode = splittingMode;
     // Reset assignment counter so IDs start fresh for each new engine instance.
     resetAssignmentCounter();
   }
@@ -111,9 +113,9 @@ export class SchedulingEngine {
     return this.disabledHC;
   }
 
-  /** Frozen per-run shift-splitting switch captured at engine construction. */
-  getSplittingEnabled(): boolean {
-    return this.splittingEnabled;
+  /** Frozen per-run shift-splitting mode captured at engine construction. */
+  getSplittingMode(): AlgorithmSettings['splittingMode'] {
+    return this.splittingMode;
   }
 
   /** Frozen rest-rule map (ruleId → minimum gap hours) captured at engine construction. */
@@ -121,9 +123,20 @@ export class SchedulingEngine {
     return this.restRuleMap;
   }
 
-  /** Frozen scheduler config captured at engine construction. */
+  /** Frozen scheduler config (user-stored values) captured at engine construction. */
   getConfig(): SchedulerConfig {
     return this.config;
+  }
+
+  /**
+   * The config the engine actually uses for scoring. In `feasibility` mode
+   * `splitPenalty` is substituted with 0; otherwise this returns the raw
+   * config. Engine-internal scoring paths and external callers that score
+   * a schedule produced by this engine (rescue, future-sos, inject) should
+   * use this rather than `getConfig()`.
+   */
+  getEffectiveConfig(): SchedulerConfig {
+    return getEffectiveConfig(this.config, this.splittingMode);
   }
 
   /** Frozen cert-id → label resolver backed by the construction-time snapshot. */
@@ -463,7 +476,7 @@ export class SchedulingEngine {
         config: { ...this.config },
         disabledHardConstraints: [...((this.disabledHC ?? new Set()) as Set<HardConstraintCode>)],
         dayStartHour: this.dayStartHour,
-        splittingEnabled: this.splittingEnabled,
+        splittingMode: this.splittingMode,
       },
       periodStart,
       periodDays,
@@ -500,10 +513,12 @@ export class SchedulingEngine {
     const participants = this.getAllParticipants();
     this._validateInputs(tasks, participants);
 
+    const effectiveConfig = this.getEffectiveConfig();
+    const qualitySplitEnabled = this.splittingMode === 'quality';
     const result: OptimizationResult = optimize(
       tasks,
       participants,
-      this.config,
+      effectiveConfig,
       [],
       this.disabledHC,
       0,
@@ -515,6 +530,8 @@ export class SchedulingEngine {
       undefined,
       undefined,
       this._scheduleContext(tasks),
+      undefined,
+      qualitySplitEnabled,
     );
     return this._commitOptimizationResult(tasks, participants, result);
   }
@@ -542,10 +559,12 @@ export class SchedulingEngine {
     const participants = this.getAllParticipants();
     this._validateInputs(tasks, participants);
 
+    const effectiveConfig = this.getEffectiveConfig();
+    const qualitySplitEnabled = this.splittingMode === 'quality';
     const result = await optimizeMultiAttemptAsync(
       tasks,
       participants,
-      this.config,
+      effectiveConfig,
       [],
       attempts,
       onProgress,
@@ -557,6 +576,8 @@ export class SchedulingEngine {
       abortSignal,
       this._scheduleContext(tasks),
       stopSignal,
+      undefined,
+      qualitySplitEnabled,
     );
 
     return this._commitOptimizationResult(tasks, participants, result);
@@ -623,10 +644,12 @@ export class SchedulingEngine {
           })
       : undefined;
 
+    const effectiveConfig = this.getEffectiveConfig();
+    const qualitySplitEnabled = this.splittingMode === 'quality';
     const result = await optimizeMultiAttemptAsync(
       baseTasks,
       participants,
-      this.config,
+      effectiveConfig,
       [],
       additionalAttempts,
       wrappedProgress,
@@ -639,6 +662,7 @@ export class SchedulingEngine {
       this._scheduleContext(baseTasks),
       stopSignal,
       { seedBest: seed, continuation: true },
+      qualitySplitEnabled,
     );
 
     const continuationAttemptsCompleted = result.actualAttempts ?? 0;
@@ -742,12 +766,13 @@ export class SchedulingEngine {
       this.getScheduleContext(),
       this.currentSchedule.capabilityLoss,
     );
-    const soft = collectSoftWarnings(tasks, participants, assignments, this.config);
+    const effectiveConfig = this.getEffectiveConfig();
+    const soft = collectSoftWarnings(tasks, participants, assignments, effectiveConfig);
     const score = computeScheduleScore(
       tasks,
       participants,
       assignments,
-      this.config,
+      effectiveConfig,
       this._buildScoreCtx(tasks, participants),
     );
 
@@ -843,11 +868,12 @@ export class SchedulingEngine {
     this._lastOptimizationResult = null;
 
     // Success: update score and metadata
+    const swapEffCfg = this.getEffectiveConfig();
     this.currentSchedule.score = computeScheduleScore(
       this.currentSchedule.tasks,
       this.currentSchedule.participants,
       this.currentSchedule.assignments,
-      this.config,
+      swapEffCfg,
       this._buildScoreCtx(this.currentSchedule.tasks, this.currentSchedule.participants),
     );
     this.currentSchedule.feasible = true;
@@ -857,7 +883,7 @@ export class SchedulingEngine {
         this.currentSchedule.tasks,
         this.currentSchedule.participants,
         this.currentSchedule.assignments,
-        this.config,
+        swapEffCfg,
       ),
     ];
 
@@ -971,11 +997,12 @@ export class SchedulingEngine {
     this._lastOptimizationResult = null;
 
     // Success: update score and metadata
+    const chainEffCfg = this.getEffectiveConfig();
     this.currentSchedule.score = computeScheduleScore(
       this.currentSchedule.tasks,
       this.currentSchedule.participants,
       this.currentSchedule.assignments,
-      this.config,
+      chainEffCfg,
       this._buildScoreCtx(this.currentSchedule.tasks, this.currentSchedule.participants),
     );
     this.currentSchedule.feasible = true;
@@ -985,7 +1012,7 @@ export class SchedulingEngine {
         this.currentSchedule.tasks,
         this.currentSchedule.participants,
         this.currentSchedule.assignments,
-        this.config,
+        chainEffCfg,
       ),
     ];
 
@@ -1101,11 +1128,12 @@ export class SchedulingEngine {
     }
 
     // Capture baseline soft warnings BEFORE mutating
+    const previewEffCfg = this.getEffectiveConfig();
     const baselineSoft = collectSoftWarnings(
       this.currentSchedule.tasks,
       this.currentSchedule.participants,
       this.currentSchedule.assignments,
-      this.config,
+      previewEffCfg,
     );
     const baselineComposite = this.currentSchedule.score?.compositeScore ?? 0;
 
@@ -1124,13 +1152,13 @@ export class SchedulingEngine {
         this.currentSchedule.tasks,
         this.currentSchedule.participants,
         this.currentSchedule.assignments,
-        this.config,
+        previewEffCfg,
       );
       const postScore = computeScheduleScore(
         this.currentSchedule.tasks,
         this.currentSchedule.participants,
         this.currentSchedule.assignments,
-        this.config,
+        previewEffCfg,
         this._buildScoreCtx(this.currentSchedule.tasks, this.currentSchedule.participants),
       );
 

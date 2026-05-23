@@ -3148,17 +3148,19 @@ export function getAlgorithmSettings(): AlgorithmSettings {
             ? (parsed.disabledHardConstraints as HardConstraintCode[])
             : [],
           dayStartHour: _normalizeDayStartHour(parsed.dayStartHour),
-          splittingEnabled:
-            typeof parsed.splittingEnabled === 'boolean'
-              ? parsed.splittingEnabled
-              : DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
+          splittingMode:
+            parsed.splittingMode === 'off' ||
+            parsed.splittingMode === 'feasibility' ||
+            parsed.splittingMode === 'quality'
+              ? parsed.splittingMode
+              : DEFAULT_ALGORITHM_SETTINGS.splittingMode,
         };
       } else {
         _algorithmSettings = {
           config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
           disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
           dayStartHour: DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
-          splittingEnabled: DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
+          splittingMode: DEFAULT_ALGORITHM_SETTINGS.splittingMode,
         };
       }
     } catch {
@@ -3166,7 +3168,7 @@ export function getAlgorithmSettings(): AlgorithmSettings {
         config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
         disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
         dayStartHour: DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
-        splittingEnabled: DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
+        splittingMode: DEFAULT_ALGORITHM_SETTINGS.splittingMode,
       };
     }
   }
@@ -3174,7 +3176,7 @@ export function getAlgorithmSettings(): AlgorithmSettings {
     config: { ..._algorithmSettings.config },
     disabledHardConstraints: [..._algorithmSettings.disabledHardConstraints],
     dayStartHour: _algorithmSettings.dayStartHour,
-    splittingEnabled: _algorithmSettings.splittingEnabled,
+    splittingMode: _algorithmSettings.splittingMode,
   };
 }
 
@@ -3195,7 +3197,7 @@ export function setAlgorithmSettings(patch: Partial<AlgorithmSettings>): void {
         ? [...patch.disabledHardConstraints]
         : current.disabledHardConstraints,
     dayStartHour: nextDayStartHour,
-    splittingEnabled: patch.splittingEnabled !== undefined ? patch.splittingEnabled : current.splittingEnabled,
+    splittingMode: patch.splittingMode !== undefined ? patch.splittingMode : current.splittingMode,
   };
   _saveAlgorithmSettings();
   // The op-day boundary anchors weekly blackout windows in `computeAvailability`,
@@ -3213,7 +3215,7 @@ export function resetAlgorithmSettings(): void {
     config: { ...DEFAULT_ALGORITHM_SETTINGS.config },
     disabledHardConstraints: [...DEFAULT_ALGORITHM_SETTINGS.disabledHardConstraints],
     dayStartHour: DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
-    splittingEnabled: DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
+    splittingMode: DEFAULT_ALGORITHM_SETTINGS.splittingMode,
   };
   _saveAlgorithmSettings();
   // Also switch active preset to Default
@@ -3312,7 +3314,7 @@ function _deepCopyPreset(p: AlgorithmPreset): AlgorithmPreset {
       config: { ...p.settings.config },
       disabledHardConstraints: [...p.settings.disabledHardConstraints],
       dayStartHour: p.settings.dayStartHour ?? DEFAULT_ALGORITHM_SETTINGS.dayStartHour,
-      splittingEnabled: p.settings.splittingEnabled ?? DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
+      splittingMode: p.settings.splittingMode ?? DEFAULT_ALGORITHM_SETTINGS.splittingMode,
     },
   };
 }
@@ -3393,7 +3395,7 @@ export function loadPreset(id: string): void {
     config: { ...preset.settings.config },
     disabledHardConstraints: [...preset.settings.disabledHardConstraints],
     dayStartHour: _normalizeDayStartHour(preset.settings.dayStartHour),
-    splittingEnabled: preset.settings.splittingEnabled ?? DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
+    splittingMode: preset.settings.splittingMode ?? DEFAULT_ALGORITHM_SETTINGS.splittingMode,
   };
   _saveAlgorithmSettings();
   _activePresetId = id;
@@ -4704,6 +4706,7 @@ export function replaceAlgorithmSettingsAndPresets(
     config: { ...settings.config },
     disabledHardConstraints: [...settings.disabledHardConstraints],
     dayStartHour: settings.dayStartHour,
+    splittingMode: settings.splittingMode ?? DEFAULT_ALGORITHM_SETTINGS.splittingMode,
   };
   if (!_saveAlgorithmSettings()) return false;
 

@@ -11,7 +11,7 @@
  *
  *   At Stage 1 only the OFF (= current behavior) column is meaningful; the
  *   feature does not exist yet. The harness is shaped so the ON column is a
- *   one-line drop-in after Stage 2 plumbs `splittingEnabled`: re-run this
+ *   one-line drop-in after Stage 2 plumbs `splittingMode`: re-run this
  *   bench after Stages 2–5 and compare ON vs OFF / OFF vs this baseline.
  *
  * Scenario
@@ -178,9 +178,9 @@ function runOnce(
   // so tasks/ids are identical run-to-run (deterministic baseline).
   const { tasks, participants } = buildScenario(baseDate, days, poolSize);
   // ON column: stamp the effective `splittable` flag the web layer would
-  // freeze (splittingEnabled && template.splittable). sameGroup occurrences
-  // are skipped by structuralRefine and handled feasibility-only by Stage-4
-  // exactly as today, so flagging all is a realistic ON workload.
+  // freeze (splittingMode !== 'off' && template.splittable). sameGroup
+  // occurrences are skipped by structuralRefine and handled feasibility-only
+  // by Stage-4 exactly as today, so flagging all is a realistic ON workload.
   if (splitOn) for (const t of tasks) t.splittable = true;
   setBenchHooks(null);
   const t0 = Date.now();
@@ -269,7 +269,7 @@ function main(): void {
   console.log(`  Config:          DEFAULT_CONFIG (composite directly comparable)`);
   console.log('───────────────────────────────────────────────────────────────────────────');
   console.log('  Column: OFF (current behavior). ON drops in after Stage 2 plumbs');
-  console.log('  splittingEnabled — re-run then to enforce OFF-within-noise + ON-acceptable.');
+  console.log('  splittingMode — re-run then to enforce OFF-within-noise + ON-acceptable.');
   console.log('───────────────────────────────────────────────────────────────────────────');
 
   process.stdout.write(`Running ${RUNS} OFF runs `);

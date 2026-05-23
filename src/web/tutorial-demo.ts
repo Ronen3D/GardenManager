@@ -244,6 +244,12 @@ function loadDemoStateIntoStore(): void {
   // Live-mode reset; demo anchor is set after schedule construction.
   store.setLiveModeEnabled(false);
 
+  // Force splitting mode to 'quality' so the tutorial's a-4b step (the
+  // `splitPenalty` slider) has a visible target — the slider is hidden in
+  // 'off' / 'feasibility'. The original setting is captured in the tutorial
+  // backup snapshot and restored on `exitTutorialDemoMode`.
+  store.setAlgorithmSettings({ splittingMode: 'quality' });
+
   // ── Set schedule window first so `getDefaultAvailability` (called inside
   //    `addParticipant`) covers the full demo period.
   store.setScheduleDate(buildDemoPeriodStart());
@@ -364,6 +370,9 @@ function buildDemoScheduleLiteral(
       config: { ...algo.config },
       disabledHardConstraints: [...algo.disabledHardConstraints],
       dayStartHour: DEMO_DAY_START_HOUR,
+      // Force quality so the tutorial's a-4b step (splitPenalty slider) has
+      // a visible target. The slider is hidden in 'off' / 'feasibility'.
+      splittingMode: 'quality',
     },
     periodStart,
     periodDays: DEMO_PERIOD_DAYS,

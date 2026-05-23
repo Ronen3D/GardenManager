@@ -256,9 +256,10 @@ export interface Task {
   sameGroupLinkId?: string;
   /**
    * EFFECTIVE splittability for this run: set at generation to
-   * `template.splittable && AlgorithmSettings.splittingEnabled`. The optimizer
-   * may realize an unfillable occurrence with this `true` as two halves.
-   * Absent/false ⇒ never split (today's behavior). Half-tasks inherit it.
+   * `template.splittable && (AlgorithmSettings.splittingMode !== 'off')`. The
+   * optimizer may realize an unfillable occurrence with this `true` as two
+   * halves. Absent/false ⇒ never split (today's behavior). Half-tasks inherit
+   * it.
    */
   splittable?: boolean;
 }
@@ -568,13 +569,23 @@ export interface AlgorithmSettings {
   /** Hour (0-23) that defines the start of an operational "day". Default 5 (05:00). */
   dayStartHour: number;
   /**
-   * Per-run shift-splitting master switch. Optional and treated as `false`
-   * when absent — so legacy serialized snapshots/presets deserialize cleanly
-   * with no migration (the frozen-snapshot back-compat rule). When false/absent
-   * templates marked `splittable` are still never split, preserving today's
-   * exact behavior. Frozen onto the schedule like `disabledHardConstraints`.
+   * Per-run shift-splitting mode. Three levels of control:
+   *
+   * - `'off'`: no shift-splitting. Templates marked `splittable` are never
+   *   split. Stage-4 feasibility recovery is disabled; `structuralRefine` is
+   *   inert via its identity fast-path.
+   * - `'feasibility'`: splitting runs only to make schedules valid/complete.
+   *   Stage-4 may split a slot to fill it; `structuralRefine`'s MERGE arm
+   *   runs to collapse no-longer-needed splits whenever doing so doesn't
+   *   make the schedule worse (non-strict gate). QUALITY-SPLIT is skipped.
+   *   `splitPenalty` is treated as 0 internally for every scoring path.
+   * - `'quality'`: splitting runs for both feasibility and quality. All three
+   *   arms (Stage-4, MERGE, QUALITY-SPLIT) are active; `config.splitPenalty`
+   *   is the economic gate for quality splits and the strict MERGE gate.
+   *
+   * Frozen onto the schedule like `disabledHardConstraints`. Default `'quality'`.
    */
-  splittingEnabled?: boolean;
+  splittingMode?: 'off' | 'feasibility' | 'quality';
 }
 
 /** Human-readable labels for hard constraints */
@@ -621,7 +632,7 @@ export const DEFAULT_ALGORITHM_SETTINGS: AlgorithmSettings = {
   config: { ...DEFAULT_CONFIG },
   disabledHardConstraints: [],
   dayStartHour: 5,
-  splittingEnabled: true,
+  splittingMode: 'quality',
 };
 
 // ─── Algorithm Presets ───────────────────────────────────────────────────────
@@ -648,7 +659,7 @@ export const DEFAULT_PRESET: AlgorithmPreset = {
     config: { ...DEFAULT_CONFIG },
     disabledHardConstraints: [],
     dayStartHour: 5,
-    splittingEnabled: true,
+    splittingMode: 'quality',
   },
   builtIn: true,
   createdAt: 0,
@@ -931,7 +942,7 @@ export interface TaskTemplate {
   displayOrder?: number;
   /**
    * Shift-splitting opt-in. When true AND the per-run
-   * `AlgorithmSettings.splittingEnabled` is on, the optimizer may realize an
+   * `AlgorithmSettings.splittingMode !== 'off'`, the optimizer may realize an
    * unfillable occurrence of this template as two equal halves worked by two
    * different participants. Independent of `blocksConsecutive`. Default false.
    */
@@ -980,7 +991,7 @@ export interface OneTimeTask {
   description?: string;
   /**
    * Shift-splitting opt-in. When true AND the per-run
-   * `AlgorithmSettings.splittingEnabled` is on, the optimizer may realize an
+   * `AlgorithmSettings.splittingMode !== 'off'`, the optimizer may realize an
    * unfillable slot of this one-time task as two equal halves worked by two
    * different participants. Independent of `blocksConsecutive`. Default false.
    */

@@ -10501,21 +10501,6 @@ tr.now-row-animate > td.time-cell {
 
 .gm-edit-sheet-v2 .pe-save {
   flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.gm-edit-sheet-v2 .pe-save-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: transparent;
-  transition: background 0.15s ease;
-}
-.gm-edit-sheet-v2 .pe-save--dirty .pe-save-dot {
-  background: #f1c40f;
-  box-shadow: 0 0 6px rgba(241, 196, 15, 0.6);
 }
 
 .gm-edit-sheet-v2 .pe-body {

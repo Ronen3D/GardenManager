@@ -1966,6 +1966,11 @@ export function localSearchOptimize(
    *  split that grows the list cannot silently fall off the 40-task
    *  temperature cliff (`getSaInitialTemperature`). Inert when equal. */
   preSplitTaskCount?: number,
+  /** Splitting mode gate forwarded to `structuralRefine`. `true` ⇒ quality
+   *  mode (MERGE strict, QUALITY-SPLIT runs); `false` ⇒ feasibility mode
+   *  (MERGE non-strict, QUALITY-SPLIT skipped). Default `true` preserves the
+   *  pre-tri-state behavior for any legacy caller. */
+  qualitySplitEnabled: boolean = true,
 ): {
   assignments: Assignment[];
   /** The realized task set. Same reference as the input `tasks` unless the
@@ -2550,6 +2555,7 @@ export function localSearchOptimize(
     capacities,
     notWithPairs,
     scheduleContext,
+    qualitySplitEnabled,
   );
   let resultTasks = tasks;
   let resultAssignments = best;
@@ -2846,6 +2852,12 @@ export function structuralRefine(
   capacities: Map<string, ParticipantCapacity>,
   notWithPairs: Map<string, Set<string>>,
   scheduleContext: ScheduleContext | undefined,
+  /** Tri-state splitting mode gate:
+   *  - `true` (quality mode): MERGE uses strict composite gain; QUALITY-SPLIT runs.
+   *  - `false` (feasibility mode): MERGE uses non-strict "not worse" gate
+   *    (with `config.splitPenalty` substituted to 0 upstream so the composite
+   *    excludes split cost on both sides); QUALITY-SPLIT is skipped. */
+  qualitySplitEnabled: boolean,
 ): { tasks: Task[]; assignments: Assignment[]; changed: boolean } {
   // Identity fast path — nothing splittable and nothing already split.
   let anySplittable = false;
@@ -3036,7 +3048,14 @@ export function structuralRefine(
       });
 
       const candComposite = compositeOf(candTasks, candAsgs);
-      if (candComposite > baseComposite + STRUCT_EPS) {
+      // MERGE gate: strict gain in quality mode, "not worse" in feasibility
+      // mode. In feasibility mode `config.splitPenalty` is 0 upstream, so
+      // compositeOf excludes split cost on both sides and this is literally
+      // "merged is not worse on soft score alone".
+      const mergeAccepts = qualitySplitEnabled
+        ? candComposite > baseComposite + STRUCT_EPS
+        : candComposite >= baseComposite - STRUCT_EPS;
+      if (mergeAccepts) {
         workTasks = candTasks;
         workAsgs = candAsgs;
         changed = true;
@@ -3046,7 +3065,11 @@ export function structuralRefine(
       }
     }
 
-    // ── QUALITY SPLIT ────────────────────────────────────────────────────
+    // ── QUALITY SPLIT (quality mode only) ────────────────────────────────
+    if (!qualitySplitEnabled) {
+      if (!committedThisPass) break;
+      continue;
+    }
     const splitCandidates = workTasks
       .filter(
         (t) =>
@@ -3200,6 +3223,9 @@ export function optimize(
   saIntensifyTaskIds?: Set<string>,
   scheduleContext?: ScheduleContext,
   stopSignal?: AbortSignal,
+  /** Splitting mode gate forwarded to `localSearchOptimize` →
+   *  `structuralRefine`. See `localSearchOptimize`'s parameter doc. */
+  qualitySplitEnabled: boolean = true,
 ): OptimizationResult {
   const startTime = Date.now();
 
@@ -3264,6 +3290,7 @@ export function optimize(
     scheduleContext,
     stopSignal,
     tasks.length,
+    qualitySplitEnabled,
   );
 
   // The realized task set after greedy Stage-4 AND the post-polish structural
@@ -3533,6 +3560,8 @@ export function optimizeMultiAttempt(
   certLabelResolver?: (certId: string) => string,
   scheduleContext?: ScheduleContext,
   dayStartHour?: number,
+  /** Splitting mode gate forwarded to `optimize`. See `optimize` doc. */
+  qualitySplitEnabled: boolean = true,
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
   const totalStart = Date.now();
@@ -3608,6 +3637,8 @@ export function optimizeMultiAttempt(
       ctx,
       eliteBoost.saIntensifyTaskIds.size > 0 ? eliteBoost.saIntensifyTaskIds : undefined,
       scheduleContext,
+      undefined,
+      qualitySplitEnabled,
     );
 
     const improved = best === null || isBetterResult(result, best);
@@ -3698,6 +3729,8 @@ export function optimizeMultiAttemptAsync(
   scheduleContext?: ScheduleContext,
   stopSignal?: AbortSignal,
   opts?: MultiAttemptOpts,
+  /** Splitting mode gate forwarded to `optimize`. See `optimize` doc. */
+  qualitySplitEnabled: boolean = true,
 ): Promise<OptimizationResult> {
   return new Promise((resolve, reject) => {
     // Continuation mode: seed `best` from the caller's prior result. Any
@@ -3821,6 +3854,7 @@ export function optimizeMultiAttemptAsync(
             eliteBoost.saIntensifyTaskIds.size > 0 ? eliteBoost.saIntensifyTaskIds : undefined,
             scheduleContext,
             stopSignal,
+            qualitySplitEnabled,
           );
 
           const improved = best === null || isBetterResult(result, best);

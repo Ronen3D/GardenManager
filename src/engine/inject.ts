@@ -1296,7 +1296,7 @@ export function searchInjectionPlans(
 
   // Build search infrastructure.
   const dayStartHour = engine.getDayStartHour();
-  const config = engine.getConfig();
+  const config = engine.getEffectiveConfig();
   const scoreCtx = engine.buildScoreContext();
   if (!scoreCtx) {
     // Should never happen post-importSchedule. Defensive cleanup.

@@ -183,15 +183,19 @@ interface Fingerprint {
   preferenceCount: number; // participants with any task-name preference
   lowPrioritySlotCount: number;
   /** Occurrences whose frozen effective `splittable` flag is on (= a
-   *  splittable template AND splittingEnabled). Zero ⇒ splitting can never
-   *  happen this run ⇒ splitPenalty is pruned from the search. */
+   *  splittable template AND `splittingMode !== 'off'`). Zero ⇒ splitting
+   *  can never happen this run ⇒ splitPenalty is pruned from the search. */
   splittableTaskCount: number;
   /** The dims we actually search over (pruned). */
   activeDims: Dim[];
   summaryHebrew: string;
 }
 
-function buildFingerprint(participants: Participant[], tasks: Task[]): Fingerprint {
+function buildFingerprint(
+  participants: Participant[],
+  tasks: Task[],
+  splittingMode: 'off' | 'feasibility' | 'quality',
+): Fingerprint {
   const levelCounts: Record<string, number> = {};
   let notWithPairCount = 0;
   let preferenceCount = 0;
@@ -216,8 +220,8 @@ function buildFingerprint(participants: Participant[], tasks: Task[]): Fingerpri
       if (s.acceptableLevels.some((e) => e.lowPriority)) lowPrioritySlotCount++;
     }
     // `Task.splittable` is the frozen effective flag (template.splittable &&
-    // splittingEnabled), stamped at generation — so this is 0 when splitting
-    // is off OR no template is splittable, exactly the prune condition.
+    // splittingMode !== 'off'), stamped at generation — so this is 0 when
+    // splitting is off OR no template is splittable.
     if (t.splittable) splittableTaskCount++;
   }
 
@@ -237,7 +241,10 @@ function buildFingerprint(participants: Participant[], tasks: Task[]): Fingerpri
       continue;
     if (d.key === 'lowPriorityLevelPenalty' && lowPrioritySlotCount === 0) continue;
     if (d.key === 'seniorFairnessWeight' && seniorCount === 0) continue;
-    if (d.key === 'splitPenalty' && splittableTaskCount === 0) continue;
+    // `splitPenalty` only affects scoring/structuralRefine in `quality` mode.
+    // In `off`/`feasibility` mode the engine substitutes 0 internally, so the
+    // dim has no behavioral effect — prune it from the search.
+    if (d.key === 'splitPenalty' && (splittableTaskCount === 0 || splittingMode !== 'quality')) continue;
 
     // Shape ranges based on dataset density
     const shaped: Dim = { ...d };
@@ -636,6 +643,7 @@ const TUNED_LABELS: Record<string, string> = {
   taskNamePreferencePenalty: 'עונש אי-קיום העדפה',
   taskNameAvoidancePenalty: 'עונש שיבוץ לא-מועדף',
   taskNamePreferenceBonus: 'בונוס שיבוץ מועדף',
+  splitPenalty: 'עונש פיצול משמרת',
 };
 
 /** Pick the weight with the largest log-space change vs. baseline — this
@@ -747,7 +755,8 @@ async function runTournament(participants: Participant[], tasks: Task[]): Promis
 
   // ── Phase 0 ────────────────────────────────────────────────────────────
   setPhase(0, 'סקירת הנתונים שלך', 1);
-  const fp = buildFingerprint(participants, tasks);
+  const splittingMode = store.getAlgorithmSettings().splittingMode ?? 'quality';
+  const fp = buildFingerprint(participants, tasks, splittingMode);
   s.fingerprintSummary = fp.summaryHebrew;
   ensureOverlay();
   updateOverlay();

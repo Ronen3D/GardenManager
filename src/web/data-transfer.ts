@@ -475,7 +475,7 @@ export function importAlgorithm(json: string, mode: 'replace' | 'add-preset'): I
         config: { ...p.settings.config },
         disabledHardConstraints: [...p.settings.disabledHardConstraints],
         dayStartHour: p.settings.dayStartHour,
-        splittingEnabled: p.settings.splittingEnabled ?? DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
+        splittingMode: p.settings.splittingMode ?? DEFAULT_ALGORITHM_SETTINGS.splittingMode,
       },
     }));
     const ok = store.replaceAlgorithmSettingsAndPresets(
@@ -498,7 +498,7 @@ export function importAlgorithm(json: string, mode: 'replace' | 'add-preset'): I
       config: { ...payload.currentSettings.config },
       disabledHardConstraints: [...payload.currentSettings.disabledHardConstraints],
       dayStartHour: payload.currentSettings.dayStartHour,
-      splittingEnabled: payload.currentSettings.splittingEnabled ?? DEFAULT_ALGORITHM_SETTINGS.splittingEnabled,
+      splittingMode: payload.currentSettings.splittingMode ?? DEFAULT_ALGORITHM_SETTINGS.splittingMode,
     },
     createdAt: Date.now(),
   };
