@@ -11,24 +11,30 @@
 
 import { validateHardConstraints } from '../constraints/hard-constraints';
 import { computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
-import type {
-  Assignment,
-  ConstraintViolation,
-  Participant,
-  RescueSwap,
-  Schedule,
-  SchedulerConfig,
-  SlotRequirement,
-  Task,
+import {
+  type Assignment,
+  AssignmentStatus,
+  type ConstraintViolation,
+  type Participant,
+  type RescueSwap,
+  type Schedule,
+  type SchedulerConfig,
+  type SlotRequirement,
+  type SplitOp,
+  type Task,
 } from '../models/types';
 import { blocksOverlap } from '../shared/utils/time-utils';
 import { isSchedulerDiagOn } from './diagnostics';
+import { makeSplitHalf } from './optimizer';
 import {
   type CandidateChain,
   type ChainEnumerationCaps,
   deriveCapsForBatchSize,
   enumerateChainsForSlot,
+  enumerateSplitFillsForSlot,
   type FallbackLevel,
+  isSplitCandidate,
+  type SlotCandidate,
   type SlotEnumerationContext,
 } from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';
@@ -56,6 +62,13 @@ export interface BatchRescuePlan {
   id: string;
   rank: number;
   swaps: RescueSwap[];
+  /**
+   * Split-fill ops applied in addition to (or instead of) chain swaps. Each
+   * op realizes one slot as `#a`/`#b` halves; see `SplitOp`. In Phase 1 a
+   * given plan is mono-kind per affected slot — for that slot it has either
+   * a chain entry in `swaps` OR a `SplitOp` in `splitOps`, not both.
+   */
+  splitOps?: SplitOp[];
   /** candidate composite − baseline composite. Positive = improvement. */
   compositeDelta: number;
   /** { 1: n1, 2: n2, 3: n3, 4: n4, 5: n5 } — chain depths used across all slots. */
@@ -172,7 +185,22 @@ export function findAffectedAssignments(
 
 // ─── Composition helpers ────────────────────────────────────────────────────
 
-type Composition = { chains: CandidateChain[]; deltaSum: number };
+type Composition = { slotCands: SlotCandidate[]; deltaSum: number };
+
+/**
+ * Project a chain-only subset out of a composition. Backwards-compat shim
+ * for callers (capability-change, inject) that still take CandidateChain[].
+ */
+function chainsOf(cands: SlotCandidate[]): CandidateChain[] {
+  return cands.filter((c): c is CandidateChain => !isSplitCandidate(c));
+}
+
+/** Project the SplitOp list out of a composition. */
+function splitOpsOf(cands: SlotCandidate[]): SplitOp[] {
+  const out: SplitOp[] = [];
+  for (const c of cands) if (isSplitCandidate(c)) out.push(c.splitOp);
+  return out;
+}
 
 export function applyCompositionToAssignments(schedule: Schedule, chains: CandidateChain[]): Assignment[] {
   const swapMap = new Map<string, string>();
@@ -183,6 +211,104 @@ export function applyCompositionToAssignments(schedule: Schedule, chains: Candid
     const pid = swapMap.get(a.id);
     return pid ? { ...a, participantId: pid } : a;
   });
+}
+
+/**
+ * Build the (tasks, assignments) the composition would produce if applied.
+ * Used by post-composition validation/scoring so the trial state mirrors
+ * what `engine.applyPlanOps` actually commits — including split-induced
+ * task-set mutations.
+ *
+ * Splits are applied first (rebuild tasks + assignment list); chain swaps
+ * then run on the resulting assignment list with in-place participantId
+ * substitution. Phase-1 plans are mono-kind per slot, so chains never refer
+ * to a half-task and split halves carry fresh synthetic assignment ids.
+ */
+export function applyCompositionToState(
+  schedule: Schedule,
+  cands: SlotCandidate[],
+): { tasks: Task[]; assignments: Assignment[] } {
+  let tasks = schedule.tasks;
+  let assignments = schedule.assignments;
+  let mutatedTasks = false;
+  let mutatedAsgs = false;
+
+  for (const c of cands) {
+    if (!isSplitCandidate(c)) continue;
+    const op = c.splitOp;
+    const T = tasks.find((t) => t.id === op.taskId);
+    if (!T) continue;
+    const slot = T.slots.find((s) => s.slotId === op.slotId);
+    if (!slot) continue;
+    const halfA = makeSplitHalf(T, 1, T.timeBlock.start.getTime(), op.midpointMs, slot);
+    const halfB = makeSplitHalf(T, 2, op.midpointMs, T.timeBlock.end.getTime(), slot);
+    const survivingSlots = T.slots.filter((s) => s.slotId !== op.slotId);
+    const newTasks: Task[] = [];
+    for (const t of tasks) {
+      if (t.id === T.id) {
+        if (survivingSlots.length > 0) {
+          // Stamp sameGroupLinkId on residual for sameGroupRequired parents so
+          // HC-8 link-union groups residual + halves as one unit.
+          newTasks.push({
+            ...T,
+            slots: survivingSlots,
+            requiredCount: survivingSlots.length,
+            sameGroupLinkId: T.sameGroupRequired ? (T.sameGroupLinkId ?? T.id) : T.sameGroupLinkId,
+          });
+        }
+        newTasks.push(halfA, halfB);
+      } else {
+        newTasks.push(t);
+      }
+    }
+    tasks = newTasks;
+    mutatedTasks = true;
+    const newAsgs: Assignment[] = [];
+    for (const a of assignments) {
+      if (a.id === op.originalAssignmentId) continue;
+      newAsgs.push(a);
+    }
+    const now = new Date();
+    newAsgs.push({
+      id: `${op.originalAssignmentId}#a`,
+      taskId: halfA.id,
+      slotId: halfA.slots[0].slotId,
+      participantId: op.fillA.participantId,
+      status: AssignmentStatus.Manual,
+      updatedAt: now,
+    });
+    newAsgs.push({
+      id: `${op.originalAssignmentId}#b`,
+      taskId: halfB.id,
+      slotId: halfB.slots[0].slotId,
+      participantId: op.fillB.participantId,
+      status: AssignmentStatus.Manual,
+      updatedAt: now,
+    });
+    assignments = newAsgs;
+    mutatedAsgs = true;
+  }
+
+  // Apply chain swaps last via in-place participantId substitution (does
+  // not touch the task set). Single .map() over the (possibly already
+  // split-mutated) assignments preserves the post-split synthetic halves.
+  const swapMap = new Map<string, string>();
+  for (const c of cands) {
+    if (isSplitCandidate(c)) continue;
+    for (const s of c.swaps) swapMap.set(s.assignmentId, s.toParticipantId);
+  }
+  if (swapMap.size > 0) {
+    assignments = assignments.map((a) => {
+      const pid = swapMap.get(a.id);
+      return pid ? { ...a, participantId: pid } : a;
+    });
+    mutatedAsgs = true;
+  }
+
+  return {
+    tasks: mutatedTasks ? tasks : schedule.tasks,
+    assignments: mutatedAsgs ? assignments : schedule.assignments,
+  };
 }
 
 /**
@@ -298,7 +424,7 @@ export function buildPerParticipantChanges(
 // ─── DFS composition with branch-and-bound ──────────────────────────────────
 
 interface DfsState {
-  chosen: (CandidateChain | null)[];
+  chosen: (SlotCandidate | null)[];
   usedAssignmentIds: Set<string>;
   usedPairs: Set<string>; // "pid|taskId"
   sumSoloDelta: number;
@@ -313,7 +439,7 @@ export interface DfsOutcome {
   timedOut: boolean;
 }
 
-export function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, deadline: number): DfsOutcome {
+export function dfsCompose(candidatesPerSlot: SlotCandidate[][], topK: number, deadline: number): DfsOutcome {
   // Suffix "best remaining" sums, for admissible upper-bound pruning.
   const suffixBest: number[] = new Array(candidatesPerSlot.length + 1).fill(0);
   for (let i = candidatesPerSlot.length - 1; i >= 0; i--) {
@@ -353,8 +479,8 @@ export function dfsCompose(candidatesPerSlot: CandidateChain[][], topK: number, 
     }
 
     if (i === candidatesPerSlot.length) {
-      const chains = state.chosen.filter((c): c is CandidateChain => c !== null);
-      tryInsert({ chains, deltaSum: state.sumSoloDelta });
+      const slotCands = state.chosen.filter((c): c is SlotCandidate => c !== null);
+      tryInsert({ slotCands, deltaSum: state.sumSoloDelta });
       return;
     }
 
@@ -595,12 +721,26 @@ export function generateBatchRescuePlans(
     timedOut: boolean;
     anySolvable: boolean;
   } => {
-    const candidatesPerSlot: CandidateChain[][] = [];
+    const candidatesPerSlot: SlotCandidate[][] = [];
     const infeasibleIds: string[] = [];
+    const splittingMode = schedule.algorithmSettings?.splittingMode ?? 'quality';
     for (const v of affected) {
       const chains = enumerateChainsForSlot(slotCtx, v.assignment, caps, fallbackLevel);
-      if (chains.length === 0) infeasibleIds.push(v.assignment.id);
-      candidatesPerSlot.push(chains);
+      // Dual-enumerator: optionally add split-fill candidates for this slot.
+      // Per the design rule, splits are gated by per-task `splittable` and the
+      // global `splittingMode`. The enumerator returns [] fast when the task
+      // is not splittable, so the cost is identity-zero when splitting is off
+      // or no template opts in.
+      const splits =
+        splittingMode !== 'off' && v.task.splittable
+          ? enumerateSplitFillsForSlot(slotCtx, v.assignment, affectedCount)
+          : [];
+      const slotPool: SlotCandidate[] = [...chains, ...splits];
+      // Sort the combined pool by descending composite delta so suffix-best
+      // admissible pruning in dfsCompose sees the strongest candidate first.
+      slotPool.sort((a, b) => b.soloCompositeDelta - a.soloCompositeDelta);
+      if (slotPool.length === 0) infeasibleIds.push(v.assignment.id);
+      candidatesPerSlot.push(slotPool);
     }
 
     const solvableIdx: number[] = [];
@@ -636,11 +776,14 @@ export function generateBatchRescuePlans(
 
     const isPartial = infeasibleIds.length > 0;
 
-    // Highest-depth-used, for the fallback badge. If any chain in the composition
-    // is at depth 4 or 5, that's what the UI surfaces.
-    const computeFallbackDepthUsed = (chains: CandidateChain[]): 4 | 5 | undefined => {
+    // Highest-depth-used, for the fallback badge. Split-fill candidates do
+    // not contribute a depth (they are depth-1 in spirit but produce a
+    // different mutation kind), so they're skipped in the histogram & badge.
+    const computeFallbackDepthUsed = (cands: SlotCandidate[]): 4 | 5 | undefined => {
       let max: 1 | 2 | 3 | 4 | 5 = 1;
-      for (const c of chains) if (c.depth > max) max = c.depth;
+      for (const c of cands) {
+        if (!isSplitCandidate(c) && c.depth > max) max = c.depth;
+      }
       return max === 4 || max === 5 ? max : undefined;
     };
 
@@ -649,14 +792,14 @@ export function generateBatchRescuePlans(
     for (let i = 0; i < compositions.length; i++) {
       const comp = compositions[i];
       const touched = new Set<string>();
-      for (const c of comp.chains) for (const id of c.touchedAssignmentIds) touched.add(id);
+      for (const c of comp.slotCands) for (const id of c.touchedAssignmentIds) touched.add(id);
 
-      const tempAssignments = applyCompositionToAssignments(schedule, comp.chains);
+      const trial = applyCompositionToState(schedule, comp.slotCands);
 
       const validation = validateHardConstraints(
-        schedule.tasks,
+        trial.tasks,
         schedule.participants,
-        tempAssignments,
+        trial.assignments,
         opts.disabledHC,
         opts.restRuleMap,
         opts.certLabelResolver,
@@ -665,17 +808,22 @@ export function generateBatchRescuePlans(
       );
 
       const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-      for (const c of comp.chains) depthHistogram[c.depth]++;
-      const fallbackDepthUsed = computeFallbackDepthUsed(comp.chains);
+      for (const c of comp.slotCands) {
+        if (!isSplitCandidate(c)) depthHistogram[c.depth]++;
+      }
+      const fallbackDepthUsed = computeFallbackDepthUsed(comp.slotCands);
+      const chainSubset = chainsOf(comp.slotCands);
+      const splitOpsForPlan = splitOpsOf(comp.slotCands);
 
       if (validation.violations.length > 0) {
         scoredInvalid.push({
-          id: `fsos-${hashSwaps(mergeSwaps(comp.chains))}-${i}`,
+          id: `fsos-${hashSwaps(mergeSwaps(chainSubset))}-${i}`,
           rank: 0,
-          swaps: mergeSwaps(comp.chains),
+          swaps: mergeSwaps(chainSubset),
+          splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
           compositeDelta: comp.deltaSum,
           depthHistogram,
-          perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
+          perParticipantChanges: buildPerParticipantChanges(schedule.assignments, trial.assignments, touched),
           violations: validation.violations,
           isPartial,
           fallbackDepthUsed,
@@ -683,22 +831,38 @@ export function generateBatchRescuePlans(
         continue;
       }
 
+      // Override `scoreCtx.taskMap` for the trial: opts.scoreCtx was built
+      // over the PRE-split task set, so its taskMap is missing the new
+      // `#a`/`#b` half-task ids. computeScheduleScore consults `ctx.taskMap`
+      // in preference to the `tasks` arg, so without this rebuild the
+      // per-assignment soft-score loops skip the halves and the composite
+      // delta loses fragment-honest scoring contribution.
+      const trialScoreCtx =
+        trial.tasks === schedule.tasks
+          ? opts.scoreCtx
+          : {
+              ...opts.scoreCtx,
+              taskMap: new Map(trial.tasks.map((t) => [t.id, t])),
+              assignmentsByParticipant: undefined,
+              assignmentsByTask: undefined,
+            };
       const candScore = computeScheduleScore(
-        schedule.tasks,
+        trial.tasks,
         schedule.participants,
-        tempAssignments,
+        trial.assignments,
         opts.config,
-        opts.scoreCtx,
+        trialScoreCtx,
       );
       const compositeDelta = candScore.compositeScore - baselineScore.compositeScore;
 
       scored.push({
-        id: `fsos-${hashSwaps(mergeSwaps(comp.chains))}-${i}`,
+        id: `fsos-${hashSwaps(mergeSwaps(chainSubset))}-${i}`,
         rank: 0,
-        swaps: mergeSwaps(comp.chains),
+        swaps: mergeSwaps(chainSubset),
+        splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
         compositeDelta,
         depthHistogram,
-        perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
+        perParticipantChanges: buildPerParticipantChanges(schedule.assignments, trial.assignments, touched),
         violations: validation.violations,
         isPartial,
         fallbackDepthUsed,

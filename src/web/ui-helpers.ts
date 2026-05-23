@@ -6,8 +6,8 @@
  * constants used across the web presentation layer.
  */
 
-import { Level } from '../models/types';
 import type { Schedule, Task } from '../models/types';
+import { Level } from '../models/types';
 import { fmtTime, stripTaskNameAffixes } from '../utils/date-utils';
 import { getCertColor, getCertificationById, getCertLabel, getTemplateVisualMap } from './config-store';
 

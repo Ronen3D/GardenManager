@@ -59,18 +59,23 @@ import {
   type ScheduleUnavailability,
   type SlotRequirement,
   type SlotTemplate,
+  type SplitOp,
   type SubTeamTemplate,
   type Task,
 } from '../models/types';
 import { injectSectionKey } from '../shared/layout-key';
 import { hourInOpDay } from '../shared/utils/time-utils';
 import { operationalDateKey } from '../utils/date-utils';
+import { makeSplitHalf } from './optimizer';
 import {
   type CandidateChain,
   type ChainEnumerationCaps,
   DEFAULT_CAPS,
   enumerateChainsForSlot,
+  enumerateSplitFillsForSlot,
   type FallbackLevel,
+  isSplitCandidate,
+  type SlotCandidate,
   type SlotEnumerationContext,
 } from './rescue-primitives';
 import type { SchedulingEngine } from './scheduler';
@@ -130,6 +135,13 @@ export interface PerParticipantChange {
 export interface InjectionPlan {
   id: string;
   rank: number;
+  /**
+   * Split-fill ops applied alongside chain swaps. Each op realizes one slot
+   * of the injected task as `#a`/`#b` halves; see `SplitOp`. Only populated
+   * when the injected task is `splittable` and the planner found a split
+   * that beats the best chain candidate for that slot.
+   */
+  splitOps?: SplitOp[];
   /** Composite score delta vs baseline. Positive = improvement. */
   compositeDelta: number;
   /** { 1: n1, 2: n2, ... } — chain depths used across all slots. */
@@ -367,9 +379,37 @@ function chainAcceptsFill(
   return true;
 }
 
+/**
+ * Filter analogous to `chainAcceptsFill` for split-fill candidates: BOTH
+ * halves' fillers must match `groupLock` and respect `allowLowPriority`.
+ * The enumerator already enforces `groupLock` internally via its same-group
+ * detection, but inject's `searchAcrossGroups` may iterate per group with
+ * its own external lock that takes precedence.
+ */
+function splitAcceptsFill(
+  sc: import('./rescue-primitives').SplitCandidate,
+  slot: SlotRequirement,
+  participantMap: Map<string, Participant>,
+  groupLock: string | null,
+  allowLowPriority: boolean,
+): boolean {
+  const a = participantMap.get(sc.splitOp.fillA.participantId);
+  const b = participantMap.get(sc.splitOp.fillB.participantId);
+  if (!a || !b) return false;
+  if (groupLock !== null) {
+    if (a.group !== groupLock) return false;
+    if (b.group !== groupLock) return false;
+  }
+  if (!allowLowPriority) {
+    if (isLowPriorityOnly(a, slot)) return false;
+    if (isLowPriorityOnly(b, slot)) return false;
+  }
+  return true;
+}
+
 // ─── Composition helpers (forked from future-sos.ts, slightly adapted) ──────
 
-type Composition = { chains: CandidateChain[]; deltaSum: number; slotIndex: number[] };
+type Composition = { slotCands: SlotCandidate[]; deltaSum: number; slotIndex: number[] };
 
 /**
  * 32-bit non-cryptographic hash over a plan's swap list. Same algorithm as
@@ -390,27 +430,90 @@ function hashSwaps(swaps: RescueSwap[]): string {
 
 function applyCompositionToAssignments(
   schedule: Schedule,
-  chains: CandidateChain[],
+  slotCands: SlotCandidate[],
   /** Placeholder assignment IDs that this composition does NOT fill — drop them. */
   unfilledPlaceholderIds: Set<string>,
-): Assignment[] {
+): { tasks: Task[]; assignments: Assignment[] } {
+  let tasks = schedule.tasks;
+  let assignments = schedule.assignments;
+  let mutatedTasks = false;
+
+  // Split-fill ops first: rebuild task set + assignment list per op.
+  for (const c of slotCands) {
+    if (!isSplitCandidate(c)) continue;
+    const op = c.splitOp;
+    const T = tasks.find((t) => t.id === op.taskId);
+    if (!T) continue;
+    const slot = T.slots.find((s) => s.slotId === op.slotId);
+    if (!slot) continue;
+    const halfA = makeSplitHalf(T, 1, T.timeBlock.start.getTime(), op.midpointMs, slot);
+    const halfB = makeSplitHalf(T, 2, op.midpointMs, T.timeBlock.end.getTime(), slot);
+    const survivingSlots = T.slots.filter((s) => s.slotId !== op.slotId);
+    const newTasks: Task[] = [];
+    for (const t of tasks) {
+      if (t.id === T.id) {
+        if (survivingSlots.length > 0) {
+          // Stamp sameGroupLinkId on residual for sameGroupRequired parents so
+          // HC-8 link-union groups residual + halves as one unit.
+          newTasks.push({
+            ...T,
+            slots: survivingSlots,
+            requiredCount: survivingSlots.length,
+            sameGroupLinkId: T.sameGroupRequired ? (T.sameGroupLinkId ?? T.id) : T.sameGroupLinkId,
+          });
+        }
+        newTasks.push(halfA, halfB);
+      } else {
+        newTasks.push(t);
+      }
+    }
+    tasks = newTasks;
+    mutatedTasks = true;
+    const newAsgs: Assignment[] = [];
+    for (const a of assignments) {
+      if (a.id === op.originalAssignmentId) continue;
+      newAsgs.push(a);
+    }
+    const now = new Date();
+    newAsgs.push({
+      id: `${op.originalAssignmentId}#a`,
+      taskId: halfA.id,
+      slotId: halfA.slots[0].slotId,
+      participantId: op.fillA.participantId,
+      status: AssignmentStatus.Manual,
+      updatedAt: now,
+    });
+    newAsgs.push({
+      id: `${op.originalAssignmentId}#b`,
+      taskId: halfB.id,
+      slotId: halfB.slots[0].slotId,
+      participantId: op.fillB.participantId,
+      status: AssignmentStatus.Manual,
+      updatedAt: now,
+    });
+    assignments = newAsgs;
+  }
+
+  // Then chain swaps + placeholder drop.
   const swapMap = new Map<string, string>();
-  for (const c of chains) {
+  for (const c of slotCands) {
+    if (isSplitCandidate(c)) continue;
     for (const s of c.swaps) swapMap.set(s.assignmentId, s.toParticipantId);
   }
   const out: Assignment[] = [];
-  for (const a of schedule.assignments) {
+  for (const a of assignments) {
     if (unfilledPlaceholderIds.has(a.id)) continue;
     const pid = swapMap.get(a.id);
     out.push(pid ? { ...a, participantId: pid } : a);
   }
-  return out;
+  return { tasks: mutatedTasks ? tasks : schedule.tasks, assignments: out };
 }
 
-function mergeSwaps(chains: CandidateChain[]): RescueSwap[] {
+function mergeSwaps(slotCands: SlotCandidate[]): RescueSwap[] {
   const merged: RescueSwap[] = [];
   const seen = new Set<string>();
-  for (const c of chains) {
+  for (const c of slotCands) {
+    if (isSplitCandidate(c)) continue;
     for (const s of c.swaps) {
       if (seen.has(s.assignmentId)) continue;
       seen.add(s.assignmentId);
@@ -418,6 +521,12 @@ function mergeSwaps(chains: CandidateChain[]): RescueSwap[] {
     }
   }
   return merged;
+}
+
+function splitOpsFromComposition(slotCands: SlotCandidate[]): SplitOp[] {
+  const out: SplitOp[] = [];
+  for (const c of slotCands) if (isSplitCandidate(c)) out.push(c.splitOp);
+  return out;
 }
 
 function buildPerParticipantChanges(
@@ -472,7 +581,7 @@ function buildPerParticipantChanges(
 // ─── DFS composition with branch-and-bound ──────────────────────────────────
 
 interface DfsState {
-  chosen: (CandidateChain | null)[];
+  chosen: (SlotCandidate | null)[];
   usedAssignmentIds: Set<string>;
   usedPairs: Set<string>;
   sumSoloDelta: number;
@@ -490,7 +599,7 @@ interface DfsOutcome {
 }
 
 function dfsCompose(
-  candidatesPerSlot: CandidateChain[][],
+  candidatesPerSlot: SlotCandidate[][],
   /** Original slot index of each entry in `candidatesPerSlot` (it gets reordered for fail-fast DFS). */
   originalIndex: number[],
   topK: number,
@@ -533,8 +642,8 @@ function dfsCompose(
       return;
     }
     if (i === candidatesPerSlot.length) {
-      const chains = state.chosen.filter((c): c is CandidateChain => c !== null);
-      tryInsert({ chains, deltaSum: state.sumSoloDelta, slotIndex: [...originalIndex] });
+      const slotCands = state.chosen.filter((c): c is SlotCandidate => c !== null);
+      tryInsert({ slotCands, deltaSum: state.sumSoloDelta, slotIndex: [...originalIndex] });
       return;
     }
     // Admissible upper-bound prune.
@@ -669,9 +778,10 @@ function runStage(opts: StageOpts): StageOutput {
     fallbackLevel,
   } = opts;
 
-  const candidatesPerSlot: CandidateChain[][] = [];
+  const candidatesPerSlot: SlotCandidate[][] = [];
   const unsolvableSlotIds: string[] = [];
   const slotByIndex: SlotRequirement[] = [];
+  const splittingMode = slotCtx.schedule.algorithmSettings?.splittingMode ?? 'quality';
 
   for (const slot of task.slots) {
     const placeholder = placeholders.bySlot.get(slot.slotId);
@@ -685,9 +795,19 @@ function runStage(opts: StageOpts): StageOutput {
     const filtered = allChains.filter((c) =>
       chainAcceptsFill(c, slot, slotCtx.participantMap, groupLock, allowLowPriority),
     );
-    candidatesPerSlot.push(filtered);
+    // Dual-enumerator: split-fill candidates for splittable injected tasks
+    // only. The placeholder is treated as the "vacated" assignment.
+    const splits =
+      splittingMode !== 'off' && task.splittable
+        ? enumerateSplitFillsForSlot(slotCtx, placeholder, task.slots.length).filter((sc) =>
+            splitAcceptsFill(sc, slot, slotCtx.participantMap, groupLock, allowLowPriority),
+          )
+        : [];
+    const slotPool: SlotCandidate[] = [...filtered, ...splits];
+    slotPool.sort((a, b) => b.soloCompositeDelta - a.soloCompositeDelta);
+    candidatesPerSlot.push(slotPool);
     slotByIndex.push(slot);
-    if (filtered.length === 0) unsolvableSlotIds.push(slot.slotId);
+    if (slotPool.length === 0) unsolvableSlotIds.push(slot.slotId);
   }
 
   // Drop slots with zero candidates from the DFS — they'll be marked unfilled.
@@ -715,35 +835,48 @@ function runStage(opts: StageOpts): StageOutput {
   }
 
   const isPartial = unsolvableSlotIds.length > 0;
-  const computeFallbackDepthUsed = (chains: CandidateChain[]): 4 | 5 | undefined => {
+  const computeFallbackDepthUsed = (cands: SlotCandidate[]): 4 | 5 | undefined => {
     let max: 1 | 2 | 3 | 4 | 5 = 1;
-    for (const c of chains) if (c.depth > max) max = c.depth;
+    for (const c of cands) {
+      if (!isSplitCandidate(c) && c.depth > max) max = c.depth;
+    }
     return max === 4 || max === 5 ? max : undefined;
   };
 
   // Map a composition to an InjectionPlan, including per-slot outcomes.
   const composeToPlan = (comp: Composition, idx: number): InjectionPlan => {
+    // Per-slot pick: either a chain or a split-fill candidate (or null when
+    // the slot is unfilled). The legacy `_chainBySlotId` map is preserved
+    // for chain picks so `applyInjectionPlan` (which mutates assignments
+    // directly) keeps working; split picks land in `splitOps` and are
+    // applied via the split-aware path in `applyInjectionPlan`.
+    const candBySlotId = new Map<string, SlotCandidate | null>();
     const chainBySlotId = new Map<string, CandidateChain | null>();
-    for (const slot of task.slots) chainBySlotId.set(slot.slotId, null);
-    for (let k = 0; k < comp.chains.length; k++) {
+    for (const slot of task.slots) {
+      candBySlotId.set(slot.slotId, null);
+      chainBySlotId.set(slot.slotId, null);
+    }
+    for (let k = 0; k < comp.slotCands.length; k++) {
       const slotIdx = comp.slotIndex[k];
       const slot = slotByIndex[slotIdx];
-      chainBySlotId.set(slot.slotId, comp.chains[k]);
+      const c = comp.slotCands[k];
+      candBySlotId.set(slot.slotId, c);
+      if (!isSplitCandidate(c)) chainBySlotId.set(slot.slotId, c);
     }
 
     const unfilledPlaceholderIds = new Set<string>();
     for (const slot of task.slots) {
-      if (chainBySlotId.get(slot.slotId) === null) {
+      if (candBySlotId.get(slot.slotId) === null) {
         const ph = placeholders.bySlot.get(slot.slotId);
         if (ph) unfilledPlaceholderIds.add(ph.id);
       }
     }
 
-    const tempAssignments = applyCompositionToAssignments(slotCtx.schedule, comp.chains, unfilledPlaceholderIds);
+    const trial = applyCompositionToAssignments(slotCtx.schedule, comp.slotCands, unfilledPlaceholderIds);
     const validation = validateHardConstraints(
-      slotCtx.schedule.tasks,
+      trial.tasks,
       slotCtx.schedule.participants,
-      tempAssignments,
+      trial.assignments,
       slotCtx.disabledHC,
       slotCtx.restRuleMap,
       undefined,
@@ -753,52 +886,87 @@ function runStage(opts: StageOpts): StageOutput {
     );
 
     const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    for (const c of comp.chains) depthHistogram[c.depth]++;
+    for (const c of comp.slotCands) {
+      if (!isSplitCandidate(c)) depthHistogram[c.depth]++;
+    }
 
+    // Override scoreCtx.taskMap for the trial — slotCtx.scoreCtx's taskMap
+    // was built over the pre-split tasks; the new `#a`/`#b` half-task ids
+    // are missing from it, so without this rebuild the per-assignment
+    // soft-score loops can't find the halves and silently drop their
+    // contribution.
+    const trialScoreCtx =
+      trial.tasks === slotCtx.schedule.tasks
+        ? slotCtx.scoreCtx
+        : {
+            ...slotCtx.scoreCtx,
+            taskMap: new Map(trial.tasks.map((t) => [t.id, t])),
+            assignmentsByParticipant: undefined,
+            assignmentsByTask: undefined,
+          };
     let compositeDelta: number;
     if (validation.violations.length > 0) {
       // Invalid plans are kept as a last-resort bucket; we still need a
       // composite delta for ranking within that bucket.
       const candScore = computeScheduleScore(
-        slotCtx.schedule.tasks,
+        trial.tasks,
         slotCtx.schedule.participants,
-        tempAssignments,
+        trial.assignments,
         slotCtx.config,
-        slotCtx.scoreCtx,
+        trialScoreCtx,
       );
       compositeDelta = candScore.compositeScore - baselineComposite;
     } else {
       const candScore = computeScheduleScore(
-        slotCtx.schedule.tasks,
+        trial.tasks,
         slotCtx.schedule.participants,
-        tempAssignments,
+        trial.assignments,
         slotCtx.config,
-        slotCtx.scoreCtx,
+        trialScoreCtx,
       );
       compositeDelta = candScore.compositeScore - baselineComposite;
     }
 
     const touched = new Set<string>();
-    for (const c of comp.chains) for (const id of c.touchedAssignmentIds) touched.add(id);
+    for (const c of comp.slotCands) for (const id of c.touchedAssignmentIds) touched.add(id);
 
     // Build per-slot outcomes in the task's original slot order.
     const outcomes: SlotStaffingOutcome[] = task.slots.map((slot) => {
-      const chain = chainBySlotId.get(slot.slotId) ?? null;
+      const cand = candBySlotId.get(slot.slotId) ?? null;
       const label = slotLabel(slot, task);
-      if (!chain || chain.swaps.length === 0) {
+      if (!cand) {
         return {
           slotId: slot.slotId,
           slotLabel: label,
           filled: false,
-          reason: diagnoseUnfillableSlotAtFinalState(slotCtx, task, slot, tempAssignments, groupLock),
+          reason: diagnoseUnfillableSlotAtFinalState(slotCtx, task, slot, trial.assignments, groupLock),
         };
       }
-      // chain.swaps[0] is the placeholder→fill swap. Subsequent swaps are
+      if (isSplitCandidate(cand)) {
+        // Split-fill: the slot is realized as two halves. Report the slot as
+        // "filled" with both fillers listed in a synthetic swapChain step so
+        // the existing modal renderer can still surface participant names.
+        return {
+          slotId: slot.slotId,
+          slotLabel: label,
+          filled: true,
+          participantId: cand.splitOp.fillA.participantId,
+        };
+      }
+      if (cand.swaps.length === 0) {
+        return {
+          slotId: slot.slotId,
+          slotLabel: label,
+          filled: false,
+          reason: diagnoseUnfillableSlotAtFinalState(slotCtx, task, slot, trial.assignments, groupLock),
+        };
+      }
+      // cand.swaps[0] is the placeholder→fill swap. Subsequent swaps are
       // donor backfills.
-      const fillSwap = chain.swaps[0];
+      const fillSwap = cand.swaps[0];
       const swapChain: StaffingSwapStep[] | undefined =
-        chain.swaps.length > 1
-          ? chain.swaps.slice(1).map((s) => ({
+        cand.swaps.length > 1
+          ? cand.swaps.slice(1).map((s) => ({
               assignmentId: s.assignmentId,
               fromParticipantId: s.fromParticipantId ?? '',
               toParticipantId: s.toParticipantId,
@@ -817,23 +985,25 @@ function runStage(opts: StageOpts): StageOutput {
     });
 
     const filledCount = outcomes.filter((o) => o.filled).length;
-    const merged = mergeSwaps(comp.chains);
+    const merged = mergeSwaps(comp.slotCands);
+    const splitOpsForPlan = splitOpsFromComposition(comp.slotCands);
 
     return {
       id: `inj-${hashSwaps(merged)}-${idx}`,
       rank: 0,
+      splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
       compositeDelta,
       depthHistogram,
       perParticipantChanges: buildPerParticipantChanges(
         slotCtx.schedule.assignments,
-        tempAssignments,
+        trial.assignments,
         touched,
         unfilledPlaceholderIds,
         (id) => placeholders.ids.has(id),
       ),
       violations: validation.violations,
       isPartial,
-      fallbackDepthUsed: computeFallbackDepthUsed(comp.chains),
+      fallbackDepthUsed: computeFallbackDepthUsed(comp.slotCands),
       outcomes,
       filledCount,
       totalSlotCount: task.slots.length,
@@ -1135,6 +1305,17 @@ interface ApplyCtx {
   applied: boolean;
   /** Track which placeholders were removed during apply (for partial plans) so re-apply doesn't double-remove. */
   removedPlaceholderIds: Set<string>;
+  /**
+   * Task ids of `#a`/`#b` half-tasks introduced by applied split-ops, so
+   * `rollbackAll` can remove them alongside the original injected task.
+   */
+  appliedSplitTaskIds: Set<string>;
+  /**
+   * Synthetic assignment ids (`originalId#a` / `#b`) created by applied
+   * split-ops, removed during rollback together with the parent placeholder
+   * unwind.
+   */
+  appliedSplitAsgIds: Set<string>;
 }
 
 function snapshotIfUnseen(ctx: ApplyCtx, a: Assignment): void {
@@ -1148,6 +1329,76 @@ function snapshotIfUnseen(ctx: ApplyCtx, a: Assignment): void {
 
 function applyInjectionPlan(ctx: ApplyCtx, plan: InjectionPlan): StaffingReport {
   const now = new Date();
+
+  // Apply split-ops first. Each split realizes one slot of the injected task
+  // as `#a`/`#b` halves: the task's slot list shrinks, two new half-tasks are
+  // added to `schedule.tasks`, and the corresponding placeholder is replaced
+  // by two synthetic half-assignments staffed by `fillA` / `fillB`.
+  const splitFilledPlaceholderIds = new Set<string>();
+  if (plan.splitOps && plan.splitOps.length > 0) {
+    for (const op of plan.splitOps) {
+      const tIdx = ctx.schedule.tasks.findIndex((t) => t.id === op.taskId);
+      if (tIdx === -1) continue;
+      const T = ctx.schedule.tasks[tIdx];
+      const slot = T.slots.find((s) => s.slotId === op.slotId);
+      if (!slot) continue;
+      const halfA = makeSplitHalf(T, 1, T.timeBlock.start.getTime(), op.midpointMs, slot);
+      const halfB = makeSplitHalf(T, 2, op.midpointMs, T.timeBlock.end.getTime(), slot);
+      const survivingSlots = T.slots.filter((s) => s.slotId !== op.slotId);
+      const replacementTasks: Task[] = [];
+      if (survivingSlots.length > 0) {
+        // Stamp sameGroupLinkId on residual for sameGroupRequired parents so
+        // HC-8 link-union groups residual + halves as one unit.
+        replacementTasks.push({
+          ...T,
+          slots: survivingSlots,
+          requiredCount: survivingSlots.length,
+          sameGroupLinkId: T.sameGroupRequired ? (T.sameGroupLinkId ?? T.id) : T.sameGroupLinkId,
+        });
+      }
+      replacementTasks.push(halfA, halfB);
+      ctx.schedule.tasks.splice(tIdx, 1, ...replacementTasks);
+      for (const rt of replacementTasks) {
+        if (rt.id !== T.id) ctx.appliedSplitTaskIds.add(rt.id);
+      }
+
+      // Remove the placeholder assignment (it's being replaced by halves).
+      // Inject always produces a non-null placeholder id (the empty-slot path
+      // — `originalAssignmentId: null` — is exclusive to the manual-build
+      // flow and never enters `applyInjectionPlan`).
+      const placeholderAsgId = op.originalAssignmentId;
+      if (placeholderAsgId === null) {
+        // Defensive: skip rather than crash. Inject's enumerator never emits
+        // null here, but the SplitOp type widening makes this reachable in
+        // principle.
+        continue;
+      }
+      const phIdx = ctx.schedule.assignments.findIndex((a) => a.id === placeholderAsgId);
+      if (phIdx >= 0) ctx.schedule.assignments.splice(phIdx, 1);
+      splitFilledPlaceholderIds.add(placeholderAsgId);
+      ctx.removedPlaceholderIds.add(placeholderAsgId);
+
+      const asgA: Assignment = {
+        id: `${op.originalAssignmentId}#a`,
+        taskId: halfA.id,
+        slotId: halfA.slots[0].slotId,
+        participantId: op.fillA.participantId,
+        status: AssignmentStatus.Manual,
+        updatedAt: now,
+      };
+      const asgB: Assignment = {
+        id: `${op.originalAssignmentId}#b`,
+        taskId: halfB.id,
+        slotId: halfB.slots[0].slotId,
+        participantId: op.fillB.participantId,
+        status: AssignmentStatus.Manual,
+        updatedAt: now,
+      };
+      ctx.schedule.assignments.push(asgA, asgB);
+      ctx.appliedSplitAsgIds.add(asgA.id);
+      ctx.appliedSplitAsgIds.add(asgB.id);
+    }
+  }
 
   // Apply all swaps in the chosen plan.
   const seenAssignments = new Set<string>();
@@ -1168,8 +1419,9 @@ function applyInjectionPlan(ctx: ApplyCtx, plan: InjectionPlan): StaffingReport 
 
   // Remove unfilled placeholders so the schedule doesn't carry synthetic
   // participants. Fully-rolled-back schedules will re-add nothing — that's
-  // correct: those slots were never staffed.
-  const filledPlaceholderIds = new Set<string>();
+  // correct: those slots were never staffed. Split-filled placeholders are
+  // already removed above.
+  const filledPlaceholderIds = new Set<string>(splitFilledPlaceholderIds);
   for (const slot of ctx.task.slots) {
     const chain = plan._chainBySlotId.get(slot.slotId);
     if (!chain) continue;
@@ -1210,8 +1462,17 @@ function rollbackAll(ctx: ApplyCtx): void {
   }
   ctx.mutatedSnapshots.clear();
 
-  // Remove every placeholder assignment (whether mutated, removed, or still
+  // Remove half-assignments introduced by applied split-ops, then drop any
+  // remaining placeholder assignments (whether mutated, removed, or still
   // synthetic) — the entire injection unwinds back to pre-call state.
+  if (ctx.appliedSplitAsgIds.size > 0) {
+    for (let i = ctx.schedule.assignments.length - 1; i >= 0; i--) {
+      if (ctx.appliedSplitAsgIds.has(ctx.schedule.assignments[i].id)) {
+        ctx.schedule.assignments.splice(i, 1);
+      }
+    }
+    ctx.appliedSplitAsgIds.clear();
+  }
   if (ctx.placeholders.ids.size > 0) {
     for (let i = ctx.schedule.assignments.length - 1; i >= 0; i--) {
       if (ctx.placeholders.ids.has(ctx.schedule.assignments[i].id)) {
@@ -1221,7 +1482,15 @@ function rollbackAll(ctx: ApplyCtx): void {
   }
   ctx.removedPlaceholderIds.clear();
 
-  // Remove the injected task itself.
+  // Remove any half-tasks the split-ops created, then the injected task itself.
+  if (ctx.appliedSplitTaskIds.size > 0) {
+    for (let i = ctx.schedule.tasks.length - 1; i >= 0; i--) {
+      if (ctx.appliedSplitTaskIds.has(ctx.schedule.tasks[i].id)) {
+        ctx.schedule.tasks.splice(i, 1);
+      }
+    }
+    ctx.appliedSplitTaskIds.clear();
+  }
   const tIdx = ctx.schedule.tasks.findIndex((t) => t.id === ctx.task.id);
   if (tIdx >= 0) ctx.schedule.tasks.splice(tIdx, 1);
   ctx.engine.removeTask(ctx.task.id);
@@ -1431,6 +1700,8 @@ export function searchInjectionPlans(
     mutatedSnapshots: new Map(),
     applied: false,
     removedPlaceholderIds: new Set(),
+    appliedSplitTaskIds: new Set(),
+    appliedSplitAsgIds: new Set(),
   };
 
   return {

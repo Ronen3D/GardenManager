@@ -18,6 +18,7 @@ import {
   type Participant,
   type Schedule,
   type SchedulerConfig,
+  type SplitOp,
   type SwapRequest,
   type Task,
   type ValidationResult,
@@ -29,6 +30,7 @@ import { describeTaskInstance } from '../utils/date-utils';
 import { getEffectiveConfig } from './effective-config';
 import {
   type MultiAttemptProgressCallback,
+  makeSplitHalf,
   type OptimizationResult,
   optimize,
   optimizeMultiAttemptAsync,
@@ -1014,6 +1016,289 @@ export class SchedulingEngine {
         this.currentSchedule.assignments,
         chainEffCfg,
       ),
+    ];
+
+    return validation;
+  }
+
+  /**
+   * Apply a dynamic-replacement plan that may include both `SwapRequest`s
+   * (mutating assignment participantIds) and `SplitOp`s (realizing a slot
+   * as two `#a`/`#b` half-tasks). All mutations are applied first, then
+   * `validateHardConstraints` runs once on the final state. On HC failure,
+   * every mutation rolls back atomically — `schedule.tasks` and
+   * `schedule.assignments` revert to pre-apply identity.
+   *
+   * Used by rescue / Future-SOS / inject / capability-change when their
+   * planner chose a split-fill candidate. The plain swap-chain path is
+   * still available via `swapParticipantChain` for unchanged callers.
+   */
+  applyPlanOps(plan: { swaps?: SwapRequest[]; splitOps?: SplitOp[] }): ValidationResult {
+    if (!this.currentSchedule) {
+      return {
+        valid: false,
+        violations: [
+          { severity: ViolationSeverity.Error, code: 'NO_SCHEDULE', message: 'אין שבצ"ק לעריכה.', taskId: '' },
+        ],
+      };
+    }
+
+    const swapReqs = plan.swaps ?? [];
+    const splitOps = plan.splitOps ?? [];
+
+    if (swapReqs.length === 0 && splitOps.length === 0) {
+      return { valid: true, violations: [] };
+    }
+
+    const sched = this.currentSchedule;
+
+    // Rollback state for split-ops, captured in apply order. Roll back in
+    // reverse so a partially-applied batch fully reverts. `originalAssignment`
+    // and `originalAssignmentIndex` are null when the op split a still-empty
+    // slot (manual-build flow) — rollback skips the assignment reinsert.
+    type SplitUndo = {
+      originalTask: Task;
+      originalTaskIndex: number;
+      insertedTaskIds: string[];
+      originalAssignment: Assignment | null;
+      originalAssignmentIndex: number | null;
+      insertedAssignmentIds: string[];
+    };
+    const splitUndo: SplitUndo[] = [];
+
+    // Rollback state for swaps (same shape as swapParticipantChain).
+    type SwapUndo = {
+      assignment: Assignment;
+      prevParticipantId: string;
+      prevStatus: AssignmentStatus;
+      prevUpdatedAt: Date;
+    };
+    const swapUndo: SwapUndo[] = [];
+
+    const rollback = (): void => {
+      // Reverse swap mutations.
+      for (const u of swapUndo) {
+        u.assignment.participantId = u.prevParticipantId;
+        u.assignment.status = u.prevStatus;
+        u.assignment.updatedAt = u.prevUpdatedAt;
+      }
+      // Reverse split mutations in reverse order. Use splice() throughout
+      // to preserve array-reference identity for any outside holders.
+      for (let i = splitUndo.length - 1; i >= 0; i--) {
+        const u = splitUndo[i];
+        for (const id of u.insertedAssignmentIds) {
+          const aIdx = sched.assignments.findIndex((a) => a.id === id);
+          if (aIdx !== -1) sched.assignments.splice(aIdx, 1);
+        }
+        if (u.originalAssignment !== null && u.originalAssignmentIndex !== null) {
+          sched.assignments.splice(u.originalAssignmentIndex, 0, u.originalAssignment);
+        }
+        for (const id of u.insertedTaskIds) {
+          const tIdx = sched.tasks.findIndex((t) => t.id === id);
+          if (tIdx !== -1) sched.tasks.splice(tIdx, 1);
+        }
+        sched.tasks.splice(u.originalTaskIndex, 0, u.originalTask);
+      }
+    };
+
+    const fail = (code: string, message: string, taskId = ''): ValidationResult => {
+      rollback();
+      return {
+        valid: false,
+        violations: [{ severity: ViolationSeverity.Error, code, message, taskId }],
+      };
+    };
+
+    // ── Apply split-ops ────────────────────────────────────────────────────
+    for (const op of splitOps) {
+      if (op.fillA.participantId === op.fillB.participantId) {
+        return fail('SPLIT_SAME_PARTICIPANT', `פיצול ${op.slotLabel}: שני החצאים שובצו לאותו אדם.`, op.taskId);
+      }
+
+      const tIdx = sched.tasks.findIndex((t) => t.id === op.taskId);
+      if (tIdx === -1) {
+        return fail('TASK_NOT_FOUND', `המשימה ${op.taskId} לא נמצאה לפיצול.`, op.taskId);
+      }
+      const T = sched.tasks[tIdx];
+      if (!T.splittable) {
+        return fail('TASK_NOT_SPLITTABLE', `המשימה "${T.name}" אינה ניתנת לפיצול.`, T.id);
+      }
+      if (T.splitGroupId !== undefined) {
+        return fail('TASK_ALREADY_SPLIT', `המשימה "${T.name}" כבר מפוצלת — אי-אפשר לפצל חצי.`, T.id);
+      }
+
+      const slot = T.slots.find((s) => s.slotId === op.slotId);
+      if (!slot) {
+        return fail('SLOT_NOT_FOUND', `המשבצת ${op.slotId} לא נמצאה במשימה "${T.name}".`, T.id);
+      }
+
+      // Empty-slot split (manual-build): `originalAssignmentId === null`.
+      // We still need to verify the targeted slot is actually empty — if it
+      // *is* assigned, applying would orphan that assignment.
+      let aIdx: number;
+      let originalAssignment: Assignment | null;
+      if (op.originalAssignmentId === null) {
+        const existing = sched.assignments.find((a) => a.taskId === T.id && a.slotId === op.slotId);
+        if (existing) {
+          return fail(
+            'SPLIT_SLOT_NOT_EMPTY',
+            `המשבצת ${op.slotLabel} משובצת כבר — לא ניתן לפצל כמשבצת ריקה.`,
+            T.id,
+          );
+        }
+        aIdx = -1;
+        originalAssignment = null;
+      } else {
+        aIdx = sched.assignments.findIndex((a) => a.id === op.originalAssignmentId);
+        if (aIdx === -1) {
+          return fail('ASSIGNMENT_NOT_FOUND', `שיבוץ ${op.originalAssignmentId} לא נמצא.`, T.id);
+        }
+        originalAssignment = sched.assignments[aIdx];
+        if (originalAssignment.status === AssignmentStatus.Frozen) {
+          return fail('ASSIGNMENT_FROZEN', `שיבוץ ${op.originalAssignmentId} קפוא ולא ניתן לפיצול.`, T.id);
+        }
+      }
+
+      if (!this.participants.has(op.fillA.participantId)) {
+        return fail('PARTICIPANT_NOT_FOUND', `משתתף ${op.fillA.participantId} לא נמצא.`, T.id);
+      }
+      if (!this.participants.has(op.fillB.participantId)) {
+        return fail('PARTICIPANT_NOT_FOUND', `משתתף ${op.fillB.participantId} לא נמצא.`, T.id);
+      }
+
+      const startMs = T.timeBlock.start.getTime();
+      const endMs = T.timeBlock.end.getTime();
+      const midMs = op.midpointMs;
+      if (!(midMs > startMs && midMs < endMs)) {
+        return fail('SPLIT_MIDPOINT_INVALID', `נקודת הפיצול של "${T.name}" אינה חוקית.`, T.id);
+      }
+
+      const halfA = makeSplitHalf(T, 1, startMs, midMs, slot);
+      const halfB = makeSplitHalf(T, 2, midMs, endMs, slot);
+
+      // Determine surviving slots (the slots NOT being split). When the
+      // parent is `sameGroupRequired`, stamp `sameGroupLinkId = T.id` on the
+      // residual so HC-8's link-union sees residual + halves as one unit —
+      // mirrors `splitSameGroup`'s residual at optimizer.ts:1373. Without
+      // this, `makeSplitHalf` stamps the halves but the residual stays
+      // unlinked, letting cross-group HC-8 violations on the residual pass.
+      const survivingSlots = T.slots.filter((s) => s.slotId !== op.slotId);
+      const replacementTasks: Task[] = [];
+      if (survivingSlots.length > 0) {
+        const Tr: Task = {
+          ...T,
+          slots: survivingSlots,
+          requiredCount: survivingSlots.length,
+          sameGroupLinkId: T.sameGroupRequired ? (T.sameGroupLinkId ?? T.id) : T.sameGroupLinkId,
+        };
+        replacementTasks.push(Tr);
+      }
+      replacementTasks.push(halfA, halfB);
+
+      // Synthetic assignment-id base. For the dynamic-replacement flows we
+      // append `#a`/`#b` to the original assignment id (preserves traceability);
+      // for manual empty-slot splits there is no original, so derive a base
+      // from the task+slot plus a wall-clock+random suffix (matches the
+      // `manual-${Date.now()}-${rand}` pattern used by `executeManualAssignment`).
+      const asgBase =
+        op.originalAssignmentId ??
+        `split-${T.id}-${op.slotId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+      const now = new Date();
+      const newAsgA: Assignment = {
+        id: `${asgBase}#a`,
+        taskId: halfA.id,
+        slotId: halfA.slots[0].slotId,
+        participantId: op.fillA.participantId,
+        status: AssignmentStatus.Manual,
+        updatedAt: now,
+      };
+      const newAsgB: Assignment = {
+        id: `${asgBase}#b`,
+        taskId: halfB.id,
+        slotId: halfB.slots[0].slotId,
+        participantId: op.fillB.participantId,
+        status: AssignmentStatus.Manual,
+        updatedAt: now,
+      };
+
+      // Guard: synthetic ids must not collide with existing ones.
+      if (sched.assignments.some((a) => a.id === newAsgA.id || a.id === newAsgB.id)) {
+        return fail(
+          'SPLIT_ASSIGNMENT_ID_COLLISION',
+          `שיבוצי הפיצול של ${asgBase} כבר קיימים — בטל את הפיצול הקודם תחילה.`,
+          T.id,
+        );
+      }
+
+      // Splice schedule.tasks: replace T with replacementTasks.
+      sched.tasks.splice(tIdx, 1, ...replacementTasks);
+      // Splice schedule.assignments: remove originalAssignment (when present), push half assignments.
+      if (aIdx !== -1) {
+        sched.assignments.splice(aIdx, 1);
+      }
+      sched.assignments.push(newAsgA, newAsgB);
+
+      splitUndo.push({
+        originalTask: T,
+        originalTaskIndex: tIdx,
+        insertedTaskIds: replacementTasks.map((t) => t.id),
+        originalAssignment,
+        originalAssignmentIndex: originalAssignment !== null ? aIdx : null,
+        insertedAssignmentIds: [newAsgA.id, newAsgB.id],
+      });
+    }
+
+    // ── Apply swaps (mirrors swapParticipantChain) ─────────────────────────
+    for (const req of swapReqs) {
+      const assignment = sched.assignments.find((a) => a.id === req.assignmentId);
+      if (!assignment) {
+        return fail('ASSIGNMENT_NOT_FOUND', `שיבוץ ${req.assignmentId} לא נמצא.`);
+      }
+      if (assignment.status === AssignmentStatus.Frozen) {
+        return fail('ASSIGNMENT_FROZEN', `שיבוץ ${req.assignmentId} קפוא ולא ניתן לשינוי.`, assignment.taskId);
+      }
+      if (!this.participants.has(req.newParticipantId)) {
+        return fail('PARTICIPANT_NOT_FOUND', `משתתף ${req.newParticipantId} לא נמצא.`, assignment.taskId);
+      }
+      swapUndo.push({
+        assignment,
+        prevParticipantId: assignment.participantId,
+        prevStatus: assignment.status,
+        prevUpdatedAt: assignment.updatedAt,
+      });
+    }
+
+    const nowSwaps = new Date();
+    for (let i = 0; i < swapReqs.length; i++) {
+      const u = swapUndo[i];
+      u.assignment.participantId = swapReqs[i].newParticipantId;
+      u.assignment.status = AssignmentStatus.Manual;
+      u.assignment.updatedAt = nowSwaps;
+    }
+
+    // ── Validate the final state ───────────────────────────────────────────
+    const validation = this.validate();
+    if (!validation.valid) {
+      rollback();
+      return validation;
+    }
+
+    // ── Commit ──────────────────────────────────────────────────────────────
+    this._lastOptimizationResult = null;
+
+    const effCfg = this.getEffectiveConfig();
+    sched.score = computeScheduleScore(
+      sched.tasks,
+      sched.participants,
+      sched.assignments,
+      effCfg,
+      this._buildScoreCtx(sched.tasks, sched.participants),
+    );
+    sched.feasible = true;
+    sched.violations = [
+      ...validation.violations,
+      ...collectSoftWarnings(sched.tasks, sched.participants, sched.assignments, effCfg),
     ];
 
     return validation;

@@ -101,6 +101,7 @@ import {
   violationLabel,
 } from './schedule-utils';
 import { attachTripleClickOpener, clearAttemptScoreHistory, pushAttemptScore } from './score-breakdown-panel';
+import { openSplitPicker } from './split-picker';
 import { openSwapPicker } from './swap-picker';
 import { initSwimlane, renderSwimlaneView, wireSwimlaneEvents } from './swimlane-view';
 import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
@@ -1641,14 +1642,47 @@ function renderParticipantWarehouse(schedule: Schedule): string {
     </div>`;
   }
 
+  // Manual-build split entry point (desktop inline). Visible only when a
+  // splittable, non-already-split slot is selected and the global splitting
+  // mode is not 'off' — gated by `canSplitSelectedSlot` (same gate as the
+  // mobile bottom-sheet button).
+  let splitButton = '';
+  if (_manualSelectedTaskId && _manualSelectedSlotId) {
+    const selTask = schedule.tasks.find((t) => t.id === _manualSelectedTaskId);
+    const selAsg = schedule.assignments.find(
+      (a) => a.taskId === _manualSelectedTaskId && a.slotId === _manualSelectedSlotId,
+    );
+    if (selTask && canSplitSelectedSlot(selTask, selAsg)) {
+      splitButton = `<button class="btn-manual-split-inline" data-action="manual-split">✂ פצל משבצת לשני אנשים</button>`;
+    }
+  }
+
   return `<section class="manual-warehouse" id="manual-warehouse">
     <div class="warehouse-header">
       <h3>מאגר משתתפים</h3>
       <input type="search" class="warehouse-filter" id="warehouse-filter" placeholder="🔍 חפש..." value="${escHtml(_warehouseFilter)}" />
     </div>
+    ${splitButton}
     ${renderPool(l0Pool, 'דרגה 0')}
     ${renderPool(seniorPool, 'סגל (דרגה 2–4)')}
   </section>`;
+}
+
+/**
+ * Manual-build gate for the ✂ split button. The button is visible only when:
+ *   - The slot's parent task is `splittable` (frozen at generation; already
+ *     reflects the global `splittingMode !== 'off'` setting).
+ *   - The task itself is not a split half (`splitGroupId === undefined`).
+ *   - The engine's splitting mode is not 'off' (defense-in-depth).
+ *   - If the slot is filled, the assignment is not frozen.
+ * Returns true when all gates pass.
+ */
+function canSplitSelectedSlot(task: Task, existingAssignment: Assignment | undefined): boolean {
+  if (!task.splittable) return false;
+  if (task.splitGroupId !== undefined) return false;
+  if (engine && engine.getSplittingMode() === 'off') return false;
+  if (existingAssignment && existingAssignment.status === AssignmentStatus.Frozen) return false;
+  return true;
 }
 
 /**
@@ -1679,6 +1713,10 @@ function buildWarehouseSheetContent(schedule: Schedule): string {
 
   if (existingAssignment && existingParticipant) {
     header += `<button class="btn-manual-remove-sheet" data-action="manual-remove" data-assignment-id="${existingAssignment.id}">✕ הסר שיבוץ של ${escHtml(existingParticipant.name)}</button>`;
+  }
+
+  if (canSplitSelectedSlot(task, existingAssignment)) {
+    header += `<button class="btn-manual-split-sheet" data-action="manual-split">✂ פצל משבצת לשני אנשים</button>`;
   }
 
   // Render participant cards
@@ -1956,6 +1994,47 @@ function handleManualUndo(): void {
   showToast('הפעולה בוטלה', { type: 'info' });
 }
 
+/**
+ * Manual-build split flow: opens the split picker for the currently selected
+ * slot. Pushes a manual-build undo snapshot before applyPlanOps; pops it if
+ * the engine rejects (HC violation). On success, refreshes the schedule and
+ * animates the two new halves.
+ */
+async function handleManualSplitClick(): Promise<void> {
+  if (!currentSchedule || !engine || !_manualSelectedTaskId || !_manualSelectedSlotId) return;
+  const task = currentSchedule.tasks.find((t) => t.id === _manualSelectedTaskId);
+  if (!task) return;
+  const existingAssignment = currentSchedule.assignments.find(
+    (a) => a.taskId === task.id && a.slotId === _manualSelectedSlotId,
+  );
+  if (!canSplitSelectedSlot(task, existingAssignment)) return;
+
+  const result = await openSplitPicker({
+    engine,
+    schedule: currentSchedule,
+    taskId: _manualSelectedTaskId,
+    slotId: _manualSelectedSlotId,
+    disabledHC: engine.getDisabledHC() ?? new Set<string>(),
+    restRuleMap: engine.getRestRuleMap(),
+    pushUndo: () => pushUndo('manual', 'פיצול משבצת'),
+    popUndo: () => {
+      popUndoByKind('manual');
+    },
+  });
+
+  if (!result.applied || !result.halfAssignmentIds) {
+    // Cancelled, dismissed, or apply failed inside the picker.
+    return;
+  }
+
+  for (const id of result.halfAssignmentIds) {
+    if (id) _pendingSwapAnimIds.add(id);
+  }
+  clearManualSelection();
+  revalidateAndRefresh();
+  showToast('המשבצת פוצלה לשני אנשים', { type: 'success' });
+}
+
 /** Open warehouse as a bottom sheet on mobile */
 function openWarehouseSheet(): void {
   if (!currentSchedule) return;
@@ -2004,6 +2083,14 @@ function openWarehouseSheet(): void {
           handleManualRemove(aid);
           handle.close();
         }
+        return;
+      }
+      // Split button: close this sheet and open the split picker.
+      const splitBtn = target.closest('[data-action="manual-split"]') as HTMLElement | null;
+      if (splitBtn) {
+        e.stopPropagation();
+        handle.close();
+        handleManualSplitClick();
       }
     });
   });
@@ -3990,7 +4077,14 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
         assignmentId: sw.assignmentId,
         newParticipantId: sw.toParticipantId,
       }));
-      const applyResult = engine.swapParticipantChain(requests);
+      const hasSplitOps = (plan.splitOps?.length ?? 0) > 0;
+      // For split plans the apply mutates tasks + assignments structurally;
+      // reverseSwaps alone can't undo task-set changes. Capture a full clone
+      // BEFORE applyPlanOps for use by undoFutureSos.
+      const preApplySnapshot = hasSplitOps ? structuredClone(currentSchedule) : undefined;
+      const applyResult = hasSplitOps
+        ? engine.applyPlanOps({ swaps: requests, splitOps: plan.splitOps })
+        : engine.swapParticipantChain(requests);
       if (!applyResult.valid) {
         currentSchedule.scheduleUnavailability = prevUnavailability;
         showToast('החלת התוכנית נכשלה — בוצע שחזור למצב הקודם.', { type: 'error', duration: 5000 });
@@ -4001,10 +4095,11 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
       currentSchedule = updated;
       store.saveSchedule(updated);
       renderAll();
-      showFutureSosAppliedStrip(participantId, plan.swaps.length, {
+      showFutureSosAppliedStrip(participantId, plan.swaps.length + (plan.splitOps?.length ?? 0), {
         reverseSwaps,
         prevUnavailability,
         fsosEntryId,
+        preApplySnapshot,
       });
     },
   });
@@ -4070,6 +4165,14 @@ interface UndoContext {
   reverseSwaps: Array<{ assignmentId: string; prevParticipantId: string }>;
   prevUnavailability: Schedule['scheduleUnavailability'];
   fsosEntryId: string;
+  /**
+   * Full pre-apply schedule clone — present only when the FSOS plan included
+   * `splitOps`. Pure swap chains use the existing `reverseSwaps` path; split
+   * plans need a full restoration because the task set and assignment set
+   * both change (halves added, originals removed). Undo restores tasks +
+   * assignments by reference-swap from this snapshot.
+   */
+  preApplySnapshot?: Schedule;
 }
 
 function showFutureSosAppliedStrip(participantId: string, swapCount: number, undoCtx: UndoContext): void {
@@ -4101,6 +4204,24 @@ function showFutureSosAppliedStrip(participantId: string, swapCount: number, und
 
 function undoFutureSos(undoCtx: UndoContext): void {
   if (!currentSchedule || !engine) return;
+
+  // Split-plan undo: the apply mutated tasks + assignments structurally,
+  // so plain reverseSwaps can't restore the state. Re-import the captured
+  // pre-apply snapshot wholesale; it carries the original tasks, assignments,
+  // and `scheduleUnavailability` together.
+  if (undoCtx.preApplySnapshot) {
+    engine.importSchedule(undoCtx.preApplySnapshot);
+    engine.addParticipants(undoCtx.preApplySnapshot.participants);
+    engine.revalidateFull();
+    currentSchedule = engine.getSchedule()!;
+    store.saveSchedule(currentSchedule);
+    renderAll();
+    showToast('התוכנית בוטלה. השיבוצים וחלון אי־הזמינות שוחזרו.', { type: 'info', duration: 4000 });
+    return;
+  }
+
+  // Pure swap-chain undo (no splitOps): the in-place participantId mutations
+  // are reversible via `swapParticipantChain` with the reverse request set.
   // Remove the FSOS entry first so HC-5 doesn't block the reverse swap.
   const before = currentSchedule.scheduleUnavailability ?? [];
   currentSchedule.scheduleUnavailability = before.filter((e) => e.id !== undoCtx.fsosEntryId);
@@ -4140,6 +4261,12 @@ interface CapabilityChangeUndoContext {
   reverseSwaps: Array<{ assignmentId: string; prevParticipantId: string }>;
   prevCapabilityLoss: Schedule['capabilityLoss'];
   capLossEntryId: string;
+  /**
+   * Full pre-apply schedule clone — present only when the cap-change plan
+   * included `splitOps`. Same rationale as `UndoContext.preApplySnapshot`:
+   * task-set mutations are not reversible via reverseSwaps alone.
+   */
+  preApplySnapshot?: Schedule;
 }
 
 async function handleProfileCapabilityChange(participantId: string): Promise<void> {
@@ -4377,7 +4504,12 @@ async function handleProfileCapabilityChange(participantId: string): Promise<voi
         assignmentId: sw.assignmentId,
         newParticipantId: sw.toParticipantId,
       }));
-      const applyResult = engine.swapParticipantChain(requests);
+      const hasSplitOps = (plan.splitOps?.length ?? 0) > 0;
+      // Capture full pre-apply snapshot for split plans (see undoCapabilityChange).
+      const preApplySnapshot = hasSplitOps ? structuredClone(currentSchedule) : undefined;
+      const applyResult = hasSplitOps
+        ? engine.applyPlanOps({ swaps: requests, splitOps: plan.splitOps })
+        : engine.swapParticipantChain(requests);
       if (!applyResult.valid) {
         currentSchedule.capabilityLoss = prevCapabilityLoss;
         showToast('החלת התוכנית נכשלה — בוצע שחזור למצב הקודם.', { type: 'error', duration: 5000 });
@@ -4388,10 +4520,11 @@ async function handleProfileCapabilityChange(participantId: string): Promise<voi
       currentSchedule = updated;
       store.saveSchedule(updated);
       renderAll();
-      showCapabilityChangeAppliedStrip(participantId, plan.swaps.length, {
+      showCapabilityChangeAppliedStrip(participantId, plan.swaps.length + (plan.splitOps?.length ?? 0), {
         reverseSwaps,
         prevCapabilityLoss,
         capLossEntryId,
+        preApplySnapshot,
       });
     },
   });
@@ -4429,6 +4562,20 @@ function showCapabilityChangeAppliedStrip(
 
 function undoCapabilityChange(undoCtx: CapabilityChangeUndoContext): void {
   if (!currentSchedule || !engine) return;
+
+  // Split-plan undo: re-import the captured pre-apply snapshot wholesale.
+  // The reverseSwaps mechanism alone can't roll back task-set mutations.
+  if (undoCtx.preApplySnapshot) {
+    engine.importSchedule(undoCtx.preApplySnapshot);
+    engine.addParticipants(undoCtx.preApplySnapshot.participants);
+    engine.revalidateFull();
+    currentSchedule = engine.getSchedule()!;
+    store.saveSchedule(currentSchedule);
+    renderAll();
+    showToast('התוכנית בוטלה. השיבוצים ושינוי ההסמכה שוחזרו.', { type: 'info', duration: 4000 });
+    return;
+  }
+
   const before = currentSchedule.capabilityLoss ?? [];
   currentSchedule.capabilityLoss = before.filter((e) => e.id !== undoCtx.capLossEntryId);
   const requests = undoCtx.reverseSwaps.map((s) => ({
@@ -4656,7 +4803,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.6.8</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.6.9</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -6220,6 +6367,14 @@ function wireScheduleEvents(container: HTMLElement): void {
       if (warehouseCard) {
         const pid = warehouseCard.dataset.pid;
         if (pid) handleManualParticipantClick(pid);
+        return;
+      }
+
+      // Handle inline split button click (desktop)
+      const splitBtn = target.closest('[data-action="manual-split"]') as HTMLElement | null;
+      if (splitBtn) {
+        e.stopPropagation();
+        handleManualSplitClick();
         return;
       }
     });

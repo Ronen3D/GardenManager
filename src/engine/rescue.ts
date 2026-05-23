@@ -23,22 +23,30 @@
 
 import { sameGroupUnitTaskIds, validateHardConstraints } from '../constraints/hard-constraints';
 import { computeScheduleScore, type ScoreContext } from '../constraints/soft-constraints';
-import type {
-  Assignment,
-  Participant,
-  RescuePlan,
-  RescueRequest,
-  RescueResult,
-  RescueSwap,
-  Schedule,
-  SchedulerConfig,
-  Task,
+import {
+  type Assignment,
+  AssignmentStatus,
+  type Participant,
+  type RescuePlan,
+  type RescueRequest,
+  type RescueResult,
+  type RescueSwap,
+  type Schedule,
+  type SchedulerConfig,
+  type SplitOp,
+  type Task,
 } from '../models/types';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import type { ScheduleContext } from '../shared/utils/time-utils';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
 import { isSchedulerDiagOn } from './diagnostics';
-import { sortDonorsByProximity, sortParticipantsByLoadProximity } from './rescue-primitives';
+import { makeSplitHalf } from './optimizer';
+import {
+  enumerateSplitFillsForSlot,
+  type SlotEnumerationContext,
+  sortDonorsByProximity,
+  sortParticipantsByLoadProximity,
+} from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { isEligible } from './validator';
 
@@ -54,6 +62,12 @@ const PAGE_SIZE = 3;
 
 interface CandidatePlan {
   swaps: RescueSwap[];
+  /**
+   * Optional split-fill operations. Mono-kind plans in Phase 1: either
+   * `swaps.length > 0` (chain) or `splitOps.length === 1` (single-slot
+   * split-fill). Never mixed.
+   */
+  splitOps?: SplitOp[];
   impactScore: number;
   compositeDelta?: number;
 }
@@ -311,6 +325,148 @@ interface RescueContext {
   config?: SchedulerConfig;
   scoreCtx?: ScoreContext;
   baselineComposite: number | null;
+}
+
+// ─── Trial-state construction for validation ────────────────────────────────
+
+/**
+ * Build the (tasks, assignments) pair a CandidatePlan would produce if
+ * applied. Used by the post-enumeration validation loop to run
+ * `validateHardConstraints` on the post-mutation state.
+ *
+ * Pure swap chains: clone `schedule.assignments` with each swap's
+ * participantId substituted; tasks unchanged.
+ *
+ * Split-fill plans: replace the parent task with `[residual?, halfA, halfB]`
+ * via `makeSplitHalf`, remove the original assignment, push two new
+ * synthetic half-assignments — exactly mirroring `applyPlanOps` in
+ * `scheduler.ts` so what passes validation here is what the apply path
+ * actually commits.
+ */
+function buildTrialStateForCandidate(
+  schedule: Schedule,
+  cp: CandidatePlan,
+): { tasks: Task[]; assignments: Assignment[] } {
+  if (!cp.splitOps || cp.splitOps.length === 0) {
+    const tempAssignments = schedule.assignments.map((a) => {
+      const sw = cp.swaps.find((s) => s.assignmentId === a.id);
+      if (sw) return { ...a, participantId: sw.toParticipantId };
+      return a;
+    });
+    return { tasks: schedule.tasks, assignments: tempAssignments };
+  }
+  // Phase 1: one split-op per plan, and it has no co-occurring swaps.
+  const op = cp.splitOps[0];
+  const T = schedule.tasks.find((t) => t.id === op.taskId);
+  if (!T) return { tasks: schedule.tasks, assignments: schedule.assignments };
+  const slot = T.slots.find((s) => s.slotId === op.slotId);
+  if (!slot) return { tasks: schedule.tasks, assignments: schedule.assignments };
+  const startMs = T.timeBlock.start.getTime();
+  const endMs = T.timeBlock.end.getTime();
+  const halfA = makeSplitHalf(T, 1, startMs, op.midpointMs, slot);
+  const halfB = makeSplitHalf(T, 2, op.midpointMs, endMs, slot);
+  const survivingSlots = T.slots.filter((s) => s.slotId !== op.slotId);
+  const trialTasks: Task[] = [];
+  for (const t of schedule.tasks) {
+    if (t.id === T.id) {
+      if (survivingSlots.length > 0) {
+        // Stamp sameGroupLinkId on residual for sameGroupRequired parents so
+        // HC-8 link-union groups residual + halves as one unit.
+        trialTasks.push({
+          ...T,
+          slots: survivingSlots,
+          requiredCount: survivingSlots.length,
+          sameGroupLinkId: T.sameGroupRequired ? (T.sameGroupLinkId ?? T.id) : T.sameGroupLinkId,
+        });
+      }
+      trialTasks.push(halfA, halfB);
+    } else {
+      trialTasks.push(t);
+    }
+  }
+  const trialAsgs: Assignment[] = [];
+  for (const a of schedule.assignments) {
+    if (a.id === op.originalAssignmentId) continue;
+    trialAsgs.push(a);
+  }
+  const now = new Date();
+  trialAsgs.push({
+    id: `${op.originalAssignmentId}#a`,
+    taskId: halfA.id,
+    slotId: halfA.slots[0].slotId,
+    participantId: op.fillA.participantId,
+    status: AssignmentStatus.Manual,
+    updatedAt: now,
+  });
+  trialAsgs.push({
+    id: `${op.originalAssignmentId}#b`,
+    taskId: halfB.id,
+    slotId: halfB.slots[0].slotId,
+    participantId: op.fillB.participantId,
+    status: AssignmentStatus.Manual,
+    updatedAt: now,
+  });
+  return { tasks: trialTasks, assignments: trialAsgs };
+}
+
+// ─── Split-fill candidates ───────────────────────────────────────────────────
+
+/**
+ * Build a SlotEnumerationContext for a single vacated slot (rescue's K=1
+ * batch size) and call `enumerateSplitFillsForSlot`, mapping each
+ * `SplitCandidate` to a CandidatePlan with `splitOps`. The composite delta
+ * from the enumerator becomes both the plan's `compositeDelta` and the
+ * negated `impactScore` (same convention as chain plans when full scoring
+ * is active).
+ */
+function enumerateSplitFillCandidatesForRescue(
+  schedule: Schedule,
+  taskMap: Map<string, Task>,
+  participantMap: Map<string, Participant>,
+  assignmentsByTask: Map<string, Assignment[]>,
+  assignmentsByParticipant: Map<string, Assignment[]>,
+  vacatedAssignment: Assignment,
+  anchor: Date,
+  disabledHC: Set<string> | undefined,
+  restRuleMap: Map<string, number> | undefined,
+  scheduleContext: ScheduleContext | undefined,
+  extraUnavailability: Array<{ participantId: string; start: Date; end: Date }>,
+  extraCapabilityLoss:
+    | Array<{
+        participantId: string;
+        lostCertifications: string[];
+        start: Date;
+        end: Date;
+      }>
+    | undefined,
+  config: SchedulerConfig,
+  scoreCtx: ScoreContext,
+  baselineComposite: number,
+): CandidatePlan[] {
+  const ctx: SlotEnumerationContext = {
+    schedule,
+    taskMap,
+    participantMap,
+    assignmentsByParticipant,
+    assignmentsByTask,
+    anchor,
+    disabledHC,
+    restRuleMap,
+    scheduleContext,
+    config,
+    scoreCtx,
+    baselineComposite,
+    extraUnavailability,
+    extraCapabilityLoss,
+    excludeParticipantIds: new Set<string>(),
+  };
+  const splitCandidates = enumerateSplitFillsForSlot(ctx, vacatedAssignment, 1);
+  return splitCandidates.map((sc) => ({
+    swaps: [],
+    splitOps: [sc.splitOp],
+    impactScore: -sc.soloCompositeDelta,
+    compositeDelta: sc.soloCompositeDelta,
+  }));
 }
 
 // ─── Depth 1: Direct replacements ───────────────────────────────────────────
@@ -1075,6 +1231,32 @@ export function generateRescuePlans(
   const needed = maxPlans ?? (page + 1) * PAGE_SIZE;
   const depth1Plans = generateDepth1Plans(ctx);
 
+  // Split-fill candidates: realize the vacated slot as two halves staffed by
+  // two different people. Only enumerated when full composite scoring is
+  // available, the parent task is `splittable`, and `splittingMode !== 'off'`.
+  // Mixed into the depth-1 pool — the planner ranks them on the same scale.
+  const splittingMode = schedule.algorithmSettings?.splittingMode ?? 'quality';
+  const splitFillPlans: CandidatePlan[] =
+    splittingMode !== 'off' && config && scoreCtx && baselineComposite !== null && vacatedTask.splittable
+      ? enumerateSplitFillCandidatesForRescue(
+          schedule,
+          taskMap,
+          participantMap,
+          assignmentsByTaskIndex,
+          assignmentsByParticipant,
+          vacatedAssignment,
+          anchor,
+          disabledHC,
+          restRuleMap,
+          scheduleContext,
+          extraUnavailability,
+          extraCapabilityLoss,
+          config,
+          scoreCtx,
+          baselineComposite,
+        )
+      : [];
+
   const topD1Delta = depth1Plans[0]?.compositeDelta ?? 0;
   const skipDepth2 = depth1Plans.length >= needed * 2 && topD1Delta >= 0;
   const depth2Plans = skipDepth2 ? [] : generateDepth2Plans(ctx);
@@ -1084,8 +1266,10 @@ export function generateRescuePlans(
   const skipDepth3 = totalSoFar >= needed * 2 && bestShallowDelta >= 0;
   const depth3Plans = skipDepth3 ? [] : generateDepth3Plans(ctx);
 
-  // Assemble all plans in priority order: depth 1 → depth 2 → depth 3
-  const allCandidates = [...depth1Plans, ...depth2Plans, ...depth3Plans];
+  // Assemble all plans. Split-fill candidates compete with chain candidates
+  // on composite delta — the sort below puts the best plan first regardless
+  // of kind.
+  const allCandidates = [...depth1Plans, ...splitFillPlans, ...depth2Plans, ...depth3Plans];
 
   // Validate each plan and filter out those with hard-constraint violations.
   // Plans that fail validation will always fail during application, so showing
@@ -1096,15 +1280,11 @@ export function generateRescuePlans(
   };
   const validPlans: ValidatedPlan[] = [];
   for (const cp of allCandidates) {
-    const tempAssignments = schedule.assignments.map((a) => {
-      const sw = cp.swaps.find((s) => s.assignmentId === a.id);
-      if (sw) return { ...a, participantId: sw.toParticipantId };
-      return a;
-    });
+    const trial = buildTrialStateForCandidate(schedule, cp);
     const validation = validateHardConstraints(
-      schedule.tasks,
+      trial.tasks,
       schedule.participants,
-      tempAssignments,
+      trial.assignments,
       disabledHC,
       restRuleMap,
       certLabelResolver,
@@ -1128,15 +1308,11 @@ export function generateRescuePlans(
     );
     const depth4Plans = generateDepth4Plans(ctx);
     for (const cp of depth4Plans) {
-      const tempAssignments = schedule.assignments.map((a) => {
-        const sw = cp.swaps.find((s) => s.assignmentId === a.id);
-        if (sw) return { ...a, participantId: sw.toParticipantId };
-        return a;
-      });
+      const trial = buildTrialStateForCandidate(schedule, cp);
       const validation = validateHardConstraints(
-        schedule.tasks,
+        trial.tasks,
         schedule.participants,
-        tempAssignments,
+        trial.assignments,
         disabledHC,
         restRuleMap,
         certLabelResolver,
@@ -1159,6 +1335,7 @@ export function generateRescuePlans(
     id: `rescue-${Date.now()}-${page}-${i}`,
     rank: i + 1,
     swaps: cp.swaps,
+    splitOps: cp.splitOps,
     impactScore: cp.impactScore,
     compositeDelta: cp.compositeDelta,
     violations: cp.violations,

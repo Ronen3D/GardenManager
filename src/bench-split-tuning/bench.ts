@@ -38,17 +38,16 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-
+import { type RunParams, type RunResult, runOnce } from './runner';
 import {
+  buildScenario,
   SCENARIOS,
+  type ScenarioBundle,
   TIER1_IDS,
   TIER1B_IDS,
   TIER2_IDS,
   TIER3_IDS,
-  buildScenario,
-  type ScenarioBundle,
 } from './scenarios';
-import { runOnce, type RunParams, type RunResult } from './runner';
 import { fmt } from './stats';
 
 // ─── Tier configuration ──────────────────────────────────────────────────────

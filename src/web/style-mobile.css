@@ -449,11 +449,15 @@
     border-radius: 28px;
     padding: 6px 8px;
     min-height: 64px;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.2);
+    box-shadow:
+      0 8px 28px rgba(0, 0, 0, 0.35),
+      0 2px 6px rgba(0, 0, 0, 0.2);
     overflow: visible; /* FAB protrudes above the bar */
   }
   [data-theme="light"] .tab-nav {
-    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.06);
+    box-shadow:
+      0 8px 24px rgba(15, 23, 42, 0.12),
+      0 2px 6px rgba(15, 23, 42, 0.06);
   }
 
   /* Reserve room for the floating bar + FAB protrusion */
@@ -1791,6 +1795,38 @@
   .btn-manual-remove-sheet {
     min-height: 48px;
     font-size: 1rem;
+  }
+
+  /* Split button in bottom sheet — matches remove-button sizing */
+  .btn-manual-split-sheet {
+    min-height: 48px;
+    font-size: 1rem;
+  }
+
+  /* Split picker — stacked halves, generous touch targets */
+  .split-picker-half {
+    min-height: 56px;
+    padding: 12px;
+  }
+
+  .split-picker-half-name {
+    font-size: 1.05rem;
+  }
+
+  .split-picker-half-clear {
+    min-height: 44px;
+    min-width: 44px;
+    font-size: 1.1rem;
+  }
+
+  .split-picker-search {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .split-picker-actions .btn {
+    min-height: 48px;
+    flex: 1;
   }
 
   /* Compact grid: slightly smaller touch targets (still >= 36px) */

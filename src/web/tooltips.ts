@@ -11,7 +11,7 @@ import { computeParticipantCapacity } from '../utils/capacity';
 import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
 import { isTouchDevice } from './responsive';
-import { escHtml, fmt, getSplitDisplay, groupColor, LEVEL_COLORS, splitInfoBlock, SVG_ICONS } from './ui-helpers';
+import { escHtml, fmt, getSplitDisplay, groupColor, LEVEL_COLORS, SVG_ICONS, splitInfoBlock } from './ui-helpers';
 import { showBottomSheet } from './ui-modal';
 import { computeTaskBreakdown } from './workload-utils';
 

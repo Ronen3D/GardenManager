@@ -99,11 +99,10 @@ import {
   type Task,
 } from './models/types';
 import { taskOpDayEnd, taskOpDayStart } from './utils/date-utils';
-import { getNumDays, getTasksForDay } from './web/export-utils';
-import { taskDayIndex, taskIntersectsDay } from './web/schedule-utils';
 import * as appHost from './web/app-tutorial-hooks';
 import { normalizeCertificationDefinitions, sanitizeCertificationIds } from './web/certification-utils';
 import * as store from './web/config-store';
+import { getNumDays, getTasksForDay } from './web/export-utils';
 import {
   clonePakalDefinitions,
   getEffectivePakalDefinitions,
@@ -113,6 +112,7 @@ import {
   renderPakalBadges,
   sanitizePakalIds,
 } from './web/pakal-utils';
+import { taskDayIndex, taskIntersectsDay } from './web/schedule-utils';
 import { enterTutorialDemoMode, exitTutorialDemoMode, TutorialPreflightError } from './web/tutorial-demo';
 import { DEMO_PARTICIPANTS } from './web/tutorial-demo-seed';
 import { escAttr, escHtml } from './web/ui-helpers';

@@ -33,6 +33,7 @@ import {
   type RescueSwap,
   type Schedule,
   type SchedulerConfig,
+  type SplitOp,
   type Task,
 } from '../models/types';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
@@ -43,6 +44,7 @@ import { isSchedulerDiagOn } from './diagnostics';
 import {
   type AffectedAssignment,
   applyCompositionToAssignments,
+  applyCompositionToState,
   type BatchRescuePlan,
   buildPerParticipantChanges,
   dfsCompose,
@@ -55,7 +57,10 @@ import {
   type ChainEnumerationCaps,
   deriveCapsForBatchSize,
   enumerateChainsForSlot,
+  enumerateSplitFillsForSlot,
   type FallbackLevel,
+  isSplitCandidate,
+  type SlotCandidate,
   type SlotEnumerationContext,
 } from './rescue-primitives';
 import { isFutureTask, isModifiableAssignment } from './temporal';
@@ -672,12 +677,21 @@ export function generateCapabilityChangePlans(
     timedOut: boolean;
     anySolvable: boolean;
   } => {
-    const candidatesPerSlot: CandidateChain[][] = [];
+    const candidatesPerSlot: SlotCandidate[][] = [];
     const infeasibleIds: string[] = [];
+    const splittingMode = schedule.algorithmSettings?.splittingMode ?? 'quality';
     for (const v of affected) {
       const chains = enumerateChainsForSlot(slotCtx, v.assignment, caps, fallbackLevel);
-      if (chains.length === 0) infeasibleIds.push(v.assignment.id);
-      candidatesPerSlot.push(chains);
+      // Dual-enumerator: split-fill candidates for `splittable` parents only.
+      // Identity fast path when splittingMode is 'off' or no template opts in.
+      const splits =
+        splittingMode !== 'off' && v.task.splittable
+          ? enumerateSplitFillsForSlot(slotCtx, v.assignment, affectedCount)
+          : [];
+      const slotPool: SlotCandidate[] = [...chains, ...splits];
+      slotPool.sort((a, b) => b.soloCompositeDelta - a.soloCompositeDelta);
+      if (slotPool.length === 0) infeasibleIds.push(v.assignment.id);
+      candidatesPerSlot.push(slotPool);
     }
 
     const solvableIdx: number[] = [];
@@ -706,10 +720,20 @@ export function generateCapabilityChangePlans(
 
     const isPartial = infeasibleIds.length > 0;
 
-    const computeFallbackDepthUsed = (chains: CandidateChain[]): 4 | 5 | undefined => {
+    const computeFallbackDepthUsed = (cands: SlotCandidate[]): 4 | 5 | undefined => {
       let max: 1 | 2 | 3 | 4 | 5 = 1;
-      for (const c of chains) if (c.depth > max) max = c.depth;
+      for (const c of cands) {
+        if (!isSplitCandidate(c) && c.depth > max) max = c.depth;
+      }
       return max === 4 || max === 5 ? max : undefined;
+    };
+
+    const chainsOf = (cands: SlotCandidate[]): CandidateChain[] =>
+      cands.filter((c): c is CandidateChain => !isSplitCandidate(c));
+    const splitOpsOf = (cands: SlotCandidate[]): SplitOp[] => {
+      const out: SplitOp[] = [];
+      for (const c of cands) if (isSplitCandidate(c)) out.push(c.splitOp);
+      return out;
     };
 
     const scored: BatchRescuePlan[] = [];
@@ -717,14 +741,14 @@ export function generateCapabilityChangePlans(
     for (let i = 0; i < compositions.length; i++) {
       const comp = compositions[i];
       const touched = new Set<string>();
-      for (const c of comp.chains) for (const id of c.touchedAssignmentIds) touched.add(id);
+      for (const c of comp.slotCands) for (const id of c.touchedAssignmentIds) touched.add(id);
 
-      const tempAssignments = applyCompositionToAssignments(schedule, comp.chains);
+      const trial = applyCompositionToState(schedule, comp.slotCands);
 
       const validation = validateHardConstraints(
-        schedule.tasks,
+        trial.tasks,
         schedule.participants,
-        tempAssignments,
+        trial.assignments,
         opts.disabledHC,
         opts.restRuleMap,
         opts.certLabelResolver,
@@ -734,17 +758,22 @@ export function generateCapabilityChangePlans(
       );
 
       const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-      for (const c of comp.chains) depthHistogram[c.depth]++;
-      const fallbackDepthUsed = computeFallbackDepthUsed(comp.chains);
+      for (const c of comp.slotCands) {
+        if (!isSplitCandidate(c)) depthHistogram[c.depth]++;
+      }
+      const fallbackDepthUsed = computeFallbackDepthUsed(comp.slotCands);
+      const chainSubset = chainsOf(comp.slotCands);
+      const splitOpsForPlan = splitOpsOf(comp.slotCands);
 
       if (validation.violations.length > 0) {
         scoredInvalid.push({
-          id: `capch-${hashSwaps(mergeSwaps(comp.chains))}-${i}`,
+          id: `capch-${hashSwaps(mergeSwaps(chainSubset))}-${i}`,
           rank: 0,
-          swaps: mergeSwaps(comp.chains),
+          swaps: mergeSwaps(chainSubset),
+          splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
           compositeDelta: comp.deltaSum,
           depthHistogram,
-          perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
+          perParticipantChanges: buildPerParticipantChanges(schedule.assignments, trial.assignments, touched),
           violations: validation.violations,
           isPartial,
           fallbackDepthUsed,
@@ -752,22 +781,36 @@ export function generateCapabilityChangePlans(
         continue;
       }
 
+      // Override scoreCtx.taskMap for trial state — see the rationale in
+      // future-sos.ts's matching block. opts.scoreCtx's taskMap was built
+      // over the pre-split tasks; without this rebuild the per-assignment
+      // soft-score loops can't find the half-tasks.
+      const trialScoreCtx =
+        trial.tasks === schedule.tasks
+          ? opts.scoreCtx
+          : {
+              ...opts.scoreCtx,
+              taskMap: new Map(trial.tasks.map((t) => [t.id, t])),
+              assignmentsByParticipant: undefined,
+              assignmentsByTask: undefined,
+            };
       const candScore = computeScheduleScore(
-        schedule.tasks,
+        trial.tasks,
         schedule.participants,
-        tempAssignments,
+        trial.assignments,
         opts.config,
-        opts.scoreCtx,
+        trialScoreCtx,
       );
       const compositeDelta = candScore.compositeScore - baselineScore.compositeScore;
 
       scored.push({
-        id: `capch-${hashSwaps(mergeSwaps(comp.chains))}-${i}`,
+        id: `capch-${hashSwaps(mergeSwaps(chainSubset))}-${i}`,
         rank: 0,
-        swaps: mergeSwaps(comp.chains),
+        swaps: mergeSwaps(chainSubset),
+        splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
         compositeDelta,
         depthHistogram,
-        perParticipantChanges: buildPerParticipantChanges(schedule.assignments, tempAssignments, touched),
+        perParticipantChanges: buildPerParticipantChanges(schedule.assignments, trial.assignments, touched),
         violations: validation.violations,
         isPartial,
         fallbackDepthUsed,

@@ -493,7 +493,13 @@ function renderPlanOutcomes(plan: InjectionPlan, pMap: Map<string, { name: strin
     const name = pMap.get(pid)?.name ?? pid;
     return `<span class="rescue-participant-hover" data-pid="${escHtml(pid)}" data-plan-id="${escHtml(plan.id)}">${escHtml(name)}</span>`;
   };
+  // Map slot id → split op for quick lookup so split-filled slots can show
+  // both fillers + a ½ badge instead of just one name.
+  const splitBySlot = new Map<string, NonNullable<InjectionPlan['splitOps']>[number]>();
+  for (const op of plan.splitOps ?? []) splitBySlot.set(op.slotId, op);
+
   for (const o of plan.outcomes) {
+    const splitOp = splitBySlot.get(o.slotId);
     const chainHtml = o.swapChain?.length
       ? `<div class="inject-outcome-chain">↳ ${o.swapChain
           .map(
@@ -502,7 +508,14 @@ function renderPlanOutcomes(plan: InjectionPlan, pMap: Map<string, { name: strin
           )
           .join(' · ')}</div>`
       : '';
-    if (o.filled) {
+    if (splitOp) {
+      rows += `<div class="inject-outcome inject-outcome--ok">
+        <span class="inject-outcome-badge">✓</span>
+        <span class="inject-outcome-slot">${escHtml(o.slotLabel)} <span class="split-badge">½</span></span>
+        <span class="inject-outcome-arrow">←</span>
+        <strong>${pHover(splitOp.fillA.participantId)} / ${pHover(splitOp.fillB.participantId)}</strong>
+      </div>`;
+    } else if (o.filled) {
       rows += `<div class="inject-outcome inject-outcome--ok">
         <span class="inject-outcome-badge">✓</span>
         <span class="inject-outcome-slot">${escHtml(o.slotLabel)}</span>

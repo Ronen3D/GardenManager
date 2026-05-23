@@ -11523,6 +11523,172 @@ tr.now-row-animate > td.time-cell {
   background: color-mix(in srgb, var(--danger) 18%, var(--bg-card));
 }
 
+.btn-manual-split-sheet,
+.btn-manual-split-inline {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent, #4a90e2);
+  background: color-mix(in srgb, var(--accent, #4a90e2) 8%, var(--bg-card));
+  border: 1px solid var(--accent, #4a90e2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s ease;
+}
+
+.btn-manual-split-sheet:hover,
+.btn-manual-split-inline:hover {
+  background: color-mix(in srgb, var(--accent, #4a90e2) 18%, var(--bg-card));
+}
+
+/* ── Manual Split Picker ─────────────────────────────────────────────────── */
+
+.split-picker-header {
+  margin-bottom: 12px;
+}
+
+.split-picker-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.split-picker-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.split-picker-halves {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.split-picker-half {
+  border: 1px solid var(--border-color, #d1d5db);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--bg-card);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.split-picker-half:hover {
+  border-color: var(--accent, #4a90e2);
+}
+
+.split-picker-half--active {
+  border-color: var(--accent, #4a90e2);
+  background: color-mix(in srgb, var(--accent, #4a90e2) 6%, var(--bg-card));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #4a90e2) 25%, transparent);
+}
+
+.split-picker-half--filled {
+  border-color: var(--success, #16a34a);
+}
+
+.split-picker-half-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.split-picker-half-label {
+  font-weight: 600;
+}
+
+.split-picker-half-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.split-picker-half-name {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.split-picker-half-placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.split-picker-half-clear {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--danger, #dc2626);
+  padding: 4px 8px;
+}
+
+.split-picker-grouplock {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent, #4a90e2) 6%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--accent, #4a90e2) 25%, transparent);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+
+.split-picker-search-row {
+  margin-bottom: 8px;
+}
+
+.split-picker-search {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color, #d1d5db);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+}
+
+.split-picker-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.split-picker-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 12px;
+  text-align: center;
+}
+
+.split-picker-error {
+  background: color-mix(in srgb, var(--danger, #dc2626) 8%, var(--bg-card));
+  border: 1px solid var(--danger, #dc2626);
+  color: var(--danger, #dc2626);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  margin-bottom: 8px;
+}
+
+.split-picker-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.split-picker-actions .btn {
+  min-width: 100px;
+}
+
 .warehouse-sheet-filter {
   margin-bottom: 8px;
   position: sticky;

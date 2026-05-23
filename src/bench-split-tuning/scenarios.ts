@@ -19,8 +19,8 @@
  */
 
 import { Level, type Participant, type SleepRecoveryRule, type Task } from '../models/types';
-import { generateWeeklyTasks } from '../tasks/cli-task-factory';
 import { createTimeBlockFromHours, generateShiftBlocks } from '../shared/utils/time-utils';
+import { generateWeeklyTasks } from '../tasks/cli-task-factory';
 
 // ─── Spec ────────────────────────────────────────────────────────────────────
 

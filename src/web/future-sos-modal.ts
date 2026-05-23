@@ -894,6 +894,25 @@ function renderSwapsGroupedByDay(
     }
     html += '</ul></div>';
   }
+  // Split-fill section: render any splitOps after the swap groups.
+  if (plan.splitOps && plan.splitOps.length > 0) {
+    html +=
+      '<div class="fsos-plan-splits"><div class="fsos-plan-swap-day-header">פיצולי משבצת</div><ul class="fsos-plan-swap-list">';
+    for (const op of plan.splitOps) {
+      const parent = taskMap.get(op.taskId);
+      const aName = pMap.get(op.fillA.participantId)?.name ?? op.fillA.displayName;
+      const bName = pMap.get(op.fillB.participantId)?.name ?? op.fillB.displayName;
+      const midDate = new Date(op.midpointMs);
+      const timeTag = parent
+        ? `<span class="fsos-ltr" dir="ltr">${escHtml(fmt(parent.timeBlock.start))}–${escHtml(fmt(midDate))} / ${escHtml(fmt(midDate))}–${escHtml(fmt(parent.timeBlock.end))}</span>`
+        : '';
+      html += `<li>
+        <span class="fsos-plan-swap-task">${escHtml(op.taskName)} (${escHtml(op.slotLabel)}) <span class="split-badge">½</span></span>
+        <span class="fsos-plan-swap-meta"><span class="fsos-plan-swap-names"><strong>${escHtml(aName)}</strong> / <strong>${escHtml(bName)}</strong></span> ${timeTag}</span>
+      </li>`;
+    }
+    html += '</ul></div>';
+  }
   html += '</div>';
   return html;
 }

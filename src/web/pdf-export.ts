@@ -50,7 +50,7 @@ import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';
 const PAGE_MARGIN = 8; // mm from each edge
 const COL_GAP = 4; // mm minimum horizontal gap between side-by-side sections
 const ROW_GAP = 3; // mm minimum vertical gap between stacked sections
-const TABLE_LABEL_OFFSET = 3; // mm from label text to table top
+const TABLE_LABEL_OFFSET = 4; // mm from label area top to table top (label rendered with `baseline: 'top'` sits inside this band)
 const TIME_COL_W = 14; // mm — width of the rightmost time column
 const MIN_NAME_COL_W = 20; // mm — min readable width for one name sub-column
 const IDEAL_NAME_COL_W = 30; // mm — comfortable width for one name sub-column
@@ -548,13 +548,17 @@ function renderSectionTablePdf(
   if (columns.length === 0) return region.y;
   const nameCols = Math.max(1, opts.nameCols);
 
-  // Section label, tinted with the section colour (preserves the grouping
-  // signal the old cell-background tint used to carry).
+  // Section label — black, horizontally centered above the table. `baseline:
+  // 'top'` is critical: the default `'alphabetic'` baseline puts `region.y` at
+  // the text baseline, so the visible glyph (ascender ≈ 3mm at 9pt) extends
+  // ABOVE `region.y` and eats into the rowGap, visually pinning the label to
+  // the table ABOVE it. With `'top'` the visible top is at `region.y`, the
+  // rowGap stays whole, and the label sits inside its own section's allocated
+  // label band (height = TABLE_LABEL_OFFSET) — attached to its own table.
   doc.setFontSize(opts.fontSize);
   doc.setFont('Rubik', 'normal');
-  const [lr, lg, lb] = hexToRgb(region.sectionColor || LABEL_FALLBACK);
-  doc.setTextColor(lr, lg, lb);
-  doc.text(rtl(region.label), region.x + region.width - 1, region.y, { align: 'right' });
+  doc.setTextColor(0, 0, 0);
+  doc.text(rtl(region.label), region.x + region.width / 2, region.y, { align: 'center', baseline: 'top' });
   const tableY = region.y + TABLE_LABEL_OFFSET;
 
   // Header: one cell per logical column spanning its sub-columns + time column.
@@ -588,7 +592,10 @@ function renderSectionTablePdf(
         }
       }
     });
-    cells.push({ content: fmtTime(new Date(timeNum)), styles: { halign: 'center' as const } } as CellDef);
+    cells.push({
+      content: fmtTime(new Date(timeNum)),
+      styles: { halign: 'center' as const, fillColor: [235, 235, 235] as [number, number, number] },
+    } as CellDef);
     return cells;
   });
 
@@ -605,7 +612,21 @@ function renderSectionTablePdf(
     head: [head],
     body,
     tableWidth: region.width,
-    margin: { left: region.x, right: doc.internal.pageSize.getWidth() - region.x - region.width },
+    // Top/bottom MUST be set explicitly — jspdf-autotable defaults missing
+    // margin fields to `40 / scaleFactor ≈ 14.11mm` (`parseSpacing` in the
+    // bundled lib). That default's `bottom` makes AutoTable's effective
+    // page-bottom ~195.89mm, while our planner uses `pageH − PAGE_MARGIN`
+    // = 202mm. The 6mm gap was harmless when the old packer clustered
+    // sections at low y; the spread pass's centering shifts the cluster
+    // down and the bottommost section can land past 195.89mm, where
+    // AutoTable silently auto-paginates it onto a second page the planner
+    // never asked for. Aligning the margin closes that gap.
+    margin: {
+      left: region.x,
+      right: doc.internal.pageSize.getWidth() - region.x - region.width,
+      top: PAGE_MARGIN,
+      bottom: PAGE_MARGIN,
+    },
     columnStyles: colStyles,
     // biome-ignore lint/suspicious/noExplicitAny: AutoTable hook data is untyped
     willDrawCell: (data: any) => {

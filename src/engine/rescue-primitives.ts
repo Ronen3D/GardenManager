@@ -20,11 +20,13 @@ import type {
   Schedule,
   SchedulerConfig,
   SlotRequirement,
+  SplitOp,
   Task,
 } from '../models/types';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
 import type { ScheduleContext } from '../shared/utils/time-utils';
 import { describeSlot, operationalDateKey } from '../utils/date-utils';
+import { makeSplitHalf } from './optimizer';
 import { isFutureTask, isModifiableAssignment } from './temporal';
 import { isEligible } from './validator';
 
@@ -1334,4 +1336,323 @@ export function enumerateChainsForSlot(
     return a.depth - b.depth;
   });
   return merged;
+}
+
+// ─── Split-fill enumeration ──────────────────────────────────────────────────
+
+/**
+ * Per-slot candidate-pair cap used by `enumerateSplitFillsForSlot`.
+ *
+ * K-adaptive on the batch size: tightens as the FSOS/cap-change batch
+ * widens so total candidates entering `dfsCompose` stay bounded
+ * (`K × SPLIT_FILL_TOP_K(K)` ≤ ~60 even at K=10). For single-slot flows
+ * (rescue, single-slot inject) K=1 unlocks 10 candidates — enough to
+ * present a good ranked list without an arbitrary global cap dropping
+ * necessary-split slots in large batches.
+ */
+export function splitFillTopK(K: number): number {
+  if (K <= 4) return 10;
+  if (K <= 8) return 8;
+  if (K <= 14) return 6;
+  return 5;
+}
+
+/** A single candidate that fills ONE vacated slot by splitting it. */
+export interface SplitCandidate {
+  splitOp: SplitOp;
+  /** Composite delta vs baseline. Positive = improvement. */
+  soloCompositeDelta: number;
+  /** Touched assignments: just the original (replaced) one. */
+  touchedAssignmentIds: string[];
+  /**
+   * (participantId, taskId) pairs the candidate places. Both halves point
+   * at the original occurrence id so `dfsCompose` conflict detection treats
+   * "person already on this occurrence elsewhere" as a clash exactly as for
+   * a chain placement on the original task.
+   */
+  participantTaskPairs: Array<{ participantId: string; taskId: string }>;
+}
+
+/**
+ * Per-slot candidate as seen by the batch composer (`dfsCompose`). Either a
+ * chain (existing surface) or a split-fill (Phase-1 dynamic-split addition).
+ * Both share `soloCompositeDelta`, `touchedAssignmentIds`, and
+ * `participantTaskPairs`, so the composer's admissible-bound pruning and
+ * conflict detection are kind-agnostic.
+ */
+export type SlotCandidate = CandidateChain | SplitCandidate;
+
+/** Structural type-guard for SlotCandidate. */
+export function isSplitCandidate(c: SlotCandidate): c is SplitCandidate {
+  return (c as SplitCandidate).splitOp !== undefined;
+}
+
+/**
+ * Enumerate split-fill candidates for ONE vacated slot.
+ *
+ * Realises the vacated slot as two half-tasks (`#a`/`#b` via `makeSplitHalf`)
+ * staffed by two different participants. Each emitted candidate is hard-
+ * constraint-valid against the trial state (HC-15 bidirectional, HC-16
+ * disjointness, HC-8 link-union, HC-12/14 coalesce-aware) and scored by
+ * composite delta. The caller's planner mixes split candidates with
+ * `enumerateChainsForSlot` chain candidates and ranks them on the same
+ * composite-score scale; `splitPenalty` from `ctx.config` is the economic
+ * gate that keeps splits a fallback, not a default.
+ *
+ * Gating: returns `[]` immediately when the parent task is not `splittable`,
+ * already split (`splitGroupId !== undefined`), not future/modifiable, or
+ * has only one slot AND the participant being replaced is the only viable
+ * candidate (degenerate). Callers should additionally skip this enumerator
+ * when `splittingMode === 'off'` (zero-cost fast path).
+ *
+ * For `sameGroupRequired` parents: when an existing `sameGroupLinkId` has
+ * surviving siblings on `schedule.tasks`, `groupLock` is derived from those
+ * siblings' incumbents and both halves must come from that group. Otherwise
+ * the enumerator tries every group that has ≥2 viable candidates and emits
+ * the top split per group; the global K cap is then applied across groups.
+ */
+export function enumerateSplitFillsForSlot(
+  ctx: SlotEnumerationContext,
+  vacatedAssignment: Assignment,
+  batchSize: number,
+): SplitCandidate[] {
+  const vacatedTask = ctx.taskMap.get(vacatedAssignment.taskId);
+  if (!vacatedTask) return [];
+  const vacatedSlot = vacatedTask.slots.find((s) => s.slotId === vacatedAssignment.slotId);
+  if (!vacatedSlot) return [];
+  if (!isFutureTask(vacatedTask, ctx.anchor)) return [];
+  if (!isModifiableAssignment(vacatedAssignment, ctx.taskMap, ctx.anchor)) return [];
+
+  // Hard gates: must be a non-already-split splittable task.
+  if (!vacatedTask.splittable) return [];
+  if (vacatedTask.splitGroupId !== undefined) return [];
+
+  const startMs = vacatedTask.timeBlock.start.getTime();
+  const endMs = vacatedTask.timeBlock.end.getTime();
+  const midMs = startMs + Math.floor((endMs - startMs) / 2);
+  // Refuse degenerate spans (sub-minute halves do not produce meaningful coverage).
+  if (midMs - startMs < 60_000 || endMs - midMs < 60_000) return [];
+
+  const halfA = makeSplitHalf(vacatedTask, 1, startMs, midMs, vacatedSlot);
+  const halfB = makeSplitHalf(vacatedTask, 2, midMs, endMs, vacatedSlot);
+
+  // Same-group: derive `groupLock` from any surviving link member, else try
+  // every group in turn (caller-side `searchAcrossGroups` already does this
+  // for inject; for rescue/FSOS/cap-change we do it inline).
+  const isSameGroup = vacatedTask.sameGroupRequired === true;
+  let groupLock: string | undefined;
+  const groupsToTry: (string | undefined)[] = [undefined];
+  if (isSameGroup) {
+    const linkId = vacatedTask.sameGroupLinkId ?? vacatedTask.id;
+    // Find any surviving link sibling (a different task that shares the link).
+    let lockedGroup: string | undefined;
+    for (const t of ctx.taskMap.values()) {
+      if (t.id === vacatedTask.id) continue;
+      if (t.sameGroupLinkId !== linkId) continue;
+      // Find an incumbent on this sibling task.
+      const sibAsgs = ctx.assignmentsByTask.get(t.id) || [];
+      for (const sa of sibAsgs) {
+        if (sa.id === vacatedAssignment.id) continue;
+        const sp = ctx.participantMap.get(sa.participantId);
+        if (sp) {
+          lockedGroup = sp.group;
+          break;
+        }
+      }
+      if (lockedGroup) break;
+    }
+    if (lockedGroup) {
+      groupLock = lockedGroup;
+      groupsToTry.length = 0;
+      groupsToTry.push(lockedGroup);
+    } else {
+      // No link survivors — try every distinct group present in the pool.
+      const seen = new Set<string>();
+      const allGroups: string[] = [];
+      for (const p of ctx.schedule.participants) {
+        if (!seen.has(p.group)) {
+          seen.add(p.group);
+          allGroups.push(p.group);
+        }
+      }
+      groupsToTry.length = 0;
+      for (const g of allGroups) groupsToTry.push(g);
+    }
+  }
+
+  const excludeAssignments = new Set([vacatedAssignment.id]);
+  const taskAsgsForA = taskAssignmentsFor(ctx, vacatedTask.id, excludeAssignments);
+  const taskAsgsForB = taskAsgsForA; // same vacated link unit — both halves see it
+  const linkId = isSameGroup ? (vacatedTask.sameGroupLinkId ?? vacatedTask.id) : undefined;
+
+  const eligOptsBase = {
+    checkSameGroup: true,
+    participantMap: ctx.participantMap,
+    disabledHC: ctx.disabledHC,
+    restRuleMap: ctx.restRuleMap,
+    extraUnavailability: ctx.extraUnavailability,
+    extraCapabilityLoss: ctx.extraCapabilityLoss,
+    scheduleContext: ctx.scheduleContext,
+  };
+
+  // Build trial-tasks scaffold (residual + halves replacing T) once. Cloning
+  // is done per pair only for the assignment list. The trial taskMap-by-task
+  // lookups during `computeScheduleScore` use this shared trialTasks.
+  const survivingSlots = vacatedTask.slots.filter((s) => s.slotId !== vacatedSlot.slotId);
+  const trialTasks: Task[] = [];
+  for (const t of ctx.schedule.tasks) {
+    if (t.id === vacatedTask.id) {
+      if (survivingSlots.length > 0) {
+        // For a sameGroupRequired parent, stamp sameGroupLinkId so HC-8's
+        // link-union sees residual + halves as one unit (mirrors
+        // optimizer.ts:1373). makeSplitHalf already stamps halves.
+        trialTasks.push({
+          ...vacatedTask,
+          slots: survivingSlots,
+          requiredCount: survivingSlots.length,
+          sameGroupLinkId: vacatedTask.sameGroupRequired
+            ? (vacatedTask.sameGroupLinkId ?? vacatedTask.id)
+            : vacatedTask.sameGroupLinkId,
+        });
+      }
+      trialTasks.push(halfA, halfB);
+    } else {
+      trialTasks.push(t);
+    }
+  }
+
+  // Build a trial-specific ScoreContext. The caller-provided `ctx.scoreCtx`
+  // was built over the pre-split task set, so its `taskMap` does NOT contain
+  // the new `#a`/`#b` half-task ids. `computeScheduleScore` consults
+  // `ctx?.taskMap ?? new Map(tasks.map(...))` — when a stale ctx is provided,
+  // the per-assignment soft-score loops do `task = taskMap.get(a.taskId)` →
+  // `undefined` → `if (!task) continue`, silently skipping the halves. The
+  // pre-built `assignmentsByParticipant` / `assignmentsByTask` would also be
+  // stale (built over pre-split assignments), so we explicitly drop them and
+  // let `computeScheduleScore` rebuild from the trial `assignments` arg.
+  const trialScoreCtx: ScoreContext = {
+    ...ctx.scoreCtx,
+    taskMap: new Map(trialTasks.map((t) => [t.id, t])),
+    assignmentsByParticipant: undefined,
+    assignmentsByTask: undefined,
+  };
+
+  // Score one trial pair (a on #a, b on #b) and return composite delta.
+  const scoreTrialPair = (aId: string, bId: string): number => {
+    const trialAsgs: Assignment[] = [];
+    for (const asg of ctx.schedule.assignments) {
+      if (asg.id === vacatedAssignment.id) continue;
+      trialAsgs.push(asg);
+    }
+    const now = new Date();
+    trialAsgs.push({
+      id: `${vacatedAssignment.id}#a`,
+      taskId: halfA.id,
+      slotId: halfA.slots[0].slotId,
+      participantId: aId,
+      status: vacatedAssignment.status,
+      updatedAt: now,
+    });
+    trialAsgs.push({
+      id: `${vacatedAssignment.id}#b`,
+      taskId: halfB.id,
+      slotId: halfB.slots[0].slotId,
+      participantId: bId,
+      status: vacatedAssignment.status,
+      updatedAt: now,
+    });
+    const score = computeScheduleScore(trialTasks, ctx.schedule.participants, trialAsgs, ctx.config, trialScoreCtx);
+    return score.compositeScore - ctx.baselineComposite;
+  };
+
+  const candidates: SplitCandidate[] = [];
+
+  for (const gl of groupsToTry) {
+    // Build group-restricted candidate pool ordered by load proximity.
+    const pool = sortParticipantsByLoadProximity(
+      ctx.schedule.participants,
+      vacatedTask,
+      ctx.scheduleContext?.dayStartHour ?? 5,
+      ctx.taskMap,
+      ctx.assignmentsByParticipant,
+    );
+
+    const restricted = gl ? pool.filter((p) => p.group === gl) : pool;
+    if (restricted.length < 2) continue;
+
+    // Per-pair pre-filter via isEligible against the half-tasks. The half-task
+    // carries splitGroupId/splitOccurrenceId/sameGroupLinkId from makeSplitHalf,
+    // so HC-15 bidirectional, HC-16, HC-8 link-union all see the trial identity.
+    // Quick A-side eligibility cache: a participant who fails halfA on their
+    // own assignments won't pass any pair, so prune once.
+    const aEligible: Participant[] = [];
+    for (const p of restricted) {
+      if (p.id === vacatedAssignment.participantId) continue;
+      if (ctx.excludeParticipantIds.has(p.id)) continue;
+      const pAsgs = participantAssignmentsExcluding(ctx, p.id, excludeAssignments);
+      if (
+        !isEligible(p, halfA, halfA.slots[0], pAsgs, ctx.taskMap, {
+          ...eligOptsBase,
+          taskAssignments: taskAsgsForA,
+        })
+      )
+        continue;
+      aEligible.push(p);
+    }
+    const bEligible: Participant[] = [];
+    for (const p of restricted) {
+      if (p.id === vacatedAssignment.participantId) continue;
+      if (ctx.excludeParticipantIds.has(p.id)) continue;
+      const pAsgs = participantAssignmentsExcluding(ctx, p.id, excludeAssignments);
+      if (
+        !isEligible(p, halfB, halfB.slots[0], pAsgs, ctx.taskMap, {
+          ...eligOptsBase,
+          taskAssignments: taskAsgsForB,
+        })
+      )
+        continue;
+      bEligible.push(p);
+    }
+
+    for (const a of aEligible) {
+      for (const b of bEligible) {
+        if (a.id === b.id) continue; // HC-16
+        const delta = scoreTrialPair(a.id, b.id);
+        candidates.push({
+          splitOp: {
+            kind: 'split',
+            taskId: vacatedTask.id,
+            slotId: vacatedSlot.slotId,
+            taskName: vacatedTask.name,
+            slotLabel: describeSlot(vacatedSlot.label, vacatedTask.timeBlock),
+            originalAssignmentId: vacatedAssignment.id,
+            originalParticipantId: vacatedAssignment.participantId,
+            midpointMs: midMs,
+            fillA: { participantId: a.id, displayName: a.name },
+            fillB: { participantId: b.id, displayName: b.name },
+            groupLock: gl,
+            sameGroupLinkId: isSameGroup ? linkId : undefined,
+          },
+          soloCompositeDelta: delta,
+          touchedAssignmentIds: [vacatedAssignment.id],
+          // Use the original occurrence id (not the half-task ids) so
+          // dfsCompose conflict detection treats both halves as a single
+          // occurrence-placement for each filler.
+          participantTaskPairs: [
+            { participantId: a.id, taskId: vacatedTask.id },
+            { participantId: b.id, taskId: vacatedTask.id },
+          ],
+        });
+      }
+    }
+  }
+
+  // Top-K by composite delta, deterministic tiebreak.
+  candidates.sort((x, y) => {
+    if (y.soloCompositeDelta !== x.soloCompositeDelta) return y.soloCompositeDelta - x.soloCompositeDelta;
+    const xKey = `${x.splitOp.fillA.participantId}|${x.splitOp.fillB.participantId}`;
+    const yKey = `${y.splitOp.fillA.participantId}|${y.splitOp.fillB.participantId}`;
+    return xKey < yKey ? -1 : xKey > yKey ? 1 : 0;
+  });
+  return candidates.slice(0, splitFillTopK(batchSize));
 }

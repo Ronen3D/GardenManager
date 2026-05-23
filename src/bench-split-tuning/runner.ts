@@ -10,9 +10,9 @@
 
 import {
   _benchSetMaxStructuralPasses,
+  type OptimizationResult,
   optimizeMultiAttempt,
   setBenchHooks,
-  type OptimizationResult,
 } from '../engine/optimizer';
 import { fullValidate } from '../engine/validator';
 import { DEFAULT_CONFIG, type SchedulerConfig, type Task } from '../models/types';

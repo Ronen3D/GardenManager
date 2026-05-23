@@ -14,9 +14,8 @@
  */
 
 import * as fs from 'fs';
-
-import { ci95HalfWidth, fmt, pairedTStat, summarize } from './stats';
 import type { RunResult } from './runner';
+import { ci95HalfWidth, fmt, pairedTStat, summarize } from './stats';
 
 function loadRuns(files: string[]): RunResult[] {
   const all: RunResult[] = [];

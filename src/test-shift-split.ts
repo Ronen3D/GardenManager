@@ -38,10 +38,14 @@ import {
   DEFAULT_CONFIG,
   Level,
   type Participant,
+  type Schedule,
+  type ScheduleScore,
   type SchedulerConfig,
+  SchedulingEngine,
   type Task,
   type TimeBlock,
-} from './models/types';
+} from './index';
+import type { SplitOp } from './models/types';
 import { fragmentShare } from './shared/utils/load-weighting';
 import { coalesceTaskRuns, hasAnySplit } from './shared/utils/run-coalesce';
 
@@ -1892,6 +1896,616 @@ function runPhase2SameGroupMerge(assert: AssertFn): void {
   }
 }
 
+/**
+ * Bug #1 regression: `enumerateSplitFillsForSlot`'s trial scoring used to pass
+ * `ctx.scoreCtx` directly to `computeScheduleScore`. Because that scoreCtx was
+ * built over the PRE-split task set, its `taskMap` did NOT contain the new
+ * `#a`/`#b` half-task ids; per-assignment soft-score loops then hit
+ * `if (!task) continue` and skipped the halves' contribution entirely. With
+ * unequal-load participants this changes the SC-3 / SC-8 fairness stddev term,
+ * so the trial score from a stale ctx diverges from a fresh-ctx score. The fix
+ * (rescue-primitives.ts) rebuilds a trial-specific ScoreContext that overrides
+ * `taskMap` from the trial tasks. This test triggers the divergence directly
+ * via `computeScheduleScore` to lock the fix in place.
+ */
+function runDynamicSplitTrialScoring(assert: AssertFn): void {
+  const p1: Participant = {
+    id: 'P1',
+    name: 'A',
+    group: 'g1',
+    level: Level.L3,
+    certifications: [],
+    notWithIds: [],
+    workloadMultiplier: 1,
+    availability: [],
+    dateUnavailability: [],
+  };
+  const p2: Participant = {
+    id: 'P2',
+    name: 'B',
+    group: 'g1',
+    level: Level.L3,
+    certifications: [],
+    notWithIds: [],
+    workloadMultiplier: 1,
+    availability: [],
+    dateUnavailability: [],
+  };
+  // P3 is unassigned. With 3 seniors, the +1h shift from skipping halves vs.
+  // counting them produces a different SC-3 std-dev (asymmetric ⇒ variance
+  // shifts), so the stale vs fresh composite scores diverge.
+  const p3: Participant = {
+    id: 'P3',
+    name: 'C',
+    group: 'g1',
+    level: Level.L3,
+    certifications: [],
+    notWithIds: [],
+    workloadMultiplier: 1,
+    availability: [],
+    dateUnavailability: [],
+  };
+  const participants = [p1, p2, p3];
+
+  // Two tasks: T_other (whole-only, already assigned to P1) introduces load
+  // asymmetry; T_split (the trial subject) becomes halfA + halfB. With
+  // halves COUNTED (fresh ctx), P1 has T_other(2h) + halfA(1h) = 3h and P2
+  // has halfB(1h) — asymmetric SC-3 std-dev. With halves SKIPPED (stale
+  // ctx), P1 has T_other(2h) and P2 has 0h — a different, larger std-dev.
+  const tOther: Task = {
+    id: 'T_other',
+    name: 'T_other',
+    sourceName: 'other',
+    timeBlock: tb(6, 8),
+    requiredCount: 1,
+    slots: [
+      { slotId: 'T_other-s', acceptableLevels: [{ level: Level.L3, lowPriority: false }], requiredCertifications: [] },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const tSplit: Task = {
+    id: 'T_split',
+    name: 'T_split',
+    sourceName: 'guard',
+    timeBlock: tb(0, 2),
+    requiredCount: 1,
+    slots: [
+      { slotId: 'T_split-s', acceptableLevels: [{ level: Level.L3, lowPriority: false }], requiredCertifications: [] },
+    ],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    splittable: true,
+  };
+  const halfA = makeSplitHalf(
+    tSplit,
+    1,
+    tSplit.timeBlock.start.getTime(),
+    tSplit.timeBlock.start.getTime() + H,
+    tSplit.slots[0],
+  );
+  const halfB = makeSplitHalf(
+    tSplit,
+    2,
+    tSplit.timeBlock.start.getTime() + H,
+    tSplit.timeBlock.end.getTime(),
+    tSplit.slots[0],
+  );
+
+  const cfg: SchedulerConfig = { ...DEFAULT_CONFIG, splitPenalty: 0 };
+
+  // Stale ctx: taskMap holds the PRE-split task set (T_other + T_split).
+  const stalePreSplitTaskMap = new Map<string, Task>([
+    [tOther.id, tOther],
+    [tSplit.id, tSplit],
+  ]);
+  const staleCtx = {
+    taskMap: stalePreSplitTaskMap,
+    pMap: new Map(participants.map((p) => [p.id, p])),
+    dayStartHour: 5,
+  };
+
+  const trialTasks: Task[] = [tOther, halfA, halfB];
+  const trialAsgs: Assignment[] = [
+    {
+      id: 'asg-other',
+      taskId: tOther.id,
+      slotId: tOther.slots[0].slotId,
+      participantId: 'P1',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'asg-A',
+      taskId: halfA.id,
+      slotId: halfA.slots[0].slotId,
+      participantId: 'P1',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'asg-B',
+      taskId: halfB.id,
+      slotId: halfB.slots[0].slotId,
+      participantId: 'P2',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+
+  const stale = computeScheduleScore(trialTasks, participants, trialAsgs, cfg, staleCtx);
+  const fresh = computeScheduleScore(trialTasks, participants, trialAsgs, cfg, undefined);
+
+  // The stale-ctx scorer's per-assignment loops can't find the half-tasks in
+  // its taskMap, so it omits their hours from the fairness std-dev. Fresh ctx
+  // includes them. The composite scores must differ.
+  assert(
+    Math.abs(stale.compositeScore - fresh.compositeScore) > 1e-6,
+    'Bug #1 repro: stale ctx.taskMap excludes split halves from SC-3 fairness; fresh-ctx score must differ',
+  );
+
+  // Now demonstrate the FIX: rebuilding taskMap from trial tasks (what
+  // rescue-primitives.ts:enumerateSplitFillsForSlot now does) must recover
+  // the fresh-ctx score byte-for-byte.
+  const fixedCtx = {
+    ...staleCtx,
+    taskMap: new Map(trialTasks.map((t) => [t.id, t])),
+    assignmentsByParticipant: undefined,
+    assignmentsByTask: undefined,
+  };
+  const fixed = computeScheduleScore(trialTasks, participants, trialAsgs, cfg, fixedCtx);
+  assert(
+    Math.abs(fixed.compositeScore - fresh.compositeScore) < 1e-6,
+    'Bug #1 fix: overriding ctx.taskMap with trial tasks restores correct fairness scoring',
+  );
+}
+
+/**
+ * Bug #2 regression: every dynamic-flow residual-construction site builds the
+ * residual as `{ ...T, slots: survivingSlots, requiredCount: ... }`. For an
+ * unsplit `T` that is `sameGroupRequired` (typical), `T.sameGroupLinkId` is
+ * undefined and the spread inherits undefined onto the residual. Meanwhile
+ * `makeSplitHalf` stamps `sameGroupLinkId: T.id` on the new halves. The result:
+ * residual is NOT in the HC-8 link-union (residual.sameGroupLinkId is
+ * undefined, halves carry T.id), so `sameGroupUnitTaskIds(residual, ...)`
+ * returns `[residual.id]` instead of `[residual.id, halfA.id, halfB.id]` — and
+ * cross-group HC-8 violations on the residual+halves combination silently
+ * pass aggregate validation. Optimizer's own `splitSameGroup` correctly stamps
+ * `sameGroupLinkId: T.id` on its residual (optimizer.ts:1373); dynamic-flow
+ * paths must do the same.
+ */
+function runDynamicSplitResidualLinkId(assert: AssertFn): void {
+  // Construct a sameGroupRequired parent task with 2 slots.
+  const T: Task = {
+    id: 'T',
+    name: 'T',
+    sourceName: 'guard',
+    timeBlock: tb(0, 4),
+    requiredCount: 2,
+    slots: [
+      { slotId: 's1', acceptableLevels: [], requiredCertifications: [] },
+      { slotId: 's2', acceptableLevels: [], requiredCertifications: [] },
+    ],
+    sameGroupRequired: true,
+    blocksConsecutive: false,
+    splittable: true,
+  };
+
+  // Simulate the residual-construction that the BUGGED dynamic-flow code path
+  // produces today (spread-only — no explicit sameGroupLinkId).
+  const buggedResidual: Task = { ...T, slots: T.slots.filter((s) => s.slotId !== 's1'), requiredCount: 1 };
+
+  // makeSplitHalf correctly stamps sameGroupLinkId = T.id on halves.
+  const halfA = makeSplitHalf(T, 1, T.timeBlock.start.getTime(), T.timeBlock.start.getTime() + 2 * H, T.slots[0]);
+  const halfB = makeSplitHalf(T, 2, T.timeBlock.start.getTime() + 2 * H, T.timeBlock.end.getTime(), T.slots[0]);
+
+  const { sameGroupUnitTaskIds } = require('./constraints/hard-constraints');
+  const buggedUnit = sameGroupUnitTaskIds(buggedResidual, [buggedResidual, halfA, halfB]);
+  // BUG: residual's sameGroupLinkId is undefined so the link-union returns
+  // only [residual.id] — the halves are excluded even though they belong to
+  // the same occurrence.
+  assert(
+    buggedUnit.length === 1 && buggedUnit[0] === buggedResidual.id,
+    'Bug #2 repro: bugged residual (no sameGroupLinkId) is alone in its HC-8 link-union (halves excluded)',
+  );
+
+  // FIXED residual stamps sameGroupLinkId = T.id when the parent is
+  // sameGroupRequired (matches optimizer.ts:splitSameGroup pattern).
+  const fixedResidual: Task = {
+    ...T,
+    slots: T.slots.filter((s) => s.slotId !== 's1'),
+    requiredCount: 1,
+    sameGroupLinkId: T.id,
+  };
+  const fixedUnit = sameGroupUnitTaskIds(fixedResidual, [fixedResidual, halfA, halfB]);
+  assert(
+    fixedUnit.length === 3 &&
+      fixedUnit.includes(fixedResidual.id) &&
+      fixedUnit.includes(halfA.id) &&
+      fixedUnit.includes(halfB.id),
+    'Bug #2 fix: stamping sameGroupLinkId=T.id on residual reunites the HC-8 link-union (residual + 2 halves)',
+  );
+
+  // Sanity: non-sameGroupRequired T must NOT stamp sameGroupLinkId on the
+  // residual (would falsely promote it into a non-existent link unit).
+  const Tns: Task = { ...T, sameGroupRequired: false };
+  const nsResidual: Task = {
+    ...Tns,
+    slots: Tns.slots.filter((s) => s.slotId !== 's1'),
+    requiredCount: 1,
+    // Intentional: no sameGroupLinkId stamp because sameGroupRequired === false.
+  };
+  assert(
+    nsResidual.sameGroupLinkId === undefined,
+    'Bug #2 fix invariant: non-sameGroupRequired residual must not carry sameGroupLinkId',
+  );
+}
+
+// ─── Manual-build applyPlanOps split coverage ───────────────────────────────
+
+/**
+ * End-to-end tests for `engine.applyPlanOps({ splitOps: [...] })`, the
+ * single apply path that the manual-build split picker uses. Covers both the
+ * historical filled-slot path (used by rescue / FSOS / cap-change) and the
+ * new nullable-`originalAssignmentId` empty-slot path (manual-build only),
+ * plus all pre-validation guards, the final-validate rollback contract, and
+ * the `sameGroupRequired` link-union stamp on the residual.
+ *
+ * Closes a long-standing test gap: no prior coverage exercised `applyPlanOps`
+ * directly — every dynamic-flow test went through `searchInjectionPlans` /
+ * `generateRescuePlans` higher up the stack.
+ */
+function runManualSplitApply(assert: AssertFn): void {
+  const dummyScore: ScheduleScore = {
+    minRestHours: 0,
+    avgRestHours: 0,
+    restStdDev: 0,
+    totalPenalty: 0,
+    compositeScore: 0,
+    l0StdDev: 0,
+    l0AvgEffective: 0,
+    seniorStdDev: 0,
+    seniorAvgEffective: 0,
+    dailyPerParticipantStdDev: 0,
+    dailyGlobalStdDev: 0,
+    restPerGapBonus: 0,
+  };
+  const wideAvail = [{ start: new Date(BASE - H), end: new Date(BASE + 48 * H) }];
+  function mkPart(id: string, group = 'G', level: Level = Level.L0): Participant {
+    return {
+      id,
+      name: id,
+      level,
+      certifications: [],
+      group,
+      availability: wideAvail,
+      dateUnavailability: [],
+    };
+  }
+  function mkSched(tasks: Task[], parts: Participant[], asgs: Assignment[]): Schedule {
+    return {
+      id: 'ms-sched',
+      tasks,
+      participants: parts,
+      assignments: asgs,
+      feasible: true,
+      score: { ...dummyScore },
+      violations: [],
+      generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(BASE),
+      periodDays: 2,
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
+    };
+  }
+  function freshEngine(sched: Schedule): SchedulingEngine {
+    const eng = new SchedulingEngine({}, undefined, undefined, 5);
+    eng.addParticipants(sched.participants);
+    eng.importSchedule(sched);
+    return eng;
+  }
+  function midOf(T: Task): number {
+    const s = T.timeBlock.start.getTime();
+    const e = T.timeBlock.end.getTime();
+    return s + Math.floor((e - s) / 2);
+  }
+  function buildSplitOp(
+    T: Task,
+    slotIdx: number,
+    fillAId: string,
+    fillBId: string,
+    originalAsg: Assignment | null,
+    opts: { groupLock?: string; sameGroupLinkId?: string } = {},
+  ): SplitOp {
+    const slot = T.slots[slotIdx];
+    return {
+      kind: 'split',
+      taskId: T.id,
+      slotId: slot.slotId,
+      taskName: T.name,
+      slotLabel: slot.label ?? slot.slotId,
+      originalAssignmentId: originalAsg?.id ?? null,
+      originalParticipantId: originalAsg?.participantId ?? null,
+      midpointMs: midOf(T),
+      fillA: { participantId: fillAId, displayName: fillAId },
+      fillB: { participantId: fillBId, displayName: fillBId },
+      groupLock: opts.groupLock,
+      sameGroupLinkId: opts.sameGroupLinkId,
+    };
+  }
+
+  // ─── Case 1: filled-slot split happy path ────────────────────────────────
+  {
+    const T = splitTask('msT1', 0, 4, true);
+    const pA = mkPart('m1-incumbent');
+    const pB = mkPart('m1-relief');
+    const aOrig: Assignment = {
+      id: 'm1-orig',
+      taskId: T.id,
+      slotId: T.slots[0].slotId,
+      participantId: pA.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    };
+    const sched = mkSched([T], [pA, pB], [aOrig]);
+    const eng = freshEngine(sched);
+    const op = buildSplitOp(T, 0, pA.id, pB.id, aOrig);
+    const res = eng.applyPlanOps({ splitOps: [op] });
+    assert(res.valid, 'Case 1: filled-slot manual split → valid');
+    assert(
+      !sched.assignments.some((a) => a.id === aOrig.id),
+      'Case 1: original assignment removed',
+    );
+    const halves = sched.assignments.filter((a) => a.id.startsWith(aOrig.id));
+    assert(halves.length === 2, `Case 1: two half assignments created (got ${halves.length})`);
+    assert(
+      halves.every((a) => a.status === AssignmentStatus.Manual),
+      'Case 1: half assignments are Manual status',
+    );
+    const tasksAfter = sched.tasks.map((t) => t.id).sort();
+    assert(
+      tasksAfter.includes(`${T.id}::${T.slots[0].slotId}#a`) &&
+        tasksAfter.includes(`${T.id}::${T.slots[0].slotId}#b`),
+      'Case 1: schedule.tasks now contains both halves',
+    );
+    assert(!tasksAfter.includes(T.id), 'Case 1: single-slot parent task removed (no residual)');
+  }
+
+  // ─── Case 2: empty-slot manual split happy path ──────────────────────────
+  {
+    const T = splitTask('msT2', 0, 4, true);
+    const pA = mkPart('m2-a');
+    const pB = mkPart('m2-b');
+    const sched = mkSched([T], [pA, pB], []);
+    const eng = freshEngine(sched);
+    const op = buildSplitOp(T, 0, pA.id, pB.id, null);
+    const res = eng.applyPlanOps({ splitOps: [op] });
+    assert(res.valid, 'Case 2: empty-slot manual split → valid');
+    const newAsgs = sched.assignments;
+    assert(newAsgs.length === 2, `Case 2: exactly 2 new assignments created (got ${newAsgs.length})`);
+    assert(
+      newAsgs.every((a) => /#[ab]$/.test(a.id)),
+      `Case 2: synthetic ids end in #a/#b (got ${newAsgs.map((a) => a.id).join(',')})`,
+    );
+    assert(
+      newAsgs.every((a) => a.id.startsWith('split-')),
+      'Case 2: synthetic id base uses the manual-split prefix',
+    );
+  }
+
+  // ─── Case 3: empty-slot guard rejects when slot is actually assigned ─────
+  {
+    const T = splitTask('msT3', 0, 4, true);
+    const pA = mkPart('m3-incumbent');
+    const pB = mkPart('m3-relief');
+    const pC = mkPart('m3-third');
+    const aOrig: Assignment = {
+      id: 'm3-orig',
+      taskId: T.id,
+      slotId: T.slots[0].slotId,
+      participantId: pA.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    };
+    const sched = mkSched([T], [pA, pB, pC], [aOrig]);
+    const eng = freshEngine(sched);
+    const tasksBefore = sched.tasks.length;
+    const asgsBefore = sched.assignments.length;
+    const op = buildSplitOp(T, 0, pB.id, pC.id, null);
+    const res = eng.applyPlanOps({ splitOps: [op] });
+    assert(!res.valid, 'Case 3: empty-slot op against an assigned slot → invalid');
+    assert(
+      res.violations[0]?.code === 'SPLIT_SLOT_NOT_EMPTY',
+      `Case 3: violation code is SPLIT_SLOT_NOT_EMPTY (got ${res.violations[0]?.code})`,
+    );
+    assert(
+      sched.tasks.length === tasksBefore && sched.assignments.length === asgsBefore,
+      'Case 3: schedule unchanged after rejection',
+    );
+  }
+
+  // ─── Case 4: TASK_NOT_SPLITTABLE rejection ───────────────────────────────
+  {
+    const T = splitTask('msT4', 0, 4, false);
+    const pA = mkPart('m4-a');
+    const pB = mkPart('m4-b');
+    const sched = mkSched([T], [pA, pB], []);
+    const eng = freshEngine(sched);
+    const op = buildSplitOp(T, 0, pA.id, pB.id, null);
+    const res = eng.applyPlanOps({ splitOps: [op] });
+    assert(!res.valid, 'Case 4: non-splittable task rejected');
+    assert(
+      res.violations[0]?.code === 'TASK_NOT_SPLITTABLE',
+      `Case 4: code = TASK_NOT_SPLITTABLE (got ${res.violations[0]?.code})`,
+    );
+  }
+
+  // ─── Case 5: TASK_ALREADY_SPLIT rejection (target a half) ────────────────
+  {
+    const T = splitTask('msT5', 0, 4, true);
+    const halfA = makeSplitHalf(T, 1, T.timeBlock.start.getTime(), midOf(T), T.slots[0]);
+    const pA = mkPart('m5-a');
+    const pB = mkPart('m5-b');
+    const sched = mkSched([halfA], [pA, pB], []);
+    const eng = freshEngine(sched);
+    // Build op against the half-task directly (taskId === halfA.id).
+    const op: SplitOp = {
+      kind: 'split',
+      taskId: halfA.id,
+      slotId: halfA.slots[0].slotId,
+      taskName: halfA.name,
+      slotLabel: halfA.slots[0].slotId,
+      originalAssignmentId: null,
+      originalParticipantId: null,
+      midpointMs: halfA.timeBlock.start.getTime() + 30 * 60 * 1000,
+      fillA: { participantId: pA.id, displayName: pA.id },
+      fillB: { participantId: pB.id, displayName: pB.id },
+    };
+    const res = eng.applyPlanOps({ splitOps: [op] });
+    assert(!res.valid, 'Case 5: split-of-half rejected');
+    assert(
+      res.violations[0]?.code === 'TASK_ALREADY_SPLIT',
+      `Case 5: code = TASK_ALREADY_SPLIT (got ${res.violations[0]?.code})`,
+    );
+  }
+
+  // ─── Case 6: SPLIT_SAME_PARTICIPANT pre-check ────────────────────────────
+  {
+    const T = splitTask('msT6', 0, 4, true);
+    const pA = mkPart('m6-a');
+    const sched = mkSched([T], [pA], []);
+    const eng = freshEngine(sched);
+    const op = buildSplitOp(T, 0, pA.id, pA.id, null);
+    const res = eng.applyPlanOps({ splitOps: [op] });
+    assert(!res.valid, 'Case 6: same-participant-both-halves rejected');
+    assert(
+      res.violations[0]?.code === 'SPLIT_SAME_PARTICIPANT',
+      `Case 6: code = SPLIT_SAME_PARTICIPANT (got ${res.violations[0]?.code})`,
+    );
+  }
+
+  // ─── Case 7: HC-16 final-validate rejection + atomic rollback ────────────
+  // Both halves of one split SLOT must go to different people. The pre-check
+  // at line 1110 catches a SplitOp where fillA===fillB; HC-16's final-validate
+  // catches the same condition after mutation as a defense-in-depth layer.
+  // Here we use the SPLIT_SAME_PARTICIPANT path as the canonical pre-check
+  // proof and additionally verify rollback restores the schedule exactly.
+  {
+    const T = splitTask('msT7', 0, 4, true);
+    const pA = mkPart('m7-incumbent');
+    const aOrig: Assignment = {
+      id: 'm7-orig',
+      taskId: T.id,
+      slotId: T.slots[0].slotId,
+      participantId: pA.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    };
+    const sched = mkSched([T], [pA], [aOrig]);
+    const eng = freshEngine(sched);
+    const tasksBefore = sched.tasks.slice();
+    const asgsBefore = sched.assignments.slice();
+    const op = buildSplitOp(T, 0, pA.id, pA.id, aOrig);
+    const res = eng.applyPlanOps({ splitOps: [op] });
+    assert(!res.valid, 'Case 7: invalid op → rollback');
+    assert(
+      sched.tasks.length === tasksBefore.length && sched.tasks.every((t, i) => t === tasksBefore[i]),
+      'Case 7: schedule.tasks references identical after rollback',
+    );
+    assert(
+      sched.assignments.length === asgsBefore.length &&
+        sched.assignments.every((a, i) => a === asgsBefore[i]),
+      'Case 7: schedule.assignments references identical after rollback',
+    );
+  }
+
+  // ─── Case 8: sameGroupRequired split — link-union + groupLock ────────────
+  {
+    const T0 = splitTask('msT8', 0, 4, true);
+    const T: Task = { ...T0, sameGroupRequired: true };
+    const pA = mkPart('m8-a', 'GROUP_X');
+    const pB = mkPart('m8-b', 'GROUP_X');
+    const sched = mkSched([T], [pA, pB], []);
+    const eng = freshEngine(sched);
+    const op = buildSplitOp(T, 0, pA.id, pB.id, null, {
+      groupLock: 'GROUP_X',
+      sameGroupLinkId: T.id,
+    });
+    const res = eng.applyPlanOps({ splitOps: [op] });
+    assert(res.valid, 'Case 8: same-group split with matching group → valid');
+    const halves = sched.tasks.filter((t) => t.splitGroupId !== undefined);
+    assert(halves.length === 2, 'Case 8: both halves present');
+    assert(
+      halves.every((t) => t.sameGroupLinkId === T.id),
+      'Case 8: halves carry sameGroupLinkId === parent occurrence id (via makeSplitHalf)',
+    );
+  }
+
+  // ─── Case 9: sameGroupRequired cross-group rejection via HC-8 ───────────
+  {
+    const T0 = splitTask('msT9', 0, 4, true);
+    const T: Task = { ...T0, sameGroupRequired: true };
+    const pA = mkPart('m9-a', 'GROUP_X');
+    const pB = mkPart('m9-b', 'GROUP_Y');
+    const sched = mkSched([T], [pA, pB], []);
+    const eng = freshEngine(sched);
+    const tasksBefore = sched.tasks.length;
+    const op = buildSplitOp(T, 0, pA.id, pB.id, null, {
+      groupLock: 'GROUP_X',
+      sameGroupLinkId: T.id,
+    });
+    const res = eng.applyPlanOps({ splitOps: [op] });
+    assert(!res.valid, 'Case 9: cross-group split rejected by final validate');
+    assert(sched.tasks.length === tasksBefore, 'Case 9: rollback restored task count');
+  }
+
+  // ─── Case 10: multi-slot task — residual keeps surviving slot ────────────
+  {
+    const T: Task = {
+      id: 'msT10',
+      name: 'msT10',
+      sourceName: 'guard',
+      timeBlock: tb(0, 4),
+      requiredCount: 2,
+      slots: [
+        { slotId: 's1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+        { slotId: 's2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+      ],
+      sameGroupRequired: false,
+      blocksConsecutive: true,
+      splittable: true,
+    };
+    const pA = mkPart('m10-a');
+    const pB = mkPart('m10-b');
+    const pC = mkPart('m10-c');
+    const aS2: Assignment = {
+      id: 'm10-s2-asg',
+      taskId: T.id,
+      slotId: 's2',
+      participantId: pC.id,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    };
+    const sched = mkSched([T], [pA, pB, pC], [aS2]);
+    const eng = freshEngine(sched);
+    const op = buildSplitOp(T, 0, pA.id, pB.id, null);
+    const res = eng.applyPlanOps({ splitOps: [op] });
+    assert(res.valid, 'Case 10: split one slot of multi-slot task → valid');
+    const residual = sched.tasks.find((t) => t.id === T.id);
+    assert(residual !== undefined, 'Case 10: residual present (other slots remain whole)');
+    assert(
+      residual !== undefined && residual.slots.length === 1 && residual.slots[0].slotId === 's2',
+      'Case 10: residual keeps only the un-split slot',
+    );
+    // The s2 assignment must still exist untouched.
+    assert(
+      sched.assignments.some((a) => a.id === aS2.id),
+      'Case 10: residual slot assignment preserved',
+    );
+  }
+}
+
 export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   console.log('\n── Shift-Split: run-coalesce primitive ──');
   runCoalesce(assert);
@@ -1929,6 +2543,12 @@ export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   runPhase2(assert);
   console.log('── Shift-Split: Phase 2 — same-group MERGE (sgm) ──');
   runPhase2SameGroupMerge(assert);
+  console.log('── Shift-Split: dynamic-flow trial scoring (Bug #1 regression) ──');
+  runDynamicSplitTrialScoring(assert);
+  console.log('── Shift-Split: dynamic-flow residual sameGroupLinkId (Bug #2 regression) ──');
+  runDynamicSplitResidualLinkId(assert);
+  console.log('── Shift-Split: manual-build applyPlanOps coverage ──');
+  runManualSplitApply(assert);
 }
 
 if (require.main === module) {

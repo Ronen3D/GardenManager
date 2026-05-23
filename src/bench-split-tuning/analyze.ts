@@ -19,9 +19,8 @@
  */
 
 import * as fs from 'fs';
-
-import { ci95HalfWidth, fmt, padL, padR, pairedTStat, summarize, type Summary } from './stats';
 import type { RunResult } from './runner';
+import { ci95HalfWidth, fmt, padL, padR, pairedTStat, type Summary, summarize } from './stats';
 
 function loadRuns(file: string): RunResult[] {
   const txt = fs.readFileSync(file, 'utf8');

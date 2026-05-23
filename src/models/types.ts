@@ -1034,6 +1034,54 @@ export interface RescueSwap {
   slotLabel: string;
 }
 
+/**
+ * A single split-fill operation: realize one slot of a splittable occurrence
+ * as two half-tasks staffed by two different participants.
+ *
+ * Produced by dynamic-replacement flows (rescue / FSOS / inject / cap-change)
+ * when no clean single-person fill exists and the parent task is `splittable`,
+ * and by the manual-build split picker (the only flow that may pass a null
+ * `originalAssignmentId` to split a still-empty slot from scratch).
+ * Mirrors the identity model the optimizer's Stage-4/Phase-2 splits use:
+ * applying a SplitOp replaces the parent Task in `schedule.tasks` with
+ * `#a`/`#b` halves (plus a residual when other slots remain whole), removes
+ * the original Assignment (when present), and inserts two new half-Assignments.
+ */
+export interface SplitOp {
+  kind: 'split';
+  /** Original occurrence id (the parent Task being split). */
+  taskId: string;
+  /** Original slot id being split. */
+  slotId: string;
+  /** Human-readable task name (for plan-step rendering). */
+  taskName: string;
+  /** Human-readable slot label (for plan-step rendering). */
+  slotLabel: string;
+  /**
+   * The assignment being replaced (vacated or inject placeholder). `null`
+   * when the slot was empty before the split (manual-build flow only).
+   */
+  originalAssignmentId: string | null;
+  /** Participant the original assignment held (null for inject placeholders / empty slots). */
+  originalParticipantId: string | null;
+  /** Absolute timestamp of the midpoint; floor((endMs − startMs) / 2) added to start. */
+  midpointMs: number;
+  /** Staff for the first half (start → midpoint). */
+  fillA: { participantId: string; displayName: string };
+  /** Staff for the second half (midpoint → end). HC-16 requires fillA.id !== fillB.id. */
+  fillB: { participantId: string; displayName: string };
+  /** Set for `sameGroupRequired` parent tasks: both halves must come from this group. */
+  groupLock?: string;
+  /**
+   * Set when the parent task has `sameGroupRequired === true`. The new halves
+   * are stamped with this id so HC-8's link-union treats them as one unit
+   * together with any remaining link siblings/residual. Equals the parent's
+   * existing `sameGroupLinkId` when one is present, otherwise the parent
+   * occurrence id.
+   */
+  sameGroupLinkId?: string;
+}
+
 /** A single rescue plan (one of 3 presented to the user) */
 export interface RescuePlan {
   id: string;
@@ -1041,6 +1089,13 @@ export interface RescuePlan {
   rank: number;
   /** Chain of swaps required to implement this plan */
   swaps: RescueSwap[];
+  /**
+   * Split-fill ops required to implement this plan. Present when the planner
+   * chose to realize a slot as two halves rather than re-staff it whole.
+   * In Phase 1 every plan is mono-kind: either `swaps.length>0` and
+   * `splitOps` is absent, OR `splitOps.length>0` and `swaps.length===0`.
+   */
+  splitOps?: SplitOp[];
   /** Composite impact score (lower = less disruption).
    *  When full scoring is active this is the negated composite delta;
    *  otherwise it is the legacy workload-delta formula. */

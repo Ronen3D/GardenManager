@@ -19,10 +19,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-
-import { SCENARIOS } from './scenarios';
-import { runOnce, type RunParams, type RunResult } from './runner';
-import { buildScenario } from './scenarios';
+import { type RunParams, type RunResult, runOnce } from './runner';
+import { buildScenario, SCENARIOS } from './scenarios';
 
 const REPAIR_SA_CAP_MS = 10000; // generous — guarantees the iteration cap binds
 const ITER_CLEAN_THRESHOLD = 99000;

@@ -225,25 +225,43 @@ function showRescueModal(): void {
           : ''
       }`;
 
-    // Build swap steps as plain-language list
+    // Build swap / split-fill steps as plain-language list
     let stepsHtml = `<ol class="rescue-steps">`;
-    for (let i = 0; i < plan.swaps.length; i++) {
-      const sw = plan.swaps[i];
-      const swP = pMap.get(sw.toParticipantId);
-      const fromP = pMap.get(sw.fromParticipantId || '');
-      const assignedSpan = `<span class="rescue-participant-hover" data-pid="${sw.toParticipantId}" data-plan-id="${plan.id}"><strong>${swP?.name || '???'}</strong></span>`;
-      const fromSpan = fromP
-        ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${fromP.name}</span>`
-        : '';
+    if (plan.splitOps && plan.splitOps.length > 0) {
+      // Phase 1: a split-fill plan has one op and no co-occurring swaps.
+      for (const op of plan.splitOps) {
+        const fillAP = pMap.get(op.fillA.participantId);
+        const fillBP = pMap.get(op.fillB.participantId);
+        const parentTask = taskMap.get(op.taskId);
+        const midDate = new Date(op.midpointMs);
+        const midLabel = parentTask
+          ? `<span dir="ltr">${fmt(midDate)}</span>`
+          : `<span dir="ltr">${fmt(midDate)}</span>`;
+        const startLabel = parentTask ? `<span dir="ltr">${fmt(parentTask.timeBlock.start)}</span>` : '';
+        const endLabel = parentTask ? `<span dir="ltr">${fmt(parentTask.timeBlock.end)}</span>` : '';
+        const aSpan = `<span class="rescue-participant-hover" data-pid="${op.fillA.participantId}" data-plan-id="${plan.id}"><strong>${fillAP?.name || op.fillA.displayName}</strong></span>`;
+        const bSpan = `<span class="rescue-participant-hover" data-pid="${op.fillB.participantId}" data-plan-id="${plan.id}"><strong>${fillBP?.name || op.fillB.displayName}</strong></span>`;
+        stepsHtml += `<li class="rescue-step-split">פיצול <strong>${escHtml(op.slotLabel)}</strong> <span class="split-badge">½</span> — ${aSpan} (${startLabel}–${midLabel}) / ${bSpan} (${midLabel}–${endLabel})</li>`;
+      }
+    } else {
+      for (let i = 0; i < plan.swaps.length; i++) {
+        const sw = plan.swaps[i];
+        const swP = pMap.get(sw.toParticipantId);
+        const fromP = pMap.get(sw.fromParticipantId || '');
+        const assignedSpan = `<span class="rescue-participant-hover" data-pid="${sw.toParticipantId}" data-plan-id="${plan.id}"><strong>${swP?.name || '???'}</strong></span>`;
+        const fromSpan = fromP
+          ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${fromP.name}</span>`
+          : '';
 
-      const swTask = taskMap.get(sw.taskId);
-      const swLabel = taskLabel(swTask, sw.taskName);
-      if (plan.swaps.length === 1) {
-        // Direct swap: natural sentence
-        stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${swLabel}</strong></li>`;
-      } else {
-        // Chain swap: arrow style
-        stepsHtml += `<li>${assignedSpan} ← <strong>${swLabel}</strong>${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
+        const swTask = taskMap.get(sw.taskId);
+        const swLabel = taskLabel(swTask, sw.taskName);
+        if (plan.swaps.length === 1) {
+          // Direct swap: natural sentence
+          stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${swLabel}</strong></li>`;
+        } else {
+          // Chain swap: arrow style
+          stepsHtml += `<li>${assignedSpan} ← <strong>${swLabel}</strong>${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
+        }
       }
     }
     stepsHtml += `</ol>`;
@@ -671,6 +689,8 @@ function applyRescuePlan(plan: RescuePlan): void {
         }
       : null;
 
+  const isSplitPlan = (plan.splitOps?.length ?? 0) > 0;
+
   // Staleness check: verify all assignments still match the expected state
   for (const sw of plan.swaps) {
     const a = currentSchedule.assignments.find((a) => a.id === sw.assignmentId);
@@ -687,34 +707,68 @@ function applyRescuePlan(plan: RescuePlan): void {
       return;
     }
   }
+  if (isSplitPlan) {
+    for (const op of plan.splitOps ?? []) {
+      const a = currentSchedule.assignments.find((a) => a.id === op.originalAssignmentId);
+      if (!a) {
+        showRescueError('תוכנית הפיצול מיושנת — השיבוץ הוסר. נסו שוב.');
+        return;
+      }
+      if (a.status === AssignmentStatus.Frozen) {
+        showRescueError('תוכנית הפיצול מיושנת — השיבוץ קפוא. נסו שוב.');
+        return;
+      }
+    }
+  }
 
   // Build per-step labels before applying (participant names from current state)
-  const swapLabels: RescueSwapLabel[] = plan.swaps.map((sw) => {
-    const fromName = currentSchedule.participants.find((p) => p.id === sw.fromParticipantId)?.name ?? '';
-    const toName = currentSchedule.participants.find((p) => p.id === sw.toParticipantId)?.name ?? '';
-    return { label: `החלפה: ${toName} ← ${fromName}` };
-  });
+  const swapLabels: RescueSwapLabel[] = [];
+  if (isSplitPlan) {
+    for (const op of plan.splitOps ?? []) {
+      const aName =
+        currentSchedule.participants.find((p) => p.id === op.fillA.participantId)?.name ?? op.fillA.displayName;
+      const bName =
+        currentSchedule.participants.find((p) => p.id === op.fillB.participantId)?.name ?? op.fillB.displayName;
+      swapLabels.push({ label: `פיצול: ${aName} / ${bName}` });
+    }
+  } else {
+    for (const sw of plan.swaps) {
+      const fromName = currentSchedule.participants.find((p) => p.id === sw.fromParticipantId)?.name ?? '';
+      const toName = currentSchedule.participants.find((p) => p.id === sw.toParticipantId)?.name ?? '';
+      swapLabels.push({ label: `החלפה: ${toName} ← ${fromName}` });
+    }
+  }
 
-  // Apply all swaps atomically via the chain method
-  const requests = plan.swaps.map((sw) => ({
-    assignmentId: sw.assignmentId,
-    newParticipantId: sw.toParticipantId,
-  }));
-  const result = engine.swapParticipantChain(requests);
+  // Apply through `applyPlanOps` when the plan includes split-fill ops;
+  // otherwise the existing pure-swap-chain path.
+  let result: ReturnType<typeof engine.swapParticipantChain>;
+  if (isSplitPlan) {
+    result = engine.applyPlanOps({
+      swaps: plan.swaps.map((sw) => ({ assignmentId: sw.assignmentId, newParticipantId: sw.toParticipantId })),
+      splitOps: plan.splitOps,
+    });
+  } else {
+    const requests = plan.swaps.map((sw) => ({
+      assignmentId: sw.assignmentId,
+      newParticipantId: sw.toParticipantId,
+    }));
+    result = engine.swapParticipantChain(requests);
+  }
   const updated = engine.getSchedule();
 
   if (!updated || !result.valid) {
-    console.warn('[Rescue] Chain swap failed:', result.violations);
+    console.warn('[Rescue] Plan apply failed:', result.violations);
     showRescueError('תוכנית ההחלפה לא יושמה בהצלחה — בוצע שחזור למצב הקודם.');
     _ctx?.onPlanFailed();
     return;
   }
 
   closeRescueModal();
-  _ctx?.onPlanApplied(
-    updated,
-    swapLabels,
-    plan.swaps.map((sw) => sw.assignmentId),
-    recordVacatedSlot,
-  );
+  const animIds: string[] = plan.swaps.map((sw) => sw.assignmentId);
+  if (isSplitPlan) {
+    for (const op of plan.splitOps ?? []) {
+      animIds.push(`${op.originalAssignmentId}#a`, `${op.originalAssignmentId}#b`);
+    }
+  }
+  _ctx?.onPlanApplied(updated, swapLabels, animIds, recordVacatedSlot);
 }
