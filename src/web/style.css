@@ -9173,31 +9173,6 @@ tr.now-row-animate > td.time-cell {
   letter-spacing: 0.01em;
 }
 
-.optim-tier-badge {
-  flex: 0 0 auto;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: #eaf3ff;
-  background: rgba(74, 144, 217, 0.5);
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px solid rgba(74, 144, 217, 0.7);
-}
-
-/* Recommended tier: filled accent, brighter border, soft inner glow. */
-.optim-tier--recommended {
-  background: linear-gradient(180deg, rgba(74, 144, 217, 0.22), rgba(74, 144, 217, 0.12));
-  border-color: rgba(74, 144, 217, 0.55);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 1px 12px rgba(74, 144, 217, 0.15);
-}
-.optim-tier--recommended:hover {
-  background: linear-gradient(180deg, rgba(74, 144, 217, 0.3), rgba(74, 144, 217, 0.18));
-  border-color: rgba(74, 144, 217, 0.75);
-}
-
 /* ── Custom number input ─────────────────────────────────────────────── */
 .optim-continuation-custom {
   display: flex;
@@ -9310,22 +9285,6 @@ tr.now-row-animate > td.time-cell {
 [data-theme="light"] .optim-tier--deep .optim-tier-icon {
   background: rgba(168, 85, 247, 0.14);
   color: #7c3aed;
-}
-[data-theme="light"] .optim-tier--recommended {
-  background: linear-gradient(180deg, rgba(74, 144, 217, 0.16), rgba(74, 144, 217, 0.08));
-  border-color: rgba(74, 144, 217, 0.55);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.5),
-    0 1px 14px rgba(74, 144, 217, 0.18);
-}
-[data-theme="light"] .optim-tier--recommended:hover {
-  background: linear-gradient(180deg, rgba(74, 144, 217, 0.22), rgba(74, 144, 217, 0.12));
-  border-color: rgba(74, 144, 217, 0.75);
-}
-[data-theme="light"] .optim-tier-badge {
-  color: #ffffff;
-  background: rgba(37, 99, 235, 0.85);
-  border-color: rgba(37, 99, 235, 0.9);
 }
 [data-theme="light"] .optim-continuation-hero {
   color: #b91c1c;

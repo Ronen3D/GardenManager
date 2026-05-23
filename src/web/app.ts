@@ -3226,8 +3226,16 @@ async function handleAutoTune(): Promise<void> {
     showToast('לא ניתן לכייל בזמן יצירת שבצ"ק.', { type: 'warning' });
     return;
   }
+  const splittingMode = store.getAlgorithmSettings().splittingMode ?? 'quality';
+  const hasSplittableTask =
+    store.getAllTaskTemplates().some((t) => t.splittable) ||
+    store.getAllOneTimeTasks().some((t) => t.splittable);
+  const splitPenaltyTuned = splittingMode === 'quality' && hasSplittableTask;
+  const splitNote = splitPenaltyTuned
+    ? ' הכיול כולל את עונש הפיצול.'
+    : ' הכיול אינו כולל את עונש הפיצול.';
   const ok = await showConfirm(
-    'הכיול יבחן עשרות סטים של משקלות מול הנתונים שלך, ועשוי להימשך מספר דקות. ההגדרות הנוכחיות לא ישונו — תקבל המלצה שתוכל ליישם.',
+    `הכיול יבחן עשרות סטים של משקלות מול הנתונים שלך, ועשוי להימשך מספר דקות. ההגדרות הנוכחיות לא ישונו — תקבל המלצה שתוכל ליישם.${splitNote}`,
     { title: 'כיול אוטומטי של הגדרות', confirmLabel: 'התחל כיול' },
   );
   if (!ok) return;
@@ -4649,7 +4657,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.6.6</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.6.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>

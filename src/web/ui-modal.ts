@@ -316,12 +316,11 @@ interface ContinuationTier {
   desc: string;
   icon: string;
   variant: 'quick' | 'balanced' | 'deep';
-  recommended?: boolean;
 }
 
 const CONTINUATION_TIERS: readonly ContinuationTier[] = [
   { value: 30, label: '+30 ניסיונות', desc: 'חיפוש מהיר', icon: ICON_LIGHTNING, variant: 'quick' },
-  { value: 60, label: '+60 ניסיונות', desc: 'חיפוש מאוזן', icon: ICON_SCALE, variant: 'balanced', recommended: true },
+  { value: 60, label: '+60 ניסיונות', desc: 'חיפוש מאוזן', icon: ICON_SCALE, variant: 'balanced' },
   { value: 100, label: '+100 ניסיונות', desc: 'חיפוש עמוק', icon: ICON_TARGET, variant: 'deep' },
 ];
 
@@ -344,19 +343,13 @@ export function showContinuationModal(opts: ContinuationModalOptions): Promise<n
     const { unfilledCount, originalAttempts, diminishingReturnsHint } = opts;
 
     const tierCards = CONTINUATION_TIERS.map((tier) => {
-      const recommendedClass = tier.recommended ? ' optim-tier--recommended' : '';
-      // Only the recommended tier has a trailing element ("מומלץ" badge);
-      // others are intentionally trailing-empty. A chevron here would read as
-      // "expand/disclose" rather than "commit action," which is misleading.
-      const trailing = tier.recommended ? `<span class="optim-tier-badge">מומלץ</span>` : '';
       return `
-        <button type="button" class="optim-tier optim-tier--${tier.variant}${recommendedClass}" data-value="${tier.value}">
+        <button type="button" class="optim-tier optim-tier--${tier.variant}" data-value="${tier.value}">
           <span class="optim-tier-icon">${tier.icon}</span>
           <span class="optim-tier-main">
             <span class="optim-tier-label">${tier.label}</span>
             <span class="optim-tier-desc">${tier.desc}</span>
           </span>
-          ${trailing}
         </button>`;
     }).join('');
 
@@ -462,10 +455,7 @@ export function showContinuationModal(opts: ContinuationModalOptions): Promise<n
     });
 
     document.body.appendChild(backdrop);
-    // Focus the recommended tier so keyboard users land on the suggested default.
-    const focusTarget =
-      (backdrop.querySelector('.optim-tier--recommended') as HTMLElement | null) ??
-      (backdrop.querySelector('.optim-tier') as HTMLElement | null);
+    const focusTarget = backdrop.querySelector('.optim-tier') as HTMLElement | null;
     focusTarget?.focus();
   });
 }
