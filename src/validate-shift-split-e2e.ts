@@ -133,9 +133,9 @@ function buildParticipants(): Participant[] {
   return [ga, gb, ...generals];
 }
 
-function makeEngine(splittingEnabled: boolean): SchedulingEngine {
+function makeEngine(splittingEnabled: boolean, configPatch?: Partial<typeof DEFAULT_CONFIG>): SchedulingEngine {
   const restRuleMap = new Map<string, number>([[REST_RULE, 4 * H]]);
-  const eng = new SchedulingEngine({ ...DEFAULT_CONFIG }, undefined, restRuleMap, 5, splittingEnabled);
+  const eng = new SchedulingEngine({ ...DEFAULT_CONFIG, ...configPatch }, undefined, restRuleMap, 5, splittingEnabled);
   eng.setPeriod(PERIOD_START, DAYS);
   eng.addParticipants(buildParticipants());
   eng.addTasks(buildTasks(splittingEnabled));
@@ -170,8 +170,12 @@ function scenarioS1(assert: AssertFn): { onSchedule: Schedule } {
   const offUnfilled = (off.violations ?? []).length; // info only
   console.log(`     OFF: ${off.assignments.length} assignments, feasible=${off.feasible}, violations=${offUnfilled}`);
 
-  // ON
-  const onEng = makeEngine(true);
+  // ON. Pin splitPenalty=1000 so Phase-2 quality-splits don't fire — this
+  // test isolates the Stage-4 feasibility-split invariant ("only the
+  // unfillable occurrence is split"). With the production default of
+  // splitPenalty=1, Phase-2 also splits other occurrences for quality,
+  // which is correct behavior but obscures the Stage-4-only signal.
+  const onEng = makeEngine(true, { splitPenalty: 1000 });
   const on = onEng.generateSchedule();
 
   const halfA = on.tasks.find((t) => t.id === halfAId);
@@ -391,10 +395,14 @@ function scenarioS5(assert: AssertFn): void {
   // guarantee — applyFeasibilitySplits returns a COPY, taskMap is per-attempt).
   const onTasks = buildTasks(true);
   const wholeGuardRef = onTasks.find((t) => t.id === guardGroupId)!;
+  // Pin splitPenalty=1000 so Phase-2 quality-splits don't fire — same
+  // rationale as scenarioS1: this test verifies Stage-4 parsimony (only
+  // the unfillable occurrence splits), which the production default of
+  // splitPenalty=1 deliberately relaxes for quality wins.
   const onResult = optimizeMultiAttempt(
     onTasks,
     participants,
-    { ...DEFAULT_CONFIG },
+    { ...DEFAULT_CONFIG, splitPenalty: 1000 },
     [],
     8,
     undefined,

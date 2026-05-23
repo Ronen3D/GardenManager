@@ -2785,8 +2785,17 @@ function polishReplaceWithIdle(
 
 /** Anti-oscillation: an occurrence is touched at most once per optimize()
  *  run, and the sweep runs at most this many passes (mirrors
- *  MAX_POLISH_PASSES' bounded-deterministic shape). */
-const MAX_STRUCTURAL_PASSES = 2;
+ *  MAX_POLISH_PASSES' bounded-deterministic shape).
+ *
+ *  Mutable only so benchmark scripts can sweep this parameter (see
+ *  `_benchSetMaxStructuralPasses`). Production code never reassigns it —
+ *  the constant 2 is the product value. */
+let MAX_STRUCTURAL_PASSES = 2;
+/** @internal Bench-only override. Pass `null` to restore the product default
+ *  of 2. Has zero effect on production code paths (never called there). */
+export function _benchSetMaxStructuralPasses(n: number | null): void {
+  MAX_STRUCTURAL_PASSES = n ?? 2;
+}
 /** Strict-improvement margin (polish's convention). The economic gate is
  *  `config.splitPenalty` itself — already inside the composite via
  *  `countSplitOccurrences` — so this is only a churn guard. */

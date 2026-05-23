@@ -163,11 +163,13 @@ const BASE_DIMS: Dim[] = [
   { key: 'taskNamePreferencePenalty', min: 1, max: 1000, integer: true },
   { key: 'taskNameAvoidancePenalty', min: 1, max: 1000, integer: true },
   { key: 'taskNamePreferenceBonus', min: 1, max: 500, integer: true },
-  // The in-run quality-split gate. Log-scaled like the other penalty dims;
-  // range brackets the 1000 default both ways so the tuner can make the
-  // dataset split more freely or hardly at all. Pruned when nothing is
-  // splittable (see buildFingerprint).
-  { key: 'splitPenalty', min: 100, max: 20000, integer: true },
+  // The in-run quality-split gate. Log-scaled like the other penalty dims.
+  // Floor widened 2026-05-23 from 100 → 1 after the tuning sweep in
+  // `src/bench-split-tuning` showed the productive band is {1..25}, an order
+  // of magnitude below the old floor. Ceiling kept high so the tuner can
+  // still suppress splitting on datasets where it doesn't help. Pruned when
+  // nothing is splittable (see buildFingerprint).
+  { key: 'splitPenalty', min: 1, max: 20000, integer: true },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

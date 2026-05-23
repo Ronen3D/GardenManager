@@ -525,12 +525,20 @@ export const DEFAULT_CONFIG: SchedulerConfig = {
   taskNamePreferencePenalty: 140,
   taskNameAvoidancePenalty: 27,
   taskNamePreferenceBonus: 7,
-  // In-run quality gate (Moderate appetite, product-chosen). A quality split
-  // must buy more composite than this to be committed; large enough that
-  // splitting stays uncommon, small relative to UNFILLED_SLOT_PENALTY (50000)
-  // so feasibility splits remain hugely net-positive. The auto-tuner explores
-  // it per dataset.
-  splitPenalty: 1000,
+  // In-run quality gate. A quality split must buy more composite than this to
+  // be committed; small relative to UNFILLED_SLOT_PENALTY (50000) so
+  // feasibility splits remain hugely net-positive. The auto-tuner explores it
+  // per dataset.
+  //
+  // Value re-tuned 2026-05-23 from 1000 → 1 after the full tuning sweep in
+  // `src/bench-split-tuning` (3,362 runs · 17 splitPenalty values · 35
+  // scenarios · 60 attempts/run · paired Mulberry32 seeds · 0 HC violations).
+  // The previous default of 1000 was the worst value in the entire grid —
+  // it produced mean paired Δcomposite = −10.1 vs OFF because no quality
+  // splits ever committed at that height. sp=1 produces mean Δcomposite =
+  // +1404 across the same 35 scenarios with ~20 quality splits/run.
+  // See `tmp/split-bench-report.md` for the full sweep table.
+  splitPenalty: 1,
 };
 
 // ─── Algorithm Settings (user-configurable control panel) ────────────────────
