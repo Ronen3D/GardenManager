@@ -34,6 +34,9 @@ export interface ConfirmOptions {
   danger?: boolean;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Optional HTML appended after the (escaped) `message`. Caller is
+   *  responsible for escaping any user-supplied substrings. */
+  extraBodyHtml?: string;
 }
 
 /** Show an informational modal with a single OK button. */
@@ -199,7 +202,7 @@ export function showConfirm(message: string, opts?: ConfirmOptions): Promise<boo
           <span class="gm-modal-icon">${danger ? '⚠️' : '❓'}</span>
           <span class="gm-modal-title">${escHtml(title)}</span>
         </div>
-        <div class="gm-modal-body">${escHtml(message)}</div>
+        <div class="gm-modal-body">${escHtml(message)}${opts?.extraBodyHtml ?? ''}</div>
         <div class="gm-modal-actions">
           <button class="${danger ? 'btn-primary gm-modal-btn-danger' : 'btn-primary'} gm-modal-btn-ok">${escHtml(confirmLabel)}</button>
           <button class="btn-sm btn-outline gm-modal-btn-cancel">${escHtml(cancelLabel)}</button>

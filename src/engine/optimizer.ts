@@ -2823,10 +2823,16 @@ const STRUCT_EPS = 1e-6;
  *             two halves worked by two different people, when the
  *             fairness/rest/balance gain beats `splitPenalty`.
  *
- * Scope: NON-`sameGroupRequired` occurrences only. Same-group occurrences are
- * left exactly as today (feasibility-only via Stage-4) so the strict
- * same-group link-union cannot be violated by a post-greedy move — a safe
- * subset of Option B; extendable later via the Stage-4 group-cover matcher.
+ * Scope: MERGE handles both non-`sameGroupRequired` and `sameGroupRequired`
+ * occurrences — for the latter the merged whole slot's incumbent is filtered
+ * to the link's surviving group via `pickEligible`'s `requiredGroup`
+ * parameter (HC-8 guarantees surviving link members all share one group),
+ * and the no-residual branch stamps `sameGroupLinkId` so still-split sibling
+ * slots stay coordinated. QUALITY-SPLIT remains non-`sameGroupRequired`-only:
+ * cross-group rotation is SA's job (swap + insert), and intra-group
+ * reshuffling is already reachable via within-group SA swaps — extending
+ * QUALITY-SPLIT would require pulling Stage-4's group-cover matcher into a
+ * deterministic Phase-2 path, which is not earned by current evidence.
  *
  * Safety: a candidate is viable ONLY if every affected slot is fully staffed
  * by HC-eligible participants (`isEligibleForSlot` — the authoritative
@@ -2924,11 +2930,20 @@ export function structuralRefine(
     bp: Map<string, Assignment[]>,
     loadByPid: Map<string, number>,
     exclude: string | null,
+    /** Link-aware group filter used by same-group MERGE: when set, only
+     *  participants whose `group` matches are considered. HC-8 guarantees the
+     *  link's surviving members all share one group; filtering here keeps the
+     *  merged whole slot inside that group without rebuilding the
+     *  `taskAssignments` / `participantMap` payload `checkEligibility` would
+     *  need to fire its HC-4 branch. Default `undefined` = no filter, which
+     *  preserves byte-identical behavior for every non-same-group caller. */
+    requiredGroup?: string,
   ): Participant | null => {
     let bestP: Participant | null = null;
     let bestLoad = Number.POSITIVE_INFINITY;
     for (const p of participants) {
       if (exclude !== null && p.id === exclude) continue;
+      if (requiredGroup !== undefined && p.group !== requiredGroup) continue;
       if (!isEligibleForSlot(p, task, slot, bp.get(p.id) || [], tm, disabledHC, restRuleMap, scheduleContext)) {
         continue;
       }
@@ -2949,6 +2964,12 @@ export function structuralRefine(
     }
     return m;
   };
+
+  // Participant→group lookup, built once. Used by same-group MERGE to derive
+  // the link's surviving-member group (passed as `requiredGroup` to
+  // `pickEligible`). Mirrors the Stage-4 `splitSameGroup` index pattern.
+  const groupOf = new Map<string, string>();
+  for (const p of participants) groupOf.set(p.id, p.group);
 
   let workTasks = tasks;
   let workAsgs = best;
@@ -2977,13 +2998,40 @@ export function structuralRefine(
       if (!Sa || !Sb) continue;
       const occId = Sa.splitOccurrenceId;
       if (occId === undefined || touched.has(occId)) continue;
-      // Same-group splits are out of scope (left exactly as Stage-4 made them).
-      if (Sa.sameGroupRequired || Sa.sameGroupLinkId !== undefined) continue;
       const residual = workTasks.find((t) => t.id === occId && t.splitGroupId === undefined);
       // Occurrence task ids whose assignments must be free of pin/Manual/Frozen.
       const occTaskIds = new Set<string>([Sa.id, Sb.id]);
       if (residual) occTaskIds.add(residual.id);
       if (workAsgs.some((x) => occTaskIds.has(x.taskId) && isPinnedLike(x))) continue;
+
+      // Link-awareness for same-group MERGE. `requiredGroup` is the group of
+      // any surviving link member's incumbent — HC-8 guarantees they all
+      // share one group — passed to `pickEligible` so the merged whole slot
+      // stays inside that group. `linkHasOtherSurvivors` also decides the
+      // no-residual branch's `sameGroupLinkId` stamp so still-split sibling
+      // slots remain coordinated. For non-same-group splits Sa.sameGroupLinkId
+      // is undefined ⇒ both stay undefined ⇒ byte-identical to prior behavior.
+      let requiredGroup: string | undefined;
+      let linkHasOtherSurvivors = false;
+      if (Sa.sameGroupLinkId !== undefined) {
+        const survivingIds = new Set<string>();
+        for (const t of workTasks) {
+          if (t.id === Sa.id || t.id === Sb.id) continue;
+          if (t.sameGroupLinkId === Sa.sameGroupLinkId) survivingIds.add(t.id);
+        }
+        linkHasOtherSurvivors = survivingIds.size > 0;
+        if (linkHasOtherSurvivors) {
+          for (const a of workAsgs) {
+            if (survivingIds.has(a.taskId)) {
+              const g = groupOf.get(a.participantId);
+              if (g !== undefined) {
+                requiredGroup = g;
+                break;
+              }
+            }
+          }
+        }
+      }
 
       // Reconstruct the whole slot from #a's slot (slotId === base + '#a').
       const halfSlot = Sa.slots[0];
@@ -3010,6 +3058,14 @@ export function structuralRefine(
         // the occurrence id — structurally identical to a Stage-4 residual
         // (id===occId, no split fields), so any still-split sibling slots stay
         // valid as a slot-level mixed whole+split occurrence. Never mutate.
+        //
+        // For same-group MERGE in a mixed-split state (other slot pairs of
+        // this occurrence are still split), the merged whole task MUST keep
+        // `sameGroupLinkId = occId` so HC-8 continues to treat residual +
+        // siblings as one link unit. When this MERGE empties the link (no
+        // other surviving members), the whole task stands alone and
+        // `sameGroupLinkId` is undefined — HC-8 then validates it as a
+        // non-linked sameGroupRequired single-slot task (trivially passes).
         const whole: Task = {
           ...Sa,
           id: occId,
@@ -3021,7 +3077,7 @@ export function structuralRefine(
           splitPart: undefined,
           splitOriginalMs: undefined,
           splitOccurrenceId: undefined,
-          sameGroupLinkId: undefined,
+          sameGroupLinkId: Sa.sameGroupRequired && linkHasOtherSurvivors ? occId : undefined,
         };
         wholeTask = whole;
         wholeTaskId = whole.id;
@@ -3036,7 +3092,7 @@ export function structuralRefine(
       const candTm = taskMapOf(candTasks);
       const candBp = buildByParticipant(candAsgs);
       const loadByPid = loadMapOf(candAsgs, candTm);
-      const chosen = pickEligible(wholeTask, wholeSlot, candTm, candBp, loadByPid, null);
+      const chosen = pickEligible(wholeTask, wholeSlot, candTm, candBp, loadByPid, null, requiredGroup);
       if (!chosen) continue;
       candAsgs.push({
         id: nextAssignmentId(),

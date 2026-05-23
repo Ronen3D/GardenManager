@@ -61,11 +61,7 @@ function buildCells(rows: RunResult[]): Cell[] {
   return cells;
 }
 
-function pairBySeed<T>(
-  off: RunResult[],
-  on: RunResult[],
-  pick: (r: RunResult) => T,
-): { aArr: T[]; bArr: T[] } {
+function pairBySeed<T>(off: RunResult[], on: RunResult[], pick: (r: RunResult) => T): { aArr: T[]; bArr: T[] } {
   const byO = new Map<number, RunResult>();
   for (const r of off) byO.set(r.seed, r);
   const aArr: T[] = [];
@@ -122,23 +118,28 @@ function execSummary(cells: Cell[]): string {
   md += `Generated: ${new Date().toISOString()}\n\n`;
 
   md += '## Methodology\n\n';
-  md += '**What was tuned.** Two parameters govern Phase-2 shift-splitting behaviour ' +
+  md +=
+    '**What was tuned.** Two parameters govern Phase-2 shift-splitting behaviour ' +
     'inside `src/engine/optimizer.ts`:\n\n';
-  md += '1. `config.splitPenalty` (`SchedulerConfig.splitPenalty`, default **1000**) — the ' +
+  md +=
+    '1. `config.splitPenalty` (`SchedulerConfig.splitPenalty`, default **1000**) — the ' +
     'economic gate inside the composite score. `structuralRefine` commits a quality split ' +
     'only when composite improvement strictly exceeds it; it merges a split back when the ' +
     'wholing buys back more than it. Also enters the SA scorer (`IncrementalScorer._splitPenalty`) ' +
     'as a run-constant.\n';
-  md += '2. `MAX_STRUCTURAL_PASSES` (compile-time constant, default **2**) — anti-oscillation ' +
+  md +=
+    '2. `MAX_STRUCTURAL_PASSES` (compile-time constant, default **2**) — anti-oscillation ' +
     'bound on number of merge+split passes per `optimize()` invocation. For the benchmark this ' +
     'was made overridable via the bench-only `_benchSetMaxStructuralPasses` setter; product ' +
     'default is untouched.\n\n';
-  md += '*Deliberately untuned:* `STRUCT_EPS` (1e-6, FP numerical guard — too low risks ' +
+  md +=
+    '*Deliberately untuned:* `STRUCT_EPS` (1e-6, FP numerical guard — too low risks ' +
     'oscillation, too high suppresses real wins, neither regime is product-relevant); ' +
     '`UNFILLED_SLOT_PENALTY` (50000, controls greedy/SA broadly, not just splitting); ' +
     '`MAX_POLISH_PASSES` (post-SA polish, orthogonal to splitting).\n\n';
 
-  md += '**How the data is collected.** Each (scenario, splitPenalty, seed) cell runs ' +
+  md +=
+    '**How the data is collected.** Each (scenario, splitPenalty, seed) cell runs ' +
     '`optimizeMultiAttempt` with `Math.random` patched by a deterministic Mulberry32 RNG keyed ' +
     'by the seed. This makes the OFF and every ON cell on the same scenario+seed *paired* — ' +
     'they share the same participant shuffle, task-order jitter, and initial SA decisions, so ' +
@@ -146,13 +147,17 @@ function execSummary(cells: Cell[]): string {
     'composite + soft-component breakdown + split count + runtime, then runs an INDEPENDENT ' +
     '`fullValidate` pass to verify zero placement violations.\n\n';
   md += 'Tiers:\n\n';
-  md += '- **Tier 1** — broad sweep across ~14 scenarios × 8 splitPenalty values × 8 seeds × ' +
+  md +=
+    '- **Tier 1** — broad sweep across ~14 scenarios × 8 splitPenalty values × 8 seeds × ' +
     '12 attempts × 1200ms SA cap. Catches where splitting matters.\n';
-  md += '- **Tier 2** — dense splitPenalty grid (12 values [0..20000]) on the splitting-' +
+  md +=
+    '- **Tier 2** — dense splitPenalty grid (12 values [0..20000]) on the splitting-' +
     'relevant subset × 24 seeds × 20 attempts × 2000ms cap. Refines parameter choice.\n';
-  md += '- **Tier 3** — MAX_STRUCTURAL_PASSES ∈ {1, 2, 3, 5} on splitting-relevant scenarios × ' +
+  md +=
+    '- **Tier 3** — MAX_STRUCTURAL_PASSES ∈ {1, 2, 3, 5} on splitting-relevant scenarios × ' +
     '20 seeds × 20 attempts × 2000ms cap. Tests whether 2 passes is enough.\n\n';
-  md += '**Scenarios** are built by `buildScenario` in `src/bench-split-tuning/scenarios.ts` ' +
+  md +=
+    '**Scenarios** are built by `buildScenario` in `src/bench-split-tuning/scenarios.ts` ' +
     'and vary: schedule length (1..7 days), pool size (18..84 participants), task recipe ' +
     '(`default` from `cli-task-factory`, plus variants: `lite`, `heavy`, `extra-shemesh-slots`, ' +
     '`quality-opportunity`, `tight-feasibility`, `split-focused`), splittable selectivity ' +
@@ -160,9 +165,10 @@ function execSummary(cells: Cell[]): string {
     'and availability pressure (`none` / `low` / `medium` / `high` / `very-high`). The OFF cell ' +
     'on every scenario uses `splittableSet: "none"` so it represents *exactly* today\'s ' +
     'splitting-disabled behaviour.\n\n';
-  md += '**Correctness bar.** A run is HC-clean iff `fullValidate` returns zero violations ' +
+  md +=
+    '**Correctness bar.** A run is HC-clean iff `fullValidate` returns zero violations ' +
     'with the codes `SLOT_UNFILLED` and `GROUP_INSUFFICIENT` excluded — both indicate the ' +
-    'optimizer COULDN\'T fill a slot under pressure, not that it filled one INCORRECTLY. Any ' +
+    "optimizer COULDN'T fill a slot under pressure, not that it filled one INCORRECTLY. Any " +
     'real placement violation (HC-1/2/3/4/5/7/8/11/12/14/15/16) at any splitPenalty is a hard ' +
     'failure: improving composite via an invalid schedule is not a win.\n\n';
 
@@ -190,7 +196,8 @@ function execSummary(cells: Cell[]): string {
     const flag = sp === bestSp ? '**← best mean Δ**' : sp === 1000 ? 'current default' : '';
     md += `| ${sp} | ${w}/${scenarios.size} | ${fmt(mean, 1)} | ${fmt(sr, 1)} | ${flag} |\n`;
   }
-  md += '\n*“Mean Δcomposite” is paired ON−OFF averaged across scenarios. Positive = ON improves composite. ' +
+  md +=
+    '\n*“Mean Δcomposite” is paired ON−OFF averaged across scenarios. Positive = ON improves composite. ' +
     '“Mean splits/run” is the mean count of split SLOTS realized per attempt.*\n\n';
   return md;
 }
@@ -199,10 +206,12 @@ function correctness(rows: RunResult[]): string {
   let md = '## Correctness audit\n\n';
   const offenders = rows.filter((r) => r.hcViolations > 0);
   if (offenders.length === 0) {
-    md += `**PASS** — all ${rows.length} runs across the full matrix produced zero hard-placement violations ` +
+    md +=
+      `**PASS** — all ${rows.length} runs across the full matrix produced zero hard-placement violations ` +
       '(independent `fullValidate` audit, excluding SLOT_UNFILLED and GROUP_INSUFFICIENT, which are feasibility ' +
       'pressure indicators rather than invalid placements).\n\n';
-    md += 'HC correctness is independent of splitPenalty — the per-placement HC gate (`isEligibleForSlot`) runs ' +
+    md +=
+      'HC correctness is independent of splitPenalty — the per-placement HC gate (`isEligibleForSlot`) runs ' +
       'inside Stage-4 feasibility split and `structuralRefine` quality split alike, so neither very low nor very ' +
       'high penalties can produce invalid schedules.\n\n';
   } else {
@@ -272,7 +281,8 @@ function perScenario(cells: Cell[]): string {
       continue;
     }
     const sample = off.runs[0];
-    md += `*tasks=${sample.tasksIn}, slots=${sample.slotsIn}, participants=${sample.participants}, ` +
+    md +=
+      `*tasks=${sample.tasksIn}, slots=${sample.slotsIn}, participants=${sample.participants}, ` +
       `attempts=${sample.attempts}, SA cap=${sample.maxSolverTimeMs}ms, N=${off.runs.length} seeds.*\n\n`;
     md += '| cell | composite | Δcomp | t | splits/run | runs w/splits | unfilled | runtime(s) | HC |\n';
     md += '|---|---|---|---|---|---|---|---|---|\n';
@@ -309,7 +319,8 @@ function perScenario(cells: Cell[]): string {
 
 function softBreakdown(cells: Cell[]): string {
   let md = '## Soft-metric trade-off panel (paired ON − OFF)\n\n';
-  md += 'Decomposition of where the composite delta comes from. Each cell is paired-Δ (ON minus OFF, ' +
+  md +=
+    'Decomposition of where the composite delta comes from. Each cell is paired-Δ (ON minus OFF, ' +
     'matched seed). Sign convention: minRest / restPerGap should *increase* (more rest is better); ' +
     'all std-devs and penalty terms should *decrease* (lower is better, in absolute composite terms).\n\n';
   const scenarios = new Set<string>();
@@ -324,7 +335,8 @@ function softBreakdown(cells: Cell[]): string {
       md += '_(no OFF baseline — skipping)_\n\n';
       continue;
     }
-    md += '| sp | minRest | restPerGap | l0StdDev | seniorStd | dailyPPStd | dailyGStd | lowPrioPen | notWithPen | taskPrefPen |\n';
+    md +=
+      '| sp | minRest | restPerGap | l0StdDev | seniorStd | dailyPPStd | dailyGStd | lowPrioPen | notWithPen | taskPrefPen |\n';
     md += '|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n';
     for (const c of ons) {
       const d = (pick: (r: RunResult) => number) => {
@@ -332,7 +344,34 @@ function softBreakdown(cells: Cell[]): string {
         if (aArr.length < 2) return 0;
         return pairedTStat(aArr, bArr).meanDelta;
       };
-      md += `| ${c.splitPenalty} | ${fmt(d((r) => r.minRestHours), 2)} | ${fmt(d((r) => r.restPerGapBonus), 2)} | ${fmt(d((r) => r.l0StdDev), 2)} | ${fmt(d((r) => r.seniorStdDev), 2)} | ${fmt(d((r) => r.dailyPerParticipantStdDev), 2)} | ${fmt(d((r) => r.dailyGlobalStdDev), 2)} | ${fmt(d((r) => r.lowPriorityPenalty), 1)} | ${fmt(d((r) => r.notWithPenalty), 1)} | ${fmt(d((r) => r.taskPrefPenalty), 1)} |\n`;
+      md += `| ${c.splitPenalty} | ${fmt(
+        d((r) => r.minRestHours),
+        2,
+      )} | ${fmt(
+        d((r) => r.restPerGapBonus),
+        2,
+      )} | ${fmt(
+        d((r) => r.l0StdDev),
+        2,
+      )} | ${fmt(
+        d((r) => r.seniorStdDev),
+        2,
+      )} | ${fmt(
+        d((r) => r.dailyPerParticipantStdDev),
+        2,
+      )} | ${fmt(
+        d((r) => r.dailyGlobalStdDev),
+        2,
+      )} | ${fmt(
+        d((r) => r.lowPriorityPenalty),
+        1,
+      )} | ${fmt(
+        d((r) => r.notWithPenalty),
+        1,
+      )} | ${fmt(
+        d((r) => r.taskPrefPenalty),
+        1,
+      )} |\n`;
     }
     md += '\n';
   }
@@ -358,7 +397,8 @@ function structuralPasses(cells: Cell[]): string {
   for (const [s, set] of passesByScen) if (set.size >= 2) sweepScens.add(s);
   if (sweepScens.size === 0) return '';
   let md = '## MAX_STRUCTURAL_PASSES sweep\n\n';
-  md += 'Current value is `2`. We vary it across {1, 2, 3, 5} on a focused subset of scenarios ' +
+  md +=
+    'Current value is `2`. We vary it across {1, 2, 3, 5} on a focused subset of scenarios ' +
     'with splitPenalty fixed at the product default 1000.\n\n';
   const byScen = new Map<string, Cell[]>();
   for (const c of eligible) {

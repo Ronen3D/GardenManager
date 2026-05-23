@@ -57,7 +57,10 @@ export function pairedDelta(a: number[], b: number[]): Summary {
 }
 
 /** Paired t-stat for "mean delta = 0". Returns t value; |t| > 2 ≈ p < 0.05 for n≥20. */
-export function pairedTStat(a: number[], b: number[]): { tStat: number; meanDelta: number; sdDelta: number; n: number } {
+export function pairedTStat(
+  a: number[],
+  b: number[],
+): { tStat: number; meanDelta: number; sdDelta: number; n: number } {
   if (a.length !== b.length) throw new Error('length mismatch');
   const n = a.length;
   const deltas = a.map((v, i) => b[i] - v);
@@ -72,7 +75,7 @@ export function pairedTStat(a: number[], b: number[]): { tStat: number; meanDelt
 export function ci95HalfWidth(stddev: number, n: number): number {
   if (n <= 1) return 0;
   // Approximate t-multiplier for two-sided 95% CI
-  const tMult = n >= 30 ? 1.96 : n >= 20 ? 2.09 : n >= 10 ? 2.26 : n >= 5 ? 2.78 : 4.30;
+  const tMult = n >= 30 ? 1.96 : n >= 20 ? 2.09 : n >= 10 ? 2.26 : n >= 5 ? 2.78 : 4.3;
   return tMult * (stddev / Math.sqrt(n));
 }
 

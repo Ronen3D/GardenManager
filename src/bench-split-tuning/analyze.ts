@@ -204,7 +204,9 @@ function perScenarioBreakdown(scenarioId: string, cells: Cell[]): void {
   const offCell = cells.find((c) => !c.splittingOn);
   const onCells = cells.filter((c) => c.splittingOn).sort((a, b) => a.splitPenalty - b.splitPenalty);
   if (!offCell || onCells.length === 0) return;
-  console.log(`\n  Soft-metric paired Δ (ON − OFF) — positive minRest/restPerGap = better; std/penalty = lower is better`);
+  console.log(
+    `\n  Soft-metric paired Δ (ON − OFF) — positive minRest/restPerGap = better; std/penalty = lower is better`,
+  );
   console.log(`  ${padR('splitPenalty', 14)}${SOFT_METRICS.map((m) => padR(m.label, 13)).join('')}`);
   for (const c of onCells) {
     const cells = SOFT_METRICS.map((m) => {

@@ -15590,22 +15590,32 @@ console.log('\n── PDF Fit Planner ──────────────
     'fit-planner: naturalWidth clamps very wide sections to usableWidth',
   );
 
-  // (a) Sparse day → best font, no reshaping, ONE page, no overlaps.
-  const sparse = planDayLayout({
-    sections: [
-      { id: 'A', displayOrder: 0, logicalColCount: 1, nameGrid: [[1], [1]] },
-      { id: 'B', displayOrder: 1, logicalColCount: 1, nameGrid: [[1], [1]] },
-    ],
+  // (a) Sparse day → best font, ONE page, no overlaps. The Phase-1 invariant
+  // ("no name-col reshaping when the fit succeeds on the first attempt") is
+  // covered by the `disableSpread: true` run; the default-levers run is then
+  // free to widen sections aesthetically via the spread pass (C5.9) while still
+  // honouring page count + height budget.
+  const sparseSections = [
+    { id: 'A', displayOrder: 0, logicalColCount: 1, nameGrid: [[1], [1]] },
+    { id: 'B', displayOrder: 1, logicalColCount: 1, nameGrid: [[1], [1]] },
+  ];
+  const sparseRaw = planDayLayout({
+    sections: sparseSections,
     geometry: geo,
-    levers: DEFAULT_LEVERS,
+    levers: { ...DEFAULT_LEVERS, disableSpread: true },
   });
   assert(
-    !sparse.overflow && sparse.pageCount === 1 && sparse.fontSize === 9,
-    'fit-planner: sparse day → font 9, one page',
+    !sparseRaw.overflow && sparseRaw.pageCount === 1 && sparseRaw.fontSize === 9,
+    'fit-planner: sparse day (raw Phase 1) → font 9, one page',
   );
   assert(
-    sparse.sections.every((s) => s.nameCols === 1) && sparse.predictedHeight <= geo.heightBudget,
-    'fit-planner: sparse day → no reshaping, within budget',
+    sparseRaw.sections.every((s) => s.nameCols === 1) && sparseRaw.predictedHeight <= geo.heightBudget,
+    'fit-planner: sparse day (raw Phase 1) → no reshaping, within budget',
+  );
+  const sparse = planDayLayout({ sections: sparseSections, geometry: geo, levers: DEFAULT_LEVERS });
+  assert(
+    !sparse.overflow && sparse.pageCount === 1 && sparse.fontSize === 9 && sparse.predictedHeight <= geo.heightBudget,
+    'fit-planner: sparse day (with spread) → still font 9, one page, within budget',
   );
   assert(sparse.sections.length === 2 && !anyOverlap(sparse.sections), 'fit-planner: sparse → no overlap');
 

@@ -3228,15 +3228,14 @@ async function handleAutoTune(): Promise<void> {
   }
   const splittingMode = store.getAlgorithmSettings().splittingMode ?? 'quality';
   const hasSplittableTask =
-    store.getAllTaskTemplates().some((t) => t.splittable) ||
-    store.getAllOneTimeTasks().some((t) => t.splittable);
+    store.getAllTaskTemplates().some((t) => t.splittable) || store.getAllOneTimeTasks().some((t) => t.splittable);
   const splitPenaltyTuned = splittingMode === 'quality' && hasSplittableTask;
-  const splitNote = splitPenaltyTuned
-    ? ' הכיול כולל את עונש הפיצול.'
-    : ' הכיול אינו כולל את עונש הפיצול.';
+  const splitNoteHtml = splitPenaltyTuned
+    ? '<p style="margin: 0.75em 0 0 0;">הכיול <b>כולל</b> את עונש הפיצול.</p>'
+    : '<p style="margin: 0.75em 0 0 0;">הכיול <b>לא כולל</b> את עונש הפיצול.</p>';
   const ok = await showConfirm(
-    `הכיול יבחן עשרות סטים של משקלות מול הנתונים שלך, ועשוי להימשך מספר דקות. ההגדרות הנוכחיות לא ישונו — תקבל המלצה שתוכל ליישם.${splitNote}`,
-    { title: 'כיול אוטומטי של הגדרות', confirmLabel: 'התחל כיול' },
+    'הכיול יבחן עשרות סטים של משקלות מול הנתונים שלך, ועשוי להימשך מספר דקות. ההגדרות הנוכחיות לא ישונו — תקבל המלצה שתוכל ליישם.',
+    { title: 'כיול אוטומטי של הגדרות', confirmLabel: 'התחל כיול', extraBodyHtml: splitNoteHtml },
   );
   if (!ok) return;
 
@@ -4657,7 +4656,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.6.7</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.6.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4677,24 +4676,36 @@ function renderAll(): void {
     </div>
   </header>
 
-  <nav class="tab-nav">
-    <button class="tab-btn ${currentTab === 'participants' ? 'tab-active' : ''}" data-tab="participants" aria-label="משתתפים">
+  <nav class="tab-nav" role="tablist">
+    <button class="tab-btn ${currentTab === 'participants' ? 'tab-active' : ''}" data-tab="participants" aria-label="משתתפים" role="tab" aria-selected="${currentTab === 'participants'}">
       <span class="tab-icon">${SVG_ICONS.participants}</span>
-      <span class="tab-label">משתתפים <span class="count">${participants.length}</span></span>
+      <span class="tab-label">משתתפים</span>
+      <span class="tab-badge-count" data-count="${participants.length}" aria-hidden="true"></span>
+      <span class="tab-dot" aria-hidden="true"></span>
     </button>
-    <button class="tab-btn ${currentTab === 'task-rules' ? 'tab-active' : ''}" data-tab="task-rules" aria-label="משימות">
+    <button class="tab-btn ${currentTab === 'task-rules' ? 'tab-active' : ''}" data-tab="task-rules" aria-label="משימות${!preflight.canGenerate ? ' (יש בעיות)' : ''}" role="tab" aria-selected="${currentTab === 'task-rules'}">
       <span class="tab-icon">${SVG_ICONS.tasks}</span>
-      <span class="tab-label">משימות <span class="count">${templates.length}</span>
-      ${!preflight.canGenerate ? '<span class="badge badge-sm" style="background:var(--danger);margin-inline-start:4px">!</span>' : ''}</span>
+      <span class="tab-label">משימות</span>
+      <span class="tab-badge-count" data-count="${templates.length}" aria-hidden="true"></span>
+      <span class="tab-badge-dot tab-badge-warn ${!preflight.canGenerate ? '' : 'is-hidden'}" aria-hidden="true"></span>
+      <span class="tab-dot" aria-hidden="true"></span>
     </button>
-    <button class="tab-btn ${currentTab === 'schedule' ? 'tab-active' : ''}" data-tab="schedule" aria-label="שבצ&quot;ק">
-      <span class="tab-icon">${SVG_ICONS.chart}</span>
-      <span class="tab-label">שבצ"ק
-      ${currentSchedule ? '<span class="badge badge-sm" style="background:var(--success);margin-inline-start:4px">✓</span>' : ''}</span>
+    <button class="tab-btn tab-fab ${currentTab === 'schedule' ? 'tab-active' : ''}" data-tab="schedule" aria-label="שבצ&quot;ק" role="tab" aria-selected="${currentTab === 'schedule'}">
+      <span class="tab-fab-surface">
+        <span class="tab-icon">${SVG_ICONS.lightbulb}</span>
+        <span class="tab-badge-dot tab-badge-ok ${currentSchedule ? '' : 'is-hidden'}" aria-hidden="true"></span>
+      </span>
+      <span class="tab-label tab-fab-label">שבצ"ק</span>
     </button>
-    <button class="tab-btn ${currentTab === 'algorithm' ? 'tab-active' : ''}" data-tab="algorithm" aria-label="הגדרות">
+    <button class="tab-btn ${currentTab === 'algorithm' ? 'tab-active' : ''}" data-tab="algorithm" aria-label="הגדרות" role="tab" aria-selected="${currentTab === 'algorithm'}">
       <span class="tab-icon">${SVG_ICONS.settings}</span>
       <span class="tab-label">הגדרות</span>
+      <span class="tab-dot" aria-hidden="true"></span>
+    </button>
+    <button class="tab-btn ${currentTab === 'home' ? 'tab-active' : ''}" data-tab="home" aria-label="ראשי" role="tab" aria-selected="${currentTab === 'home'}">
+      <span class="tab-icon">${SVG_ICONS.home}</span>
+      <span class="tab-label">ראשי</span>
+      <span class="tab-dot" aria-hidden="true"></span>
     </button>
   </nav>
 

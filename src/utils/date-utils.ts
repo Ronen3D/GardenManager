@@ -120,11 +120,7 @@ export function operationalDateKey(d: Date, dayStartHour: number): string {
  * row on the occurrence's page — exactly as a non-boundary split already does.
  */
 export function taskOpDayStart(task: Task): Date {
-  if (
-    task.splitGroupId !== undefined &&
-    task.splitPart === 2 &&
-    task.splitOriginalMs !== undefined
-  ) {
+  if (task.splitGroupId !== undefined && task.splitPart === 2 && task.splitOriginalMs !== undefined) {
     return new Date(task.timeBlock.end.getTime() - task.splitOriginalMs);
   }
   return task.timeBlock.start;

@@ -173,7 +173,9 @@ function main(): void {
   const timeOverride = parseInt(process.env.BENCH_TIME_MS ?? '0', 10);
   if (timeOverride > 0) cfg.maxSolverTimeMs = timeOverride;
   if (process.env.BENCH_SCENARIOS) {
-    const ids = process.env.BENCH_SCENARIOS.split(',').map((s) => s.trim()).filter(Boolean);
+    const ids = process.env.BENCH_SCENARIOS.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
     cfg.scenarioIds = new Set(ids);
   }
 

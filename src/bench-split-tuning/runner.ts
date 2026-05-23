@@ -8,7 +8,12 @@
  * optimizer's self-reported `feasible` alone.
  */
 
-import { _benchSetMaxStructuralPasses, optimizeMultiAttempt, setBenchHooks, type OptimizationResult } from '../engine/optimizer';
+import {
+  _benchSetMaxStructuralPasses,
+  optimizeMultiAttempt,
+  setBenchHooks,
+  type OptimizationResult,
+} from '../engine/optimizer';
 import { fullValidate } from '../engine/validator';
 import { DEFAULT_CONFIG, type SchedulerConfig, type Task } from '../models/types';
 import type { BuiltScenario } from './scenarios';

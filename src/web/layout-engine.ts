@@ -498,12 +498,7 @@ export function generateGridTemplate(rows: LayoutRow[]): GridTemplate {
  * One name span for a card. `frozen` only adds the data flag used by the
  * tooltip/swap wiring — it never changes the visible text.
  */
-function cardNameSpan(
-  p: Participant | undefined,
-  a: Assignment | undefined,
-  taskId: string,
-  frozen: boolean,
-): string {
+function cardNameSpan(p: Participant | undefined, a: Assignment | undefined, taskId: string, frozen: boolean): string {
   if (!p) return `<span class="split-empty" title="חצי לא מאויש">—</span>`;
   const hover = a
     ? `data-pid="${p.id}" data-assignment-id="${a.id}" data-task-id="${taskId}"${frozen ? ' data-frozen="1"' : ''}`
@@ -534,9 +529,7 @@ function renderAssignmentCard(
   // split tasks, so that path is left untouched.
   if (task.splitGroupId !== undefined && !isManualActive) {
     if (task.splitPart === 2) return ''; // folded into the part-1 card
-    const sib = schedule.tasks.find(
-      (t) => t.splitGroupId === task.splitGroupId && t.splitPart === 2,
-    );
+    const sib = schedule.tasks.find((t) => t.splitGroupId === task.splitGroupId && t.splitPart === 2);
     if (sib) {
       const sb = getTaskAssignments(sib, schedule)[0];
       const aFrozen = liveMode.enabled && !isFutureTask(task, liveMode.currentTimestamp);

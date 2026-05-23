@@ -1659,10 +1659,7 @@ function runPhase2(assert: AssertFn): void {
       );
     const Q = l0Task('Q', 0, 12, 1, true);
     const BLK = l0Task('BLK', 0, 6, 1, false);
-    const withConflict = refine(
-      [Q, BLK],
-      [asg('Q', 'Q-s0', 'p1'), asg('BLK', 'BLK-s0', 'p2')],
-    );
+    const withConflict = refine([Q, BLK], [asg('Q', 'Q-s0', 'p1'), asg('BLK', 'BLK-s0', 'p2')]);
     assert(
       withConflict.changed === false && !withConflict.tasks.some((t) => t.splitGroupId !== undefined),
       '(p2) quality split REFUSED when the only eligible half-staffing would double-book (HC-5 enforced via full taskMap)',
@@ -1676,6 +1673,221 @@ function runPhase2(assert: AssertFn): void {
     assert(
       validateHardConstraints(noConflict.tasks, ps, noConflict.assignments, undefined).violations.length === 0,
       '(p2) the committed split is HC-valid (no double-booking / cross-task violation)',
+    );
+  }
+}
+
+// ── Phase 2: same-group MERGE (sgm) ──────────────────────────────────────────
+function runPhase2SameGroupMerge(assert: AssertFn): void {
+  const asg = (taskId: string, slotId: string, pid: string): Assignment => ({
+    id: `a-${taskId}-${slotId}-${pid}`,
+    taskId,
+    slotId,
+    participantId: pid,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(BASE),
+  });
+  // structuralRefine boilerplate (matches runPhase2's calling convention).
+  const refine = (tasks: Task[], best: Assignment[], ps: Participant[], splitPenalty: number) =>
+    structuralRefine(
+      best,
+      tasks,
+      ps,
+      { ...DEFAULT_CONFIG, splitPenalty },
+      new Set(),
+      new Map(ps.map((p) => [p.id, p])),
+      undefined,
+      undefined,
+      undefined,
+      5,
+      new Map(),
+      new Map(),
+      undefined,
+      true,
+    );
+
+  // (sgm-1) Same-group MERGE collapses a stale Stage-4 split; the merged
+  // whole slot's incumbent comes from the link's surviving group.
+  {
+    const { Tr, Sa, Sb } = splitSameGroupOccurrence();
+    const ps = [
+      partG('g1a', 0, 24, 'g1'),
+      partG('g1b', 0, 24, 'g1'),
+      partG('g1c', 0, 24, 'g1'),
+      partG('g2a', 0, 24, 'g2'),
+    ];
+    const best = [asg('O', 'O-s0', 'g1a'), asg(Sa.id, 'O-s1#a', 'g1b'), asg(Sb.id, 'O-s1#b', 'g1c')];
+    const r = refine([Tr, Sa, Sb], best, ps, /*splitPenalty*/ 1e9);
+    const merged = r.tasks.find((t) => t.id === 'O');
+    const halves = r.tasks.filter((t) => t.splitGroupId !== undefined);
+    assert(
+      r.changed === true &&
+        halves.length === 0 &&
+        !!merged &&
+        merged.slots.length === 2 &&
+        merged.sameGroupLinkId === 'O',
+      '(sgm-1) same-group MERGE collapses Stage-4 split back into the 2-slot residual (linkId preserved)',
+    );
+    const s1Asg = r.assignments.find((a) => a.taskId === 'O' && a.slotId === 'O-s1');
+    assert(
+      !!s1Asg && ['g1a', 'g1b', 'g1c'].includes(s1Asg.participantId) && s1Asg.participantId !== 'g2a',
+      '(sgm-1) merged whole slot stays inside the link group (requiredGroup filter is load-bearing)',
+    );
+    assert(
+      validateHardConstraints(r.tasks, ps, r.assignments, undefined).violations.length === 0,
+      '(sgm-1) post-merge schedule is HC-valid (HC-8 link-aware passes)',
+    );
+  }
+
+  // (sgm-2) No-residual mixed-split MERGE stamps `sameGroupLinkId` on the
+  // fresh whole task so still-split sibling slots remain link-coordinated.
+  // Setup: occurrence O has two splittable slots, both currently split, no
+  // residual. Only ONE slot can merge — the other has no g1 member with
+  // whole-window availability — so the per-occurrence `touched` guard would
+  // be irrelevant if linkId weren't stamped, but HC-8 demands the merged
+  // whole task be in the link unit.
+  const mkHalf = (
+    occId: string,
+    baseSlotId: string,
+    part: 1 | 2,
+    startH: number,
+    endH: number,
+    fullH: number,
+  ): Task => ({
+    id: `${occId}::${baseSlotId}#${part === 1 ? 'a' : 'b'}`,
+    name: `${occId} (${part}/2)`,
+    sourceName: occId,
+    timeBlock: tb(startH, endH),
+    requiredCount: 1,
+    slots: [
+      {
+        slotId: `${baseSlotId}#${part === 1 ? 'a' : 'b'}`,
+        acceptableLevels: [{ level: Level.L0 }],
+        requiredCertifications: [],
+      },
+    ],
+    sameGroupRequired: true,
+    blocksConsecutive: false,
+    splittable: true,
+    splitGroupId: `${occId}::${baseSlotId}`,
+    splitPart: part,
+    splitOriginalMs: fullH * H,
+    splitOccurrenceId: occId,
+    sameGroupLinkId: occId,
+  });
+  {
+    // O has slots s0 and s1, each [0,4] (concurrent). Both split into halves.
+    // Slot s0: g1a/g1b are whole-window available ⇒ MERGE can collapse it.
+    // Slot s1: no g1 member is whole-window available besides g1a/g1b, but
+    // they would be busy on s0 (overlapping time ⇒ HC-5 would forbid double
+    // booking). Since MERGE only processes ONE slot pair per occurrence per
+    // run (`touched` guard), this naturally stays mixed.
+    const Sa0 = mkHalf('O', 'O-s0', 1, 0, 2, 4);
+    const Sb0 = mkHalf('O', 'O-s0', 2, 2, 4, 4);
+    const Sa1 = mkHalf('O', 'O-s1', 1, 0, 2, 4);
+    const Sb1 = mkHalf('O', 'O-s1', 2, 2, 4, 4);
+    const ps = [
+      partG('g1a', 0, 24, 'g1'),
+      partG('g1b', 0, 24, 'g1'),
+      partG('g1c', 0, 2, 'g1'),
+      partG('g1d', 2, 4, 'g1'),
+    ];
+    const best = [
+      asg(Sa0.id, Sa0.slots[0].slotId, 'g1a'),
+      asg(Sb0.id, Sb0.slots[0].slotId, 'g1b'),
+      asg(Sa1.id, Sa1.slots[0].slotId, 'g1c'),
+      asg(Sb1.id, Sb1.slots[0].slotId, 'g1d'),
+    ];
+    const r = refine([Sa0, Sb0, Sa1, Sb1], best, ps, /*splitPenalty*/ 1e9);
+    const wholeO = r.tasks.find((t) => t.id === 'O');
+    const stillSplit = r.tasks.filter((t) => t.splitGroupId !== undefined);
+    assert(
+      r.changed === true && !!wholeO,
+      '(sgm-2) MERGE commits on one slot pair, creating a fresh whole task (no-residual branch)',
+    );
+    assert(
+      !!wholeO && wholeO.sameGroupLinkId === 'O',
+      '(sgm-2) mixed-split fresh whole task carries sameGroupLinkId=occId (link survives)',
+    );
+    assert(
+      stillSplit.length === 2 && stillSplit.every((t) => t.sameGroupLinkId === 'O'),
+      '(sgm-2) the un-merged slot pair remains split AND keeps its linkId — HC-8 still groups all three tasks',
+    );
+    assert(
+      validateHardConstraints(r.tasks, ps, r.assignments, undefined).violations.length === 0,
+      '(sgm-2) mixed post-merge state is HC-valid',
+    );
+  }
+
+  // (sgm-3) MERGE refused when no link-group candidate exists for the whole
+  // slot. Halves are individually coverable (Stage-4 was justified), but no
+  // g1 member spans the whole window ⇒ pickEligible returns null ⇒ skip.
+  {
+    const { Tr, Sa, Sb } = splitSameGroupOccurrence();
+    // Slot O-s0 of Tr is [0,4]; halves of O-s1 are [0,2] / [2,4]. Use g1
+    // members that can cover the split halves but NOT the whole O-s1 [0,4].
+    const ps = [
+      partG('g1a', 0, 24, 'g1'), // covers Tr's whole O-s0 [0,4]
+      partG('g1b', 0, 2, 'g1'), // only #a of O-s1
+      partG('g1c', 2, 4, 'g1'), // only #b of O-s1
+    ];
+    const best = [asg('O', 'O-s0', 'g1a'), asg(Sa.id, 'O-s1#a', 'g1b'), asg(Sb.id, 'O-s1#b', 'g1c')];
+    const r = refine([Tr, Sa, Sb], best, ps, /*splitPenalty*/ 1e9);
+    assert(
+      r.changed === false && r.tasks.filter((t) => t.splitGroupId !== undefined).length === 2,
+      '(sgm-3) MERGE refused when no link-group member can cover the reconstructed whole slot',
+    );
+  }
+
+  // (sgm-4) MERGE refused when only OUT-OF-GROUP candidates are eligible for
+  // the whole slot. This is the load-bearing assertion for the requiredGroup
+  // gate: a wrong-group participant available for the whole window must not
+  // sneak into the merged slot.
+  {
+    const { Tr, Sa, Sb } = splitSameGroupOccurrence();
+    const ps = [
+      partG('g1a', 0, 24, 'g1'), // covers Tr's O-s0 [0,4]
+      partG('g1b', 0, 2, 'g1'), // only #a
+      partG('g1c', 2, 4, 'g1'), // only #b
+      partG('g2x', 0, 24, 'g2'), // out-of-group; would qualify without the filter
+    ];
+    const best = [asg('O', 'O-s0', 'g1a'), asg(Sa.id, 'O-s1#a', 'g1b'), asg(Sb.id, 'O-s1#b', 'g1c')];
+    const r = refine([Tr, Sa, Sb], best, ps, /*splitPenalty*/ 1e9);
+    assert(
+      r.changed === false &&
+        !r.assignments.some((a) => a.participantId === 'g2x') &&
+        r.tasks.filter((t) => t.splitGroupId !== undefined).length === 2,
+      '(sgm-4) requiredGroup filter blocks an out-of-group candidate from merging into the link unit',
+    );
+  }
+
+  // (sgm-5) Non-same-group MERGE byte-identical: the new requiredGroup path
+  // is inert when sameGroupLinkId is undefined. Mirrors the existing (g)
+  // case to prove zero regression on the non-same-group path.
+  {
+    const ps = [partG('p1', 0, 24, 'g1'), partG('p2', 0, 24, 'g2')]; // different groups; doesn't matter for non-link
+    const Tns = {
+      id: 'M',
+      name: 'M',
+      sourceName: 'guard',
+      timeBlock: tb(0, 12),
+      requiredCount: 1,
+      slots: [{ slotId: 'M-s0', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: false,
+      splittable: true,
+    } as Task;
+    const Ma = makeSplitHalf(Tns, 1, tb(0, 12).start.getTime(), tb(6, 6).start.getTime(), Tns.slots[0]);
+    const Mb = makeSplitHalf(Tns, 2, tb(6, 6).start.getTime(), tb(0, 12).end.getTime(), Tns.slots[0]);
+    const best = [asg(Ma.id, Ma.slots[0].slotId, 'p1'), asg(Mb.id, Mb.slots[0].slotId, 'p2')];
+    const r = refine([Ma, Mb], best, ps, /*splitPenalty*/ 1e9);
+    assert(
+      r.changed === true &&
+        r.tasks.length === 1 &&
+        r.tasks[0].id === 'M' &&
+        r.tasks[0].splitGroupId === undefined &&
+        r.tasks[0].sameGroupLinkId === undefined,
+      '(sgm-5) non-same-group MERGE still commits unchanged (no group filter applied, linkId stays undefined)',
     );
   }
 }
@@ -1715,6 +1927,8 @@ export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   runPerPlacementHc4Link(assert);
   console.log('── Shift-Split: Phase 2 — scoring honesty + quality split/merge (p2) ──');
   runPhase2(assert);
+  console.log('── Shift-Split: Phase 2 — same-group MERGE (sgm) ──');
+  runPhase2SameGroupMerge(assert);
 }
 
 if (require.main === module) {

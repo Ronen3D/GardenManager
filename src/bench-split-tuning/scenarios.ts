@@ -45,7 +45,7 @@ export type AvailabilityPressure =
   | 'low' // ~1/12 participants get one 6h gap (very mild)
   | 'medium' // ~1/9 get one 6h gap (existing bench default)
   | 'high' // ~1/6 get one 6h gap
-  | 'very-high' // ~1/4 get a multi-day 12h gap
+  | 'very-high'; // ~1/4 get a multi-day 12h gap
 
 export interface ScenarioSpec {
   /** Stable human-readable key — used in result aggregation. */
@@ -271,11 +271,7 @@ function applyRecipe(tasks: Task[], recipe: TaskRecipe, baseDate: Date, days: nu
     // harder for one participant to cover whole — feasibility-split bait.
     const kept: Task[] = tasks.filter((t) => t.sourceName !== 'שמש');
     for (let day = 0; day < days; day++) {
-      const d = new Date(
-        baseDate.getFullYear(),
-        baseDate.getMonth(),
-        baseDate.getDate() + day,
-      );
+      const d = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + day);
       const blocks = generateShiftBlocks(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 5, 0), 8, 3);
       let i = 0;
       for (const block of blocks) {
@@ -394,127 +390,323 @@ function pair(spec: ScenarioSpec, label: string): ScenarioBundle {
 export const SCENARIOS: ScenarioBundle[] = [
   // ── Schedule length sweep (medium pool, default tasks, medium avail) ────
   pair(
-    { id: '1d-54p-default-med', days: 1, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '1d-54p-default-med',
+      days: 1,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '1d · 54p · default · medAvail',
   ),
   pair(
-    { id: '2d-54p-default-med', days: 2, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '2d-54p-default-med',
+      days: 2,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '2d · 54p · default · medAvail',
   ),
   pair(
-    { id: '4d-54p-default-med', days: 4, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '4d-54p-default-med',
+      days: 4,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '4d · 54p · default · medAvail',
   ),
   pair(
-    { id: '6d-54p-default-med', days: 6, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '6d-54p-default-med',
+      days: 6,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '6d · 54p · default · medAvail',
   ),
   pair(
-    { id: '3d-54p-default-med', days: 3, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '3d-54p-default-med',
+      days: 3,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '3d · 54p · default · medAvail',
   ),
   pair(
-    { id: '4d-54p-default-med', days: 4, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '4d-54p-default-med',
+      days: 4,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '4d · 54p · default · medAvail',
   ),
   pair(
-    { id: '5d-54p-default-med', days: 5, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '5d-54p-default-med',
+      days: 5,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '5d · 54p · default · medAvail',
   ),
   pair(
-    { id: '6d-54p-default-med', days: 6, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '6d-54p-default-med',
+      days: 6,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '6d · 54p · default · medAvail',
   ),
   pair(
-    { id: '7d-54p-default-med', days: 7, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-54p-default-med',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 54p · default · medAvail',
   ),
 
   // ── Pool size sweep (7 days, default tasks, medium avail) ───────────────
   pair(
-    { id: '7d-40p-default-med', days: 7, poolSize: 40, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-40p-default-med',
+      days: 7,
+      poolSize: 40,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 40p · default · medAvail (overload)',
   ),
   pair(
-    { id: '7d-48p-default-med', days: 7, poolSize: 48, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-48p-default-med',
+      days: 7,
+      poolSize: 48,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 48p · default · medAvail (tight)',
   ),
   pair(
-    { id: '7d-60p-default-med', days: 7, poolSize: 60, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-60p-default-med',
+      days: 7,
+      poolSize: 60,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 60p · default · medAvail',
   ),
   pair(
-    { id: '7d-72p-default-med', days: 7, poolSize: 72, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-72p-default-med',
+      days: 7,
+      poolSize: 72,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 72p · default · medAvail (slack)',
   ),
   pair(
-    { id: '7d-84p-default-med', days: 7, poolSize: 84, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-84p-default-med',
+      days: 7,
+      poolSize: 84,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 84p · default · medAvail (loose)',
   ),
 
   // ── Task pressure sweep (7 days, 54p, medium avail) ─────────────────────
   pair(
-    { id: '7d-54p-lite-med', days: 7, poolSize: 54, taskRecipe: 'lite', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-54p-lite-med',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'lite',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 54p · lite · medAvail',
   ),
   pair(
-    { id: '7d-54p-heavy-med', days: 7, poolSize: 54, taskRecipe: 'heavy', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-54p-heavy-med',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'heavy',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 54p · heavy · medAvail',
   ),
   pair(
-    { id: '7d-54p-extra-med', days: 7, poolSize: 54, taskRecipe: 'extra-shemesh-slots', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-54p-extra-med',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'extra-shemesh-slots',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 54p · extra-shemesh-slots · medAvail',
   ),
   pair(
-    { id: '7d-54p-quality-med', days: 7, poolSize: 54, taskRecipe: 'quality-opportunity', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-54p-quality-med',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'quality-opportunity',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 54p · quality-opportunity · medAvail',
   ),
   pair(
-    { id: '7d-54p-tight-med', days: 7, poolSize: 54, taskRecipe: 'tight-feasibility', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-54p-tight-med',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'tight-feasibility',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 54p · tight-feasibility · medAvail',
   ),
 
   // ── Availability pressure sweep (7d, 54p, default) ──────────────────────
   pair(
-    { id: '7d-54p-default-none', days: 7, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'none' },
+    {
+      id: '7d-54p-default-none',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'none',
+    },
     '7d · 54p · default · noAvail',
   ),
   pair(
-    { id: '7d-54p-default-low', days: 7, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'low' },
+    {
+      id: '7d-54p-default-low',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'low',
+    },
     '7d · 54p · default · lowAvail',
   ),
   pair(
-    { id: '7d-54p-default-high', days: 7, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'high' },
+    {
+      id: '7d-54p-default-high',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'high',
+    },
     '7d · 54p · default · highAvail',
   ),
   pair(
-    { id: '7d-54p-default-vh', days: 7, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-non-sameGroup', availability: 'very-high' },
+    {
+      id: '7d-54p-default-vh',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'very-high',
+    },
     '7d · 54p · default · veryHighAvail',
   ),
 
   // ── Splittable selectivity sweep (7d, 54p, default, med) ────────────────
   pair(
-    { id: '7d-54p-default-med-shemesh', days: 7, poolSize: 54, taskRecipe: 'default', splittableSet: 'shemesh-only', availability: 'medium' },
+    {
+      id: '7d-54p-default-med-shemesh',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'shemesh-only',
+      availability: 'medium',
+    },
     '7d · 54p · default · medAvail · split=shemesh-only',
   ),
   pair(
-    { id: '7d-54p-default-med-half', days: 7, poolSize: 54, taskRecipe: 'default', splittableSet: 'half-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-54p-default-med-half',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'half-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 54p · default · medAvail · split=half',
   ),
   pair(
-    { id: '7d-54p-default-med-all', days: 7, poolSize: 54, taskRecipe: 'default', splittableSet: 'all-incl-sameGroup', availability: 'medium' },
+    {
+      id: '7d-54p-default-med-all',
+      days: 7,
+      poolSize: 54,
+      taskRecipe: 'default',
+      splittableSet: 'all-incl-sameGroup',
+      availability: 'medium',
+    },
     '7d · 54p · default · medAvail · split=all-incl-sameGroup',
   ),
 
   // ── Stress: overload + tight feasibility + high avail ───────────────────
   pair(
-    { id: '7d-48p-tight-high', days: 7, poolSize: 48, taskRecipe: 'tight-feasibility', splittableSet: 'all-non-sameGroup', availability: 'high' },
+    {
+      id: '7d-48p-tight-high',
+      days: 7,
+      poolSize: 48,
+      taskRecipe: 'tight-feasibility',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'high',
+    },
     '7d · 48p · tight-feasibility · highAvail (stress)',
   ),
 
   // ── Slack: large pool + lite tasks + no avail (quality-side test) ───────
   pair(
-    { id: '7d-72p-lite-none', days: 7, poolSize: 72, taskRecipe: 'lite', splittableSet: 'all-non-sameGroup', availability: 'none' },
+    {
+      id: '7d-72p-lite-none',
+      days: 7,
+      poolSize: 72,
+      taskRecipe: 'lite',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'none',
+    },
     '7d · 72p · lite · noAvail (slack, quality)',
   ),
 
@@ -522,47 +714,124 @@ export const SCENARIOS: ScenarioBundle[] = [
   // These are the scenarios where shift-splitting is *exercised* — non-trivial
   // load with no feasibility blockers from sameGroup / missing certs.
   pair(
-    { id: '7d-18p-splitfoc-med', days: 7, poolSize: 18, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-18p-splitfoc-med',
+      days: 7,
+      poolSize: 18,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 18p · split-focused · medAvail (very tight)',
   ),
   pair(
-    { id: '7d-22p-splitfoc-med', days: 7, poolSize: 22, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-22p-splitfoc-med',
+      days: 7,
+      poolSize: 22,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 22p · split-focused · medAvail (tight)',
   ),
   pair(
-    { id: '7d-26p-splitfoc-med', days: 7, poolSize: 26, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-26p-splitfoc-med',
+      days: 7,
+      poolSize: 26,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 26p · split-focused · medAvail',
   ),
   pair(
-    { id: '7d-30p-splitfoc-med', days: 7, poolSize: 30, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-30p-splitfoc-med',
+      days: 7,
+      poolSize: 30,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 30p · split-focused · medAvail',
   ),
   pair(
-    { id: '7d-36p-splitfoc-med', days: 7, poolSize: 36, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '7d-36p-splitfoc-med',
+      days: 7,
+      poolSize: 36,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '7d · 36p · split-focused · medAvail',
   ),
   pair(
-    { id: '7d-22p-splitfoc-high', days: 7, poolSize: 22, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'high' },
+    {
+      id: '7d-22p-splitfoc-high',
+      days: 7,
+      poolSize: 22,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'high',
+    },
     '7d · 22p · split-focused · highAvail',
   ),
   pair(
-    { id: '7d-30p-splitfoc-high', days: 7, poolSize: 30, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'high' },
+    {
+      id: '7d-30p-splitfoc-high',
+      days: 7,
+      poolSize: 30,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'high',
+    },
     '7d · 30p · split-focused · highAvail',
   ),
   pair(
-    { id: '5d-22p-splitfoc-med', days: 5, poolSize: 22, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '5d-22p-splitfoc-med',
+      days: 5,
+      poolSize: 22,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '5d · 22p · split-focused · medAvail',
   ),
   pair(
-    { id: '5d-30p-splitfoc-med', days: 5, poolSize: 30, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '5d-30p-splitfoc-med',
+      days: 5,
+      poolSize: 30,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '5d · 30p · split-focused · medAvail',
   ),
   pair(
-    { id: '3d-22p-splitfoc-med', days: 3, poolSize: 22, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '3d-22p-splitfoc-med',
+      days: 3,
+      poolSize: 22,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '3d · 22p · split-focused · medAvail',
   ),
   pair(
-    { id: '2d-22p-splitfoc-med', days: 2, poolSize: 22, taskRecipe: 'split-focused', splittableSet: 'all-non-sameGroup', availability: 'medium' },
+    {
+      id: '2d-22p-splitfoc-med',
+      days: 2,
+      poolSize: 22,
+      taskRecipe: 'split-focused',
+      splittableSet: 'all-non-sameGroup',
+      availability: 'medium',
+    },
     '2d · 22p · split-focused · medAvail',
   ),
 ];

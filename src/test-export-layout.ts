@@ -288,6 +288,7 @@ export async function runExportLayoutTests(assert: AssertFn): Promise<void> {
   testC56_layoutEngine(assert);
   testC57_day0Adapter(assert);
   testC58_pdfPacker(assert);
+  testC59_pdfSpread(assert);
 
   console.log('── WP5 export/layout tests complete ───────────');
 }
@@ -1069,6 +1070,192 @@ function testC58_pdfPacker(assert: AssertFn): void {
   const detRun1 = JSON.stringify(planDayLayout(detIn));
   const detRun2 = JSON.stringify(planDayLayout(detIn));
   assert(detRun1 === detRun2, 'C5.8: planner is deterministic (identical input ⇒ identical plan)');
+}
+
+// ─── C5.9 — Phase 1.5 spread pass widens & centers sparse pages ──────────────
+// The MAXRECTS packer (C5.8) is a pure space-minimizer: on sparse days it
+// cheerfully crowds every tiny section into one corner and leaves the other
+// half of the page dead. C5.9 covers the spread pass that — after a successful
+// 1-page fit — grows name sub-columns, then cell padding, then centers the
+// cluster, gated by a re-pack into one bin. Invariants: never grows the page
+// count, never regresses a dense page (slack-gate no-op), deterministic.
+
+function testC59_pdfSpread(assert: AssertFn): void {
+  const geo: PageGeometry = {
+    usableWidth: 281,
+    heightBudget: 175,
+    labelOffset: 3,
+    rowGap: 3,
+    colGap: 4,
+    timeColWidth: 14,
+    minNameColWidth: 20,
+    idealNameColWidth: 30,
+  };
+
+  type R = { x: number; y: number; width: number; height: number; page: number };
+  const anyOverlap = (r: R[]): boolean => {
+    for (let i = 0; i < r.length; i++) {
+      for (let j = i + 1; j < r.length; j++) {
+        const a = r[i];
+        const b = r[j];
+        if (a.page !== b.page) continue;
+        if (
+          a.x < b.x + b.width - 1e-6 &&
+          b.x < a.x + a.width - 1e-6 &&
+          a.y < b.y + b.height - 1e-6 &&
+          b.y < a.y + a.height - 1e-6
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  const bbox = (r: R[], page = 0): { x0: number; y0: number; x1: number; y1: number } => {
+    let x0 = Number.POSITIVE_INFINITY;
+    let y0 = Number.POSITIVE_INFINITY;
+    let x1 = 0;
+    let y1 = 0;
+    for (const s of r) {
+      if (s.page !== page) continue;
+      if (s.x < x0) x0 = s.x;
+      if (s.y < y0) y0 = s.y;
+      if (s.x + s.width > x1) x1 = s.x + s.width;
+      if (s.y + s.height > y1) y1 = s.y + s.height;
+    }
+    return { x0, y0, x1, y1 };
+  };
+
+  // ── (1) Sparse day matching the bug-report screenshot: 7 small sections with
+  // ample headroom both axes. Spread MUST widen the cluster AND center it.
+  const sparseInput = {
+    sections: [
+      { id: 'hamama', displayOrder: 0, logicalColCount: 1, nameGrid: [[1], [1]] },
+      { id: 'adanit', displayOrder: 1, logicalColCount: 1, nameGrid: [[6], [6], [6], [3]] },
+      { id: 'boker', displayOrder: 2, logicalColCount: 1, nameGrid: [[2]] },
+      { id: 'erev', displayOrder: 3, logicalColCount: 1, nameGrid: [[2]] },
+      { id: 'shemesh', displayOrder: 4, logicalColCount: 1, nameGrid: [[1], [1], [1], [1], [3], [2]] },
+      { id: 'mamtera', displayOrder: 5, logicalColCount: 1, nameGrid: [[2]] },
+      { id: 'kruv', displayOrder: 6, logicalColCount: 1, nameGrid: [[3], [3], [3]] },
+    ],
+    geometry: geo,
+    levers: DEFAULT_LEVERS,
+  };
+  const sparse = planDayLayout(sparseInput);
+  assert(sparse.pageCount === 1 && !sparse.overflow, 'C5.9: sparse day still fits one page after spread');
+  assert(!anyOverlap(sparse.sections), 'C5.9: sparse day — no overlapping sections');
+  const sparseBb = bbox(sparse.sections);
+  const sparseCenterX = (sparseBb.x0 + sparseBb.x1) / 2;
+  // Lever C took effect: padding grew above the Phase 1 floor.
+  assert(
+    sparse.cellPadding > DEFAULT_LEVERS.cellPaddings[0] + 1e-6,
+    `C5.9: sparse — padding grew from ${DEFAULT_LEVERS.cellPaddings[0]} (got ${sparse.cellPadding.toFixed(2)})`,
+  );
+  // Lever D took effect: cluster sits at horizontal page midpoint.
+  assert(
+    Math.abs(sparseCenterX - geo.usableWidth / 2) <= 2,
+    `C5.9: sparse cluster horizontally centered (center=${sparseCenterX.toFixed(1)}, mid=${(geo.usableWidth / 2).toFixed(1)})`,
+  );
+  // Width invariant: spread MUST NOT inflate per-section widths beyond what
+  // Phase 1 picked (this is the bug from the first spread iteration — Levers
+  // A/B widening sparse 1-name tables to span the whole page).
+  const sparseRawWidths = planDayLayout({
+    ...sparseInput,
+    levers: { ...DEFAULT_LEVERS, disableSpread: true },
+  }).sections;
+  for (const s of sparse.sections) {
+    const raw = sparseRawWidths.find((r) => r.id === s.id);
+    if (!raw) continue;
+    assert(
+      Math.abs(s.width - raw.width) < 1e-6 && s.nameCols === raw.nameCols,
+      `C5.9: section '${s.id}' width/nameCols unchanged by spread (raw=${raw.width.toFixed(1)}/${raw.nameCols}, spread=${s.width.toFixed(1)}/${s.nameCols})`,
+    );
+  }
+
+  // ── (2) Spread-disabled flag: same fixture, `disableSpread: true` ⇒ raw
+  // Phase 1 placements (no widening, no centering — cluster pinned at x=0).
+  const sparseRaw = planDayLayout({ ...sparseInput, levers: { ...DEFAULT_LEVERS, disableSpread: true } });
+  assert(sparseRaw.pageCount === 1, 'C5.9: disableSpread — still 1 page');
+  const rawBb = bbox(sparseRaw.sections);
+  assert(rawBb.x0 < 1, `C5.9: disableSpread leaves cluster pinned at left (x0=${rawBb.x0.toFixed(2)}, expected ≈ 0)`);
+  assert(
+    Math.abs(sparseCenterX - geo.usableWidth / 2) < Math.abs((rawBb.x0 + rawBb.x1) / 2 - geo.usableWidth / 2),
+    'C5.9: spread cluster is closer to page center than raw Phase 1',
+  );
+
+  // ── (3) No-regression on dense day: re-run the C5.8 realDay fixture. The
+  // slack-gate must keep the spread a no-op (or near-no-op) — page count stays
+  // 1, no section migrates pages, predicted height ≤ heightBudget.
+  const dense = planDayLayout({
+    sections: [
+      {
+        id: 'adanit',
+        displayOrder: 0,
+        logicalColCount: 4,
+        nameGrid: [
+          [3, 4, 3, 3],
+          [4, 3, 3, 3],
+          [3, 4, 3, 3],
+        ],
+      },
+      { id: 'shemesh', displayOrder: 1, logicalColCount: 1, nameGrid: [[3], [3], [3], [3], [5], [3]] },
+      { id: 'shshsh', displayOrder: 2, logicalColCount: 1, nameGrid: [[9], [9], [9], [6], [9], [9]] },
+      { id: 'mamtera', displayOrder: 3, logicalColCount: 1, nameGrid: [[3]] },
+      { id: 'gk', displayOrder: 4, logicalColCount: 1, nameGrid: [[2]] },
+      { id: 'matara', displayOrder: 5, logicalColCount: 1, nameGrid: [[3]] },
+      { id: 'bi', displayOrder: 6, logicalColCount: 1, nameGrid: [[1]] },
+      { id: 'dgk', displayOrder: 7, logicalColCount: 1, nameGrid: [[1]] },
+    ],
+    geometry: geo,
+    levers: DEFAULT_LEVERS,
+  });
+  assert(
+    !dense.overflow && dense.pageCount === 1 && dense.predictedHeight <= geo.heightBudget,
+    'C5.9: dense day — spread did not push past 1 page or exceed height budget',
+  );
+  assert(!anyOverlap(dense.sections), 'C5.9: dense day — no overlapping sections after spread');
+
+  // ── (4) No-regression on impossible day: Phase 1 fails so spread never runs.
+  // The 2-page balanced fallback must be byte-equivalent to C5.8's expectation.
+  const huge = planDayLayout({
+    sections: Array.from({ length: 6 }, (_, i) => ({
+      id: `S${i}`,
+      displayOrder: i,
+      logicalColCount: 1,
+      nameGrid: Array.from({ length: 30 }, () => [1]),
+    })),
+    geometry: geo,
+    levers: DEFAULT_LEVERS,
+  });
+  assert(
+    huge.overflow && huge.pageCount === 2 && huge.fontSize >= 7,
+    'C5.9: impossible day — spread untouched (still spills to 2 balanced pages at readable font)',
+  );
+
+  // ── (5) Determinism: identical inputs ⇒ identical plans (with spread on).
+  const det1 = JSON.stringify(planDayLayout(sparseInput));
+  const det2 = JSON.stringify(planDayLayout(sparseInput));
+  assert(det1 === det2, 'C5.9: spread pass is deterministic');
+
+  // ── (6) Single-section day — the cluster is one rectangle; centering should
+  // land it at the page midpoint on both axes.
+  const single = planDayLayout({
+    sections: [{ id: 'solo', displayOrder: 0, logicalColCount: 1, nameGrid: [[1]] }],
+    geometry: geo,
+    levers: DEFAULT_LEVERS,
+  });
+  assert(single.pageCount === 1 && single.sections.length === 1, 'C5.9: single-section day — 1 page, 1 placement');
+  const solo = single.sections[0];
+  const soloCenterX = solo.x + solo.width / 2;
+  const soloCenterY = solo.y + solo.height / 2;
+  assert(
+    Math.abs(soloCenterX - geo.usableWidth / 2) <= 2,
+    `C5.9: single-section — horizontally centered (x-center=${soloCenterX.toFixed(1)})`,
+  );
+  assert(
+    Math.abs(soloCenterY - geo.heightBudget / 2) <= 2,
+    `C5.9: single-section — vertically centered (y-center=${soloCenterY.toFixed(1)})`,
+  );
 }
 
 // ─── Standalone entry point ─────────────────────────────────────────────────

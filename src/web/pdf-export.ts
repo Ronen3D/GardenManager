@@ -40,12 +40,7 @@ import { fmtTime } from '../utils/date-utils';
 import { triggerShareOrDownload } from './data-transfer';
 import { buildDay0Schedule } from './day0-adapter';
 import { getTasksForDay, hexToRgb } from './export-utils';
-import {
-  type AssignedSlot,
-  computeSectionMetrics,
-  getTaskAssignments,
-  type SectionMetrics,
-} from './layout-engine';
+import { type AssignedSlot, computeSectionMetrics, getTaskAssignments, type SectionMetrics } from './layout-engine';
 import { groupColor } from './ui-helpers';
 import { RUBIK_BOLD_FONT_BASE64 } from './utils/rubik-bold-font-data';
 import { RUBIK_FONT_BASE64 } from './utils/rubik-font-data';
@@ -219,20 +214,14 @@ function sectionRowTimes(tasks: Task[]): number[] {
  * entry (the sibling second half folds in and is never drawn on its own);
  * non-split slots are unchanged. `accept` applies the column's slot filter.
  */
-function columnNameEntries(
-  tasksAtTime: Task[],
-  schedule: Schedule,
-  accept: (s: AssignedSlot) => boolean,
-): NameEntry[] {
+function columnNameEntries(tasksAtTime: Task[], schedule: Schedule, accept: (s: AssignedSlot) => boolean): NameEntry[] {
   const out: NameEntry[] = [];
   for (const tk of tasksAtTime) {
     if (tk.splitGroupId !== undefined && tk.splitPart === 2) continue; // folded into part-1
     if (tk.splitGroupId !== undefined && tk.splitPart === 1) {
       const a = getTaskAssignments(tk, schedule).find((s) => s.participant && accept(s));
       if (!a) continue; // this column doesn't own the split slot
-      const sib = schedule.tasks.find(
-        (t) => t.splitGroupId === tk.splitGroupId && t.splitPart === 2,
-      );
+      const sib = schedule.tasks.find((t) => t.splitGroupId === tk.splitGroupId && t.splitPart === 2);
       const b = sib ? getTaskAssignments(sib, schedule).find((s) => s.participant) : undefined;
       const nameB = b?.participant?.name ?? '—';
       out.push({ raw: `${a.participant!.name} / ${nameB}`, color: groupColor(a.participant!.group) });

@@ -145,7 +145,7 @@ function main(): void {
   }
   console.log('───────────────────────────────────────────────────────────────');
   console.log(
-    `Done in ${(((Date.now() - t0) / 60000) | 0)}m — ${totalRepaired} repaired, ${totalStillBad} still time-capped.`,
+    `Done in ${((Date.now() - t0) / 60000) | 0}m — ${totalRepaired} repaired, ${totalStillBad} still time-capped.`,
   );
 }
 

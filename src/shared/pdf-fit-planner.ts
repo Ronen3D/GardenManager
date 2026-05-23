@@ -92,6 +92,10 @@ export interface FitLevers {
   headPadding: number;
   /** Hard cap on name sub-columns regardless of available width. */
   maxNameCols: number;
+  /** Ceiling (mm) the spread pass may grow `cellPadding` to. Default 3.0. */
+  maxSpreadCellPadding?: number;
+  /** Skip the spread pass — preserve the raw Phase 1 placements. Default false. */
+  disableSpread?: boolean;
 }
 
 export interface PlanInput {
@@ -144,10 +148,21 @@ export const DEFAULT_LEVERS: FitLevers = {
   cellPaddings: [1.8, 1.4, 1.0, 0.7],
   headPadding: 1.5,
   maxNameCols: 12,
+  maxSpreadCellPadding: 3.0,
 };
 
 /** Step (mm) for the 2-page balancing cap search. */
 const CAP_STEP = 2;
+
+/**
+ * Page is "dense" — and the spread pass is a no-op — when both axes have less
+ * than this much empty space (~one minimum name sub-column). Keeps already-full
+ * pages byte-identical to pre-spread output.
+ */
+const SPREAD_MIN_SLACK_MM = 10;
+
+/** Lever C step (mm) — `cellPadding` grows in 0.4 mm increments. */
+const SPREAD_PAD_STEP = 0.4;
 
 // ─── Height / width model ────────────────────────────────────────────────────
 
@@ -383,6 +398,10 @@ function emptyResult(): PlanResult {
  *   3. reduce font size (floor 7 pt),
  *   4. open a 2nd page → restart at the best font, then balance the two pages,
  *   5. (unreachable) N pages at the floor, oversize sections on their own page.
+ *
+ * After step 1 succeeds, a **spread pass** (`spreadLayout`) grows cell padding
+ * for breathing room and centers the cluster on the page — purely aesthetic,
+ * never grows the page count, no-op on dense pages.
  */
 export function planDayLayout(input: PlanInput): PlanResult {
   const { sections, geometry: geo, levers } = input;
@@ -463,9 +482,77 @@ export function planDayLayout(input: PlanInput): PlanResult {
     return res;
   };
 
+  /**
+   * Phase 1.5 — spread pass. After a successful 1-page fit, grow cell padding
+   * for breathing room then center the cluster on the page. Width is left
+   * exactly where Phase 1 chose it — growing `nameCols` post-fit was tried
+   * and dropped because, on a sparse day with all 1-name cells, it inflates
+   * single-row sections to span the full page and splits cells into mostly-
+   * empty sub-cells (visible empty bordered cells, worse than the cramped
+   * original). No-op when the page is already dense or `disableSpread` is set.
+   */
+  const spreadLayout = (fit: {
+    placements: PackPlacement[];
+    fontSize: number;
+    cellPadding: number;
+    nameCols: Map<string, number>;
+  }): typeof fit => {
+    let bboxW = 0;
+    let bboxH = 0;
+    for (const p of fit.placements) {
+      bboxW = Math.max(bboxW, p.x + p.w);
+      bboxH = Math.max(bboxH, p.y + p.h);
+    }
+    if (geo.usableWidth - bboxW < SPREAD_MIN_SLACK_MM && geo.heightBudget - bboxH < SPREAD_MIN_SLACK_MM) {
+      return fit; // dense page — preserve byte-identical Phase 1 output
+    }
+
+    const tryPack = (pad: number): PackPlacement[] | null =>
+      packBins(
+        itemsFor(fit.nameCols, fit.fontSize, pad),
+        geo.usableWidth,
+        geo.heightBudget,
+        geo.colGap,
+        geo.rowGap,
+        1,
+        false,
+      );
+
+    let curPadding = fit.cellPadding;
+    let curPlacements = fit.placements;
+
+    // Lever C — grow cellPadding for breathing room (every row gains 2·Δpad).
+    const padCap = levers.maxSpreadCellPadding ?? 3.0;
+    while (curPadding + SPREAD_PAD_STEP <= padCap + EPS) {
+      const trialPad = curPadding + SPREAD_PAD_STEP;
+      const packed = tryPack(trialPad);
+      if (!packed) break;
+      curPadding = trialPad;
+      curPlacements = packed;
+    }
+
+    // Lever D — center the final cluster on the page (mirror-safe under RTL).
+    let finalW = 0;
+    let finalH = 0;
+    for (const p of curPlacements) {
+      finalW = Math.max(finalW, p.x + p.w);
+      finalH = Math.max(finalH, p.y + p.h);
+    }
+    const dx = Math.max(0, (geo.usableWidth - finalW) / 2);
+    const dy = Math.max(0, (geo.heightBudget - finalH) / 2);
+    if (dx > EPS || dy > EPS) {
+      curPlacements = curPlacements.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy }));
+    }
+
+    return { placements: curPlacements, fontSize: fit.fontSize, cellPadding: curPadding, nameCols: fit.nameCols };
+  };
+
   // ── 1: single page ──
   const one = attempt(1, geo.heightBudget);
-  if (one) return withNameCols(build(one.placements, one.fontSize, one.cellPadding), one.nameCols);
+  if (one) {
+    const spread = levers.disableSpread ? one : spreadLayout(one);
+    return withNameCols(build(spread.placements, spread.fontSize, spread.cellPadding), spread.nameCols);
+  }
 
   // ── 2: two balanced pages, at the best readable font ──
   const two = attempt(2, geo.heightBudget);
