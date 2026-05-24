@@ -90,7 +90,7 @@ test.describe('Deep tour — sequencing', () => {
 
     // Macro caption advanced to the second topic track; per-track counter reset.
     await expect(caption).toContainText('מסלול 2 מתוך 6');
-    await expect(popover.locator('.tutorial-step-counter')).toContainText('מתוך 15');
+    await expect(popover.locator('.tutorial-step-counter')).toContainText('מתוך 16');
 
     // Crossing the boundary must NOT have exited/re-entered demo mode: the
     // backup blob is still present and byte-identical to the one taken at start

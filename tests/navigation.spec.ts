@@ -30,7 +30,7 @@ test.describe('Navigation across viewports', () => {
   test('tab icons exist for mobile bottom nav', async ({ page, viewport }) => {
     if (viewport && viewport.width <= 768) {
       const icons = page.locator('.tab-nav .tab-icon');
-      await expect(icons).toHaveCount(4);
+      await expect(icons).toHaveCount(5);
     }
   });
 });

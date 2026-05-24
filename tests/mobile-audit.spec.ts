@@ -101,15 +101,15 @@ test.describe('2. Bottom navigation', () => {
     expect(box!.y + box!.height).toBeGreaterThan(viewport!.height - 30);
   });
 
-  test('bottom nav has 4 tab buttons', async ({ page }) => {
+  test('bottom nav has 5 tab buttons', async ({ page }) => {
     const buttons = page.locator('.tab-nav .tab-btn');
-    await expect(buttons).toHaveCount(4);
+    await expect(buttons).toHaveCount(5);
   });
 
   test('each tab button has an icon', async ({ page }) => {
     const icons = page.locator('.tab-nav .tab-btn .tab-icon');
-    await expect(icons).toHaveCount(4);
-    for (let i = 0; i < 4; i++) {
+    await expect(icons).toHaveCount(5);
+    for (let i = 0; i < 5; i++) {
       await expect(icons.nth(i)).toBeVisible();
     }
   });
