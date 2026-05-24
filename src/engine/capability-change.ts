@@ -43,7 +43,6 @@ import { describeSlot } from '../utils/date-utils';
 import { isSchedulerDiagOn } from './diagnostics';
 import {
   type AffectedAssignment,
-  applyCompositionToAssignments,
   applyCompositionToState,
   type BatchRescuePlan,
   buildPerParticipantChanges,
@@ -110,22 +109,35 @@ export interface GenerateCapabilityChangeOpts {
 // ─── Focal-continuity gate thresholds ───────────────────────────────────────
 
 /**
- * Active focal-placement extension fires only when BOTH conditions hold:
- *   - focal retains < 50% of their pre-change effective hours, AND
- *   - focal is below their proportional target by > 2 effective hours.
+ * Active focal-placement extension fires when EITHER of these holds, AND the
+ * focal isn't already essentially at target:
+ *   - focal retains < 70% of their pre-change effective hours, OR
+ *   - focal is below their proportional target by > 3 effective hours.
  *
- * The retention check ensures the cert loss was meaningful (not a one-shift
- * impact). The deficit check ensures the fairness gap is large enough to be
- * worth the extra disruption — a focal with low capacity has a low target,
- * so a small absolute deficit shouldn't trigger reshuffling valid slots.
+ * Earlier this was an AND-gate (retention < 0.5 AND deficit > 2), which left
+ * the moderate "middle band" (retention 50–70% with a real workload hole)
+ * unhelped — the base depth-1 swap fills the vacated cert slot but doesn't
+ * give the focal alternative work. Splitting into OR lets either signal fire
+ * the extension; the `FOCAL_MIN_DEFICIT_FLOOR` guard prevents over-eager
+ * firing when the focal is essentially at target.
  *
- * `MAX_EXTENSION_SWAPS` bounds how many extra swaps the extension may add to
- * a single plan. Each swap must strictly improve composite score — the
- * extension never makes a plan worse.
+ * Per-iteration self-regulation: once the gate fires, the loop's strict
+ * composite-improvement check (`delta > 1e-6`) naturally stops adding
+ * extension moves once the focal is at target — additional placements would
+ * hurt composite and get rejected. So the gate only decides whether to ENTER
+ * the loop; the inner gate decides how far to go.
+ *
+ * `MAX_EXTENSION_SWAPS` bounds the total extension swaps the loop may add.
+ * Each swap must strictly improve composite score — the extension never
+ * makes a plan worse — so 3 is an upper bound on disruption, not a target.
+ * In practice the strict-gain check terminates the loop earlier in most
+ * cases; the cap exists to bound worst-case work and prevent runaway
+ * rebalancing when a participant has a very large deficit.
  */
-const FOCAL_RETENTION_GATE = 0.5;
-const FOCAL_DEFICIT_HOURS_GATE = 2;
-const MAX_EXTENSION_SWAPS = 2;
+const FOCAL_RETENTION_TRIGGER = 0.7;
+const FOCAL_DEFICIT_TRIGGER_HOURS = 3;
+const FOCAL_MIN_DEFICIT_FLOOR = 1;
+const MAX_EXTENSION_SWAPS = 3;
 
 // ─── Local capacity fallback ────────────────────────────────────────────────
 
@@ -324,8 +336,14 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
     ctx.capacities,
     ctx.taskMap,
   );
-  if (metrics.retentionFraction >= FOCAL_RETENTION_GATE) return null;
-  if (metrics.deficit <= FOCAL_DEFICIT_HOURS_GATE) return null;
+  // Floor: skip if focal is essentially at target — any further placement would
+  // push them over and the per-iteration strict-improvement check would reject
+  // it anyway, so we save the work.
+  if (metrics.deficit < FOCAL_MIN_DEFICIT_FLOOR) return null;
+  // OR-trigger: either retention drop OR absolute deficit fires the extension.
+  const triggeredByRetention = metrics.retentionFraction < FOCAL_RETENTION_TRIGGER;
+  const triggeredByDeficit = metrics.deficit > FOCAL_DEFICIT_TRIGGER_HOURS;
+  if (!triggeredByRetention && !triggeredByDeficit) return null;
 
   const focal = ctx.participantMap.get(ctx.focalId);
   if (!focal) return null;
@@ -866,7 +884,11 @@ export function generateCapabilityChangePlans(
       certLabelResolver: opts.certLabelResolver,
       baselineComposite: baselineScore.compositeScore,
     };
-    const extensionConsiderLimit = Math.min(scored.length, Math.max(maxPlans * 2, 6));
+    // Widened from `max(maxPlans*2, 6)` to `max(maxPlans*3, 10)` (2026-05-24)
+    // so a quality-ranked-#7-#10 base plan that would uniquely benefit from
+    // the focal extension still gets the chance — bound stays small enough
+    // to keep total per-call cost bounded by `scored.length * O(extension)`.
+    const extensionConsiderLimit = Math.min(scored.length, Math.max(maxPlans * 3, 10));
     const extendedVariants: BatchRescuePlan[] = [];
     for (let i = 0; i < extensionConsiderLimit; i++) {
       const ext = tryFocalContinuityExtensions(scored[i], extCtx);

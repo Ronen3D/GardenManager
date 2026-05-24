@@ -15,13 +15,6 @@
 
 const KEY_INSTALL_NUDGE_SEEN = 'gardenmanager_install_nudge_seen';
 
-// Home-tab install banner — a *separate* dismiss key from the Settings
-// share-target nudge above. They are distinct surfaces with distinct messages
-// (broad "install the app" vs. narrow "install to receive shared files") and
-// distinct platform reach (the banner also covers iOS), so each owns its own
-// dismissal: hiding one must not silently hide the other.
-const KEY_HOME_INSTALL_SEEN = 'gardenmanager_home_install_seen';
-
 /** Minimal shape of the non-standard `BeforeInstallPromptEvent`. */
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -34,21 +27,25 @@ let _captureInstalled = false;
 /**
  * Register the `beforeinstallprompt` / `appinstalled` listeners. Call once,
  * as early as possible in app init, so the (one-shot) event is never missed.
+ *
+ * `onChange` (optional) fires whenever install state shifts — used by the
+ * Home-tab install panel to re-render immediately when the deferred prompt
+ * arrives late or when the user completes the install, instead of waiting
+ * for the next user-triggered render.
  */
-export function initPwaInstallCapture(): void {
+export function initPwaInstallCapture(onChange?: () => void): void {
   if (_captureInstalled) return;
   _captureInstalled = true;
   window.addEventListener('beforeinstallprompt', (e) => {
     // Prevent the mini-infobar so we can trigger the prompt from our own UI.
     e.preventDefault();
     _deferredPrompt = e as BeforeInstallPromptEvent;
+    onChange?.();
   });
   window.addEventListener('appinstalled', () => {
     _deferredPrompt = null;
     markInstallNudgeSeen();
-    // Same install covers the Home banner — never resurface it post-install,
-    // even before the next standalone relaunch.
-    markHomeInstallSeen();
+    onChange?.();
   });
 }
 
@@ -101,36 +98,20 @@ function isIosSafari(): boolean {
   return /Safari/i.test(ua) && /Version\//i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|GSA/i.test(ua);
 }
 
-export function isHomeInstallSeen(): boolean {
-  try {
-    return localStorage.getItem(KEY_HOME_INSTALL_SEEN) === '1';
-  } catch {
-    return false;
-  }
-}
-
-export function markHomeInstallSeen(): void {
-  try {
-    localStorage.setItem(KEY_HOME_INSTALL_SEEN, '1');
-  } catch {
-    /* storage full — banner may reappear on next load, acceptable */
-  }
-}
-
 /**
- * Drives the mobile Home-tab install banner. Independent of the Settings
- * share-target nudge (its own dismiss key, broader copy, both platforms):
+ * Drives the mobile Home-tab install panel. The panel is intentionally
+ * persistent — it has no dismiss control, so visibility is fully derived
+ * from platform state:
  *
  * - `'android'` → a `beforeinstallprompt` was captured: offer the one-tap
  *   native install button (`runInstallPrompt`).
  * - `'ios'`     → iOS Safari, not installed: show the manual Share → Add to
  *   Home Screen hint (no programmatic prompt exists on iOS).
- * - `null`      → already installed/standalone, dismissed, or unsupported
- *   (desktop browsers, alternative iOS browsers, webviews).
+ * - `null`      → already installed/standalone, or unsupported (desktop
+ *   browsers, alternative iOS browsers, webviews) → nothing actionable.
  */
 export function homeInstallBannerMode(): 'android' | 'ios' | null {
   if (isStandalone()) return null;
-  if (isHomeInstallSeen()) return null;
   if (_deferredPrompt) return 'android';
   if (isIosSafari()) return 'ios';
   return null;
@@ -138,8 +119,10 @@ export function homeInstallBannerMode(): 'android' | 'ios' | null {
 
 /**
  * Trigger the captured install prompt and wait for the user's choice. Marks
- * the nudge seen afterwards (whatever the outcome) and drops the one-shot
- * prompt reference so the nudge never reappears.
+ * the Settings share-target nudge seen afterwards (whatever the outcome) and
+ * drops the one-shot prompt reference. Browser will refire
+ * `beforeinstallprompt` later under its engagement heuristics, restoring the
+ * Home panel's Install button on the next eligible event.
  */
 export async function runInstallPrompt(): Promise<void> {
   const deferred = _deferredPrompt;

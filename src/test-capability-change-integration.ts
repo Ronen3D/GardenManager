@@ -1139,6 +1139,153 @@ console.log('\n── Test 10: light cert-loss (1 hour) does NOT trigger extensi
   assert(top.focalContinuityExtended !== true, 'fc-light: top plan has no focal-continuity extension');
 }
 
+// ─── Test 11 — middle band: new OR-gate fires where old AND-gate skipped ────
+
+console.log('\n── Test 11: middle-band (retention ≈ 0.6) — new OR-gate catches what old AND-gate missed ──');
+{
+  // Scenario chosen to land SQUARELY inside the 50–70% retention band, not
+  // at the 0.5 boundary, so the test proves the new gate catches the intended
+  // cohort.
+  //
+  // Pool (all L0, equal capacity):
+  //   P (focal, has cert X):   2 cert (16h) + 3 non-cert (24h) = 40h pre-loss
+  //   T (cert X):              0h pre-loss
+  //   Q (no cert):             5 non-cert (40h)
+  //   R (no cert):             5 non-cert (40h)
+  //
+  // Window covers only P's 2 cert slots → P loses 16h, keeps 24h non-cert.
+  // Depth-1: T is the only other cert holder → T takes both cert slots = 16h.
+  //
+  // Post-base: P=24, T=16, Q=40, R=40 = 120h, target=30 each.
+  //   P retention = 24/40 = 0.6   (between 0.5 and 0.7 — middle band)
+  //   P deficit   = 30 − 24 = 6   (above 3)
+  //   Old gate: retention < 0.5 FAILS → AND fails → no extension.
+  //   New gate: retention < 0.7 ✓  AND  deficit > 3 ✓  → FIRES.
+  // Extension finds a Q/R slot whose displacement to P strictly improves
+  // composite (L0 std dev drops from sqrt(108)≈10.4 to sqrt(76)≈8.7).
+  const eng = new SchedulingEngine({}, undefined, undefined, 5);
+  eng.setPeriod(base, 7);
+  eng.setCertLabelSnapshot({ X: 'X-label' });
+
+  // P's 2 cert slots
+  const tPCert1 = createTimeBlockFromHours(base, 6, 14);
+  const tPCert2 = createTimeBlockFromHours(new Date(2026, 5, 2), 6, 14);
+  // P's 3 non-cert slots
+  const tPNon1 = createTimeBlockFromHours(new Date(2026, 5, 3), 6, 14);
+  const tPNon2 = createTimeBlockFromHours(new Date(2026, 5, 4), 6, 14);
+  const tPNon3 = createTimeBlockFromHours(new Date(2026, 5, 5), 6, 14);
+  // Q's 5 non-cert slots
+  const tQ1 = createTimeBlockFromHours(base, 14, 22);
+  const tQ2 = createTimeBlockFromHours(new Date(2026, 5, 2), 14, 22);
+  const tQ3 = createTimeBlockFromHours(new Date(2026, 5, 3), 14, 22);
+  const tQ4 = createTimeBlockFromHours(new Date(2026, 5, 4), 14, 22);
+  const tQ5 = createTimeBlockFromHours(new Date(2026, 5, 5), 14, 22);
+  // R's 5 non-cert slots
+  const tR1 = createTimeBlockFromHours(new Date(2026, 5, 6), 6, 14);
+  const tR2 = createTimeBlockFromHours(new Date(2026, 5, 7), 6, 14);
+  const tR3 = createTimeBlockFromHours(new Date(2026, 5, 6), 14, 22);
+  const tR4 = createTimeBlockFromHours(new Date(2026, 5, 7), 14, 22);
+  const tR5 = createTimeBlockFromHours(new Date(2026, 5, 6), 22, 24);
+
+  const mkTask = (id: string, tb: ReturnType<typeof createTimeBlockFromHours>, certs: string[]): Task => ({
+    id,
+    name: id,
+    timeBlock: tb,
+    requiredCount: 1,
+    slots: [{ slotId: `${id}-s`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: certs }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  });
+  const tasks = [
+    mkTask('mb-pc1', tPCert1, ['X']),
+    mkTask('mb-pc2', tPCert2, ['X']),
+    mkTask('mb-pn1', tPNon1, []),
+    mkTask('mb-pn2', tPNon2, []),
+    mkTask('mb-pn3', tPNon3, []),
+    mkTask('mb-q1', tQ1, []),
+    mkTask('mb-q2', tQ2, []),
+    mkTask('mb-q3', tQ3, []),
+    mkTask('mb-q4', tQ4, []),
+    mkTask('mb-q5', tQ5, []),
+    mkTask('mb-r1', tR1, []),
+    mkTask('mb-r2', tR2, []),
+    mkTask('mb-r3', tR3, []),
+    mkTask('mb-r4', tR4, []),
+    mkTask('mb-r5', tR5, []),
+  ];
+
+  const mkP = (id: string, certs: string[]): Participant => ({
+    id,
+    name: id,
+    level: Level.L0,
+    certifications: certs,
+    group: 'G',
+    availability: wideAvail,
+    dateUnavailability: [],
+  });
+  const P = mkP('mb-P', ['X']);
+  const T = mkP('mb-T', ['X']);
+  const Q = mkP('mb-Q', []);
+  const R = mkP('mb-R', []);
+
+  eng.addParticipants([P, T, Q, R]);
+  eng.addTasks(tasks);
+  const sched = eng.generateSchedule();
+
+  // Pin assignments to the documented pre-loss shape.
+  const pin = (taskId: string, pid: string) => {
+    const a = sched.assignments.find((x) => x.taskId === taskId);
+    if (a) a.participantId = pid;
+  };
+  pin('mb-pc1', 'mb-P');
+  pin('mb-pc2', 'mb-P');
+  pin('mb-pn1', 'mb-P');
+  pin('mb-pn2', 'mb-P');
+  pin('mb-pn3', 'mb-P');
+  pin('mb-q1', 'mb-Q');
+  pin('mb-q2', 'mb-Q');
+  pin('mb-q3', 'mb-Q');
+  pin('mb-q4', 'mb-Q');
+  pin('mb-q5', 'mb-Q');
+  pin('mb-r1', 'mb-R');
+  pin('mb-r2', 'mb-R');
+  pin('mb-r3', 'mb-R');
+  pin('mb-r4', 'mb-R');
+  pin('mb-r5', 'mb-R');
+  eng.revalidateFull();
+  const liveSched = eng.getSchedule()!;
+
+  // Window covers ONLY the 2 cert slots.
+  const window = {
+    start: new Date(tPCert1.start.getTime() - 1_000),
+    end: new Date(tPCert2.end.getTime() + 1_000),
+  };
+
+  const result = generateCapabilityChangePlans(
+    liveSched,
+    { participantId: 'mb-P', lostCertifications: ['X'], window },
+    earlyAnchor,
+    {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildScoreCtx(liveSched.tasks, liveSched.participants),
+      maxPlans: 5,
+    },
+  );
+  assert(result.plans.length > 0, 'mb: at least one plan returned');
+
+  const extended = result.plans.filter((p) => p.focalContinuityExtended === true);
+  assert(extended.length > 0, 'mb: extension fires for middle-band retention/deficit (would have skipped under old AND-gate)');
+  if (extended.length > 0) {
+    const ext = extended[0];
+    assert(
+      ext.swaps.some((sw) => sw.toParticipantId === 'mb-P'),
+      'mb: extended plan moves focal P onto at least one additional slot',
+    );
+    assert((ext.focalContinuityHoursAdded ?? 0) > 0, 'mb: focalContinuityHoursAdded > 0');
+    assert(ext.violations.length === 0, 'mb: extended plan passes full HC validation');
+  }
+}
+
 // ─── Summary ────────────────────────────────────────────────────────────────
 
 console.log('\n────────────────────────────────────────────────────────');

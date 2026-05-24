@@ -78,7 +78,7 @@ import { renderParticipantCard } from './participant-card';
 import { exportDailyDetail, exportDailyImage, exportWeeklyOverview } from './pdf-export';
 import { type PointInTimeContext, renderPointInTimeView, wirePointInTimeEvents } from './point-in-time-view';
 import { runPreflight } from './preflight';
-import { initPwaInstallCapture, markHomeInstallSeen, runInstallPrompt } from './pwa-install';
+import { initPwaInstallCapture, runInstallPrompt } from './pwa-install';
 import { showRangePicker } from './range-picker-modal';
 import { closeRescueModal, initRescue, openRescueModal } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice, onSmallScreenChange } from './responsive';
@@ -4803,7 +4803,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.7.0</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.7.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4926,14 +4926,11 @@ function renderAll(): void {
         renderAll();
       },
       onInstall: () => {
-        // Mark seen first so the immediate re-render drops the banner
-        // regardless of the (async) native prompt's outcome.
-        markHomeInstallSeen();
+        // runInstallPrompt nulls the deferred prompt synchronously, so the
+        // immediate re-render drops the banner regardless of the native
+        // prompt's (async) outcome. The appinstalled-driven onChange
+        // re-render then keeps it gone permanently on accept.
         void runInstallPrompt();
-        renderAll();
-      },
-      onDismissInstall: () => {
-        markHomeInstallSeen();
         renderAll();
       },
     });
@@ -7288,8 +7285,14 @@ function init(): void {
 
   try {
     // Capture beforeinstallprompt as early as possible — it's a one-shot
-    // event and powers the "install to receive shared files" nudge.
-    initPwaInstallCapture();
+    // event and powers both the "install to receive shared files" nudge
+    // and the persistent Home install panel. The onChange callback re-renders
+    // Home immediately when the deferred prompt arrives late or when the
+    // user finishes installing — otherwise the panel would lag behind real
+    // install state until the next user-triggered render.
+    initPwaInstallCapture(() => {
+      if (currentTab === 'home') renderAll();
+    });
 
     // Set .touch-device / .pointer-device on <html> before first render
     initResponsive();
