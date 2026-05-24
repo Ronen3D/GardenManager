@@ -1,7 +1,7 @@
 // Garden Manager Service Worker
 // Caches all app assets for full offline support
 
-const CACHE_NAME = 'garden-manager-v3';
+const CACHE_NAME = 'garden-manager-v4';
 
 // Synthetic same-origin cache key used to hand a Web-Share-Target file off to
 // the page. It is NOT a real asset — see the fetch handler guards below.
