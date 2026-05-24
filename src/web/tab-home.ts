@@ -159,26 +159,27 @@ function renderGuide(preflight: PreflightResult): string {
  * actionable install path). No dismiss control by design. Rendered as the
  * *first* child of Home so it's above the fold on a 375×812 phone.
  *
- * Android/Chromium gets a one-tap native install button; iOS Safari gets the
- * manual Share → Add to Home Screen instruction (no programmatic prompt
- * exists there). Hidden on desktop and on unsupported browsers (see
- * homeInstallBannerMode).
+ * Visual register matches the rest of the app's surfaces — neutral
+ * `var(--bg-card)` panel + `var(--border)` outline + brand-accent SVG icon
+ * + `btn-primary` action — instead of a tinted notice box, to read as a
+ * first-class system surface rather than a marketing nudge.
  */
 function renderHomeInstallBanner(): string {
   if (!isSmallScreen) return '';
   const mode = homeInstallBannerMode();
   if (!mode) return '';
+  const icon = `<svg class="home-install-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M5 21h14"/></svg>`;
   if (mode === 'android') {
     return `<div class="home-install-banner" role="status">
-      <span class="home-install-text">📲 התקינו את השבצקיסט למסך הבית — פתיחה בלחיצה אחת, ללא דפדפן, וגם ללא אינטרנט.</span>
-      <span class="home-install-actions">
-        <button type="button" class="home-install-btn" data-action="install-app">התקן עכשיו</button>
-      </span>
+      ${icon}
+      <span class="home-install-text">התקנת השבצקיסט למסך הבית</span>
+      <button type="button" class="btn-sm btn-primary home-install-btn" data-action="install-app">התקנה</button>
     </div>`;
   }
   // iOS — no programmatic prompt; show the manual gesture instead.
   return `<div class="home-install-banner" role="status">
-    <span class="home-install-text">📲 להתקנת השבצקיסט למסך הבית: הקישו על ⬆️ "שיתוף" בתחתית הדפדפן ואז "הוסף למסך הבית" (Add to Home Screen).</span>
+    ${icon}
+    <span class="home-install-text">להתקנה: שיתוף ↑ → הוסף למסך הבית</span>
   </div>`;
 }
 

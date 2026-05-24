@@ -2578,49 +2578,37 @@ select.input-sm {
 /* ─── Mobile install banner ──────────────────────────────────────────────
    A calm footer-style hint at the very bottom of Home (see
    tab-home.ts:renderHomeInstallBanner). Persistent (no dismiss control)
-   and rendered as the first child of Home, so it lives above the fold on a
-   375×812 phone. Subtle green-tinted language — same brand surface as the
-   Settings share-target nudge (.transfer-install-nudge); green reads as
-   "good idea," not "alarm," which matches the calm advisory intent. */
+   and rendered as the first child of Home, above the fold on a 375×812
+   phone. Visual register matches the rest of the app's panels — neutral
+   var(--bg-card) surface + var(--border) outline + brand-accent icon +
+   btn-primary action — instead of a tinted notice box, to read as a
+   first-class system surface, not a marketing nudge. */
 .home-install-banner {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  gap: 10px;
   margin: 0 0 12px 0;
-  padding: 12px 14px;
-  border: 1px solid rgba(39, 174, 96, 0.28);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: rgba(39, 174, 96, 0.09);
+  background: var(--bg-card);
   color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.home-install-icon {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 
 .home-install-text {
-  flex: 1 1 200px;
-  font-size: 0.84rem;
-  line-height: 1.4;
-}
-
-.home-install-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .home-install-btn {
-  padding: 0.4rem 0.95rem;
-  border: none;
-  border-radius: var(--radius);
-  background: var(--success, #1d9050);
-  color: #fff;
-  font-weight: 600;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-
-.home-install-btn:hover {
-  filter: brightness(1.1);
+  flex-shrink: 0;
 }
 
 /* Phone / tablet (≤1024 — the priority): the rail is transparent so its
