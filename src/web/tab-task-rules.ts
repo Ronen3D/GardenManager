@@ -1417,8 +1417,11 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
   if (isExpanded) {
     html += `<div class="template-body">`;
 
-    // Day options (1-7)
-    const dayOptions = Array.from({ length: 7 }, (_, i) => {
+    // Day options bounded by the configured schedule length, matching the add
+    // form above. Hardcoding 7 here let the user pick days outside the actual
+    // schedule when the period was shortened.
+    const numDays = store.getScheduleDays();
+    const dayOptions = Array.from({ length: numDays }, (_, i) => {
       const d = i + 1;
       return `<option value="${d}"${d === dayNum ? ' selected' : ''}>יום ${d}</option>`;
     }).join('');

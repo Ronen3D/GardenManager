@@ -3572,7 +3572,9 @@ async function ensureLiveModeAnchor(taskGate?: Task | null): Promise<Date | null
 
   if (!currentSchedule) return null;
 
-  const numDays = store.getScheduleDays();
+  // Read from the frozen schedule, not the live store — the anchor picker must
+  // match the schedule the user is acting on.
+  const numDays = currentSchedule.periodDays;
   const days: Array<{ value: string; label: string }> = [];
   for (let d = 1; d <= numDays; d++) {
     days.push({ value: String(d), label: `יום ${d}` });
@@ -3611,7 +3613,7 @@ async function ensureLiveModeAnchor(taskGate?: Task | null): Promise<Date | null
   return ts;
 }
 
-async function handleProfileSos(assignmentId: string): Promise<void> {
+async function handleSosRescue(assignmentId: string): Promise<void> {
   if (!currentSchedule) return;
   const assignment = currentSchedule.assignments.find((a) => a.id === assignmentId);
   if (!assignment) return;
@@ -3773,8 +3775,11 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
   const participant = schedule.participants.find((p) => p.id === participantId);
   if (!participant) return;
 
-  const numDays = store.getScheduleDays();
-  const baseDate = store.getScheduleDate();
+  // Read from the frozen schedule, not the live store — the picker must match
+  // the schedule the user is acting on, even if scheduleDays/scheduleDate were
+  // edited in settings after generation.
+  const numDays = schedule.periodDays;
+  const baseDate = schedule.periodStart;
   const dayStartHour = schedule.algorithmSettings.dayStartHour;
 
   const days: Array<{ value: string; label: string }> = [];
@@ -4118,7 +4123,9 @@ function computeSmartDefaultWindow(
   anchor: Date,
   dayStartHour: number,
 ): RangePickerDefaults {
-  const baseDate = store.getScheduleDate();
+  // Anchor on the frozen schedule's periodStart, not the live store — the
+  // computed default day-chip must match the day axis the FSOS picker shows.
+  const baseDate = schedule.periodStart;
   // Return the op-day index of a timestamp: early-morning hours (< dayStartHour)
   // belong to the prior op-day's tail, so the day-chip offered to the user
   // matches the operational grouping used in the schedule view.
@@ -4279,8 +4286,9 @@ async function handleProfileCapabilityChange(participantId: string): Promise<voi
     return;
   }
 
-  const numDays = store.getScheduleDays();
-  const baseDate = store.getScheduleDate();
+  // Read from the frozen schedule, not the live store — see handleProfileFutureSos.
+  const numDays = schedule.periodDays;
+  const baseDate = schedule.periodStart;
   const dayStartHour = schedule.algorithmSettings.dayStartHour;
 
   const days: Array<{ value: string; label: string }> = [];
@@ -4700,7 +4708,7 @@ function renderAll(): void {
           _restoreScheduleScroll = true;
           renderAll();
         },
-        onSosClick: handleProfileSos,
+        onSosClick: handleSosRescue,
         onFutureSosClick: handleProfileFutureSos,
         onRemoveFutureSosEntry: handleRemoveFutureSosEntry,
         onCapabilityChangeClick: handleProfileCapabilityChange,
@@ -4727,8 +4735,10 @@ function renderAll(): void {
     const panelCtx: TaskPanelContext = {
       sourceName: _taskPanelSourceName,
       schedule: currentSchedule,
-      numDays: store.getScheduleDays(),
-      baseDate: store.getScheduleDate(),
+      // Read from the frozen schedule so the week timeline lanes match the
+      // schedule the user is viewing, not whatever the live store now holds.
+      numDays: currentSchedule.periodDays,
+      baseDate: currentSchedule.periodStart,
       frozenAssignmentIds: frozenIds,
       showSosButtons: true,
       isSmallScreen,
@@ -4803,7 +4813,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.7.3</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.7.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -6264,14 +6274,19 @@ function wireScheduleEvents(container: HTMLElement): void {
     const dayIdx = parseInt(_liveDayVal, 10);
     const hour = parseInt(_liveHourVal, 10);
     if (Number.isNaN(dayIdx) || Number.isNaN(hour)) return;
-    const base = store.getScheduleDate();
+    // Anchor on the frozen schedule so the timestamp lands on the same op-day
+    // grid the user sees. Fall back to the live store only when no schedule
+    // exists (live-mode controls are themselves gated on currentSchedule, so
+    // this fallback is defensive).
+    const base = currentSchedule?.periodStart ?? store.getScheduleDate();
+    const numDays = currentSchedule?.periodDays ?? store.getScheduleDays();
     const ts = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIdx - 1, hour, 0);
     store.setLiveModeTimestamp(ts);
     if (currentSchedule && store.getLiveModeState().enabled) {
       freezeAssignments(currentSchedule, ts);
     }
     // Navigate the schedule view to the selected live-mode day
-    if (dayIdx >= 1 && dayIdx <= 7) {
+    if (dayIdx >= 1 && dayIdx <= numDays) {
       currentDay = dayIdx;
       pushHash(true);
     }
@@ -6401,7 +6416,9 @@ function wireScheduleEvents(container: HTMLElement): void {
 function openExportModal(): void {
   if (!currentSchedule) return;
 
-  const numDays = store.getScheduleDays();
+  // Bound the day picker on the frozen schedule so the user can't pick a day
+  // that doesn't exist in what's being exported.
+  const numDays = currentSchedule.periodDays;
   const showDay0 = hasDay0(currentSchedule);
 
   // Build day options for the daily picker. When continuity context is
@@ -7336,7 +7353,7 @@ function init(): void {
     // the swimlane invoke identical flows (rescue, swap, profile, task panel).
     initSwimlane({
       onSwap: guardDay0(handleSwap),
-      onRescue: guardDay0(openRescueModal),
+      onRescue: guardDay0(handleSosRescue),
       onNavigateToProfile: navigateToProfile,
       onNavigateToTaskPanel: navigateToTaskPanel,
       getSchedule: () => currentSchedule,
@@ -7347,7 +7364,7 @@ function init(): void {
     // Initialize tooltip callbacks before first render
     initTooltips({
       onSwap: guardDay0(handleSwap),
-      onRescue: guardDay0(openRescueModal),
+      onRescue: guardDay0(handleSosRescue),
       onNavigateToProfile: navigateToProfile,
     });
 

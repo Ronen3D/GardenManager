@@ -101,8 +101,10 @@ export function buildParticipantTooltipContent(
   schedule: Schedule | null,
   slotCtx?: { assignmentId: string; taskId: string; isFrozen: boolean } | null,
 ): string {
-  // Workload data
-  const numDays = store.getScheduleDays();
+  // Workload data — prefer the frozen schedule's period so the fallback denom
+  // matches the schedule the tooltip is describing. Only fall back to the
+  // live store when no schedule is loaded.
+  const numDays = schedule?.periodDays ?? store.getScheduleDays();
 
   // Build breakdown using shared utility (R1). Only the effective-hours total
   // feeds this popup now — the per-task breakdown rows were removed.
@@ -157,10 +159,9 @@ export function buildParticipantTooltipContent(
   // Build action buttons for the Group row (if we have slot context)
   let actionsHtml = '';
   if (slotCtx && !slotCtx.isFrozen) {
-    const lm = store.getLiveModeState();
     actionsHtml = `<span class="tt-actions">
       <button class="btn-swap" data-assignment-id="${slotCtx.assignmentId}" data-task-id="${slotCtx.taskId}" title="החלף">⇄</button>
-      ${lm.enabled ? `<button class="btn-rescue" data-assignment-id="${slotCtx.assignmentId}" title="החלפה">🆘</button>` : ''}
+      <button class="btn-rescue" data-assignment-id="${slotCtx.assignmentId}" title="החלפה">🆘</button>
     </span>`;
   } else if (slotCtx?.isFrozen) {
     actionsHtml = `<span class="tt-actions"><span class="tt-dim">${SVG_ICONS.snowflake}</span></span>`;
