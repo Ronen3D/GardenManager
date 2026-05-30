@@ -201,6 +201,42 @@ export function setBenchHooks(h: BenchHookConfig | null): void {
 }
 
 /**
+ * Phase 2 (D1+D3) dispatch flag. When `true`, `computeStructuralPriority`
+ * uses the lowPriority-aware effective-cert-impact for S2 and the
+ * log-scale pool-fraction for the sub-priority. When `false` (default),
+ * the legacy tiered formula runs byte-identical to the pre-Phase-2
+ * baseline. Flipped by the priority bench's D1+D3 variant via
+ * `_benchSetEnhancedRarity(true)` / `_benchSetEnhancedRarity(false)`.
+ *
+ * Production currently runs with this flag `false`. The flag is
+ * bench-only — switching production to D1+D3 would simply default this
+ * to `true` (and update the bench acceptance baseline accordingly).
+ *
+ * Threshold for D1's S2 trigger: `θ_S2 = 0.5` — calibrated against the
+ * default fixture so a moderate cert (Hamama at 50% globally, ~80% in
+ * the lowPrio-aware L0-subset) trips it.
+ */
+let _useEnhancedRarity = false;
+/** D1 — S2 tier-shift trigger. When effective cert impact > this, the task
+ *  is demoted one tier (harder). Calibrated against the default fixture so
+ *  Hamama (impact ≈ 0.8 against L0+Hamama subset) trips it. */
+const D1_CERT_IMPACT_THRESHOLD = 0.5;
+/** D1 — symmetric "vacuous-cert" relief: when effective cert impact < this,
+ *  `hasCerts` and `hasExclusion` are treated as false in the base tier
+ *  classifier. Without this, a universal-cert L0-only task (impact = 0)
+ *  would stay stuck in Tier 2 even though the cert removes no one. The
+ *  classic Tier 2 trap; this is what flips P-universal-cert-tier. */
+const D1_LOW_IMPACT_THRESHOLD = 0.1;
+
+export function _benchSetEnhancedRarity(on: boolean): void {
+  _useEnhancedRarity = on;
+}
+
+export function _benchGetEnhancedRarity(): boolean {
+  return _useEnhancedRarity;
+}
+
+/**
  * R4: Thin wrapper around the shared isEligible() that adds diagnostic
  * logging when enabled.  All constraint logic lives in validator.ts.
  */
@@ -419,6 +455,30 @@ export interface SchedulingContext {
   effHoursByTask: Map<string, number>;
   /** Sum of totalAvailableHours across all participants in the schedule window. 0 if capacities unavailable. */
   totalCapacityHours: number;
+  // ─── Phase 2 (D1+D3) — lowPriority-aware tightness signals ─────────────
+  // Always populated. Consumed by `computeStructuralPriority` only when the
+  // module-level `_useEnhancedRarity` flag is on (default off; flipped by
+  // the priority bench's D1+D3 variant). When off, byte-identical behavior
+  // to the pre-Phase-2 formula.
+  /** For each (taskId, slotId) → count of participants whose level matches a
+   *  NON-lowPriority entry of the slot (level-only filter, no cert). The
+   *  denominator of `cleanPool / nonLowPrio` pool-fraction. */
+  nonLowPrioLevelEligiblePerSlot: Map<string, Map<string, number>>;
+  /** For each (taskId, slotId) → non-lowPrio-level-eligible ∩ required certs
+   *  ∩ ¬forbidden. The numerator of pool-fraction; the "clean fill" pool the
+   *  optimizer actually wants to draw from. */
+  cleanPoolPerSlot: Map<string, Map<string, number>>;
+  /** Per task: min cleanPool count across its slots (bottleneck). */
+  minCleanPoolPerTask: Map<string, number>;
+  /** Per task: min nonLowPrioLevelEligible count across its slots. */
+  minNonLowPrioLevelEligiblePerTask: Map<string, number>;
+  /** Per task: `1 − minCleanPool / max(1, minNonLowPrioLevelEligible)`,
+   *  clamped to [0, 1]. Replaces global `certRarity` as the S2 input under
+   *  D1: rarity is now measured against the pool the slot CAN draw from,
+   *  not pool-wide. A universal-cert task on an L0-only slot has impact ≈ 0
+   *  (no one excluded by the cert); a rare cert on a narrow level subset
+   *  has impact close to 1. */
+  effectiveCertImpactPerTask: Map<string, number>;
 }
 
 /**
@@ -464,36 +524,71 @@ export function buildSchedulingContext(
   const minEligiblePerTask = new Map<string, number>();
   const lowPrioRisk = new Map<string, number>();
   const effHoursByTask = new Map<string, number>();
+  // Phase 2 fields
+  const nonLowPrioLevelEligiblePerSlot = new Map<string, Map<string, number>>();
+  const cleanPoolPerSlot = new Map<string, Map<string, number>>();
+  const minCleanPoolPerTask = new Map<string, number>();
+  const minNonLowPrioLevelEligiblePerTask = new Map<string, number>();
+  const effectiveCertImpactPerTask = new Map<string, number>();
 
   for (const task of tasks) {
     const perSlot = new Map<string, number>();
+    const perSlotNonLowPrio = new Map<string, number>();
+    const perSlotClean = new Map<string, number>();
     let minEligible = Number.POSITIVE_INFINITY;
+    let minNonLowPrio = Number.POSITIVE_INFINITY;
+    let minClean = Number.POSITIVE_INFINITY;
     let lowPrioSlots = 0;
     const nonLowPrioPool = new Set<string>();
 
     for (const slot of task.slots) {
       let count = 0;
+      let nonLowPrioCount = 0;
+      let cleanCount = 0;
       const hasLowPrioEntry = slot.acceptableLevels.some((e) => e.lowPriority);
       if (hasLowPrioEntry) lowPrioSlots++;
 
       for (const p of participants) {
-        if (!isLevelSatisfied(p.level, slot)) continue;
-        if (slot.requiredCertifications.some((c) => !p.certifications.includes(c))) continue;
-        if (hasForbiddenCertification(p, slot)) continue;
-        count++;
+        const passesLevel = isLevelSatisfied(p.level, slot);
+        const passesCert = !slot.requiredCertifications.some((c) => !p.certifications.includes(c));
+        const passesForbidden = !hasForbiddenCertification(p, slot);
 
-        // Track participants who match a NON-lowPriority level entry of any slot.
+        if (passesLevel && passesCert && passesForbidden) count++;
+
+        // Non-lowPriority level match: matches a NON-lowPriority entry of THIS slot.
         const nonLowPrioMatch = slot.acceptableLevels.some((e) => e.level === p.level && !e.lowPriority);
-        if (nonLowPrioMatch) nonLowPrioPool.add(p.id);
+        if (nonLowPrioMatch) {
+          nonLowPrioCount++;
+          nonLowPrioPool.add(p.id);
+          if (passesCert && passesForbidden) cleanCount++;
+        }
       }
       perSlot.set(slot.slotId, count);
+      perSlotNonLowPrio.set(slot.slotId, nonLowPrioCount);
+      perSlotClean.set(slot.slotId, cleanCount);
       if (count < minEligible) minEligible = count;
+      if (nonLowPrioCount < minNonLowPrio) minNonLowPrio = nonLowPrioCount;
+      if (cleanCount < minClean) minClean = cleanCount;
     }
 
     eligiblePerSlot.set(task.id, perSlot);
     minEligiblePerTask.set(task.id, Number.isFinite(minEligible) ? minEligible : 0);
     lowPrioRisk.set(task.id, Math.max(0, lowPrioSlots - nonLowPrioPool.size));
     effHoursByTask.set(task.id, computeTaskEffectiveHours(task) * Math.max(1, task.slots.length));
+
+    nonLowPrioLevelEligiblePerSlot.set(task.id, perSlotNonLowPrio);
+    cleanPoolPerSlot.set(task.id, perSlotClean);
+    const mnlp = Number.isFinite(minNonLowPrio) ? minNonLowPrio : 0;
+    const mcp = Number.isFinite(minClean) ? minClean : 0;
+    minNonLowPrioLevelEligiblePerTask.set(task.id, mnlp);
+    minCleanPoolPerTask.set(task.id, mcp);
+    // Effective cert impact: 1 − cleanPool / nonLowPrioLevelEligible at the
+    // bottleneck. 0 means certs eliminate no one from the level-eligible
+    // pool (universal-cert case); 1 means certs eliminate everyone. When
+    // nonLowPrioLevelEligible is 0 the task is structurally infeasible —
+    // preflight catches that; we return 0 here so ordering doesn't break.
+    const impact = mnlp > 0 ? Math.max(0, Math.min(1, 1 - mcp / mnlp)) : 0;
+    effectiveCertImpactPerTask.set(task.id, impact);
   }
 
   let totalCapacityHours = 0;
@@ -509,6 +604,11 @@ export function buildSchedulingContext(
     lowPrioRisk,
     effHoursByTask,
     totalCapacityHours,
+    nonLowPrioLevelEligiblePerSlot,
+    cleanPoolPerSlot,
+    minCleanPoolPerTask,
+    minNonLowPrioLevelEligiblePerTask,
+    effectiveCertImpactPerTask,
   };
 }
 
@@ -580,12 +680,28 @@ export function computeStructuralPriority(task: Task, ctx?: SchedulingContext): 
   const hasExclusion = task.slots.some((s) => (s.forbiddenCertifications?.length ?? 0) > 0);
   const hasLowPriority = task.slots.some((s) => s.acceptableLevels.some((e) => e.lowPriority));
 
+  // D1 — vacuous-cert relief. When the enhanced-rarity flag is on AND
+  // effective cert impact is below D1_LOW_IMPACT_THRESHOLD, the cert
+  // constraints exist structurally but don't actually narrow the pool
+  // (e.g. universal Nitzan). Treat hasCerts / hasExclusion as false for
+  // the base tier classifier so the task isn't stuck in Tier 2. Under
+  // the default (baseline) flag this is a no-op.
+  let hasCertsForClassifier = hasCerts;
+  let hasExclusionForClassifier = hasExclusion;
+  if (_useEnhancedRarity && ctx) {
+    const impact = ctx.effectiveCertImpactPerTask.get(task.id) ?? 0;
+    if (impact < D1_LOW_IMPACT_THRESHOLD) {
+      hasCertsForClassifier = false;
+      hasExclusionForClassifier = false;
+    }
+  }
+
   let tier: number;
-  if (hasLowPriority && hasCerts)
+  if (hasLowPriority && hasCertsForClassifier)
     tier = 1; // Penalty-critical (e.g. Hamama)
-  else if (allL0Only && hasCerts)
+  else if (allL0Only && hasCertsForClassifier)
     tier = 2; // Shemesh: tight L0+cert pool
-  else if (hasCerts || hasExclusion)
+  else if (hasCertsForClassifier || hasExclusionForClassifier)
     tier = 3; // Karov, Mamtera: moderate
   else if (allL0Only)
     tier = 4; // Aruga: wide L0 pool
@@ -597,15 +713,24 @@ export function computeStructuralPriority(task: Task, ctx?: SchedulingContext): 
     // First-match tier shift (at most one of S2/S3/S4 applies). Guard
     // tier > 1 everywhere so signals never cascade past the lowPriority tier.
     if (tier > 1) {
-      // S2 cert rarity
-      let maxRarity = 0;
-      for (const slot of task.slots) {
-        for (const c of slot.requiredCertifications) {
-          const r = ctx.certRarity.get(c) ?? 1;
-          if (r > maxRarity) maxRarity = r;
+      // S2 cert impact / rarity. Under baseline: pool-wide rarity > 0.7.
+      // Under D1: effective cert impact (cleanPool / nonLowPrioLevelEligible
+      // at the bottleneck slot) > D1_CERT_IMPACT_THRESHOLD.
+      let s2Fires = false;
+      if (_useEnhancedRarity) {
+        const impact = ctx.effectiveCertImpactPerTask.get(task.id) ?? 0;
+        s2Fires = impact > D1_CERT_IMPACT_THRESHOLD;
+      } else {
+        let maxRarity = 0;
+        for (const slot of task.slots) {
+          for (const c of slot.requiredCertifications) {
+            const r = ctx.certRarity.get(c) ?? 1;
+            if (r > maxRarity) maxRarity = r;
+          }
         }
+        s2Fires = maxRarity > 0.7;
       }
-      if (maxRarity > 0.7) {
+      if (s2Fires) {
         tier -= 1;
       } else {
         // S3 stickiness
@@ -623,10 +748,26 @@ export function computeStructuralPriority(task: Task, ctx?: SchedulingContext): 
       }
     }
 
-    // S1 bottleneck sub-priority (0..9). Fewer eligible = lower sub-priority
-    // digit = sorted earlier within the tier.
-    const minEligible = ctx.minEligiblePerTask.get(task.id) ?? 9;
-    const subMin = Math.max(0, Math.min(9, minEligible));
+    // S1 bottleneck sub-priority. Under baseline: clamp(minEligible, 0, 9)
+    // — saturates at 9 for any pool ≥ 9. Under D3: log-scale on pool
+    // fraction (cleanPool / nonLowPrioLevelEligible at the bottleneck);
+    // tight pool (f → 0) → low subMin (early); wide pool (f → 1) → high
+    // subMin (late). Maps f = 1 → 9, f = 0.5 → 8, f = 0.25 → 6, f = 0.125
+    // → 5, f = 1/64 → 0. Note: the plan as written had this direction
+    // inverted; the actual semantic (tight → early) matches the legacy
+    // sort-ascending-by-priority convention.
+    let subMin: number;
+    if (_useEnhancedRarity) {
+      const clean = ctx.minCleanPoolPerTask.get(task.id) ?? 0;
+      const nonLow = ctx.minNonLowPrioLevelEligiblePerTask.get(task.id) ?? 0;
+      const denom = Math.max(1, nonLow);
+      const fRaw = clean / denom;
+      const fSafe = Math.max(fRaw, 1 / 64);
+      subMin = Math.max(0, Math.min(9, Math.round(Math.log2(fSafe) * 1.5 + 9)));
+    } else {
+      const minEligible = ctx.minEligiblePerTask.get(task.id) ?? 9;
+      subMin = Math.max(0, Math.min(9, minEligible));
+    }
     return tier * 10 + subMin;
   }
 
@@ -640,9 +781,13 @@ export function computeStructuralPriority(task: Task, ctx?: SchedulingContext): 
 /**
  * Sort tasks for assignment order. Most-constrained tasks first.
  * Uses explicit schedulingPriority if set on the task, otherwise computes
- * priority from constraint tiers.
+ * priority from constraint tiers via {@link computeStructuralPriority}.
+ *
+ * Exported so the priority bench's anchor fixtures
+ * ([src/bench-priority/anchors](../bench-priority/anchors)) can observe
+ * ordering directly without running the full optimizer pipeline.
  */
-function sortTasksByDifficulty(tasks: Task[], jitter: number = 0, ctx?: SchedulingContext): Task[] {
+export function sortTasksByDifficulty(tasks: Task[], jitter: number = 0, ctx?: SchedulingContext): Task[] {
   // P3: Pre-compute random keys for transitive tiebreaker
   const taskRngKey = new Map<string, number>();
   for (const t of tasks) taskRngKey.set(t.id, Math.random());
@@ -3249,6 +3394,14 @@ export interface OptimizationResult {
    *  diagnostics. Differs from `unfilledSlots`: that field is the post-SA-
    *  insert remaining set; this one captures what greedy alone left behind. */
   greedyUnfilledSlots: UnfilledSlot[];
+  /** 1-indexed attempt index at which `best` was last updated. Populated by
+   *  `optimizeMultiAttempt` / `optimizeMultiAttemptAsync`; undefined for
+   *  single-attempt `optimize()` calls. Used by the priority bench
+   *  ([src/bench-priority/]) to measure ordering quality — a lower value
+   *  means the ordering reached the good region of solution space faster,
+   *  with less downstream SA repair. Zero (when populated) means no attempt
+   *  in this call improved over the seed (continuation mode only). */
+  attemptOfBest?: number;
   /**
    * The realized task set this result was scored/validated against. Equals
    * the input `tasks` reference unless a feasibility split (Stage 4) replaced
@@ -3620,6 +3773,7 @@ export function optimizeMultiAttempt(
   qualitySplitEnabled: boolean = true,
 ): OptimizationResult {
   let best: OptimizationResult | null = null;
+  let attemptOfBest = 0;
   const totalStart = Date.now();
   resetSnapshot();
   const diagOn = isSchedulerDiagOn();
@@ -3700,6 +3854,7 @@ export function optimizeMultiAttempt(
     const improved = best === null || isBetterResult(result, best);
     if (improved) {
       best = result;
+      attemptOfBest = i + 1;
     }
 
     if (diagOn) {
@@ -3739,6 +3894,7 @@ export function optimizeMultiAttempt(
   // Update total duration and actual attempts performed
   best!.durationMs = Date.now() - totalStart;
   best!.actualAttempts = attempts;
+  best!.attemptOfBest = attemptOfBest;
   finalizeSnapshot(best!.durationMs);
 
   if (diagOn) {
@@ -3795,6 +3951,7 @@ export function optimizeMultiAttemptAsync(
     const seedBest = opts?.seedBest;
     const isContinuation = !!opts?.continuation;
     let best: OptimizationResult | null = seedBest ?? null;
+    let attemptOfBest = 0;
     let i = 0;
     let attemptsCompleted = 0;
     const totalStart = Date.now();
@@ -3823,6 +3980,7 @@ export function optimizeMultiAttemptAsync(
       if (!stopSignal?.aborted || best === null) return false;
       best.durationMs = Date.now() - totalStart;
       best.actualAttempts = attemptsCompleted;
+      best.attemptOfBest = attemptOfBest;
       finalizeSnapshot(best.durationMs);
       if (diagOn) {
         console.log(
@@ -3916,6 +4074,7 @@ export function optimizeMultiAttemptAsync(
           const improved = best === null || isBetterResult(result, best);
           if (improved) {
             best = result;
+            attemptOfBest = i + 1;
           }
 
           i++;
@@ -3961,6 +4120,7 @@ export function optimizeMultiAttemptAsync(
         } else {
           best!.durationMs = Date.now() - totalStart;
           best!.actualAttempts = attemptsCompleted;
+          best!.attemptOfBest = attemptOfBest;
           finalizeSnapshot(best!.durationMs);
           if (diagOn) {
             console.log(

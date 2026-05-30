@@ -13,6 +13,7 @@
     "test": "ts-node src/test.ts",
     "test:coverage": "ts-node src/run-coverage-suite.ts",
     "test:persistence": "ts-node --project tsconfig.test-persistence.json src/test-persistence.ts",
+    "bench:priority": "ts-node --project tsconfig.bench-priority.json src/bench-priority/runner.ts",
     "test:e2e": "playwright test",
     "test:e2e:phone": "playwright test --project=phone",
     "test:e2e:desktop": "playwright test --project=desktop",
