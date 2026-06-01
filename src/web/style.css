@@ -10608,6 +10608,25 @@ tr.now-row-animate > td.time-cell {
   font-size: 0.85rem;
   cursor: help;
 }
+/* Directional warning shown to the left of the stepper when the multiplier ≠ 1 */
+.gm-edit-sheet-v2 .pe-mult-warning {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  color: var(--warning);
+  text-align: start;
+}
+.gm-edit-sheet-v2 .pe-mult-warning .warn-icon {
+  flex: 0 0 auto;
+}
+.gm-edit-sheet-v2 .pe-mult-warning .warn-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
 /* Skills checkboxes */
 

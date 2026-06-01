@@ -1061,8 +1061,8 @@ function wireScheduleSwipe(container: HTMLElement): void {
     for (const [el, origScroll] of c.scrollerStart) {
       if (el.scrollLeft !== origScroll) return;
     }
-    // In RTL, advancing through the week is a right→left finger motion (dx<0).
-    stepDay(dx < 0 ? 1 : -1);
+    // In RTL, advancing through the week is a left→right finger motion (dx>0).
+    stepDay(dx < 0 ? -1 : 1);
   };
 
   const onCancel = () => {
@@ -4804,7 +4804,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.7.9</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.8.0</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4820,7 +4820,7 @@ function renderAll(): void {
     </p>
     <div class="header-credit">
       <span class="credit-left">פותח על ידי אייל צמיר</span>
-      <span class="credit-right">כי עוד אאמין גם באדם גם ברוחו רוח עז</span>
+      <span class="credit-right">כי עוד אאמין באדם, גם ברוחו, רוח עז.</span>
     </div>
   </header>
 
@@ -5669,7 +5669,7 @@ function wireScheduleEvents(container: HTMLElement): void {
     });
   });
 
-  // Horizontal swipe on schedule body (phone) — left = next day, right = prev
+  // Horizontal swipe on schedule body (phone) — left = prev day, right = next
   wireScheduleSwipe(container);
 
   // ── Availability strip: open / close / results ──

@@ -1368,6 +1368,28 @@ function cloneLoadFormula(f: TaskTemplate['loadFormula']): TaskTemplate['loadFor
   };
 }
 
+/**
+ * Next `displayOrder` for a newly created task type: one past the current max
+ * across all task templates and one-time tasks, so new types sort after the
+ * existing ones in creation order instead of all colliding at the default
+ * (`?? 100`) fallback. Explicitly-provided values (e.g. the seeded defaults)
+ * are preserved by the callers' `?? nextTaskDisplayOrder()` guard.
+ *
+ * Note: only template `displayOrder` currently feeds the section sort
+ * (`buildSectionMaps`); a one-time task's `displayOrder` is stored but not yet
+ * consumed by the layout (OTT sections resolve to `CUSTOM_DISPLAY_ORDER`).
+ */
+function nextTaskDisplayOrder(): number {
+  let max = -1;
+  for (const t of taskTemplates.values()) {
+    if (typeof t.displayOrder === 'number' && t.displayOrder > max) max = t.displayOrder;
+  }
+  for (const t of oneTimeTasks.values()) {
+    if (typeof t.displayOrder === 'number' && t.displayOrder > max) max = t.displayOrder;
+  }
+  return max + 1;
+}
+
 export function addTaskTemplate(tpl: Omit<TaskTemplate, 'id'>): TaskTemplate {
   pushSnapshot();
   const id = uid('tpl');
@@ -1378,6 +1400,7 @@ export function addTaskTemplate(tpl: Omit<TaskTemplate, 'id'>): TaskTemplate {
     color: sanitized.color || getNextAvailableColor(),
     baseLoadWeight: sanitized.baseLoadWeight ?? 1,
     splittable: sanitized.splittable ?? false,
+    displayOrder: sanitized.displayOrder ?? nextTaskDisplayOrder(),
     loadFormula: cloneLoadFormula(sanitized.loadFormula),
     loadWindows: (sanitized.loadWindows || []).map((w) => ({
       ...w,
@@ -1628,6 +1651,7 @@ export function addOneTimeTask(task: Omit<OneTimeTask, 'id'>): OneTimeTask {
     id,
     color: task.color || getNextAvailableColor(),
     baseLoadWeight: task.baseLoadWeight ?? 1,
+    displayOrder: task.displayOrder ?? nextTaskDisplayOrder(),
     loadWindows: (task.loadWindows || []).map((w) => ({ ...w })),
   };
   oneTimeTasks.set(id, full);
@@ -2343,6 +2367,7 @@ export function seedDefaultTaskTemplates(): void {
     ],
     // HC-15: night-shift only (shift 2 ends 06:00 → no loaded task until 13:00).
     sleepRecovery: { triggerShifts: [2], recoveryHours: 7 },
+    splittable: true,
     color: '#E74C3C',
     displayOrder: 1,
   });
@@ -2376,6 +2401,7 @@ export function seedDefaultTaskTemplates(): void {
     ],
     restRuleId: defaultRestRule.id,
     sleepRecovery: { triggerShifts: [6], recoveryHours: 7 },
+    splittable: true,
     color: '#F39C12',
     displayOrder: 4,
   });
@@ -2418,6 +2444,7 @@ export function seedDefaultTaskTemplates(): void {
         forbiddenCertifications: ['Horesh'],
       },
     ],
+    splittable: true,
     color: '#27AE60',
     displayOrder: 3,
   });

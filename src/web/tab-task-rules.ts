@@ -1347,6 +1347,7 @@ function renderAddOneTimeForm(): string {
     <div class="form-row">
       <label class="checkbox-label"><input type="checkbox" data-field="ot-samegroup" /> נדרשת אותה קבוצה</label>
       <label class="checkbox-label"><input type="checkbox" data-field="ot-blocks-consecutive" checked /> חוסמת רצף</label>
+      <label class="checkbox-label"><input type="checkbox" data-field="ot-togetherness" /> אי התאמה</label>
       <label>כלל מרווח: <select class="input-sm" data-field="ot-rest-rule">
         <option value="">ללא</option>
         ${store
@@ -1385,6 +1386,7 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
   const flags: string[] = [];
   if (ot.sameGroupRequired) flags.push('קבוצה');
   if (ot.blocksConsecutive) flags.push('חוסמת');
+  if (ot.togethernessRelevant) flags.push('אי התאמה');
 
   const relevantFindings = getRelevantFindingsForOneTime(ot, pf);
   const hasCritical = relevantFindings.some((f) => f.severity === PreflightSeverity.Critical);
@@ -1436,6 +1438,7 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
       <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-ot-field="baseLoadWeight" value="${(ot.baseLoadWeight ?? 1).toFixed(2)}" data-ot-id="${ot.id}" /></label>
       <label class="checkbox-label"><input type="checkbox" data-ot-field="sameGroupRequired" data-ot-id="${ot.id}" ${ot.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
       <label class="checkbox-label"><input type="checkbox" data-ot-field="blocksConsecutive" data-ot-id="${ot.id}" ${ot.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
+      <label class="checkbox-label"><input type="checkbox" data-ot-field="togethernessRelevant" data-ot-id="${ot.id}" ${ot.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
       <label class="checkbox-label" title="כשמסומן וגם נבחר אחד ממצבי הפיצול בהגדרות האלגוריתם — המערכת רשאית לפצל את המשימה לשתי משמרות שמאויישות על־ידי שני אנשים שונים: כדי לאייש משבצת שאחרת תישאר ריקה, ובמצב 'השלמת איוש ושיפור איכות' גם כדי לשפר את איכות הלוח (עונש הפיצול קובע את הסף)"><input type="checkbox" data-ot-field="splittable" data-ot-id="${ot.id}" ${ot.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
       <label>כלל מרווח: <select class="input-sm" data-ot-field="restRuleId" data-ot-id="${ot.id}">
         <option value=""${!ot.restRuleId ? ' selected' : ''}>ללא</option>
@@ -1606,6 +1609,8 @@ function _commitOneTimeProps(body: HTMLElement, otId: string): boolean {
   const sameGroup = (body.querySelector('[data-ot-field="sameGroupRequired"]') as HTMLInputElement)?.checked || false;
   const blocksConsecutive =
     (body.querySelector('[data-ot-field="blocksConsecutive"]') as HTMLInputElement)?.checked ?? true;
+  const togethernessRelevant =
+    (body.querySelector('[data-ot-field="togethernessRelevant"]') as HTMLInputElement)?.checked || false;
   const splittable = (body.querySelector('[data-ot-field="splittable"]') as HTMLInputElement)?.checked || false;
   const otRestRuleId = (body.querySelector('[data-ot-field="restRuleId"]') as HTMLSelectElement)?.value || undefined;
   const desc = (body.querySelector('[data-ot-field="description"]') as HTMLInputElement)?.value.trim();
@@ -1631,6 +1636,7 @@ function _commitOneTimeProps(body: HTMLElement, otId: string): boolean {
     sameGroupRequired: sameGroup,
     baseLoadWeight: Math.max(0, Math.min(1, baseLoad)),
     blocksConsecutive,
+    togethernessRelevant,
     splittable,
     restRuleId: otRestRuleId,
     ...(otSleepRecovery.kind === 'set' ? { sleepRecovery: otSleepRecovery.value } : {}),
@@ -2532,6 +2538,8 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const sameGroup = (form.querySelector('[data-field="ot-samegroup"]') as HTMLInputElement)?.checked || false;
         const blocksConsecutive =
           (form.querySelector('[data-field="ot-blocks-consecutive"]') as HTMLInputElement)?.checked ?? true;
+        const togethernessRelevant =
+          (form.querySelector('[data-field="ot-togetherness"]') as HTMLInputElement)?.checked || false;
         const desc = (form.querySelector('[data-field="ot-desc"]') as HTMLInputElement)?.value.trim();
         const otRestRuleId =
           (form.querySelector('[data-field="ot-rest-rule"]') as HTMLSelectElement)?.value || undefined;
@@ -2553,7 +2561,7 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           baseLoadWeight: Math.max(0, Math.min(1, baseLoad)),
           loadWindows: [],
           blocksConsecutive,
-          togethernessRelevant: false,
+          togethernessRelevant,
           restRuleId: otRestRuleId,
           subTeams: [],
           slots: [],

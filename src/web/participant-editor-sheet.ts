@@ -149,6 +149,28 @@ function formatWorkloadMultiplier(m: number): string {
   return Number(m.toFixed(2)).toString();
 }
 
+/**
+ * Show a directional warning next to the workload-multiplier stepper whenever
+ * the value deviates from the neutral default (1). A multiplier > 1 shrinks the
+ * participant's effective capacity (fewer assignments); < 1 grows it (more
+ * assignments) — see effectiveCapacity() in soft-constraints.ts.
+ */
+function refreshMultWarning(body: HTMLElement, draft: DraftFields): void {
+  const warnEl = body.querySelector('[data-pe-mult-warning]') as HTMLElement | null;
+  if (!warnEl) return;
+  const textEl = warnEl.querySelector('.warn-text') as HTMLElement | null;
+  const m = draft.workloadMultiplier;
+  if (m > DEFAULT_WORKLOAD_MULTIPLIER + 1e-9) {
+    if (textEl) textEl.textContent = 'ערך מעל 1 מקטין את העומס על המשתתף';
+    warnEl.classList.remove('hidden');
+  } else if (m < DEFAULT_WORKLOAD_MULTIPLIER - 1e-9) {
+    if (textEl) textEl.textContent = 'ערך מתחת ל-1 מעלה את העומס על המשתתף';
+    warnEl.classList.remove('hidden');
+  } else {
+    warnEl.classList.add('hidden');
+  }
+}
+
 async function runEditor(opts: ParticipantEditorOptions): Promise<ParticipantEditorResult> {
   return new Promise((resolve) => {
     const isCreate = opts.mode === 'create';
@@ -341,6 +363,9 @@ function renderIdentitySection(draft: DraftFields): string {
                  data-pe-field="workloadMultiplier" value="${escAttr(formatWorkloadMultiplier(draft.workloadMultiplier))}" />
           <button type="button" class="pe-mult-step" data-pe-mult-step="1" aria-label="הגדל">+</button>
           <span class="pe-mult-help" title="ערך &gt; 1 מקטין את ההקצאות, ערך &lt; 1 מגדיל אותן.">ⓘ</span>
+          <span class="pe-mult-warning hidden" data-pe-mult-warning role="status" aria-live="polite">
+            <span class="warn-icon" aria-hidden="true">⚠</span><span class="warn-text"></span>
+          </span>
         </div>
       </div>
     </div>`;
@@ -616,6 +641,7 @@ function wireIdentitySection(body: HTMLElement, draft: DraftFields): void {
   const multInput = body.querySelector('[data-pe-field="workloadMultiplier"]') as HTMLInputElement;
   multInput.addEventListener('input', () => {
     draft.workloadMultiplier = parseWorkloadMultiplier(multInput.value);
+    refreshMultWarning(body, draft);
   });
   body.querySelectorAll<HTMLButtonElement>('[data-pe-mult-step]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -623,8 +649,10 @@ function wireIdentitySection(body: HTMLElement, draft: DraftFields): void {
       const next = Math.max(0.1, +(draft.workloadMultiplier + 0.1 * step).toFixed(2));
       draft.workloadMultiplier = next;
       multInput.value = formatWorkloadMultiplier(next);
+      refreshMultWarning(body, draft);
     });
   });
+  refreshMultWarning(body, draft);
 }
 
 function wireSkillsSection(body: HTMLElement, draft: DraftFields, _participantId: string | undefined): void {

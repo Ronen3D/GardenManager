@@ -186,7 +186,17 @@ export async function canLeaveParticipantsTab(): Promise<boolean> {
 // ─── Sort Logic ──────────────────────────────────────────────────────────────
 
 function sortParticipants(list: Participant[]): Participant[] {
-  if (!sortColumn) return list;
+  if (!sortColumn) {
+    // Default "natural roster" order when no column is explicitly selected:
+    // group A→Z, then rank senior-first (L4→L0), then name. This slots a
+    // newly added participant into its correct position instead of appending
+    // it at the bottom (storage/insertion order). Explicit column clicks
+    // override this with the single-key sorts below.
+    return [...list].sort(
+      (a, b) =>
+        a.group.localeCompare(b.group, 'he') || b.level - a.level || a.name.localeCompare(b.name, 'he'),
+    );
+  }
   const dir = sortDirection === 'asc' ? 1 : -1;
   return [...list].sort((a, b) => {
     switch (sortColumn) {
