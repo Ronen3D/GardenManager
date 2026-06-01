@@ -63,12 +63,12 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         key: 'l0FairnessWeight',
         label: 'שיוויון עומס בכל השבצ"ק',
         min: 0,
-        max: 200,
+        max: 500,
         step: 1,
         description:
           'עד כמה חשוב לחלק את שעות העבודה באופן שווה בין משתתפים שאינם סגל. ערך גבוה = חלוקה שוויונית יותר.',
         detail:
-          "אם משתתף א' עובד 12 שעות אפקטיביות ומשתתף ב' עובד 6, האופטימייזר מעניש פער זה. במשקל 40 (ברירת מחדל), שיוויון העומס של משתתפים שאינם סגל חשוב יותר מכמעט כל גורם אחר. הגדר 0 כדי להתעלם משיוויוניות זו לחלוטין.",
+          "אם משתתף א' עובד 12 שעות אפקטיביות ומשתתף ב' עובד 6, האופטימייזר מעניש פער זה. במשקל {default} (ברירת המחדל), שיוויון העומס של משתתפים שאינם סגל חשוב יותר מכמעט כל גורם אחר. הגדר 0 כדי להתעלם משיוויוניות זו לחלוטין.",
       },
       {
         key: 'seniorFairnessWeight',
@@ -78,13 +78,13 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         step: 1,
         description: 'עד כמה שעות העבודה מתחלקות בשווה בין משתתפי סגל (L2–L4). עדיפות נמוכה יותר כי מאגר הסגל קטן.',
         detail:
-          'לסגל יש פחות משימות מתאימות (בעיקר אדנית), ולכן טווח העומס שלהם מצומצם יותר. ברירת מחדל 6 נמוכה בכוונה בהשוואה לשיוויוניות L0 (40). הגדל אם אתה מבחין שעומס הסגל הופך לא מאוזן.',
+          'לסגל יש פחות משימות מתאימות (בעיקר אדנית), ולכן טווח העומס שלהם מצומצם יותר. ברירת המחדל ({default}) נמוכה בכוונה בהשוואה למשקל שיוויון העומס הכללי. הגדל אם אתה מבחין שעומס הסגל הופך לא מאוזן.',
       },
       {
         key: 'dailyBalanceWeight',
         label: 'שיוויון עומס יומי',
         min: 0,
-        max: 200,
+        max: 500,
         step: 1,
         description:
           'מצמצם פערים בין ימים עמוסים לימים קלים — שואף לחלוקה יומית פרופורציונלית לזמינות של כל משתתף וליום עצמו.',
@@ -105,7 +105,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         step: 1,
         description: 'כמה חשוב לאופטימייזר לשמור על הפסקה בין משימות חוסמות. ערך גבוה = הפסקות ארוכות יותר.',
         detail:
-          'רק פערים שבהם לשתי המשימות הצמודות מופעל "חוסם רצף" (HC-12) נספרים. לדוגמה, אדנית→שמש נספר, אבל כרוב→שמש לא. הנוסחה: minRestWeight × שעות מנוחה מינימליות. בברירת מחדל 10, כל שעת מנוחה נוספת = 10 נקודות.',
+          'רק פערים שבהם לשתי המשימות הצמודות מופעל "חוסם רצף" (HC-12) נספרים. לדוגמה, אדנית→שמש נספר, אבל כרוב→שמש לא. הנוסחה: minRestWeight × שעות מנוחה מינימליות. בברירת המחדל ({default}), כל שעת מנוחה נוספת = {default} נקודות.',
       },
       {
         key: 'restPerGapWeight',
@@ -129,11 +129,11 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         key: 'lowPriorityLevelPenalty',
         label: 'עונש דרגה בעדיפות נמוכה',
         min: 0,
-        max: 50000,
+        max: 20000,
         step: 100,
         description: 'עונש כבד כשמשתתף משובץ במשבצת שבה דרגתו מסומנת כ"עדיפות נמוכה". מוצא אחרון בלבד.',
         detail:
-          'בברירת מחדל 10,000, שיבוץ אחד של דרגה בעדיפות נמוכה עולה כמו 250 יחידות של חוסר שיוויון בעומס עבודה. האופטימייזר ינסה כל אפשרות אחרת לפני שיפנה לזה.',
+          'בברירת המחדל ({default}), שיבוץ אחד של דרגה בעדיפות נמוכה עולה הרבה יותר מאשר אי-שוויון קל בעומס עבודה. האופטימייזר ינסה כל אפשרות אחרת לפני שיפנה לזה.',
       },
     ],
   },
@@ -146,7 +146,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         key: 'notWithPenalty',
         label: 'עונש "אי התאמה"',
         min: 0,
-        max: 5000,
+        max: 20000,
         step: 50,
         description: 'חשיבות ההימנעות משיבוץ משתתפים שלא מסתדרים זה עם זה.',
         detail:
@@ -166,7 +166,7 @@ const WEIGHT_GROUPS: WeightGroup[] = [
         key: 'taskNameAvoidancePenalty',
         label: 'עונש שיבוץ לא-מועדף',
         min: 0,
-        max: 2000,
+        max: 1000,
         step: 10,
         description: 'עונש לכל שיבוץ לסוג משימה שהמשתתף מעדיף להימנע ממנו.',
         detail:
@@ -202,6 +202,21 @@ const WEIGHT_GROUPS: WeightGroup[] = [
     ],
   },
 ];
+
+/**
+ * The exact weight label shown on its slider card in the Algorithm Settings UI.
+ * Single source of truth (`WEIGHT_GROUPS`) so the auto-tune change table can
+ * render identical names instead of a drifting hand-maintained copy. Falls back
+ * to the raw key for any non-weight field.
+ */
+export function getWeightFieldLabel(key: string): string {
+  for (const group of WEIGHT_GROUPS) {
+    for (const f of group.fields) {
+      if (f.key === key) return f.label;
+    }
+  }
+  return key;
+}
 
 // ─── HC/SW Extended Descriptions ─────────────────────────────────────────────
 
@@ -1028,7 +1043,7 @@ function renderWeightInput(
           ? `
       <details class="algo-weight-details">
         <summary>למידע נוסף</summary>
-        <p>${f.detail}</p>
+        <p>${f.detail.replace(/\{default\}/g, String(defaultVal))}</p>
       </details>`
           : ''
       }

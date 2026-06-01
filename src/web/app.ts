@@ -104,7 +104,7 @@ import { attachTripleClickOpener, clearAttemptScoreHistory, pushAttemptScore } f
 import { openSplitPicker } from './split-picker';
 import { openSwapPicker } from './swap-picker';
 import { initSwimlane, renderSwimlaneView, wireSwimlaneEvents } from './swimlane-view';
-import { renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
+import { getWeightFieldLabel, renderAlgorithmTab, wireAlgorithmEvents } from './tab-algorithm';
 import { type HomeNavTarget, renderHomeTab, wireHomeEvents } from './tab-home';
 import {
   canLeaveParticipantsTab,
@@ -3346,20 +3346,10 @@ async function handleAutoTune(): Promise<void> {
 }
 
 function formatWeightKey(key: string): string {
-  const labels: Record<string, string> = {
-    minRestWeight: 'משקל מנוחה מינימלית',
-    restPerGapWeight: 'משקל פערי מנוחה',
-    l0FairnessWeight: 'שיוויוניות כללי',
-    seniorFairnessWeight: 'שיוויוניות סגל',
-    lowPriorityLevelPenalty: 'עונש דרגה בעדיפות נמוכה',
-    dailyBalanceWeight: 'איזון יומי',
-    notWithPenalty: 'עונש "אי התאמה"',
-    taskNamePreferencePenalty: 'עונש אי-קיום העדפה',
-    taskNameAvoidancePenalty: 'עונש שיבוץ לא-מועדף',
-    taskNamePreferenceBonus: 'בונוס שיבוץ מועדף',
-    splitPenalty: 'עונש פיצול משמרת',
-  };
-  return labels[key] ?? key;
+  // Use the exact slider label from the Algorithm Settings UI (single source of
+  // truth in WEIGHT_GROUPS) so the auto-tune change table names match the
+  // controls the user actually edits.
+  return getWeightFieldLabel(key);
 }
 
 function showTuneResultModal(rec: TuneRecommendation): void {
@@ -4814,7 +4804,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.7.7</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.7.8</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>

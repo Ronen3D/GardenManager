@@ -94,6 +94,7 @@ function validateSubTeams(arr: unknown[], ctx: string): string | null {
 
 const SCHEDULER_CONFIG_KEYS = [
   'minRestWeight',
+  'restPerGapWeight',
   'l0FairnessWeight',
   'seniorFairnessWeight',
   'maxIterations',
@@ -104,6 +105,7 @@ const SCHEDULER_CONFIG_KEYS = [
   'taskNamePreferencePenalty',
   'taskNameAvoidancePenalty',
   'taskNamePreferenceBonus',
+  'splitPenalty',
 ] as const;
 
 function validateAlgorithmSettings(obj: unknown, ctx: string): string | null {
@@ -126,7 +128,19 @@ function validateAlgorithmSettings(obj: unknown, ctx: string): string | null {
   if (dhcErr) return dhcErr;
 
   // dayStartHour
-  return requireNumber(s, 'dayStartHour', ctx);
+  const dshErr = requireNumber(s, 'dayStartHour', ctx);
+  if (dshErr) return dshErr;
+
+  // splittingMode (optional; if present must be one of the three valid modes)
+  if (
+    s.splittingMode !== undefined &&
+    s.splittingMode !== 'off' &&
+    s.splittingMode !== 'feasibility' &&
+    s.splittingMode !== 'quality'
+  ) {
+    return `שדה "splittingMode" אינו תקין ב-${ctx}.`;
+  }
+  return null;
 }
 
 // ─── Per-Type Validators ───────────────────────────────────────────────────

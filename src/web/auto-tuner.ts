@@ -25,6 +25,7 @@
 import { computeScheduleScore } from '../constraints/soft-constraints';
 import { SchedulingEngine } from '../engine/scheduler';
 import { DEFAULT_CONFIG, type Participant, type Schedule, type SchedulerConfig, type Task } from '../models/types';
+import { computeAllCapacities } from '../utils/capacity';
 import { computeRankScore, iqr, latinHypercubeSample, maxUnfilledIn, median, mulberry32 } from '../utils/tuner-math';
 import * as store from './config-store';
 import { escHtml, getStoredDefaultAttempts } from './ui-helpers';
@@ -310,22 +311,40 @@ interface FrozenEnv {
   notWithPairs: Map<string, Set<string>>;
   taskMap: Map<string, Task>;
   pMap: Map<string, Participant>;
+  /**
+   * Per-participant capacities over the run's task span. Required so the
+   * reference re-score uses capacity-PROPORTIONAL SC-3/SC-8 targets — the same
+   * objective production scores with. Without it the yardstick degrades to
+   * flat-mean targets and mis-ranks the fairness/daily weights on
+   * uneven-availability datasets.
+   */
+  capacities: ReturnType<typeof computeAllCapacities>;
 }
 
-function freezeEnv(participants: Participant[], tasks: Task[]): FrozenEnv {
+export function freezeEnv(participants: Participant[], tasks: Task[]): FrozenEnv {
   const notWithPairs = new Map<string, Set<string>>();
   for (const p of participants) {
     if (p.notWithIds && p.notWithIds.length > 0) {
       notWithPairs.set(p.id, new Set(p.notWithIds));
     }
   }
+  const dayStart = store.getDayStartHour();
+  // Mirror scheduler._buildScoreCtx: capacity-proportional SC-3/SC-8 targets
+  // need each participant's available hours over the schedule's time span.
+  let schedStart = tasks[0]?.timeBlock.start ?? new Date();
+  let schedEnd = tasks[0]?.timeBlock.end ?? new Date();
+  for (const t of tasks) {
+    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+  }
   return {
-    dayStart: store.getDayStartHour(),
+    dayStart,
     disabledHC: store.getDisabledHCSet(),
     restRuleMap: store.buildRestRuleMap(),
     notWithPairs,
     taskMap: new Map(tasks.map((t) => [t.id, t])),
     pMap: new Map(participants.map((p) => [p.id, p])),
+    capacities: computeAllCapacities(participants, schedStart, schedEnd, dayStart),
   };
 }
 
@@ -365,6 +384,7 @@ async function evaluate(params: EvalParams): Promise<EvalResult> {
   const refScoreObj = computeScheduleScore(params.tasks, params.participants, schedule.assignments, DEFAULT_CONFIG, {
     taskMap: params.frozen.taskMap,
     pMap: params.frozen.pMap,
+    capacities: params.frozen.capacities,
     notWithPairs,
     dayStartHour: dayStart,
   });
@@ -630,15 +650,17 @@ let _leaderDiffBaseline: SchedulerConfig | null = null;
 let _leaderDiffDims: Dim[] | null = null;
 
 /** Hebrew labels for weight keys — used in the live leader-diff preview.
- * Duplicates the map in `app.ts#formatWeightKey` so the auto-tuner module
- * stays free of a reverse dependency back to the app layer. */
+ * Mirrors the exact slider labels in the Algorithm Settings UI (`WEIGHT_GROUPS`
+ * in `tab-algorithm.ts`) so the in-run preview and the final change table show
+ * identical names. Kept as a local copy rather than imported because
+ * `tab-algorithm.ts` imports this module (importing it back would be circular). */
 const TUNED_LABELS: Record<string, string> = {
-  minRestWeight: 'משקל מנוחה מינימלית',
-  restPerGapWeight: 'משקל פערי מנוחה',
-  l0FairnessWeight: 'שיוויוניות כללי',
-  seniorFairnessWeight: 'שיוויוניות סגל',
+  minRestWeight: 'הפסקה מינימלית גבוהה בין משימות',
+  restPerGapWeight: 'חשיבות הפסקה בין משימות',
+  l0FairnessWeight: 'שיוויון עומס בכל השבצ"ק',
+  seniorFairnessWeight: 'שיוויון עומס לסגל בכל השבצ"ק',
   lowPriorityLevelPenalty: 'עונש דרגה בעדיפות נמוכה',
-  dailyBalanceWeight: 'איזון יומי',
+  dailyBalanceWeight: 'שיוויון עומס יומי',
   notWithPenalty: 'עונש "אי התאמה"',
   taskNamePreferencePenalty: 'עונש אי-קיום העדפה',
   taskNameAvoidancePenalty: 'עונש שיבוץ לא-מועדף',

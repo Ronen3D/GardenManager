@@ -138,6 +138,7 @@ if (typeof _g.File === 'undefined') {
 }
 
 // ─── Now safe to import store + data-transfer ──────────────────────────────
+import { computeScheduleScore } from './constraints/soft-constraints';
 import { buildPhantomContext } from './engine/phantom';
 import {
   type AlgorithmSettings,
@@ -148,7 +149,9 @@ import {
   type OneTimeTask,
   type Participant,
   type Schedule,
+  type SchedulerConfig,
   type SlotTemplate,
+  type Task,
   type TaskTemplate,
   ViolationSeverity,
 } from './models/types';
@@ -156,6 +159,7 @@ import { runExportLayoutTests } from './test-export-layout';
 // A0 EXTENSION POINT (imports): src/web-importing writing-agent suites
 import { runPersistenceExtraTests } from './test-persistence-extra';
 import { runWebUtilsTests } from './test-web-utils';
+import { freezeEnv } from './web/auto-tuner';
 import * as store from './web/config-store';
 import { exportDaySnapshot } from './web/continuity-export';
 import { matchParticipants, parseContinuitySnapshot } from './web/continuity-import';
@@ -2119,6 +2123,162 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
         );
       }
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // P0-R. Regression guards for the tuning-system P0 fixes
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n── P0-R1: scheduleDays clamped on load ──');
+  {
+    const buildState = (sd: unknown) => {
+      const s: Record<string, unknown> = {
+        version: 7,
+        scheduleDate: new Date().toISOString(),
+        restRules: [],
+        pakalDefinitions: [],
+        certificationDefinitions: [],
+        participants: [],
+        dateUnavailabilities: [],
+        notWithPairs: [],
+      };
+      // `undefined` ⇒ omit the key entirely (simulates an older state file)
+      if (sd !== undefined) s.scheduleDays = sd;
+      return JSON.stringify(s);
+    };
+    const loadWith = (sd: unknown): number => {
+      store.factoryReset();
+      localStorage.clear();
+      localStorage.setItem('gardenmanager_state', buildState(sd));
+      store.loadFromStorage();
+      return store.getScheduleDays();
+    };
+    assert(loadWith(99) === 7, 'P0-R1: scheduleDays=99 clamps to 7 on load');
+    assert(loadWith(-3) === 1, 'P0-R1: scheduleDays=-3 clamps to 1 on load (old `|| 7` let it through)');
+    assert(loadWith(3.9) === 3, 'P0-R1: non-integer scheduleDays=3.9 floors to 3');
+    assert(loadWith(4) === 4, 'P0-R1: valid scheduleDays=4 passes through unchanged');
+    assert(loadWith(undefined) === 7, 'P0-R1: missing scheduleDays defaults to 7');
+  }
+
+  console.log('\n── P0-R2: replace-import heals a config missing restPerGapWeight (no NaN composite) ──');
+  {
+    store.factoryReset();
+    localStorage.clear();
+
+    // Simulate a legacy/cross-version export whose config lacks restPerGapWeight.
+    const legacyConfig = { ...DEFAULT_CONFIG } as Partial<SchedulerConfig>;
+    delete legacyConfig.restPerGapWeight;
+
+    // Regression guard: the UN-healed config WOULD poison the composite to NaN
+    // (undefined × restPerGapBonus = NaN), which silently breaks all SA/refine
+    // comparisons for the session. This is exactly what the merge fix prevents.
+    const sched = makeSchedule();
+    const ctx = {
+      taskMap: new Map(sched.tasks.map((t) => [t.id, t])),
+      pMap: new Map(sched.participants.map((p) => [p.id, p])),
+      dayStartHour: 5,
+    };
+    const naNComposite = computeScheduleScore(
+      sched.tasks,
+      sched.participants,
+      sched.assignments,
+      legacyConfig as SchedulerConfig,
+      ctx,
+    ).compositeScore;
+    assert(Number.isNaN(naNComposite), 'P0-R2: un-merged legacy config (no restPerGapWeight) yields NaN composite');
+
+    // The replace path must merge over DEFAULT_CONFIG so the missing key is healed.
+    const ok = store.replaceAlgorithmSettingsAndPresets(
+      {
+        config: legacyConfig as SchedulerConfig,
+        disabledHardConstraints: [],
+        dayStartHour: 5,
+        splittingMode: 'quality',
+      } as AlgorithmSettings,
+      [],
+      null,
+    );
+    assert(ok === true, 'P0-R2: replaceAlgorithmSettingsAndPresets succeeds');
+
+    const healed = store.getAlgorithmSettings().config;
+    assert(
+      Number.isFinite(healed.restPerGapWeight) && healed.restPerGapWeight === DEFAULT_CONFIG.restPerGapWeight,
+      'P0-R2: missing restPerGapWeight is healed from DEFAULT_CONFIG',
+    );
+    const healedComposite = computeScheduleScore(
+      sched.tasks,
+      sched.participants,
+      sched.assignments,
+      healed,
+      ctx,
+    ).compositeScore;
+    assert(Number.isFinite(healedComposite), 'P0-R2: composite is finite after the replace path heals the config');
+  }
+
+  console.log('\n── P0-R3: auto-tuner freezeEnv populates capacities (capacity-proportional ≠ flat-mean) ──');
+  {
+    store.factoryReset(); // ensure default dayStartHour=5 / no disabled HCs for freezeEnv
+    localStorage.clear();
+
+    const t = (h: number) => new Date(`2026-03-15T${String(h).padStart(2, '0')}:00:00Z`);
+    const makeTask = (id: string, startH: number, endH: number): Task => ({
+      id,
+      name: `${id} D1`,
+      sourceName: id,
+      timeBlock: { start: t(startH), end: t(endH) },
+      requiredCount: 1,
+      slots: [{ slotId: `${id}-s`, acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: false,
+    });
+    // Equal load (both 4h tasks) but uneven availability ⇒ capacity-proportional
+    // fair-share targets diverge from the flat-mean targets.
+    const tasks: Task[] = [makeTask('tA', 6, 10), makeTask('tB', 18, 22)];
+    const pNarrow: Participant = {
+      id: 'pN',
+      name: 'Narrow',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: [{ start: t(6), end: t(10) }],
+      dateUnavailability: [],
+    };
+    const pWide: Participant = {
+      id: 'pW',
+      name: 'Wide',
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: [{ start: t(6), end: t(22) }],
+      dateUnavailability: [],
+    };
+    const participants = [pNarrow, pWide];
+    const assignments = [
+      { id: 'aN', taskId: 'tA', slotId: 'tA-s', participantId: 'pN', status: AssignmentStatus.Scheduled, updatedAt: t(10) },
+      { id: 'aW', taskId: 'tB', slotId: 'tB-s', participantId: 'pW', status: AssignmentStatus.Scheduled, updatedAt: t(22) },
+    ];
+
+    const frozen = freezeEnv(participants, tasks);
+    assert(frozen.capacities.size === participants.length, 'P0-R3: freezeEnv populates capacities for every participant');
+    const capN = frozen.capacities.get('pN')?.totalAvailableHours ?? 0;
+    const capW = frozen.capacities.get('pW')?.totalAvailableHours ?? 0;
+    assert(capN > 0 && capW > 0 && Math.abs(capN - capW) > 1e-6, 'P0-R3: uneven-availability fixture yields unequal capacities');
+
+    const ctxBase = {
+      taskMap: frozen.taskMap,
+      pMap: frozen.pMap,
+      notWithPairs: frozen.notWithPairs,
+      dayStartHour: frozen.dayStart,
+    };
+    const withCap = computeScheduleScore(tasks, participants, assignments, DEFAULT_CONFIG, {
+      ...ctxBase,
+      capacities: frozen.capacities,
+    }).compositeScore;
+    const flatMean = computeScheduleScore(tasks, participants, assignments, DEFAULT_CONFIG, ctxBase).compositeScore;
+    assert(Number.isFinite(withCap) && Number.isFinite(flatMean), 'P0-R3: both reference scores are finite');
+    assert(
+      Math.abs(withCap - flatMean) > 1e-6,
+      'P0-R3: capacity-proportional refScore differs from the flat-mean path on uneven availability',
+    );
   }
 
   console.log('\n── Persistence tests complete ───────────');

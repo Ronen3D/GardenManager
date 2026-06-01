@@ -2856,7 +2856,11 @@ export function loadFromStorage(): boolean {
 
     // Restore schedule date/days
     scheduleDate = new Date(state.scheduleDate);
-    scheduleDays = state.scheduleDays || 7;
+    // Clamp on load: setScheduleDays() clamps to 1..7, but a corrupt/hand-edited
+    // gardenmanager_state could carry an out-of-range value that would widen the
+    // availability window and freeze onto Schedule.periodDays. (Falsy → 7.)
+    const sd = state.scheduleDays;
+    scheduleDays = typeof sd === 'number' && Number.isFinite(sd) ? Math.max(1, Math.min(7, Math.floor(sd))) : 7;
     _restRules = Array.isArray(state.restRules) ? state.restRules : [];
 
     // Reset stale schedule dates to the next upcoming Sunday:
@@ -4701,11 +4705,15 @@ export function replaceAlgorithmSettingsAndPresets(
   presets: AlgorithmPreset[],
   activeId: string | null,
 ): boolean {
-  // Replace working copy
+  // Replace working copy. Merge config over DEFAULT_ALGORITHM_SETTINGS.config so
+  // a legacy/cross-version file missing newer keys (e.g. restPerGapWeight,
+  // splitPenalty) is healed rather than stored with `undefined` — which would
+  // poison the composite score to NaN. Normalize dayStartHour like every other
+  // ingress path.
   _algorithmSettings = {
-    config: { ...settings.config },
+    config: { ...DEFAULT_ALGORITHM_SETTINGS.config, ...settings.config },
     disabledHardConstraints: [...settings.disabledHardConstraints],
-    dayStartHour: settings.dayStartHour,
+    dayStartHour: _normalizeDayStartHour(settings.dayStartHour),
     splittingMode: settings.splittingMode ?? DEFAULT_ALGORITHM_SETTINGS.splittingMode,
   };
   if (!_saveAlgorithmSettings()) return false;
