@@ -8674,6 +8674,7 @@ console.log('\n── Rescue Plans ───────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import {
+  _benchSetEnhancedRarity,
   buildSchedulingContext,
   classifyUnfilledSlots,
   computeStructuralPriority,
@@ -9092,8 +9093,19 @@ console.log('\n── Optimizer ────────────────
   assert(d1ReVal.valid === true, 'greedy: depth-1 repair output passes hard-constraint re-validation');
 
   // ═══ Phase 1: SchedulingContext signal-aware ordering ══════════════════════
+  //
+  // These assertions document the LEGACY tiered formula's signal-aware
+  // tier shifts. The production default is now D1+D3 (lowPriority-aware
+  // effective cert impact + log-scale sub-priority) — see
+  // `_useEnhancedRarity` in optimizer.ts and the priority bench reports
+  // for the empirical basis. We toggle the flag off here so these tests
+  // continue to exercise the legacy code path they were written against
+  // and explicitly document its behavior; D1+D3 behavior is validated
+  // empirically by the priority bench, not by hardcoded assertions.
 
-  console.log('\n── Optimizer: SchedulingContext signals ─────────');
+  console.log('\n── Optimizer: SchedulingContext signals (legacy formula) ─────────');
+
+  _benchSetEnhancedRarity(false);
 
   // Signal fixtures: 10 participants, a mix of common & rare certs
   const signalPool: Participant[] = [];
@@ -9348,6 +9360,12 @@ console.log('\n── Optimizer ────────────────
   assert(srCtx.seniorCountByGroup.get('GA') === 2, `seniorCountByGroup: GA has 2 seniors`);
   assert(srCtx.seniorCountByGroup.get('GB') === 1, `seniorCountByGroup: GB has 1 senior`);
   assert((srCtx.seniorCountByGroup.get('Unknown') ?? 0) === 0, `seniorCountByGroup: missing group has 0 (default)`);
+
+  // Restore production default (D1+D3) before the next test section. The
+  // remaining structural-priority tests below use sameGroupRequired tasks
+  // whose path through `computeStructuralPriority` is unaffected by the
+  // flag, so they run cleanly under the production default.
+  _benchSetEnhancedRarity(true);
 
   // ═══ Phase 2: S5 senior-pressure tier-0 ordering ═══════════════════════════
 

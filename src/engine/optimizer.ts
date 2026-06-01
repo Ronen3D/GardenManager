@@ -201,22 +201,31 @@ export function setBenchHooks(h: BenchHookConfig | null): void {
 }
 
 /**
- * Phase 2 (D1+D3) dispatch flag. When `true`, `computeStructuralPriority`
- * uses the lowPriority-aware effective-cert-impact for S2 and the
- * log-scale pool-fraction for the sub-priority. When `false` (default),
- * the legacy tiered formula runs byte-identical to the pre-Phase-2
- * baseline. Flipped by the priority bench's D1+D3 variant via
- * `_benchSetEnhancedRarity(true)` / `_benchSetEnhancedRarity(false)`.
+ * Phase 2 (D1+D3) dispatch flag — TRUE by default in production.
  *
- * Production currently runs with this flag `false`. The flag is
- * bench-only — switching production to D1+D3 would simply default this
- * to `true` (and update the bench acceptance baseline accordingly).
+ * When `true` (production default), `computeStructuralPriority` uses the
+ * lowPriority-aware effective-cert-impact for S2 and the log-scale
+ * pool-fraction for the sub-priority. When `false`, the legacy tiered
+ * formula runs byte-identical to the pre-Phase-2 baseline; the priority
+ * bench's `baseline` variant flips the flag off so it can compare D1+D3
+ * against the legacy reference.
+ *
+ * Empirical basis for the production default: the canonical bench
+ * (60 seeds × 30 attempts × 10 fixtures, see
+ * [tmp/priority-bench-phase2-report.md](../../tmp/priority-bench-phase2-report.md))
+ * found D1+D3 statistically improves fixture-default (Δ = +65.7 mean
+ * composite, p = 0.000, 83% of seeds better, 24% lower stdDev), with
+ * zero HC violations and zero regressions on the other 9 fixtures.
+ * Three pathology anchors flip from fail→pass (P-universal-cert-tier,
+ * P-saturated-pool, P-hamama-realistic); two remain failing in both
+ * variants (P-adjacency-isolation, P-restRule-density) as documented
+ * unfixed pathologies.
  *
  * Threshold for D1's S2 trigger: `θ_S2 = 0.5` — calibrated against the
  * default fixture so a moderate cert (Hamama at 50% globally, ~80% in
  * the lowPrio-aware L0-subset) trips it.
  */
-let _useEnhancedRarity = false;
+let _useEnhancedRarity = true;
 /** D1 — S2 tier-shift trigger. When effective cert impact > this, the task
  *  is demoted one tier (harder). Calibrated against the default fixture so
  *  Hamama (impact ≈ 0.8 against L0+Hamama subset) trips it. */

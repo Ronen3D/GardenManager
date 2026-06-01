@@ -1,9 +1,22 @@
 # Priority-ordering bench
 
 Empirical bench infrastructure for validating changes to the scheduler's
-initial task-ordering phase. Ships with two variants — `baseline`
-(legacy tiered formula) and `D1+D3` (the shipped Phase 2 change:
-lowPriority-aware effective cert impact + log-scale sub-priority).
+initial task-ordering phase.
+
+Two variants:
+
+- **`D1+D3`** — current production default (as of 2026-05-30).
+  lowPriority-aware effective cert impact + log-scale sub-priority on
+  pool fraction. Promoted to production after the canonical bench
+  showed a statistically significant improvement on `fixture-default`
+  (Δ = +65.7 mean composite, p = 0.000, 83% of seeds better, 24% lower
+  stdDev) with zero regressions on the other 9 fixtures and zero HC
+  violations.
+
+- **`baseline`** — legacy tiered formula (pre-D1+D3). Kept as the
+  reference for paired-Δ comparisons so future ordering changes can
+  contrast against both the current production default and the
+  original baseline.
 
 Phase 3 (D4 continuous priority) was implemented and evaluated end-to-end
 with both default and auto-tuner-calibrated coefficients; both failed
@@ -11,8 +24,8 @@ acceptance and the D4 code path was removed. The 6 fixtures originally
 built to stress D4 mechanisms remain in the bench as regression
 sentinels for any future ordering change that re-targets them.
 
-See the full plan and bench history in the design notes referenced by the
-git history for this directory.
+The design notes that drove this work were captured in commit history
+under the priority-ordering branch.
 
 ## What this measures
 
@@ -97,16 +110,20 @@ Smoke test (fast):
 BENCH_SEED_COUNT=2 BENCH_ATTEMPTS=4 BENCH_PROGRESS=true BENCH_FIXTURES=fixture-default npm run bench:priority
 ```
 
-## Acceptance criteria (Phase 1)
+## Acceptance criteria
 
-The bench passes Phase 1 acceptance when:
+The bench passes acceptance when:
 
-1. **`baseline` on `fixture-default` reproduces today's behavior** within
-   statistical noise (mean composite Δ within ±0.5% across runs).
-2. **All 5 invariant anchors pass for `baseline`.**
-3. **All 5 pathology anchors fail for `baseline` in the specific ways
-   named in `pathologies.ts`.** An unexpectedly-passing pathology anchor
-   for baseline is itself a bench bug — investigate.
+1. **`D1+D3` on `fixture-default` reproduces today's production behavior**
+   within statistical noise (mean composite Δ within ±0.5% across runs).
+   `baseline` should produce the legacy pre-D1+D3 result on the same
+   fixture, paired-Δ statistically significant.
+2. **All 5 invariant anchors pass for both `baseline` and `D1+D3`.**
+3. **Pathology anchors match `expectedOutcome` in `pathologies.ts`:**
+   `baseline` fails all 5; `D1+D3` resolves 3 of 5 (P-universal-cert-tier,
+   P-saturated-pool, P-hamama-realistic) and leaves 2 documented as
+   unfixed (P-adjacency-isolation, P-restRule-density). An unexpected
+   outcome on either side is a bench bug — investigate.
 4. **Zero HC violations matrix-wide** (independent `fullValidate` of
    every run's final assignments).
 5. **Bench runs to completion under 24 hours** at default settings.
