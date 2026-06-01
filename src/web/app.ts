@@ -54,7 +54,7 @@ import { computeTemplateSectionKey, oneTimeSectionKey } from '../shared/layout-k
 import { generateShiftBlocks, hourInOpDay } from '../shared/utils/time-utils';
 import { scheduleToGantt } from '../ui/gantt-bridge';
 import { computeAllCapacities } from '../utils/capacity';
-import { operationalDateKey, taskOpDayStart } from '../utils/date-utils';
+import { describeTaskBidi, operationalDateKey, taskOpDayStart } from '../utils/date-utils';
 import { register as registerTutorialHooks } from './app-tutorial-hooks';
 import { runAutoTune, setAutoTunerTaskFactory, type TuneRecommendation } from './auto-tuner';
 import { showCapabilityChangePicker } from './capability-change-modal';
@@ -1867,9 +1867,10 @@ async function handleManualParticipantClick(participantId: string): Promise<bool
     const reasonMove = getRejectionReason(participant, task, slot, pAssignmentsMove, taskMap, validateOpts);
     if (reasonMove === null) {
       const otherTask = currentSchedule.tasks.find((t) => t.id === otherAssignment.taskId);
+      const otherDesc = otherTask ? describeTaskBidi(otherTask) : '?';
       const reasonText = REJECTION_REASONS_HE[reasonAddBoth] || `אילוץ ${reasonAddBoth}`;
       const confirmed = await showConfirm(
-        `${participant.name} משובץ ב-"${otherTask?.name || '?'}" — שיבוץ נוסף יפר אילוץ (${reasonText}). להעביר לכאן?`,
+        `${participant.name} משובץ ב-"${otherDesc}" — שיבוץ נוסף יפר אילוץ (${reasonText}). להעביר לכאן?`,
       );
       if (!confirmed) return false;
       executeManualAssignment(participantId, existingAssignment, otherAssignment);
@@ -4813,7 +4814,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.7.6</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.7.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
