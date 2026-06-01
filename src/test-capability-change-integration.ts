@@ -67,7 +67,7 @@ const wideAvail = [{ start: new Date(2026, 4, 28), end: new Date(2026, 5, 10) }]
 const dummyScore: ScheduleScore = {
   minRestHours: 0,
   avgRestHours: 0,
-  restStdDev: 0,
+  workloadStdDev: 0,
   totalPenalty: 0,
   compositeScore: 0,
   l0StdDev: 0,

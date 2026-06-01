@@ -270,7 +270,7 @@ function buildFrozenSchedule(id: string): Schedule {
     score: {
       minRestHours: 24,
       avgRestHours: 24,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 100,
       l0StdDev: 0,

@@ -864,7 +864,7 @@ export function computeScheduleScore(
   return {
     minRestHours: minRest,
     avgRestHours: avgRest,
-    restStdDev: combinedStdDev,
+    workloadStdDev: combinedStdDev,
     totalPenalty,
     compositeScore,
     l0StdDev: wlSplit.l0StdDev,

@@ -404,8 +404,10 @@ export interface ScheduleScore {
   minRestHours: number;
   /** Average rest period (hours) */
   avgRestHours: number;
-  /** Standard deviation of effective load hours — lower is fairer */
-  restStdDev: number;
+  /** Standard deviation of effective workload hours — lower is fairer.
+   *  (Despite living among the rest metrics, this is a WORKLOAD spread, not a
+   *  rest gap; it is display-only and never enters the composite score.) */
+  workloadStdDev: number;
   /** Sum of penalty points (low-priority level usage, preference mismatches, etc.) */
   totalPenalty: number;
   /** Composite objective: maximize this */
@@ -441,8 +443,6 @@ export interface ScheduleScore {
   /** Shift-split penalty contribution (config.splitPenalty × split-occurrence
    *  count). Run-constant in v1. Optional so older schedules deserialize. */
   splitPenalty?: number;
-  /** Penalty for disrupting existing assignments (rescue mode only) */
-  disruptionPenalty?: number;
 }
 
 // ─── Constraint Violations ───────────────────────────────────────────────────
@@ -480,9 +480,11 @@ export interface SchedulerConfig {
   /** Weight for senior (L2-L4) fairness — secondary */
   seniorFairnessWeight: number;
 
-  /** Max solver iterations */
+  /** Max solver iterations. Fixed operational parameter — intentionally NOT
+   *  exposed as a UI slider and NOT an auto-tuner dimension (the tuner only
+   *  scales it down per-phase for cheaper early rounds). */
   maxIterations: number;
-  /** Max time for solver in ms */
+  /** Max solver time (ms). Fixed operational parameter — see `maxIterations`. */
   maxSolverTimeMs: number;
   /** Penalty for assigning a participant to a slot where their level is marked lowPriority */
   lowPriorityLevelPenalty: number;

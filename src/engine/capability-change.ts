@@ -134,6 +134,7 @@ export interface GenerateCapabilityChangeOpts {
  * cases; the cap exists to bound worst-case work and prevent runaway
  * rebalancing when a participant has a very large deficit.
  */
+// Fixed, reasoned thresholds — not user-tunable and not auto-tuned.
 const FOCAL_RETENTION_TRIGGER = 0.7;
 const FOCAL_DEFICIT_TRIGGER_HOURS = 3;
 const FOCAL_MIN_DEFICIT_FLOOR = 1;

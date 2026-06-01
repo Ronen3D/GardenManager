@@ -48,7 +48,7 @@ export interface AttemptRow {
   score: {
     minRestHours: number;
     avgRestHours: number;
-    restStdDev: number;
+    workloadStdDev: number;
     totalPenalty: number;
     l0StdDev: number;
     seniorStdDev: number;
@@ -546,7 +546,7 @@ function printSnapshot(): void {
     iters: a.iterations,
     ms: a.durationMs,
     minRest: a.score.minRestHours.toFixed(1),
-    restStd: a.score.restStdDev.toFixed(2),
+    restStd: a.score.workloadStdDev.toFixed(2),
     l0Std: a.score.l0StdDev.toFixed(2),
     srStd: a.score.seniorStdDev.toFixed(2),
     dayPP: a.score.dailyPerParticipantStdDev.toFixed(2),

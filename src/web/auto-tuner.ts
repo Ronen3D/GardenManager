@@ -767,8 +767,9 @@ export function setAutoTunerTaskFactory(fn: () => Task[]): void {
 
 /** Baseline attempts count used for Phase 4/5 (full quality). */
 function getBaselineAttempts(): number {
-  const n = getStoredDefaultAttempts();
-  return Number.isFinite(n) && n > 0 ? n : 100;
+  // getStoredDefaultAttempts() already guarantees a finite integer ≥ 1
+  // (FALLBACK_DEFAULT_ATTEMPTS = 60), so no extra guard/fallback is needed.
+  return getStoredDefaultAttempts();
 }
 
 async function runTournament(participants: Participant[], tasks: Task[]): Promise<TuneRecommendation | null> {

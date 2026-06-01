@@ -366,6 +366,10 @@ function getEligibleCandidates(
     const dayCap = (cap?.dailyAvailableHours.get(taskDay) ?? 0) / divisor;
     const periodPart = totalCap > 0 ? w / totalCap : w;
     const dayPart = dayCap > 0 ? day / dayCap : 0;
+    // Fixed shaping weight (not user-tunable / not auto-tuned): greedy ordering
+    // weights day-level balance 2× the period-level term so it front-loads
+    // day-even placements. Parallels dailyBalanceWeight but is a separate,
+    // deliberately frozen constant.
     return periodPart + 2.0 * dayPart;
   };
 
@@ -466,9 +470,9 @@ export interface SchedulingContext {
   totalCapacityHours: number;
   // ─── Phase 2 (D1+D3) — lowPriority-aware tightness signals ─────────────
   // Always populated. Consumed by `computeStructuralPriority` only when the
-  // module-level `_useEnhancedRarity` flag is on (default off; flipped by
-  // the priority bench's D1+D3 variant). When off, byte-identical behavior
-  // to the pre-Phase-2 formula.
+  // module-level `_useEnhancedRarity` flag is on (default ON in production;
+  // the priority bench's baseline variant flips it OFF to score the legacy
+  // pre-Phase-2 formula). When off, byte-identical behavior to that formula.
   /** For each (taskId, slotId) → count of participants whose level matches a
    *  NON-lowPriority entry of the slot (level-only filter, no cert). The
    *  denominator of `cleanPool / nonLowPrio` pool-fraction. */
@@ -2098,6 +2102,10 @@ export function isSwapFeasible(
  * is pre-built once and reused across all `computeScheduleScore` calls
  * to eliminate redundant map construction and O(P×A) scans.
  */
+// Fixed by design — not user-tunable and not an auto-tuner dimension. Set far
+// above any realistic composite delta so feasibility (filling slots) always
+// dominates score quality; this also intentionally caps the effective magnitude
+// of the user-facing weights.
 const UNFILLED_SLOT_PENALTY = 50000;
 
 export function localSearchOptimize(
@@ -2761,6 +2769,8 @@ export function localSearchOptimize(
 
 // ─── Post-SA Polish ──────────────────────────────────────────────────────────
 
+/** Max deterministic polish passes after SA. Fixed by design — not user-tunable
+ *  and not an auto-tuner dimension. */
 const MAX_POLISH_PASSES = 3;
 
 /**
@@ -3645,7 +3655,7 @@ function makeAttemptRow(
     score: {
       minRestHours: s.minRestHours,
       avgRestHours: s.avgRestHours,
-      restStdDev: s.restStdDev,
+      workloadStdDev: s.workloadStdDev,
       totalPenalty: s.totalPenalty,
       l0StdDev: s.l0StdDev,
       seniorStdDev: s.seniorStdDev,

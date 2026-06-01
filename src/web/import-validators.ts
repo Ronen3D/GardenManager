@@ -23,6 +23,33 @@ function requireNumber(obj: R, field: string, ctx: string): string | null {
   return null;
 }
 
+/** Reject NaN / ±Infinity and negative values (config weights are all ≥ 0). */
+function requireFiniteNonNegative(obj: R, field: string, ctx: string): string | null {
+  const v = obj[field];
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+    return `שדה "${field}" חייב להיות מספר אי-שלילי תקין ב-${ctx}.`;
+  }
+  return null;
+}
+
+/** Reject NaN / ±Infinity and non-positive values (solver budgets must be > 0). */
+function requireFinitePositive(obj: R, field: string, ctx: string): string | null {
+  const v = obj[field];
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) {
+    return `שדה "${field}" חייב להיות מספר חיובי תקין ב-${ctx}.`;
+  }
+  return null;
+}
+
+/** Require an integer within [min, max] inclusive. */
+function requireIntInRange(obj: R, field: string, ctx: string, min: number, max: number): string | null {
+  const v = obj[field];
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) {
+    return `שדה "${field}" חייב להיות מספר שלם בין ${min} ל-${max} ב-${ctx}.`;
+  }
+  return null;
+}
+
 function requireBoolean(obj: R, field: string, ctx: string): string | null {
   if (typeof obj[field] !== 'boolean') return `שדה "${field}" חסר או לא תקין ב-${ctx}.`;
   return null;
@@ -108,6 +135,9 @@ const SCHEDULER_CONFIG_KEYS = [
   'splitPenalty',
 ] as const;
 
+/** Config keys that are solver budgets (must be > 0); all others are weights (≥ 0). */
+const SOLVER_BUDGET_KEYS = new Set<string>(['maxIterations', 'maxSolverTimeMs']);
+
 function validateAlgorithmSettings(obj: unknown, ctx: string): string | null {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     return `${ctx} חסר או לא תקין.`;
@@ -119,7 +149,9 @@ function validateAlgorithmSettings(obj: unknown, ctx: string): string | null {
   if (configErr) return configErr;
   const config = s.config as R;
   for (const key of SCHEDULER_CONFIG_KEYS) {
-    const err = requireNumber(config, key, `config ב-${ctx}`);
+    const err = SOLVER_BUDGET_KEYS.has(key)
+      ? requireFinitePositive(config, key, `config ב-${ctx}`)
+      : requireFiniteNonNegative(config, key, `config ב-${ctx}`);
     if (err) return err;
   }
 
@@ -127,8 +159,8 @@ function validateAlgorithmSettings(obj: unknown, ctx: string): string | null {
   const dhcErr = requireArray(s, 'disabledHardConstraints', ctx);
   if (dhcErr) return dhcErr;
 
-  // dayStartHour
-  const dshErr = requireNumber(s, 'dayStartHour', ctx);
+  // dayStartHour — integer hour-of-day
+  const dshErr = requireIntInRange(s, 'dayStartHour', ctx, 0, 23);
   if (dshErr) return dshErr;
 
   // splittingMode (optional; if present must be one of the three valid modes)

@@ -265,7 +265,7 @@ function makeSchedule(overrides?: Partial<Schedule>): Schedule {
     score: {
       minRestHours: 24,
       avgRestHours: 24,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 100,
       l0StdDev: 0,
@@ -412,6 +412,28 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     );
     assert(algoResult.ok === true, 'U2.1: Valid algorithm envelope accepted');
     assert(algoResult.exportType === 'algorithm', 'U2.1: exportType is algorithm');
+
+    // P3 hardening: corrupt scheduler-config values are rejected on import.
+    // (JSON carries no NaN/Infinity — they arrive as null and are caught by the
+    // type check; negative weights, a non-positive solver budget, and an
+    // out-of-range dayStartHour are what the new finite/range checks add.)
+    const badAlgo = (patch: Record<string, unknown>, dayStartHour?: number) =>
+      dataTransfer.validateImportFile(
+        makeEnvelope('algorithm', {
+          currentSettings: {
+            ...DEFAULT_ALGORITHM_SETTINGS,
+            config: { ...DEFAULT_ALGORITHM_SETTINGS.config, ...patch },
+            ...(dayStartHour !== undefined ? { dayStartHour } : {}),
+          },
+          presets: [],
+          activePresetId: null,
+        }),
+      );
+    assert(badAlgo({ l0FairnessWeight: NaN }).ok === false, 'U2.1h: NaN weight (→null) rejected on import');
+    assert(badAlgo({ minRestWeight: -5 }).ok === false, 'U2.1h: negative weight rejected on import');
+    assert(badAlgo({ maxIterations: 0 }).ok === false, 'U2.1h: maxIterations=0 rejected on import');
+    assert(badAlgo({}, 25).ok === false, 'U2.1h: out-of-range dayStartHour rejected on import');
+    assert(badAlgo({}).ok === true, 'U2.1h: otherwise-valid config still accepted');
 
     // 2-5. Real-export round-trip through validateImportFile.
     // The previous U2.2-U2.5 fixtures were hand-written minimal envelopes that

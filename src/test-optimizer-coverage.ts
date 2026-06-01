@@ -246,7 +246,7 @@ console.log('\n── 4. Score finiteness with zero soft weights ──');
   const result = optimize([t], [mkP('zero-p1', Level.L0, [])], allZeroConfig);
   assert(Number.isFinite(result.score.compositeScore), 'Zero-weight scoring: compositeScore is finite');
   assert(Number.isFinite(result.score.totalPenalty), 'Zero-weight scoring: totalPenalty is finite');
-  assert(Number.isFinite(result.score.restStdDev), 'Zero-weight scoring: restStdDev is finite');
+  assert(Number.isFinite(result.score.workloadStdDev), 'Zero-weight scoring: workloadStdDev is finite');
   // Penalty should never be negative.
   assert(
     result.score.totalPenalty >= 0,

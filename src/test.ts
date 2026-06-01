@@ -8335,7 +8335,7 @@ console.log('\n── Rescue Plans ───────────────
   const dummyScore: ScheduleScore = {
     minRestHours: 0,
     avgRestHours: 0,
-    restStdDev: 0,
+    workloadStdDev: 0,
     totalPenalty: 0,
     compositeScore: 0,
     l0StdDev: 0,
@@ -11135,7 +11135,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -11250,7 +11250,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -11349,7 +11349,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -11488,7 +11488,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -11635,7 +11635,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -11770,7 +11770,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -11869,7 +11869,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -11961,7 +11961,7 @@ console.log('\n── Rescue Plans (Composite Scoring) ────');
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -12139,7 +12139,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -12274,7 +12274,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -12397,7 +12397,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -12569,7 +12569,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -12666,7 +12666,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -12893,7 +12893,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -12992,7 +12992,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -13172,7 +13172,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -13318,7 +13318,7 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     const dScore: ScheduleScore = {
       minRestHours: 0,
       avgRestHours: 0,
-      restStdDev: 0,
+      workloadStdDev: 0,
       totalPenalty: 0,
       compositeScore: 0,
       l0StdDev: 0,
@@ -13750,7 +13750,7 @@ console.log('\n── Deep-chain fallback (depth 4/5) ────');
   const dcfDummyScore: ScheduleScore = {
     minRestHours: 0,
     avgRestHours: 0,
-    restStdDev: 0,
+    workloadStdDev: 0,
     totalPenalty: 0,
     compositeScore: 0,
     l0StdDev: 0,
@@ -14045,7 +14045,7 @@ console.log('\n── Adaptive limits ──────────────
   const adDummyScore: ScheduleScore = {
     minRestHours: 0,
     avgRestHours: 0,
-    restStdDev: 0,
+    workloadStdDev: 0,
     totalPenalty: 0,
     compositeScore: 0,
     l0StdDev: 0,
@@ -14166,7 +14166,7 @@ console.log('\n── Adaptive limits ──────────────
   const adScore: ScheduleScore = {
     minRestHours: 0,
     avgRestHours: 0,
-    restStdDev: 0,
+    workloadStdDev: 0,
     totalPenalty: 0,
     compositeScore: 0,
     l0StdDev: 0,
@@ -14267,7 +14267,7 @@ console.log('\n── Adaptive limits ──────────────
   const adScore: ScheduleScore = {
     minRestHours: 0,
     avgRestHours: 0,
-    restStdDev: 0,
+    workloadStdDev: 0,
     totalPenalty: 0,
     compositeScore: 0,
     l0StdDev: 0,
@@ -14342,7 +14342,7 @@ console.log('\n── BALTAM injection (inject.ts) ─────────')
   const injDummyScore: ScheduleScore = {
     minRestHours: 0,
     avgRestHours: 0,
-    restStdDev: 0,
+    workloadStdDev: 0,
     totalPenalty: 0,
     compositeScore: 0,
     l0StdDev: 0,

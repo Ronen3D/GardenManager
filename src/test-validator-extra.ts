@@ -78,7 +78,7 @@ function mkA(id: string, taskId: string, slotId: string, participantId: string):
 const DUMMY_SCORE: ScheduleScore = {
   minRestHours: 0,
   avgRestHours: 0,
-  restStdDev: 0,
+  workloadStdDev: 0,
   totalPenalty: 0,
   compositeScore: 0,
   l0StdDev: 0,

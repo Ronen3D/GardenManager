@@ -112,7 +112,7 @@ const fakeSchedule: Schedule = {
     compositeScore: 50,
     minRestHours: 8,
     avgRestHours: 12,
-    restStdDev: 1.2,
+    workloadStdDev: 1.2,
     totalPenalty: 0,
     l0StdDev: 1.0,
     l0AvgEffective: 20,
