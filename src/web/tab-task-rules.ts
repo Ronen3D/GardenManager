@@ -1066,15 +1066,18 @@ function renderLoadWindowsEditor(owner: TaskTemplate | OneTimeTask, opts?: { isO
         : renderLoadFormulaControls({ kind: 'window', tpl: owner as TaskTemplate, window: w, disabled: false });
       html += `<div class="lw-row" role="listitem">
         <div class="lw-time">
+          <span class="lw-mlabel" aria-hidden="true">טווח שעות</span>
           <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-start" data-lwid="${w.id}" value="${fmtHm(w.startHour, w.startMinute)}" aria-label="שעת התחלה" />
           <span class="lw-sep" aria-hidden="true">–</span>
           <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-edit-end" data-lwid="${w.id}" value="${fmtHm(w.endHour, w.endMinute)}" aria-label="שעת סיום" />
         </div>
         <div class="lw-weight">
+          <span class="lw-mlabel" aria-hidden="true">משקל</span>
           <input class="input-sm lw-weight-input" type="number" step="0.05" min="0" max="1" data-field="lw-edit-weight" data-lwid="${w.id}" value="${w.weight.toFixed(2)}" aria-label="משקל" />
           ${formulaControls}
         </div>
         <div class="lw-blocks">
+          <span class="lw-mlabel" aria-hidden="true">חוסם רצף בקצה</span>
           <label class="checkbox-label" title="${escHtml(blocksTooltip)}">
             <input type="checkbox" data-field="lw-edit-blocks" data-lwid="${w.id}" ${checkedAttr} ${disabledAttr} aria-label="חוסם רצף בקצה" />
           </label>
@@ -1094,11 +1097,13 @@ function renderLoadWindowsEditor(owner: TaskTemplate | OneTimeTask, opts?: { isO
     <div class="lw-add-caption">הוספת חלון חדש</div>
     <div class="lw-row lw-row-add" role="group" aria-label="הוספת חלון חדש">
       <div class="lw-time">
+        <span class="lw-mlabel" aria-hidden="true">טווח שעות</span>
         <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-start" value="05:00" aria-label="שעת התחלה" />
         <span class="lw-sep" aria-hidden="true">–</span>
         <input class="input-sm time-24h" type="text" maxlength="5" pattern="[0-2]?[0-9]:[0-5][0-9]" placeholder="HH:mm" data-field="lw-end" value="06:30" aria-label="שעת סיום" />
       </div>
       <div class="lw-weight">
+        <span class="lw-mlabel" aria-hidden="true">משקל</span>
         <input class="input-sm lw-weight-input" type="number" step="0.05" min="0" max="1" data-field="lw-weight" value="1" aria-label="משקל (0-1)" />
         ${addComputeBtn}
       </div>

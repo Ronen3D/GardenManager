@@ -2172,7 +2172,7 @@ select.input-sm {
     minmax(0, max-content) /* time   */
     minmax(0, max-content) /* weight */
     minmax(0, max-content) /* blocks */
-    minmax(0, 1fr); /* actions */
+    minmax(max-content, 1fr); /* actions — floored so it can't starve to 0px */
   column-gap: 8px;
   row-gap: 0;
 }
@@ -2327,6 +2327,148 @@ select.input-sm {
 }
 .lw-row-add:hover {
   background: transparent;
+}
+
+/* Mobile-only inline field labels, shown inside the ≤479px card layout below.
+   Real aria-hidden spans (NOT ::before generated content): a span can be removed
+   from the accessibility tree, so it doesn't double-announce alongside each
+   control's own aria-label; it also avoids the `content: attr() / ""` alt-text
+   syntax that iOS Safari <17.4 ignores (which would drop the visible label). */
+.lw-mlabel {
+  display: none;
+}
+
+/* ─── Load Windows Editor — phone (≤479px): stacked labeled cards ───
+   Below this breakpoint the 4-col subgrid cannot fit: the three max-content
+   tracks consume the full ~314px container, the actions (1fr) track collapses
+   to 0px, and the ✕/+ buttons overflow it and collide with the blocks column.
+   Drop the subgrid and render each window — and the add-row — as a vertical,
+   self-labeled card (labels are aria-hidden `.lw-mlabel` spans → copy stays in
+   TS, no screen-reader double-announce). The ✕ delete / full-width "+" sit on a
+   trailing foot-row: better thumb reach than a top corner, zero overlap math.
+   Everything here is media-scoped → desktop / tablet (768) / phone-landscape
+   (812w) keep the exact subgrid table, byte-for-byte. */
+@media (max-width: 479px) {
+  /* Unwind the subgrid scaffolding → plain block flow. The bordered .lw-list
+     is kept; the existing .lw-row border-bottom (with its :last-child reset)
+     becomes the inter-card separators, so no extra border bookkeeping. */
+  .lw-table {
+    display: block;
+  }
+  .lw-list {
+    display: block;
+  }
+  .lw-add-form {
+    display: block;
+    padding: 8px 12px 12px; /* restore the inline padding the desktop rule zeroes */
+  }
+
+  /* A single column header can't label stacked cards — drop it. The header
+     carries BOTH `lw-row` and `lw-row-head`, so the mobile `.lw-row{display:flex}`
+     below would otherwise win on source-order — qualify with `.lw-row` to raise
+     specificity (0,2,0 > 0,1,0) and hide it regardless of order. */
+  .lw-row.lw-row-head {
+    display: none;
+  }
+
+  /* Each window / add-row → vertical card. */
+  .lw-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  /* Cells → one [label][control…] line each.
+     min-width aligns the controls across all three lines; white-space:nowrap
+     keeps the longest label (חוסם רצף בקצה ≈ 85px) on one line within 5.5rem. */
+  .lw-time,
+  .lw-weight,
+  .lw-blocks {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start; /* clears .lw-blocks' desktop `center` */
+    gap: 10px;
+    min-width: 0;
+  }
+  .lw-mlabel {
+    display: inline-block;
+    flex: 0 0 auto;
+    min-width: 5.5rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /* Touch-sized inputs. Widths inherit from desktop (4em time / 3.5em weight);
+     default flex-shrink lets them compress on very narrow phones rather than
+     overflow the card (the label gutter stays fixed). */
+  .lw-time input,
+  .lw-weight-input {
+    min-height: 36px;
+  }
+
+  /* Template-only formula buttons → 36px tap targets. Absent for OneTimeTask
+     (no .lf-controls rendered) → these selectors harmlessly no-op. */
+  .lw-weight .lf-open-btn,
+  .lw-weight .lf-info-btn {
+    min-width: 36px;
+    height: 36px;
+    font-size: 1rem;
+    padding-inline: 0;
+  }
+
+  /* Boundary-blocking checkbox → 36px tap zone, enlarged box. The disabled
+     state (task-level blocking) keeps the global opacity:.5 / not-allowed. */
+  .lw-blocks .checkbox-label {
+    min-width: 36px;
+    min-height: 36px;
+    justify-content: flex-start;
+  }
+  .lw-blocks input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Action on its own trailing foot-row: ✕ pushed to inline-end (left in RTL),
+     a comfortable thumb-reach spot, and no overlap with any control anywhere. */
+  .lw-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .lw-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 1.05rem;
+  }
+
+  /* ── Add-row card ──  (.lw-add-form = dashed frame; .lw-row-add = its
+     borderless inner field group, inheriting the column flex from .lw-row.) */
+  .lw-add-caption {
+    padding-inline: 0; /* the form now supplies the 12px inline padding */
+  }
+  .lw-row-add {
+    padding: 0; /* later in source than `.lw-row` → wins (equal specificity) */
+  }
+  /* No per-window boundary control while adding — drop the empty cell so no
+     orphan label/line appears (explicit, whitespace-proof — not :empty). */
+  .lw-row-add .lw-blocks {
+    display: none;
+  }
+  /* "+" becomes a full-width primary CTA at the card foot. */
+  .lw-row-add .lw-actions {
+    width: 100%;
+  }
+  .lw-row-add .lw-save {
+    width: 100%;
+    height: 44px;
+    font-size: 1.15rem;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
 }
 
 /* ─── Preflight Panel ────────────────────────────────── */
