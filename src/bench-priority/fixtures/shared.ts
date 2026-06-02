@@ -16,14 +16,14 @@ import { addDays, addHours, startOfDay } from 'date-fns';
 import {
   AssignmentStatus as _AssignmentStatus,
   type AvailabilityWindow,
-  DEFAULT_CONFIG,
   type DateUnavailability,
-  Level,
+  DEFAULT_CONFIG,
+  type Level,
   type LevelEntry,
   type Participant,
   type SchedulerConfig,
-  type SlotRequirement,
   type SleepRecoveryRule,
+  type SlotRequirement,
   type Task,
 } from '../../models/types';
 import { createTimeBlockFromHours } from '../../shared/utils/time-utils';
@@ -196,7 +196,12 @@ export function makeTask(opts: MakeTaskOpts): Task {
   const id = opts.id ?? `t-${_taskCounter}`;
   // Anchor the time block to (baseDate + (dayIndex-1) days).
   const dayBase = addDays(startOfDay(opts.baseDate), opts.dayIndex - 1);
-  const timeBlock = createTimeBlockFromHours(dayBase, opts.startHour, opts.startHour + opts.durationHours, opts.durationHours);
+  const timeBlock = createTimeBlockFromHours(
+    dayBase,
+    opts.startHour,
+    opts.startHour + opts.durationHours,
+    opts.durationHours,
+  );
   return {
     id,
     name: opts.name,

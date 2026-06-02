@@ -10,6 +10,8 @@
  *  - C7.2  escHtml / escAttr exact output + a render site does not emit raw <script>
  *  - C7.10 cross-day split day-bucketing (residual + halves share the
  *          occurrence op-day; non-split / non-boundary unchanged)
+ *  - C7.11 computeDefaultLiveAnchor / anchorToPickerDefaults ("now" → op-day
+ *          coordinates with before/after-window clamping)
  *
  * Convention: export `runWebUtilsTests(assert)`, injected assert, no
  * module-level counters, standalone self-exec guarded by
@@ -112,7 +114,13 @@ import {
   renderPakalBadges,
   sanitizePakalIds,
 } from './web/pakal-utils';
-import { taskDayIndex, taskIntersectsDay } from './web/schedule-utils';
+import {
+  anchorToPickerDefaults,
+  computeDefaultLiveAnchor,
+  taskDayIndex,
+  taskIntersectsDay,
+  timestampToOpDayIndex,
+} from './web/schedule-utils';
 import { enterTutorialDemoMode, exitTutorialDemoMode, TutorialPreflightError } from './web/tutorial-demo';
 import { DEMO_PARTICIPANTS } from './web/tutorial-demo-seed';
 import { escAttr, escHtml } from './web/ui-helpers';
@@ -928,6 +936,70 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
     assert(
       getNumDays(sched, dsh) === 2,
       'C7.10: getNumDays counts occurrence op-days (X→1, Y/P→2) not the midpoint day',
+    );
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // C7.11 — computeDefaultLiveAnchor / anchorToPickerDefaults
+  //         ("now" → schedule op-day coordinates, with out-of-window clamping)
+  // ───────────────────────────────────────────────────────────────────────────
+  console.log('\n── C7.11: live-mode default anchor ──');
+  {
+    // periodStart 2020-01-05 (Sunday), 3 op-days, dayStartHour 5 ⇒ window is
+    // [2020-01-05 05:00, 2020-01-08 05:00). Fixed `now` injected each call so
+    // the assertions are deterministic regardless of wall-clock.
+    const sched = {
+      periodStart: new Date(2020, 0, 5),
+      periodDays: 3,
+      algorithmSettings: { dayStartHour: 5 },
+    } as unknown as Schedule;
+
+    // Before the window → day 1 at dayStartHour (nothing frozen).
+    const before = computeDefaultLiveAnchor(sched, new Date(2020, 0, 4, 23, 0));
+    assert(before.getTime() === new Date(2020, 0, 5, 5, 0).getTime(), 'C7.11: before window → day 1 @ dayStartHour');
+
+    // Inside the window → exact now.
+    const inside = computeDefaultLiveAnchor(sched, new Date(2020, 0, 6, 14, 0));
+    assert(inside.getTime() === new Date(2020, 0, 6, 14, 0).getTime(), 'C7.11: in window → exact current moment');
+
+    // Exactly at the op-day-1 start → treated as in-window (strict `<` before).
+    const atStart = computeDefaultLiveAnchor(sched, new Date(2020, 0, 5, 5, 0));
+    assert(atStart.getTime() === new Date(2020, 0, 5, 5, 0).getTime(), 'C7.11: at day-1 boundary → in window (exact)');
+
+    // After the window, normal hour → last day at the real current hour.
+    const afterNormal = computeDefaultLiveAnchor(sched, new Date(2020, 0, 10, 14, 0));
+    assert(
+      timestampToOpDayIndex(afterNormal, sched) === 3 && afterNormal.getHours() === 14,
+      'C7.11: after window → last day (3) at real current hour (14)',
+    );
+
+    // After the window, tail hour (< dayStartHour) → last day, tail handled.
+    const afterTail = computeDefaultLiveAnchor(sched, new Date(2020, 0, 10, 3, 0));
+    assert(
+      timestampToOpDayIndex(afterTail, sched) === 3 && afterTail.getHours() === 3,
+      'C7.11: after window, tail hour → last day (3), tail hour preserved (3)',
+    );
+
+    // periodDays === 1: after-window collapses to day 1 at current hour.
+    const oneDay = { ...sched, periodDays: 1 } as unknown as Schedule;
+    const oneDayAfter = computeDefaultLiveAnchor(oneDay, new Date(2020, 0, 10, 14, 0));
+    assert(
+      timestampToOpDayIndex(oneDayAfter, oneDay) === 1 && oneDayAfter.getHours() === 14,
+      'C7.11: periodDays=1 after window → day 1 at current hour',
+    );
+
+    // anchorToPickerDefaults — in-window anchor maps to its op-day + hour.
+    const inDefaults = anchorToPickerDefaults(new Date(2020, 0, 6, 10, 0), sched);
+    assert(
+      inDefaults.defaultDay === '2' && inDefaults.defaultHour === '10',
+      'C7.11: anchorToPickerDefaults — day-2 10:00 → {2, 10}',
+    );
+
+    // anchorToPickerDefaults — day-N tail anchor clamps to N, keeps real hour.
+    const tailDefaults = anchorToPickerDefaults(new Date(2020, 0, 8, 3, 0), sched);
+    assert(
+      tailDefaults.defaultDay === '3' && tailDefaults.defaultHour === '3',
+      'C7.11: anchorToPickerDefaults — op-day-3 tail (03:00) → {3, 3}',
     );
   }
 

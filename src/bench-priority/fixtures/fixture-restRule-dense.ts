@@ -27,7 +27,8 @@ const GROUPS = ['ק1', 'ק2', 'ק3', 'ק4'];
 
 export const REST_RULE_DENSE_FIXTURE: FixtureSpec = {
   id: 'fixture-restRule-dense',
-  description: 'Dense restRule X (5 task types share it) vs. sparse restRule Y (1 task) — same +1 stickiness today. T7 rest-rule analog target.',
+  description:
+    'Dense restRule X (5 task types share it) vs. sparse restRule Y (1 task) — same +1 stickiness today. T7 rest-rule analog target.',
   targetingPhase: 'D4',
   generate: (seed: number): FixtureInstance => {
     resetIdCounters();
@@ -80,9 +81,7 @@ export const REST_RULE_DENSE_FIXTURE: FixtureSpec = {
             startHour: tc.startHour,
             durationHours: tc.dur,
             restRuleId: RR_X,
-            slots: [
-              makeSlot({ acceptableLevels: [{ level: Level.L0 }] }),
-            ],
+            slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
           }),
         );
       }
@@ -96,9 +95,7 @@ export const REST_RULE_DENSE_FIXTURE: FixtureSpec = {
           startHour: 8,
           durationHours: 3,
           restRuleId: RR_Y,
-          slots: [
-            makeSlot({ acceptableLevels: [{ level: Level.L0 }] }),
-          ],
+          slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
         }),
       );
     }

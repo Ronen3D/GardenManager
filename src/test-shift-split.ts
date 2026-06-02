@@ -39,8 +39,8 @@ import {
   Level,
   type Participant,
   type Schedule,
-  type ScheduleScore,
   type SchedulerConfig,
+  type ScheduleScore,
   SchedulingEngine,
   type Task,
   type TimeBlock,
@@ -2253,10 +2253,7 @@ function runManualSplitApply(assert: AssertFn): void {
     const op = buildSplitOp(T, 0, pA.id, pB.id, aOrig);
     const res = eng.applyPlanOps({ splitOps: [op] });
     assert(res.valid, 'Case 1: filled-slot manual split → valid');
-    assert(
-      !sched.assignments.some((a) => a.id === aOrig.id),
-      'Case 1: original assignment removed',
-    );
+    assert(!sched.assignments.some((a) => a.id === aOrig.id), 'Case 1: original assignment removed');
     const halves = sched.assignments.filter((a) => a.id.startsWith(aOrig.id));
     assert(halves.length === 2, `Case 1: two half assignments created (got ${halves.length})`);
     assert(
@@ -2265,8 +2262,7 @@ function runManualSplitApply(assert: AssertFn): void {
     );
     const tasksAfter = sched.tasks.map((t) => t.id).sort();
     assert(
-      tasksAfter.includes(`${T.id}::${T.slots[0].slotId}#a`) &&
-        tasksAfter.includes(`${T.id}::${T.slots[0].slotId}#b`),
+      tasksAfter.includes(`${T.id}::${T.slots[0].slotId}#a`) && tasksAfter.includes(`${T.id}::${T.slots[0].slotId}#b`),
       'Case 1: schedule.tasks now contains both halves',
     );
     assert(!tasksAfter.includes(T.id), 'Case 1: single-slot parent task removed (no residual)');
@@ -2414,8 +2410,7 @@ function runManualSplitApply(assert: AssertFn): void {
       'Case 7: schedule.tasks references identical after rollback',
     );
     assert(
-      sched.assignments.length === asgsBefore.length &&
-        sched.assignments.every((a, i) => a === asgsBefore[i]),
+      sched.assignments.length === asgsBefore.length && sched.assignments.every((a, i) => a === asgsBefore[i]),
       'Case 7: schedule.assignments references identical after rollback',
     );
   }

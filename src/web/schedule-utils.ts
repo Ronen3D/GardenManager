@@ -8,6 +8,7 @@
 
 import type { AssignmentStatus, ConstraintViolation, Schedule, Task } from '../index';
 import { computeTaskEffectiveHours } from '../shared/utils/load-weighting';
+import { hourInOpDay } from '../shared/utils/time-utils';
 import { taskOpDayEnd, taskOpDayStart } from '../utils/date-utils';
 import * as store from './config-store';
 import { fmt } from './ui-helpers';
@@ -102,6 +103,49 @@ export function timestampToOpDayIndex(d: Date, schedule: Schedule): number {
   shifted.setHours(0, 0, 0, 0);
   const baseMidnight = new Date(base.getFullYear(), base.getMonth(), base.getDate()).getTime();
   return Math.max(1, Math.floor((shifted.getTime() - baseMidnight) / 86400000) + 1);
+}
+
+/**
+ * Default Live Mode anchor at picker-open time: "right now" mapped onto the
+ * schedule's op-day coordinates. Used as the pre-selected value wherever the
+ * user sets the temporal anchor (rescue/SOS/inject prompt, Future-SOS freeze
+ * point, capability-change, the toolbar checkbox).
+ *
+ *   - now BEFORE the window → day 1 at dayStartHour (schedule hasn't started;
+ *     nothing frozen).
+ *   - now AFTER the window  → the last day (יום N) at the real current hour
+ *     (the 3-day-schedule-on-Wednesday case): an honest, editable starting
+ *     point. Isolated to the single POLICY line below if it ever changes.
+ *   - now INSIDE the window → the exact current moment.
+ *
+ * One-shot: the anchor does not auto-advance — the user controls it after.
+ * `now` is injectable for deterministic tests.
+ */
+export function computeDefaultLiveAnchor(schedule: Schedule, now: Date = new Date()): Date {
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  const base = schedule.periodStart;
+  const numDays = schedule.periodDays;
+  // Op-day 1 starts at periodStart@dayStartHour; the window ends at the start
+  // of op-day N+1 (exclusive upper bound).
+  const day1StartMs = new Date(base.getFullYear(), base.getMonth(), base.getDate(), dsh, 0).getTime();
+  const windowEndMs = new Date(base.getFullYear(), base.getMonth(), base.getDate() + numDays, dsh, 0).getTime();
+  if (now.getTime() < day1StartMs) return new Date(day1StartMs);
+  // POLICY (after window): last day at the real current hour. hourInOpDay maps
+  // tail hours (< dayStartHour) onto the correct op-day.
+  if (now.getTime() >= windowEndMs) return new Date(hourInOpDay(base, dsh, numDays, now.getHours()));
+  return new Date(now.getTime());
+}
+
+/**
+ * Convert a live anchor `Date` into the `{ defaultDay, defaultHour }` string
+ * pair `showTimePicker` needs to pre-select its `<select>` options. The day is
+ * derived via {@link timestampToOpDayIndex} and clamped to `[1, periodDays]`
+ * so it always matches a rendered `יום N` option; the hour (0..23) always
+ * matches an `operationalHourOrder` option.
+ */
+export function anchorToPickerDefaults(anchor: Date, schedule: Schedule): { defaultDay: string; defaultHour: string } {
+  const dayIndex = Math.max(1, Math.min(schedule.periodDays, timestampToOpDayIndex(anchor, schedule)));
+  return { defaultDay: String(dayIndex), defaultHour: String(anchor.getHours()) };
 }
 
 /** Format an HC-15 recovery window as `יום N HH:MM – HH:MM` (single op-day) or `יום N HH:MM – יום M HH:MM`. */

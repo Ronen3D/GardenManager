@@ -17,17 +17,17 @@
 
 import { makeSplitHalf } from '../engine/optimizer';
 import { isEligible } from '../engine/validator';
-import {
-  type Assignment,
-  type Participant,
-  type Schedule,
-  type SchedulingEngine,
-  type SlotRequirement,
-  type SplitOp,
-  type Task,
+import type {
+  Assignment,
+  Participant,
+  Schedule,
+  SchedulingEngine,
+  SlotRequirement,
+  SplitOp,
+  Task,
 } from '../models/types';
 import { renderParticipantCard } from './participant-card';
-import { stripDayPrefix, escAttr, escHtml, fmt } from './ui-helpers';
+import { escAttr, escHtml, fmt, stripDayPrefix } from './ui-helpers';
 import { showBottomSheet } from './ui-modal';
 
 export interface SplitPickerDeps {
@@ -73,11 +73,9 @@ export function openSplitPicker(deps: SplitPickerDeps): Promise<SplitPickerResul
     return Promise.resolve({ applied: false, halfAssignmentIds: null });
   }
 
-  const existingAssignment = deps.schedule.assignments.find(
-    (a) => a.taskId === task.id && a.slotId === slot.slotId,
-  );
+  const existingAssignment = deps.schedule.assignments.find((a) => a.taskId === task.id && a.slotId === slot.slotId);
   const existingParticipant = existingAssignment
-    ? deps.schedule.participants.find((p) => p.id === existingAssignment.participantId) ?? null
+    ? (deps.schedule.participants.find((p) => p.id === existingAssignment.participantId) ?? null)
     : null;
 
   // Pre-fill Half A with the current incumbent (when the slot is filled).
@@ -265,9 +263,7 @@ export function openSplitPicker(deps: SplitPickerDeps): Promise<SplitPickerResul
               displayName: state.pickB.participant.name,
             },
             groupLock: task.sameGroupRequired ? state.pickA.participant.group : undefined,
-            sameGroupLinkId: task.sameGroupRequired
-              ? (task.sameGroupLinkId ?? task.id)
-              : undefined,
+            sameGroupLinkId: task.sameGroupRequired ? (task.sameGroupLinkId ?? task.id) : undefined,
           };
           deps.pushUndo();
           const res = deps.engine.applyPlanOps({ splitOps: [op] });
@@ -318,9 +314,7 @@ function computeEligible(
   // Task-level assignments (other slots of the parent occurrence) MINUS the
   // one we're about to replace. Lets HC-8 link-union + HC-5/HC-7 see who
   // currently holds the surviving slots of the same occurrence.
-  const taskAssignments = allAssignments.filter(
-    (a) => a.taskId === parentTaskId && !excludeAsgIds.has(a.id),
-  );
+  const taskAssignments = allAssignments.filter((a) => a.taskId === parentTaskId && !excludeAsgIds.has(a.id));
   const scheduleContext = engine.getScheduleContext();
 
   const result = new Set<string>();
@@ -328,9 +322,7 @@ function computeEligible(
     // Per-participant assignments view: everything they hold MINUS the
     // assignment we're about to replace. Mirrors `participantAssignmentsExcluding`
     // in rescue-primitives.ts.
-    const pAsgs = allAssignments.filter(
-      (a) => a.participantId === p.id && !excludeAsgIds.has(a.id),
-    );
+    const pAsgs = allAssignments.filter((a) => a.participantId === p.id && !excludeAsgIds.has(a.id));
     const ok = isEligible(p, halfTask, slot, pAsgs, taskMap, {
       checkSameGroup: true,
       participantMap,
@@ -447,10 +439,7 @@ function renderBody(
     ? `<div class="split-picker-error">⚠ ${escHtml(state.errorMessage)}</div>`
     : '';
 
-  const confirmDisabled =
-    !state.pickA ||
-    !state.pickB ||
-    state.pickA.participant.id === state.pickB.participant.id;
+  const confirmDisabled = !state.pickA || !state.pickB || state.pickA.participant.id === state.pickB.participant.id;
 
   const actions = `<div class="split-picker-actions">
     <button class="btn btn-secondary" data-action="split-cancel" type="button">ביטול</button>

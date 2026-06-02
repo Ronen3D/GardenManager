@@ -15,7 +15,7 @@
  * Targets: D1+D3 (Phase 2).
  */
 
-import { type Participant, type SchedulerConfig, type SlotRequirement, type Task, type TaskTemplate } from '../../models/types';
+import type { Participant, SchedulerConfig, SlotRequirement, Task, TaskTemplate } from '../../models/types';
 import { computeTemplateSectionKey } from '../../shared/layout-key';
 import { generateShiftBlocks, hourInOpDay } from '../../shared/utils/time-utils';
 import type { FixtureInstance, FixtureSpec } from '../types';
@@ -124,7 +124,8 @@ function buildRestRuleMap(store: typeof import('../../web/config-store')): Map<s
 
 export const DEFAULT_FIXTURE: FixtureSpec = {
   id: 'fixture-default',
-  description: 'Production default seed (4 groups × 12 participants × 8 templates) — control fixture; Hamama-Shemesh collision lives here.',
+  description:
+    'Production default seed (4 groups × 12 participants × 8 templates) — control fixture; Hamama-Shemesh collision lives here.',
   targetingPhase: 'D1+D3',
   generate: (_seed: number): FixtureInstance => {
     // Lazy import to avoid loading config-store (and its localStorage

@@ -18,20 +18,10 @@
  */
 
 import { Level, type Participant, type Task } from '../../models/types';
-import type { AnchorResult, AnchorSpec, AnchorOutcome } from '../types';
+import { DEFAULT_BASE_DATE, makeParticipant, makeSlot, makeTask } from '../fixtures/shared';
+import type { AnchorOutcome, AnchorResult, AnchorSpec } from '../types';
 import { ALL_VARIANTS } from '../variants';
-import {
-  ctxFor,
-  priorityOf,
-  resetAnchorCounters,
-  tinyL0Pool,
-} from './shared';
-import {
-  DEFAULT_BASE_DATE,
-  makeParticipant,
-  makeSlot,
-  makeTask,
-} from '../fixtures/shared';
+import { ctxFor, priorityOf, resetAnchorCounters, tinyL0Pool } from './shared';
 
 // Helper: build an expectedOutcome map where ALL variants are expected
 // to fail (default). Individual anchors override per-variant entries
@@ -57,7 +47,8 @@ const PHASE_2_RESOLVES = ['D1+D3'] as const;
 export const P_UNIVERSAL_CERT_TIER: AnchorSpec = {
   id: 'P-universal-cert-tier',
   group: 'pathology',
-  description: 'L0+universal-cert task must NOT outrank equally-shaped L0-only task. Baseline fails: hasCerts → Tier 2 regardless of cert holders fraction.',
+  description:
+    'L0+universal-cert task must NOT outrank equally-shaped L0-only task. Baseline fails: hasCerts → Tier 2 regardless of cert holders fraction.',
   expectedOutcome: {
     ...baselineExpectedFails(),
     ...Object.fromEntries(PHASE_2_RESOLVES.map((id) => [id, 'pass' as const])),
@@ -69,14 +60,22 @@ export const P_UNIVERSAL_CERT_TIER: AnchorSpec = {
 
     // Task A: L0 + NitzanU (universal cert → 0 actual pool reduction)
     const tA = makeTask({
-      name: 'A-univ-cert', sourceName: 'A',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 6, durationHours: 3,
+      name: 'A-univ-cert',
+      sourceName: 'A',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 6,
+      durationHours: 3,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['NitzanU'] })],
     });
     // Task B: L0 no cert
     const tB = makeTask({
-      name: 'B-no-cert', sourceName: 'B',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 11, durationHours: 3,
+      name: 'B-no-cert',
+      sourceName: 'B',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 11,
+      durationHours: 3,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
     const tasks = [tA, tB];
@@ -106,7 +105,8 @@ export const P_UNIVERSAL_CERT_TIER: AnchorSpec = {
 export const P_SATURATED_POOL: AnchorSpec = {
   id: 'P-saturated-pool',
   group: 'pathology',
-  description: 'Two tasks with eligible pools 12 and 30 must have priorities differing by ≥1 unit. Baseline fails: subMin clamp at 9 collapses both to 9.',
+  description:
+    'Two tasks with eligible pools 12 and 30 must have priorities differing by ≥1 unit. Baseline fails: subMin clamp at 9 collapses both to 9.',
   expectedOutcome: {
     ...baselineExpectedFails(),
     ...Object.fromEntries(PHASE_2_RESOLVES.map((id) => [id, 'pass' as const])),
@@ -119,7 +119,8 @@ export const P_SATURATED_POOL: AnchorSpec = {
       const hasRare = i < 12;
       participants.push(
         makeParticipant({
-          id: `p${i + 1}`, name: `P${i + 1}`,
+          id: `p${i + 1}`,
+          name: `P${i + 1}`,
           level: Level.L0,
           certs: hasRare ? ['Nitzan', 'Rare'] : ['Nitzan'],
           group: 'ק1',
@@ -129,14 +130,22 @@ export const P_SATURATED_POOL: AnchorSpec = {
 
     // T-tight: needs L0 + Rare cert → pool = 12
     const tTight = makeTask({
-      name: 'T-tight', sourceName: 'T-tight',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 6, durationHours: 3,
+      name: 'T-tight',
+      sourceName: 'T-tight',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 6,
+      durationHours: 3,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Rare'] })],
     });
     // T-wide: needs L0 + Nitzan → pool = 30
     const tWide = makeTask({
-      name: 'T-wide', sourceName: 'T-wide',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 11, durationHours: 3,
+      name: 'T-wide',
+      sourceName: 'T-wide',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 11,
+      durationHours: 3,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] })],
     });
     const tasks = [tTight, tWide];
@@ -167,7 +176,8 @@ export const P_SATURATED_POOL: AnchorSpec = {
 export const P_ADJACENCY_ISOLATION: AnchorSpec = {
   id: 'P-adjacency-isolation',
   group: 'pathology',
-  description: 'Isolated blocksConsecutive task and one with 4 boundary-overlapping tasks must have different priorities. Baseline fails: stickiness `+1` is uniform.',
+  description:
+    'Isolated blocksConsecutive task and one with 4 boundary-overlapping tasks must have different priorities. Baseline fails: stickiness `+1` is uniform.',
   expectedOutcome: {
     ...baselineExpectedFails(),
     // No shipped variant resolves this anchor — kept as known unfixed
@@ -179,40 +189,64 @@ export const P_ADJACENCY_ISOLATION: AnchorSpec = {
 
     // Task X: isolated blocksConsecutive (no other tasks adjacent)
     const tIso = makeTask({
-      name: 'Iso-blocks', sourceName: 'Iso',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 14, durationHours: 2,
+      name: 'Iso-blocks',
+      sourceName: 'Iso',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 14,
+      durationHours: 2,
       blocksConsecutive: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
     // Task Y: blocksConsecutive surrounded by 4 adjacent tasks
     const tDense = makeTask({
-      name: 'Dense-blocks', sourceName: 'Dense',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 2, startHour: 10, durationHours: 4,
+      name: 'Dense-blocks',
+      sourceName: 'Dense',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 2,
+      startHour: 10,
+      durationHours: 4,
       blocksConsecutive: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
     // 4 tasks adjacent to tDense's boundaries (none adjacent to tIso)
     const adj1 = makeTask({
-      name: 'Adj-1', sourceName: 'Adj',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 2, startHour: 6, durationHours: 4,
+      name: 'Adj-1',
+      sourceName: 'Adj',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 2,
+      startHour: 6,
+      durationHours: 4,
       blocksConsecutive: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
     const adj2 = makeTask({
-      name: 'Adj-2', sourceName: 'Adj',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 2, startHour: 14, durationHours: 4,
+      name: 'Adj-2',
+      sourceName: 'Adj',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 2,
+      startHour: 14,
+      durationHours: 4,
       blocksConsecutive: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
     const adj3 = makeTask({
-      name: 'Adj-3', sourceName: 'Adj',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 2, startHour: 9, durationHours: 1,
+      name: 'Adj-3',
+      sourceName: 'Adj',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 2,
+      startHour: 9,
+      durationHours: 1,
       blocksConsecutive: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
     const adj4 = makeTask({
-      name: 'Adj-4', sourceName: 'Adj',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 2, startHour: 18, durationHours: 2,
+      name: 'Adj-4',
+      sourceName: 'Adj',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 2,
+      startHour: 18,
+      durationHours: 2,
       blocksConsecutive: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
@@ -241,7 +275,8 @@ export const P_ADJACENCY_ISOLATION: AnchorSpec = {
 export const P_RESTRULE_DENSITY: AnchorSpec = {
   id: 'P-restRule-density',
   group: 'pathology',
-  description: 'A task on a rule shared by 4 tasks must rank higher than one on a rule shared by 2 tasks. Baseline fails: restRuleId stickiness is binary.',
+  description:
+    'A task on a rule shared by 4 tasks must rank higher than one on a rule shared by 2 tasks. Baseline fails: restRuleId stickiness is binary.',
   expectedOutcome: {
     ...baselineExpectedFails(),
     // No shipped variant resolves this anchor — kept as known unfixed
@@ -254,12 +289,66 @@ export const P_RESTRULE_DENSITY: AnchorSpec = {
     // Rule X — shared by 4 tasks. Rule Y — shared by 2 tasks.
     const RR_X = 'rr-X';
     const RR_Y = 'rr-Y';
-    const x1 = makeTask({ name: 'X-1', sourceName: 'X', baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 6, durationHours: 3, restRuleId: RR_X, slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })] });
-    const x2 = makeTask({ name: 'X-2', sourceName: 'X', baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 11, durationHours: 3, restRuleId: RR_X, slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })] });
-    const x3 = makeTask({ name: 'X-3', sourceName: 'X', baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 16, durationHours: 3, restRuleId: RR_X, slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })] });
-    const x4 = makeTask({ name: 'X-4', sourceName: 'X', baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 21, durationHours: 3, restRuleId: RR_X, slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })] });
-    const y1 = makeTask({ name: 'Y-1', sourceName: 'Y', baseDate: DEFAULT_BASE_DATE, dayIndex: 2, startHour: 6, durationHours: 3, restRuleId: RR_Y, slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })] });
-    const y2 = makeTask({ name: 'Y-2', sourceName: 'Y', baseDate: DEFAULT_BASE_DATE, dayIndex: 2, startHour: 16, durationHours: 3, restRuleId: RR_Y, slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })] });
+    const x1 = makeTask({
+      name: 'X-1',
+      sourceName: 'X',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 6,
+      durationHours: 3,
+      restRuleId: RR_X,
+      slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
+    });
+    const x2 = makeTask({
+      name: 'X-2',
+      sourceName: 'X',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 11,
+      durationHours: 3,
+      restRuleId: RR_X,
+      slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
+    });
+    const x3 = makeTask({
+      name: 'X-3',
+      sourceName: 'X',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 16,
+      durationHours: 3,
+      restRuleId: RR_X,
+      slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
+    });
+    const x4 = makeTask({
+      name: 'X-4',
+      sourceName: 'X',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 21,
+      durationHours: 3,
+      restRuleId: RR_X,
+      slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
+    });
+    const y1 = makeTask({
+      name: 'Y-1',
+      sourceName: 'Y',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 2,
+      startHour: 6,
+      durationHours: 3,
+      restRuleId: RR_Y,
+      slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
+    });
+    const y2 = makeTask({
+      name: 'Y-2',
+      sourceName: 'Y',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 2,
+      startHour: 16,
+      durationHours: 3,
+      restRuleId: RR_Y,
+      slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
+    });
     const tasks = [x1, x2, x3, x4, y1, y2];
     const ctx = ctxFor(tasks, participants);
 
@@ -286,7 +375,8 @@ export const P_RESTRULE_DENSITY: AnchorSpec = {
 export const P_HAMAMA_REALISTIC: AnchorSpec = {
   id: 'P-hamama-realistic',
   group: 'pathology',
-  description: 'Realistic Hamama-vs-Shemesh setup: priorities must differ by ≥2 units. Baseline fails: both collide at priority 19.',
+  description:
+    'Realistic Hamama-vs-Shemesh setup: priorities must differ by ≥2 units. Baseline fails: both collide at priority 19.',
   expectedOutcome: {
     ...baselineExpectedFails(),
     ...Object.fromEntries(PHASE_2_RESOLVES.map((id) => [id, 'pass' as const])),
@@ -299,7 +389,8 @@ export const P_HAMAMA_REALISTIC: AnchorSpec = {
       const hasHamama = i < 8;
       participants.push(
         makeParticipant({
-          id: `p${i + 1}`, name: `P${i + 1}`,
+          id: `p${i + 1}`,
+          name: `P${i + 1}`,
           level: Level.L0,
           certs: hasHamama ? ['Nitzan', 'Hamama'] : ['Nitzan'],
           group: `ק${(i % 4) + 1}`,
@@ -310,7 +401,8 @@ export const P_HAMAMA_REALISTIC: AnchorSpec = {
     for (let i = 0; i < 4; i++) {
       participants.push(
         makeParticipant({
-          id: `l4-${i + 1}`, name: `L4-${i + 1}`,
+          id: `l4-${i + 1}`,
+          name: `L4-${i + 1}`,
           level: Level.L4,
           certs: ['Nitzan', 'Hamama'],
           group: `ק${(i % 4) + 1}`,
@@ -320,8 +412,12 @@ export const P_HAMAMA_REALISTIC: AnchorSpec = {
 
     // Hamama task — L0 + Hamama, lowPriority L4. blocksConsecutive + sleepRecovery (sticky).
     const hamama = makeTask({
-      name: 'Hamama', sourceName: 'Hamama',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 6, durationHours: 12,
+      name: 'Hamama',
+      sourceName: 'Hamama',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 6,
+      durationHours: 12,
       blocksConsecutive: true,
       slots: [
         makeSlot({
@@ -333,8 +429,12 @@ export const P_HAMAMA_REALISTIC: AnchorSpec = {
 
     // Shemesh task — L0 + Nitzan (universal). blocksConsecutive + restRule (sticky).
     const shemesh = makeTask({
-      name: 'Shemesh', sourceName: 'Shemesh',
-      baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 14, durationHours: 4,
+      name: 'Shemesh',
+      sourceName: 'Shemesh',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 14,
+      durationHours: 4,
       blocksConsecutive: true,
       restRuleId: 'rr-shemesh',
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Nitzan'] })],

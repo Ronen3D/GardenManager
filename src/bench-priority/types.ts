@@ -17,13 +17,7 @@
  * phase failure (likely a bench bug or unintended side effect).
  */
 
-import type {
-  AlgorithmSettings,
-  Participant,
-  SchedulerConfig,
-  SleepRecoveryRule,
-  Task,
-} from '../models/types';
+import type { AlgorithmSettings, Participant, SchedulerConfig, SleepRecoveryRule, Task } from '../models/types';
 
 // ─── Fixture ─────────────────────────────────────────────────────────────────
 

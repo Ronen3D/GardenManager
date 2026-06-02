@@ -1274,7 +1274,10 @@ console.log('\n── Test 11: middle-band (retention ≈ 0.6) — new OR-gate c
   assert(result.plans.length > 0, 'mb: at least one plan returned');
 
   const extended = result.plans.filter((p) => p.focalContinuityExtended === true);
-  assert(extended.length > 0, 'mb: extension fires for middle-band retention/deficit (would have skipped under old AND-gate)');
+  assert(
+    extended.length > 0,
+    'mb: extension fires for middle-band retention/deficit (would have skipped under old AND-gate)',
+  );
   if (extended.length > 0) {
     const ext = extended[0];
     assert(

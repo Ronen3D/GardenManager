@@ -19,13 +19,7 @@ import {
   sortTasksByDifficulty,
 } from '../../engine/optimizer';
 import { Level, type Participant, type Task } from '../../models/types';
-import {
-  DEFAULT_BASE_DATE,
-  makeParticipant,
-  makeSlot,
-  makeTask,
-  resetIdCounters,
-} from '../fixtures/shared';
+import { DEFAULT_BASE_DATE, makeParticipant, makeSlot, makeTask, resetIdCounters } from '../fixtures/shared';
 
 /**
  * Tier × 10 + sub display value used by anchors' "priority observations".
@@ -44,7 +38,11 @@ export function priorityOf(task: Task, ctx?: SchedulingContext): number {
  * Use `sortAndRank` for pass/fail decisions; use `priorityOf` for
  * observation/reporting values.
  */
-export function sortAndRank(tasks: Task[], ctx?: SchedulingContext, jitter = 0): { sorted: Task[]; rank: Map<string, number> } {
+export function sortAndRank(
+  tasks: Task[],
+  ctx?: SchedulingContext,
+  jitter = 0,
+): { sorted: Task[]; rank: Map<string, number> } {
   const sorted = sortTasksByDifficulty(tasks, jitter, ctx);
   const rank = new Map<string, number>();
   sorted.forEach((t, i) => rank.set(t.id, i));
@@ -59,7 +57,12 @@ export function ctxFor(tasks: Task[], participants: Participant[]): SchedulingCo
 
 /** Tiny pool — N L0 participants in one group, all with the given certs.
  *  Used as a baseline pool for several anchors. */
-export function tinyL0Pool(opts: { count: number; group?: string; certs?: string[]; idPrefix?: string }): Participant[] {
+export function tinyL0Pool(opts: {
+  count: number;
+  group?: string;
+  certs?: string[];
+  idPrefix?: string;
+}): Participant[] {
   const group = opts.group ?? 'ק1';
   const certs = opts.certs ?? ['Nitzan'];
   const prefix = opts.idPrefix ?? 'p';
@@ -85,7 +88,13 @@ export function resetAnchorCounters(): void {
 }
 
 /** Build a simple no-cert L0 task at the given day/hour. */
-export function simpleL0Task(opts: { name: string; dayIndex: number; startHour: number; slotCount?: number; durationHours?: number }): Task {
+export function simpleL0Task(opts: {
+  name: string;
+  dayIndex: number;
+  startHour: number;
+  slotCount?: number;
+  durationHours?: number;
+}): Task {
   return makeTask({
     name: opts.name,
     sourceName: opts.name,
@@ -93,8 +102,6 @@ export function simpleL0Task(opts: { name: string; dayIndex: number; startHour: 
     dayIndex: opts.dayIndex,
     startHour: opts.startHour,
     durationHours: opts.durationHours ?? 4,
-    slots: Array.from({ length: opts.slotCount ?? 1 }, () =>
-      makeSlot({ acceptableLevels: [{ level: Level.L0 }] }),
-    ),
+    slots: Array.from({ length: opts.slotCount ?? 1 }, () => makeSlot({ acceptableLevels: [{ level: Level.L0 }] })),
   });
 }

@@ -71,9 +71,7 @@ export const JUNIOR_HEAVY_FIXTURE: FixtureSpec = {
           dayIndex: day,
           startHour: 6,
           durationHours: 5,
-          slots: [
-            makeSlot({ acceptableLevels: [{ level: Level.L2 }] }),
-          ],
+          slots: [makeSlot({ acceptableLevels: [{ level: Level.L2 }] })],
         }),
       );
       // L0 task — wide pool of 36
@@ -100,9 +98,7 @@ export const JUNIOR_HEAVY_FIXTURE: FixtureSpec = {
           dayIndex: day,
           startHour: 18,
           durationHours: 4,
-          slots: [
-            makeSlot({ acceptableLevels: [{ level: Level.L0 }, { level: Level.L2 }] }),
-          ],
+          slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }, { level: Level.L2 }] })],
         }),
       );
     }

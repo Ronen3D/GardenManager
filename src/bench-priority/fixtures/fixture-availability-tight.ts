@@ -16,7 +16,7 @@
 
 import { addDays, addHours, startOfDay } from 'date-fns';
 
-import { Level, type AvailabilityWindow } from '../../models/types';
+import { type AvailabilityWindow, Level } from '../../models/types';
 import type { FixtureInstance, FixtureSpec } from '../types';
 import {
   DEFAULT_BASE_DATE,
@@ -40,7 +40,8 @@ const TIGHT_DURATION_HOURS = 4;
 
 export const AVAILABILITY_TIGHT_FIXTURE: FixtureSpec = {
   id: 'fixture-availability-tight',
-  description: 'Static pool ≥30 but time-window-available pool ≤5 on one specific task time block. Measurement infrastructure for a future HC-3-aware T1 variant.',
+  description:
+    'Static pool ≥30 but time-window-available pool ≤5 on one specific task time block. Measurement infrastructure for a future HC-3-aware T1 variant.',
   targetingPhase: 'future',
   generate: (seed: number): FixtureInstance => {
     resetIdCounters();

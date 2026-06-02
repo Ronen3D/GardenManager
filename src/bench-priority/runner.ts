@@ -44,7 +44,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { withSeededRandom } from '../bench-split-tuning/seeded-rng';
-import { optimizeMultiAttempt, type OptimizationResult } from '../engine/optimizer';
+import { type OptimizationResult, optimizeMultiAttempt } from '../engine/optimizer';
 import { fullValidate } from '../engine/validator';
 import type { AlgorithmSettings, Task } from '../models/types';
 import { ALL_ANCHORS } from './anchors';
@@ -69,7 +69,10 @@ function envBool(name: string, def: boolean): boolean {
 function envCsv(name: string): string[] | undefined {
   const v = process.env[name];
   if (!v) return undefined;
-  return v.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+  return v
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 function envStr(name: string, def: string): string {
   return process.env[name] ?? def;
@@ -293,7 +296,11 @@ function main(): void {
   fs.writeFileSync(OUTPUT_JSON, JSON.stringify(results, null, 2), 'utf-8');
   console.log(`Wrote raw JSON → ${OUTPUT_JSON}`);
 
-  const reportText = generateReport(results, { fixtures: SELECTED_FIXTURES, variants: SELECTED_VARIANTS, anchors: ALL_ANCHORS });
+  const reportText = generateReport(results, {
+    fixtures: SELECTED_FIXTURES,
+    variants: SELECTED_VARIANTS,
+    anchors: ALL_ANCHORS,
+  });
   const reportDir = path.dirname(OUTPUT_REPORT);
   if (reportDir && !fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
   fs.writeFileSync(OUTPUT_REPORT, reportText, 'utf-8');

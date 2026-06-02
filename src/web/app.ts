@@ -84,6 +84,8 @@ import { closeRescueModal, initRescue, openRescueModal } from './rescue-modal';
 import { initResponsive, isSmallScreen, isTouchDevice, onSmallScreenChange } from './responsive';
 import { renderScheduleGrid } from './schedule-grid-view';
 import {
+  anchorToPickerDefaults,
+  computeDefaultLiveAnchor,
   computePerDayHours,
   filterVisibleViolations,
   fmtRecoveryWindow,
@@ -3576,19 +3578,25 @@ async function ensureLiveModeAnchor(taskGate?: Task | null): Promise<Date | null
     label: `${String(h).padStart(2, '0')}:00`,
   }));
 
+  const { defaultDay, defaultHour } = anchorToPickerDefaults(
+    computeDefaultLiveAnchor(currentSchedule),
+    currentSchedule,
+  );
   const result = await showTimePicker('כדי להמשיך, יש להגדיר את הזמן הנוכחי במצב חי.', {
     title: 'הפעלת מצב חי',
     days,
     hours,
-    defaultDay: '1',
-    defaultHour: String(dayStartHour),
+    defaultDay,
+    defaultHour,
   });
   if (!result) return null;
 
   const dayIdx = parseInt(result.day, 10);
   const hour = parseInt(result.hour, 10);
   const base = currentSchedule.periodStart;
-  const ts = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIdx - 1, hour, 0);
+  // hourInOpDay maps tail hours (< dayStartHour) onto the op-day's post-midnight
+  // tail, matching the tail-aware toDate helper used in handleProfileFutureSos.
+  const ts = new Date(hourInOpDay(base, dayStartHour, dayIdx, hour));
 
   if (taskGate && !isFutureTask(taskGate, ts)) {
     await showAlert('הזמן שנבחר הופך את המשימה למוקפאת (בעבר). לא ניתן להפעיל חילוץ על משימה שכבר חלפה.', {
@@ -3796,9 +3804,7 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
   // can tweak in the range-picker banner. Live mode is only activated on
   // apply, so a cancel leaves the schedule untouched.
   const lm = store.getLiveModeState();
-  let anchor: Date = lm.enabled
-    ? lm.currentTimestamp
-    : new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0);
+  let anchor: Date = lm.enabled ? lm.currentTimestamp : computeDefaultLiveAnchor(schedule);
   const liveModeInitiallyOn = lm.enabled;
 
   // Smart default: use next modifiable upcoming assignment if no override provided.
@@ -3835,12 +3841,16 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
       currentLabel: anchorLabel(anchor),
       changeButtonLabel: 'שנה',
       onChange: async () => {
+        const { defaultDay: defDay, defaultHour: defHour } = anchorToPickerDefaults(
+          computeDefaultLiveAnchor(schedule),
+          schedule,
+        );
         const result = await showTimePicker('בחר את נקודת ההקפאה. שיבוצים לפני נקודה זו ייחשבו כעבר.', {
           title: 'נקודת הקפאה',
           days,
           hours,
-          defaultDay: '1',
-          defaultHour: String(dayStartHour),
+          defaultDay: defDay,
+          defaultHour: defHour,
         });
         if (!result) return null;
         const ts = toDate(result.day, result.hour);
@@ -4300,9 +4310,7 @@ async function handleProfileCapabilityChange(participantId: string): Promise<voi
 
   const lm = store.getLiveModeState();
   const liveModeInitiallyOn = lm.enabled;
-  const anchor: Date = lm.enabled
-    ? lm.currentTimestamp
-    : new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), dayStartHour, 0);
+  const anchor: Date = lm.enabled ? lm.currentTimestamp : computeDefaultLiveAnchor(schedule);
 
   const certResolver = engine.getCertLabelResolver();
   const availableCerts = participant.certifications.map((id) => ({
@@ -4804,7 +4812,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.8.0</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.8.1</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -6243,7 +6251,12 @@ function wireScheduleEvents(container: HTMLElement): void {
     liveModeChk.addEventListener('change', () => {
       store.setLiveModeEnabled(liveModeChk.checked);
       if (liveModeChk.checked && currentSchedule) {
-        freezeAssignments(currentSchedule, store.getLiveModeState().currentTimestamp);
+        // setLiveModeEnabled stores raw new Date(), which may fall outside the
+        // schedule window; clamp it onto the op-day grid so the day-select
+        // resolves to a real day instead of silently falling back to יום 1.
+        const clamped = computeDefaultLiveAnchor(currentSchedule);
+        store.setLiveModeTimestamp(clamped);
+        freezeAssignments(currentSchedule, clamped);
       } else if (currentSchedule) {
         unfreezeAll(currentSchedule);
       }

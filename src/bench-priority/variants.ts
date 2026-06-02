@@ -71,7 +71,8 @@ export const BASELINE_VARIANT: VariantSpec = {
  */
 export const D1_D3_VARIANT: VariantSpec = {
   id: 'D1+D3',
-  description: 'D1 (lowPriority-aware effective cert impact + vacuous-cert relief) + D3 (log-scale sub-priority on pool fraction). Production default.',
+  description:
+    'D1 (lowPriority-aware effective cert impact + vacuous-cert relief) + D3 (log-scale sub-priority on pool fraction). Production default.',
   install: (_settings) => {
     _benchSetEnhancedRarity(true);
     return () => {

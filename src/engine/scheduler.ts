@@ -1140,11 +1140,7 @@ export class SchedulingEngine {
       if (op.originalAssignmentId === null) {
         const existing = sched.assignments.find((a) => a.taskId === T.id && a.slotId === op.slotId);
         if (existing) {
-          return fail(
-            'SPLIT_SLOT_NOT_EMPTY',
-            `המשבצת ${op.slotLabel} משובצת כבר — לא ניתן לפצל כמשבצת ריקה.`,
-            T.id,
-          );
+          return fail('SPLIT_SLOT_NOT_EMPTY', `המשבצת ${op.slotLabel} משובצת כבר — לא ניתן לפצל כמשבצת ריקה.`, T.id);
         }
         aIdx = -1;
         originalAssignment = null;
@@ -1201,8 +1197,7 @@ export class SchedulingEngine {
       // from the task+slot plus a wall-clock+random suffix (matches the
       // `manual-${Date.now()}-${rand}` pattern used by `executeManualAssignment`).
       const asgBase =
-        op.originalAssignmentId ??
-        `split-${T.id}-${op.slotId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        op.originalAssignmentId ?? `split-${T.id}-${op.slotId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
       const now = new Date();
       const newAsgA: Assignment = {

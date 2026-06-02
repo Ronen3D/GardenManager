@@ -27,7 +27,8 @@ const GROUPS = ['ק1', 'ק2', 'ק3', 'ק4'];
 
 export const SENIOR_HEAVY_FIXTURE: FixtureSpec = {
   id: 'fixture-senior-heavy',
-  description: '60%+ L2-L4 (24 seniors / 16 L0s) — L0-only tasks become tight. Inverts the Tier 4 "wide pool" assumption.',
+  description:
+    '60%+ L2-L4 (24 seniors / 16 L0s) — L0-only tasks become tight. Inverts the Tier 4 "wide pool" assumption.',
   targetingPhase: 'D4',
   generate: (seed: number): FixtureInstance => {
     resetIdCounters();
@@ -40,10 +41,16 @@ export const SENIOR_HEAVY_FIXTURE: FixtureSpec = {
       const group = GROUPS[g];
       // Per group: 2 L4, 2 L3, 2 L2, 4 L0
       const levelSpec: Level[] = [
-        Level.L4, Level.L4,
-        Level.L3, Level.L3,
-        Level.L2, Level.L2,
-        Level.L0, Level.L0, Level.L0, Level.L0,
+        Level.L4,
+        Level.L4,
+        Level.L3,
+        Level.L3,
+        Level.L2,
+        Level.L2,
+        Level.L0,
+        Level.L0,
+        Level.L0,
+        Level.L0,
       ];
       for (let j = 0; j < levelSpec.length; j++) {
         participants.push(

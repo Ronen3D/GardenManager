@@ -15,18 +15,9 @@
  * D1/D3/D1+D3/D4 once those variants are added.
  */
 
+import { withSeededRandom } from '../../bench-split-tuning/seeded-rng';
 import { optimizeMultiAttempt, sortTasksByDifficulty } from '../../engine/optimizer';
 import { Level, type Participant, type Task } from '../../models/types';
-import type { AnchorResult, AnchorSpec } from '../types';
-import { withSeededRandom } from '../../bench-split-tuning/seeded-rng';
-import { ALL_VARIANTS } from '../variants';
-import {
-  ctxFor,
-  priorityOf,
-  resetAnchorCounters,
-  simpleL0Task,
-  tinyL0Pool,
-} from './shared';
 import {
   DEFAULT_BASE_DATE,
   defaultBenchConfig,
@@ -35,6 +26,9 @@ import {
   makeTask,
   wideAvailability,
 } from '../fixtures/shared';
+import type { AnchorResult, AnchorSpec } from '../types';
+import { ALL_VARIANTS } from '../variants';
+import { ctxFor, priorityOf, resetAnchorCounters, simpleL0Task, tinyL0Pool } from './shared';
 
 // Each invariant anchor is expected to PASS for every variant.
 const ALL_VARIANTS_PASS = Object.fromEntries(ALL_VARIANTS.map((v) => [v.id, 'pass' as const]));
@@ -48,7 +42,8 @@ const ALL_VARIANTS_PASS = Object.fromEntries(ALL_VARIANTS.map((v) => [v.id, 'pas
 export const I_RARE_CERT_SHARED: AnchorSpec = {
   id: 'I-rare-cert-shared',
   group: 'invariant',
-  description: 'Rare cert: T1 (cert-required) must sort before T2 (no cert) when T1\'s only holder is also eligible for T2.',
+  description:
+    "Rare cert: T1 (cert-required) must sort before T2 (no cert) when T1's only holder is also eligible for T2.",
   expectedOutcome: ALL_VARIANTS_PASS,
   evaluate(): AnchorResult {
     resetAnchorCounters();
@@ -103,17 +98,32 @@ export const I_SAMEGROUP_ALWAYS_FIRST: AnchorSpec = {
 
     // Build a mix: 3 sameGroup tasks, 3 non-sameGroup tasks.
     const sg1 = makeTask({
-      name: 'SG-1', sourceName: 'SG', baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 6, durationHours: 4,
+      name: 'SG-1',
+      sourceName: 'SG',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 6,
+      durationHours: 4,
       sameGroupRequired: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
     const sg2 = makeTask({
-      name: 'SG-2', sourceName: 'SG', baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 12, durationHours: 4,
+      name: 'SG-2',
+      sourceName: 'SG',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 12,
+      durationHours: 4,
       sameGroupRequired: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
     const sg3 = makeTask({
-      name: 'SG-3', sourceName: 'SG', baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 18, durationHours: 4,
+      name: 'SG-3',
+      sourceName: 'SG',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 18,
+      durationHours: 4,
       sameGroupRequired: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
@@ -208,12 +218,22 @@ export const I_PRIORITY_ZERO_NOT_JITTERED: AnchorSpec = {
 
     // 2 sameGroup (priority-0) tasks + 4 normal non-sameGroup tasks
     const sg1 = makeTask({
-      name: 'SG-1', sourceName: 'SG', baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 6, durationHours: 4,
+      name: 'SG-1',
+      sourceName: 'SG',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 6,
+      durationHours: 4,
       sameGroupRequired: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });
     const sg2 = makeTask({
-      name: 'SG-2', sourceName: 'SG', baseDate: DEFAULT_BASE_DATE, dayIndex: 1, startHour: 18, durationHours: 4,
+      name: 'SG-2',
+      sourceName: 'SG',
+      baseDate: DEFAULT_BASE_DATE,
+      dayIndex: 1,
+      startHour: 18,
+      durationHours: 4,
       sameGroupRequired: true,
       slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
     });

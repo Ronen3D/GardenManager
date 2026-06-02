@@ -29,7 +29,8 @@ const GROUPS = ['ק1', 'ק2', 'ק3', 'ק4'];
 
 export const UNIVERSAL_CERT_FIXTURE: FixtureSpec = {
   id: 'fixture-universal-cert',
-  description: 'All 3 certs held by ≥95% of the pool — `hasCerts` is structurally true but eliminates ~no one. Tier 2 mis-classification target.',
+  description:
+    'All 3 certs held by ≥95% of the pool — `hasCerts` is structurally true but eliminates ~no one. Tier 2 mis-classification target.',
   targetingPhase: 'D1',
   generate: (seed: number): FixtureInstance => {
     resetIdCounters();
@@ -123,9 +124,7 @@ export const UNIVERSAL_CERT_FIXTURE: FixtureSpec = {
           dayIndex: day,
           startHour: 19,
           durationHours: 4,
-          slots: [
-            makeSlot({ acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['HoreshU'] }),
-          ],
+          slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['HoreshU'] })],
         }),
       );
     }

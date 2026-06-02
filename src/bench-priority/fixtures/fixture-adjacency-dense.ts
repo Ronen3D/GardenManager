@@ -30,7 +30,8 @@ const GROUPS = ['ק1', 'ק2', 'ק3', 'ק4'];
 
 export const ADJACENCY_DENSE_FIXTURE: FixtureSpec = {
   id: 'fixture-adjacency-dense',
-  description: 'Multiple blocksConsecutive tasks packed back-to-back each day — HC-12 boundary pressure. T5 density target.',
+  description:
+    'Multiple blocksConsecutive tasks packed back-to-back each day — HC-12 boundary pressure. T5 density target.',
   targetingPhase: 'D4',
   generate: (seed: number): FixtureInstance => {
     resetIdCounters();
@@ -95,9 +96,7 @@ export const ADJACENCY_DENSE_FIXTURE: FixtureSpec = {
           startHour: 13,
           durationHours: 2,
           blocksConsecutive: true,
-          slots: [
-            makeSlot({ acceptableLevels: [{ level: Level.L0 }] }),
-          ],
+          slots: [makeSlot({ acceptableLevels: [{ level: Level.L0 }] })],
         }),
       );
     }

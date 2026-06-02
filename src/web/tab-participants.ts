@@ -193,8 +193,7 @@ function sortParticipants(list: Participant[]): Participant[] {
     // it at the bottom (storage/insertion order). Explicit column clicks
     // override this with the single-key sorts below.
     return [...list].sort(
-      (a, b) =>
-        a.group.localeCompare(b.group, 'he') || b.level - a.level || a.name.localeCompare(b.name, 'he'),
+      (a, b) => a.group.localeCompare(b.group, 'he') || b.level - a.level || a.name.localeCompare(b.name, 'he'),
     );
   }
   const dir = sortDirection === 'asc' ? 1 : -1;

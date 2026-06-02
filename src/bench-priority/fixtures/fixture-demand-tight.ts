@@ -96,9 +96,7 @@ export const DEMAND_TIGHT_FIXTURE: FixtureSpec = {
           dayIndex: day,
           startHour: 8,
           durationHours: 6,
-          slots: [
-            makeSlot({ acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }] }),
-          ],
+          slots: [makeSlot({ acceptableLevels: [{ level: Level.L2 }, { level: Level.L3 }, { level: Level.L4 }] })],
         }),
       );
     }

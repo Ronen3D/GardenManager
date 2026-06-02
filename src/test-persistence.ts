@@ -2275,15 +2275,35 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     };
     const participants = [pNarrow, pWide];
     const assignments = [
-      { id: 'aN', taskId: 'tA', slotId: 'tA-s', participantId: 'pN', status: AssignmentStatus.Scheduled, updatedAt: t(10) },
-      { id: 'aW', taskId: 'tB', slotId: 'tB-s', participantId: 'pW', status: AssignmentStatus.Scheduled, updatedAt: t(22) },
+      {
+        id: 'aN',
+        taskId: 'tA',
+        slotId: 'tA-s',
+        participantId: 'pN',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: t(10),
+      },
+      {
+        id: 'aW',
+        taskId: 'tB',
+        slotId: 'tB-s',
+        participantId: 'pW',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: t(22),
+      },
     ];
 
     const frozen = freezeEnv(participants, tasks);
-    assert(frozen.capacities.size === participants.length, 'P0-R3: freezeEnv populates capacities for every participant');
+    assert(
+      frozen.capacities.size === participants.length,
+      'P0-R3: freezeEnv populates capacities for every participant',
+    );
     const capN = frozen.capacities.get('pN')?.totalAvailableHours ?? 0;
     const capW = frozen.capacities.get('pW')?.totalAvailableHours ?? 0;
-    assert(capN > 0 && capW > 0 && Math.abs(capN - capW) > 1e-6, 'P0-R3: uneven-availability fixture yields unequal capacities');
+    assert(
+      capN > 0 && capW > 0 && Math.abs(capN - capW) > 1e-6,
+      'P0-R3: uneven-availability fixture yields unequal capacities',
+    );
 
     const ctxBase = {
       taskMap: frozen.taskMap,

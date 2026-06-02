@@ -30,7 +30,8 @@ const GROUPS = ['ק1', 'ק2', 'ק3', 'ק4'];
 
 export const RARE_EVERYWHERE_FIXTURE: FixtureSpec = {
   id: 'fixture-rare-everywhere',
-  description: '4 certs each held by ≤15% of pool — every cert-requiring task has a tight pool. S1 sub-priority saturation target.',
+  description:
+    '4 certs each held by ≤15% of pool — every cert-requiring task has a tight pool. S1 sub-priority saturation target.',
   targetingPhase: 'D3',
   generate: (seed: number): FixtureInstance => {
     resetIdCounters();

@@ -52,7 +52,7 @@ function signTestPValue(deltas: number[]): number {
   if (n <= 20) {
     let pTail = 0;
     const k = Math.min(positives, n - positives);
-    for (let i = 0; i <= k; i++) pTail += binomialCoef(n, i) * Math.pow(0.5, n);
+    for (let i = 0; i <= k; i++) pTail += binomialCoef(n, i) * 0.5 ** n;
     return Math.min(1, 2 * pTail);
   }
   const meanK = n / 2;
@@ -71,8 +71,13 @@ function normalCdf(z: number): number {
   // Approximation by Abramowitz & Stegun 26.2.17.
   const t = 1 / (1 + 0.2316419 * Math.abs(z));
   const d = (1 / Math.sqrt(2 * Math.PI)) * Math.exp(-(z * z) / 2);
-  const p = d * (0.319381530 * t - 0.356563782 * t * t + 1.781477937 * t * t * t
-    - 1.821255978 * t * t * t * t + 1.330274429 * t * t * t * t * t);
+  const p =
+    d *
+    (0.31938153 * t -
+      0.356563782 * t * t +
+      1.781477937 * t * t * t -
+      1.821255978 * t * t * t * t +
+      1.330274429 * t * t * t * t * t);
   return z >= 0 ? 1 - p : p;
 }
 
@@ -101,8 +106,14 @@ function summarize(runs: SingleRunRecord[], fixtureId: string, variantId: string
     variantId,
     runCount: r.length,
     meanComposite: mean(r.map((x) => x.compositeScore)),
-    p25Composite: quantile(r.map((x) => x.compositeScore), 0.25),
-    p75Composite: quantile(r.map((x) => x.compositeScore), 0.75),
+    p25Composite: quantile(
+      r.map((x) => x.compositeScore),
+      0.25,
+    ),
+    p75Composite: quantile(
+      r.map((x) => x.compositeScore),
+      0.75,
+    ),
     stdDevComposite: stdDev(r.map((x) => x.compositeScore)),
     meanUnfilled: mean(r.map((x) => x.unfilledSlotCount)),
     meanGreedyFillRate: mean(r.map((x) => x.greedyFillRate)),
@@ -136,7 +147,9 @@ function renderAnchors(results: BenchResults, opts: ReportOptions): string {
   for (const group of ['invariant', 'pathology'] as const) {
     const anchorsInGroup = opts.anchors.filter((a) => a.group === group);
     if (anchorsInGroup.length === 0) continue;
-    lines.push(`### ${group === 'invariant' ? 'Invariant anchors (must pass)' : 'Pathology anchors (baseline expected to fail)'}`);
+    lines.push(
+      `### ${group === 'invariant' ? 'Invariant anchors (must pass)' : 'Pathology anchors (baseline expected to fail)'}`,
+    );
     lines.push('');
     // Header: anchor + one column per variant
     const header = ['Anchor', ...opts.variants.map((v) => v.id)];
@@ -167,7 +180,9 @@ function renderAnchors(results: BenchResults, opts: ReportOptions): string {
       lines.push('');
       for (const rec of recs) {
         const obsStr = rec.observations
-          ? Object.entries(rec.observations).map(([k, v]) => `${k}=${v}`).join(', ')
+          ? Object.entries(rec.observations)
+              .map(([k, v]) => `${k}=${v}`)
+              .join(', ')
           : '';
         const detailStr = rec.detail ? ` — ${rec.detail}` : '';
         lines.push(`- ${rec.variantId}: ${rec.observed}${detailStr} (${obsStr})`);
@@ -261,12 +276,16 @@ function renderAcceptance(results: BenchResults, opts: ReportOptions): string {
   if (defaultRuns.length > 0) {
     const hc = defaultRuns.reduce((s, r) => s + r.hcViolationCount, 0);
     const feasible = defaultRuns.filter((r) => r.feasible).length;
-    lines.push(`**fixture-default / baseline**: ${defaultRuns.length} runs, ${feasible} feasible, ${hc} HC violations (independent fullValidate).`);
+    lines.push(
+      `**fixture-default / baseline**: ${defaultRuns.length} runs, ${feasible} feasible, ${hc} HC violations (independent fullValidate).`,
+    );
   }
 
   // 2. Invariant anchors: all should pass for baseline.
   const baselineAnchors = results.anchors.filter((r) => r.variantId === baseline.id);
-  const invariants = baselineAnchors.filter((r) => opts.anchors.find((a) => a.id === r.anchorId)?.group === 'invariant');
+  const invariants = baselineAnchors.filter(
+    (r) => opts.anchors.find((a) => a.id === r.anchorId)?.group === 'invariant',
+  );
   const invPass = invariants.filter((r) => r.observed === 'pass').length;
   lines.push(`**Invariant anchors / baseline**: ${invPass}/${invariants.length} pass.`);
   for (const rec of invariants.filter((r) => r.observed !== 'pass')) {
@@ -274,13 +293,17 @@ function renderAcceptance(results: BenchResults, opts: ReportOptions): string {
   }
 
   // 3. Pathology anchors: all should fail for baseline (in named ways).
-  const pathologies = baselineAnchors.filter((r) => opts.anchors.find((a) => a.id === r.anchorId)?.group === 'pathology');
+  const pathologies = baselineAnchors.filter(
+    (r) => opts.anchors.find((a) => a.id === r.anchorId)?.group === 'pathology',
+  );
   const pathExpectedFail = pathologies.filter((r) => r.expected === 'fail');
   const pathFailedAsExpected = pathExpectedFail.filter((r) => r.observed === 'fail').length;
   lines.push(`**Pathology anchors / baseline**: ${pathFailedAsExpected}/${pathExpectedFail.length} fail as expected.`);
   const unexpectedlyPassing = pathExpectedFail.filter((r) => r.observed !== 'fail');
   for (const rec of unexpectedlyPassing) {
-    lines.push(`  - ⚠ ${rec.anchorId}: unexpectedly PASSED for baseline. Bench bug or unintended side effect — investigate.`);
+    lines.push(
+      `  - ⚠ ${rec.anchorId}: unexpectedly PASSED for baseline. Bench bug or unintended side effect — investigate.`,
+    );
   }
 
   // 4. Total HC violations across all baseline runs.

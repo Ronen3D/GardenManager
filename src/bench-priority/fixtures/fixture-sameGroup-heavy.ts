@@ -28,7 +28,8 @@ const GROUPS = ['ק1', 'ק2', 'ק3', 'ק4'];
 
 export const SAME_GROUP_HEAVY_FIXTURE: FixtureSpec = {
   id: 'fixture-sameGroup-heavy',
-  description: '6 tier-0 (sameGroupRequired) tasks per day competing for the same senior cohort — cross-task contention.',
+  description:
+    '6 tier-0 (sameGroupRequired) tasks per day competing for the same senior cohort — cross-task contention.',
   targetingPhase: 'D4',
   generate: (seed: number): FixtureInstance => {
     resetIdCounters();
