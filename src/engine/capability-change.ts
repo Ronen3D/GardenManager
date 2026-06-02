@@ -578,6 +578,8 @@ export function generateCapabilityChangePlans(
   const caps = opts.caps ?? deriveCapsForBatchSize(affectedCount);
   const defaultBudget = Math.min(4000, Math.max(500, 500 + 250 * Math.max(0, affectedCount - 2)));
   const timeBudgetMs = opts.timeBudgetMs ?? defaultBudget;
+  // Wall-clock start for the honest total-time signal (see future-sos.ts).
+  const opStart = Date.now();
 
   const excludedIds = opts.excludedAssignmentIds;
   const excludedInWindow: AffectedAssignment[] = [];
@@ -730,13 +732,6 @@ export function generateCapabilityChangePlans(
     const orderedSolvable = [...solvableIdx].sort((a, b) => candidatesPerSlot[a].length - candidatesPerSlot[b].length);
     const orderedCandidates = orderedSolvable.map((i) => candidatesPerSlot[i]);
 
-    const deadline = Date.now() + budgetMs;
-    const { compositions, timedOut } = dfsCompose(orderedCandidates, Math.max(maxPlans * 4, 8), deadline);
-
-    if (compositions.length === 0) {
-      return { validPlans: [], invalidPlans: [], infeasibleIds, timedOut, anySolvable: true };
-    }
-
     const isPartial = infeasibleIds.length > 0;
 
     const computeFallbackDepthUsed = (cands: SlotCandidate[]): 4 | 5 | undefined => {
@@ -755,85 +750,122 @@ export function generateCapabilityChangePlans(
       return out;
     };
 
-    const scored: BatchRescuePlan[] = [];
-    const scoredInvalid: BatchRescuePlan[] = [];
-    for (let i = 0; i < compositions.length; i++) {
-      const comp = compositions[i];
-      const touched = new Set<string>();
-      for (const c of comp.slotCands) for (const id of c.touchedAssignmentIds) touched.add(id);
+    // Compose at `topK` (proxy-ranked) then HC-validate each composition into the
+    // valid / invalid buckets. Factored so the gated breadth-retry below can
+    // re-run at a wider topK with no duplication (see future-sos.ts for the
+    // full rationale; this path shares the truncate-then-validate pattern).
+    const composeAndScore = (topK: number, deadline: number) => {
+      const { compositions, timedOut } = dfsCompose(orderedCandidates, topK, deadline);
+      const scored: BatchRescuePlan[] = [];
+      const scoredInvalid: BatchRescuePlan[] = [];
+      for (let i = 0; i < compositions.length; i++) {
+        const comp = compositions[i];
+        const touched = new Set<string>();
+        for (const c of comp.slotCands) {
+          for (const id of c.touchedAssignmentIds) touched.add(id);
+          // Track split halves so the shared buildPerParticipantChanges counts the
+          // two fillers (see future-sos.ts BUG-2 rationale).
+          if (isSplitCandidate(c) && c.splitOp.originalAssignmentId) {
+            touched.add(`${c.splitOp.originalAssignmentId}#a`);
+            touched.add(`${c.splitOp.originalAssignmentId}#b`);
+          }
+        }
 
-      const trial = applyCompositionToState(schedule, comp.slotCands);
+        const trial = applyCompositionToState(schedule, comp.slotCands);
 
-      const validation = validateHardConstraints(
-        trial.tasks,
-        schedule.participants,
-        trial.assignments,
-        opts.disabledHC,
-        opts.restRuleMap,
-        opts.certLabelResolver,
-        extraUnavailability,
-        opts.scheduleContext,
-        extraCapabilityLoss,
-      );
+        const validation = validateHardConstraints(
+          trial.tasks,
+          schedule.participants,
+          trial.assignments,
+          opts.disabledHC,
+          opts.restRuleMap,
+          opts.certLabelResolver,
+          extraUnavailability,
+          opts.scheduleContext,
+          extraCapabilityLoss,
+        );
 
-      const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-      for (const c of comp.slotCands) {
-        if (!isSplitCandidate(c)) depthHistogram[c.depth]++;
-      }
-      const fallbackDepthUsed = computeFallbackDepthUsed(comp.slotCands);
-      const chainSubset = chainsOf(comp.slotCands);
-      const splitOpsForPlan = splitOpsOf(comp.slotCands);
+        const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+        for (const c of comp.slotCands) {
+          if (!isSplitCandidate(c)) depthHistogram[c.depth]++;
+        }
+        const fallbackDepthUsed = computeFallbackDepthUsed(comp.slotCands);
+        const chainSubset = chainsOf(comp.slotCands);
+        const splitOpsForPlan = splitOpsOf(comp.slotCands);
 
-      if (validation.violations.length > 0) {
-        scoredInvalid.push({
+        if (validation.violations.length > 0) {
+          scoredInvalid.push({
+            id: `capch-${hashSwaps(mergeSwaps(chainSubset))}-${i}`,
+            rank: 0,
+            swaps: mergeSwaps(chainSubset),
+            splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
+            compositeDelta: comp.deltaSum,
+            depthHistogram,
+            perParticipantChanges: buildPerParticipantChanges(schedule.assignments, trial.assignments, touched),
+            violations: validation.violations,
+            isPartial,
+            fallbackDepthUsed,
+          });
+          continue;
+        }
+
+        // Override scoreCtx.taskMap for trial state — see the rationale in
+        // future-sos.ts's matching block. opts.scoreCtx's taskMap was built
+        // over the pre-split tasks; without this rebuild the per-assignment
+        // soft-score loops can't find the half-tasks.
+        const trialScoreCtx =
+          trial.tasks === schedule.tasks
+            ? opts.scoreCtx
+            : {
+                ...opts.scoreCtx,
+                taskMap: new Map(trial.tasks.map((t) => [t.id, t])),
+                assignmentsByParticipant: undefined,
+                assignmentsByTask: undefined,
+              };
+        const candScore = computeScheduleScore(
+          trial.tasks,
+          schedule.participants,
+          trial.assignments,
+          opts.config,
+          trialScoreCtx,
+        );
+        const compositeDelta = candScore.compositeScore - baselineScore.compositeScore;
+
+        scored.push({
           id: `capch-${hashSwaps(mergeSwaps(chainSubset))}-${i}`,
           rank: 0,
           swaps: mergeSwaps(chainSubset),
           splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
-          compositeDelta: comp.deltaSum,
+          compositeDelta,
           depthHistogram,
           perParticipantChanges: buildPerParticipantChanges(schedule.assignments, trial.assignments, touched),
           violations: validation.violations,
           isPartial,
           fallbackDepthUsed,
         });
-        continue;
       }
+      return { compositions, scored, scoredInvalid, timedOut };
+    };
 
-      // Override scoreCtx.taskMap for trial state — see the rationale in
-      // future-sos.ts's matching block. opts.scoreCtx's taskMap was built
-      // over the pre-split tasks; without this rebuild the per-assignment
-      // soft-score loops can't find the half-tasks.
-      const trialScoreCtx =
-        trial.tasks === schedule.tasks
-          ? opts.scoreCtx
-          : {
-              ...opts.scoreCtx,
-              taskMap: new Map(trial.tasks.map((t) => [t.id, t])),
-              assignmentsByParticipant: undefined,
-              assignmentsByTask: undefined,
-            };
-      const candScore = computeScheduleScore(
-        trial.tasks,
-        schedule.participants,
-        trial.assignments,
-        opts.config,
-        trialScoreCtx,
-      );
-      const compositeDelta = candScore.compositeScore - baselineScore.compositeScore;
+    const baseTopK = Math.max(maxPlans * 4, 8);
+    let { compositions, scored, scoredInvalid, timedOut } = composeAndScore(baseTopK, Date.now() + budgetMs);
 
-      scored.push({
-        id: `capch-${hashSwaps(mergeSwaps(chainSubset))}-${i}`,
-        rank: 0,
-        swaps: mergeSwaps(chainSubset),
-        splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
-        compositeDelta,
-        depthHistogram,
-        perParticipantChanges: buildPerParticipantChanges(schedule.assignments, trial.assignments, touched),
-        violations: validation.violations,
-        isPartial,
-        fallbackDepthUsed,
-      });
+    // Gated breadth-retry — identical to future-sos.ts: when the FULL proxy top-K
+    // pool all fails HC validation and the search did not time out, re-validate a
+    // wider pool once at the same depth before the depth cascade escalates. Never
+    // relaxes an HC. Common-case byte-identical (skipped on first-pass success,
+    // non-full pool, or timeout).
+    if (scored.length === 0 && compositions.length >= baseTopK && !timedOut) {
+      const retryTopK = Math.max(maxPlans * 12, 36);
+      const retry = composeAndScore(retryTopK, Date.now() + Math.min(budgetMs, 3000));
+      compositions = retry.compositions;
+      scored = retry.scored;
+      scoredInvalid = retry.scoredInvalid;
+      timedOut = timedOut || retry.timedOut;
+    }
+
+    if (compositions.length === 0) {
+      return { validPlans: [], invalidPlans: [], infeasibleIds, timedOut, anySolvable: true };
     }
 
     // Precompute focal continuity delta per plan once for the tiebreaker.
@@ -946,6 +978,9 @@ export function generateCapabilityChangePlans(
     finalInfeasible = stage3.infeasibleIds;
     finalTimedOut = stage3.timedOut;
   }
+
+  // Honest total-time signal — see future-sos.ts for the rationale.
+  if (Date.now() - opStart > timeBudgetMs + 2 * fallbackBudget) finalTimedOut = true;
 
   return {
     request,

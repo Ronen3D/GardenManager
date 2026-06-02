@@ -22,6 +22,7 @@ import {
   upsertCapabilityLoss,
 } from '../engine/capability-change';
 import {
+  type AffectedAssignment,
   computeEffectiveUnavailabilityWindows,
   findAffectedAssignments,
   generateBatchRescuePlans,
@@ -3948,7 +3949,13 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
       // so HC-3 doesn't fire on them. If the user opted out of literally everything
       // and the kept tasks cover the whole window, effective is [] and no entry is
       // persisted (the window is effectively a no-op, matching opt-out intent).
-      const keptBlocks = affected.filter((a) => excludedIds.has(a.assignment.id)).map((a) => a.task.timeBlock);
+      // Punch holes around BOTH user-kept (opt-out) and lockedInPast (in-progress/
+      // frozen) in-window assignments, so the persisted window matches what the
+      // planner validated and revalidateFull doesn't re-fire HC-3 on a shift the
+      // focal is intrinsically committed to. Mirrors the FSOS planner's keptTaskBlocks.
+      const keptBlocks = [...affected.filter((a) => excludedIds.has(a.assignment.id)), ...lockedInPast].map(
+        (a) => a.task.timeBlock,
+      );
       const effectiveWindows = computeEffectiveUnavailabilityWindows(
         { start: windowStart, end: windowEnd },
         keptBlocks,
@@ -4011,11 +4018,12 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
     });
     if (decision === 'cancel') return;
     if (decision === 'narrow-window') {
+      const narrowed = suggestNarrowerWindow(result.affected, range, schedule.periodStart, dayStartHour);
       void handleProfileFutureSos(participantId, {
-        defaultStartDay: range.startDay,
-        defaultStartHour: range.startHour,
-        defaultEndDay: range.endDay,
-        defaultEndHour: range.endHour,
+        defaultStartDay: narrowed.startDay,
+        defaultStartHour: narrowed.startHour,
+        defaultEndDay: narrowed.endDay,
+        defaultEndHour: narrowed.endHour,
         defaultReason: reason,
       });
       return;
@@ -4030,12 +4038,15 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
     schedule: currentSchedule,
     participantName: participant.name,
     onNarrowWindow: () => {
-      // Re-enter the flow preserving the current window values as defaults.
+      // Re-enter the flow with a window tightened to the affected slots' span
+      // (never re-pin the identical failed window). Provably covers all affected
+      // slots; the picker stays editable so the user can shave further.
+      const narrowed = suggestNarrowerWindow(result.affected, range, schedule.periodStart, dayStartHour);
       void handleProfileFutureSos(participantId, {
-        defaultStartDay: range.startDay,
-        defaultStartHour: range.startHour,
-        defaultEndDay: range.endDay,
-        defaultEndHour: range.endHour,
+        defaultStartDay: narrowed.startDay,
+        defaultStartHour: narrowed.startHour,
+        defaultEndDay: narrowed.endDay,
+        defaultEndHour: narrowed.endHour,
         defaultReason: reason,
       });
     },
@@ -4058,7 +4069,13 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
       // Punch holes around kept (excluded) in-window assignments so the persisted
       // entry matches the planner's effective windows — otherwise downstream
       // revalidation fires HC-3 on assignments the user chose to keep.
-      const keptBlocks = affected.filter((a) => excludedIds.has(a.assignment.id)).map((a) => a.task.timeBlock);
+      // Punch holes around BOTH user-kept (opt-out) and lockedInPast (in-progress/
+      // frozen) in-window assignments, so the persisted window matches what the
+      // planner validated and revalidateFull doesn't re-fire HC-3 on a shift the
+      // focal is intrinsically committed to. Mirrors the FSOS planner's keptTaskBlocks.
+      const keptBlocks = [...affected.filter((a) => excludedIds.has(a.assignment.id)), ...lockedInPast].map(
+        (a) => a.task.timeBlock,
+      );
       const effectiveWindows = computeEffectiveUnavailabilityWindows(
         { start: windowStart, end: windowEnd },
         keptBlocks,
@@ -4088,6 +4105,10 @@ async function handleProfileFutureSos(participantId: string, entryOpts: FutureSo
       // reverseSwaps alone can't undo task-set changes. Capture a full clone
       // BEFORE applyPlanOps for use by undoFutureSos.
       const preApplySnapshot = hasSplitOps ? structuredClone(currentSchedule) : undefined;
+      // The clone is taken AFTER scheduleUnavailability was set to nextUnavail
+      // above, so it embeds the NEW window. Undo must restore the PRE-FSOS window
+      // — overwrite the snapshot's copy so importSchedule on undo brings it back.
+      if (preApplySnapshot) preApplySnapshot.scheduleUnavailability = prevUnavailability;
       const applyResult = hasSplitOps
         ? engine.applyPlanOps({ swaps: requests, splitOps: plan.splitOps })
         : engine.swapParticipantChain(requests);
@@ -4162,6 +4183,60 @@ function computeSmartDefaultWindow(
   };
 }
 
+/**
+ * Suggest a tighter window for the "narrow window" re-entry instead of
+ * re-pinning the identical window that just failed. Tightens to the op-day span
+ * of the affected assignments, reusing the exact op-day→picker mapping that
+ * `computeSmartDefaultWindow` uses.
+ *
+ * Coverage guarantee: the suggested window FULLY COVERS every affected task —
+ * the start floors to its whole hour and the end ceils to the next whole hour,
+ * so a fragment ending at a non-whole-hour (e.g. a split half at :30) is still
+ * inside the window rather than silently dropped by the hour-granular picker.
+ *
+ * It is NOT guaranteed to be strictly narrower than the failed window:
+ * `findAffectedAssignments` classifies by overlap (not containment), so an
+ * affected task straddling a window boundary may push the suggested edge
+ * slightly past the original on that side (affected tasks must be rescued in
+ * full). The picker stays editable; per-slot opt-out (remove-and-retry) remains
+ * the precise tool for excising a mid-window bottleneck.
+ */
+function suggestNarrowerWindow(
+  affected: AffectedAssignment[],
+  fallback: RangePickerDefaults,
+  periodStart: Date,
+  dayStartHour: number,
+): RangePickerDefaults {
+  if (affected.length === 0) return fallback;
+  const opDayIndexOf = (d: Date): number => {
+    const ms = d.getTime() - new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()).getTime();
+    const calendarIdx = Math.floor(ms / 86400000) + 1;
+    return d.getHours() < dayStartHour ? calendarIdx - 1 : calendarIdx;
+  };
+  let minStart = affected[0].task.timeBlock.start;
+  let maxEnd = affected[0].task.timeBlock.end;
+  for (const a of affected) {
+    if (a.task.timeBlock.start < minStart) minStart = a.task.timeBlock.start;
+    if (a.task.timeBlock.end > maxEnd) maxEnd = a.task.timeBlock.end;
+  }
+  // Ceil the end to the next whole hour when it carries sub-hour minutes (split
+  // halves can end at e.g. :30). The picker is hour-granular, so without this the
+  // reconstructed window would end one hour short and silently drop that fragment.
+  // Deriving endDay/endHour from the ceiled timestamp also rolls the op-day
+  // correctly when ceiling crosses the day-start boundary.
+  const maxEndCeil = new Date(maxEnd);
+  if (maxEndCeil.getMinutes() !== 0 || maxEndCeil.getSeconds() !== 0 || maxEndCeil.getMilliseconds() !== 0) {
+    maxEndCeil.setMinutes(0, 0, 0);
+    maxEndCeil.setHours(maxEndCeil.getHours() + 1);
+  }
+  return {
+    startDay: String(Math.max(1, opDayIndexOf(minStart))),
+    startHour: String(minStart.getHours()),
+    endDay: String(Math.max(1, opDayIndexOf(maxEndCeil))),
+    endHour: String(maxEndCeil.getHours()),
+  };
+}
+
 function activateLiveModeWithAnchor(anchor: Date): void {
   if (!currentSchedule) return;
   store.setLiveModeEnabled(true);
@@ -4230,9 +4305,12 @@ function undoFutureSos(undoCtx: UndoContext): void {
 
   // Pure swap-chain undo (no splitOps): the in-place participantId mutations
   // are reversible via `swapParticipantChain` with the reverse request set.
-  // Remove the FSOS entry first so HC-5 doesn't block the reverse swap.
-  const before = currentSchedule.scheduleUnavailability ?? [];
-  currentSchedule.scheduleUnavailability = before.filter((e) => e.id !== undoCtx.fsosEntryId);
+  // Restore the exact pre-FSOS window first so HC-3 doesn't block the reverse
+  // swap. We assign prevUnavailability wholesale rather than filtering by
+  // fsosEntryId: a hole-punched window persists suffixed `${id}-${i}` entries the
+  // bare-id filter can't match, and upsert may have merged-away a pre-existing
+  // overlapping entry an id-filter could never bring back.
+  currentSchedule.scheduleUnavailability = undoCtx.prevUnavailability;
 
   const requests = undoCtx.reverseSwaps.map((s) => ({
     assignmentId: s.assignmentId,
@@ -4514,6 +4592,10 @@ async function handleProfileCapabilityChange(participantId: string): Promise<voi
       const hasSplitOps = (plan.splitOps?.length ?? 0) > 0;
       // Capture full pre-apply snapshot for split plans (see undoCapabilityChange).
       const preApplySnapshot = hasSplitOps ? structuredClone(currentSchedule) : undefined;
+      // The clone is taken AFTER capabilityLoss was set to the new entry above, so
+      // it embeds the NEW loss. Undo must restore the PRE-change capabilityLoss —
+      // overwrite the snapshot's copy so importSchedule on undo brings it back.
+      if (preApplySnapshot) preApplySnapshot.capabilityLoss = prevCapabilityLoss;
       const applyResult = hasSplitOps
         ? engine.applyPlanOps({ swaps: requests, splitOps: plan.splitOps })
         : engine.swapParticipantChain(requests);
@@ -4583,8 +4665,11 @@ function undoCapabilityChange(undoCtx: CapabilityChangeUndoContext): void {
     return;
   }
 
-  const before = currentSchedule.capabilityLoss ?? [];
-  currentSchedule.capabilityLoss = before.filter((e) => e.id !== undoCtx.capLossEntryId);
+  // Restore the exact pre-change capabilityLoss wholesale (not an id-filter):
+  // upsertCapabilityLoss may have merged-away a pre-existing overlapping entry
+  // that a bare-id filter could never bring back. Symmetric with the apply-
+  // failure path below and with the FSOS pure-swap undo.
+  currentSchedule.capabilityLoss = undoCtx.prevCapabilityLoss;
   const requests = undoCtx.reverseSwaps.map((s) => ({
     assignmentId: s.assignmentId,
     newParticipantId: s.prevParticipantId,
@@ -4812,7 +4897,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.8.1</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.8.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>

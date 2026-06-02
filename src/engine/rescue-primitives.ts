@@ -492,8 +492,17 @@ function depth3(
   maxDepth3: number,
 ): CandidateChain[] {
   const plans: CandidateChain[] = [];
-  const MAX_P_DONORS = 5;
-  const MAX_Q_DONORS = 3;
+  // Adaptive donor caps — ported verbatim from rescue.ts:generateDepth3Plans
+  // (MAX_P_DONORS=max(5,⌈N/8⌉), MAX_Q_DONORS=max(3,⌈N/12⌉)) so the batch path
+  // (Future-SOS / inject / capability-change) and single-slot rescue search
+  // the same donor breadth and produce consistent plan quality. At typical
+  // N≤40 these collapse to the historical fixed 5/3; they only widen for
+  // larger teams, where a feasible deep chain can need a chronologically
+  // distant donor beyond the 5th/3rd. The companion `maxDepth3` early-exit
+  // is widened to match in `enumerateChainsForSlot`.
+  const N = ctx.schedule.participants.length;
+  const MAX_P_DONORS = Math.max(5, Math.ceil(N / 8));
+  const MAX_Q_DONORS = Math.max(3, Math.ceil(N / 12));
   const sortedParticipants = sortParticipantsByLoadProximity(
     ctx.schedule.participants,
     vacatedTask,
@@ -1310,7 +1319,11 @@ export function enumerateChainsForSlot(
 
   const d1 = depth1(ctx, vacatedAssignment, vacatedTask, vacatedSlot).slice(0, caps.depth1);
   const d2 = depth2(ctx, vacatedAssignment, vacatedTask, vacatedSlot).slice(0, caps.depth2);
-  const d3MaxEnumeration = Math.max(200, caps.depth3 * 40);
+  // Widen the depth-3 early-exit alongside the adaptive donor caps so the
+  // `break outer` count-cap doesn't truncate the wider donor space before the
+  // delta sort. `N * 5` mirrors rescue.ts:generateDepth3Plans (MAX_DEPTH3);
+  // the `caps.depth3 * 40` floor preserves the prior small-K enumeration depth.
+  const d3MaxEnumeration = Math.max(200, ctx.schedule.participants.length * 5, caps.depth3 * 40);
   const d3 = depth3(ctx, vacatedAssignment, vacatedTask, vacatedSlot, d3MaxEnumeration).slice(0, caps.depth3);
 
   const merged: CandidateChain[] = [...d1, ...d2, ...d3];

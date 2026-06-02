@@ -408,10 +408,20 @@ export function buildPerParticipantChanges(
   for (const id of touchedAssignmentIds) {
     const before = baseById.get(id);
     const after = candById.get(id);
-    if (!before || !after) continue;
-    if (before.participantId === after.participantId) continue;
-    ensure(before.participantId).removed.push(before);
-    ensure(after.participantId).added.push(after);
+    if (before && after) {
+      if (before.participantId === after.participantId) continue;
+      ensure(before.participantId).removed.push(before);
+      ensure(after.participantId).added.push(after);
+    } else if (before) {
+      // Removal-only: the original assignment is gone (e.g. a split's original
+      // occurrence replaced by its `#a`/`#b` halves). Count the focal's loss so
+      // split plans report honest disruption (not 0) for the ranking tiebreaker.
+      ensure(before.participantId).removed.push(before);
+    } else if (after) {
+      // Addition-only: a newly-created assignment (e.g. a split half) with no
+      // baseline counterpart. Count the filler's gain.
+      ensure(after.participantId).added.push(after);
+    }
   }
 
   const result: PerParticipantChange[] = [];
@@ -609,6 +619,12 @@ export function generateBatchRescuePlans(
   // is spent on real branches, not fan-out.
   const defaultBudget = Math.min(4000, Math.max(500, 500 + 250 * Math.max(0, affectedCount - 2)));
   const timeBudgetMs = opts.timeBudgetMs ?? defaultBudget;
+  // Wall-clock start for the honest total-time signal. The DFS deadline only
+  // bounds dfsCompose; per-slot enumeration (which can dominate on large/tight
+  // batches) runs uncounted. We OR an elapsed-vs-total-budget check into the
+  // returned `timedOut` below so the UI's "narrow the window" affordance fires
+  // on the real bottleneck instead of mislabelling a slow run as "infeasible".
+  const opStart = Date.now();
 
   const excludedIds = opts.excludedAssignmentIds;
   const excludedInWindow: AffectedAssignment[] = [];
@@ -661,7 +677,16 @@ export function generateBatchRescuePlans(
   //      candidate eligibility ignores prior FSOS windows for any participant
   //      and the planner can place a candidate (or reassign focal) onto a task
   //      that's already inside a previously-recorded unavailability.
-  const keptTaskBlocks = excludedInWindow.map((e) => e.task.timeBlock);
+  //   4. Subtract lockedInPast task blocks too: a window that begins while the
+  //      focal is mid-shift (a task straddling the anchor → lockedInPast) leaves
+  //      the focal genuinely committed to that intrinsically-unmodifiable shift.
+  //      Without this, the focal's effective unavailability still covers it and
+  //      the final HC-3 validator fires AVAILABILITY_VIOLATION on the focal's own
+  //      frozen assignment in EVERY composition → zero valid plans for the most
+  //      common live scenario ("mark X unavailable from now"). You cannot be
+  //      unavailable for a shift you are already performing — identical treatment
+  //      to opt-out kept blocks, so no HC is relaxed.
+  const keptTaskBlocks = [...excludedInWindow, ...lockedInPast].map((e) => e.task.timeBlock);
   const effectiveFocalWindows = computeEffectiveUnavailabilityWindows(request.window, keptTaskBlocks);
   const extraUnavailability: Array<{ participantId: string; start: Date; end: Date }> = [
     ...(schedule.scheduleUnavailability ?? []).map((u) => ({
@@ -675,6 +700,20 @@ export function generateBatchRescuePlans(
       end: w.end,
     })),
   ];
+
+  // Schedule-scoped capability losses (from a prior capability-change). The
+  // apply-time validator (engine.validate / revalidateFull) enforces these via
+  // the 9th `extraCapabilityLoss` arg, so FSOS MUST too — otherwise a cert-lost
+  // participant is treated as still-certified during enumeration, a plan placing
+  // them on a cert-gated slot is surfaced as "recommended", then HC-2 fires at
+  // apply and the whole plan rolls back. Mirrors capability-change.ts/inject.ts.
+  // Inert (byte-identical) when schedule.capabilityLoss is empty.
+  const extraCapabilityLoss = (schedule.capabilityLoss ?? []).map((c) => ({
+    participantId: c.participantId,
+    lostCertifications: c.lostCertifications,
+    start: c.start,
+    end: c.end,
+  }));
 
   const baselineScore = computeScheduleScore(
     schedule.tasks,
@@ -698,6 +737,7 @@ export function generateBatchRescuePlans(
     scoreCtx: opts.scoreCtx,
     baselineComposite: baselineScore.compositeScore,
     extraUnavailability,
+    extraCapabilityLoss,
     excludeParticipantIds: new Set([request.participantId]),
   };
 
@@ -761,19 +801,6 @@ export function generateBatchRescuePlans(
     const orderedSolvable = [...solvableIdx].sort((a, b) => candidatesPerSlot[a].length - candidatesPerSlot[b].length);
     const orderedCandidates = orderedSolvable.map((i) => candidatesPerSlot[i]);
 
-    const deadline = Date.now() + budgetMs;
-    const { compositions, timedOut } = dfsCompose(orderedCandidates, Math.max(maxPlans * 4, 8), deadline);
-
-    if (compositions.length === 0) {
-      if (isSchedulerDiagOn()) {
-        console.log(
-          `[future-sos] stage=${fallbackLevel} K=${affectedCount} caps=${JSON.stringify(caps)} ` +
-            `budgetMs=${budgetMs} dfs-empty timedOut=${timedOut}`,
-        );
-      }
-      return { validPlans: [], invalidPlans: [], infeasibleIds, timedOut, anySolvable: true };
-    }
-
     const isPartial = infeasibleIds.length > 0;
 
     // Highest-depth-used, for the fallback badge. Split-fill candidates do
@@ -787,86 +814,150 @@ export function generateBatchRescuePlans(
       return max === 4 || max === 5 ? max : undefined;
     };
 
-    const scored: BatchRescuePlan[] = [];
-    const scoredInvalid: BatchRescuePlan[] = [];
-    for (let i = 0; i < compositions.length; i++) {
-      const comp = compositions[i];
-      const touched = new Set<string>();
-      for (const c of comp.slotCands) for (const id of c.touchedAssignmentIds) touched.add(id);
+    // Compose at `topK` (proxy-ranked by sum-of-solo-deltas), then HC-validate
+    // each composition into the valid (`scored`) / invalid buckets. Factored so
+    // the gated breadth-retry below can re-run it at a wider topK with no dup.
+    const composeAndScore = (
+      topK: number,
+      deadline: number,
+    ): {
+      compositions: Composition[];
+      scored: BatchRescuePlan[];
+      scoredInvalid: BatchRescuePlan[];
+      timedOut: boolean;
+    } => {
+      const { compositions, timedOut } = dfsCompose(orderedCandidates, topK, deadline);
+      const scored: BatchRescuePlan[] = [];
+      const scoredInvalid: BatchRescuePlan[] = [];
+      for (let i = 0; i < compositions.length; i++) {
+        const comp = compositions[i];
+        const touched = new Set<string>();
+        for (const c of comp.slotCands) {
+          for (const id of c.touchedAssignmentIds) touched.add(id);
+          // A split candidate's touchedAssignmentIds is just the original (now
+          // removed) id; also track the synthetic `#a`/`#b` halves so
+          // buildPerParticipantChanges counts the two fillers' gains (otherwise a
+          // pure-split plan reports 0 disturbance and unfairly wins the tiebreaker).
+          if (isSplitCandidate(c) && c.splitOp.originalAssignmentId) {
+            touched.add(`${c.splitOp.originalAssignmentId}#a`);
+            touched.add(`${c.splitOp.originalAssignmentId}#b`);
+          }
+        }
 
-      const trial = applyCompositionToState(schedule, comp.slotCands);
+        const trial = applyCompositionToState(schedule, comp.slotCands);
 
-      const validation = validateHardConstraints(
-        trial.tasks,
-        schedule.participants,
-        trial.assignments,
-        opts.disabledHC,
-        opts.restRuleMap,
-        opts.certLabelResolver,
-        extraUnavailability,
-        opts.scheduleContext,
-      );
+        const validation = validateHardConstraints(
+          trial.tasks,
+          schedule.participants,
+          trial.assignments,
+          opts.disabledHC,
+          opts.restRuleMap,
+          opts.certLabelResolver,
+          extraUnavailability,
+          opts.scheduleContext,
+          extraCapabilityLoss,
+        );
 
-      const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-      for (const c of comp.slotCands) {
-        if (!isSplitCandidate(c)) depthHistogram[c.depth]++;
-      }
-      const fallbackDepthUsed = computeFallbackDepthUsed(comp.slotCands);
-      const chainSubset = chainsOf(comp.slotCands);
-      const splitOpsForPlan = splitOpsOf(comp.slotCands);
+        const depthHistogram: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+        for (const c of comp.slotCands) {
+          if (!isSplitCandidate(c)) depthHistogram[c.depth]++;
+        }
+        const fallbackDepthUsed = computeFallbackDepthUsed(comp.slotCands);
+        const chainSubset = chainsOf(comp.slotCands);
+        const splitOpsForPlan = splitOpsOf(comp.slotCands);
 
-      if (validation.violations.length > 0) {
-        scoredInvalid.push({
+        if (validation.violations.length > 0) {
+          scoredInvalid.push({
+            id: `fsos-${hashSwaps(mergeSwaps(chainSubset))}-${i}`,
+            rank: 0,
+            swaps: mergeSwaps(chainSubset),
+            splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
+            compositeDelta: comp.deltaSum,
+            depthHistogram,
+            perParticipantChanges: buildPerParticipantChanges(schedule.assignments, trial.assignments, touched),
+            violations: validation.violations,
+            isPartial,
+            fallbackDepthUsed,
+          });
+          continue;
+        }
+
+        // Override `scoreCtx.taskMap` for the trial: opts.scoreCtx was built
+        // over the PRE-split task set, so its taskMap is missing the new
+        // `#a`/`#b` half-task ids. computeScheduleScore consults `ctx.taskMap`
+        // in preference to the `tasks` arg, so without this rebuild the
+        // per-assignment soft-score loops skip the halves and the composite
+        // delta loses fragment-honest scoring contribution.
+        const trialScoreCtx =
+          trial.tasks === schedule.tasks
+            ? opts.scoreCtx
+            : {
+                ...opts.scoreCtx,
+                taskMap: new Map(trial.tasks.map((t) => [t.id, t])),
+                assignmentsByParticipant: undefined,
+                assignmentsByTask: undefined,
+              };
+        const candScore = computeScheduleScore(
+          trial.tasks,
+          schedule.participants,
+          trial.assignments,
+          opts.config,
+          trialScoreCtx,
+        );
+        const compositeDelta = candScore.compositeScore - baselineScore.compositeScore;
+
+        scored.push({
           id: `fsos-${hashSwaps(mergeSwaps(chainSubset))}-${i}`,
           rank: 0,
           swaps: mergeSwaps(chainSubset),
           splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
-          compositeDelta: comp.deltaSum,
+          compositeDelta,
           depthHistogram,
           perParticipantChanges: buildPerParticipantChanges(schedule.assignments, trial.assignments, touched),
           violations: validation.violations,
           isPartial,
           fallbackDepthUsed,
         });
-        continue;
       }
+      return { compositions, scored, scoredInvalid, timedOut };
+    };
 
-      // Override `scoreCtx.taskMap` for the trial: opts.scoreCtx was built
-      // over the PRE-split task set, so its taskMap is missing the new
-      // `#a`/`#b` half-task ids. computeScheduleScore consults `ctx.taskMap`
-      // in preference to the `tasks` arg, so without this rebuild the
-      // per-assignment soft-score loops skip the halves and the composite
-      // delta loses fragment-honest scoring contribution.
-      const trialScoreCtx =
-        trial.tasks === schedule.tasks
-          ? opts.scoreCtx
-          : {
-              ...opts.scoreCtx,
-              taskMap: new Map(trial.tasks.map((t) => [t.id, t])),
-              assignmentsByParticipant: undefined,
-              assignmentsByTask: undefined,
-            };
-      const candScore = computeScheduleScore(
-        trial.tasks,
-        schedule.participants,
-        trial.assignments,
-        opts.config,
-        trialScoreCtx,
-      );
-      const compositeDelta = candScore.compositeScore - baselineScore.compositeScore;
+    const baseTopK = Math.max(maxPlans * 4, 8);
+    let { compositions, scored, scoredInvalid, timedOut } = composeAndScore(baseTopK, Date.now() + budgetMs);
 
-      scored.push({
-        id: `fsos-${hashSwaps(mergeSwaps(chainSubset))}-${i}`,
-        rank: 0,
-        swaps: mergeSwaps(chainSubset),
-        splitOps: splitOpsForPlan.length > 0 ? splitOpsForPlan : undefined,
-        compositeDelta,
-        depthHistogram,
-        perParticipantChanges: buildPerParticipantChanges(schedule.assignments, trial.assignments, touched),
-        violations: validation.violations,
-        isPartial,
-        fallbackDepthUsed,
-      });
+    // Gated breadth-retry. The proxy top-K pool was FULL yet every composition
+    // failed HC validation (cross-chain HC-5/12/14/15 are invisible to per-slot
+    // solo enumeration and to dfsCompose's assignment/HC-7 conflict checks), and
+    // the search did not time out — so a feasible lower-proxy composition may sit
+    // just past the cutoff. Re-validate a WIDER pool ONCE at the same depth before
+    // the depth cascade escalates (which only adds lower-proxy deeper chains and
+    // never widens breadth). Never relaxes an HC — every surfaced plan is still
+    // fully validated. Common-case byte-identical: skipped whenever the first pass
+    // produced a valid plan, returned a non-full pool (no truncation), or timed out.
+    if (scored.length === 0 && compositions.length >= baseTopK && !timedOut) {
+      const retryTopK = Math.max(maxPlans * 12, 36);
+      const retry = composeAndScore(retryTopK, Date.now() + Math.min(budgetMs, 3000));
+      if (isSchedulerDiagOn()) {
+        console.log(
+          `[future-sos] breadth-retry stage=${fallbackLevel} K=${affectedCount} ` +
+            `baseTopK=${baseTopK} retryTopK=${retryTopK} recovered=${retry.scored.length} ` +
+            `retryTimedOut=${retry.timedOut}`,
+        );
+      }
+      compositions = retry.compositions;
+      scored = retry.scored;
+      scoredInvalid = retry.scoredInvalid;
+      timedOut = timedOut || retry.timedOut;
+    }
+
+    if (compositions.length === 0) {
+      if (isSchedulerDiagOn()) {
+        console.log(
+          `[future-sos] stage=${fallbackLevel} K=${affectedCount} caps=${JSON.stringify(caps)} ` +
+            `budgetMs=${budgetMs} dfs-empty timedOut=${timedOut}`,
+        );
+      }
+      return { validPlans: [], invalidPlans: [], infeasibleIds, timedOut, anySolvable: true };
     }
 
     // Rank valid plans; leave invalid ones unranked (caller may mix them in only
@@ -936,6 +1027,15 @@ export function generateBatchRescuePlans(
     finalInfeasible = stage3.infeasibleIds;
     finalTimedOut = stage3.timedOut;
   }
+
+  // Honest total-time: if the whole operation (enumeration + every stage)
+  // overran the worst-case budget we'd ever intend to spend, report timedOut so
+  // the caller surfaces "timed out — try a narrower window" rather than a flat
+  // "infeasible". `timeBudgetMs + 2 * fallbackBudget` is the sum of all three
+  // stages' DFS budgets; exceeding it means enumeration (uncounted by the DFS
+  // deadline) was the real cost. Tiny/fast inputs never reach it → unchanged.
+  const totalBudgetMs = timeBudgetMs + 2 * fallbackBudget;
+  if (Date.now() - opStart > totalBudgetMs) finalTimedOut = true;
 
   return {
     request,

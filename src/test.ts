@@ -37,6 +37,7 @@ import {
 import { allowedLevels, hasAnyLowPriority, isAcceptedLevel, isLowPriority } from './models/level-utils';
 import type { DateUnavailability } from './models/types';
 import {
+  type CapabilityLoss,
   type CertificationDefinition,
   DEFAULT_CERTIFICATION_DEFINITIONS,
   type LevelEntry,
@@ -13693,6 +13694,220 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     assert(
       withOrphan[withOrphan.length - 1].id === 'b5u-aOrphan',
       'fsos-B5 helper: donor with missing task sinks to the end',
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Future-SOS Tier-1 correctness regressions (lockedInPast hole-punch, capabilityLoss)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+console.log('\n── Future-SOS: lockedInPast & capabilityLoss ──');
+
+{
+  const regAvail = [{ start: new Date(2026, 4, 29), end: new Date(2026, 5, 5) }];
+
+  const buildRegCtx = (tasks: Task[], participants: Participant[]): ScoreContext => {
+    let s = tasks[0]?.timeBlock.start ?? new Date();
+    let e = tasks[0]?.timeBlock.end ?? new Date();
+    for (const t of tasks) {
+      if (t.timeBlock.start < s) s = t.timeBlock.start;
+      if (t.timeBlock.end > e) e = t.timeBlock.end;
+    }
+    return {
+      taskMap: new Map(tasks.map((t) => [t.id, t])),
+      pMap: new Map(participants.map((p) => [p.id, p])),
+      capacities: computeAllCapacities(participants, s, e, 5),
+      notWithPairs: new Map(),
+      dayStartHour: 5,
+    };
+  };
+  const regZeroScore: ScheduleScore = {
+    minRestHours: 0,
+    avgRestHours: 0,
+    workloadStdDev: 0,
+    totalPenalty: 0,
+    compositeScore: 0,
+    l0StdDev: 0,
+    l0AvgEffective: 0,
+    seniorStdDev: 0,
+    seniorAvgEffective: 0,
+    dailyPerParticipantStdDev: 0,
+    dailyGlobalStdDev: 0,
+    restPerGapBonus: 0,
+  };
+  const mkRegSched = (
+    tasks: Task[],
+    participants: Participant[],
+    assignments: Assignment[],
+    extra?: Partial<Schedule>,
+  ): Schedule => ({
+    id: 'reg-sched',
+    tasks,
+    participants,
+    assignments,
+    feasible: true,
+    score: regZeroScore,
+    violations: [],
+    generatedAt: new Date(),
+    algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+    periodStart: new Date(2026, 5, 1),
+    periodDays: 7,
+    restRuleSnapshot: {},
+    certLabelSnapshot: {},
+    ...extra,
+  });
+
+  // ── R1: a window starting mid-shift no longer self-invalidates every plan ──
+  // Focal holds an in-progress shift (straddles the anchor → lockedInPast) that
+  // overlaps the window, PLUS a separate future slot that needs rescue. Before the
+  // lockedInPast hole-punch, HC-3 fired on the focal's own frozen shift in EVERY
+  // composition → zero plans. Now the in-progress block is carved out of the
+  // focal's effective window, so the future slot gets a clean, complete plan.
+  {
+    const anchorR1 = new Date(2026, 5, 1, 10); // 10:00 — focal is mid-shift
+    const tInProgress: Task = {
+      id: 'lp-tp',
+      name: 'InProgress',
+      timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 8, 14),
+      requiredCount: 1,
+      slots: [{ slotId: 'lp-sp', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: false,
+    };
+    const tFuture: Task = {
+      id: 'lp-tf',
+      name: 'Future',
+      timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 16, 22),
+      requiredCount: 1,
+      slots: [{ slotId: 'lp-sf', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: false,
+    };
+    const mk = (id: string): Participant => ({
+      id,
+      name: id,
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: regAvail,
+      dateUnavailability: [],
+    });
+    const assigns: Assignment[] = [
+      {
+        id: 'lp-ap',
+        taskId: 'lp-tp',
+        slotId: 'lp-sp',
+        participantId: 'lp-focal',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'lp-af',
+        taskId: 'lp-tf',
+        slotId: 'lp-sf',
+        participantId: 'lp-focal',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const sched = mkRegSched([tInProgress, tFuture], [mk('lp-focal'), mk('lp-p2')], assigns);
+    const window = { start: anchorR1, end: new Date(2026, 5, 1, 23) };
+    const res = generateBatchRescuePlans(sched, { participantId: 'lp-focal', window }, anchorR1, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildRegCtx(sched.tasks, sched.participants),
+      maxPlans: 3,
+    });
+    assert(res.lockedInPast.length === 1, 'fsos-lockedInPast: in-progress focal shift is locked-in-past');
+    assert(
+      res.affected.length === 1 && res.affected[0].assignment.id === 'lp-af',
+      'fsos-lockedInPast: only the future slot is affected',
+    );
+    assert(res.plans.length > 0, 'fsos-lockedInPast: a complete plan is produced (no self-invalidation)');
+    assert(!res.plans[0].isPartial, 'fsos-lockedInPast: top plan is not partial');
+    assert(res.plans[0].violations.length === 0, 'fsos-lockedInPast: top plan is HC-clean');
+    assert(
+      res.plans[0].swaps.some((s) => s.toParticipantId === 'lp-p2'),
+      'fsos-lockedInPast: the future slot is rescued by the available replacement',
+    );
+  }
+
+  // ── R2: FSOS respects schedule.capabilityLoss (enumeration + final validate) ──
+  // Focal holds a cert-gated slot; the only other cert-holder (p2) carries a
+  // recorded capability loss covering it. Before the fix FSOS treated p2 as
+  // still-certified and surfaced a plan that would roll back at apply-time (HC-2).
+  // Now p2 is ineligible → the slot is correctly infeasible; removing the loss
+  // makes it fillable again (control).
+  {
+    const anchorR2 = new Date(2026, 4, 31); // before the task
+    const tCert: Task = {
+      id: 'cl-tc',
+      name: 'CertGated',
+      timeBlock: createTimeBlockFromHours(new Date(2026, 5, 1), 8, 14),
+      requiredCount: 1,
+      slots: [{ slotId: 'cl-sc', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['Hamama'] }],
+      sameGroupRequired: false,
+      blocksConsecutive: false,
+    };
+    const mk = (id: string, certs: string[]): Participant => ({
+      id,
+      name: id,
+      level: Level.L0,
+      certifications: certs,
+      group: 'A',
+      availability: regAvail,
+      dateUnavailability: [],
+    });
+    const assigns: Assignment[] = [
+      {
+        id: 'cl-ac',
+        taskId: 'cl-tc',
+        slotId: 'cl-sc',
+        participantId: 'cl-focal',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ];
+    const window = { start: new Date(2026, 5, 1, 0), end: new Date(2026, 5, 1, 23) };
+    const capLoss: CapabilityLoss[] = [
+      {
+        id: 'cl-loss',
+        participantId: 'cl-p2',
+        lostCertifications: ['Hamama'],
+        start: new Date(2026, 5, 1, 0),
+        end: new Date(2026, 5, 1, 23),
+        createdAt: new Date(),
+        anchorAtCreation: anchorR2,
+      },
+    ];
+    const participants = [mk('cl-focal', ['Hamama']), mk('cl-p2', ['Hamama']), mk('cl-p3', [])];
+
+    const schedWithLoss = mkRegSched([tCert], participants, assigns, { capabilityLoss: capLoss });
+    const resLoss = generateBatchRescuePlans(schedWithLoss, { participantId: 'cl-focal', window }, anchorR2, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildRegCtx(schedWithLoss.tasks, schedWithLoss.participants),
+      maxPlans: 3,
+    });
+    assert(
+      resLoss.infeasibleAssignmentIds.includes('cl-ac'),
+      'fsos-capLoss: cert-lost candidate is excluded → slot infeasible (no plan that rolls back at apply)',
+    );
+    assert(
+      !resLoss.plans.some((p) => p.swaps.some((s) => s.toParticipantId === 'cl-p2')),
+      'fsos-capLoss: no surfaced plan places the cert-lost participant on the cert slot',
+    );
+
+    // Control: same schedule without the loss → p2 is eligible → slot is fillable.
+    const schedNoLoss = mkRegSched([tCert], participants, assigns);
+    const resOk = generateBatchRescuePlans(schedNoLoss, { participantId: 'cl-focal', window }, anchorR2, {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildRegCtx(schedNoLoss.tasks, schedNoLoss.participants),
+      maxPlans: 3,
+    });
+    assert(resOk.plans.length > 0, 'fsos-capLoss control: without the loss a plan is found');
+    assert(
+      resOk.plans[0].swaps.some((s) => s.toParticipantId === 'cl-p2'),
+      'fsos-capLoss control: the only cert-holder fills the slot when not cert-lost',
     );
   }
 }

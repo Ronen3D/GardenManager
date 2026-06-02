@@ -87,7 +87,7 @@ export function openConfirmModal(ctx: ConfirmContext): Promise<ConfirmResult> {
         <div class="fsos-window-sentence">${windowSentence}</div>
         ${
           ctx.affected.length > 0
-            ? `<h4 class="profile-sub-title fsos-affected-title">${escHtml(affectedSectionTitle)}</h4>${affectedHtml}`
+            ? `<h4 class="profile-sub-title fsos-affected-title">${escHtml(affectedSectionTitle)}</h4><p class="fsos-keep-note">${escHtml(`שיבוץ שתבטל את סימונו יישאר אצל ${ctx.participantName} ולא יוחלף — גם אם הוא בתוך חלון אי־הזמינות.`)}</p>${affectedHtml}`
             : '<p class="gm-modal-body fsos-empty-note">אין שיבוצים חופפים לחלון זה.</p>'
         }
         ${lockedHtml}
@@ -363,6 +363,10 @@ export function openInfeasibleModal(ctx: InfeasibleContext): Promise<InfeasibleD
         'לכל שיבוץ נמצאו מועמדים בנפרד, אך לא נמצא שילוב ביניהם שעומד באילוצים הקשיחים. נסה להוציא חלק מהשיבוצים מהאצווה ידנית כדי לאפשר תוכנית.';
     }
     const explainHtml = `<p class="fsos-infeasible-explain">${escHtml(explainText)}</p>`;
+    // Honest consequence: opting a slot out of the batch (remove-and-retry) does
+    // NOT vacate it — the unavailable focal keeps that shift (its window is
+    // hole-punched so HC-3 stays silent). Say so, so the user isn't surprised.
+    const keepNoteHtml = `<p class="fsos-keep-note">${escHtml(`שיבוץ שתסיר מהאצווה יישאר אצל ${ctx.participantName} — הוא לא יוחלף.`)}</p>`;
 
     const unsolvableHtml = hasUnsolvable
       ? `<section class="fsos-infeasible-section fsos-infeasible-section--missing">
@@ -393,6 +397,7 @@ export function openInfeasibleModal(ctx: InfeasibleContext): Promise<InfeasibleD
         </div>
         ${timeoutHtml}
         ${explainHtml}
+        ${keepNoteHtml}
         ${unsolvableHtml}
         ${candidateOnlyHtml}
         <div class="gm-modal-actions fsos-sticky-actions">
@@ -498,8 +503,6 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
   const hasInfeasible = ctx.result.infeasibleAssignmentIds.length > 0;
   const warningHtml = hasInfeasible ? renderInfeasibleWarning(ctx.result) : '';
   const timeoutHtml = ctx.result.timedOut ? renderTimeoutBanner(ctx.result.plans.length > 0) : '';
-  const usesDeepFallback = ctx.result.plans.some((p) => p.fallbackDepthUsed !== undefined);
-  const fallbackHtml = usesDeepFallback ? renderFallbackBanner() : '';
   const isTouch = document.documentElement.classList.contains('touch-device');
 
   let plansHtml = '';
@@ -540,7 +543,6 @@ export function openBatchPlansModal(ctx: BatchPlansContext): void {
       </div>
       ${timeoutHtml}
       ${warningHtml}
-      ${fallbackHtml}
       ${pagerHtml}
       ${plansHtml}
       <div class="gm-modal-actions fsos-sticky-actions">
@@ -748,19 +750,6 @@ function renderNoPlans(): string {
   </div>`;
 }
 
-/**
- * Rendered when at least one plan in the result used the deep-chain fallback
- * (depth 4 or 5). Signals to the user that the shallow-chain search exhausted
- * and the engine produced unusually long chains as a last-resort. Plan details
- * are still shown as usual — the banner just primes the user to expect deeper
- * chains inside the per-slot "Show Details" sections.
- */
-function renderFallbackBanner(): string {
-  return `<div class="fsos-warning-banner fsos-warning-banner--fallback">
-    <strong>⚠️ תוכנית זו נוצרה במצב חירום ועלולה לכלול שרשראות עמוקות — כדאי לעיין בפרטים לפני אישור.</strong>
-  </div>`;
-}
-
 function renderCarouselPager(plans: BatchRescuePlan[]): string {
   const dots = plans
     .map((_, i) => `<span class="fsos-carousel-dot${i === 0 ? ' fsos-carousel-dot--active' : ''}"></span>`)
@@ -791,6 +780,18 @@ function renderBatchPlanCard(
   const focalBadgeHtml = plan.focalContinuityExtended
     ? `<span class="fsos-focal-continuity-badge" title="התוכנית משבצת מחדש את המשתתף למשימות אחרות כדי לשמור על העומס שלו">📜 שמרנו על העומס</span>`
     : '';
+  // Per-card deep-chain chip — scoped to the plan that actually used a depth-4/5
+  // fallback (replaces the old modal-wide banner that mislabelled a shallow
+  // recommended #1 as "emergency" whenever ANY lower-ranked plan was deep).
+  const fallbackChipHtml = plan.fallbackDepthUsed
+    ? `<span class="fsos-fallback-chip" title="התוכנית כוללת שרשרת החלפות עמוקה (עומק ${plan.fallbackDepthUsed}) — כדאי לעיין בפרטים לפני אישור">⚠️ שרשרת עמוקה</span>`
+    : '';
+  // Terse disruption metric so collapsed (desktop) cards are comparable at a
+  // glance and the mobile carousel shows the cost without expanding. swaps +
+  // splitOps = number of changes; perParticipantChanges = people touched.
+  const changeCount = plan.swaps.length + (plan.splitOps?.length ?? 0);
+  const peopleCount = plan.perParticipantChanges.length;
+  const disruptionHtml = `<span class="fsos-plan-disruption" title="כמה אנשים מושפעים וכמה החלפות בתוכנית">${peopleCount} ${peopleCount === 1 ? 'איש' : 'אנשים'} · ${changeCount} ${changeCount === 1 ? 'החלפה' : 'החלפות'}</span>`;
   const rankLine = `#${plan.rank}${recommended ? ' · מומלץ' : ''}`;
 
   let applyHtml = '';
@@ -806,7 +807,9 @@ function renderBatchPlanCard(
         <span class="fsos-plan-rank">${escHtml(rankLine)}</span>
         ${partialBadgeHtml}
         ${focalBadgeHtml}
+        ${fallbackChipHtml}
         <span class="fsos-verdict fsos-verdict--${verdict.level}">${escHtml(verdict.label)}</span>
+        ${disruptionHtml}
         <button type="button" class="fsos-plan-toggle" aria-expanded="${opts.expanded ? 'true' : 'false'}" aria-label="הרחב/הסתר פרטים">
           <span class="fsos-plan-toggle-label">פרטים</span>
           <span class="fsos-plan-toggle-arrow">▾</span>

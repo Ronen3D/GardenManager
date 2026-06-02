@@ -10027,11 +10027,6 @@ tr.now-row-animate > td.time-cell {
   border-color: rgba(243, 156, 18, 0.35);
   color: #f39c12;
 }
-.fsos-warning-banner--fallback {
-  background: rgba(230, 126, 34, 0.1);
-  border-color: rgba(230, 126, 34, 0.4);
-  color: #bf6516;
-}
 .fsos-narrow-btn {
   align-self: flex-start;
 }
@@ -10156,6 +10151,26 @@ tr.now-row-animate > td.time-cell {
   color: #4a90d9;
   border: 1px solid rgba(74, 144, 217, 0.55);
   letter-spacing: 0.02em;
+}
+.fsos-fallback-chip {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(230, 126, 34, 0.18);
+  color: #e67e22;
+  border: 1px solid rgba(230, 126, 34, 0.55);
+  letter-spacing: 0.02em;
+}
+.fsos-plan-disruption {
+  font-size: 0.75rem;
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+}
+.fsos-keep-note {
+  font-size: 0.8rem;
+  color: var(--text-muted, #888);
+  margin: 4px 0 8px;
 }
 .fsos-plan-reason {
   font-size: 0.8rem;

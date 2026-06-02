@@ -823,17 +823,6 @@ function runStage(opts: StageOpts): StageOutput {
   const orderedSolvable = [...solvableIdx].sort((a, b) => candidatesPerSlot[a].length - candidatesPerSlot[b].length);
   const orderedCandidates = orderedSolvable.map((i) => candidatesPerSlot[i]);
 
-  const deadline = Date.now() + budgetMs;
-  const { compositions, timedOut } = dfsCompose(
-    orderedCandidates,
-    orderedSolvable,
-    Math.max(maxPlans * 4, 8),
-    deadline,
-  );
-  if (compositions.length === 0) {
-    return { validPlans: [], invalidPlans: [], unsolvableSlotIds, timedOut, anySolvable: true };
-  }
-
   const isPartial = unsolvableSlotIds.length > 0;
   const computeFallbackDepthUsed = (cands: SlotCandidate[]): 4 | 5 | undefined => {
     let max: 1 | 2 | 3 | 4 | 5 = 1;
@@ -928,7 +917,15 @@ function runStage(opts: StageOpts): StageOutput {
     }
 
     const touched = new Set<string>();
-    for (const c of comp.slotCands) for (const id of c.touchedAssignmentIds) touched.add(id);
+    for (const c of comp.slotCands) {
+      for (const id of c.touchedAssignmentIds) touched.add(id);
+      // Track split halves so the two fillers are counted as added (the add-only
+      // branch already handles them); see future-sos.ts BUG-2 rationale.
+      if (isSplitCandidate(c) && c.splitOp.originalAssignmentId) {
+        touched.add(`${c.splitOp.originalAssignmentId}#a`);
+        touched.add(`${c.splitOp.originalAssignmentId}#b`);
+      }
+    }
 
     // Build per-slot outcomes in the task's original slot order.
     const outcomes: SlotStaffingOutcome[] = task.slots.map((slot) => {
@@ -1012,12 +1009,41 @@ function runStage(opts: StageOpts): StageOutput {
     };
   };
 
-  const valid: InjectionPlan[] = [];
-  const invalid: InjectionPlan[] = [];
-  for (let i = 0; i < compositions.length; i++) {
-    const plan = composeToPlan(compositions[i], i);
-    if (plan.violations.length > 0) invalid.push(plan);
-    else valid.push(plan);
+  // Compose at `topK` (proxy-ranked) then HC-validate each composition into the
+  // valid / invalid buckets via composeToPlan. Factored so the gated breadth-
+  // retry can re-run at a wider topK (see future-sos.ts for the full rationale;
+  // this path shares the truncate-then-validate pattern).
+  const composeAndScore = (topK: number, deadline: number) => {
+    const { compositions, timedOut } = dfsCompose(orderedCandidates, orderedSolvable, topK, deadline);
+    const valid: InjectionPlan[] = [];
+    const invalid: InjectionPlan[] = [];
+    for (let i = 0; i < compositions.length; i++) {
+      const plan = composeToPlan(compositions[i], i);
+      if (plan.violations.length > 0) invalid.push(plan);
+      else valid.push(plan);
+    }
+    return { compositions, valid, invalid, timedOut };
+  };
+
+  const baseTopK = Math.max(maxPlans * 4, 8);
+  let { compositions, valid, invalid, timedOut } = composeAndScore(baseTopK, Date.now() + budgetMs);
+
+  // Gated breadth-retry — identical to future-sos.ts: when the FULL proxy top-K
+  // pool all fails HC validation and the search did not time out, re-validate a
+  // wider pool once at the same depth before the depth cascade escalates. Never
+  // relaxes an HC; common-case byte-identical (skipped on first-pass success,
+  // non-full pool, or timeout).
+  if (valid.length === 0 && compositions.length >= baseTopK && !timedOut) {
+    const retryTopK = Math.max(maxPlans * 12, 36);
+    const retry = composeAndScore(retryTopK, Date.now() + Math.min(budgetMs, 3000));
+    compositions = retry.compositions;
+    valid = retry.valid;
+    invalid = retry.invalid;
+    timedOut = timedOut || retry.timedOut;
+  }
+
+  if (compositions.length === 0) {
+    return { validPlans: [], invalidPlans: [], unsolvableSlotIds, timedOut, anySolvable: true };
   }
 
   return { validPlans: valid, invalidPlans: invalid, unsolvableSlotIds, timedOut, anySolvable: true };
