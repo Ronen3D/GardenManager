@@ -355,6 +355,7 @@ import { runEngineExtraTests } from './test-engine-extra';
 import { runParticipantSetXlsxTests } from './test-participant-set-xlsx';
 import { runRescueExtraTests } from './test-rescue-extra';
 import { runShiftSplitTests } from './test-shift-split';
+import { runTerminalSplitRescueTests } from './test-terminal-split-rescue';
 import { runValidatorExtraTests } from './test-validator-extra';
 import { computeAllCapacities } from './utils/capacity';
 import { runShiftSplitE2ETests } from './validate-shift-split-e2e';
@@ -15972,6 +15973,7 @@ console.log('\n── PDF Fit Planner ──────────────
   await runValidatorExtraTests(assert);
   await runShiftSplitTests(assert);
   await runShiftSplitE2ETests(assert);
+  await runTerminalSplitRescueTests(assert);
   // ──────────────────────────────────────────────────────────────────────────
 
   console.log('\n══════════════════════════════════════════');

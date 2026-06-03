@@ -63,13 +63,18 @@ const PAGE_SIZE = 3;
 interface CandidatePlan {
   swaps: RescueSwap[];
   /**
-   * Optional split-fill operations. Mono-kind plans in Phase 1: either
+   * Optional split-fill operations. Plans are mono-kind — either
    * `swaps.length > 0` (chain) or `splitOps.length === 1` (single-slot
-   * split-fill). Never mixed.
+   * split-fill) — EXCEPT the terminal-split feasibility fallback, which carries
+   * `swaps.length >= 1` AND `splitOps.length === 1` (chain + split of the
+   * terminal displaced donor). The swap and split target disjoint assignment
+   * ids, so they apply/validate independently.
    */
   splitOps?: SplitOp[];
   impactScore: number;
   compositeDelta?: number;
+  /** Set by the terminal chain-internal split fallback (see RescuePlan). */
+  terminalSplit?: boolean;
 }
 
 // ─── Internal Helpers ────────────────────────────────────────────────────────
@@ -347,66 +352,82 @@ function buildTrialStateForCandidate(
   schedule: Schedule,
   cp: CandidatePlan,
 ): { tasks: Task[]; assignments: Assignment[] } {
-  if (!cp.splitOps || cp.splitOps.length === 0) {
-    const tempAssignments = schedule.assignments.map((a) => {
-      const sw = cp.swaps.find((s) => s.assignmentId === a.id);
-      if (sw) return { ...a, participantId: sw.toParticipantId };
-      return a;
-    });
-    return { tasks: schedule.tasks, assignments: tempAssignments };
-  }
-  // Phase 1: one split-op per plan, and it has no co-occurring swaps.
-  const op = cp.splitOps[0];
-  const T = schedule.tasks.find((t) => t.id === op.taskId);
-  if (!T) return { tasks: schedule.tasks, assignments: schedule.assignments };
-  const slot = T.slots.find((s) => s.slotId === op.slotId);
-  if (!slot) return { tasks: schedule.tasks, assignments: schedule.assignments };
-  const startMs = T.timeBlock.start.getTime();
-  const endMs = T.timeBlock.end.getTime();
-  const halfA = makeSplitHalf(T, 1, startMs, op.midpointMs, slot);
-  const halfB = makeSplitHalf(T, 2, op.midpointMs, endMs, slot);
-  const survivingSlots = T.slots.filter((s) => s.slotId !== op.slotId);
-  const trialTasks: Task[] = [];
-  for (const t of schedule.tasks) {
-    if (t.id === T.id) {
-      if (survivingSlots.length > 0) {
-        // Stamp sameGroupLinkId on residual for sameGroupRequired parents so
-        // HC-8 link-union groups residual + halves as one unit.
-        trialTasks.push({
-          ...T,
-          slots: survivingSlots,
-          requiredCount: survivingSlots.length,
-          sameGroupLinkId: T.sameGroupRequired ? (T.sameGroupLinkId ?? T.id) : T.sameGroupLinkId,
-        });
+  // Unified builder mirroring engine.applyPlanOps: apply every split-op first
+  // (replace the parent task with residual + #a/#b halves; remove the original
+  // assignment; push two synthetic half-assignments), THEN apply chain swaps as
+  // participant substitution over the resulting assignment list. This supports
+  // pure-swap plans, pure-split plans, AND terminal-split mixed plans with one
+  // code path. For pure-swap (no splitOps) and pure-split (no swaps) plans the
+  // pipeline reduces to the original two branches byte-for-byte.
+  let tasks: Task[] = schedule.tasks;
+  let assignments: Assignment[] = schedule.assignments;
+
+  if (cp.splitOps && cp.splitOps.length > 0) {
+    let curTasks = schedule.tasks;
+    let curAsgs: Assignment[] = schedule.assignments;
+    const now = new Date();
+    for (const op of cp.splitOps) {
+      const T = curTasks.find((t) => t.id === op.taskId);
+      if (!T) continue;
+      const slot = T.slots.find((s) => s.slotId === op.slotId);
+      if (!slot) continue;
+      const halfA = makeSplitHalf(T, 1, T.timeBlock.start.getTime(), op.midpointMs, slot);
+      const halfB = makeSplitHalf(T, 2, op.midpointMs, T.timeBlock.end.getTime(), slot);
+      const survivingSlots = T.slots.filter((s) => s.slotId !== op.slotId);
+      const nextTasks: Task[] = [];
+      for (const t of curTasks) {
+        if (t.id === T.id) {
+          if (survivingSlots.length > 0) {
+            // Stamp sameGroupLinkId on residual for sameGroupRequired parents so
+            // HC-8 link-union groups residual + halves as one unit.
+            nextTasks.push({
+              ...T,
+              slots: survivingSlots,
+              requiredCount: survivingSlots.length,
+              sameGroupLinkId: T.sameGroupRequired ? (T.sameGroupLinkId ?? T.id) : T.sameGroupLinkId,
+            });
+          }
+          nextTasks.push(halfA, halfB);
+        } else {
+          nextTasks.push(t);
+        }
       }
-      trialTasks.push(halfA, halfB);
-    } else {
-      trialTasks.push(t);
+      const nextAsgs: Assignment[] = [];
+      for (const a of curAsgs) {
+        if (a.id === op.originalAssignmentId) continue;
+        nextAsgs.push(a);
+      }
+      nextAsgs.push({
+        id: `${op.originalAssignmentId}#a`,
+        taskId: halfA.id,
+        slotId: halfA.slots[0].slotId,
+        participantId: op.fillA.participantId,
+        status: AssignmentStatus.Manual,
+        updatedAt: now,
+      });
+      nextAsgs.push({
+        id: `${op.originalAssignmentId}#b`,
+        taskId: halfB.id,
+        slotId: halfB.slots[0].slotId,
+        participantId: op.fillB.participantId,
+        status: AssignmentStatus.Manual,
+        updatedAt: now,
+      });
+      curTasks = nextTasks;
+      curAsgs = nextAsgs;
     }
+    tasks = curTasks;
+    assignments = curAsgs;
   }
-  const trialAsgs: Assignment[] = [];
-  for (const a of schedule.assignments) {
-    if (a.id === op.originalAssignmentId) continue;
-    trialAsgs.push(a);
+
+  if (cp.swaps.length > 0) {
+    assignments = assignments.map((a) => {
+      const sw = cp.swaps.find((s) => s.assignmentId === a.id);
+      return sw ? { ...a, participantId: sw.toParticipantId } : a;
+    });
   }
-  const now = new Date();
-  trialAsgs.push({
-    id: `${op.originalAssignmentId}#a`,
-    taskId: halfA.id,
-    slotId: halfA.slots[0].slotId,
-    participantId: op.fillA.participantId,
-    status: AssignmentStatus.Manual,
-    updatedAt: now,
-  });
-  trialAsgs.push({
-    id: `${op.originalAssignmentId}#b`,
-    taskId: halfB.id,
-    slotId: halfB.slots[0].slotId,
-    participantId: op.fillB.participantId,
-    status: AssignmentStatus.Manual,
-    updatedAt: now,
-  });
-  return { tasks: trialTasks, assignments: trialAsgs };
+
+  return { tasks, assignments };
 }
 
 // ─── Split-fill candidates ───────────────────────────────────────────────────
@@ -467,6 +488,170 @@ function enumerateSplitFillCandidatesForRescue(
     impactScore: -sc.soloCompositeDelta,
     compositeDelta: sc.soloCompositeDelta,
   }));
+}
+
+// ─── Terminal chain-internal split candidates (feasibility fallback) ─────────
+
+/** Per-donor split candidate cap and overall terminal candidate cap. Frozen
+ *  constants protecting the deadline-less rescue path — NOT tunables. */
+const TERMINAL_SPLIT_TOPK_PER_DONOR = 4;
+const MAX_TERMINAL_SPLIT_CANDIDATES = 24;
+
+/**
+ * Score a mixed (swaps + one splitOp) candidate from its realized trial state.
+ * The chain scorer `scoreCandidate` only substitutes participants and cannot
+ * realize the split's task-set change, so we build the trial (residual + #a/#b
+ * halves, then the chain swap) and run the full composite over it — rebuilding
+ * `scoreCtx.taskMap` so the new half-task ids are scored (mirrors the trial
+ * scoring in `enumerateSplitFillsForSlot`).
+ */
+function scoreMixedCandidate(
+  schedule: Schedule,
+  cp: CandidatePlan,
+  config: SchedulerConfig,
+  scoreCtx: ScoreContext,
+  baselineComposite: number,
+): number {
+  const trial = buildTrialStateForCandidate(schedule, cp);
+  const trialScoreCtx: ScoreContext =
+    trial.tasks === schedule.tasks
+      ? scoreCtx
+      : {
+          ...scoreCtx,
+          taskMap: new Map(trial.tasks.map((t) => [t.id, t])),
+          assignmentsByParticipant: undefined,
+          assignmentsByTask: undefined,
+        };
+  const score = computeScheduleScore(trial.tasks, schedule.participants, trial.assignments, config, trialScoreCtx);
+  return score.compositeScore - baselineComposite;
+}
+
+/**
+ * Terminal chain-internal split candidates: a depth-2 chain `[V←p]` whose
+ * displaced donor task `T` (the task `p` vacates) is backfilled by a SPLIT
+ * rather than a whole replacement. Each candidate carries `swaps:[V←p]` and
+ * `splitOps:[split(T)]` — disjoint assignment ids, so they apply atomically.
+ *
+ * Scope (v1): non-`sameGroupRequired` donors only (sidesteps the chain-aware
+ * group-lock + residual link-stamp hazards). Gated by the caller to the
+ * zero-valid-plans feasibility fallback; bounded by frozen candidate caps
+ * because the single-slot rescue path has no wall-clock deadline.
+ */
+function enumerateTerminalSplitCandidatesForRescue(
+  schedule: Schedule,
+  taskMap: Map<string, Task>,
+  participantMap: Map<string, Participant>,
+  assignmentsByTask: Map<string, Assignment[]>,
+  assignmentsByParticipant: Map<string, Assignment[]>,
+  vacatedAssignment: Assignment,
+  vacatedTask: Task,
+  vacatedSlot: import('../models/types').SlotRequirement,
+  anchor: Date,
+  dayStartHour: number,
+  taskAssignmentsFor: (taskId: string, excludeIds: Set<string>) => Assignment[],
+  disabledHC: Set<string> | undefined,
+  restRuleMap: Map<string, number> | undefined,
+  scheduleContext: ScheduleContext | undefined,
+  extraUnavailability: Array<{ participantId: string; start: Date; end: Date }>,
+  extraCapabilityLoss:
+    | Array<{ participantId: string; lostCertifications: string[]; start: Date; end: Date }>
+    | undefined,
+  config: SchedulerConfig,
+  scoreCtx: ScoreContext,
+  baselineComposite: number,
+): CandidatePlan[] {
+  const out: CandidatePlan[] = [];
+  const vacatedExcl = new Set([vacatedAssignment.id]);
+  const pool = sortParticipantsByLoadProximity(
+    schedule.participants,
+    vacatedTask,
+    dayStartHour,
+    taskMap,
+    assignmentsByParticipant,
+  );
+
+  for (const p of pool) {
+    if (out.length >= MAX_TERMINAL_SPLIT_CANDIDATES) break;
+    if (p.id === vacatedAssignment.participantId) continue;
+    const pAsgs = assignmentsByParticipant.get(p.id) || [];
+
+    for (const donor of pAsgs) {
+      if (out.length >= MAX_TERMINAL_SPLIT_CANDIDATES) break;
+      const T = taskMap.get(donor.taskId);
+      if (!T || T.id === vacatedTask.id) continue;
+      if (!T.splittable || T.splitGroupId !== undefined) continue;
+      if (T.sameGroupRequired === true) continue; // v1: non-same-group donors only
+      if (!isFutureTask(T, anchor)) continue;
+      if (!isModifiableAssignment(donor, taskMap, anchor)) continue;
+
+      // p must be able to take V after leaving exactly this donor.
+      const pWithoutDonor = pAsgs.filter((a) => a.id !== donor.id);
+      if (
+        !isEligible(p, vacatedTask, vacatedSlot, pWithoutDonor, taskMap, {
+          checkSameGroup: true,
+          taskAssignments: taskAssignmentsFor(vacatedTask.id, vacatedExcl),
+          participantMap,
+          disabledHC,
+          restRuleMap,
+          scheduleContext,
+          extraUnavailability,
+          extraCapabilityLoss,
+        })
+      )
+        continue;
+
+      // Split-fill the donor slot. enumerateSplitFillsForSlot auto-excludes the
+      // donor's participant (p) from the half-fillers and HC-pre-checks each
+      // half; we re-score the FULL mixed plan and the final validator confirms.
+      const splitCtx: SlotEnumerationContext = {
+        schedule,
+        taskMap,
+        participantMap,
+        assignmentsByParticipant,
+        assignmentsByTask,
+        anchor,
+        disabledHC,
+        restRuleMap,
+        scheduleContext,
+        config,
+        scoreCtx,
+        baselineComposite,
+        extraUnavailability,
+        extraCapabilityLoss,
+        excludeParticipantIds: new Set<string>(),
+      };
+      const splits = enumerateSplitFillsForSlot(splitCtx, donor, 1).slice(0, TERMINAL_SPLIT_TOPK_PER_DONOR);
+
+      for (const sc of splits) {
+        // Disjoint-id safety basis: the chain swap mutates V's assignment, the
+        // split removes the donor's — they must not be the same id.
+        if (sc.splitOp.originalAssignmentId === vacatedAssignment.id) continue;
+        const swap: RescueSwap = {
+          assignmentId: vacatedAssignment.id,
+          fromParticipantId: vacatedAssignment.participantId,
+          toParticipantId: p.id,
+          taskId: vacatedTask.id,
+          taskName: vacatedTask.name,
+          slotLabel: describeSlot(vacatedSlot.label, vacatedTask.timeBlock),
+        };
+        const cp: CandidatePlan = {
+          swaps: [swap],
+          splitOps: [sc.splitOp],
+          impactScore: 0,
+          compositeDelta: 0,
+          terminalSplit: true,
+        };
+        const delta = scoreMixedCandidate(schedule, cp, config, scoreCtx, baselineComposite);
+        cp.impactScore = -delta;
+        cp.compositeDelta = delta;
+        out.push(cp);
+      }
+    }
+  }
+
+  // Best composite first (consistent with the depth generators' internal sort).
+  out.sort((a, b) => (b.compositeDelta ?? 0) - (a.compositeDelta ?? 0));
+  return out;
 }
 
 // ─── Depth 1: Direct replacements ───────────────────────────────────────────
@@ -1266,9 +1451,13 @@ export function generateRescuePlans(
   const skipDepth3 = totalSoFar >= needed * 2 && bestShallowDelta >= 0;
   const depth3Plans = skipDepth3 ? [] : generateDepth3Plans(ctx);
 
-  // Assemble all plans. Split-fill candidates compete with chain candidates
-  // on composite delta — the sort below puts the best plan first regardless
-  // of kind.
+  // Assemble all plans in disruption-tiered priority order: depth-1 chains,
+  // then single-slot split-fills, then depth-2, then depth-3. Each tier is
+  // internally sorted by composite delta (best first) by its generator; the
+  // tiers are NOT globally re-sorted — shallower/less-disruptive repairs are
+  // deliberately surfaced ahead of deeper ones (the engine's minimum-disruption
+  // contract), and a split-fill (2 people, 1 task) ranks between a 1-swap and a
+  // 2-swap chain. Pagination then slices the top PAGE_SIZE.
   const allCandidates = [...depth1Plans, ...splitFillPlans, ...depth2Plans, ...depth3Plans];
 
   // Validate each plan and filter out those with hard-constraint violations.
@@ -1326,6 +1515,57 @@ export function generateRescuePlans(
     }
   }
 
+  // Terminal chain-internal split fallback: when even the depth-4 deep-chain
+  // fallback yields zero valid plans, try a depth-2 chain whose terminal
+  // displaced donor is backfilled by a SPLIT (two part-eligible people) instead
+  // of one whole replacement. Strictly a feasibility unlocker, gated by the
+  // same global split settings as seed-split. Plans are tagged fallbackDepth=4
+  // (reuses the deep-chain warning styling) + terminalSplit=true (precise copy).
+  if (validPlans.length === 0 && splittingMode !== 'off' && config && scoreCtx && baselineComposite !== null) {
+    console.warn(
+      `[rescue] terminal-split fallback fired for assignment ${request.vacatedAssignmentId} ` +
+        `(task=${vacatedTask.id}, slot=${vacatedSlot.slotId}) — depth 1..4 returned zero valid plans`,
+    );
+    const terminalPlans = enumerateTerminalSplitCandidatesForRescue(
+      schedule,
+      taskMap,
+      participantMap,
+      assignmentsByTaskIndex,
+      assignmentsByParticipant,
+      vacatedAssignment,
+      vacatedTask,
+      vacatedSlot,
+      anchor,
+      dayStartHour,
+      taskAssignmentsFor,
+      disabledHC,
+      restRuleMap,
+      scheduleContext,
+      extraUnavailability,
+      extraCapabilityLoss,
+      config,
+      scoreCtx,
+      baselineComposite,
+    );
+    for (const cp of terminalPlans) {
+      const trial = buildTrialStateForCandidate(schedule, cp);
+      const validation = validateHardConstraints(
+        trial.tasks,
+        schedule.participants,
+        trial.assignments,
+        disabledHC,
+        restRuleMap,
+        certLabelResolver,
+        extraUnavailability,
+        scheduleContext,
+        extraCapabilityLoss,
+      );
+      if (validation.valid) {
+        validPlans.push({ ...cp, violations: [], fallbackDepth: 4, terminalSplit: true });
+      }
+    }
+  }
+
   // When maxPlans is specified, return the top N plans (no page slicing)
   const startIdx = maxPlans !== undefined ? 0 : page * PAGE_SIZE;
   const endIdx = maxPlans !== undefined ? maxPlans : startIdx + PAGE_SIZE;
@@ -1340,6 +1580,7 @@ export function generateRescuePlans(
     compositeDelta: cp.compositeDelta,
     violations: cp.violations,
     fallbackDepth: cp.fallbackDepth,
+    terminalSplit: cp.terminalSplit,
   }));
 
   return {

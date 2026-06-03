@@ -1063,7 +1063,11 @@
     z-index: 45;
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.25);
-    transform: translateY(calc(100% + 16px));
+    /* Closed: translate down by the element's own height (100%) PLUS the 72px
+       bottom anchor + safe area, so the panel clears the viewport entirely.
+       (translateY(100%) alone only clears the height, leaving the 72px-anchored
+       top edge as a sliver peeking around the floating bottom-nav pill.) */
+    transform: translateY(calc(100% + 96px + env(safe-area-inset-bottom)));
     transition: transform var(--transition-slow) cubic-bezier(0.32, 0.72, 0, 1);
     overscroll-behavior: contain;
     overflow-y: auto;
@@ -1081,7 +1085,7 @@
   .sidebar-collapsed {
     min-width: unset !important;
     max-width: unset !important;
-    transform: translateY(calc(100% + 16px));
+    transform: translateY(calc(100% + 96px + env(safe-area-inset-bottom)));
   }
 
   /* Floating action button to toggle sidebar drawer */

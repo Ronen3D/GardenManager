@@ -206,8 +206,13 @@ function showRescueModal(): void {
       plan.impactScore < excellentCap ? 'excellent' : plan.impactScore < fairCap ? 'fair' : 'significant';
     const qualityLabel = qualityTier === 'excellent' ? 'מצוין' : qualityTier === 'fair' ? 'סביר' : 'משמעותי';
 
+    const isTerminalSplit = plan.terminalSplit === true;
     // Swap count label — friendly wording
-    const swapLabel = plan.swaps.length === 1 ? 'החלפה ישירה' : `שרשרת של ${plan.swaps.length}`;
+    const swapLabel = isTerminalSplit
+      ? 'החלפה + פיצול'
+      : plan.swaps.length === 1
+        ? 'החלפה ישירה'
+        : `שרשרת של ${plan.swaps.length}`;
 
     const isDeepFallback = typeof plan.fallbackDepth === 'number' && plan.fallbackDepth >= 4;
 
@@ -220,49 +225,49 @@ function showRescueModal(): void {
       ${
         isDeepFallback
           ? `<div class="rescue-fallback-warning" dir="rtl">
-              ⚠️ שרשרת מעמיקה — הוצעה רק כי לא נמצאה חלופה קצרה יותר
+              ${
+                isTerminalSplit
+                  ? '⚠️ שילוב החלפה ופיצול — הוצע רק כמוצא אחרון, כשלא נמצאה חלופה אחרת'
+                  : '⚠️ שרשרת מעמיקה — הוצעה רק כי לא נמצאה חלופה קצרה יותר'
+              }
             </div>`
           : ''
       }`;
 
-    // Build swap / split-fill steps as plain-language list
+    // Build swap + split-fill steps as a plain-language list. Mono-kind plans
+    // render a single section; a terminal-split plan renders BOTH the chain
+    // swap(s) AND the donor split (swaps and splitOps are independent).
     let stepsHtml = `<ol class="rescue-steps">`;
-    if (plan.splitOps && plan.splitOps.length > 0) {
-      // Phase 1: a split-fill plan has one op and no co-occurring swaps.
-      for (const op of plan.splitOps) {
-        const fillAP = pMap.get(op.fillA.participantId);
-        const fillBP = pMap.get(op.fillB.participantId);
-        const parentTask = taskMap.get(op.taskId);
-        const midDate = new Date(op.midpointMs);
-        const midLabel = parentTask
-          ? `<span dir="ltr">${fmt(midDate)}</span>`
-          : `<span dir="ltr">${fmt(midDate)}</span>`;
-        const startLabel = parentTask ? `<span dir="ltr">${fmt(parentTask.timeBlock.start)}</span>` : '';
-        const endLabel = parentTask ? `<span dir="ltr">${fmt(parentTask.timeBlock.end)}</span>` : '';
-        const aSpan = `<span class="rescue-participant-hover" data-pid="${op.fillA.participantId}" data-plan-id="${plan.id}"><strong>${fillAP?.name || op.fillA.displayName}</strong></span>`;
-        const bSpan = `<span class="rescue-participant-hover" data-pid="${op.fillB.participantId}" data-plan-id="${plan.id}"><strong>${fillBP?.name || op.fillB.displayName}</strong></span>`;
-        stepsHtml += `<li class="rescue-step-split">פיצול <strong>${escHtml(op.slotLabel)}</strong> <span class="split-badge">½</span> — ${aSpan} (${startLabel}–${midLabel}) / ${bSpan} (${midLabel}–${endLabel})</li>`;
-      }
-    } else {
-      for (let i = 0; i < plan.swaps.length; i++) {
-        const sw = plan.swaps[i];
-        const swP = pMap.get(sw.toParticipantId);
-        const fromP = pMap.get(sw.fromParticipantId || '');
-        const assignedSpan = `<span class="rescue-participant-hover" data-pid="${sw.toParticipantId}" data-plan-id="${plan.id}"><strong>${swP?.name || '???'}</strong></span>`;
-        const fromSpan = fromP
-          ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${fromP.name}</span>`
-          : '';
+    for (let i = 0; i < plan.swaps.length; i++) {
+      const sw = plan.swaps[i];
+      const swP = pMap.get(sw.toParticipantId);
+      const fromP = pMap.get(sw.fromParticipantId || '');
+      const assignedSpan = `<span class="rescue-participant-hover" data-pid="${sw.toParticipantId}" data-plan-id="${plan.id}"><strong>${swP?.name || '???'}</strong></span>`;
+      const fromSpan = fromP
+        ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${fromP.name}</span>`
+        : '';
 
-        const swTask = taskMap.get(sw.taskId);
-        const swLabel = taskLabel(swTask, sw.taskName);
-        if (plan.swaps.length === 1) {
-          // Direct swap: natural sentence
-          stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${swLabel}</strong></li>`;
-        } else {
-          // Chain swap: arrow style
-          stepsHtml += `<li>${assignedSpan} ← <strong>${swLabel}</strong>${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
-        }
+      const swTask = taskMap.get(sw.taskId);
+      const swLabel = taskLabel(swTask, sw.taskName);
+      if (plan.swaps.length === 1) {
+        // Direct swap: natural sentence
+        stepsHtml += `<li>${assignedSpan} יחליף${fromSpan ? ` את ${fromSpan}` : ''} ב-<strong>${swLabel}</strong></li>`;
+      } else {
+        // Chain swap: arrow style
+        stepsHtml += `<li>${assignedSpan} ← <strong>${swLabel}</strong>${fromSpan ? ` במקום ${fromSpan}` : ''}</li>`;
       }
+    }
+    for (const op of plan.splitOps ?? []) {
+      const fillAP = pMap.get(op.fillA.participantId);
+      const fillBP = pMap.get(op.fillB.participantId);
+      const parentTask = taskMap.get(op.taskId);
+      const midDate = new Date(op.midpointMs);
+      const midLabel = `<span dir="ltr">${fmt(midDate)}</span>`;
+      const startLabel = parentTask ? `<span dir="ltr">${fmt(parentTask.timeBlock.start)}</span>` : '';
+      const endLabel = parentTask ? `<span dir="ltr">${fmt(parentTask.timeBlock.end)}</span>` : '';
+      const aSpan = `<span class="rescue-participant-hover" data-pid="${op.fillA.participantId}" data-plan-id="${plan.id}"><strong>${fillAP?.name || op.fillA.displayName}</strong></span>`;
+      const bSpan = `<span class="rescue-participant-hover" data-pid="${op.fillB.participantId}" data-plan-id="${plan.id}"><strong>${fillBP?.name || op.fillB.displayName}</strong></span>`;
+      stepsHtml += `<li class="rescue-step-split">פיצול <strong>${escHtml(op.slotLabel)}</strong> <span class="split-badge">½</span> — ${aSpan} (${startLabel}–${midLabel}) / ${bSpan} (${midLabel}–${endLabel})</li>`;
     }
     stepsHtml += `</ol>`;
 
@@ -721,22 +726,20 @@ function applyRescuePlan(plan: RescuePlan): void {
     }
   }
 
-  // Build per-step labels before applying (participant names from current state)
+  // Build per-step labels before applying (participant names from current
+  // state). A terminal-split plan has BOTH swaps and splitOps — render both.
   const swapLabels: RescueSwapLabel[] = [];
-  if (isSplitPlan) {
-    for (const op of plan.splitOps ?? []) {
-      const aName =
-        currentSchedule.participants.find((p) => p.id === op.fillA.participantId)?.name ?? op.fillA.displayName;
-      const bName =
-        currentSchedule.participants.find((p) => p.id === op.fillB.participantId)?.name ?? op.fillB.displayName;
-      swapLabels.push({ label: `פיצול: ${aName} / ${bName}` });
-    }
-  } else {
-    for (const sw of plan.swaps) {
-      const fromName = currentSchedule.participants.find((p) => p.id === sw.fromParticipantId)?.name ?? '';
-      const toName = currentSchedule.participants.find((p) => p.id === sw.toParticipantId)?.name ?? '';
-      swapLabels.push({ label: `החלפה: ${toName} ← ${fromName}` });
-    }
+  for (const sw of plan.swaps) {
+    const fromName = currentSchedule.participants.find((p) => p.id === sw.fromParticipantId)?.name ?? '';
+    const toName = currentSchedule.participants.find((p) => p.id === sw.toParticipantId)?.name ?? '';
+    swapLabels.push({ label: `החלפה: ${toName} ← ${fromName}` });
+  }
+  for (const op of plan.splitOps ?? []) {
+    const aName =
+      currentSchedule.participants.find((p) => p.id === op.fillA.participantId)?.name ?? op.fillA.displayName;
+    const bName =
+      currentSchedule.participants.find((p) => p.id === op.fillB.participantId)?.name ?? op.fillB.displayName;
+    swapLabels.push({ label: `פיצול: ${aName} / ${bName}` });
   }
 
   // Apply through `applyPlanOps` when the plan includes split-fill ops;

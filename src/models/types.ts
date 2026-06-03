@@ -1094,8 +1094,11 @@ export interface RescuePlan {
   /**
    * Split-fill ops required to implement this plan. Present when the planner
    * chose to realize a slot as two halves rather than re-staff it whole.
-   * In Phase 1 every plan is mono-kind: either `swaps.length>0` and
-   * `splitOps` is absent, OR `splitOps.length>0` and `swaps.length===0`.
+   * Plans are mono-kind (either `swaps.length>0` and `splitOps` absent, OR
+   * `splitOps.length>0` and `swaps.length===0`) EXCEPT the terminal-split
+   * feasibility fallback (see `terminalSplit`), which carries `swaps.length>=1`
+   * AND `splitOps.length===1` — a swap chain whose terminal displaced donor is
+   * backfilled by a split. The swap and split target disjoint assignment ids.
    */
   splitOps?: SplitOp[];
   /** Composite impact score (lower = less disruption).
@@ -1111,6 +1114,11 @@ export interface RescuePlan {
    *  Only populated when depth 1..3 returned zero valid plans. The UI uses
    *  this to render a "deep chain" warning banner. */
   fallbackDepth?: number;
+  /** When true, this is a terminal chain-internal split plan: a swap chain plus
+   *  a split of the chain's terminal displaced donor task. Produced only by the
+   *  zero-valid-plans feasibility fallback (after depths 1..4 yield nothing).
+   *  The UI renders a distinct "chain + split, last resort" warning. */
+  terminalSplit?: boolean;
 }
 
 /** Request to generate rescue plans for a vacated assignment */

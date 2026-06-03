@@ -26,6 +26,7 @@
     "src/test-web-utils.ts",
     "src/stress-test-bulk-delete.ts",
     "src/bench-day0-vs-fresh-realstore.ts",
-    "src/bench-priority"
+    "src/bench-priority",
+    "src/measure-terminal-split.ts"
   ]
 }
