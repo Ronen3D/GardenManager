@@ -2170,6 +2170,10 @@
     min-height: 44px;
   }
 
+  .te-compact-more {
+    min-height: 44px;
+  }
+
   /* Quick-Add sheet */
   .te-qa-name {
     min-height: 44px;

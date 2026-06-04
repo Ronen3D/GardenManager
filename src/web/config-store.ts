@@ -182,6 +182,9 @@ export function subscribe(fn: Listener): () => void {
 }
 
 function notify(): void {
+  // Inside a transaction() the listeners + persist are coalesced to a single
+  // notify() fired by the outermost transaction (see `transaction`).
+  if (_suppressNotify) return;
   for (const fn of listeners) {
     try {
       fn();
@@ -233,6 +236,8 @@ const MAX_HISTORY = 80;
 const undoStack: StoreSnapshot[] = [];
 const redoStack: StoreSnapshot[] = [];
 let _suppressSnapshot = false;
+let _suppressNotify = false;
+let _txnDepth = 0;
 
 /**
  * Capture the current state as a deep-cloned snapshot.
@@ -450,6 +455,39 @@ function pushSnapshot(): void {
   if (undoStack.length > MAX_HISTORY) undoStack.shift();
   // Any new mutation clears the redo future
   redoStack.length = 0;
+}
+
+/**
+ * Run `fn` as a single atomic store mutation: one undo snapshot captured before
+ * it runs, and one `notify()` (listeners + persist) fired after it completes.
+ *
+ * `fn` may call any number of ordinary exported mutations (updateParticipant,
+ * setTaskNamePreference, addNotWith, add/update/removeDateUnavailability, …);
+ * their inner pushSnapshot()/notify() become no-ops for the duration, so the
+ * whole batch is one undo step and triggers exactly one schedule reconciliation
+ * (one structuredClone in app.ts onStoreChanged) instead of N.
+ *
+ * Re-entrant: only the outermost transaction snapshots and notifies. On a thrown
+ * error the snapshot is still in place (undo restores the pre-call state) and a
+ * single notify() still fires; there is no partial rollback, so callers should
+ * validate before mutating (matching bulkMutateParticipants).
+ */
+export function transaction<T>(fn: () => T): T {
+  const outer = _txnDepth === 0;
+  if (outer) pushSnapshot();
+  _txnDepth++;
+  const prevSuppressSnapshot = _suppressSnapshot;
+  const prevSuppressNotify = _suppressNotify;
+  _suppressSnapshot = true;
+  _suppressNotify = true;
+  try {
+    return fn();
+  } finally {
+    _suppressSnapshot = prevSuppressSnapshot;
+    _suppressNotify = prevSuppressNotify;
+    _txnDepth--;
+    if (outer) notify();
+  }
 }
 
 /** Undo the last action. Returns true if successful. */
@@ -1087,6 +1125,38 @@ export function removeDateUnavailability(participantId: string, ruleId: string):
     p.availability = computeAvailability(participantId);
   }
   notify();
+}
+
+/**
+ * Update an existing DateUnavailability rule in place, preserving its id and
+ * position in the participant's list. Returns the updated rule, or null if the
+ * participant/rule is missing or the new values fail validation.
+ *
+ * Use this instead of remove + re-add so editing a block stays a single undo
+ * step (and inside a transaction(), a single atomic mutation) without churning
+ * the rule id or list order.
+ */
+export function updateDateUnavailability(
+  participantId: string,
+  ruleId: string,
+  rule: Omit<DateUnavailability, 'id'>,
+): DateUnavailability | null {
+  const arr = dateUnavailabilities.get(participantId);
+  if (!arr) return null;
+  const idx = arr.findIndex((r) => r.id === ruleId);
+  if (idx < 0) return null;
+  const normalized = normalizeDateUnavailabilityRule(rule);
+  if (!normalized) return null;
+  pushSnapshot();
+  const updated: DateUnavailability = { ...normalized, id: ruleId };
+  arr.splice(idx, 1, updated);
+  const p = participants.get(participantId);
+  if (p) {
+    p.dateUnavailability = arr;
+    p.availability = computeAvailability(participantId);
+  }
+  notify();
+  return updated;
 }
 
 export function getDateUnavailabilities(participantId: string): DateUnavailability[] {

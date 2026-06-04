@@ -9,11 +9,12 @@
  *   via the existing `.gm-edit-sheet-v2` mobile CSS rules.
  *
  * Flow:
- *  - Identity / Skills / Pairings sections read & write live store state on
- *    [שמור]. Unavailability cards add/edit/delete are committed immediately
- *    (each rule is its own undo step), matching today's behavior.
- *  - Dirty fields show a small dot on Save; outside-tap / Esc / drag-down
- *    on dirty state shows the existing 3-button save-confirm dialog.
+ *  - Every section (Identity / Skills / Pairings / Unavailability) is edited
+ *    into an in-memory draft and committed together on [שמור] as a single
+ *    store transaction — one undo step, one schedule reconciliation. A Discard
+ *    reverts the whole draft, unavailability blocks included.
+ *  - Outside-tap / Esc / drag-down on dirty state shows the existing 3-button
+ *    save-confirm dialog.
  */
 
 import { checkTemplateEligibility } from '../engine/validator';
@@ -68,6 +69,13 @@ interface DraftFields {
   notWithIds: Set<string>;
   preferredTaskName: string;
   lessPreferredTaskName: string;
+  /**
+   * Working copy of the participant's unavailability rules. Edited in-memory and
+   * committed atomically with the rest of the draft on Save (a Discard reverts
+   * these too). New rules added in-session carry a temporary `du-tmp-*` id until
+   * they are persisted on Save.
+   */
+  dateUnavailability: DateUnavailability[];
 }
 
 function snapshotParticipant(p: Participant): DraftFields {
@@ -82,6 +90,7 @@ function snapshotParticipant(p: Participant): DraftFields {
     notWithIds: new Set(store.getNotWithIds(p.id)),
     preferredTaskName: p.preferredTaskName ?? '',
     lessPreferredTaskName: p.lessPreferredTaskName ?? '',
+    dateUnavailability: store.getDateUnavailabilities(p.id).map((r) => ({ ...r })),
   };
 }
 
@@ -99,7 +108,34 @@ function emptyDraft(): DraftFields {
     notWithIds: new Set(),
     preferredTaskName: '',
     lessPreferredTaskName: '',
+    dateUnavailability: [],
   };
+}
+
+let _tmpRuleCounter = 0;
+function tempRuleId(): string {
+  return `du-tmp-${++_tmpRuleCounter}`;
+}
+
+/** Value-equality for one unavailability rule, ignoring its id. */
+function singleRuleEqual(a: DateUnavailability, b: DateUnavailability): boolean {
+  return (
+    a.dayIndex === b.dayIndex &&
+    (a.endDayIndex ?? null) === (b.endDayIndex ?? null) &&
+    a.startHour === b.startHour &&
+    a.endHour === b.endHour &&
+    !!a.allDay === !!b.allDay &&
+    (a.reason ?? '') === (b.reason ?? '')
+  );
+}
+
+/** Positional value-equality for two rule lists (order is stable across edits). */
+function rulesEqual(a: DateUnavailability[], b: DateUnavailability[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id || !singleRuleEqual(a[i], b[i])) return false;
+  }
+  return true;
 }
 
 function draftsEqual(a: DraftFields, b: DraftFields): boolean {
@@ -113,6 +149,7 @@ function draftsEqual(a: DraftFields, b: DraftFields): boolean {
   if (!setsEqual(a.notWithIds, b.notWithIds)) return false;
   if (a.preferredTaskName !== b.preferredTaskName) return false;
   if (a.lessPreferredTaskName !== b.lessPreferredTaskName) return false;
+  if (!rulesEqual(a.dateUnavailability, b.dateUnavailability)) return false;
   return true;
 }
 
@@ -215,16 +252,13 @@ async function runEditor(opts: ParticipantEditorOptions): Promise<ParticipantEdi
     const isDirty = (): boolean => !draftsEqual(draft, original);
 
     const renderUnavailabilitySectionInto = (host: HTMLElement) => {
-      if (!participantId) return;
-      host.innerHTML = renderUnavailabilitySection(participantId);
-      wireUnavailabilitySection(host, participantId, () => renderUnavailabilitySectionInto(host));
+      host.innerHTML = renderUnavailabilitySection(draft.dateUnavailability);
+      wireUnavailabilitySection(host, draft, () => renderUnavailabilitySectionInto(host));
     };
 
-    // Initial unavailability render (edit mode only)
-    if (participantId) {
-      const unavailHost = bodyEl.querySelector('[data-pe-unavail-host]') as HTMLElement | null;
-      if (unavailHost) renderUnavailabilitySectionInto(unavailHost);
-    }
+    // Initial unavailability render — draft-based, available in both create and edit modes.
+    const unavailHost = bodyEl.querySelector('[data-pe-unavail-host]') as HTMLElement | null;
+    if (unavailHost) renderUnavailabilitySectionInto(unavailHost);
 
     // Wire identity / skills / pairings — all draft-only updates.
     wireIdentitySection(bodyEl, draft);
@@ -242,8 +276,9 @@ async function runEditor(opts: ParticipantEditorOptions): Promise<ParticipantEdi
     saveBtn.addEventListener('click', onSaveClick);
 
     // Cancel / X / Esc / backdrop tap → save-confirm if dirty.
-    // Unavailability rule changes are committed live (each rule is its own
-    // undo step) and are not included in the dirty flag.
+    // All sections (including unavailability) live in the draft and commit
+    // together on Save, so the dirty check covers block edits too and a
+    // Discard reverts them.
     const dismiss = async () => {
       if (closed.value) return;
       if (!isDirty()) {
@@ -306,7 +341,7 @@ function renderShell(isCreate: boolean, draft: DraftFields): string {
         ${renderIdentitySection(draft)}
         ${renderSkillsSection(draft)}
         ${renderPairingsSection(draft)}
-        ${isCreate ? '' : `<div class="pe-section" data-pe-section="unavailability" data-pe-unavail-host></div>`}
+        <div class="pe-section" data-pe-section="unavailability" data-pe-unavail-host></div>
       </div>
       <div class="pe-footer">
         <button class="btn-sm btn-outline" data-pe-cancel type="button">ביטול</button>
@@ -460,7 +495,7 @@ function renderSkillsSection(draft: DraftFields): string {
     </div>`;
 }
 
-function renderPairingsSection(draft: DraftFields): string {
+function renderPairingsSection(draft: Pick<DraftFields, 'notWithIds'>): string {
   const candidates = store.getAllParticipants();
   return `
     <div class="pe-section">
@@ -495,8 +530,7 @@ function renderNotWithChips(selected: Set<string>, candidates: Participant[]): s
   return `<div class="pe-notwith-chips" data-pe-notwith-chips>${chips}</div>`;
 }
 
-function renderUnavailabilitySection(participantId: string): string {
-  const rules = store.getDateUnavailabilities(participantId);
+function renderUnavailabilitySection(rules: DateUnavailability[]): string {
   let cards = '';
   if (rules.length === 0) {
     cards = `<div class="pe-unavail-empty">לא הוגדרו חסימות. הוסף חוקי חסימה לימים ספציפיים בשבצ"ק.</div>`;
@@ -504,21 +538,12 @@ function renderUnavailabilitySection(participantId: string): string {
     cards = rules.map(renderUnavailabilityCard).join('');
   }
 
-  // Schedule-scoped Future-SOS read-only summary (linking to profile is out of scope here;
-  // we just show the count so the user knows about it).
-  const fsosCount = countFutureSosFor(participantId);
-  const fsosNote =
-    fsosCount > 0
-      ? `<div class="pe-unavail-fsos-note">ⓘ קיימות ${fsosCount} חלונות אי-זמינות עתידית על השבצ"ק הנוכחי. ניתן לערוך אותן בפרופיל.</div>`
-      : '';
-
   return `
     <div class="pe-section-title">אי זמינות קבועה</div>
     <div class="pe-unavail-list" data-pe-unavail-list>${cards}</div>
     <div class="pe-unavail-actions">
       <button type="button" class="btn-sm btn-primary pe-unavail-add" data-pe-unavail-add>+ הוסף חסימה</button>
     </div>
-    ${fsosNote}
   `;
 }
 
@@ -543,14 +568,6 @@ function renderUnavailabilityCard(r: DateUnavailability): string {
       <button class="btn-sm btn-outline btn-danger-outline btn-icon" type="button" data-pe-unavail-delete="${escAttr(r.id)}" aria-label="מחק">${SVG_ICONS.trash}</button>
     </div>
   </div>`;
-}
-
-function countFutureSosFor(_participantId: string): number {
-  // Read-only summary: walks the active schedule's scheduleUnavailability if loaded.
-  // The editor doesn't have schedule context today, so we always return 0 (the
-  // note will simply not render). Hook this up later by passing a getter into
-  // showParticipantEditor when an FSOS-aware caller exists.
-  return 0;
 }
 
 // ───────────────────────────── Wiring ─────────────────────────────
@@ -674,7 +691,11 @@ function wireSkillsSection(body: HTMLElement, draft: DraftFields, _participantId
   });
 }
 
-function wirePairingsSection(body: HTMLElement, draft: DraftFields, participantId: string | undefined): void {
+function wirePairingsSection(
+  body: HTMLElement,
+  draft: Pick<DraftFields, 'notWithIds'>,
+  participantId: string | undefined,
+): void {
   const host = body.querySelector('[data-pe-notwith]') as HTMLElement;
 
   // Re-render only the chips host (the "+ הוסף / ערוך…" trigger lives outside it
@@ -712,36 +733,37 @@ function wirePairingsSection(body: HTMLElement, draft: DraftFields, participantI
   });
 }
 
-function wireUnavailabilitySection(host: HTMLElement, participantId: string, rerender: () => void): void {
-  // Add new
+function wireUnavailabilitySection(
+  host: HTMLElement,
+  draft: Pick<DraftFields, 'dateUnavailability'>,
+  rerender: () => void,
+): void {
+  // Add new — pushes a draft rule with a temporary id (persisted on Save).
   host.querySelector('[data-pe-unavail-add]')?.addEventListener('click', async () => {
-    const result = await openUnavailPicker(participantId);
+    const result = await openUnavailPicker();
     if (!result) return;
     const rule = mapPickerResultToRule(result);
     if (!rule) return;
-    store.addDateUnavailability(participantId, rule);
+    draft.dateUnavailability.push({ ...rule, id: tempRuleId() });
     rerender();
   });
 
-  // Edit existing
+  // Edit existing — replaces the draft rule in place, preserving its id + order.
   host.querySelectorAll<HTMLButtonElement>('[data-pe-unavail-edit]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.peUnavailEdit!;
-      const rules = store.getDateUnavailabilities(participantId);
-      const rule = rules.find((r) => r.id === id);
-      if (!rule) return;
-      const result = await openUnavailPicker(participantId, rule);
+      const idx = draft.dateUnavailability.findIndex((r) => r.id === id);
+      if (idx < 0) return;
+      const result = await openUnavailPicker(draft.dateUnavailability[idx]);
       if (!result) return;
       const next = mapPickerResultToRule(result);
       if (!next) return;
-      // No "update" API — remove + re-add
-      store.removeDateUnavailability(participantId, id);
-      store.addDateUnavailability(participantId, next);
+      draft.dateUnavailability[idx] = { ...next, id };
       rerender();
     });
   });
 
-  // Delete existing
+  // Delete existing — removes the rule from the draft array.
   host.querySelectorAll<HTMLButtonElement>('[data-pe-unavail-delete]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.peUnavailDelete!;
@@ -751,16 +773,14 @@ function wireUnavailabilitySection(host: HTMLElement, participantId: string, rer
         confirmLabel: 'הסר',
       });
       if (!ok) return;
-      store.removeDateUnavailability(participantId, id);
+      const idx = draft.dateUnavailability.findIndex((r) => r.id === id);
+      if (idx >= 0) draft.dateUnavailability.splice(idx, 1);
       rerender();
     });
   });
 }
 
-async function openUnavailPicker(
-  participantId: string,
-  existing?: DateUnavailability,
-): Promise<RangePickerResult | null> {
+async function openUnavailPicker(existing?: DateUnavailability): Promise<RangePickerResult | null> {
   const nDays = store.getScheduleDays();
   const days: RangePickerOption[] = Array.from({ length: nDays }, (_, i) => ({
     value: String(i + 1),
@@ -771,7 +791,6 @@ async function openUnavailPicker(
     label: `${String(i).padStart(2, '0')}:00`,
   }));
   const dayStartHour = store.getDayStartHour();
-  void participantId; // could be used for future preview; reserved.
 
   const defaultStartDay = existing ? String(existing.dayIndex) : '1';
   const defaultEndDay = existing ? String(existing.endDayIndex ?? existing.dayIndex) : defaultStartDay;
@@ -881,6 +900,34 @@ interface CommitOk {
   participantId: string;
 }
 
+/** Reconcile a participant's not-with set to `desired` (symmetric add/remove). */
+function commitNotWithDiff(pid: string, desired: Set<string>): void {
+  const current = new Set(store.getNotWithIds(pid));
+  for (const id of current) if (!desired.has(id)) store.removeNotWith(pid, id);
+  for (const id of desired) if (!current.has(id)) store.addNotWith(pid, id);
+}
+
+/**
+ * Reconcile a participant's unavailability rules to `desired`, diffing against
+ * what the store currently holds: rules dropped from the draft are removed,
+ * draft rules whose id isn't in the store are added (temp ids get a fresh real
+ * id on persist), and rules whose values changed are updated in place (id and
+ * list position preserved). Intended to run inside a `store.transaction(...)`.
+ */
+function commitUnavailabilityDiff(pid: string, desired: DateUnavailability[]): void {
+  // Copy the live array — removeDateUnavailability splices it as we iterate.
+  const storeRules = [...store.getDateUnavailabilities(pid)];
+  const storeById = new Map(storeRules.map((r) => [r.id, r]));
+  const desiredIds = new Set(desired.map((r) => r.id));
+  for (const r of storeRules) if (!desiredIds.has(r.id)) store.removeDateUnavailability(pid, r.id);
+  for (const r of desired) {
+    const { id, ...rule } = r;
+    const existing = storeById.get(id);
+    if (!existing) store.addDateUnavailability(pid, rule);
+    else if (!singleRuleEqual(existing, r)) store.updateDateUnavailability(pid, id, rule);
+  }
+}
+
 async function commitDraft(
   draft: DraftFields,
   participantId: string | undefined,
@@ -920,40 +967,173 @@ async function commitDraft(
     return null;
   }
 
-  let pid: string;
-  if (!participantId) {
-    const newP = store.addParticipant({
-      name,
-      level: draft.level,
-      certifications: [...draft.certifications],
-      pakalIds: [...draft.pakalIds],
-      group,
-      workloadMultiplier: draft.workloadMultiplier,
-    });
-    pid = newP.id;
-    if (draft.preferredTaskName || draft.lessPreferredTaskName) {
-      store.setTaskNamePreference(pid, draft.preferredTaskName || undefined, draft.lessPreferredTaskName || undefined);
+  // Commit every field of the participant in ONE store transaction: a single
+  // undo snapshot + a single notify() (one schedule reconciliation) for the
+  // whole Save, instead of one per field. Validation above already ran, so the
+  // body only mutates.
+  const pid = store.transaction((): string => {
+    let id: string;
+    if (!participantId) {
+      const newP = store.addParticipant({
+        name,
+        level: draft.level,
+        certifications: [...draft.certifications],
+        pakalIds: [...draft.pakalIds],
+        group,
+        workloadMultiplier: draft.workloadMultiplier,
+      });
+      id = newP.id;
+    } else {
+      id = participantId;
+      store.updateParticipant(id, {
+        name,
+        level: draft.level,
+        certifications: [...draft.certifications],
+        pakalIds: [...draft.pakalIds],
+        group,
+        workloadMultiplier: draft.workloadMultiplier,
+      });
     }
-    // A brand-new participant has no pre-existing pairs, so only adds are needed.
-    // (Without this, not-with selections made during "add participant" were silently dropped.)
-    for (const id of draft.notWithIds) store.addNotWith(pid, id);
-    showToast(`${name} נוסף/ה`, { type: 'success' });
-  } else {
-    pid = participantId;
-    store.updateParticipant(pid, {
-      name,
-      level: draft.level,
-      certifications: [...draft.certifications],
-      pakalIds: [...draft.pakalIds],
-      group,
-      workloadMultiplier: draft.workloadMultiplier,
-    });
-    store.setTaskNamePreference(pid, draft.preferredTaskName || undefined, draft.lessPreferredTaskName || undefined);
-    // Sync notWith
-    const current = new Set(store.getNotWithIds(pid));
-    for (const id of current) if (!draft.notWithIds.has(id)) store.removeNotWith(pid, id);
-    for (const id of draft.notWithIds) if (!current.has(id)) store.addNotWith(pid, id);
-  }
+    // setTaskNamePreference has a no-op guard, so calling it unconditionally is
+    // safe for a brand-new participant (defaults already undefined).
+    store.setTaskNamePreference(id, draft.preferredTaskName || undefined, draft.lessPreferredTaskName || undefined);
+    commitNotWithDiff(id, draft.notWithIds);
+    commitUnavailabilityDiff(id, draft.dateUnavailability);
+    return id;
+  });
 
+  if (!participantId) showToast(`${name} נוסף/ה`, { type: 'success' });
   return { participantId: pid };
+}
+
+// ──────────────── Focused pairings + availability sheet ────────────────
+//
+// A slim sheet that edits ONLY a participant's not-with pairings and
+// unavailability — the two dimensions the batch table editor can't reach.
+// Opened from a table-editor row's "עוד…" button. It reuses the same section
+// renderers + the same draft/transaction commit model as the full editor, and
+// it is conflict-free with an active table-edit draft: not-with re-syncs from
+// the authoritative pairs map and unavailability lives in a separate store map,
+// neither of which bulkMutateParticipants overwrites.
+
+interface PairingsAvailabilityDraft {
+  notWithIds: Set<string>;
+  dateUnavailability: DateUnavailability[];
+}
+
+function snapshotPairingsAvailability(p: Participant): PairingsAvailabilityDraft {
+  return {
+    notWithIds: new Set(store.getNotWithIds(p.id)),
+    dateUnavailability: store.getDateUnavailabilities(p.id).map((r) => ({ ...r })),
+  };
+}
+
+function pairingsAvailabilityEqual(a: PairingsAvailabilityDraft, b: PairingsAvailabilityDraft): boolean {
+  return setsEqual(a.notWithIds, b.notWithIds) && rulesEqual(a.dateUnavailability, b.dateUnavailability);
+}
+
+/**
+ * Open the focused pairings + availability sheet for one existing participant.
+ * Resolves `{ saved: true }` only when changes were committed. Shares the
+ * full editor's `_isOpen` guard, so it never stacks with the full editor.
+ */
+export function showPairingsAvailabilitySheet(participantId: string): Promise<{ saved: boolean }> {
+  if (_isOpen) return Promise.resolve({ saved: false });
+  const participant = store.getParticipant(participantId);
+  if (!participant) return Promise.resolve({ saved: false });
+  _isOpen = true;
+  return runPairingsAvailability(participant).finally(() => {
+    _isOpen = false;
+  });
+}
+
+function runPairingsAvailability(participant: Participant): Promise<{ saved: boolean }> {
+  return new Promise((resolve) => {
+    const pid = participant.id;
+    const original = snapshotPairingsAvailability(participant);
+    const draft = snapshotPairingsAvailability(participant);
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'gm-modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="gm-modal-dialog gm-modal-dialog-wide gm-edit-sheet-v2" role="dialog" aria-modal="true" aria-labelledby="pa-title">
+        <div class="pe-header">
+          <button class="pe-close" data-pa-close type="button" aria-label="סגור">✕</button>
+          <span class="pe-title" id="pa-title">${escHtml(participant.name)} · אי-זיווג וזמינות</span>
+        </div>
+        <div class="pe-body" data-pa-body>
+          ${renderPairingsSection(draft)}
+          <div class="pe-section" data-pe-section="unavailability" data-pa-unavail-host></div>
+        </div>
+        <div class="pe-footer">
+          <button class="btn-sm btn-outline" data-pa-cancel type="button">ביטול</button>
+          <button class="btn-primary btn-sm pe-save" data-pa-save type="button">שמור</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+    lockBodyScroll();
+
+    const bodyEl = backdrop.querySelector('[data-pa-body]') as HTMLElement;
+    const closed = { value: false };
+    const close = (saved: boolean) => {
+      if (closed.value) return;
+      closed.value = true;
+      backdrop.remove();
+      unlockBodyScroll();
+      document.removeEventListener('keydown', onKey);
+      resolve({ saved });
+    };
+
+    wirePairingsSection(bodyEl, draft, pid);
+    const unavailHost = bodyEl.querySelector('[data-pa-unavail-host]') as HTMLElement | null;
+    const renderUnavail = (host: HTMLElement) => {
+      host.innerHTML = renderUnavailabilitySection(draft.dateUnavailability);
+      wireUnavailabilitySection(host, draft, () => renderUnavail(host));
+    };
+    if (unavailHost) renderUnavail(unavailHost);
+
+    // Commit both dimensions in one transaction (one undo step, one reconcile).
+    const commit = () => {
+      store.transaction(() => {
+        commitNotWithDiff(pid, draft.notWithIds);
+        commitUnavailabilityDiff(pid, draft.dateUnavailability);
+      });
+    };
+
+    backdrop.querySelector('[data-pa-save]')?.addEventListener('click', () => {
+      const dirty = !pairingsAvailabilityEqual(draft, original);
+      if (dirty) commit();
+      close(dirty);
+    });
+
+    const dismiss = async () => {
+      if (closed.value) return;
+      if (pairingsAvailabilityEqual(draft, original)) {
+        close(false);
+        return;
+      }
+      const result = await showSaveConfirm();
+      if (result === 'save') {
+        commit();
+        close(true);
+      } else if (result === 'discard') {
+        close(false);
+      }
+      // 'continue' → keep open
+    };
+
+    backdrop.querySelector('[data-pa-cancel]')?.addEventListener('click', dismiss);
+    backdrop.querySelector('[data-pa-close]')?.addEventListener('click', dismiss);
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) dismiss();
+    });
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        dismiss();
+      }
+    }
+    document.addEventListener('keydown', onKey);
+  });
 }

@@ -12435,6 +12435,11 @@ tr.now-row-animate > td.time-cell {
   margin-top: 4px;
 }
 
+.te-compact-more {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
 /* Mobile sticky bottom bar */
 .te-mobile-bottom-bar {
   display: none;

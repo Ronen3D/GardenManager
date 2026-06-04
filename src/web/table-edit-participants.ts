@@ -10,6 +10,7 @@ import { FORBIDDEN_GROUP_PATTERNS } from '../shared/group-name-rules';
 import type { BulkParticipantOp } from './config-store';
 import * as store from './config-store';
 import { getEffectivePakalIds } from './pakal-utils';
+import { showPairingsAvailabilitySheet } from './participant-editor-sheet';
 import { isSmallScreen } from './responsive';
 import { certBadge, escAttr, escHtml, groupColor, SVG_ICONS } from './ui-helpers';
 import { showAlert, showBottomSheet, showPrompt, showSaveConfirm, showToast } from './ui-modal';
@@ -428,6 +429,21 @@ export function renderTableEditMode(): string {
   return html;
 }
 
+/**
+ * "More" button → opens the focused pairings + availability sheet for fields the
+ * table editor can't reach. Enabled only for already-persisted rows; a `new` row
+ * has no participant to edit yet, so it's disabled with a "save first" hint.
+ */
+function renderMoreButtonIcon(row: DraftRow): string {
+  const enabled = !!row.originalId;
+  return `<button class="btn-sm btn-outline btn-icon" data-te-action="open-more" data-te-row-id="${row.rowId}" title="${enabled ? 'אי-זיווג וזמינות' : 'שמור קודם את הטבלה'}"${enabled ? '' : ' disabled'} aria-label="אי-זיווג וזמינות">⋯</button>`;
+}
+
+function renderMoreButtonText(row: DraftRow): string {
+  const enabled = !!row.originalId;
+  return `<button class="btn-sm btn-outline te-compact-more" data-te-action="open-more" data-te-row-id="${row.rowId}"${enabled ? '' : ' disabled title="שמור קודם את הטבלה"'}>⋯ אי-זיווג וזמינות</button>`;
+}
+
 function renderDesktopTable(
   certDefs: CertificationDefinition[],
   pakalDefs: PakalDefinition[],
@@ -510,6 +526,7 @@ function renderDesktopRow(
       ${row.errors.has('lessPreferredTaskName') ? `<div class="te-field-error">${escHtml(row.errors.get('lessPreferredTaskName')!)}</div>` : ''}
     </td>
     <td class="te-col-delete">
+      ${isDeleted ? '' : renderMoreButtonIcon(row)}
       <button class="btn-sm btn-outline btn-icon" data-te-action="${isDeleted ? 'restore-row' : 'delete-row'}" data-te-row-id="${row.rowId}" title="${isDeleted ? 'שחזור' : 'מחיקה'}">
         ${isDeleted ? '↩' : SVG_ICONS.trash}
       </button>
@@ -680,6 +697,7 @@ function renderCompactRow(
         ${renderTaskSelect(row, 'lessPreferredTaskName', taskNames, isDeleted)}
         ${row.errors.has('lessPreferredTaskName') ? `<div class="te-field-error">${escHtml(row.errors.get('lessPreferredTaskName')!)}</div>` : ''}
       </div>
+      ${renderMoreButtonText(row)}
       <button class="btn-sm btn-danger-outline te-compact-delete" data-te-action="delete-row" data-te-row-id="${row.rowId}">
         ${SVG_ICONS.trash} מחיקה
       </button>
@@ -736,6 +754,9 @@ export function wireTableEditEvents(container: HTMLElement, rerender: () => void
         break;
       case 'toggle-expand':
         handleToggleExpand(btn.dataset.teRowId!, rerender);
+        break;
+      case 'open-more':
+        await handleOpenMore(btn.dataset.teRowId!);
         break;
       case 'quick-add':
         await handleQuickAdd(rerender);
@@ -1032,6 +1053,19 @@ function handleToggleExpand(rowId: string, _rerender: () => void): void {
     rowEl.classList.toggle('te-compact-expanded', isExpanded);
     if (chevron) chevron.textContent = isExpanded ? '⌃' : '⌄';
   }
+}
+
+/**
+ * Open the focused pairings + availability sheet for an existing row's
+ * participant. Only persisted rows (with an `originalId`) can be opened. The
+ * sheet writes not-with + unavailability directly to the store; neither is part
+ * of the table-edit draft and bulkMutateParticipants re-syncs/ignores both, so
+ * the uncommitted grid edits are untouched and no draft refresh is needed.
+ */
+async function handleOpenMore(rowId: string): Promise<void> {
+  const row = _draftRows.find((r) => r.rowId === rowId);
+  if (!row || !row.originalId || row.status === 'deleted') return;
+  await showPairingsAvailabilitySheet(row.originalId);
 }
 
 async function handleBulkLevel(rerender: () => void): Promise<void> {
