@@ -2541,6 +2541,31 @@ select.input-sm {
   font-size: 3rem;
   margin-bottom: 12px;
 }
+.empty-state-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* In-card CTA shown when an expanded task has no slots yet (creation handoff). */
+.slot-empty-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  padding: 16px 12px;
+  margin: 4px 0 8px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+.slot-empty-cta-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
 
 /* ─── Home Screen — native to the system ─────────────────
    Built from the app's own language: a glass panel + accent

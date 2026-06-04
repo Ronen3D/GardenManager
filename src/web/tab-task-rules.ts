@@ -571,12 +571,16 @@ export function renderTaskRulesTab(preflight: PreflightResult): string {
     html += renderTaskSetPanel();
   }
 
-  // Template cards
-  html += '<div class="template-list">';
-  for (const tpl of templates) {
-    html += renderTemplateCard(tpl, preflight);
+  // Template cards (or first-run empty state when there are none)
+  if (templates.length === 0) {
+    html += renderTaskRulesEmptyState();
+  } else {
+    html += '<div class="template-list">';
+    for (const tpl of templates) {
+      html += renderTemplateCard(tpl, preflight);
+    }
+    html += '</div>';
   }
-  html += '</div>';
 
   // ── One-Time Tasks Section ──
   const oneTimeTasks = store.getAllOneTimeTasks();
@@ -600,6 +604,8 @@ export function renderTaskRulesTab(preflight: PreflightResult): string {
       html += renderOneTimeCard(ot, preflight);
     }
     html += '</div>';
+  } else if (!showAddOneTime) {
+    html += `<p class="text-muted" style="padding:6px 2px;">אין משימות חד-פעמיות.</p>`;
   }
 
   // ── Rest Rules Management ──
@@ -635,7 +641,7 @@ export function renderTaskRulesTab(preflight: PreflightResult): string {
             (r) => `
           <tr data-rest-rule-id="${r.id}" style="border-bottom:1px solid var(--border-light, var(--border));">
             <td style="padding:8px;">
-              <input type="text" class="input-sm" data-rr-field="label" value="${escHtml(r.label)}" style="width:100%;" />
+              <input type="text" maxlength="40" class="input-sm" data-rr-field="label" value="${escHtml(r.label)}" style="width:100%;" />
             </td>
             <td style="padding:8px; text-align:center;">
               <input type="number" class="input-sm" data-rr-field="durationHours" value="${r.durationHours}" min="0.5" max="24" step="0.5" style="width:60px; text-align:center;" />
@@ -735,6 +741,30 @@ function renderTaskSetPanel(): string {
 
 function buildTaskSetLoadConfirmMessage(taskSet: TaskSet): string {
   return `טעינת הסט תחליף את תבניות המשימות, את המשימות החד-פעמיות, ואת כללי המרווחים המינימליים. להמשיך?`;
+}
+
+/** First-run / emptied-out state for the whole task list. Reuses the shared
+ *  `.empty-state` pattern; both CTAs reuse already-wired toolbar actions. */
+function renderTaskRulesEmptyState(): string {
+  return `<div class="empty-state">
+    <div class="empty-icon">${SVG_ICONS.tasks}</div>
+    <p>עדיין לא הוגדרו סוגי משימות.</p>
+    <p class="text-muted">סוג משימה מגדיר תפקיד חוזר בלוח — כמה משמרות ביום, מי כשיר לאייש אותו, ואילו כללי עומס ומנוחה חלים. צור את הראשון כדי להתחיל, או טען סט מוכן.</p>
+    <div class="empty-state-actions">
+      <button class="btn-sm btn-primary" data-action="toggle-add-template">➕ צור משימה ראשונה</button>
+      <button class="btn-sm btn-outline" data-action="tset-panel-toggle">📋 טען סט ברירת מחדל</button>
+    </div>
+  </div>`;
+}
+
+/** CTA shown inside an expanded task card that has no slots or sub-teams yet.
+ *  The creation handoff lands the user here, so the next step — defining who can
+ *  fill the task — is obvious rather than buried at the bottom of the card. */
+function renderEmptyTaskSlotCTA(templateId: string): string {
+  return `<div class="slot-empty-cta">
+    <p class="slot-empty-cta-hint">הוסף משבצת אחת לפחות כדי שניתן יהיה לשבץ את המשימה.</p>
+    <button class="btn-sm btn-primary" data-action="add-slot" data-tid="${templateId}">➕ הוסף משבצת ראשונה</button>
+  </div>`;
 }
 
 function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
@@ -851,7 +881,10 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
           ? `<button class="btn-sm btn-outline" data-action="grouped-slot-edit" data-tid="${tpl.id}">✎ עריכה קבוצתית</button>`
           : ''
       }</h4>`;
-      html += renderSlotTable(tpl.id, tpl.slots, undefined, pf);
+      html +=
+        tpl.slots.length === 0
+          ? renderEmptyTaskSlotCTA(tpl.id)
+          : renderSlotTable(tpl.id, tpl.slots, undefined, pf);
     }
 
     // Add sub-team / slot buttons
@@ -1287,7 +1320,7 @@ function renderSlotForm(
   return `<div class="${formClass}">
     <h5>${title}</h5>
     <div class="form-row">
-      <label>תווית: <input class="input-sm" type="text" data-field="slot-label" placeholder="למשל #1" value="${labelVal}" /></label>
+      <label>תווית: <input class="input-sm" type="text" maxlength="32" data-field="slot-label" placeholder="למשל #1" value="${labelVal}" /></label>
     </div>
     <div class="form-row">
       <span>דרגות:</span>
@@ -1338,7 +1371,7 @@ function renderAddOneTimeForm(): string {
   return `<div class="add-form" id="add-onetime-form">
     <h4>משימה חד-פעמית חדשה</h4>
     <div class="form-row">
-      <label>שם: <input class="input-sm" type="text" data-field="ot-name" placeholder="שם משימה" /></label>
+      <label>שם: <input class="input-sm" type="text" maxlength="60" data-field="ot-name" placeholder="שם משימה" /></label>
     </div>
     <div class="form-row">
       <label>יום:
@@ -1362,7 +1395,7 @@ function renderAddOneTimeForm(): string {
       </select></label>
     </div>
     <div class="form-row">
-      <label>תיאור: <input class="input-sm" type="text" data-field="ot-desc" placeholder="אופציונלי" style="width:300px;" /></label>
+      <label>תיאור: <input class="input-sm" type="text" maxlength="200" data-field="ot-desc" placeholder="אופציונלי" style="width:300px;" /></label>
     </div>
     <div class="form-row">
       <button class="btn-sm btn-primary" data-action="confirm-add-onetime">צור</button>
@@ -1435,7 +1468,7 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
 
     // Properties
     html += `<div class="template-props">
-      <label>שם: <input class="input-sm" type="text" data-ot-field="name" value="${escHtml(ot.name)}" data-ot-id="${ot.id}" /></label>
+      <label>שם: <input class="input-sm" type="text" maxlength="60" data-ot-field="name" value="${escHtml(ot.name)}" data-ot-id="${ot.id}" /></label>
       <label>יום: <select class="input-sm" data-ot-field="dayNum" data-ot-id="${ot.id}">${dayOptions}</select></label>
       <label>שעת התחלה: <input class="input-sm" type="number" min="0" max="23" data-ot-field="startHour" value="${ot.startHour}" data-ot-id="${ot.id}" /></label>
       <label>דקת התחלה: <input class="input-sm" type="number" min="0" max="59" data-ot-field="startMinute" value="${ot.startMinute}" data-ot-id="${ot.id}" /></label>
@@ -1456,7 +1489,7 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
           .join('')}
       </select></label>${_restRuleOrphanNote(ot.restRuleId)}
       ${renderSleepRecoveryEditor(ot.sleepRecovery, 'ot', ot.id, shiftsForOneTime(ot))}
-      <label>תיאור: <input class="input-sm" type="text" data-ot-field="description" value="${escHtml(ot.description || '')}" data-ot-id="${ot.id}" /></label>
+      <label>תיאור: <input class="input-sm" type="text" maxlength="200" data-ot-field="description" value="${escHtml(ot.description || '')}" data-ot-id="${ot.id}" /></label>
     </div>`;
 
     html += renderLoadWindowsEditor(ot, { isOneTime: true });
@@ -1830,7 +1863,22 @@ function autoSaveRerender(rerender: () => void, flashSelector?: string | null): 
 
 export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void): void {
   initLoadFormulaModal({ onChanged: rerender });
-  initAddTemplateModal({ onCreated: rerender });
+  initAddTemplateModal({
+    onCreated: (created) => {
+      // Creation handoff: open the new (empty) card and bring it into view so the
+      // "add first slot" CTA is immediately visible instead of a half-built task
+      // landing silently at the bottom of the list.
+      expandedTemplateId = created.id;
+      rerender();
+      // `rerender()` rebuilds #tab-content as a fresh element, so the captured
+      // `container` is now detached — query the live document for the new card.
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-template-id="${created.id}"]`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    },
+  });
   initGroupedSlotEdit({ rerender });
 
   container.addEventListener('input', (e) => {

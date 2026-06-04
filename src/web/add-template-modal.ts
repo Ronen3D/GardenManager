@@ -6,7 +6,7 @@
  * and notifies the host tab through `onCreated` so it can re-render.
  */
 
-import type { LoadFormula } from '../models/types';
+import type { LoadFormula, TaskTemplate } from '../models/types';
 import * as store from './config-store';
 import { openLoadFormulaModal } from './load-formula-modal';
 import { escAttr } from './ui-helpers';
@@ -15,8 +15,8 @@ import { showToast } from './ui-modal';
 // ─── Context injection ──────────────────────────────────────────────────────
 
 export interface AddTemplateModalContext {
-  /** Called after a template is successfully added so the host tab can re-render. */
-  onCreated: () => void;
+  /** Called after a template is successfully added so the host tab can re-render and focus the new card. */
+  onCreated: (created: TaskTemplate) => void;
 }
 
 let _ctx: AddTemplateModalContext | null = null;
@@ -80,7 +80,7 @@ function render(): void {
       </div>
       <div class="gm-modal-body">
         <div class="form-row">
-          <label>שם: <input class="input-sm" type="text" data-field="tpl-name" placeholder="שם משימה" /></label>
+          <label>שם: <input class="input-sm" type="text" maxlength="60" data-field="tpl-name" placeholder="שם משימה" /></label>
           <label>משך (שעות): <input class="input-sm" type="number" step="0.5" min="0.5" value="8" data-field="tpl-duration" /></label>
           <label>משמרות/יום: <input class="input-sm" type="number" min="1" max="48" value="1" data-field="tpl-shifts" /></label>
           <label>שעת התחלה: <input class="input-sm" type="time" step="3600" value="06:00" data-field="tpl-start" /></label>
@@ -182,7 +182,7 @@ function handleConfirm(): void {
   const keepFormula =
     _pendingFormula !== undefined && Math.abs(clampedBaseLoad - _pendingFormula.computedValue) <= 1e-9;
 
-  store.addTaskTemplate({
+  const created = store.addTaskTemplate({
     name,
     durationHours: sanitized.durationHours,
     shiftsPerDay: sanitized.shiftsPerDay,
@@ -199,7 +199,7 @@ function handleConfirm(): void {
   });
 
   closeAddTemplateModal();
-  _ctx?.onCreated();
+  _ctx?.onCreated(created);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

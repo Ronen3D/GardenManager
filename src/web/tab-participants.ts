@@ -217,9 +217,12 @@ function sortParticipants(list: Participant[]): Participant[] {
     // group A→Z, then rank senior-first (L4→L0), then name. This slots a
     // newly added participant into its correct position instead of appending
     // it at the bottom (storage/insertion order). Explicit column clicks
-    // override this with the single-key sorts below.
+    // override this with the single-key sorts below. The direction toggle
+    // flips the whole composite order (group Z→A, junior-first, name Z→A).
+    const dir = sortDirection === 'asc' ? 1 : -1;
     return [...list].sort(
-      (a, b) => a.group.localeCompare(b.group, 'he') || b.level - a.level || a.name.localeCompare(b.name, 'he'),
+      (a, b) =>
+        dir * (a.group.localeCompare(b.group, 'he') || b.level - a.level || a.name.localeCompare(b.name, 'he')),
     );
   }
   const dir = sortDirection === 'asc' ? 1 : -1;
@@ -371,7 +374,7 @@ export function renderParticipantsTab(): string {
               <option value="level" ${sortColumn === 'level' ? 'selected' : ''}>דרגה</option>
             </select>
           </label>
-          <button class="btn-sm btn-outline sort-dir-btn" data-action="sort-dir-toggle" title="כיוון מיון" aria-label="כיוון מיון" ${sortColumn === '' ? 'disabled' : ''}>${sortDirection === 'asc' ? '▲' : '▼'}</button>
+          <button class="btn-sm btn-outline sort-dir-btn" data-action="sort-dir-toggle" title="כיוון מיון" aria-label="כיוון מיון">${sortDirection === 'asc' ? '▲' : '▼'}</button>
           <button class="btn-sm btn-outline mobile-select-all-btn" data-action="mobile-select-all">${allSearchVisibleSelected ? 'נקה בחירה' : 'בחר הכל'}</button>
         </div>
       </div>
@@ -715,7 +718,6 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
     // Mobile sort control (<select> fires change, not click)
     if (el.getAttribute('data-action') === 'sort-select') {
       sortColumn = (el as HTMLSelectElement).value as typeof sortColumn;
-      if (sortColumn === '') sortDirection = 'asc';
       rerender();
     }
   });
@@ -755,10 +757,8 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         break;
       }
       case 'sort-dir-toggle': {
-        if (sortColumn !== '') {
-          sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
-          rerender();
-        }
+        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+        rerender();
         break;
       }
       case 'mobile-select-all': {

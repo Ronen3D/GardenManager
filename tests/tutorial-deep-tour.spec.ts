@@ -62,18 +62,18 @@ test.describe('Deep tour — sequencing', () => {
     await page.evaluate(() => window.gmStartTutorial?.('deep-tour'));
     await expect(popover).toBeVisible();
 
-    // First track of the playlist is `participants` (12 steps).
+    // First track of the playlist is `participants` (13 steps).
     await expect(caption).toBeVisible();
     await expect(caption).toContainText('מסלול 1 מתוך 6');
-    await expect(popover.locator('.tutorial-step-counter')).toContainText('מתוך 12');
+    await expect(popover.locator('.tutorial-step-counter')).toContainText('מתוך 13');
     expect(await currentStepId(page)).toBe('p-1');
 
     // Demo mode entered exactly once → durable backup blob exists now.
     const backupAtStart = await readBackup(page);
     expect(backupAtStart).not.toBeNull();
 
-    // Advance until the playlist crosses participants → task-rules. 12 "next"
-    // clicks at most (p-1..p-12 then the boundary), cap generously for any
+    // Advance until the playlist crosses participants → task-rules. 13 "next"
+    // clicks at most (p-1..p-13 then the boundary), cap generously for any
     // intermediate re-renders.
     let crossed = false;
     for (let i = 0; i < 40; i++) {
