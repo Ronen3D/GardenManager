@@ -20,6 +20,7 @@ import { checkTemplateEligibility } from '../engine/validator';
 import { type DateUnavailability, Level, type Participant } from '../models/types';
 import * as store from './config-store';
 import { getEffectivePakalIds } from './pakal-utils';
+import { showPeoplePicker } from './people-picker';
 import { type RangePickerOption, type RangePickerResult, showRangePicker } from './range-picker-modal';
 import { escAttr, escHtml, SVG_ICONS } from './ui-helpers';
 import { lockBodyScroll, showConfirm, showSaveConfirm, showToast, unlockBodyScroll } from './ui-modal';
@@ -468,8 +469,8 @@ function renderPairingsSection(draft: DraftFields): string {
         <span class="pe-field-label">לא לזווג עם</span>
         <div class="pe-notwith" data-pe-notwith>
           ${renderNotWithChips(draft.notWithIds, candidates)}
-          ${renderNotWithSelect(draft.notWithIds, candidates, '')}
         </div>
+        <button type="button" class="btn-sm btn-outline pe-notwith-open" data-pe-notwith-open>+ הוסף / ערוך…</button>
         <div class="pe-field-help">לחיצה על × תסיר את החיבור.</div>
       </div>
     </div>`;
@@ -492,21 +493,6 @@ function renderNotWithChips(selected: Set<string>, candidates: Participant[]): s
     .filter(Boolean)
     .join('');
   return `<div class="pe-notwith-chips" data-pe-notwith-chips>${chips}</div>`;
-}
-
-function renderNotWithSelect(selected: Set<string>, candidates: Participant[], excludeId: string): string {
-  const remaining = candidates.filter((c) => c.id !== excludeId && !selected.has(c.id));
-  if (remaining.length === 0) {
-    return `<div class="pe-notwith-add-empty">אין משתתפים נוספים להוספה.</div>`;
-  }
-  const opts = remaining
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((p) => `<option value="${escAttr(p.id)}">${escHtml(p.name)}</option>`)
-    .join('');
-  return `<select class="input-sm pe-input pe-notwith-add" data-pe-notwith-add>
-    <option value="">+ הוסף משתתף…</option>
-    ${opts}
-  </select>`;
 }
 
 function renderUnavailabilitySection(participantId: string): string {
@@ -690,33 +676,40 @@ function wireSkillsSection(body: HTMLElement, draft: DraftFields, _participantId
 
 function wirePairingsSection(body: HTMLElement, draft: DraftFields, participantId: string | undefined): void {
   const host = body.querySelector('[data-pe-notwith]') as HTMLElement;
-  const rerenderNotWith = () => {
-    const candidates = store.getAllParticipants();
-    host.innerHTML =
-      renderNotWithChips(draft.notWithIds, candidates) +
-      renderNotWithSelect(draft.notWithIds, candidates, participantId ?? '');
-    wireNotWith();
+
+  // Re-render only the chips host (the "+ הוסף / ערוך…" trigger lives outside it
+  // and is wired once below).
+  const rerenderChips = () => {
+    host.innerHTML = renderNotWithChips(draft.notWithIds, store.getAllParticipants());
+    wireRemoveButtons();
   };
 
-  const wireNotWith = () => {
+  const wireRemoveButtons = () => {
     host.querySelectorAll<HTMLButtonElement>('[data-pe-notwith-remove]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const id = btn.dataset.peNotwithRemove!;
         draft.notWithIds.delete(id);
-        rerenderNotWith();
+        rerenderChips();
       });
     });
-    const addSel = host.querySelector('[data-pe-notwith-add]') as HTMLSelectElement | null;
-    if (addSel) {
-      addSel.addEventListener('change', () => {
-        const id = addSel.value;
-        if (!id) return;
-        draft.notWithIds.add(id);
-        rerenderNotWith();
-      });
-    }
   };
-  wireNotWith();
+  wireRemoveButtons();
+
+  // Open the searchable multi-select picker. It returns a NEW set on אישור, so
+  // several partners can be chosen in one pass; null ⇒ cancelled (draft kept).
+  body.querySelector('[data-pe-notwith-open]')?.addEventListener('click', async () => {
+    const result = await showPeoplePicker({
+      title: 'לא לזווג עם',
+      candidates: store.getAllParticipants(),
+      selected: new Set(draft.notWithIds),
+      excludeId: participantId,
+      emptyHint: 'אין משתתפים נוספים להוספה.',
+    });
+    if (result) {
+      draft.notWithIds = result;
+      rerenderChips();
+    }
+  });
 }
 
 function wireUnavailabilitySection(host: HTMLElement, participantId: string, rerender: () => void): void {
@@ -941,6 +934,9 @@ async function commitDraft(
     if (draft.preferredTaskName || draft.lessPreferredTaskName) {
       store.setTaskNamePreference(pid, draft.preferredTaskName || undefined, draft.lessPreferredTaskName || undefined);
     }
+    // A brand-new participant has no pre-existing pairs, so only adds are needed.
+    // (Without this, not-with selections made during "add participant" were silently dropped.)
+    for (const id of draft.notWithIds) store.addNotWith(pid, id);
     showToast(`${name} נוסף/ה`, { type: 'success' });
   } else {
     pid = participantId;

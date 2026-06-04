@@ -20,7 +20,7 @@ import {
   renderTableEditMode,
   wireTableEditEvents,
 } from './table-edit-participants';
-import { certBadges, escHtml, groupBadge, levelBadge, SVG_ICONS } from './ui-helpers';
+import { certBadges, escAttr, escHtml, groupBadge, levelBadge, SVG_ICONS } from './ui-helpers';
 import { showConfirm, showToast } from './ui-modal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -112,6 +112,16 @@ function renderPreferenceBadges(p: Participant): string {
 let filterGroup: string = '';
 let sortColumn: 'name' | 'group' | 'level' | '' = '';
 let sortDirection: 'asc' | 'desc' = 'asc';
+/** Live name-search query. Applied as a DOM-overlay filter (see applySearchFilter)
+ *  rather than through getVisibleParticipants, so typing never triggers a full
+ *  rerender — the search input keeps focus and the mobile keyboard stays open. */
+let filterText: string = '';
+
+/** Case-insensitive name match against the active search query. */
+function matchesSearch(p: Participant): boolean {
+  const q = filterText.trim().toLowerCase();
+  return q === '' || p.name.toLowerCase().includes(q);
+}
 
 // ─── Multi-Select State ──────────────────────────────────────────────────────
 
@@ -122,6 +132,10 @@ let _lastClickedId: string | null = null;
 let _bulkDialogOpen = false;
 /** When true the bulk delete confirmation dialog is open */
 let _bulkDeleteDialogOpen = false;
+/** Participant IDs whose detail row is expanded. Promoted to module state so the
+ *  expansion survives a rerender — the row builder re-emits `row-expanded` from
+ *  this set, and selection changes patch the DOM surgically instead of rerendering. */
+const expandedIds: Set<string> = new Set();
 
 function getVisibleParticipants(allParticipants: Participant[] = store.getAllParticipants()): Participant[] {
   const filtered = filterGroup ? allParticipants.filter((p) => p.group === filterGroup) : allParticipants;
@@ -145,6 +159,16 @@ function reconcileSelection(visibleParticipants: Participant[] = getVisibleParti
   }
 }
 
+/** Drop expanded IDs for participants that no longer exist (e.g. after a delete).
+ *  Expansion is intentionally kept across group-filter changes. */
+function reconcileExpanded(): void {
+  if (expandedIds.size === 0) return;
+  const existing = new Set(store.getAllParticipants().map((p) => p.id));
+  for (const id of Array.from(expandedIds)) {
+    if (!existing.has(id)) expandedIds.delete(id);
+  }
+}
+
 // ─── Participant Sets Panel State ────────────────────────────────────────────
 
 let _setsPanelOpen = false;
@@ -156,6 +180,7 @@ let _setsRenameTargetId: string | null = null;
 export function clearParticipantSelection(): void {
   if (isTableEditActive()) exitTableEditMode();
   selectedIds.clear();
+  expandedIds.clear();
   _lastClickedId = null;
   _bulkDialogOpen = false;
   _bulkDeleteDialogOpen = false;
@@ -167,6 +192,7 @@ export function clearParticipantSelection(): void {
  *  isn't accidentally filtered to one group. */
 export function resetParticipantsTabViewState(): void {
   filterGroup = '';
+  filterText = '';
   sortColumn = '';
   sortDirection = 'asc';
   _setsPanelOpen = false;
@@ -309,10 +335,16 @@ export function renderParticipantsTab(): string {
   const groups = store.getGroups();
   const sorted = getVisibleParticipants(allParticipants);
   reconcileSelection(sorted);
+  reconcileExpanded();
   const visibleSelectedCount = sorted.reduce(
     (count, participant) => count + (selectedIds.has(participant.id) ? 1 : 0),
     0,
   );
+  // Search is a DOM overlay (applySearchFilter), so the "select all visible"
+  // controls operate on the group-filtered ∩ name-matching set.
+  const searchVisible = sorted.filter(matchesSearch);
+  const allSearchVisibleSelected = searchVisible.length > 0 && searchVisible.every((p) => selectedIds.has(p.id));
+  const allRowsExpanded = sorted.length > 0 && sorted.every((p) => expandedIds.has(p.id));
 
   let html = `
   <div class="tab-toolbar">
@@ -327,9 +359,25 @@ export function renderParticipantsTab(): string {
           )
           .join('')}
       </div>
+      <div class="participants-controls">
+        <input type="search" class="participant-search" data-action="participant-search" value="${escAttr(filterText)}" placeholder="חיפוש לפי שם…" maxlength="30" aria-label="חיפוש משתתף לפי שם" />
+        <div class="participants-mobile-controls">
+          <label class="sort-control">
+            <span class="sort-control-label">מיון</span>
+            <select class="input-sm" data-action="sort-select" aria-label="מיון לפי">
+              <option value="" ${sortColumn === '' ? 'selected' : ''}>ברירת מחדל</option>
+              <option value="name" ${sortColumn === 'name' ? 'selected' : ''}>שם</option>
+              <option value="group" ${sortColumn === 'group' ? 'selected' : ''}>קבוצה</option>
+              <option value="level" ${sortColumn === 'level' ? 'selected' : ''}>דרגה</option>
+            </select>
+          </label>
+          <button class="btn-sm btn-outline sort-dir-btn" data-action="sort-dir-toggle" title="כיוון מיון" aria-label="כיוון מיון" ${sortColumn === '' ? 'disabled' : ''}>${sortDirection === 'asc' ? '▲' : '▼'}</button>
+          <button class="btn-sm btn-outline mobile-select-all-btn" data-action="mobile-select-all">${allSearchVisibleSelected ? 'נקה בחירה' : 'בחר הכל'}</button>
+        </div>
+      </div>
     </div>
     <div class="toolbar-right">
-      <button class="btn-expand-all-mobile btn-sm btn-outline" data-action="toggle-all-details">הרחב הכל</button>
+      <button class="btn-expand-all-mobile btn-sm btn-outline" data-action="toggle-all-details">${allRowsExpanded ? 'כווץ הכל' : 'הרחב הכל'}</button>
       <button class="btn-sm btn-outline${_setsPanelOpen ? ' pill-active' : ''}" data-action="pset-panel-toggle" title="סטים של משתתפים">📋 סטים${store.isParticipantSetDirty() ? ' <span class="dirty-dot"></span>' : ''}</button>
       <button class="btn-sm btn-outline" data-action="enter-table-edit" title="עריכת טבלה מרובה">✏️ עריכת טבלה</button>
       <button class="btn-primary btn-sm" data-action="add-participant">+ הוסף משתתף</button>
@@ -358,9 +406,10 @@ export function renderParticipantsTab(): string {
     const dateRules = store.getDateUnavailabilities(p.id);
     const totalRules = dateRules.length;
     const isSelected = selectedIds.has(p.id);
+    const isExpanded = expandedIds.has(p.id);
     const allPakalDefs = store.getAllPakalDefinitionsIncludeDeleted();
 
-    html += `<tr data-participant-id="${p.id}" class="${isSelected ? 'row-selected' : ''}${totalRules > 0 ? ' has-unavail' : ''}">
+    html += `<tr data-participant-id="${p.id}" class="${isSelected ? 'row-selected' : ''}${isExpanded ? ' row-expanded' : ''}${totalRules > 0 ? ' has-unavail' : ''}">
         <td class="col-select"><input type="checkbox" class="cb-select-participant" data-pid="${p.id}" ${isSelected ? 'checked' : ''} /></td>
         <td class="col-index">${i + 1}</td>
         <td class="col-name" title="${escHtml(p.name)}">${hasOrphanedRefs(p) ? '<span class="badge-orphan-icon">⚠</span> ' : ''}<strong>${escHtml(p.name)}</strong>${renderUnavailChips(p.id)}</td>
@@ -382,15 +431,20 @@ export function renderParticipantsTab(): string {
 
   html += '</tbody></table></div>';
 
-  // ── Bulk Actions Toolbar (shown when selection is non-empty) ──
-  if (selectedIds.size > 0) {
-    html += `<div class="bulk-toolbar">
+  // Empty state for an active filter that matches nobody. The search overlay
+  // (applySearchFilter) toggles `hidden` live; render handles the group-filter case.
+  const groupFilterEmpty = sorted.length === 0 && filterGroup !== '';
+  html += `<div class="participant-search-empty"${groupFilterEmpty ? '' : ' hidden'}>לא נמצאו משתתפים</div>`;
+
+  // ── Bulk Actions Toolbar ──
+  // Always in the DOM (hidden when nothing is selected) so selection changes can
+  // patch it in place via updateSelectionUI instead of forcing a full rerender.
+  html += `<div class="bulk-toolbar"${selectedIds.size > 0 ? '' : ' hidden'}>
       <span class="bulk-count">${selectedIds.size} משתתפים נבחרו</span>
       <button class="btn-sm btn-outline" data-action="bulk-add-unavailability">${SVG_ICONS.calendar} הוסף חוסר זמינות</button>
       <button class="btn-sm btn-danger-outline" data-action="bulk-delete-participants">${SVG_ICONS.trash} מחק משתתפים</button>
       <button class="btn-sm btn-outline" data-action="bulk-clear-selection">נקה בחירה</button>
     </div>`;
-  }
 
   // ── Bulk Unavailability Dialog ──
   if (_bulkDialogOpen) {
@@ -481,6 +535,84 @@ function renderBulkDeleteDialog(): string {
 
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
+/** Apply the live name-search query as a DOM overlay: hide non-matching rows
+ *  (without a rerender, so the search input keeps focus), toggle the empty state,
+ *  and refresh the mobile select-all label. Safe to call on every render. */
+function applySearchFilter(container: HTMLElement): void {
+  const q = filterText.trim().toLowerCase();
+  const rows = container.querySelectorAll<HTMLElement>('tr[data-participant-id]');
+  let visibleCount = 0;
+  rows.forEach((row) => {
+    const pid = row.getAttribute('data-participant-id');
+    const p = pid ? store.getParticipant(pid) : undefined;
+    const match = q === '' || (!!p && p.name.toLowerCase().includes(q));
+    row.classList.toggle('row-search-hidden', !match);
+    if (match) visibleCount++;
+  });
+  const emptyEl = container.querySelector('.participant-search-empty');
+  if (emptyEl) emptyEl.toggleAttribute('hidden', visibleCount > 0);
+  updateSelectAllLabel(container);
+}
+
+/** Refresh the mobile "בחר הכל / נקה בחירה" toggle label from the current
+ *  selection over the visible (group ∩ name-matching) set. */
+function updateSelectAllLabel(container: HTMLElement): void {
+  const selBtn = container.querySelector('[data-action="mobile-select-all"]');
+  if (!selBtn) return;
+  const visible = getVisibleParticipants().filter(matchesSearch);
+  const allSel = visible.length > 0 && visible.every((p) => selectedIds.has(p.id));
+  selBtn.textContent = allSel ? 'נקה בחירה' : 'בחר הכל';
+}
+
+/**
+ * Patch every selection-dependent piece of UI in place — per-row highlight +
+ * checkbox, the header select-all, the mobile select-all label, and the bulk
+ * action bar — WITHOUT a full rerender, so expanded rows and the scroll
+ * position are preserved and large rosters don't rebuild the whole app on each
+ * tap. MUST stay in parity with the row builder + bulk-bar markup in
+ * renderParticipantsTab (the single source of truth for the initial render).
+ */
+function updateSelectionUI(container: HTMLElement): void {
+  // Per-row highlight + checkbox. Iterates every row (search-hidden included);
+  // never touches `.row-search-hidden` (the search overlay is independent).
+  container.querySelectorAll<HTMLElement>('tr[data-participant-id]').forEach((row) => {
+    const pid = row.getAttribute('data-participant-id');
+    if (!pid) return;
+    const sel = selectedIds.has(pid);
+    row.classList.toggle('row-selected', sel);
+    const cb = row.querySelector<HTMLInputElement>('.cb-select-participant');
+    if (cb) cb.checked = sel;
+  });
+
+  // Header select-all (desktop) — checked only when every group-visible row is
+  // selected, mirroring the builder's `visibleSelectedCount === sorted.length`.
+  const sorted = getVisibleParticipants();
+  const visibleSelectedCount = sorted.reduce((n, p) => n + (selectedIds.has(p.id) ? 1 : 0), 0);
+  const selectAllCb = container.querySelector<HTMLInputElement>('#cb-select-all');
+  if (selectAllCb) {
+    selectAllCb.checked = visibleSelectedCount > 0 && visibleSelectedCount === sorted.length;
+    selectAllCb.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < sorted.length;
+  }
+
+  updateSelectAllLabel(container);
+
+  // Bulk action bar — show/hide + count.
+  const bulkBar = container.querySelector('.bulk-toolbar');
+  if (bulkBar) {
+    bulkBar.toggleAttribute('hidden', selectedIds.size === 0);
+    const countEl = bulkBar.querySelector('.bulk-count');
+    if (countEl) countEl.textContent = `${selectedIds.size} משתתפים נבחרו`;
+  }
+}
+
+/** Run a structural rerender while preserving the window scroll position, so an
+ *  edit/removal mid-list doesn't jump the page to the top. */
+function rerenderKeepingScroll(rerender: () => void): void {
+  const y = window.scrollY;
+  rerender();
+  requestAnimationFrame(() => window.scrollTo(0, y));
+}
+
 export function wireParticipantsEvents(container: HTMLElement, rerender: () => void): void {
   // ── Table Edit Mode branch ──
   if (isTableEditActive()) {
@@ -498,16 +630,28 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
   const selectAllCb = container.querySelector('#cb-select-all') as HTMLInputElement | null;
   if (selectAllCb) {
     selectAllCb.addEventListener('change', () => {
-      const cbs = container.querySelectorAll<HTMLInputElement>('.cb-select-participant');
+      // Operate on the group-filtered ∩ name-matching set, not raw DOM checkboxes,
+      // so search-hidden rows are never silently swept into the selection.
       if (selectAllCb.checked) {
-        cbs.forEach((cb) => selectedIds.add(cb.dataset.pid!));
+        for (const p of getVisibleParticipants()) if (matchesSearch(p)) selectedIds.add(p.id);
       } else {
         selectedIds.clear();
       }
       _lastClickedId = null;
-      rerender();
+      updateSelectionUI(container);
     });
   }
+
+  // ─── Name search (DOM overlay — no rerender, preserves input focus) ───
+  const searchInput = container.querySelector('[data-action="participant-search"]') as HTMLInputElement | null;
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      filterText = searchInput.value;
+      applySearchFilter(container);
+    });
+  }
+  // Re-apply the overlay after every (re)render so the hidden class survives a rebuild.
+  applySearchFilter(container);
 
   // ─── Bulk: Individual checkboxes (Shift+Click range, Ctrl+Click toggle) ───
 
@@ -525,7 +669,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       } else {
         for (const id of groupIds) selectedIds.add(id);
       }
-      rerender();
+      updateSelectionUI(container);
     });
   });
 
@@ -554,18 +698,25 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         else selectedIds.add(pid);
       }
       _lastClickedId = pid;
-      rerender();
+      updateSelectionUI(container);
     });
   });
 
   // ─── Bulk: Dialog live toggles (allDay) ─────────────────────────────────────
   container.addEventListener('change', (e) => {
-    const field = (e.target as HTMLElement).getAttribute('data-field');
+    const el = e.target as HTMLElement;
+    const field = el.getAttribute('data-field');
     if (field === 'bulk-allday') {
-      const checked = (e.target as HTMLInputElement).checked;
-      const dialog = (e.target as HTMLElement).closest('.bulk-dialog')!;
+      const checked = (el as HTMLInputElement).checked;
+      const dialog = el.closest('.bulk-dialog')!;
       const timeFields = dialog.querySelector('.bulk-time-fields') as HTMLElement;
       if (timeFields) timeFields.classList.toggle('hidden', checked);
+    }
+    // Mobile sort control (<select> fires change, not click)
+    if (el.getAttribute('data-action') === 'sort-select') {
+      sortColumn = (el as HTMLSelectElement).value as typeof sortColumn;
+      if (sortColumn === '') sortDirection = 'asc';
+      rerender();
     }
   });
 
@@ -601,6 +752,25 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       case 'filter-group': {
         filterGroup = actionButton?.dataset.group || '';
         rerender();
+        break;
+      }
+      case 'sort-dir-toggle': {
+        if (sortColumn !== '') {
+          sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+          rerender();
+        }
+        break;
+      }
+      case 'mobile-select-all': {
+        // Toggle selection over the visible (group ∩ name-matching) set.
+        const visible = getVisibleParticipants().filter(matchesSearch);
+        const allSelected = visible.length > 0 && visible.every((p) => selectedIds.has(p.id));
+        for (const p of visible) {
+          if (allSelected) selectedIds.delete(p.id);
+          else selectedIds.add(p.id);
+        }
+        _lastClickedId = null;
+        updateSelectionUI(container);
         break;
       }
       case 'add-participant': {
@@ -646,7 +816,8 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         const result = await showParticipantEditor({ mode: 'edit', participantId: pid });
         // Re-render whether saved or not — unavailability rules may have changed
         // even when the main draft was discarded (rules are committed live).
-        rerender();
+        // Keep scroll so editing someone mid-list doesn't jump back to the top.
+        rerenderKeepingScroll(rerender);
         void result;
         break;
       }
@@ -680,7 +851,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
                 },
               },
             });
-            rerender();
+            rerenderKeepingScroll(rerender);
             triggerCharacterFarewell(p.name, farewellAnchor);
           }
         }
@@ -688,7 +859,14 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       }
       case 'toggle-details': {
         const row = actionButton?.closest('tr');
-        if (row) row.classList.toggle('row-expanded');
+        if (!row) break;
+        const pid = row.getAttribute('data-participant-id');
+        const nowExpanded = row.classList.toggle('row-expanded');
+        // Mirror into module state so the expansion survives any later rerender.
+        if (pid) {
+          if (nowExpanded) expandedIds.add(pid);
+          else expandedIds.delete(pid);
+        }
         break;
       }
       case 'toggle-all-details': {
@@ -696,7 +874,13 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
         if (!table) break;
         const rows = table.querySelectorAll('tr[data-participant-id]');
         const allExpanded = Array.from(rows).every((r) => r.classList.contains('row-expanded'));
-        rows.forEach((r) => r.classList.toggle('row-expanded', !allExpanded));
+        rows.forEach((r) => {
+          r.classList.toggle('row-expanded', !allExpanded);
+          const pid = r.getAttribute('data-participant-id');
+          if (!pid) return;
+          if (allExpanded) expandedIds.delete(pid);
+          else expandedIds.add(pid);
+        });
         if (actionButton) {
           actionButton.textContent = allExpanded ? 'הרחב הכל' : 'כווץ הכל';
         }
@@ -801,7 +985,7 @@ export function wireParticipantsEvents(container: HTMLElement, rerender: () => v
       case 'bulk-clear-selection': {
         selectedIds.clear();
         _lastClickedId = null;
-        rerender();
+        updateSelectionUI(container);
         break;
       }
       case 'bulk-delete-participants': {

@@ -738,6 +738,29 @@
     gap: 4px 6px;
   }
 
+  /* Participants roster controls: full-width search + the mobile-only sort /
+     select-all row (desktop reaches these via the hidden table header). */
+  .participants-controls {
+    width: 100%;
+    gap: 6px;
+  }
+  .participant-search {
+    flex: 1 1 100%;
+    min-height: 40px;
+  }
+  .participants-mobile-controls {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .participants-mobile-controls .input-sm,
+  .participants-mobile-controls .btn-sm {
+    min-height: 40px;
+  }
+  .participants-mobile-controls .mobile-select-all-btn {
+    margin-inline-start: auto;
+  }
+
   /* Schedule title is redundant with the tab bar */
   .schedule-toolbar .toolbar-left {
     display: none;
@@ -1531,42 +1554,46 @@
   /* ── Bulk toolbar — must come AFTER global .btn-sm 44px to override ── */
   .bulk-toolbar {
     position: fixed !important;
-    bottom: 68px;
+    /* Float clear of the tab-nav (bottom 8px + 64px tall) AND its central FAB,
+       which protrudes ~33px above the bar: 8 + 64 + 33 + ~7 gap ≈ 112px. */
+    bottom: calc(112px + env(safe-area-inset-bottom));
     left: 0;
     right: 0;
     z-index: 49;
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
-    justify-content: center;
-    gap: 6px 8px;
-    padding: 10px 12px;
+    gap: 8px;
+    padding: 8px 12px;
     margin: 0;
     border-radius: 0;
     border-left: none;
     border-right: none;
     border-top: 1px solid var(--border, #444);
+    border-bottom: 1px solid var(--border, #444);
     background: var(--bg-card, #1e1e2e);
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.3);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .bulk-toolbar::-webkit-scrollbar {
+    display: none;
   }
   .bulk-toolbar .bulk-count {
-    flex-basis: 100%;
-    text-align: center;
-    font-size: 0.85rem;
+    flex: 0 0 auto;
+    font-size: 0.8rem;
     font-weight: 700;
-    margin-bottom: 2px;
+    white-space: nowrap;
   }
   .bulk-toolbar .btn-sm {
-    font-size: 0.72rem !important;
-    padding: 6px 10px !important;
-    min-height: 36px !important;
+    flex: 0 0 auto;
+    font-size: 0.78rem !important;
+    padding: 8px 12px !important;
+    min-height: 44px !important;
     white-space: nowrap;
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    max-width: calc(50% - 8px);
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   .bulk-toolbar .btn-sm svg {
     width: 14px;

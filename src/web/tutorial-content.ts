@@ -21,7 +21,7 @@ const stepById = (track: TutorialTrack, id: string) => {
   return s;
 };
 
-// ─── Track: participants (12 steps) ──────────────────────────────────────────
+// ─── Track: participants (13 steps) ──────────────────────────────────────────
 
 const PARTICIPANTS_TRACK: TutorialTrack = {
   id: 'participants',
@@ -104,7 +104,17 @@ const PARTICIPANTS_TRACK: TutorialTrack = {
       target: '.table-participants',
       placement: 'top',
       title: 'בחירה מרובה ופעולות בצובר',
-      body: 'תיבות הסימון בעמודה הימנית של הטבלה מאפשרות בחירה מרובה. כשנבחר משתתף אחד או יותר תופיע שורת פעולות: <strong>מחק משתתפים</strong> ו<strong>הוסף חוסר זמינות</strong> בצובר. קיצור: לחיצה על תג קבוצה בוחרת את כל חבריה; Shift/Ctrl-click מצרפת בחירות.',
+      body: 'תיבות הסימון בעמודה הימנית של הטבלה מאפשרות בחירה מרובה. כשנבחר משתתף אחד או יותר תופיע שורת פעולות: <strong>מחק משתתפים</strong> ו<strong>הוסף חוסר זמינות</strong> בצובר.',
+    },
+    {
+      id: 'p-6c',
+      target: '[data-select-group]',
+      placement: 'bottom',
+      title: 'בחירת קבוצה שלמה',
+      body: 'לחיצה על <strong>תג הקבוצה</strong> הצבעוני בשורה בוחרת בבת אחת את כל חברי אותה קבוצה (לחיצה נוספת מבטלת). קיצור מהיר להחלת פעולת צובר — למשל הוספת אי-זמינות או מחיקה — על קבוצה שלמה.',
+      mobileOverride: {
+        placement: 'top',
+      },
     },
     {
       id: 'p-7',
