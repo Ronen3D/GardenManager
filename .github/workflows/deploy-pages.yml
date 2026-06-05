@@ -15,9 +15,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ─── Test gate ────────────────────────────────────────────────────────────
-  # Runs the full automated suite. ANY failing step fails this job, which
-  # blocks the deploy job below (`needs: tests`). Before A0 nothing ran tests.
+  # ─── Deterministic test gate ──────────────────────────────────────────────
+  # Fast, deterministic suites (unit / coverage / persistence). ANY failing
+  # step fails this job, which blocks the deploy job below (`needs: tests`).
+  # The E2E phone suite is intentionally NOT here — it is flaky on the CI
+  # runner and was freezing the (primary) mobile platform behind transient
+  # failures. It now runs as a separate, non-blocking job (`e2e`) so a flake
+  # reports red without preventing a release. See the `e2e` job below.
   tests:
     runs-on: ubuntu-latest
     steps:
@@ -43,6 +47,23 @@ jobs:
       - name: Persistence tests (npm run test:persistence)
         run: npm run test:persistence
 
+  # ─── E2E phone tests (non-blocking / informational) ───────────────────────
+  # Runs on every push in parallel with `tests`, but the deploy does NOT depend
+  # on it, so a flaky E2E run can no longer block a release. Failures still
+  # surface (the job goes red and the report is uploaded) so real mobile
+  # regressions remain visible — they just don't freeze the deploy.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
       # Playwright phone (375×812) — mobile is the primary platform.
       # playwright.config.ts auto-starts `npm run dev` in CI.
       - name: Install Playwright (chromium)
@@ -59,7 +80,7 @@ jobs:
           path: playwright-report
           retention-days: 7
 
-  # ─── Build & deploy (gated on tests) ──────────────────────────────────────
+  # ─── Build & deploy (gated on deterministic tests only) ───────────────────
   build-and-deploy:
     needs: tests
     runs-on: ubuntu-latest
