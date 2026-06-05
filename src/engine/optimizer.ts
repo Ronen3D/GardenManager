@@ -2133,6 +2133,14 @@ export function localSearchOptimize(
    *  (MERGE non-strict, QUALITY-SPLIT skipped). Default `true` preserves the
    *  pre-tri-state behavior for any legacy caller. */
   qualitySplitEnabled: boolean = true,
+  /** When `true`, SKIP the post-polish structural refinement (quality
+   *  split/merge + its 2nd polish) and return the post-1st-polish state. Used
+   *  by `optimizeMultiAttempt`'s top-K deferral: the structural pass is the
+   *  dominant quality-mode cost and runs on every attempt though only one
+   *  survives, so attempts run deferred (cheap) and only the K best finalists
+   *  are refined afterward via `refineDeferredResult`. Default `false` ⇒
+   *  byte-identical to the pre-deferral pipeline. */
+  deferStructural: boolean = false,
 ): {
   assignments: Assignment[];
   /** The realized task set. Same reference as the input `tasks` unless the
@@ -2703,6 +2711,78 @@ export function localSearchOptimize(
   // run-constant IncrementalScorer._splitPenalty) is never mutated mid-search
   // (Option B). Identity fast path returns the same refs when nothing is
   // splittable/split ⇒ zero added cost and byte-identical with splitting off.
+  // `deferStructural` (top-K deferral) skips this entirely — the caller
+  // refines the chosen finalists later via `refineDeferredResult`.
+  let resultTasks = tasks;
+  let resultAssignments = best;
+  if (!deferStructural) {
+    const refined = applyStructuralRefinement(
+      best,
+      tasks,
+      participants,
+      config,
+      pinnedIds,
+      pMap,
+      phantomContext,
+      disabledHC,
+      restRuleMap,
+      dayStartHour,
+      capacities,
+      notWithPairs,
+      scheduleContext,
+      qualitySplitEnabled,
+      startTime,
+      abortSignal,
+      stopSignal,
+    );
+    resultTasks = refined.tasks;
+    resultAssignments = refined.assignments;
+  }
+
+  return {
+    assignments: resultAssignments,
+    tasks: resultTasks,
+    filledSlots,
+    iterations,
+    saMs,
+    polishMs,
+    postGreedyComposite,
+    postSAComposite,
+  };
+}
+
+/**
+ * The post-polish structural-refinement step: `structuralRefine` (quality
+ * split / merge) followed by a single bounded `polishReplaceWithIdle` that
+ * re-staffs the fresh fragments when the structural pass changed the task set.
+ *
+ * Extracted verbatim from `localSearchOptimize`'s tail so the SAME code path
+ * is used both inline (non-deferred attempts) and by `refineDeferredResult`
+ * (top-K deferral). This guarantees a deferred-then-refined result is
+ * identical to a non-deferred result for the same post-polish input.
+ *
+ * Identity fast path inside `structuralRefine` returns the same refs with
+ * `changed:false` when nothing is splittable/split ⇒ no 2nd polish, zero cost.
+ */
+function applyStructuralRefinement(
+  best: Assignment[],
+  tasks: Task[],
+  participants: Participant[],
+  config: SchedulerConfig,
+  pinnedIds: Set<string>,
+  pMap: Map<string, Participant>,
+  phantomContext: PhantomContext | undefined,
+  disabledHC: Set<string> | undefined,
+  restRuleMap: Map<string, number> | undefined,
+  dayStartHour: number,
+  capacities: Map<string, ParticipantCapacity>,
+  notWithPairs: Map<string, Set<string>>,
+  scheduleContext: ScheduleContext | undefined,
+  qualitySplitEnabled: boolean,
+  startTime: number,
+  abortSignal: AbortSignal | undefined,
+  stopSignal: AbortSignal | undefined,
+): { tasks: Task[]; assignments: Assignment[] } {
   const sr = structuralRefine(
     best,
     tasks,
@@ -2719,52 +2799,37 @@ export function localSearchOptimize(
     scheduleContext,
     qualitySplitEnabled,
   );
-  let resultTasks = tasks;
-  let resultAssignments = best;
-  if (sr.changed) {
-    resultTasks = sr.tasks;
-    resultAssignments = sr.assignments;
-    // Bounded refinement on the NEW frozen list: a single deterministic
-    // polish pass re-staffs the fresh fragments globally (replace-with-idle,
-    // strict-improvement, HC-safe). It builds its own indices from the passed
-    // assignments and rebuilds the scorer (so _splitPenalty is re-derived for
-    // the new split count). Conservative substitute for a second cold SA — it
-    // captures the global re-staffing payoff without the runtime / invariant
-    // risk of mutating the SA core.
-    const refinedTaskMap = new Map<string, Task>();
-    for (const t of resultTasks) refinedTaskMap.set(t.id, t);
-    if (phantomContext) for (const pt of phantomContext.phantomTasks) refinedTaskMap.set(pt.id, pt);
-    polishReplaceWithIdle(
-      resultAssignments,
-      resultTasks,
-      participants,
-      config,
-      pinnedIds,
-      refinedTaskMap,
-      pMap,
-      phantomContext,
-      disabledHC,
-      restRuleMap,
-      dayStartHour,
-      capacities,
-      notWithPairs,
-      startTime,
-      abortSignal,
-      stopSignal,
-      scheduleContext,
-    );
-  }
-
-  return {
-    assignments: resultAssignments,
-    tasks: resultTasks,
-    filledSlots,
-    iterations,
-    saMs,
-    polishMs,
-    postGreedyComposite,
-    postSAComposite,
-  };
+  if (!sr.changed) return { tasks, assignments: best };
+  const resultTasks = sr.tasks;
+  const resultAssignments = sr.assignments;
+  // Bounded refinement on the NEW frozen list: a single deterministic polish
+  // pass re-staffs the fresh fragments globally (replace-with-idle,
+  // strict-improvement, HC-safe). It builds its own indices from the passed
+  // assignments and rebuilds the scorer (so _splitPenalty is re-derived for
+  // the new split count). Conservative substitute for a second cold SA.
+  const refinedTaskMap = new Map<string, Task>();
+  for (const t of resultTasks) refinedTaskMap.set(t.id, t);
+  if (phantomContext) for (const pt of phantomContext.phantomTasks) refinedTaskMap.set(pt.id, pt);
+  polishReplaceWithIdle(
+    resultAssignments,
+    resultTasks,
+    participants,
+    config,
+    pinnedIds,
+    refinedTaskMap,
+    pMap,
+    phantomContext,
+    disabledHC,
+    restRuleMap,
+    dayStartHour,
+    capacities,
+    notWithPairs,
+    startTime,
+    abortSignal,
+    stopSignal,
+    scheduleContext,
+  );
+  return { tasks: resultTasks, assignments: resultAssignments };
 }
 
 // ─── Post-SA Polish ──────────────────────────────────────────────────────────
@@ -3327,7 +3392,7 @@ export function structuralRefine(
         halves.push(makeSplitHalf(T, 2, midMs, endMs, s));
       }
       const candTasks = workTasks.filter((t) => t.id !== T.id).concat(halves);
-      let candAsgs = workAsgs.filter((x) => x.taskId !== T.id);
+      const candAsgs = workAsgs.filter((x) => x.taskId !== T.id);
       // `candTasks` is stable across the slot loop (only `candAsgs` grows),
       // so the task map is built once. `candBp` (per-participant assignment
       // index) is built once and updated incrementally via
@@ -3335,12 +3400,18 @@ export function structuralRefine(
       // sees the participant's freshly-added half without a full rebuild.
       const candTm = taskMapOf(candTasks);
       const candBp = buildByParticipant(candAsgs);
+      // Incremental load map: built ONCE over the post-removal assignment set,
+      // then bumped by each placed half's effective hours. `loadMapOf` simply
+      // sums `computeTaskEffectiveHours` per assignment, so an O(1) per-placement
+      // bump is byte-identical to the old per-pick full rebuild — but replaces
+      // 2×slots O(A) rebuilds/candidate with O(1) updates (the load is only read
+      // by `pickEligible`'s least-loaded tie-break, which sees the same values).
+      const load = loadMapOf(candAsgs, candTm);
       let feasible = true;
       for (let i = 0; i < T.slots.length; i++) {
         const Sa = halves[2 * i];
         const Sb = halves[2 * i + 1];
-        const la = loadMapOf(candAsgs, candTm);
-        const pa = pickEligible(Sa, Sa.slots[0], candTm, candBp, la, null);
+        const pa = pickEligible(Sa, Sa.slots[0], candTm, candBp, load, null);
         if (!pa) {
           feasible = false;
           break;
@@ -3353,10 +3424,10 @@ export function structuralRefine(
           status: AssignmentStatus.Scheduled,
           updatedAt: new Date(),
         };
-        candAsgs = candAsgs.concat(newAsgA);
+        candAsgs.push(newAsgA);
         addToAssignmentMap(candBp, newAsgA);
-        const lb = loadMapOf(candAsgs, candTm);
-        const pb = pickEligible(Sb, Sb.slots[0], candTm, candBp, lb, pa.id);
+        load.set(pa.id, (load.get(pa.id) ?? 0) + computeTaskEffectiveHours(Sa));
+        const pb = pickEligible(Sb, Sb.slots[0], candTm, candBp, load, pa.id);
         if (!pb) {
           feasible = false;
           break;
@@ -3369,8 +3440,9 @@ export function structuralRefine(
           status: AssignmentStatus.Scheduled,
           updatedAt: new Date(),
         };
-        candAsgs = candAsgs.concat(newAsgB);
+        candAsgs.push(newAsgB);
         addToAssignmentMap(candBp, newAsgB);
+        load.set(pb.id, (load.get(pb.id) ?? 0) + computeTaskEffectiveHours(Sb));
       }
       if (!feasible) continue;
 
@@ -3454,6 +3526,10 @@ export function optimize(
   /** Splitting mode gate forwarded to `localSearchOptimize` →
    *  `structuralRefine`. See `localSearchOptimize`'s parameter doc. */
   qualitySplitEnabled: boolean = true,
+  /** Forwarded to `localSearchOptimize`. When `true`, the post-polish quality
+   *  structural refinement is skipped; the returned result is post-1st-polish.
+   *  `optimizeMultiAttempt` uses this for top-K deferral. Default `false`. */
+  deferStructural: boolean = false,
 ): OptimizationResult {
   const startTime = Date.now();
 
@@ -3519,6 +3595,7 @@ export function optimize(
     stopSignal,
     tasks.length,
     qualitySplitEnabled,
+    deferStructural,
   );
 
   // The realized task set after greedy Stage-4 AND the post-polish structural
@@ -3592,6 +3669,118 @@ export function optimize(
     // splits, possibly + post-polish quality split/merge).
     // `_commitOptimizationResult` / continuation read `result.tasks ?? tasks`.
     tasks: realizedTasks,
+  };
+}
+
+/**
+ * Apply the deferred quality structural refinement to a result produced by
+ * `optimize(..., deferStructural=true)`, then re-validate and re-score. Used by
+ * `optimizeMultiAttempt` top-K deferral: attempts run cheap (post-1st-polish)
+ * and only the chosen finalists are refined here.
+ *
+ * Equivalence guarantee: this rebuilds the SAME context `optimize()` builds
+ * (capacities, pMap, notWithPairs, pinnedIds) from the same inputs and routes
+ * through the SAME `applyStructuralRefinement` + validate + score code, so
+ * `refineDeferredResult(optimize(deferStructural=true))` is identical to
+ * `optimize(deferStructural=false)` for the same post-1st-polish state.
+ *
+ * Returns the SAME `result` reference when the structural pass commits nothing
+ * (identity fast path) — the deferred score already IS the final score, and
+ * this preserves the `result === seed` no-improvement check in continuation.
+ *
+ * NOTE: production always passes `pinnedAssignments=[]`; pinned/Manual/Frozen
+ * incumbents are additionally caught by `isPinnedLike`'s status check inside
+ * `structuralRefine`, so the reconstructed `pinnedIds` is sufficient.
+ */
+export function refineDeferredResult(
+  result: OptimizationResult,
+  participants: Participant[],
+  config: SchedulerConfig,
+  pinnedAssignments: Assignment[],
+  disabledHC: Set<string> | undefined,
+  phantomContext: PhantomContext | undefined,
+  restRuleMap: Map<string, number> | undefined,
+  dayStartHour: number,
+  certLabelResolver: ((certId: string) => string) | undefined,
+  scheduleContext: ScheduleContext | undefined,
+  abortSignal: AbortSignal | undefined,
+  stopSignal: AbortSignal | undefined,
+): OptimizationResult {
+  const startTime = Date.now();
+  const baseTasks = result.tasks ?? [];
+
+  // Rebuild the capacity view over the realized window — identical inputs to
+  // optimize() (participants, schedule window, dayStartHour) ⇒ identical map.
+  let schedStart = baseTasks[0]?.timeBlock.start ?? new Date();
+  let schedEnd = baseTasks[0]?.timeBlock.end ?? new Date();
+  for (const t of baseTasks) {
+    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
+    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
+  }
+  const capacities = computeAllCapacities(participants, schedStart, schedEnd, dayStartHour);
+  const pMap = new Map<string, Participant>(participants.map((p) => [p.id, p]));
+  const notWithPairs = new Map<string, Set<string>>();
+  for (const p of participants) {
+    if (p.notWithIds && p.notWithIds.length > 0) notWithPairs.set(p.id, new Set(p.notWithIds));
+  }
+  const pinnedIds = new Set(pinnedAssignments.map((a) => a.id));
+
+  const refined = applyStructuralRefinement(
+    result.assignments,
+    baseTasks,
+    participants,
+    config,
+    pinnedIds,
+    pMap,
+    phantomContext,
+    disabledHC,
+    restRuleMap,
+    dayStartHour,
+    capacities,
+    notWithPairs,
+    scheduleContext,
+    /*qualitySplitEnabled*/ true,
+    startTime,
+    abortSignal,
+    stopSignal,
+  );
+
+  // Nothing committed ⇒ deferred result is already final (its score was
+  // computed on this same post-polish state). Return the same reference.
+  if (refined.tasks === baseTasks && refined.assignments === result.assignments) {
+    return result;
+  }
+
+  const validation = validateHardConstraints(
+    refined.tasks,
+    participants,
+    refined.assignments,
+    disabledHC,
+    restRuleMap,
+    certLabelResolver,
+    undefined,
+    scheduleContext,
+  );
+  const finalCtx: ScoreContext = {
+    taskMap: new Map(refined.tasks.map((t) => [t.id, t])),
+    pMap,
+    capacities,
+    notWithPairs,
+    dayStartHour,
+  };
+  setCapturingFinal(true);
+  const score = computeScheduleScore(refined.tasks, participants, refined.assignments, config, finalCtx);
+  setCapturingFinal(false);
+
+  return {
+    ...result,
+    assignments: refined.assignments,
+    tasks: refined.tasks,
+    score,
+    // Refinement never creates an unfilled slot, so feasibility is governed by
+    // the (unchanged) unfilled set; re-validate guards HC the same as optimize.
+    feasible: validation.valid && result.unfilledSlots.length === 0,
+    phaseScores: { ...result.phaseScores, final: score.compositeScore },
   };
 }
 
@@ -3775,6 +3964,49 @@ export function classifyUnfilledSlots(unfilled: UnfilledSlot[]): EliteBoostState
  *   `getStoredDefaultAttempts()` in `src/web/ui-helpers.ts` (fallback 60).
  * @param onProgress Optional callback fired after each attempt
  */
+/**
+ * Top-K deferral: number of pre-structural finalists that get the (expensive)
+ * quality structural refinement. The refinement (structuralRefine + 2nd polish)
+ * is the dominant quality-mode cost and runs on every attempt though only one
+ * survives. Running attempts deferred (cheap) and refining only the K best
+ * recovers ~91% of the all-attempts split value at ~40% less runtime (validated
+ * on bench-split-tuning). Quality mode ONLY — with splitting off/feasibility the
+ * structural pass is ~free (identity fast path), so attempts are not deferred
+ * and behavior is byte-identical to the pre-deferral pipeline.
+ */
+const TOP_K_DEFERRED = 5;
+
+/**
+ * Finalize a deferred multi-attempt run: rank the deferred finalists best-first
+ * (`isBetterResult` — feasibility-first, and feasibility is refinement-invariant
+ * because `structuralRefine` never creates an unfilled slot), refine the top
+ * `TOP_K_DEFERRED` via `refine`, and return the best refined result. When a
+ * `seedBest` (already-refined continuation incumbent) is supplied, the winner
+ * must strictly beat it — otherwise `seedBest` is returned by the SAME reference
+ * so the caller's `result === seed` no-improvement check still holds.
+ */
+function selectBestRefined(
+  finalists: { result: OptimizationResult; attemptIndex: number }[],
+  seedBest: OptimizationResult | null,
+  refine: (r: OptimizationResult) => OptimizationResult,
+): { best: OptimizationResult; attemptOfBest: number } {
+  const ranked = finalists
+    .slice()
+    .sort((x, y) => (isBetterResult(x.result, y.result) ? -1 : isBetterResult(y.result, x.result) ? 1 : 0));
+  const topK = ranked.slice(0, TOP_K_DEFERRED);
+
+  let best: OptimizationResult | null = seedBest;
+  let attemptOfBest = 0;
+  for (const f of topK) {
+    const refined = refine(f.result);
+    if (best === null || isBetterResult(refined, best)) {
+      best = refined;
+      attemptOfBest = f.attemptIndex;
+    }
+  }
+  return { best: best!, attemptOfBest };
+}
+
 export function optimizeMultiAttempt(
   tasks: Task[],
   participants: Participant[],
@@ -3796,6 +4028,15 @@ export function optimizeMultiAttempt(
   const totalStart = Date.now();
   resetSnapshot();
   const diagOn = isSchedulerDiagOn();
+
+  // Top-K deferral (quality mode only): run each attempt with the structural
+  // refinement deferred (cheap), collect the deferred results, then refine only
+  // the best `TOP_K_DEFERRED` and pick the winner. `best`/elite-boost still
+  // track the best DEFERRED result during the loop (unfilled is
+  // refinement-invariant, so elite-boost is unaffected); the final winner is
+  // re-derived from the refined finalists below.
+  const defer = qualitySplitEnabled;
+  const finalists: { result: OptimizationResult; attemptIndex: number }[] = [];
 
   // Elite restart: every ELITE_INTERVAL attempts, inspect the current best's
   // unfilled slots and refresh the two additive recovery hints. Every unfilled
@@ -3868,7 +4109,9 @@ export function optimizeMultiAttempt(
       scheduleContext,
       undefined,
       qualitySplitEnabled,
+      defer,
     );
+    if (defer) finalists.push({ result, attemptIndex: i + 1 });
 
     const improved = best === null || isBetterResult(result, best);
     if (improved) {
@@ -3908,6 +4151,31 @@ export function optimizeMultiAttempt(
         improved,
       });
     }
+  }
+
+  // Top-K deferral finalize: refine only the best TOP_K_DEFERRED deferred
+  // finalists and re-select the winner from the refined set. No seed in the
+  // sync path. When nothing is splittable the refinement is identity, so the
+  // refined winner equals the best deferred attempt (== the all-attempts best).
+  if (defer && finalists.length > 0) {
+    const sel = selectBestRefined(finalists, null, (r) =>
+      refineDeferredResult(
+        r,
+        participants,
+        config,
+        pinnedAssignments,
+        disabledHC,
+        phantomContext,
+        restRuleMap,
+        dayStartHour ?? 5,
+        certLabelResolver,
+        scheduleContext,
+        undefined,
+        undefined,
+      ),
+    );
+    best = sel.best;
+    attemptOfBest = sel.attemptOfBest;
   }
 
   // Update total duration and actual attempts performed
@@ -3977,6 +4245,14 @@ export function optimizeMultiAttemptAsync(
     resetSnapshot();
     const diagOn = isSchedulerDiagOn();
 
+    // Top-K deferral (quality mode only) — see optimizeMultiAttempt. Attempts
+    // run with the structural refinement deferred (cheap); only the best
+    // TOP_K_DEFERRED are refined at finalize (including early-stop). `best`
+    // tracks the best DEFERRED result for elite-boost/onProgress; the resolved
+    // winner is re-derived from the refined finalists in finalizeAndResolve.
+    const defer = qualitySplitEnabled;
+    const finalists: { result: OptimizationResult; attemptIndex: number }[] = [];
+
     // Elite restart state (same classification as sync version)
     const ELITE_INTERVAL = 20;
     let eliteBoost: EliteBoostState = {
@@ -3995,21 +4271,57 @@ export function optimizeMultiAttemptAsync(
     // depend only on (tasks, participants), both invariant across attempts.
     const ctx = buildSchedulingContext(tasks, participants);
 
-    function finalizeEarlyStop(): boolean {
-      if (!stopSignal?.aborted || best === null) return false;
-      best.durationMs = Date.now() - totalStart;
-      best.actualAttempts = attemptsCompleted;
-      best.attemptOfBest = attemptOfBest;
-      finalizeSnapshot(best.durationMs);
+    // Resolve the run. In defer mode, refine the best TOP_K_DEFERRED deferred
+    // finalists and pick the winner; for continuation the winner must strictly
+    // beat the already-refined `seedBest`, which is returned by REFERENCE when
+    // unbeaten so the caller's `result === seed` no-improvement check holds.
+    // Non-defer mode resolves the tracked best (byte-identical to before).
+    function finalizeAndResolve(isEarlyStop: boolean): void {
+      let winner: OptimizationResult;
+      let winnerAttemptOfBest = attemptOfBest;
+      if (defer && finalists.length > 0) {
+        const sel = selectBestRefined(finalists, seedBest ?? null, (r) =>
+          refineDeferredResult(
+            r,
+            participants,
+            config,
+            pinnedAssignments,
+            disabledHC,
+            phantomContext,
+            restRuleMap,
+            dayStartHour,
+            certLabelResolver,
+            scheduleContext,
+            abortSignal,
+            stopSignal,
+          ),
+        );
+        winner = sel.best;
+        winnerAttemptOfBest = sel.attemptOfBest;
+      } else {
+        winner = best!;
+      }
+      winner.durationMs = Date.now() - totalStart;
+      winner.actualAttempts = attemptsCompleted;
+      winner.attemptOfBest = winnerAttemptOfBest;
+      finalizeSnapshot(winner.durationMs);
       if (diagOn) {
         console.log(
-          `[Scheduler] Multi-attempt async early-stopped after ${best.actualAttempts} attempts in ${best.durationMs}ms — ` +
-            `best score ${best.score.compositeScore.toFixed(2)}, ` +
-            `unfilled ${best.unfilledSlots.length}. ` +
+          `[Scheduler] Multi-attempt async ${
+            isEarlyStop ? `early-stopped after ${attemptsCompleted}` : `done: ${attempts}`
+          } attempts in ${winner.durationMs}ms — ` +
+            `best score ${winner.score.compositeScore.toFixed(2)}, ` +
+            `unfilled ${winner.unfilledSlots.length}. ` +
             `Run toggleSchedulerDiag('show') for the report.`,
         );
       }
-      resolve(best);
+      resolve(winner);
+    }
+
+    function finalizeEarlyStop(): boolean {
+      // Nothing to resolve yet if no attempt has completed and there is no seed.
+      if (!stopSignal?.aborted || (best === null && finalists.length === 0)) return false;
+      finalizeAndResolve(true);
       return true;
     }
 
@@ -4088,7 +4400,9 @@ export function optimizeMultiAttemptAsync(
             scheduleContext,
             stopSignal,
             qualitySplitEnabled,
+            defer,
           );
+          if (defer) finalists.push({ result, attemptIndex: i + 1 });
 
           const improved = best === null || isBetterResult(result, best);
           if (improved) {
@@ -4137,19 +4451,7 @@ export function optimizeMultiAttemptAsync(
           // Yield to event loop so the UI can repaint between batches
           setTimeout(runBatch, 0);
         } else {
-          best!.durationMs = Date.now() - totalStart;
-          best!.actualAttempts = attemptsCompleted;
-          best!.attemptOfBest = attemptOfBest;
-          finalizeSnapshot(best!.durationMs);
-          if (diagOn) {
-            console.log(
-              `[Scheduler] Multi-attempt async done: ${attempts} attempts in ${best!.durationMs}ms — ` +
-                `best score ${best!.score.compositeScore.toFixed(2)}, ` +
-                `unfilled ${best!.unfilledSlots.length}. ` +
-                `Run toggleSchedulerDiag('show') for the report.`,
-            );
-          }
-          resolve(best!);
+          finalizeAndResolve(false);
         }
       } catch (err) {
         reject(err);

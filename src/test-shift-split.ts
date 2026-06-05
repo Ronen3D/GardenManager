@@ -28,6 +28,7 @@ import {
   type FeasibilitySplitCtx,
   isSwapFeasible,
   makeSplitHalf,
+  optimizeMultiAttemptAsync,
   structuralRefine,
   type UnfilledSlot,
 } from './engine/optimizer';
@@ -2501,6 +2502,75 @@ function runManualSplitApply(assert: AssertFn): void {
   }
 }
 
+// ─── Top-K structural deferral: multi-attempt selection + continuation + early-stop ──
+// Guards the production deferral path (optimizeMultiAttemptAsync, quality mode):
+// the per-attempt structural refinement is deferred and only the top-K finalists
+// are refined via refineDeferredResult. Invariant-based, so non-flaky regardless
+// of SA randomness:
+//   - a fresh run is HC-valid;
+//   - continuation NEVER yields a worse composite than its (refined) seed;
+//   - continuation returns the seed BY REFERENCE when it cannot improve (so the
+//     scheduler's `result === seed` no-improvement check still holds), else it is
+//     strictly better and still HC-valid;
+//   - early-stop (an already-aborted stopSignal) resolves with a finite-score
+//     result (the buffer-so-far is refined before resolving, never left raw).
+async function runTopKDeferral(assert: AssertFn): Promise<void> {
+  // Splittable fixture: 6 non-touching 8h tasks (gaps satisfy blocksConsecutive)
+  // and 4 idle-capable L0s — enough imbalance for quality refinement to act on,
+  // but the assertions hold whether or not a split actually commits.
+  const tasks: Task[] = [
+    splitTask('TK1', 6, 14, true),
+    splitTask('TK2', 16, 24, true),
+    splitTask('TK3', 30, 38, true),
+    splitTask('TK4', 40, 48, true),
+    splitTask('TK5', 54, 62, true),
+    splitTask('TK6', 64, 72, true),
+  ];
+  const participants: Participant[] = [part('tkp1', 0, 96), part('tkp2', 0, 96), part('tkp3', 0, 96), part('tkp4', 0, 96)];
+  const cfg: SchedulerConfig = { ...DEFAULT_CONFIG, maxIterations: 300, maxSolverTimeMs: 2000 };
+  const nonHc6 = (asgs: Assignment[], ts: Task[]): string[] =>
+    validateHardConstraints(ts, participants, asgs)
+      .violations.filter((vv) => vv.code !== 'HC-6')
+      .map((vv) => vv.code);
+
+  // Fresh multi-attempt run — quality mode ⇒ deferral active.
+  const r1 = await optimizeMultiAttemptAsync(
+    tasks, participants, cfg, [], 8,
+    undefined, undefined, undefined, undefined, 5, undefined, undefined, undefined, undefined, undefined, true,
+  );
+  assert(Number.isFinite(r1.score.compositeScore), 'top-K deferral: fresh run has finite composite');
+  const v1 = nonHc6(r1.assignments, r1.tasks ?? tasks);
+  assert(v1.length === 0, `top-K deferral: fresh run HC-valid (non-HC-6) (got [${v1.join(',')}])`);
+
+  // Continuation from the (already-refined) seed, on its realized task set.
+  const baseTasks = r1.tasks ?? tasks;
+  const r2 = await optimizeMultiAttemptAsync(
+    baseTasks, participants, cfg, [], 8,
+    undefined, undefined, undefined, undefined, 5, undefined, undefined, undefined, undefined,
+    { seedBest: r1, continuation: true }, true,
+  );
+  assert(
+    r2.score.compositeScore >= r1.score.compositeScore - 1e-6,
+    `top-K deferral: continuation never worse than seed (${r2.score.compositeScore.toFixed(2)} >= ${r1.score.compositeScore.toFixed(2)})`,
+  );
+  assert(
+    r2 === r1 || r2.score.compositeScore > r1.score.compositeScore,
+    'top-K deferral: continuation returns seed by reference when unbeaten, else strictly better',
+  );
+  const v2 = nonHc6(r2.assignments, r2.tasks ?? baseTasks);
+  assert(v2.length === 0, `top-K deferral: continuation result HC-valid (non-HC-6) (got [${v2.join(',')}])`);
+
+  // Early-stop: an already-aborted stopSignal must resolve (refining the
+  // buffer-so-far), never hang and never return a raw unrefined best.
+  const stop = new AbortController();
+  stop.abort();
+  const r3 = await optimizeMultiAttemptAsync(
+    tasks, participants, cfg, [], 8,
+    undefined, undefined, undefined, undefined, 5, undefined, undefined, undefined, stop.signal, undefined, true,
+  );
+  assert(Number.isFinite(r3.score.compositeScore), 'top-K deferral: early-stop resolves with finite-score result');
+}
+
 export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   console.log('\n── Shift-Split: run-coalesce primitive ──');
   runCoalesce(assert);
@@ -2544,6 +2614,8 @@ export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   runDynamicSplitResidualLinkId(assert);
   console.log('── Shift-Split: manual-build applyPlanOps coverage ──');
   runManualSplitApply(assert);
+  console.log('── Shift-Split: top-K structural deferral (multi-attempt + continuation + early-stop) ──');
+  await runTopKDeferral(assert);
 }
 
 if (require.main === module) {
