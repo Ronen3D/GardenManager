@@ -27,6 +27,7 @@ export interface PromptOptions {
   placeholder?: string;
   defaultValue?: string;
   suggestions?: string[];
+  maxlength?: number;
 }
 
 export interface ConfirmOptions {
@@ -90,6 +91,7 @@ export function showPrompt(message: string, opts?: PromptOptions): Promise<strin
     const placeholder = opts?.placeholder || '';
     const defaultValue = opts?.defaultValue || '';
     const suggestions = opts?.suggestions || [];
+    const maxAttr = opts?.maxlength ? ` maxlength="${opts.maxlength}"` : '';
 
     const backdrop = document.createElement('div');
     backdrop.className = 'gm-modal-backdrop';
@@ -110,7 +112,7 @@ export function showPrompt(message: string, opts?: PromptOptions): Promise<strin
         </div>
         <div class="gm-modal-body">
           <p>${escHtml(message)}</p>
-          <input type="text" class="gm-modal-input gm-modal-main-input"
+          <input type="text" class="gm-modal-input gm-modal-main-input"${maxAttr}
                  placeholder="${escAttr(placeholder)}"
                  value="${escAttr(defaultValue)}" />
           ${suggestionsHtml}

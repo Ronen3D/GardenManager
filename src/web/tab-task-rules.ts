@@ -2365,12 +2365,23 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           currentWindows.filter((w) => w.id !== lwid),
         );
         rerender();
+        showToast('חלון העומס נמחק', {
+          type: 'success',
+          duration: 6000,
+          action: {
+            label: 'בטל',
+            callback: () => {
+              store.undo();
+              rerender();
+            },
+          },
+        });
         break;
       }
       case 'add-subteam': {
         const otIdSt = actionButton?.dataset.otId;
         const tidSt = otIdSt || actionButton?.dataset.tid!;
-        const name = await showPrompt('הזן שם לתת-צוות:', { title: 'הוספת תת-צוות' });
+        const name = await showPrompt('הזן שם לתת-צוות:', { title: 'הוספת תת-צוות', maxlength: 32 });
         if (!name) return;
         if (otIdSt) {
           store.addSubTeamToOneTimeTask(otIdSt, name.trim());
@@ -2526,6 +2537,17 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           store.removeSlotFromTemplate(tidRs, slotId);
         }
         rerender();
+        showToast('המשבצת נמחקה', {
+          type: 'success',
+          duration: 6000,
+          action: {
+            label: 'בטל',
+            callback: () => {
+              store.undo();
+              rerender();
+            },
+          },
+        });
         break;
       }
       case 'grouped-slot-edit': {
