@@ -22,7 +22,7 @@ import { escAttr, escHtml, groupBadge } from './ui-helpers';
 import { showBottomSheet } from './ui-modal';
 
 export interface PeoplePickerOptions {
-  /** Sheet title, e.g. 'לא לזווג עם'. */
+  /** Sheet title, e.g. 'אי התאמה עם'. */
   title: string;
   /** Full candidate pool (typically store.getAllParticipants()). */
   candidates: Participant[];

@@ -1758,6 +1758,72 @@ export function getAllOneTimeTasks(): OneTimeTask[] {
   return [...oneTimeTasks.values()];
 }
 
+// ─── Task duplication ────────────────────────────────────────────────────────
+
+/**
+ * Deep clone that preserves Date values (OneTimeTask.scheduledDate). structuredClone
+ * is already relied on at runtime (see restoreSnapshot); the JSON fallback exists only
+ * for environments without it and would stringify Dates — never reached in practice.
+ */
+function _cloneDeep<T>(v: T): T {
+  const sc = (globalThis as { structuredClone?: <U>(x: U) => U }).structuredClone;
+  return typeof sc === 'function' ? sc(v) : (JSON.parse(JSON.stringify(v)) as T);
+}
+
+/** Regenerate EVERY nested id in place on an already-cloned task body. */
+function _regenerateNestedTaskIds(t: TaskTemplate | OneTimeTask): void {
+  for (const s of t.slots) s.id = uid('slot');
+  for (const st of t.subTeams) {
+    st.id = uid('st');
+    for (const s of st.slots) s.id = uid('slot');
+  }
+  if (t.loadWindows) for (const w of t.loadWindows) w.id = uid('lw');
+}
+
+/** Build a "<base> (עותק)" name, escalating to "(עותק 2)" etc. while `taken` is true. */
+function _uniqueTaskName(base: string, taken: (n: string) => boolean): string {
+  let name = `${base} (עותק)`;
+  let attempt = 2;
+  while (taken(name)) name = `${base} (עותק ${attempt++})`;
+  return name;
+}
+
+/**
+ * Duplicate a task template into a fully independent copy: new top-level id, every
+ * nested id (slots / sub-teams / load windows) regenerated, a unique "(עותק)" name,
+ * a fresh palette color, and placement at the end of the list. Shared references
+ * (restRuleId, certification ids, load-formula refs to OTHER templates) are preserved.
+ * Single undo step (one addTaskTemplate call). Returns null if the source is missing.
+ */
+export function duplicateTaskTemplate(id: string): TaskTemplate | null {
+  const source = getTaskTemplate(id);
+  if (!source) return null;
+  const clone = _cloneDeep(source);
+  _regenerateNestedTaskIds(clone);
+  const { id: _omit, ...body } = clone;
+  body.name = _uniqueTaskName(source.name.trim(), (n) =>
+    getAllTaskTemplates().some((t) => t.name.trim().toLowerCase() === n.toLowerCase()),
+  );
+  body.color = undefined; // fresh palette color
+  body.displayOrder = undefined; // sort at end
+  return addTaskTemplate(body);
+}
+
+/** As {@link duplicateTaskTemplate}, for one-time tasks (preserves scheduledDate). */
+export function duplicateOneTimeTask(id: string): OneTimeTask | null {
+  const source = getOneTimeTask(id);
+  if (!source) return null;
+  const clone = _cloneDeep(source);
+  _regenerateNestedTaskIds(clone);
+  const { id: _omit, ...body } = clone;
+  body.name = _uniqueTaskName(source.name.trim(), (n) =>
+    getAllOneTimeTasks().some((t) => t.name.trim().toLowerCase() === n.toLowerCase()),
+  );
+  body.color = undefined;
+  body.displayOrder = undefined;
+  return addOneTimeTask(body);
+}
+
 // ─── Slot / Sub-Team helpers ─────────────────────────────────────────────────
 
 export function addSlotToTemplate(templateId: string, slot: Omit<SlotTemplate, 'id'>): void {

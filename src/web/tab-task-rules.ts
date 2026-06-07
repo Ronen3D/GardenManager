@@ -896,9 +896,13 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         <div class="tprop-grid tprop-grid-2 tprop-toggles">
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="sameGroupRequired" data-tid="${tpl.id}" ${tpl.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
           <label class="checkbox-label"><input type="checkbox" data-tpl-field="blocksConsecutive" data-tid="${tpl.id}" ${tpl.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
-          <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
+          <div class="tprop-toggle-cell">
+            <label class="checkbox-label"><input type="checkbox" data-tpl-field="togethernessRelevant" data-tid="${tpl.id}" ${tpl.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
+            <button type="button" class="tprop-help-btn" data-action="toggle-notwith-help" data-help-key="notwith-tpl-${tpl.id}" aria-controls="notwith-tpl-${tpl.id}" aria-expanded="false" aria-label="מה זה אי התאמה?" title="מה זה אי התאמה?">?</button>
+          </div>
           <label class="checkbox-label" title="כשמסומן וגם נבחר אחד ממצבי הפיצול בהגדרות האלגוריתם — המערכת רשאית לפצל מופע של המשימה לשתי משמרות שמאויישות על־ידי שני אנשים שונים: כדי לאייש משבצת שאחרת תישאר ריקה, ובמצב 'השלמת איוש ושיפור איכות' גם כדי לשפר את איכות הלוח (עונש הפיצול קובע את הסף)"><input type="checkbox" data-tpl-field="splittable" data-tid="${tpl.id}" ${tpl.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
         </div>
+        <div class="sr-hint notwith-help-panel hidden" id="notwith-tpl-${tpl.id}" data-help-panel="notwith-tpl-${tpl.id}" role="note"><span class="notwith-help-text">המתג מפעיל את ההתחשבות באי-התאמה בין משתתפים; את הזוגות עצמם מגדירים בכרטיסי המשתתפים.</span><button type="button" class="notwith-help-go" data-action="goto-participants">פתח מסך משתתפים ‹</button></div>
       </section>
     </div>`;
 
@@ -937,8 +941,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
     }
 
     // Advanced (collapsed): rest-rule + sleep-recovery + load-windows.
-    const tplAdvInner =
-      `<div class="tprop-footer-row">
+    const tplAdvInner = `<div class="tprop-footer-row">
         <label class="tprop-field tprop-field-grow">
           <span class="tprop-field-label">כלל מרווח</span>
           <select class="input-sm" data-tpl-field="restRuleId" data-tid="${tpl.id}">
@@ -960,6 +963,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
 
     // Danger footer: destructive delete, isolated from the constructive actions.
     html += `<div class="template-actions template-actions--danger">
+      <button class="btn-sm btn-outline" data-action="duplicate-template" data-tid="${tpl.id}">⧉ שכפל</button>
       <button class="btn-sm btn-danger-outline" data-action="remove-template" data-tid="${tpl.id}">הסר תבנית</button>
     </div>`;
 
@@ -1540,10 +1544,16 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
       <label>רמת עומס (0-1): <input class="input-sm" type="number" step="0.05" min="0" max="1" data-ot-field="baseLoadWeight" value="${(ot.baseLoadWeight ?? 1).toFixed(2)}" data-ot-id="${ot.id}" /></label>
       <label class="checkbox-label"><input type="checkbox" data-ot-field="sameGroupRequired" data-ot-id="${ot.id}" ${ot.sameGroupRequired ? 'checked' : ''} /> נדרשת אותה קבוצה</label>
       <label class="checkbox-label"><input type="checkbox" data-ot-field="blocksConsecutive" data-ot-id="${ot.id}" ${ot.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
-      <label class="checkbox-label"><input type="checkbox" data-ot-field="togethernessRelevant" data-ot-id="${ot.id}" ${ot.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
+      <div class="tprop-toggle-cell"><label class="checkbox-label"><input type="checkbox" data-ot-field="togethernessRelevant" data-ot-id="${ot.id}" ${ot.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label><button type="button" class="tprop-help-btn" data-action="toggle-notwith-help" data-help-key="notwith-ot-${ot.id}" aria-controls="notwith-ot-${ot.id}" aria-expanded="false" aria-label="מה זה אי התאמה?" title="מה זה אי התאמה?">?</button></div>
       <label class="checkbox-label" title="כשמסומן וגם נבחר אחד ממצבי הפיצול בהגדרות האלגוריתם — המערכת רשאית לפצל את המשימה לשתי משמרות שמאויישות על־ידי שני אנשים שונים: כדי לאייש משבצת שאחרת תישאר ריקה, ובמצב 'השלמת איוש ושיפור איכות' גם כדי לשפר את איכות הלוח (עונש הפיצול קובע את הסף)"><input type="checkbox" data-ot-field="splittable" data-ot-id="${ot.id}" ${ot.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
       <label>תיאור: <input class="input-sm" type="text" maxlength="200" data-ot-field="description" value="${escHtml(ot.description || '')}" data-ot-id="${ot.id}" /></label>
     </div>`;
+
+    // Pointer revealed by the "?" help button in the "אי התאמה" row above: the
+    // toggle only enables SC-9 for this task; the incompatible pairs themselves
+    // are defined per-participant on the Participants screen. Hidden until the
+    // user taps "?"; the in-panel button navigates there.
+    html += `<div class="sr-hint notwith-help-panel hidden" id="notwith-ot-${ot.id}" data-help-panel="notwith-ot-${ot.id}" role="note"><span class="notwith-help-text">המתג מפעיל את ההתחשבות באי-התאמה בין משתתפים; את הזוגות עצמם מגדירים בכרטיסי המשתתפים.</span><button type="button" class="notwith-help-go" data-action="goto-participants">פתח מסך משתתפים ‹</button></div>`;
 
     // Sub-teams
     if (ot.subTeams.length > 0) {
@@ -1575,8 +1585,7 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
     }
 
     // Advanced (collapsed): rest-rule + sleep-recovery + load-windows.
-    const otAdvInner =
-      `<label>כלל מרווח: <select class="input-sm" data-ot-field="restRuleId" data-ot-id="${ot.id}">
+    const otAdvInner = `<label>כלל מרווח: <select class="input-sm" data-ot-field="restRuleId" data-ot-id="${ot.id}">
         <option value=""${!ot.restRuleId ? ' selected' : ''}>ללא</option>
         ${store
           .getRestRules()
@@ -1592,6 +1601,7 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
 
     // Danger footer: destructive delete, isolated from the constructive actions.
     html += `<div class="template-actions template-actions--danger">
+      <button class="btn-sm btn-outline" data-action="duplicate-onetime" data-ot-id="${ot.id}">⧉ שכפל</button>
       <button class="btn-sm btn-danger-outline" data-action="delete-onetime" data-ot-id="${ot.id}">הסר משימה</button>
     </div>`;
 
@@ -1932,7 +1942,11 @@ function autoSaveRerender(rerender: () => void, flashSelector?: string | null): 
 
 // ─── Event Wiring ────────────────────────────────────────────────────────────
 
-export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void): void {
+export function wireTaskRulesEvents(
+  container: HTMLElement,
+  rerender: () => void,
+  onNavigateToParticipants?: () => void,
+): void {
   initLoadFormulaModal({ onChanged: rerender });
   initAddTemplateModal({
     onCreated: (created) => {
@@ -2050,6 +2064,23 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
     if (!action) return;
 
     switch (action) {
+      // "?" button in the "אי התאמה" toggle row reveals/hides the explanation
+      // panel sitting just below the toggles grid (keyed by tpl/ot id so it works
+      // regardless of where the panel sits in the card DOM).
+      case 'toggle-notwith-help': {
+        const key = actionButton?.dataset.helpKey;
+        if (!key) break;
+        const panel = container.querySelector<HTMLElement>(`[data-help-panel="${key}"]`);
+        if (!panel) break;
+        const nowHidden = panel.classList.toggle('hidden');
+        actionButton?.setAttribute('aria-expanded', String(!nowHidden));
+        break;
+      }
+      // In-panel signpost (revealed by the "?" above) to where the pairs live.
+      case 'goto-participants': {
+        onNavigateToParticipants?.();
+        break;
+      }
       // ─── Task Sets panel actions ───────────────────────────────────────
       case 'tset-panel-toggle': {
         _taskSetPanelOpen = !_taskSetPanelOpen;
@@ -2647,6 +2678,26 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
           id: tidGse,
           subTeamId: stidGse,
         });
+        break;
+      }
+      case 'duplicate-template': {
+        const dup = store.duplicateTaskTemplate(actionButton?.dataset.tid!);
+        if (dup) {
+          expandedTemplateId = dup.id;
+          expandedOtId = null;
+          showToast('המשימה שוכפלה', { type: 'success' });
+          rerender();
+        }
+        break;
+      }
+      case 'duplicate-onetime': {
+        const dup = store.duplicateOneTimeTask(actionButton?.dataset.otId!);
+        if (dup) {
+          expandedOtId = dup.id;
+          expandedTemplateId = null;
+          showToast('המשימה שוכפלה', { type: 'success' });
+          rerender();
+        }
         break;
       }
       case 'remove-template': {

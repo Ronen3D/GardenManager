@@ -198,6 +198,42 @@ test.describe('Mobile config CRUD + emergency flows (phone)', () => {
     await expect(page.locator(`[data-source-name="${TPL}"]`).first()).toBeVisible({ timeout: 10_000 });
   });
 
+  // ── C7.3b — Duplicate a task template; copy is independent + generation-usable ──
+  test('C7.3b duplicate a seeded template, copy appears and generation uses both', async ({ page }) => {
+    await page.click('.tab-btn[data-tab="task-rules"]');
+
+    // Recurring templates only (one-time cards also use .template-card, with .onetime-card).
+    const templateCards = page.locator('.template-card:not(.onetime-card)');
+    const beforeCount = await templateCards.count();
+    expect(beforeCount).toBeGreaterThan(0);
+
+    const firstCard = templateCards.first();
+    const origName = (await firstCard.locator('.template-title strong').first().innerText()).trim();
+    const copyName = `${origName} (עותק)`;
+
+    // Expand the source and duplicate it (no confirm — duplication is non-destructive).
+    await firstCard.locator('.template-header').click();
+    await firstCard.locator('[data-action="duplicate-template"]').first().click();
+
+    // A copy card titled "<name> (עותק)" now exists and the template count grew by one.
+    const copyCard = page.locator('.template-card:not(.onetime-card)', {
+      has: page.locator('.template-title strong', { hasText: copyName }),
+    });
+    await expect(copyCard).toHaveCount(1, { timeout: 10_000 });
+    await expect(templateCards).toHaveCount(beforeCount + 1);
+
+    // Generation treats them as independent tasks — the generated schedule
+    // contains task instances for BOTH source names (data-source-name elements
+    // are derived per-occurrence from the generated schedule).
+    await generateSchedule(page);
+    await expect
+      .poll(() => page.locator(`[data-source-name="${origName}"]`).count(), { timeout: 10_000 })
+      .toBeGreaterThan(0);
+    await expect
+      .poll(() => page.locator(`[data-source-name="${copyName}"]`).count(), { timeout: 10_000 })
+      .toBeGreaterThan(0);
+  });
+
   // ── C7.4 — Participant editor round-trip + survives reload ────────────────
   test('C7.4 participant editor edit/save round-trips on the card and survives reload', async ({ page }) => {
     await page.click('.tab-btn[data-tab="participants"]');

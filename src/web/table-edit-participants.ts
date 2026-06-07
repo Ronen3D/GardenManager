@@ -436,12 +436,12 @@ export function renderTableEditMode(): string {
  */
 function renderMoreButtonIcon(row: DraftRow): string {
   const enabled = !!row.originalId;
-  return `<button class="btn-sm btn-outline btn-icon" data-te-action="open-more" data-te-row-id="${row.rowId}" title="${enabled ? 'אי-זיווג וזמינות' : 'שמור קודם את הטבלה'}"${enabled ? '' : ' disabled'} aria-label="אי-זיווג וזמינות">⋯</button>`;
+  return `<button class="btn-sm btn-outline btn-icon" data-te-action="open-more" data-te-row-id="${row.rowId}" title="${enabled ? 'אי התאמה וזמינות' : 'שמור קודם את הטבלה'}"${enabled ? '' : ' disabled'} aria-label="אי התאמה וזמינות">⋯</button>`;
 }
 
 function renderMoreButtonText(row: DraftRow): string {
   const enabled = !!row.originalId;
-  return `<button class="btn-sm btn-outline te-compact-more" data-te-action="open-more" data-te-row-id="${row.rowId}"${enabled ? '' : ' disabled title="שמור קודם את הטבלה"'}>⋯ אי-זיווג וזמינות</button>`;
+  return `<button class="btn-sm btn-outline te-compact-more" data-te-action="open-more" data-te-row-id="${row.rowId}"${enabled ? '' : ' disabled title="שמור קודם את הטבלה"'}>⋯ אי התאמה וזמינות</button>`;
 }
 
 function renderDesktopTable(

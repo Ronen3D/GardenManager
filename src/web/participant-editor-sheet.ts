@@ -499,9 +499,9 @@ function renderPairingsSection(draft: Pick<DraftFields, 'notWithIds'>): string {
   const candidates = store.getAllParticipants();
   return `
     <div class="pe-section">
-      <div class="pe-section-title">אי-זיווג</div>
+      <div class="pe-section-title">אי התאמה</div>
       <div class="pe-field">
-        <span class="pe-field-label">לא לזווג עם</span>
+        <span class="pe-field-label">אי התאמה עם</span>
         <div class="pe-notwith" data-pe-notwith>
           ${renderNotWithChips(draft.notWithIds, candidates)}
         </div>
@@ -720,7 +720,7 @@ function wirePairingsSection(
   // several partners can be chosen in one pass; null ⇒ cancelled (draft kept).
   body.querySelector('[data-pe-notwith-open]')?.addEventListener('click', async () => {
     const result = await showPeoplePicker({
-      title: 'לא לזווג עם',
+      title: 'אי התאמה עם',
       candidates: store.getAllParticipants(),
       selected: new Set(draft.notWithIds),
       excludeId: participantId,
@@ -1059,7 +1059,7 @@ function runPairingsAvailability(participant: Participant): Promise<{ saved: boo
       <div class="gm-modal-dialog gm-modal-dialog-wide gm-edit-sheet-v2" role="dialog" aria-modal="true" aria-labelledby="pa-title">
         <div class="pe-header">
           <button class="pe-close" data-pa-close type="button" aria-label="סגור">✕</button>
-          <span class="pe-title" id="pa-title">${escHtml(participant.name)} · אי-זיווג וזמינות</span>
+          <span class="pe-title" id="pa-title">${escHtml(participant.name)} · אי התאמה וזמינות</span>
         </div>
         <div class="pe-body" data-pa-body>
           ${renderPairingsSection(draft)}

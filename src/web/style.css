@@ -1929,6 +1929,81 @@ select.input-sm {
   background: rgba(0, 0, 0, 0.03);
 }
 
+/* "אי התאמה" toggle pairs a checkbox with a "?" help button in one grid cell.
+   Tapping "?" reveals .notwith-help-panel (a muted .sr-hint box) explaining that
+   the toggle only enables the rule and pointing to where the pairs are defined.
+   Replaces the old detached full-width signpost button. */
+.tprop-toggle-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tprop-toggle-cell .checkbox-label {
+  flex: 1 1 auto;
+}
+.tprop-help-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.tprop-help-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tprop-help-btn[aria-expanded="true"] {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tprop-help-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.notwith-help-panel {
+  margin-top: 8px;
+  border-inline-start-color: var(--accent);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.notwith-help-go {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.notwith-help-go:hover {
+  filter: brightness(1.08);
+}
+.notwith-help-go:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .sr-field-group {
   display: flex;
   flex-direction: column;
@@ -2141,6 +2216,12 @@ select.input-sm {
   .tprop-grid-numeric,
   .tprop-grid-2 {
     grid-template-columns: 1fr;
+  }
+  /* Roomier "?" tap target on phones, matching the load-formula info button. */
+  .tprop-help-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 0.95rem;
   }
   .tprop-footer-row {
     flex-direction: column;

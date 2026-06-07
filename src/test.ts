@@ -4,6 +4,8 @@
  * Usage: npm test
  */
 
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import {
   AssignmentStatus,
   blockDurationHours,
@@ -15959,9 +15961,66 @@ console.log('\n── PDF Fit Planner ──────────────
   assert(fitDetRun1 === fitDetRun2, 'fit-planner: deterministic (identical input ⇒ identical plan)');
 }
 
+// ─── Terminology consistency (Q7) ────────────────────────────────────────────
+// The SC-9 "not-with" concept must use ONE Hebrew term — «אי התאמה» — across
+// every user-facing string. This text-level scan (no DOM, no web-module import,
+// so it runs in the Node suite) guards against drift re-introducing the old
+// split terms ("אי-זיווג" / "לא לזווג עם" / "לא ביחד"), and asserts the unified
+// term + the tappable Participants signpost are actually wired in.
+function runTerminologyConsistencyTests(): void {
+  const srcRoot = __dirname; // ts-node runs this file in-place → the src/ dir
+  const deprecated = ['זיווג', 'לא ביחד', 'לא-ביחד'];
+
+  const tsFiles: string[] = [];
+  const walk = (dir: string): void => {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (ent.name === 'node_modules' || ent.name.startsWith('dist')) continue;
+        walk(full);
+      } else if (ent.name.endsWith('.ts') && !ent.name.includes('test')) {
+        // Skip the test harness itself (it necessarily contains the search needles).
+        tsFiles.push(full);
+      }
+    }
+  };
+  walk(srcRoot);
+
+  const violations: string[] = [];
+  for (const file of tsFiles) {
+    const text = readFileSync(file, 'utf8');
+    for (const term of deprecated) {
+      if (text.includes(term)) violations.push(`${relative(srcRoot, file)} → "${term}"`);
+    }
+  }
+  assert(
+    violations.length === 0,
+    `terminology: no deprecated not-with term in src/ (${violations.length ? violations.join('; ') : 'clean'})`,
+  );
+  assert(tsFiles.length > 20, 'terminology: scan walked the src tree');
+
+  // Positive presence: the unified term + the signpost are present.
+  const read = (rel: string): string => readFileSync(join(srcRoot, rel), 'utf8');
+  const tutorial = read('web/tutorial-content.ts');
+  assert(tutorial.includes('אי התאמה'), 'terminology: tutorial uses «אי התאמה»');
+  assert(
+    tutorial.includes('את הזוגות עצמם מגדירים בכרטיסי המשתתפים'),
+    'terminology: t-6b points users to where pairs are defined',
+  );
+  assert(
+    read('web/participant-editor-sheet.ts').includes('אי התאמה'),
+    'terminology: participant editor uses «אי התאמה»',
+  );
+  assert(
+    read('web/tab-task-rules.ts').includes('data-action="goto-participants"'),
+    'terminology: task-rules renders the tappable Participants signpost',
+  );
+}
+
 // ─── Async test blocks + Summary ─────────────────────────────────────────────
 
 (async () => {
+  runTerminologyConsistencyTests();
   await runParticipantSetXlsxTests(assert);
   await runContinuationTests();
   // ─── A0 EXTENSION POINT (IIFE) ────────────────────────────────────────────

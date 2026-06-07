@@ -2323,6 +2323,155 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log('\n── DUP: Task duplication ────────────────');
+
+  // Collect every nested id (top slots + sub-teams + sub-team slots + load windows).
+  const _dupNestedIds = (t: TaskTemplate | OneTimeTask): string[] => [
+    ...t.slots.map((s) => s.id),
+    ...t.subTeams.flatMap((st) => [st.id, ...st.slots.map((s) => s.id)]),
+    ...(t.loadWindows ?? []).map((w) => w.id),
+  ];
+
+  // Build a rich source template: top slots (with certs), a sub-team + slot, a load
+  // window, sleep recovery, a rest-rule reference, and a load formula whose
+  // refTemplateId points at another (external) template.
+  const _buildDupSource = (): { srcId: string; restRuleId: string } => {
+    const restRuleId = store.addRestRule('DUP-Rest', 12).id;
+    const src = store.addTaskTemplate(
+      makeTaskTemplateData('DUP-Src', {
+        shiftsPerDay: 3,
+        splittable: true,
+        baseLoadWeight: 0.5,
+        slots: [
+          makeSlotTemplate({ label: 'Top A', requiredCertifications: ['cert-x'] }),
+          makeSlotTemplate({ label: 'Top B', forbiddenCertifications: ['cert-y'] }),
+        ],
+        loadWindows: [{ id: 'dup-lw-seed', startHour: 5, startMinute: 0, endHour: 6, endMinute: 30, weight: 1 }],
+        sleepRecovery: { triggerShifts: [3], recoveryHours: 7 },
+        loadFormula: {
+          components: [{ refTemplateId: 'other-tpl', refRate: { kind: 'base' }, hours: 8 }],
+          snapshot: [],
+          computedValue: 0.5,
+          computedAt: 0,
+          targetHours: 1,
+        },
+      }),
+    );
+    const subTeam = store.addSubTeamToTemplate(src.id, 'Team A');
+    store.addSlotToSubTeam(src.id, subTeam.id, makeSlotTemplate({ label: 'Sub A' }));
+    store.updateTaskTemplate(src.id, { restRuleId });
+    return { srcId: src.id, restRuleId };
+  };
+
+  // Block 1 — identity, naming, id regeneration, value fidelity, independence, order/color.
+  {
+    store.factoryReset();
+    localStorage.clear();
+    store.initStore();
+    const baseCount = store.getAllTaskTemplates().length;
+    const { srcId, restRuleId } = _buildDupSource();
+    const source = store.getTaskTemplate(srcId)!;
+    const dup = store.duplicateTaskTemplate(srcId);
+
+    // DUP1 — identity
+    assert(dup !== null, 'DUP1: returns a non-null copy');
+    assert(!!dup && dup.id !== source.id, 'DUP1: copy has a new top-level id');
+    assert(store.getAllTaskTemplates().length === baseCount + 2, 'DUP1: count grew by source + copy');
+
+    // DUP2 — naming + escalation
+    assert(!!dup && dup.name === 'DUP-Src (עותק)', 'DUP2: copy name is "<src> (עותק)"');
+    const dup2 = store.duplicateTaskTemplate(srcId);
+    assert(!!dup2 && dup2.name === 'DUP-Src (עותק 2)', 'DUP2: second copy escalates to "(עותק 2)"');
+
+    // DUP3 — nested ids regenerated & disjoint (central correctness assertion)
+    const srcNested = _dupNestedIds(source);
+    const dupNested = _dupNestedIds(dup!);
+    assert(srcNested.length === 5, 'DUP3: source nested-id count is 5 (2 top + sub-team + sub slot + window)');
+    assert(srcNested.length === dupNested.length, 'DUP3: copy has the same nested-id count');
+    assert(dupNested.every((id) => !srcNested.includes(id)), 'DUP3: copy nested-id set is disjoint from the source');
+    assert(new Set(dupNested).size === dupNested.length, 'DUP3: copy nested ids are internally unique');
+
+    // DUP4 — value fidelity & preserved external references
+    assert(!!dup && dup.durationHours === source.durationHours && dup.shiftsPerDay === source.shiftsPerDay && dup.startHour === source.startHour, 'DUP4: numeric props copied');
+    assert(!!dup && dup.blocksConsecutive === source.blocksConsecutive && dup.sameGroupRequired === source.sameGroupRequired && dup.splittable === source.splittable, 'DUP4: behavior flags copied');
+    assert(!!dup && dup.restRuleId === restRuleId, 'DUP4: restRuleId preserved (shared reference)');
+    assert(!!dup && JSON.stringify(dup.slots.map((s) => [s.requiredCertifications, s.forbiddenCertifications])) === JSON.stringify(source.slots.map((s) => [s.requiredCertifications, s.forbiddenCertifications])), 'DUP4: slot cert arrays preserved by value');
+    assert(!!dup && JSON.stringify(dup.sleepRecovery) === JSON.stringify(source.sleepRecovery), 'DUP4: sleepRecovery copied');
+    assert(!!dup && dup.loadFormula?.components[0].refTemplateId === 'other-tpl', 'DUP4: load-formula external refTemplateId preserved');
+    assert(!!dup && dup.subTeams[0].name === source.subTeams[0].name, 'DUP4: sub-team name copied');
+
+    // DUP5 — deep independence: distinct array refs + mutating the copy leaves the source intact
+    assert(!!dup && dup.slots !== source.slots && dup.subTeams[0].slots !== source.subTeams[0].slots, 'DUP5: copy nested arrays are distinct references');
+    const srcTopCountBefore = source.slots.length;
+    store.removeSlotFromTemplate(dup!.id, dup!.slots[0].id);
+    assert(store.getTaskTemplate(srcId)!.slots.length === srcTopCountBefore, 'DUP5: deleting a copy slot does not affect the source');
+
+    // DUP10 — distinct order & fresh color
+    assert(!!dup && dup.displayOrder !== source.displayOrder, 'DUP10: copy has a different displayOrder (placed at end)');
+    assert(!!dup && typeof dup.color === 'string' && dup.color.length > 0, 'DUP10: copy has a fresh color assigned');
+
+    // DUP9 — missing source returns null without mutating
+    const countBeforeMiss = store.getAllTaskTemplates().length;
+    assert(store.duplicateTaskTemplate('does-not-exist') === null, 'DUP9: duplicating a missing template returns null');
+    assert(store.getAllTaskTemplates().length === countBeforeMiss, 'DUP9: missing-source duplicate leaves the count unchanged');
+  }
+
+  // Block 2 — DUP6: a single undo removes exactly the duplicate (duplicate is the last mutation).
+  {
+    store.factoryReset();
+    localStorage.clear();
+    store.initStore();
+    const { srcId } = _buildDupSource();
+    const beforeDup = store.getAllTaskTemplates().length;
+    const dup = store.duplicateTaskTemplate(srcId)!;
+    assert(store.getAllTaskTemplates().length === beforeDup + 1, 'DUP6: duplicate added one template');
+    const undoOk = store.undo();
+    assert(undoOk === true, 'DUP6: undo() returns true');
+    assert(store.getAllTaskTemplates().length === beforeDup, 'DUP6: one undo removes the whole duplicate');
+    assert(store.getTaskTemplate(dup.id) === undefined, 'DUP6: the duplicate is gone after one undo');
+    assert(!!store.getTaskTemplate(srcId), 'DUP6: the source survives the undo');
+  }
+
+  // Block 3 — DUP7: persistence round-trip keeps the copy with disjoint ids.
+  {
+    store.factoryReset();
+    localStorage.clear();
+    store.initStore();
+    const { srcId } = _buildDupSource();
+    const dupId = store.duplicateTaskTemplate(srcId)!.id;
+    store.saveToStorage();
+    store.initStore();
+    const reloaded = store.getTaskTemplate(dupId);
+    assert(!!reloaded, 'DUP7: duplicated template survives save + initStore');
+    if (reloaded) {
+      const reloadedSrc = store.getTaskTemplate(srcId)!;
+      assert(_dupNestedIds(reloaded).every((id) => !_dupNestedIds(reloadedSrc).includes(id)), 'DUP7: nested ids stay disjoint after round-trip');
+    }
+  }
+
+  // Block 4 — DUP8: one-time duplication preserves the Date and regenerates ids.
+  {
+    store.factoryReset();
+    localStorage.clear();
+    store.initStore();
+    const otDate = new Date('2026-03-15T21:00:00Z');
+    const ot = store.addOneTimeTask(
+      makeOneTimeTaskData('DUP-OT', otDate, {
+        description: 'night',
+        slots: [makeSlotTemplate({ label: 'OT slot' })],
+        loadWindows: [{ id: 'dup-ot-lw', startHour: 21, startMinute: 0, endHour: 1, endMinute: 0, weight: 1 }],
+      }),
+    );
+    const otDup = store.duplicateOneTimeTask(ot.id);
+    assert(!!otDup && otDup.id !== ot.id, 'DUP8: one-time copy has a new id');
+    assert(!!otDup && otDup.name === 'DUP-OT (עותק)', 'DUP8: one-time copy is named "(עותק)"');
+    assert(!!otDup && otDup.scheduledDate instanceof Date, 'DUP8: scheduledDate is still a Date (not stringified)');
+    assert(!!otDup && otDup.scheduledDate.getTime() === otDate.getTime(), 'DUP8: scheduledDate value preserved');
+    assert(!!otDup && _dupNestedIds(otDup).every((id) => !_dupNestedIds(store.getOneTimeTask(ot.id)!).includes(id)), 'DUP8: one-time nested ids are disjoint from the source');
+    assert(!!otDup && otDup.description === 'night', 'DUP8: one-time description copied');
+  }
+
   console.log('\n── Persistence tests complete ───────────');
 }
 

@@ -174,15 +174,15 @@ function buildBreakdownRows(score: ScheduleScore, config: SchedulerConfig): Brea
   const nw = score.notWithPenalty ?? 0;
   rows.push({
     id: 'notWith',
-    label: '"לא ביחד"',
-    subtitle: 'קנס על כל זוג משתתפים שסומנו "לא ביחד" ושובצו יחד באותה משימה.',
+    label: '"אי התאמה"',
+    subtitle: 'קנס על כל זוג משתתפים שסומנו "אי התאמה" ושובצו יחד באותה משימה.',
     code: 'SC-9',
     group: 'cost',
     signedWeight: -1,
     raw: nw,
     contribution: -nw,
     active: nw > 0,
-    inactiveHint: nw === 0 ? 'אין זוגות "לא-ביחד" שובצו יחד' : undefined,
+    inactiveHint: nw === 0 ? 'אין זוגות "אי התאמה" שובצו יחד' : undefined,
   });
 
   // SC-10 task name preference: NET signal — penalty minus bonus.

@@ -4209,7 +4209,8 @@ function suggestNarrowerWindow(
 ): RangePickerDefaults {
   if (affected.length === 0) return fallback;
   const opDayIndexOf = (d: Date): number => {
-    const ms = d.getTime() - new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()).getTime();
+    const ms =
+      d.getTime() - new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate()).getTime();
     const calendarIdx = Math.floor(ms / 86400000) + 1;
     return d.getHours() < dayStartHour ? calendarIdx - 1 : calendarIdx;
   };
@@ -4897,7 +4898,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.9.1</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.9.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -5031,7 +5032,7 @@ function renderAll(): void {
   } else if (currentTab === 'participants') {
     wireParticipantsEvents(content, renderAll);
   } else if (currentTab === 'task-rules') {
-    wireTaskRulesEvents(content, renderAll);
+    wireTaskRulesEvents(content, renderAll, () => void goToTab('participants'));
   } else if (currentTab === 'schedule') {
     wireScheduleEvents(content);
     const swimlane = content.querySelector('.swimlane-view') as HTMLElement | null;
