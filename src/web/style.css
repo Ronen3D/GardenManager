@@ -1768,6 +1768,31 @@ select.input-sm {
   border-bottom: 1px solid var(--border);
 }
 
+/* "מתקדם" (advanced) disclosure — reuses the .sr-* collapsible header/body/chip,
+   styled neutral (no accent) since it's a container, not an active rule. */
+.tprop-section--advanced.sr-collapsible {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+  gap: 0;
+  margin-top: 12px;
+}
+.tprop-section--advanced.adv-open {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.tprop-section--advanced.adv-open .sr-header {
+  border-bottom: 1px solid var(--border);
+}
+
+/* Isolate the destructive card action (הסר תבנית / הסר משימה) from the
+   constructive "+ " buttons with a divider above its own footer row. */
+.template-actions--danger {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
 .sr-header {
   /* Two-row grid: row 1 = title + arrow (always); row 2 = status pill (only
      rendered when collapsed). Splitting the rows prevents the narrow-column

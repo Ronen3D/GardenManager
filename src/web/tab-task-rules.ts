@@ -463,6 +463,58 @@ function renderSleepRecoveryEditor(
     </section>`;
 }
 
+/** A Sleep & Recovery rule is "active" iff the rule object exists — mirrors the
+ *  `active` flag inside renderSleepRecoveryEditor so the "מתקדם" summary chip and
+ *  the editor never disagree about whether the rule is on. */
+function isSleepRecoveryActive(rule: SleepRecoveryRule | undefined): boolean {
+  return !!rule;
+}
+
+/**
+ * Collapsible "מתקדם" (advanced) disclosure that wraps the rest-rule select,
+ * sleep-recovery editor, and load-windows editor inside an expanded task card.
+ * Reuses the proven `.sr-*` collapsible markup/CSS. `innerHtml` is the already-
+ * built inner content; `chips` are short tokens shown on the header when the
+ * section holds configured (non-default) content, so it isn't missed while
+ * collapsed. Open state is module-level (`expandedAdvanced`) so it survives the
+ * full re-render fired on every field edit.
+ */
+function renderAdvancedSection(target: 'tpl' | 'ot', id: string, innerHtml: string, chips: string[]): string {
+  const open = expandedAdvanced.has(`${target}:${id}`);
+  const statusRow = chips.length
+    ? `<span class="sr-status"><span class="sr-summary-chip">${escHtml(chips.join(' · '))}</span></span>`
+    : '';
+  return `
+    <section class="tprop-section tprop-section--advanced sr-collapsible${open ? ' adv-open' : ''}">
+      <button type="button" class="sr-header"
+              data-action="toggle-advanced" data-adv-target="${target}" data-adv-id="${id}"
+              aria-expanded="${open}">
+        <span class="sr-title">
+          <span class="sr-icon" aria-hidden="true">⚙️</span>
+          <span class="sr-title-text">מתקדם</span>
+        </span>
+        <span class="sr-arrow" aria-hidden="true">${open ? '▾' : '◂'}</span>
+        ${statusRow}
+      </button>
+      ${open ? `<div class="sr-body adv-body">${innerHtml}</div>` : ''}
+    </section>`;
+}
+
+/** Build the "מתקדם" header chips for a template / one-time task — one token per
+ *  configured advanced setting (rest-rule, sleep-recovery, load-windows). */
+function advancedChips(item: {
+  restRuleId?: string;
+  sleepRecovery?: SleepRecoveryRule;
+  loadWindows?: LoadWindow[];
+}): string[] {
+  const chips: string[] = [];
+  if (item.restRuleId) chips.push('מרווח');
+  if (isSleepRecoveryActive(item.sleepRecovery)) chips.push('שינה');
+  const lw = item.loadWindows?.length ?? 0;
+  if (lw > 0) chips.push(`${lw} חלונות`);
+  return chips;
+}
+
 /** Parse an HH:MM string with range validation (00:00–23:59). */
 function parseHm(value: string): { h: number; m: number } | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
@@ -509,6 +561,9 @@ let editingSlot: { templateId: string; subTeamId?: string; slotId: string; isOne
 let showAddOneTime = false;
 /** IDs of templates / one-time tasks whose Sleep & Recovery section is currently expanded. Collapsed by default. */
 const expandedSleepRecovery = new Set<string>();
+/** Keys (`${'tpl'|'ot'}:${id}`) of cards whose "מתקדם" (advanced) disclosure is open. Collapsed by default.
+ *  Module-level (not a DOM `<details>`) so it survives the full re-render fired on every field edit. */
+const expandedAdvanced = new Set<string>();
 
 /**
  * Pending load formula for the still-inline "add one-time task" form. Populated
@@ -537,6 +592,7 @@ export function resetTaskRulesTabViewState(): void {
   editingSlot = null;
   showAddOneTime = false;
   expandedSleepRecovery.clear();
+  expandedAdvanced.clear();
   _pendingOtLoadFormula = undefined;
   _taskSetPanelOpen = false;
   _taskSetFormMode = 'none';
@@ -844,27 +900,11 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
           <label class="checkbox-label" title="כשמסומן וגם נבחר אחד ממצבי הפיצול בהגדרות האלגוריתם — המערכת רשאית לפצל מופע של המשימה לשתי משמרות שמאויישות על־ידי שני אנשים שונים: כדי לאייש משבצת שאחרת תישאר ריקה, ובמצב 'השלמת איוש ושיפור איכות' גם כדי לשפר את איכות הלוח (עונש הפיצול קובע את הסף)"><input type="checkbox" data-tpl-field="splittable" data-tid="${tpl.id}" ${tpl.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
         </div>
       </section>
-
-      <div class="tprop-footer-row">
-        <label class="tprop-field tprop-field-grow">
-          <span class="tprop-field-label">כלל מרווח</span>
-          <select class="input-sm" data-tpl-field="restRuleId" data-tid="${tpl.id}">
-            <option value=""${!tpl.restRuleId ? ' selected' : ''}>ללא</option>
-            ${store
-              .getRestRules()
-              .map(
-                (r) =>
-                  `<option value="${r.id}"${tpl.restRuleId === r.id ? ' selected' : ''}>${escHtml(r.label)} (${r.durationHours} שע׳)</option>`,
-              )
-              .join('')}
-          </select>
-        </label>
-      </div>
-      ${_restRuleOrphanNote(tpl.restRuleId)}
-      ${renderSleepRecoveryEditor(tpl.sleepRecovery, 'tpl', tpl.id, shiftsForTemplate(tpl))}
     </div>`;
 
-    html += renderLoadWindowsEditor(tpl);
+    // Eligibility: sub-teams + slots, surfaced right under basics (the dominant
+    // reason to open a card). Rest-rule / sleep-recovery / load-windows now live
+    // in the collapsed "מתקדם" disclosure below.
 
     // Sub-teams
     if (tpl.subTeams.length > 0) {
@@ -885,17 +925,43 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
         tpl.slots.length === 0 ? renderEmptyTaskSlotCTA(tpl.id) : renderSlotTable(tpl.id, tpl.slots, undefined, pf);
     }
 
-    // Add sub-team / slot buttons
+    // Eligibility actions (constructive only — destructive delete is isolated below).
     html += `<div class="template-actions">
       <button class="btn-sm btn-outline" data-action="add-subteam" data-tid="${tpl.id}">+ תת-צוות</button>
       <button class="btn-sm btn-outline" data-action="add-slot" data-tid="${tpl.id}">+ משבצת</button>
-      <button class="btn-sm btn-danger-outline" data-action="remove-template" data-tid="${tpl.id}">הסר תבנית</button>
     </div>`;
 
     // Inline add-slot form
     if (addingSlotTo && addingSlotTo.templateId === tpl.id && !addingSlotTo.subTeamId) {
       html += renderAddSlotForm(tpl.id);
     }
+
+    // Advanced (collapsed): rest-rule + sleep-recovery + load-windows.
+    const tplAdvInner =
+      `<div class="tprop-footer-row">
+        <label class="tprop-field tprop-field-grow">
+          <span class="tprop-field-label">כלל מרווח</span>
+          <select class="input-sm" data-tpl-field="restRuleId" data-tid="${tpl.id}">
+            <option value=""${!tpl.restRuleId ? ' selected' : ''}>ללא</option>
+            ${store
+              .getRestRules()
+              .map(
+                (r) =>
+                  `<option value="${r.id}"${tpl.restRuleId === r.id ? ' selected' : ''}>${escHtml(r.label)} (${r.durationHours} שע׳)</option>`,
+              )
+              .join('')}
+          </select>
+        </label>
+      </div>
+      ${_restRuleOrphanNote(tpl.restRuleId)}
+      ${renderSleepRecoveryEditor(tpl.sleepRecovery, 'tpl', tpl.id, shiftsForTemplate(tpl))}
+      ${renderLoadWindowsEditor(tpl)}`;
+    html += renderAdvancedSection('tpl', tpl.id, tplAdvInner, advancedChips(tpl));
+
+    // Danger footer: destructive delete, isolated from the constructive actions.
+    html += `<div class="template-actions template-actions--danger">
+      <button class="btn-sm btn-danger-outline" data-action="remove-template" data-tid="${tpl.id}">הסר תבנית</button>
+    </div>`;
 
     html += `</div>`;
   }
@@ -1476,21 +1542,8 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
       <label class="checkbox-label"><input type="checkbox" data-ot-field="blocksConsecutive" data-ot-id="${ot.id}" ${ot.blocksConsecutive ? 'checked' : ''} /> חוסם רצף משימות</label>
       <label class="checkbox-label"><input type="checkbox" data-ot-field="togethernessRelevant" data-ot-id="${ot.id}" ${ot.togethernessRelevant ? 'checked' : ''} /> אי התאמה</label>
       <label class="checkbox-label" title="כשמסומן וגם נבחר אחד ממצבי הפיצול בהגדרות האלגוריתם — המערכת רשאית לפצל את המשימה לשתי משמרות שמאויישות על־ידי שני אנשים שונים: כדי לאייש משבצת שאחרת תישאר ריקה, ובמצב 'השלמת איוש ושיפור איכות' גם כדי לשפר את איכות הלוח (עונש הפיצול קובע את הסף)"><input type="checkbox" data-ot-field="splittable" data-ot-id="${ot.id}" ${ot.splittable ? 'checked' : ''} /> ניתן לפיצול</label>
-      <label>כלל מרווח: <select class="input-sm" data-ot-field="restRuleId" data-ot-id="${ot.id}">
-        <option value=""${!ot.restRuleId ? ' selected' : ''}>ללא</option>
-        ${store
-          .getRestRules()
-          .map(
-            (r) =>
-              `<option value="${r.id}"${ot.restRuleId === r.id ? ' selected' : ''}>${escHtml(r.label)} (${r.durationHours} שע׳)</option>`,
-          )
-          .join('')}
-      </select></label>${_restRuleOrphanNote(ot.restRuleId)}
-      ${renderSleepRecoveryEditor(ot.sleepRecovery, 'ot', ot.id, shiftsForOneTime(ot))}
       <label>תיאור: <input class="input-sm" type="text" maxlength="200" data-ot-field="description" value="${escHtml(ot.description || '')}" data-ot-id="${ot.id}" /></label>
     </div>`;
-
-    html += renderLoadWindowsEditor(ot, { isOneTime: true });
 
     // Sub-teams
     if (ot.subTeams.length > 0) {
@@ -1510,17 +1563,37 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
       html += renderSlotTable(ot.id, ot.slots, undefined, pf, { isOneTime: true });
     }
 
-    // Add sub-team / slot / delete buttons
+    // Eligibility actions (constructive only — destructive delete is isolated below).
     html += `<div class="template-actions">
       <button class="btn-sm btn-outline" data-action="add-subteam" data-ot-id="${ot.id}">+ תת-צוות</button>
       <button class="btn-sm btn-outline" data-action="add-slot" data-ot-id="${ot.id}">+ משבצת</button>
-      <button class="btn-sm btn-danger-outline" data-action="delete-onetime" data-ot-id="${ot.id}">הסר משימה</button>
     </div>`;
 
     // Inline add-slot form
     if (addingSlotTo && addingSlotTo.templateId === ot.id && addingSlotTo.isOneTime && !addingSlotTo.subTeamId) {
       html += renderAddSlotForm(ot.id, undefined, { isOneTime: true });
     }
+
+    // Advanced (collapsed): rest-rule + sleep-recovery + load-windows.
+    const otAdvInner =
+      `<label>כלל מרווח: <select class="input-sm" data-ot-field="restRuleId" data-ot-id="${ot.id}">
+        <option value=""${!ot.restRuleId ? ' selected' : ''}>ללא</option>
+        ${store
+          .getRestRules()
+          .map(
+            (r) =>
+              `<option value="${r.id}"${ot.restRuleId === r.id ? ' selected' : ''}>${escHtml(r.label)} (${r.durationHours} שע׳)</option>`,
+          )
+          .join('')}
+      </select></label>${_restRuleOrphanNote(ot.restRuleId)}
+      ${renderSleepRecoveryEditor(ot.sleepRecovery, 'ot', ot.id, shiftsForOneTime(ot))}
+      ${renderLoadWindowsEditor(ot, { isOneTime: true })}`;
+    html += renderAdvancedSection('ot', ot.id, otAdvInner, advancedChips(ot));
+
+    // Danger footer: destructive delete, isolated from the constructive actions.
+    html += `<div class="template-actions template-actions--danger">
+      <button class="btn-sm btn-danger-outline" data-action="delete-onetime" data-ot-id="${ot.id}">הסר משימה</button>
+    </div>`;
 
     html += `</div>`;
   }
@@ -2099,6 +2172,16 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         const key = `${srTarget}:${srId}`;
         if (expandedSleepRecovery.has(key)) expandedSleepRecovery.delete(key);
         else expandedSleepRecovery.add(key);
+        rerender();
+        break;
+      }
+      case 'toggle-advanced': {
+        const advTarget = actionButton?.dataset.advTarget;
+        const advId = actionButton?.dataset.advId;
+        if (!advTarget || !advId) break;
+        const key = `${advTarget}:${advId}`;
+        if (expandedAdvanced.has(key)) expandedAdvanced.delete(key);
+        else expandedAdvanced.add(key);
         rerender();
         break;
       }

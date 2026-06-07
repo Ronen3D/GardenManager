@@ -42,6 +42,10 @@ export interface TutorialStep {
   openAccordion?: string | string[];
   /** Engine should expand the first `.template-card` if it is collapsed. */
   expandFirstTemplate?: boolean;
+  /** Engine should open the first template card's "מתקדם" disclosure (where
+   * sleep-recovery and load-windows now live). Requires the card to be expanded
+   * first, so pair with `expandFirstTemplate`. */
+  expandAdvanced?: boolean;
   /** Engine should put the first participant row into edit mode (clicks the
    * row's pencil icon). Needed for steps that point at controls only rendered
    * inside an expanded row (e.g. the unavailability editor). */
@@ -532,6 +536,8 @@ async function renderStep(idx: number): Promise<void> {
   }
 
   if (step.expandFirstTemplate) await expandFirstTemplateCard();
+  if (!stillCurrent()) return;
+  if (step.expandAdvanced) await expandFirstTemplateAdvanced();
   if (!stillCurrent()) return;
   if (step.expandFirstParticipant) await expandFirstParticipantRow();
   if (!stillCurrent()) return;
@@ -1084,6 +1090,21 @@ async function expandFirstTemplateCard(): Promise<void> {
   header.click();
   _internalClickFlag = false;
   // Card-expand transition isn't animated; one rAF lets the slot rows render.
+  await rAFAsync();
+}
+
+async function expandFirstTemplateAdvanced(): Promise<void> {
+  // Sleep-recovery and load-windows live inside the collapsed "מתקדם" disclosure
+  // (see renderAdvancedSection in tab-task-rules.ts). Steps t-7b / t-8b target
+  // controls in there, so open it after the card itself is expanded.
+  const card = document.querySelector<HTMLElement>('.template-card[data-template-id]');
+  if (!card || !card.querySelector('.template-body')) return; // card must be expanded first
+  if (card.querySelector('.adv-body')) return; // already open — `.adv-body` renders only when expanded
+  const toggle = card.querySelector<HTMLElement>('[data-action="toggle-advanced"]');
+  if (!toggle) return;
+  _internalClickFlag = true;
+  toggle.click();
+  _internalClickFlag = false;
   await rAFAsync();
 }
 
