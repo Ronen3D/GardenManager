@@ -27,7 +27,7 @@ import * as store from './config-store';
 import { closeGroupedSlotEdit, initGroupedSlotEdit, openGroupedSlotEdit } from './grouped-slot-edit';
 import { initLoadFormulaModal, openLoadFormulaModal } from './load-formula-modal';
 import { runPreflight } from './preflight';
-import { escHtml, SVG_ICONS } from './ui-helpers';
+import { escAttr, escHtml, SVG_ICONS } from './ui-helpers';
 import { showAlert, showConfirm, showPrompt, showToast } from './ui-modal';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -555,7 +555,7 @@ export function renderTaskRulesTab(preflight: PreflightResult): string {
   <div class="tab-toolbar">
     <div class="toolbar-left">
       <h2>פירוט משימות <span class="count">${templates.length}</span></h2>
-      <div class="score-card inline-badge ${criticals.length > 0 ? 'status-error' : 'status-ok'}">
+      <div class="score-card inline-badge ${criticals.length > 0 ? 'status-error badge-clickable' : 'status-ok'}"${criticals.length > 0 ? ' role="button" tabindex="0" data-action="show-readiness-findings" title="הצג מה חוסם יצירת שבצ&quot;ק" aria-label="הצג מה חוסם יצירת שבצ&quot;ק"' : ''}>
         <span class="score-value">${criticals.length > 0 ? '✗ חסום' : '✓ מוכן'}</span>
         <span class="score-label">מוכנות לשיבוץ</span>
       </div>
@@ -882,9 +882,7 @@ function renderTemplateCard(tpl: TaskTemplate, pf: PreflightResult): string {
           : ''
       }</h4>`;
       html +=
-        tpl.slots.length === 0
-          ? renderEmptyTaskSlotCTA(tpl.id)
-          : renderSlotTable(tpl.id, tpl.slots, undefined, pf);
+        tpl.slots.length === 0 ? renderEmptyTaskSlotCTA(tpl.id) : renderSlotTable(tpl.id, tpl.slots, undefined, pf);
     }
 
     // Add sub-team / slot buttons
@@ -1203,7 +1201,7 @@ function renderSlotTable(
     const isCritical = finding?.severity === PreflightSeverity.Critical;
     const isWarn = finding?.severity === PreflightSeverity.Warning;
     const findingIcon = finding
-      ? `<span class="slot-finding-icon ${isCritical ? 'text-danger' : 'text-warn'}" title="${escHtml(finding.code)}" aria-label="${escHtml(finding.code)}">${isCritical ? '✗' : '⚠'}</span> `
+      ? `<span class="slot-finding-icon ${isCritical ? 'text-danger' : 'text-warn'}" title="${escAttr(finding.message)}" aria-label="${escAttr(finding.message)}">${isCritical ? '✗' : '⚠'}</span> `
       : '';
 
     const forbiddenCerts = slot.forbiddenCertifications ?? [];
@@ -2183,6 +2181,22 @@ export function wireTaskRulesEvents(container: HTMLElement, rerender: () => void
         await showAlert('', {
           title: hasCrit ? 'בעיות בהגדרת המשימה' : 'אזהרות בהגדרת המשימה',
           icon: hasCrit ? '🚫' : '⚠️',
+          bodyHtml: `<ul class="gm-modal-finding-list">${list}</ul>`,
+        });
+        break;
+      }
+      case 'show-readiness-findings': {
+        const pf = runPreflight();
+        const crits = pf.findings.filter((f) => f.severity === PreflightSeverity.Critical);
+        if (crits.length === 0) {
+          // Criticals may have just been resolved by another edit — refresh and bail.
+          rerender();
+          break;
+        }
+        const list = crits.map((f) => `<li>🚫 ${escHtml(f.message)}</li>`).join('');
+        await showAlert('', {
+          title: 'לא ניתן ליצור שבצ"ק',
+          icon: '🚫',
           bodyHtml: `<ul class="gm-modal-finding-list">${list}</ul>`,
         });
         break;
