@@ -148,6 +148,17 @@ export function anchorToPickerDefaults(anchor: Date, schedule: Schedule): { defa
   return { defaultDay: String(dayIndex), defaultHour: String(anchor.getHours()) };
 }
 
+/**
+ * Live-mode picker (`dayIdx`, wall-clock `hour`) → absolute anchor on the
+ * schedule's frozen op-day grid. Tail hours (`hour < dayStartHour`) map to the
+ * op-day's post-midnight tail. Reads the FROZEN `periodStart` + `dayStartHour`
+ * so the anchor lands on the same grid the user sees — mirrors the picker
+ * composition in `ensureLiveModeAnchor`.
+ */
+export function liveAnchorFromPicker(schedule: Schedule, dayIdx: number, hour: number): Date {
+  return new Date(hourInOpDay(schedule.periodStart, schedule.algorithmSettings.dayStartHour, dayIdx, hour));
+}
+
 /** Format an HC-15 recovery window as `יום N HH:MM – HH:MM` (single op-day) or `יום N HH:MM – יום M HH:MM`. */
 export function fmtRecoveryWindow(win: { start: Date; end: Date }, schedule: Schedule): string {
   const startDay = timestampToOpDayIndex(win.start, schedule);

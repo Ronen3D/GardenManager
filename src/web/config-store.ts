@@ -43,7 +43,7 @@ import { computeTemplateSectionKey } from '../shared/layout-key';
 import { jsonDeserialize, jsonSerialize } from '../shared/utils/json-dates';
 import { buildFormula } from '../shared/utils/load-formula';
 import { hourInOpDay } from '../shared/utils/time-utils';
-import { normalizeCertificationDefinitions, sanitizeCertificationIds } from './certification-utils';
+import { normalizeCertificationDefinitions } from './certification-utils';
 import { buildDefaultContinuityJson } from './default-continuity';
 import {
   clonePakalDefinitions,
@@ -4008,7 +4008,11 @@ function _normalizeParticipantSet(pset: ParticipantSet): ParticipantSet {
   const participants = (pset.participants || []).map((snap) => ({
     ...snap,
     pakalIds: sanitizePakalIds(snap.pakalIds, pakalCatalog),
-    certifications: sanitizeCertificationIds(snap.certifications, certificationCatalog),
+    // Certification ids are intentionally PRESERVED even when orphaned/deleted —
+    // the cert soft-delete model keeps them on the participant and surfaces them via
+    // the ⚠ orphan badge. This matches the live-store load paths (loadFromStorage,
+    // restoreSnapshot, loadParticipantSet). Only pakalIds are hard-sanitized at load.
+    certifications: Array.isArray(snap.certifications) ? [...snap.certifications] : [],
   }));
 
   return {

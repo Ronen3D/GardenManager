@@ -92,7 +92,6 @@ if (typeof _gs.window === 'undefined') {
 
 // ─── Now safe to import src/web ──────────────────────────────────────────────
 import {
-  type CertificationDefinition,
   type DateUnavailability,
   Level,
   type PakalDefinition,
@@ -102,8 +101,9 @@ import {
 } from './models/types';
 import { taskOpDayEnd, taskOpDayStart } from './utils/date-utils';
 import * as appHost from './web/app-tutorial-hooks';
-import { normalizeCertificationDefinitions, sanitizeCertificationIds } from './web/certification-utils';
+import { normalizeCertificationDefinitions } from './web/certification-utils';
 import * as store from './web/config-store';
+import { exportDaySnapshot } from './web/continuity-export';
 import { getNumDays, getTasksForDay } from './web/export-utils';
 import {
   clonePakalDefinitions,
@@ -117,6 +117,7 @@ import {
 import {
   anchorToPickerDefaults,
   computeDefaultLiveAnchor,
+  liveAnchorFromPicker,
   taskDayIndex,
   taskIntersectsDay,
   timestampToOpDayIndex,
@@ -651,20 +652,6 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
     assert(certs[1].deleted === true && certs[1].color === '#abcdef', 'C7.7: normalizeCert preserves tombstone+color');
     assert(normalizeCertificationDefinitions('nope' as unknown).length === 0, 'C7.7: normalizeCert non-array -> []');
 
-    const certDefs: CertificationDefinition[] = [
-      { id: 'Nitzan', label: 'ניצן', color: '#16a085' },
-      { id: 'Old', label: 'ישן', color: '#000', deleted: true },
-    ];
-    const sanitized = sanitizeCertificationIds(
-      ['Nitzan', ' Nitzan ', 'Nitzan', 'Old', 'Ghost', 42, '', null],
-      certDefs,
-    );
-    assert(
-      JSON.stringify(sanitized) === JSON.stringify(['Nitzan']),
-      'C7.7: sanitizeCertIds trims/dedupes/drops deleted+unknown+non-string',
-    );
-    assert(sanitizeCertificationIds('x' as unknown, certDefs).length === 0, 'C7.7: sanitizeCertIds non-array -> []');
-
     // pakal-utils
     const pakDefs = normalizePakalDefinitions([
       { id: 'p1', label: ' One ' },
@@ -1000,6 +987,85 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
     assert(
       tailDefaults.defaultDay === '3' && tailDefaults.defaultHour === '3',
       'C7.11: anchorToPickerDefaults — op-day-3 tail (03:00) → {3, 3}',
+    );
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // C7.12 — liveAnchorFromPicker (C1) + exportDaySnapshot base-date (C4)
+  //         Caller-level guards: both bugs were callers feeding a correct helper
+  //         the wrong inputs — a non-tail-aware offset (C1) / a stale live base
+  //         date (C4). The helpers themselves are covered elsewhere.
+  // ───────────────────────────────────────────────────────────────────────────
+  console.log('\n── C7.12: live picker anchor + day-export base ──');
+  {
+    // Frozen schedule grid: periodStart 2020-01-05, dayStartHour 5.
+    const sched = {
+      periodStart: new Date(2020, 0, 5),
+      periodDays: 3,
+      algorithmSettings: { dayStartHour: 5 },
+    } as unknown as Schedule;
+
+    // Daytime hour (>= dayStartHour): calendar offset dayIdx-1 — identical to the
+    // pre-fix literal, so non-tail picks are unchanged.
+    assert(
+      liveAnchorFromPicker(sched, 1, 10).getTime() === new Date(2020, 0, 5, 10, 0).getTime(),
+      'C7.12: liveAnchorFromPicker day-1 hour-10 (daytime) → Jan-5 10:00 (== legacy offset)',
+    );
+    // TAIL hour (< dayStartHour): the bug case — rolls to the op-day's
+    // post-midnight tail (Jan-6), NOT one calendar day early (legacy gave Jan-5).
+    assert(
+      liveAnchorFromPicker(sched, 1, 3).getTime() === new Date(2020, 0, 6, 3, 0).getTime(),
+      'C7.12: liveAnchorFromPicker day-1 hour-3 (tail) → Jan-6 03:00 (tail of op-day 1, not Jan-5)',
+    );
+    // Exactly at dayStartHour → base date (boundary is not a tail); one tick below → tail.
+    assert(
+      liveAnchorFromPicker(sched, 1, 5).getTime() === new Date(2020, 0, 5, 5, 0).getTime() &&
+        liveAnchorFromPicker(sched, 1, 4).getTime() === new Date(2020, 0, 6, 4, 0).getTime(),
+      'C7.12: liveAnchorFromPicker boundary hour-5 → Jan-5 05:00; hour-4 → Jan-6 04:00 (tail)',
+    );
+    // dayStartHour=0 ⇒ no tail exists; every hour stays on the base date (no-op proof).
+    const schedZero = { ...sched, algorithmSettings: { dayStartHour: 0 } } as unknown as Schedule;
+    assert(
+      liveAnchorFromPicker(schedZero, 2, 0).getTime() === new Date(2020, 0, 6, 0, 0).getTime() &&
+        liveAnchorFromPicker(schedZero, 2, 23).getTime() === new Date(2020, 0, 6, 23, 0).getTime(),
+      'C7.12: liveAnchorFromPicker dayStartHour=0 → no tail; day-2 hours 0 and 23 both on Jan-6',
+    );
+    // Non-default dayStartHour=22 ⇒ hour 0 is a tail hour.
+    const sched22 = { ...sched, algorithmSettings: { dayStartHour: 22 } } as unknown as Schedule;
+    assert(
+      liveAnchorFromPicker(sched22, 1, 0).getTime() === new Date(2020, 0, 6, 0, 0).getTime(),
+      'C7.12: liveAnchorFromPicker dayStartHour=22 day-1 hour-0 (tail) → Jan-6 00:00',
+    );
+
+    // exportDaySnapshot (C4): the day window + captured assignments follow the
+    // base date passed in. Frozen periodStart selects op-day 1; a stale base
+    // (one calendar day later) shifts the window and drops the day-1 assignment.
+    const exSched = {
+      tasks: [
+        {
+          id: 't1',
+          name: 'T',
+          sourceName: 'T',
+          timeBlock: { start: new Date(2020, 0, 5, 10, 0), end: new Date(2020, 0, 5, 14, 0) },
+          blocksConsecutive: false,
+          baseLoadWeight: 1,
+        },
+      ],
+      participants: [{ id: 'p1', name: 'Alice', level: 2, certifications: [], group: 'G1' }],
+      assignments: [{ id: 'a1', taskId: 't1', participantId: 'p1' }],
+    } as unknown as Schedule;
+
+    const snapFrozen = exportDaySnapshot(exSched, 1, new Date(2020, 0, 5), 5);
+    assert(
+      snapFrozen.dayWindow.start === new Date(2020, 0, 5, 5, 0).toISOString() &&
+        snapFrozen.participants.length === 1 &&
+        snapFrozen.participants[0].name === 'Alice',
+      'C7.12: exportDaySnapshot frozen periodStart → op-day-1 window captures Alice',
+    );
+    const snapStale = exportDaySnapshot(exSched, 1, new Date(2020, 0, 6), 5);
+    assert(
+      snapStale.dayWindow.start === new Date(2020, 0, 6, 5, 0).toISOString() && snapStale.participants.length === 0,
+      'C7.12: exportDaySnapshot stale base (+1 day) shifts window and drops the assignment (why frozen base is required)',
     );
   }
 

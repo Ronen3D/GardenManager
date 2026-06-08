@@ -32,18 +32,3 @@ export function normalizeCertificationDefinitions(raw: unknown): CertificationDe
 
   return normalized;
 }
-
-export function sanitizeCertificationIds(raw: unknown, definitions: CertificationDefinition[]): string[] {
-  if (!Array.isArray(raw)) return [];
-  const validIds = new Set(definitions.filter((d) => !d.deleted).map((def) => def.id));
-  const result: string[] = [];
-  const seen = new Set<string>();
-  for (const value of raw) {
-    if (typeof value !== 'string') continue;
-    const id = value.trim();
-    if (!id || seen.has(id) || !validIds.has(id)) continue;
-    seen.add(id);
-    result.push(id);
-  }
-  return result;
-}

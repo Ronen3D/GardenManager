@@ -148,6 +148,7 @@ import {
   Level,
   type OneTimeTask,
   type Participant,
+  type ParticipantSet,
   type Schedule,
   type SchedulerConfig,
   type SlotTemplate,
@@ -1700,6 +1701,31 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     // loadParticipantSet pushes 1 checkpoint, but addParticipant also pushed 1,
     // so depthAfter should be depthBefore + 2 (one for add, one for load)
     assert(depthAfter === depthBefore + 2, 'I6.9: Load pushes undo checkpoint (depth +2: add + load)');
+
+    // 10. Orphaned cert ids survive the participant-set normalize path
+    //     (importParticipantSetDirect → _normalizeParticipantSet). Under the cert
+    //     soft-delete model orphans stay on the participant and surface via the ⚠
+    //     badge — only pakalIds are hard-sanitized at load. 'Ghost' is absent from
+    //     the set's certificationCatalog yet must be preserved on the participant.
+    store.factoryReset();
+    localStorage.clear();
+    store.initStore();
+    const orphanSet: ParticipantSet = {
+      id: 'pset-orphan-test',
+      name: 'orphan-cert-set',
+      description: '',
+      participants: [
+        { name: 'Orphan-P', level: Level.L2, certifications: ['Ghost'], group: 'G1', dateUnavailability: [] },
+      ],
+      certificationCatalog: [],
+      createdAt: 123,
+    };
+    assert(store.importParticipantSetDirect(orphanSet) === true, 'I6.10: Orphan-cert set imported');
+    const storedOrphan = store.getParticipantSetById('pset-orphan-test');
+    assert(
+      storedOrphan!.participants[0].certifications.includes('Ghost'),
+      'I6.10: Orphaned cert id preserved through normalize path',
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

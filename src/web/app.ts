@@ -94,6 +94,7 @@ import {
   getDayWindow,
   getVisibleDayIndices,
   hasDay0,
+  liveAnchorFromPicker,
   operationalHalfHourLabels,
   operationalHourOrder,
   resolveLogicalDayTimestamp,
@@ -101,6 +102,7 @@ import {
   taskEndsAfter,
   taskIntersectsDay,
   taskStartsBefore,
+  timestampToOpDayIndex,
   violationLabel,
 } from './schedule-utils';
 import { attachTripleClickOpener, clearAttemptScoreHistory, pushAttemptScore } from './score-breakdown-panel';
@@ -922,10 +924,10 @@ function renderDayNavigator(): string {
       ).length;
 
       if (liveMode.enabled) {
-        if (isDayFrozen(d, baseDate, liveMode.currentTimestamp, store.getDayStartHour())) {
+        if (isDayFrozen(d, baseDate, liveMode.currentTimestamp, dsh)) {
           frozenTag = `<span class="day-frozen-badge" title="היום הזה מוקפא כי הוא בעבר">🧊</span>`;
           frozenClass = ' day-tab-frozen';
-        } else if (isDayPartiallyFrozen(d, baseDate, liveMode.currentTimestamp, store.getDayStartHour())) {
+        } else if (isDayPartiallyFrozen(d, baseDate, liveMode.currentTimestamp, dsh)) {
           frozenTag = `<span class="day-frozen-badge day-frozen-partial" title="מוקפא חלקית לפי שעה נוכחית">⏳</span>`;
           frozenClass = ' day-tab-partial-frozen';
         }
@@ -1351,34 +1353,15 @@ function renderScheduleTab(preflight: ReturnType<typeof runPreflight>): string {
   // Build Live Mode day/hour options
   let liveModeControls = '';
   if (currentSchedule) {
-    const baseDate = currentSchedule.periodStart;
     const daySelectOpts: { value: string; label: string; selected: boolean }[] = [];
+    // Preselect the day the anchor falls on using the frozen op-day resolver (the
+    // same one anchorToPickerDefaults uses). The clamp guarantees exactly one
+    // match in [1, displayNumDays] when live mode is on, so no fallback is needed.
+    const selectedDay = liveMode.enabled
+      ? Math.max(1, Math.min(displayNumDays, timestampToOpDayIndex(liveMode.currentTimestamp, currentSchedule)))
+      : 0;
     for (let d = 1; d <= displayNumDays; d++) {
-      const label = `יום ${d}`;
-      let selected = false;
-      if (liveMode.enabled) {
-        const anchor = liveMode.currentTimestamp;
-        const dayStart = new Date(
-          baseDate.getFullYear(),
-          baseDate.getMonth(),
-          baseDate.getDate() + d - 1,
-          store.getDayStartHour(),
-          0,
-        );
-        const dayEnd = new Date(
-          baseDate.getFullYear(),
-          baseDate.getMonth(),
-          baseDate.getDate() + d,
-          store.getDayStartHour(),
-          0,
-        );
-        selected = anchor.getTime() >= dayStart.getTime() && anchor.getTime() < dayEnd.getTime();
-      }
-      daySelectOpts.push({ value: String(d), label, selected });
-    }
-    // Fallback: if no day matched (anchor outside schedule range), select day 1
-    if (liveMode.enabled && !daySelectOpts.some((o) => o.selected) && daySelectOpts.length > 0) {
-      daySelectOpts[0].selected = true;
+      daySelectOpts.push({ value: String(d), label: `יום ${d}`, selected: d === selectedDay });
     }
 
     const frozenDayStartHour = currentSchedule.algorithmSettings.dayStartHour;
@@ -4898,7 +4881,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.9.2</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.9.3</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -5875,7 +5858,7 @@ function wireScheduleEvents(container: HTMLElement): void {
       const snapshot = exportDaySnapshot(
         currentSchedule,
         currentDay,
-        store.getScheduleDate(),
+        currentSchedule.periodStart,
         currentSchedule.algorithmSettings.dayStartHour,
         new Map(Object.entries(currentSchedule.restRuleSnapshot)),
       );
@@ -6370,7 +6353,14 @@ function wireScheduleEvents(container: HTMLElement): void {
     // this fallback is defensive).
     const base = currentSchedule?.periodStart ?? store.getScheduleDate();
     const numDays = currentSchedule?.periodDays ?? store.getScheduleDays();
-    const ts = new Date(base.getFullYear(), base.getMonth(), base.getDate() + dayIdx - 1, hour, 0);
+    // Compose the anchor on the frozen op-day grid via the tail-aware helper so a
+    // tail hour (hour < dayStartHour) lands on the op-day's post-midnight tail,
+    // not one calendar day too early. Mirrors ensureLiveModeAnchor; the non-schedule
+    // branch is defensive (controls are gated on currentSchedule).
+    const dsh = currentSchedule?.algorithmSettings.dayStartHour ?? store.getDayStartHour();
+    const ts = currentSchedule
+      ? liveAnchorFromPicker(currentSchedule, dayIdx, hour)
+      : new Date(hourInOpDay(base, dsh, dayIdx, hour));
     store.setLiveModeTimestamp(ts);
     if (currentSchedule && store.getLiveModeState().enabled) {
       freezeAssignments(currentSchedule, ts);
