@@ -10,6 +10,8 @@
 import { addDays } from 'date-fns';
 import type { Schedule, Task } from '../models/types';
 import { operationalDateKey, taskOpDayStart } from '../utils/date-utils';
+import type { ColumnDefinition } from './layout-engine';
+import { getTaskAssignments } from './layout-engine';
 
 // ─── Day windowing ───────────────────────────────────────────────────────────
 
@@ -68,6 +70,74 @@ export function getNumDays(schedule: Schedule, dayStartHour: number = 5): number
     keys.add(operationalDateKey(taskOpDayStart(t), dayStartHour));
   }
   return keys.size;
+}
+
+// ─── Split-slot folding (shared by the PDF + Excel day grids) ────────────────
+
+/**
+ * Row start-times for a section's day table, folding split slots. A split slot
+ * is shown as ONE row at the first half's start time, so the second half
+ * (`splitPart === 2`) does NOT contribute its midpoint start time when its
+ * part-1 sibling is present. Safety: if part-1 is absent (data anomaly), the
+ * orphan part-2 keeps its own row so an assignment is never silently dropped.
+ *
+ * Every presentation surface folds the pair identically — the on-screen grid
+ * via `renderAssignmentCard`'s empty-row skip, and the PDF + Excel day grids by
+ * consuming THIS helper. Use it instead of `getUniqueStartTimes` wherever a day
+ * table renders split-aware rows. With no split tasks present it is
+ * byte-identical to `getUniqueStartTimes` (same set of starts, same sort).
+ */
+export function getFoldedStartTimes(tasks: Task[]): number[] {
+  const times = new Set<number>();
+  for (const t of tasks) {
+    if (t.splitGroupId !== undefined && t.splitPart === 2) {
+      const hasPart1 = tasks.some((x) => x.splitGroupId === t.splitGroupId && x.splitPart === 1);
+      if (hasPart1) continue;
+    }
+    times.add(new Date(t.timeBlock.start).getTime());
+  }
+  return [...times].sort((a, b) => a - b);
+}
+
+/**
+ * Names for one Excel column at one time row, folding split slots. Mirrors the
+ * on-screen grid and the PDF's `columnNameEntries` (pdf-export.ts) — keep those
+ * two split-fold branches in sync: a split first-half slot this column owns
+ * renders as a single "firstHalf / secondHalf" string (the sibling second half
+ * folds in and is never emitted on its own); part-2 tasks are skipped;
+ * non-split slots are unchanged. `col.matchSlots` applies the column's slot
+ * filter (sub-team / source / flat), identical to the non-split path this
+ * replaces. Returns plain strings — Excel tints the whole cell with the section
+ * colour, so (unlike the PDF) no per-name group colour is carried here.
+ *
+ * `emptyLabel` is the placeholder for an unfilled half / slot, threaded through
+ * so the caller keeps one source of truth for the empty-slot string. With no
+ * split tasks present this reduces to the plain per-slot name collection.
+ */
+export function foldedColumnNames(
+  tasksAtTime: Task[],
+  col: ColumnDefinition,
+  schedule: Schedule,
+  emptyLabel: string,
+): string[] {
+  const out: string[] = [];
+  for (const tk of tasksAtTime) {
+    if (tk.splitGroupId !== undefined && tk.splitPart === 2) continue; // folded into part-1
+    if (tk.splitGroupId !== undefined && tk.splitPart === 1) {
+      const matched = col.matchSlots(tk, getTaskAssignments(tk, schedule));
+      if (matched.length === 0) continue; // this column does not own the split slot
+      const sib = schedule.tasks.find((t) => t.splitGroupId === tk.splitGroupId && t.splitPart === 2);
+      const nameB = (sib ? getTaskAssignments(sib, schedule).find((s) => s.participant) : undefined)?.participant?.name;
+      for (const s of matched) {
+        out.push(`${s.participant?.name ?? emptyLabel} / ${nameB ?? emptyLabel}`);
+      }
+      continue;
+    }
+    for (const s of col.matchSlots(tk, getTaskAssignments(tk, schedule))) {
+      out.push(s.participant?.name ?? emptyLabel);
+    }
+  }
+  return out;
 }
 
 // ─── Colour helpers ──────────────────────────────────────────────────────────

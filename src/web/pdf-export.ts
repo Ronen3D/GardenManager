@@ -39,7 +39,7 @@ import {
 import { fmtTime } from '../utils/date-utils';
 import { triggerShareOrDownload } from './data-transfer';
 import { buildDay0Schedule } from './day0-adapter';
-import { getTasksForDay, hexToRgb } from './export-utils';
+import { getFoldedStartTimes, getTasksForDay, hexToRgb } from './export-utils';
 import { type AssignedSlot, computeSectionMetrics, getTaskAssignments, type SectionMetrics } from './layout-engine';
 import { groupColor } from './ui-helpers';
 import { RUBIK_BOLD_FONT_BASE64 } from './utils/rubik-bold-font-data';
@@ -190,29 +190,14 @@ function nameEntry(p: { name: string; group: string }): NameEntry {
 }
 
 /**
- * Row start-times for a section. A split slot is shown as ONE row at the full
- * shift window, so the second half (`splitPart === 2`) does NOT contribute its
- * mid-point start time — it is folded into the first half's row. (If the
- * first half is somehow absent, the second half keeps its own row so the
- * assignment is never silently dropped.)
- */
-function sectionRowTimes(tasks: Task[]): number[] {
-  const times = new Set<number>();
-  for (const t of tasks) {
-    if (t.splitGroupId !== undefined && t.splitPart === 2) {
-      const hasPart1 = tasks.some((x) => x.splitGroupId === t.splitGroupId && x.splitPart === 1);
-      if (hasPart1) continue;
-    }
-    times.add(new Date(t.timeBlock.start).getTime());
-  }
-  return [...times].sort((a, b) => a - b);
-}
-
-/**
  * Names for one column at one time row. Mirrors the on-screen grid's split
  * merge: a split first-half slot renders as a single "firstHalf / secondHalf"
  * entry (the sibling second half folds in and is never drawn on its own);
  * non-split slots are unchanged. `accept` applies the column's slot filter.
+ *
+ * The split-fold branch here is the colour-carrying twin of `foldedColumnNames`
+ * in export-utils.ts (which the Excel grid uses). Keep both in sync. Row-time
+ * folding is shared via `getFoldedStartTimes` (export-utils.ts).
  */
 function columnNameEntries(tasksAtTime: Task[], schedule: Schedule, accept: (s: AssignedSlot) => boolean): NameEntry[] {
   const out: NameEntry[] = [];
@@ -389,7 +374,7 @@ function planDayLayoutForPdf(
   for (const section of sections) {
     const columns = buildLogicalColumns(section, schedule);
     if (columns.length === 0) continue;
-    const uniqueTimes = sectionRowTimes(section.tasks);
+    const uniqueTimes = getFoldedStartTimes(section.tasks);
     meta.set(section.id, {
       section,
       columns,

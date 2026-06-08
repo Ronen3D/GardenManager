@@ -21,8 +21,8 @@ import type { AssignmentStatus, Level, Participant, Schedule, SlotRequirement, T
 import { fmtTime } from '../utils/date-utils';
 import { getCategoryColorMap } from './config-store';
 import { buildDay0Schedule } from './day0-adapter';
-import { getDayWindow, getTasksForDay, rgbToArgb, tint } from './export-utils';
-import { computeSectionMetrics, getTaskAssignments, getUniqueStartTimes, inferColumnStrategy } from './layout-engine';
+import { foldedColumnNames, getDayWindow, getFoldedStartTimes, getTasksForDay, rgbToArgb, tint } from './export-utils';
+import { computeSectionMetrics, getTaskAssignments, inferColumnStrategy } from './layout-engine';
 
 // ─── Style constants ─────────────────────────────────────────────────────────
 
@@ -105,7 +105,7 @@ function buildDaySheet(ws: Worksheet, schedule: Schedule, dayIndex: number, dayS
     const columns = strategy(section.tasks);
     if (columns.length === 0) continue;
 
-    const uniqueTimes = getUniqueStartTimes(section.tasks);
+    const uniqueTimes = getFoldedStartTimes(section.tasks);
     const sectionColor = categoryColors[section.id] || section.tasks[0]?.color || DEFAULT_TASK_COLOR;
     const tintedHeader = rgbToArgb(tint(sectionColor, 0.55));
     const tintedCell = rgbToArgb(tint(sectionColor));
@@ -155,14 +155,11 @@ function buildDaySheet(ws: Worksheet, schedule: Schedule, dayIndex: number, dayS
       let maxCardsInRow = 1;
       for (let c = 0; c < columns.length; c++) {
         const col = columns[c];
-        const names: string[] = [];
-        for (const task of timeTasks) {
-          const allSlots = getTaskAssignments(task, schedule);
-          const matched = col.matchSlots(task, allSlots);
-          for (const s of matched) {
-            names.push(s.participant?.name ?? '(פנוי)');
-          }
-        }
+        // Fold split #a/#b halves into one "A / B" entry — same treatment as
+        // the on-screen grid and the PDF (foldedColumnNames mirrors the PDF's
+        // columnNameEntries). With no split tasks this is the plain per-slot
+        // name collection. Empty slot/half placeholder stays '(פנוי)'.
+        const names = foldedColumnNames(timeTasks, col, schedule, '(פנוי)');
         const cell = row.getCell(c + 2);
         cell.value = names.length ? names.join('\n') : '—';
         cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };

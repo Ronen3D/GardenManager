@@ -289,6 +289,7 @@ export async function runExportLayoutTests(assert: AssertFn): Promise<void> {
   testC57_day0Adapter(assert);
   testC58_pdfPacker(assert);
   testC59_pdfSpread(assert);
+  await testC510_excelFoldsSplitHalves(assert);
 
   console.log('── WP5 export/layout tests complete ───────────');
 }
@@ -1255,6 +1256,85 @@ function testC59_pdfSpread(assert: AssertFn): void {
   assert(
     Math.abs(soloCenterY - geo.heightBudget / 2) <= 2,
     `C5.9: single-section — vertically centered (y-center=${soloCenterY.toFixed(1)})`,
+  );
+}
+
+// ─── C5.10 — Excel day sheet folds split #a/#b halves into one row ───────────
+// Regression gate for the bug where the Excel presentation sheet printed a
+// split slot as TWO separate name cells at two time rows (#a at the shift
+// start, #b at the midpoint), while the on-screen grid and the PDF already
+// folded the pair into one "A / B" row. The fix routes the Excel day grid
+// through the shared getFoldedStartTimes + foldedColumnNames helpers
+// (export-utils.ts), so all three surfaces fold identically. See CLAUDE.md
+// shift-splitting rule.
+async function testC510_excelFoldsSplitHalves(assert: AssertFn): Promise<void> {
+  // One occurrence [09:00,11:00] on op-day 1, split at its 10:00 midpoint into
+  // #a (Alice) and #b (Bob). Both halves bucket to op-day 1 (taskOpDayStart
+  // recovers the occurrence start for #b via end − splitOriginalMs).
+  const a0 = opDayStart(1); // op-day 1 start (05:00 local)
+  const occMs = 2 * HOUR; // full pre-split occurrence duration
+  const halfA = mkTask('occ::s1#a', a0 + 4 * HOUR, a0 + 5 * HOUR, {
+    slots: [mkSlot({ slotId: 's1#a' })],
+    splitGroupId: 'occ::s1',
+    splitPart: 1,
+    splitOccurrenceId: 'occ',
+    splitOriginalMs: occMs,
+  });
+  const halfB = mkTask('occ::s1#b', a0 + 5 * HOUR, a0 + 6 * HOUR, {
+    slots: [mkSlot({ slotId: 's1#b' })],
+    splitGroupId: 'occ::s1',
+    splitPart: 2,
+    splitOccurrenceId: 'occ',
+    splitOriginalMs: occMs,
+  });
+  const alice = mkParticipant('p-a', 'Alice');
+  const bob = mkParticipant('p-b', 'Bob');
+  const assignments: Assignment[] = [
+    {
+      id: 'a1',
+      taskId: 'occ::s1#a',
+      slotId: 's1#a',
+      participantId: 'p-a',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+    {
+      id: 'a2',
+      taskId: 'occ::s1#b',
+      slotId: 's1#b',
+      participantId: 'p-b',
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    },
+  ];
+  const schedule = mkSchedule({
+    id: 'c510',
+    tasks: [halfA, halfB],
+    participants: [alice, bob],
+    assignments,
+    periodDays: 1,
+  });
+
+  const wb = await captureWeeklyExcel(schedule);
+  const ws = wb.getWorksheet('יום 1') ?? wb.worksheets.find((w) => /^יום\s+1$/.test(w.name));
+  assert(!!ws, 'C5.10: weekly Excel emits the day-1 sheet');
+  if (!ws) return;
+
+  // Flat single-source section ⇒ one data column (column 2; column 1 is time).
+  // Collect every column-2 cell that carries a participant name.
+  const nameCells: string[] = [];
+  ws.eachRow((row) => {
+    const v = row.getCell(2).value;
+    if (typeof v === 'string' && (v.includes('Alice') || v.includes('Bob'))) nameCells.push(v);
+  });
+
+  assert(
+    nameCells.length === 1,
+    `C5.10: split slot folds to ONE Excel data cell (pre-fix: 2 separate rows) — got ${nameCells.length}`,
+  );
+  assert(
+    nameCells[0] === 'Alice / Bob',
+    `C5.10: folded cell shows "Alice / Bob" (part-1 first) — got ${JSON.stringify(nameCells[0])}`,
   );
 }
 
