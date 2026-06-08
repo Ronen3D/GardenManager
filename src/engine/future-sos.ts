@@ -739,6 +739,13 @@ export function generateBatchRescuePlans(
     extraUnavailability,
     extraCapabilityLoss,
     excludeParticipantIds: new Set([request.participantId]),
+    // The focal's vacated slots: when the focal is reassigned into a
+    // donor-receiver role, the enumerator strips these from its eligibility
+    // list so HC-5/12/14/15 model the post-plan freed state (not a phantom
+    // double-booking on slots this batch is vacating). `affected` excludes the
+    // focal's kept opt-out (`excludedInWindow`) and `lockedInPast` blocks, which
+    // must remain real blockers — only genuinely-vacated slots are stripped.
+    focalVacatedAssignmentIds: new Set(affected.map((a) => a.assignment.id)),
   };
 
   // Inner helper — runs enumeration + DFS composition + scoring at a given

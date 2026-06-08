@@ -129,6 +129,21 @@ export interface SlotEnumerationContext {
    */
   excludeParticipantIds: Set<string>;
   /**
+   * Assignment ids the batch is vacating from the focal (Future-SOS affected
+   * slots / capability-change cert-affected slots). When the focal occupies a
+   * donor-receiver role (q/r/s/t), these are removed from its PERSONAL
+   * eligibility list so HC-5/12/14/15 model the post-plan state where the batch
+   * has freed them — not the stale pre-plan booking. The terminal role used to
+   * keep the current vacated slot in the focal's list (over-pruning valid
+   * focal-reassignment plans); intermediate roles only stripped the current
+   * slot, so the focal's OTHER vacated slots still over-pruned in multi-slot
+   * batches. MUST contain only assignments actually being vacated — never the
+   * focal's KEPT / opt-out / locked blocks, which remain real blockers. Absent
+   * for inject (synthetic placeholder focal) ⇒ enumerators fall back to just the
+   * current `vacatedAssignment.id`, a no-op for the placeholder.
+   */
+  focalVacatedAssignmentIds?: Set<string>;
+  /**
    * Optional order-bias hint: when set, depth-2/3/4/5 try this participant
    * first in the `q`/`r`/`s`/`t` candidate-role loops. Pure iteration-order
    * bias — does not affect eligibility, exclusion, scoring, or depth caps.
@@ -294,6 +309,33 @@ function participantAssignmentsExcluding(
 }
 
 /**
+ * The focal's batch-vacated assignment ids for the current enumeration, always
+ * including the slot being filled (`vacatedAssignment.id`) defensively. Threaded
+ * from the batch caller via `ctx.focalVacatedAssignmentIds`; falls back to just
+ * the current slot when absent (inject's placeholder focal).
+ */
+function focalVacatedExcl(ctx: SlotEnumerationContext, vacatedAssignment: Assignment): Set<string> {
+  const s = new Set(ctx.focalVacatedAssignmentIds ?? []);
+  s.add(vacatedAssignment.id);
+  return s;
+}
+
+/**
+ * Build the exclusion set for a donor-receiver role's PERSONAL eligibility list:
+ * the chain donor ids being handed off, unioned with the focal's batch-vacated
+ * assignments (`focalExcl`). When the receiver IS the focal this removes the
+ * slots the batch frees, so HC-5/12/14/15 see the post-plan state instead of a
+ * phantom double-booking; when it is anyone else it is a no-op (those ids belong
+ * only to the focal). PERSONAL lists only — the task-level `taskAssignmentsFor`
+ * exclusion (HC-4 / HC-8) is intentionally left unchanged.
+ */
+function personalExclWithFocal(focalExcl: Set<string>, ...donorIds: string[]): Set<string> {
+  const s = new Set(focalExcl);
+  for (const id of donorIds) s.add(id);
+  return s;
+}
+
+/**
  * Move the priority participant to the front of the iteration list while
  * preserving the relative order of all other entries. No-op when priorityId
  * is undefined, not found in the list, or already at index 0. Allocates a
@@ -381,6 +423,7 @@ function depth2(
     ctx.assignmentsByParticipant,
   );
   const vacatedStart = vacatedTask.timeBlock.start.getTime();
+  const focalExcl = focalVacatedExcl(ctx, vacatedAssignment);
 
   for (const p of sortedParticipants) {
     if (p.id === vacatedAssignment.participantId) continue;
@@ -420,9 +463,12 @@ function depth2(
         // will reject them for in-window donor tasks while allowing reassignment
         // to outside-window donor tasks. This is the Future-SOS "reassign focal
         // elsewhere" path; do not filter focal out structurally here.
+        // `focalExcl` strips the focal's batch-vacated slots from its own
+        // eligibility list so HC-5/12/14/15 model the post-plan freed state, not
+        // a phantom double-booking on the very slot this chain vacates.
         if (q.id === p.id) continue;
 
-        const qAssignments = participantAssignmentsExcluding(ctx, q.id, new Set([donor.id]));
+        const qAssignments = participantAssignmentsExcluding(ctx, q.id, personalExclWithFocal(focalExcl, donor.id));
         const donorExcl = new Set([donor.id, vacatedAssignment.id]);
         const donorExtra =
           donorTask.id === vacatedTask.id ? [{ slotId: vacatedSlot.slotId, participantId: p.id }] : undefined;
@@ -503,6 +549,7 @@ function depth3(
   const N = ctx.schedule.participants.length;
   const MAX_P_DONORS = Math.max(5, Math.ceil(N / 8));
   const MAX_Q_DONORS = Math.max(3, Math.ceil(N / 12));
+  const focalExcl = focalVacatedExcl(ctx, vacatedAssignment);
   const sortedParticipants = sortParticipantsByLoadProximity(
     ctx.schedule.participants,
     vacatedTask,
@@ -546,9 +593,11 @@ function depth3(
         continue;
 
       for (const q of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
-        // q may be focal — HC-3 via extraUnavailability rejects them for
-        // in-window donor tasks; outside-window donor tasks are a valid
+        // q (intermediate) may be focal — HC-3 via extraUnavailability rejects
+        // them for in-window donor tasks; outside-window donor tasks are a valid
         // reassignment of the focal participant (Future-SOS product intent).
+        // The qWithout personal list below strips `focalExcl` (the focal's
+        // batch-vacated slots) so HC-5/12/14/15 see the post-plan freed state.
         if (q.id === p.id) continue;
 
         const qAssignments = ctx.assignmentsByParticipant.get(q.id) || [];
@@ -568,7 +617,8 @@ function depth3(
           if (!donorQSlot) continue;
 
           const donorPExcl = new Set([donorP.id, donorQ.id, vacatedAssignment.id]);
-          const qWithout = participantAssignmentsExcluding(ctx, q.id, donorPExcl);
+          const qExcl = personalExclWithFocal(focalExcl, donorP.id, donorQ.id);
+          const qWithout = participantAssignmentsExcluding(ctx, q.id, qExcl);
           const donorPExtra: Array<{ slotId: string; participantId: string }> = [];
           if (donorPTask.id === vacatedTask.id) {
             donorPExtra.push({ slotId: vacatedSlot.slotId, participantId: p.id });
@@ -594,12 +644,15 @@ function depth3(
             continue;
 
           for (const r of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
-            // r may be focal — HC-3 via extraUnavailability rejects focal
-            // for in-window donor tasks; outside-window donor tasks are a
-            // valid focal reassignment under Future-SOS intent.
+            // r (terminal) may be focal — HC-3 via extraUnavailability rejects
+            // focal for in-window donor tasks; outside-window donor tasks are a
+            // valid focal reassignment under Future-SOS intent. `focalExcl`
+            // strips the focal's batch-vacated slots from its eligibility list so
+            // HC-5/12/14/15 see the post-plan freed state, not a phantom booking.
             if (r.id === p.id || r.id === q.id) continue;
 
-            const rAssignments = participantAssignmentsExcluding(ctx, r.id, new Set([donorQ.id]));
+            const rExcl = personalExclWithFocal(focalExcl, donorQ.id);
+            const rAssignments = participantAssignmentsExcluding(ctx, r.id, rExcl);
             const donorQExcl = new Set([donorQ.id, donorP.id, vacatedAssignment.id]);
 
             const donorQExtra: Array<{ slotId: string; participantId: string }> = [];
@@ -709,6 +762,7 @@ function depth4(
   const MAX_P_DONORS = 3;
   const MAX_Q_DONORS = 2;
   const MAX_R_DONORS = 2;
+  const focalExcl = focalVacatedExcl(ctx, vacatedAssignment);
   const sortedParticipants = sortParticipantsByLoadProximity(
     ctx.schedule.participants,
     vacatedTask,
@@ -771,7 +825,8 @@ function depth4(
           if (!donorQSlot) continue;
 
           const donorPExcl = new Set([donorP.id, donorQ.id, vacatedAssignment.id]);
-          const qWithout = participantAssignmentsExcluding(ctx, q.id, donorPExcl);
+          const qExcl = personalExclWithFocal(focalExcl, donorP.id, donorQ.id);
+          const qWithout = participantAssignmentsExcluding(ctx, q.id, qExcl);
           const donorPExtra: Array<{ slotId: string; participantId: string }> = [];
           if (donorPTask.id === vacatedTask.id) {
             donorPExtra.push({ slotId: vacatedSlot.slotId, participantId: p.id });
@@ -819,7 +874,8 @@ function depth4(
               if (!donorRSlot) continue;
 
               const donorQExcl = new Set([donorQ.id, donorR.id, donorP.id, vacatedAssignment.id]);
-              const rWithout = participantAssignmentsExcluding(ctx, r.id, donorQExcl);
+              const rExcl = personalExclWithFocal(focalExcl, donorQ.id, donorR.id, donorP.id);
+              const rWithout = participantAssignmentsExcluding(ctx, r.id, rExcl);
               const donorQExtra: Array<{ slotId: string; participantId: string }> = [];
               if (donorQTask.id === vacatedTask.id) {
                 donorQExtra.push({ slotId: vacatedSlot.slotId, participantId: p.id });
@@ -848,9 +904,13 @@ function depth4(
                 continue;
 
               for (const s of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
+                // s (terminal) may be focal — `focalExcl` strips the focal's
+                // batch-vacated slots so HC-5/12/14/15 model the post-plan
+                // freed state (depth-4 fallback; same fix as depth-2/3 terminals).
                 if (s.id === p.id || s.id === q.id || s.id === r.id) continue;
 
-                const sAssignments = participantAssignmentsExcluding(ctx, s.id, new Set([donorR.id]));
+                const sExcl = personalExclWithFocal(focalExcl, donorR.id);
+                const sAssignments = participantAssignmentsExcluding(ctx, s.id, sExcl);
                 const donorRExcl = new Set([donorR.id, donorQ.id, donorP.id, vacatedAssignment.id]);
 
                 const donorRExtra: Array<{ slotId: string; participantId: string }> = [];
@@ -974,6 +1034,7 @@ function depth5(
   const MAX_Q_DONORS = 2;
   const MAX_R_DONORS = 2;
   const MAX_S_DONORS = 1;
+  const focalExcl = focalVacatedExcl(ctx, vacatedAssignment);
   const sortedParticipants = sortParticipantsByLoadProximity(
     ctx.schedule.participants,
     vacatedTask,
@@ -1036,7 +1097,8 @@ function depth5(
           if (!donorQSlot) continue;
 
           const donorPExcl = new Set([donorP.id, donorQ.id, vacatedAssignment.id]);
-          const qWithout = participantAssignmentsExcluding(ctx, q.id, donorPExcl);
+          const qExcl = personalExclWithFocal(focalExcl, donorP.id, donorQ.id);
+          const qWithout = participantAssignmentsExcluding(ctx, q.id, qExcl);
           const donorPExtra: Array<{ slotId: string; participantId: string }> = [];
           if (donorPTask.id === vacatedTask.id) {
             donorPExtra.push({ slotId: vacatedSlot.slotId, participantId: p.id });
@@ -1084,7 +1146,8 @@ function depth5(
               if (!donorRSlot) continue;
 
               const donorQExcl = new Set([donorQ.id, donorR.id, donorP.id, vacatedAssignment.id]);
-              const rWithout = participantAssignmentsExcluding(ctx, r.id, donorQExcl);
+              const rExcl = personalExclWithFocal(focalExcl, donorQ.id, donorR.id, donorP.id);
+              const rWithout = participantAssignmentsExcluding(ctx, r.id, rExcl);
               const donorQExtra: Array<{ slotId: string; participantId: string }> = [];
               if (donorQTask.id === vacatedTask.id) {
                 donorQExtra.push({ slotId: vacatedSlot.slotId, participantId: p.id });
@@ -1136,7 +1199,8 @@ function depth5(
                   if (!donorSSlot) continue;
 
                   const donorRExcl = new Set([donorR.id, donorS.id, donorQ.id, donorP.id, vacatedAssignment.id]);
-                  const sWithout = participantAssignmentsExcluding(ctx, s.id, donorRExcl);
+                  const sExcl = personalExclWithFocal(focalExcl, donorR.id, donorS.id, donorQ.id, donorP.id);
+                  const sWithout = participantAssignmentsExcluding(ctx, s.id, sExcl);
                   const donorRExtra: Array<{ slotId: string; participantId: string }> = [];
                   if (donorRTask.id === vacatedTask.id) {
                     donorRExtra.push({ slotId: vacatedSlot.slotId, participantId: p.id });
@@ -1168,9 +1232,13 @@ function depth5(
                     continue;
 
                   for (const t of withPriorityFirst(sortedParticipants, ctx.priorityParticipantId)) {
+                    // t (terminal) may be focal — `focalExcl` strips the focal's
+                    // batch-vacated slots so HC-5/12/14/15 model the post-plan
+                    // freed state (depth-5 fallback; same fix as depth-2/3/4 terminals).
                     if (t.id === p.id || t.id === q.id || t.id === r.id || t.id === s.id) continue;
 
-                    const tAssignments = participantAssignmentsExcluding(ctx, t.id, new Set([donorS.id]));
+                    const tExcl = personalExclWithFocal(focalExcl, donorS.id);
+                    const tAssignments = participantAssignmentsExcluding(ctx, t.id, tExcl);
                     const donorSExcl = new Set([donorS.id, donorR.id, donorQ.id, donorP.id, vacatedAssignment.id]);
 
                     const donorSExtra: Array<{ slotId: string; participantId: string }> = [];

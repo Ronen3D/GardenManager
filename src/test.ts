@@ -12628,6 +12628,284 @@ console.log('\n── Future SOS (batch rescue) ──────────�
     assert(plansWithFocalInWindow.length === 0, 'fsos-focal-reassign: HC-3 still blocks focal from in-window tasks');
   }
 
+  // ── Tests 6b–6e: focal-as-donor-receiver eligibility excludes batch-vacated slots ──
+  // Regression for the FSOS/capability-change over-pruning bug: when the focal is
+  // reassigned into a donor-receiver (q/r/s/t) role, its OWN slots being vacated by
+  // the batch used to remain in its eligibility list, so HC-5/12/14/15 falsely
+  // rejected valid focal-reassignment plans. The fix threads
+  // `focalVacatedAssignmentIds` into the enumerator (rescue-primitives.ts) so the
+  // focal's eligibility list models the post-plan freed state.
+  {
+    const ovScore: ScheduleScore = {
+      minRestHours: 0,
+      avgRestHours: 0,
+      workloadStdDev: 0,
+      totalPenalty: 0,
+      compositeScore: 0,
+      l0StdDev: 0,
+      l0AvgEffective: 0,
+      seniorStdDev: 0,
+      seniorAvgEffective: 0,
+      dailyPerParticipantStdDev: 0,
+      dailyGlobalStdDev: 0,
+      restPerGapBonus: 0,
+    };
+    const ovAvail = [{ start: new Date(2026, 4, 29), end: new Date(2026, 5, 5) }];
+    const mkOvP = (id: string): Participant => ({
+      id,
+      name: id,
+      level: Level.L0,
+      certifications: [],
+      group: 'A',
+      availability: ovAvail,
+      dateUnavailability: [],
+    });
+    const mkOvAsg = (id: string, taskId: string, slotId: string, participantId: string): Assignment => ({
+      id,
+      taskId,
+      slotId,
+      participantId,
+      status: AssignmentStatus.Scheduled,
+      updatedAt: new Date(),
+    });
+    const mkOvSched = (tasks: Task[], participants: Participant[], assignments: Assignment[]): Schedule => ({
+      id: 'ov-sched',
+      tasks,
+      participants,
+      assignments,
+      feasible: true,
+      score: ovScore,
+      violations: [],
+      generatedAt: new Date(),
+      algorithmSettings: { config: { ...DEFAULT_CONFIG }, disabledHardConstraints: [], dayStartHour: 5 },
+      periodStart: new Date(2025, 0, 1),
+      periodDays: 7,
+      restRuleSnapshot: {},
+      certLabelSnapshot: {},
+    });
+    const day1 = new Date(2026, 5, 1);
+    const ovAnchor = new Date(2026, 4, 30);
+
+    // ── T1: HC-15 recovery shadow (Part A, single-slot, 2 participants) ──
+    // focal holds V 12–16 with a 4h recovery rule (recovery window 16–20). P1
+    // holds D 16–18 (outside the focal's 12–16 unavailability window but inside
+    // V's recovery shadow). The ONLY chain that fills V is P1→V with focal as Q
+    // taking D. Pre-fix: V stays in focal's list ⇒ HC-15 phantom-rejects ⇒ no
+    // plan. Post-fix: V stripped ⇒ plan surfaced.
+    {
+      const V: Task = {
+        id: 't1-V',
+        name: 'V',
+        timeBlock: createTimeBlockFromHours(day1, 12, 16),
+        requiredCount: 1,
+        slots: [{ slotId: 't1-sV', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: false,
+        baseLoadWeight: 1,
+        sleepRecovery: { triggerShifts: [1], recoveryHours: 4 },
+      };
+      const D: Task = {
+        id: 't1-D',
+        name: 'D',
+        timeBlock: createTimeBlockFromHours(day1, 16, 18),
+        requiredCount: 1,
+        slots: [{ slotId: 't1-sD', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: false,
+        baseLoadWeight: 1,
+      };
+      const sched = mkOvSched(
+        [V, D],
+        [mkOvP('t1-focal'), mkOvP('t1-p1')],
+        [mkOvAsg('t1-aV', 't1-V', 't1-sV', 't1-focal'), mkOvAsg('t1-aD', 't1-D', 't1-sD', 't1-p1')],
+      );
+      const window = { start: new Date(2026, 5, 1, 12), end: new Date(2026, 5, 1, 16) };
+      const result = generateBatchRescuePlans(sched, { participantId: 't1-focal', window }, ovAnchor, {
+        config: { ...DEFAULT_CONFIG },
+        scoreCtx: buildFsosScoreCtx(sched.tasks, sched.participants),
+        maxPlans: 10,
+        caps: { depth1: 6, depth2: 8, depth3: 4 },
+      });
+      assert(result.affected.length === 1, 'fsos-overprune-T1: one affected in-window slot');
+      const focalToD = result.plans.filter((plan) =>
+        plan.swaps.some((sw) => sw.toParticipantId === 't1-focal' && sw.taskId === 't1-D'),
+      );
+      assert(
+        focalToD.length > 0,
+        'fsos-overprune-T1: HC-15 recovery-shadow no longer over-prunes focal reassignment to outside-window donor',
+      );
+    }
+
+    // ── T2: HC-12 boundary abutment (Part A, single-slot, 2 participants) ──
+    // V 12–16 and D 16–20 both blocksConsecutive; D abuts V's end. focal-as-Q on
+    // D was phantom-rejected by HC-12 against the still-listed V. Post-fix: surfaced.
+    {
+      const V: Task = {
+        id: 't2-V',
+        name: 'V',
+        timeBlock: createTimeBlockFromHours(day1, 12, 16),
+        requiredCount: 1,
+        slots: [{ slotId: 't2-sV', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: true,
+      };
+      const D: Task = {
+        id: 't2-D',
+        name: 'D',
+        timeBlock: createTimeBlockFromHours(day1, 16, 20),
+        requiredCount: 1,
+        slots: [{ slotId: 't2-sD', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: true,
+      };
+      const sched = mkOvSched(
+        [V, D],
+        [mkOvP('t2-focal'), mkOvP('t2-p1')],
+        [mkOvAsg('t2-aV', 't2-V', 't2-sV', 't2-focal'), mkOvAsg('t2-aD', 't2-D', 't2-sD', 't2-p1')],
+      );
+      const window = { start: new Date(2026, 5, 1, 12), end: new Date(2026, 5, 1, 16) };
+      const result = generateBatchRescuePlans(sched, { participantId: 't2-focal', window }, ovAnchor, {
+        config: { ...DEFAULT_CONFIG },
+        scoreCtx: buildFsosScoreCtx(sched.tasks, sched.participants),
+        maxPlans: 10,
+        caps: { depth1: 6, depth2: 8, depth3: 4 },
+      });
+      const focalToD = result.plans.filter((plan) =>
+        plan.swaps.some((sw) => sw.toParticipantId === 't2-focal' && sw.taskId === 't2-D'),
+      );
+      assert(
+        focalToD.length > 0,
+        'fsos-overprune-T2: HC-12 boundary abutment no longer over-prunes focal reassignment',
+      );
+    }
+
+    // ── T3: kept (non-affected) block STILL blocks the focal (Part B precision) ──
+    // focal holds V 12–16 (in-window, affected) AND K 16–18 (out-of-window, NOT
+    // affected — a genuine kept commitment). P1 holds D 16–18 overlapping K. The
+    // focal must NOT be reassigned onto D: K is not in focalVacatedAssignmentIds,
+    // so HC-5 against K still fires (guards against widening the strip to ALL of
+    // the focal's assignments). filler provides a valid alternative Q. Depth-3 is
+    // disabled so the focal can't side-step K by donating it in a deeper chain.
+    {
+      const V: Task = {
+        id: 't3-V',
+        name: 'V',
+        timeBlock: createTimeBlockFromHours(day1, 12, 16),
+        requiredCount: 1,
+        slots: [{ slotId: 't3-sV', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: false,
+      };
+      const K: Task = {
+        id: 't3-K',
+        name: 'K',
+        timeBlock: createTimeBlockFromHours(day1, 16, 18),
+        requiredCount: 1,
+        slots: [{ slotId: 't3-sK', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: false,
+      };
+      const D: Task = {
+        id: 't3-D',
+        name: 'D',
+        timeBlock: createTimeBlockFromHours(day1, 16, 18),
+        requiredCount: 1,
+        slots: [{ slotId: 't3-sD', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: false,
+      };
+      const sched = mkOvSched(
+        [V, K, D],
+        [mkOvP('t3-focal'), mkOvP('t3-p1'), mkOvP('t3-filler')],
+        [
+          mkOvAsg('t3-aV', 't3-V', 't3-sV', 't3-focal'),
+          mkOvAsg('t3-aK', 't3-K', 't3-sK', 't3-focal'),
+          mkOvAsg('t3-aD', 't3-D', 't3-sD', 't3-p1'),
+        ],
+      );
+      const window = { start: new Date(2026, 5, 1, 12), end: new Date(2026, 5, 1, 16) };
+      const result = generateBatchRescuePlans(sched, { participantId: 't3-focal', window }, ovAnchor, {
+        config: { ...DEFAULT_CONFIG },
+        scoreCtx: buildFsosScoreCtx(sched.tasks, sched.participants),
+        maxPlans: 10,
+        caps: { depth1: 6, depth2: 8, depth3: 0 },
+      });
+      assert(result.affected.length === 1, 'fsos-overprune-T3: only the in-window slot is affected (K is kept)');
+      assert(result.plans.length > 0, 'fsos-overprune-T3: a valid alternative plan exists (filler takes D)');
+      const focalToD = result.plans.filter((plan) =>
+        plan.swaps.some((sw) => sw.toParticipantId === 't3-focal' && sw.taskId === 't3-D'),
+      );
+      assert(
+        focalToD.length === 0,
+        'fsos-overprune-T3: kept block K still blocks focal from the overlapping donor (only affected slots are stripped)',
+      );
+    }
+
+    // ── T5: multi-slot compounding (Part B) ──
+    // focal holds V1 12–16 and V2 06–10 (V2 recovery 8h ⇒ window 10–18). P1 holds
+    // D 16–18 (in V2's recovery shadow, outside the focal window). Filling V1 with
+    // focal as Q on D was over-pruned by V2's recovery even after Part A removed
+    // V1 — Part B strips V2 too. A complete plan REQUIRES focal→D (only P1+filler
+    // can cover the two in-window slots), so this is decisive.
+    {
+      const V1: Task = {
+        id: 't5-V1',
+        name: 'V1',
+        timeBlock: createTimeBlockFromHours(day1, 12, 16),
+        requiredCount: 1,
+        slots: [{ slotId: 't5-sV1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: false,
+      };
+      const V2: Task = {
+        id: 't5-V2',
+        name: 'V2',
+        timeBlock: createTimeBlockFromHours(day1, 6, 10),
+        requiredCount: 1,
+        slots: [{ slotId: 't5-sV2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: false,
+        baseLoadWeight: 1,
+        sleepRecovery: { triggerShifts: [1], recoveryHours: 8 },
+      };
+      const D: Task = {
+        id: 't5-D',
+        name: 'D',
+        timeBlock: createTimeBlockFromHours(day1, 16, 18),
+        requiredCount: 1,
+        slots: [{ slotId: 't5-sD', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+        sameGroupRequired: false,
+        blocksConsecutive: false,
+        baseLoadWeight: 1,
+      };
+      const sched = mkOvSched(
+        [V1, V2, D],
+        [mkOvP('t5-focal'), mkOvP('t5-p1'), mkOvP('t5-filler')],
+        [
+          mkOvAsg('t5-aV1', 't5-V1', 't5-sV1', 't5-focal'),
+          mkOvAsg('t5-aV2', 't5-V2', 't5-sV2', 't5-focal'),
+          mkOvAsg('t5-aD', 't5-D', 't5-sD', 't5-p1'),
+        ],
+      );
+      const window = { start: new Date(2026, 5, 1, 6), end: new Date(2026, 5, 1, 16) };
+      const result = generateBatchRescuePlans(sched, { participantId: 't5-focal', window }, ovAnchor, {
+        config: { ...DEFAULT_CONFIG },
+        scoreCtx: buildFsosScoreCtx(sched.tasks, sched.participants),
+        maxPlans: 10,
+        caps: { depth1: 6, depth2: 8, depth3: 4 },
+      });
+      assert(result.affected.length === 2, 'fsos-overprune-T5: two affected in-window slots');
+      assert(result.plans.length > 0, 'fsos-overprune-T5: a complete multi-slot plan is found');
+      const focalToD = result.plans.filter((plan) =>
+        plan.swaps.some((sw) => sw.toParticipantId === 't5-focal' && sw.taskId === 't5-D'),
+      );
+      assert(
+        focalToD.length > 0,
+        "fsos-overprune-T5: focal's OTHER vacated slot (V2) no longer over-prunes the reassignment (Part B)",
+      );
+    }
+  }
+
   // ── Test 7: timedOut flag is surfaced when the DFS budget is exhausted ──
   {
     const p1: Participant = {

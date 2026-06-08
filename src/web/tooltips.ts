@@ -173,7 +173,7 @@ export function buildParticipantTooltipContent(
       ${actionsHtml}
       <span class="tt-level" style="background:${LEVEL_COLORS[p.level]}">${p.level}</span>
     </div>
-    <div class="tt-row"><span class="tt-label">קבוצה</span><span class="tt-value" style="color:${groupColor(p.group)}">${p.group}</span></div>
+    <div class="tt-row"><span class="tt-label">קבוצה</span><span class="tt-value" style="color:${groupColor(p.group)}">${escHtml(p.group)}</span></div>
     <div class="tt-row"><span class="tt-label">הסמכות</span><span class="tt-value">${certsHtml}</span></div>
     <div class="tt-row tt-row-wrap"><span class="tt-label">פק"לים</span><span class="tt-value">${pakalHtml}</span></div>
     <div class="tt-divider"></div>

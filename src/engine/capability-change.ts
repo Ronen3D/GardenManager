@@ -680,6 +680,12 @@ export function generateCapabilityChangePlans(
     // still apply. Surfaces focal-inclusive chains earlier in depth 3+
     // (which has internal break caps) and is harmless at depth 2.
     priorityParticipantId: request.participantId,
+    // The focal's cert-affected (being-vacated) slots: stripped from the focal's
+    // eligibility list when it occupies a donor-receiver role so HC-5/12/14/15
+    // model the post-plan freed state. `affected` is cert-affected only
+    // (findCertAffectedAssignments), so the focal's KEPT non-cert assignments
+    // correctly remain real blockers.
+    focalVacatedAssignmentIds: new Set(affected.map((a) => a.assignment.id)),
   };
 
   // Capacities for the proportional-target computation that drives the

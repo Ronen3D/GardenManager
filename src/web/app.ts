@@ -1297,7 +1297,7 @@ function renderParticipantSidebar(schedule: Schedule): string {
     // Mini bars — tiny workload indicators for each L0 participant
     html += `<div class="sidebar-mini">`;
     for (const entry of l0Entries) {
-      html += `<div class="sidebar-mini-bar" title="${entry.p.name}: ${entry.w.effectiveHours.toFixed(1)} שעות עומס"></div>`;
+      html += `<div class="sidebar-mini-bar" title="${escAttr(entry.p.name)}: ${entry.w.effectiveHours.toFixed(1)} שעות עומס"></div>`;
     }
     html += `</div></div>`;
     return html;
@@ -1442,7 +1442,7 @@ function renderScheduleTab(preflight: ReturnType<typeof runPreflight>): string {
     const crits = preflight.findings.filter((f) => f.severity === 'Critical');
     html += `<div class="alert alert-error">
       <strong>לא ניתן ליצור שיבוץ - נמצאו ${crits.length} בעיות קריטיות:</strong>
-      <ul>${crits.map((f) => `<li>${f.message}</li>`).join('')}</ul>
+      <ul>${crits.map((f) => `<li>${escHtml(f.message)}</li>`).join('')}</ul>
       <p>עבור ל<strong>מסך פירוט משימות</strong> כדי לתקן אותן.</p>
     </div>`;
   }
@@ -2172,8 +2172,8 @@ function renderSnapshotPanel(): string {
     const active = snapshots.find((s) => s.id === activeId);
     html += `<div class="snapshot-inline-form" id="snap-form">
       <div class="snapshot-form-row">
-        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" value="${active?.name || ''}" maxlength="100"${nameFieldInvalid} /></label>
-        <label>תיאור: <input class="snapshot-desc-input" type="text" id="snap-desc" value="${active?.description || ''}" /></label>
+        <label>שם: <input class="snapshot-name-input" type="text" id="snap-name" value="${escAttr(active?.name || '')}" maxlength="100"${nameFieldInvalid} /></label>
+        <label>תיאור: <input class="snapshot-desc-input" type="text" id="snap-desc" value="${escAttr(active?.description || '')}" /></label>
         <button class="btn-sm btn-primary" id="btn-snap-confirm-rename">שמור</button>
         <button class="btn-sm btn-outline" id="btn-snap-cancel">ביטול</button>
       </div>
@@ -2382,7 +2382,7 @@ function renderViolations(schedule: Schedule): string {
   };
 
   const renderItem = (v: ConstraintViolation): string =>
-    `<li dir="rtl"><code>${violationLabel(v.code)}</code> · ${v.message}</li>`;
+    `<li dir="rtl"><code>${violationLabel(v.code)}</code> · ${escHtml(v.message)}</li>`;
 
   const renderOtherDays = (items: ConstraintViolation[]): string => {
     const byDay = new Map<number | null, ConstraintViolation[]>();
@@ -2511,7 +2511,7 @@ function renderAssignmentsTable(schedule: Schedule): string {
     }
 
     if (taskAssignments.length === 0) {
-      html += `<tr class="row-warning"><td><strong>${task.name}</strong> ${crossDayTag}</td><td>${taskBadge(task)}</td>
+      html += `<tr class="row-warning"><td><strong>${escHtml(task.name)}</strong> ${crossDayTag}</td><td>${taskBadge(task)}</td>
         <td><span dir="ltr">${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}</span></td>
         <td colspan="6"><em class="text-danger">⚠ אין שיבוצים</em></td></tr>`;
       continue;
@@ -2525,13 +2525,13 @@ function renderAssignmentsTable(schedule: Schedule): string {
       html += `<tr class="${rowClass}" data-assignment-id="${a.id}">`;
       if (i === 0) {
         html += `<td rowspan="${taskAssignments.length}" class="task-cell task-tooltip-hover${taskIsFrozen ? ' task-cell-frozen' : ''}" data-task-id="${task.id}" style="border-inline-start:4px solid ${task.color || '#7f8c8d'}">
-          <strong>${task.name}</strong> ${crossDayTag}
+          <strong>${escHtml(task.name)}</strong> ${crossDayTag}
           ${taskIsFrozen ? '<span class="frozen-label">🧊 מוקפא</span>' : ''}</td>
           <td rowspan="${taskAssignments.length}">${taskBadge(task)}</td>
           <td rowspan="${taskAssignments.length}"><span dir="ltr">${fmt(task.timeBlock.start)}–${fmt(task.timeBlock.end)}</span></td>`;
       }
-      html += `<td><small>${slot?.label || task.name}</small></td>
-        <td><strong class="participant-hover" data-pid="${p?.id || ''}">${p?.name || '???'}</strong></td>
+      html += `<td><small>${escHtml(slot?.label || task.name)}</small></td>
+        <td><strong class="participant-hover" data-pid="${p?.id || ''}">${escHtml(p?.name || '???')}</strong></td>
         <td>${p ? levelBadge(p.level) : '—'}</td>
         <td>${p ? groupBadge(p.group) : '—'}</td>
         <td>${statusBadge(a.status)}</td>
@@ -2589,8 +2589,8 @@ function renderGanttChart(schedule: Schedule): string {
     if (row.blocks.length === 0) continue;
 
     html += `<div class="gantt-row"><div class="gantt-label-col">
-      <span class="gantt-name participant-hover" data-pid="${row.participantId}">${row.participantName}</span>
-      <span class="gantt-meta">${row.group} · ${row.level}</span>
+      <span class="gantt-name participant-hover" data-pid="${row.participantId}">${escHtml(row.participantName)}</span>
+      <span class="gantt-meta">${escHtml(row.group)} · ${row.level}</span>
     </div><div class="gantt-timeline-col">`;
 
     for (const block of row.blocks) {
@@ -4881,7 +4881,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.9.3</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.9.4</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>

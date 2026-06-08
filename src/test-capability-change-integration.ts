@@ -562,6 +562,103 @@ console.log('\n── Test 4: generateCapabilityChangePlans end-to-end ──');
   }
 }
 
+// ─── Test 4b — focal reassignment not over-pruned by a stale cert-affected slot ──
+// Regression for the shared rescue-primitives over-pruning bug: when the focal is
+// reassigned into a donor-receiver (q/r/s/t) role, its cert-affected slot V must be
+// stripped from its own eligibility list (via focalVacatedAssignmentIds) so a
+// time-based HC — HC-15 recovery here — does not phantom-reject a valid focal
+// reassignment. Mirrors FSOS test T1; capability-change shares the enumerators.
+
+console.log('\n── Test 4b: capability-change focal reassignment not over-pruned ──');
+{
+  // focal holds cert-gated V 12–16 with a 4h recovery rule (recovery 16–20).
+  // P1 holds non-cert D 16–18 (inside V's recovery shadow). Losing cert X frees
+  // V from the focal; the only chain that refills V is P1→V with focal as Q on D.
+  // Pre-fix: V lingers in focal's list ⇒ HC-15 phantom-rejects ⇒ no plan.
+  const tV = createTimeBlockFromHours(base, 12, 16);
+  const tD = createTimeBlockFromHours(base, 16, 18);
+  const taskV: Task = {
+    id: 'c4b-V',
+    name: 'V',
+    timeBlock: tV,
+    requiredCount: 1,
+    slots: [{ slotId: 'c4b-sV', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['X'], label: 'V' }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    baseLoadWeight: 1,
+    sleepRecovery: { triggerShifts: [1], recoveryHours: 4 },
+  };
+  const taskD: Task = {
+    id: 'c4b-D',
+    name: 'D',
+    timeBlock: tD,
+    requiredCount: 1,
+    slots: [{ slotId: 'c4b-sD', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [], label: 'D' }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    baseLoadWeight: 1,
+  };
+  const focal: Participant = {
+    id: 'c4b-focal',
+    name: 'Focal',
+    level: Level.L0,
+    certifications: ['X'],
+    group: 'G',
+    availability: wideAvail,
+    dateUnavailability: [],
+  };
+  const p1: Participant = {
+    id: 'c4b-p1',
+    name: 'P1',
+    level: Level.L0,
+    certifications: ['X'],
+    group: 'G',
+    availability: wideAvail,
+    dateUnavailability: [],
+  };
+  const sched = mkSchedule(
+    [taskV, taskD],
+    [focal, p1],
+    [
+      {
+        id: 'c4b-aV',
+        taskId: 'c4b-V',
+        slotId: 'c4b-sV',
+        participantId: 'c4b-focal',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+      {
+        id: 'c4b-aD',
+        taskId: 'c4b-D',
+        slotId: 'c4b-sD',
+        participantId: 'c4b-p1',
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      },
+    ],
+  );
+  const window = { start: new Date(2026, 5, 1, 12), end: new Date(2026, 5, 1, 16) };
+  const result = generateCapabilityChangePlans(
+    sched,
+    { participantId: 'c4b-focal', lostCertifications: ['X'], window },
+    earlyAnchor,
+    {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildScoreCtx(sched.tasks, sched.participants),
+      maxPlans: 10,
+    },
+  );
+  assert(result.affected.length === 1, 'capch-overprune: one cert-affected slot');
+  const focalToD = result.plans.filter((plan) =>
+    plan.swaps.some((sw) => sw.toParticipantId === 'c4b-focal' && sw.taskId === 'c4b-D'),
+  );
+  assert(
+    focalToD.length > 0,
+    'capch-overprune: HC-15 recovery-shadow no longer over-prunes focal reassignment (shared rescue-primitives fix)',
+  );
+}
+
 // ─── Test 5 — persistence / serialization round-trip ────────────────────────
 
 console.log('\n── Test 5: persistence round-trip preserves capabilityLoss ──');

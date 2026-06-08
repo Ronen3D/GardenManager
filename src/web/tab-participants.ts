@@ -99,10 +99,10 @@ function renderUnavailChips(pid: string): string {
 function renderPreferenceBadges(p: Participant): string {
   const parts: string[] = [];
   if (p.preferredTaskName) {
-    parts.push(`<span class="badge badge-sm" style="background:#27ae60">מעדיף: ${p.preferredTaskName}</span>`);
+    parts.push(`<span class="badge badge-sm" style="background:#27ae60">מעדיף: ${escHtml(p.preferredTaskName)}</span>`);
   }
   if (p.lessPreferredTaskName) {
-    parts.push(`<span class="badge badge-sm" style="background:#e67e22">פחות: ${p.lessPreferredTaskName}</span>`);
+    parts.push(`<span class="badge badge-sm" style="background:#e67e22">פחות: ${escHtml(p.lessPreferredTaskName)}</span>`);
   }
   return parts.length > 0 ? parts.join(' ') : '<span class="text-muted">—</span>';
 }

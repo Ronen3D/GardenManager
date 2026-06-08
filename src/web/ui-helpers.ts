@@ -105,9 +105,9 @@ export function certBadges(certs: string[], emptyLabel = '—'): string {
 export function groupBadge(group: string, clickable = false): string {
   const color = groupColor(group);
   if (clickable) {
-    return `<span class="badge badge-group-select" style="background:${color};cursor:pointer" data-select-group="${group}" title="בחר את כל חברי ${group}">${group}</span>`;
+    return `<span class="badge badge-group-select" style="background:${color};cursor:pointer" data-select-group="${escAttr(group)}" title="בחר את כל חברי ${escAttr(group)}">${escHtml(group)}</span>`;
   }
-  return `<span class="badge" style="background:${color}">${group}</span>`;
+  return `<span class="badge" style="background:${color}">${escHtml(group)}</span>`;
 }
 
 /** Task badge HTML from a task-like object with direct visual properties. */

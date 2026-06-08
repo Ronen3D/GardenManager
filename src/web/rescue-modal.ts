@@ -178,7 +178,7 @@ function showRescueModal(): void {
         <button class="rescue-close" id="btn-rescue-close">✕</button>
       </div>
       <div class="rescue-context">
-        <p>משבצת שהתפנתה על ידי <strong>${vacatedP?.name || '???'}</strong> ב-
+        <p>משבצת שהתפנתה על ידי <strong>${escHtml(vacatedP?.name || '???')}</strong> ב-
         <strong>${taskLabel(task ?? undefined, '???')}</strong></p>
       </div>
       <div class="rescue-plans">`;
@@ -242,9 +242,9 @@ function showRescueModal(): void {
       const sw = plan.swaps[i];
       const swP = pMap.get(sw.toParticipantId);
       const fromP = pMap.get(sw.fromParticipantId || '');
-      const assignedSpan = `<span class="rescue-participant-hover" data-pid="${sw.toParticipantId}" data-plan-id="${plan.id}"><strong>${swP?.name || '???'}</strong></span>`;
+      const assignedSpan = `<span class="rescue-participant-hover" data-pid="${sw.toParticipantId}" data-plan-id="${plan.id}"><strong>${escHtml(swP?.name || '???')}</strong></span>`;
       const fromSpan = fromP
-        ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${fromP.name}</span>`
+        ? `<span class="rescue-participant-hover" data-pid="${sw.fromParticipantId}" data-plan-id="${plan.id}">${escHtml(fromP.name)}</span>`
         : '';
 
       const swTask = taskMap.get(sw.taskId);
@@ -265,8 +265,8 @@ function showRescueModal(): void {
       const midLabel = `<span dir="ltr">${fmt(midDate)}</span>`;
       const startLabel = parentTask ? `<span dir="ltr">${fmt(parentTask.timeBlock.start)}</span>` : '';
       const endLabel = parentTask ? `<span dir="ltr">${fmt(parentTask.timeBlock.end)}</span>` : '';
-      const aSpan = `<span class="rescue-participant-hover" data-pid="${op.fillA.participantId}" data-plan-id="${plan.id}"><strong>${fillAP?.name || op.fillA.displayName}</strong></span>`;
-      const bSpan = `<span class="rescue-participant-hover" data-pid="${op.fillB.participantId}" data-plan-id="${plan.id}"><strong>${fillBP?.name || op.fillB.displayName}</strong></span>`;
+      const aSpan = `<span class="rescue-participant-hover" data-pid="${op.fillA.participantId}" data-plan-id="${plan.id}"><strong>${escHtml(fillAP?.name || op.fillA.displayName)}</strong></span>`;
+      const bSpan = `<span class="rescue-participant-hover" data-pid="${op.fillB.participantId}" data-plan-id="${plan.id}"><strong>${escHtml(fillBP?.name || op.fillB.displayName)}</strong></span>`;
       stepsHtml += `<li class="rescue-step-split">פיצול <strong>${escHtml(op.slotLabel)}</strong> <span class="split-badge">½</span> — ${aSpan} (${startLabel}–${midLabel}) / ${bSpan} (${midLabel}–${endLabel})</li>`;
     }
     stepsHtml += `</ol>`;
@@ -322,7 +322,7 @@ function showRescueModal(): void {
 /** Task label for swap steps: clean template name + time range, e.g. "שמש 13:00–17:00".
  *  For a split half, makes clear only half the shift is being filled. */
 function taskLabel(task: Task | undefined, fallbackName: string): string {
-  const name = task?.sourceName ?? stripDayPrefix(task?.name ?? fallbackName);
+  const name = escHtml(task?.sourceName ?? stripDayPrefix(task?.name ?? fallbackName));
   if (!task) return name;
   const sd = getSplitDisplay(task);
   const splitNote = sd
@@ -449,7 +449,7 @@ function buildRescueParticipantTooltip(
   periodStart: Date,
   dayStartHour: number,
 ): string {
-  let html = `<div class="rescue-hover-tt-header">${participantName} — משימות סביב המשבצת אם יוחל</div>`;
+  let html = `<div class="rescue-hover-tt-header">${escHtml(participantName)} — משימות סביב המשבצת אם יוחל</div>`;
   if (nextTasks.length === 0) {
     html += `<div class="rescue-hover-tt-empty">אין משימות קרובות</div>`;
   } else {
@@ -464,7 +464,7 @@ function buildRescueParticipantTooltip(
       const timeStr = `<span dir="ltr">${fmt(t.start)} – ${fmt(t.end)}</span>`;
       const refClass = t.isReference ? ' rescue-hover-tt-task--ref' : '';
       const refMarker = t.isReference ? ' ◄' : '';
-      html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${stripDayPrefix(t.taskName)}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
+      html += `<div class="rescue-hover-tt-task${refClass}">${i + 1}. ${escHtml(stripDayPrefix(t.taskName))}${refMarker}<span class="rescue-hover-tt-time">${dayStr} ${timeStr}</span></div>`;
     }
   }
   return html;
