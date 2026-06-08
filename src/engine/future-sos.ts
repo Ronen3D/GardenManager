@@ -214,28 +214,33 @@ export function applyCompositionToAssignments(schedule: Schedule, chains: Candid
 }
 
 /**
- * Build the (tasks, assignments) the composition would produce if applied.
- * Used by post-composition validation/scoring so the trial state mirrors
- * what `engine.applyPlanOps` actually commits — including split-induced
- * task-set mutations.
+ * Build the (tasks, assignments) that applying a plan's flat split + swap ops
+ * to a schedule would produce, WITHOUT mutating the schedule. Pure counterpart
+ * of `engine.applyPlanOps` and the shared core of `applyCompositionToState`.
+ * Takes a plan's flat fields directly (`BatchRescuePlan.splitOps` /
+ * `BatchRescuePlan.swaps`), so callers that only hold a plan — not the original
+ * `SlotCandidate[]` — can still reconstruct the post-plan view (e.g.
+ * capability-change's focal-continuity extension).
  *
- * Splits are applied first (rebuild tasks + assignment list); chain swaps
- * then run on the resulting assignment list with in-place participantId
- * substitution. Phase-1 plans are mono-kind per slot, so chains never refer
- * to a half-task and split halves carry fresh synthetic assignment ids.
+ * Splits are applied first (rebuild tasks + assignment list); chain swaps then
+ * run on the resulting assignment list with in-place participantId
+ * substitution. Phase-1 plans are mono-kind per slot, so swaps never refer to a
+ * half-task and split halves carry fresh synthetic assignment ids
+ * (`${originalAssignmentId}#a` / `#b`). Returns the schedule's own arrays by
+ * reference when nothing mutated, so callers' `result.tasks === schedule.tasks`
+ * fast-paths stay valid.
  */
-export function applyCompositionToState(
+export function applyPlanOpsToState(
   schedule: Schedule,
-  cands: SlotCandidate[],
+  splitOps: SplitOp[],
+  swaps: RescueSwap[],
 ): { tasks: Task[]; assignments: Assignment[] } {
   let tasks = schedule.tasks;
   let assignments = schedule.assignments;
   let mutatedTasks = false;
   let mutatedAsgs = false;
 
-  for (const c of cands) {
-    if (!isSplitCandidate(c)) continue;
-    const op = c.splitOp;
+  for (const op of splitOps) {
     const T = tasks.find((t) => t.id === op.taskId);
     if (!T) continue;
     const slot = T.slots.find((s) => s.slotId === op.slotId);
@@ -293,10 +298,7 @@ export function applyCompositionToState(
   // not touch the task set). Single .map() over the (possibly already
   // split-mutated) assignments preserves the post-split synthetic halves.
   const swapMap = new Map<string, string>();
-  for (const c of cands) {
-    if (isSplitCandidate(c)) continue;
-    for (const s of c.swaps) swapMap.set(s.assignmentId, s.toParticipantId);
-  }
+  for (const s of swaps) swapMap.set(s.assignmentId, s.toParticipantId);
   if (swapMap.size > 0) {
     assignments = assignments.map((a) => {
       const pid = swapMap.get(a.id);
@@ -309,6 +311,30 @@ export function applyCompositionToState(
     tasks: mutatedTasks ? tasks : schedule.tasks,
     assignments: mutatedAsgs ? assignments : schedule.assignments,
   };
+}
+
+/**
+ * Build the (tasks, assignments) the composition would produce if applied.
+ * Used by post-composition validation/scoring so the trial state mirrors
+ * what `engine.applyPlanOps` actually commits — including split-induced
+ * task-set mutations.
+ *
+ * Thin adapter over `applyPlanOpsToState`: projects the composition's split
+ * ops and chain swaps into flat lists. `chainsOf(...).flatMap(c => c.swaps)`
+ * preserves candidate + within-chain order, so swap last-write-wins is
+ * identical to the prior inline implementation. Phase-1 plans are mono-kind per
+ * slot, so chains never refer to a half-task and split halves carry fresh
+ * synthetic assignment ids.
+ */
+export function applyCompositionToState(
+  schedule: Schedule,
+  cands: SlotCandidate[],
+): { tasks: Task[]; assignments: Assignment[] } {
+  return applyPlanOpsToState(
+    schedule,
+    splitOpsOf(cands),
+    chainsOf(cands).flatMap((c) => c.swaps),
+  );
 }
 
 /**

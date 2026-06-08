@@ -1173,11 +1173,21 @@ export class SchedulingEngine {
       const halfB = makeSplitHalf(T, 2, midMs, endMs, slot);
 
       // Determine surviving slots (the slots NOT being split). When the
-      // parent is `sameGroupRequired`, stamp `sameGroupLinkId = T.id` on the
-      // residual so HC-8's link-union sees residual + halves as one unit —
-      // mirrors `splitSameGroup`'s residual at optimizer.ts:1373. Without
-      // this, `makeSplitHalf` stamps the halves but the residual stays
-      // unlinked, letting cross-group HC-8 violations on the residual pass.
+      // parent is `sameGroupRequired`, stamp `sameGroupLinkId` on the residual
+      // so HC-8's link-union sees residual + halves as one unit — mirrors
+      // `splitSameGroup`'s residual in optimizer.ts. Without this,
+      // `makeSplitHalf` stamps the halves but the residual stays unlinked,
+      // letting cross-group HC-8 violations on the residual pass.
+      //
+      // RE-SPLIT SAFETY: a residual is built via spread with no id override, so
+      // `Tr.id === T.id === occurrenceId` permanently. When T is itself a prior
+      // residual being re-split, `T.sameGroupLinkId` is already the occurrence
+      // id and `?? T.id` preserves it; `makeSplitHalf` stamps the new halves
+      // with `T.id` (= that same occurrence id). Every fragment from every
+      // split round therefore shares one link id — the union never fractures.
+      // The re-split guard above (`splitGroupId !== undefined`) intentionally
+      // blocks only halves, not residuals (a multi-slot occurrence may split
+      // different slots across rounds). Regression: runManualSplitApply Case 11.
       const survivingSlots = T.slots.filter((s) => s.slotId !== op.slotId);
       const replacementTasks: Task[] = [];
       if (survivingSlots.length > 0) {

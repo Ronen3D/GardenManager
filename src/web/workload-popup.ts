@@ -13,7 +13,7 @@ import { isTouchDevice } from './responsive';
 import { computePerDayHours, hasDay0 } from './schedule-utils';
 import { escAttr, escHtml, groupBadge, levelBadge } from './ui-helpers';
 import { showBottomSheet } from './ui-modal';
-import { computeWeeklyWorkloads } from './workload-utils';
+import { computeWeeklyWorkloads, getCapacityWindow } from './workload-utils';
 
 // ─── Callback injection ─────────────────────────────────────────────────────
 
@@ -177,12 +177,9 @@ export function openWorkloadPopup(
   // Capacity-aware: feed capacities to computeWeeklyWorkloads so the returned
   // WeeklyWorkload carries availableHours / loadRatio. The primary stat then
   // renders as utilization of the participant's actual available hours.
-  let schedStart = schedule.tasks[0]?.timeBlock.start ?? schedule.periodStart;
-  let schedEnd = schedule.tasks[0]?.timeBlock.end ?? schedule.periodStart;
-  for (const t of schedule.tasks) {
-    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
-    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
-  }
+  // Denominator window is the full operational period (not the min/max task span), so the
+  // "% of availability" headline describes the whole period — see getCapacityWindow.
+  const { start: schedStart, end: schedEnd } = getCapacityWindow(schedule);
   const capacities = computeAllCapacities(
     schedule.participants,
     schedStart,

@@ -1528,7 +1528,12 @@ export function applyFeasibilitySplits(ctx: FeasibilitySplitCtx): Task[] {
           ...T,
           slots: survivingSlots,
           requiredCount: survivingSlots.length,
-          sameGroupLinkId: T.id,
+          // T is the original occurrence here (Stage-4 runs before any split),
+          // so `T.sameGroupLinkId` is undefined and this resolves to `T.id` —
+          // byte-identical to the prior `T.id`. The `?? T.id` form matches the
+          // dynamic-flow residual sites (scheduler/inject/fsos/rescue) and is
+          // re-split-safe should T ever already carry a link id.
+          sameGroupLinkId: T.sameGroupLinkId ?? T.id,
         };
         taskMap.set(T.id, Tr);
         replacements.push(Tr);

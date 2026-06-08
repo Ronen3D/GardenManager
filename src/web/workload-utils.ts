@@ -5,7 +5,7 @@
  * tooltip, profile metrics, and sidebar computations (R1).
  */
 
-import type { Assignment, Participant, ParticipantCapacity, Task } from '../models/types';
+import type { Assignment, Participant, ParticipantCapacity, Schedule, Task } from '../models/types';
 import {
   computeTaskColdHours,
   computeTaskEffectiveHours,
@@ -142,4 +142,25 @@ export function computeWeeklyWorkloads(
   }
 
   return result;
+}
+
+/**
+ * Canonical operational-period window for capacity/utilization DISPLAY metrics:
+ * `[periodStart@dayStartHour, periodStart + periodDays days @dayStartHour)` (exclusive end).
+ *
+ * Use this for "% of availability" denominators so they describe the WHOLE period, not just
+ * the task-occupied span — otherwise a gappy/short-tailed schedule (leading/trailing op-days
+ * with no tasks) truncates the window and inflates the headline. Mirrors the period-window math
+ * in `schedule-utils.computeDefaultLiveAnchor`, and is a safe superset of every task.
+ *
+ * NOT for engine capacity (scheduler/optimizer/capability-change/auto-tuner) — those
+ * intentionally use the min/max task span for demand-proportional targets, where a day with no
+ * work needs no reserved capacity.
+ */
+export function getCapacityWindow(schedule: Schedule): { start: Date; end: Date } {
+  const dsh = schedule.algorithmSettings.dayStartHour;
+  const base = schedule.periodStart;
+  const start = new Date(base.getFullYear(), base.getMonth(), base.getDate(), dsh, 0);
+  const end = new Date(base.getFullYear(), base.getMonth(), base.getDate() + schedule.periodDays, dsh, 0);
+  return { start, end };
 }

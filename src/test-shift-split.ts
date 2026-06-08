@@ -2500,6 +2500,116 @@ function runManualSplitApply(assert: AssertFn): void {
       'Case 10: residual slot assignment preserved',
     );
   }
+
+  // ─── Case 11: RE-SPLIT of a sameGroupRequired residual keeps the HC-8 ─────
+  // link-union intact. Regression for the claim "re-splitting a same-group
+  // residual stamps halves with sameGroupLinkId=T.id while the residual keeps
+  // origOccId, fracturing the link-union and letting a cross-group assignment
+  // pass". It cannot: a residual's id IS the occurrence id, so makeSplitHalf
+  // (stamps T.id) and the residual stamp (T.sameGroupLinkId ?? T.id) both
+  // resolve to that one id on a re-split. The discriminating proof is the A/B
+  // pair below — identical except the s2 fillers' group: A (GROUP_X) is valid,
+  // B (GROUP_Y) MUST be rejected. B would wrongly pass iff the new s2-halves
+  // and the residual+s1-halves fell into separate, internally-consistent units.
+  {
+    const mkOccSched = () => {
+      const T: Task = {
+        id: 'msT11',
+        name: 'msT11',
+        sourceName: 'guard',
+        timeBlock: tb(0, 4),
+        requiredCount: 3,
+        slots: [
+          { slotId: 's1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+          { slotId: 's2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+          { slotId: 's3', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] },
+        ],
+        sameGroupRequired: true,
+        blocksConsecutive: false,
+        splittable: true,
+      };
+      const parts = [
+        mkPart('x11-a', 'GROUP_X'),
+        mkPart('x11-b', 'GROUP_X'),
+        mkPart('x11-c', 'GROUP_X'),
+        mkPart('x11-d', 'GROUP_X'),
+        mkPart('x11-e', 'GROUP_X'),
+        mkPart('y11-a', 'GROUP_Y'),
+        mkPart('y11-b', 'GROUP_Y'),
+      ];
+      const mk = (id: string, slotId: string, pid: string): Assignment => ({
+        id,
+        taskId: T.id,
+        slotId,
+        participantId: pid,
+        status: AssignmentStatus.Scheduled,
+        updatedAt: new Date(),
+      });
+      const aS1 = mk('a11-s1', 's1', 'x11-a');
+      const aS2 = mk('a11-s2', 's2', 'x11-b');
+      const aS3 = mk('a11-s3', 's3', 'x11-c');
+      const sched = mkSched([T], parts, [aS1, aS2, aS3]);
+      const eng = freshEngine(sched);
+      // First split: realize slot s1 as two GROUP_X halves (Xa keeps #a, Xd takes #b).
+      const first = eng.applyPlanOps({
+        splitOps: [buildSplitOp(T, 0, 'x11-a', 'x11-d', aS1, { groupLock: 'GROUP_X', sameGroupLinkId: T.id })],
+      });
+      return { T, sched, eng, aS2, first };
+    };
+
+    // Sub-case A: same-group re-split of the residual's s2 → valid, union intact.
+    {
+      const { T, sched, eng, aS2, first } = mkOccSched();
+      assert(first.valid, 'Case 11A: first split (s1) of same-group occurrence → valid');
+      const residual = sched.tasks.find((t) => t.id === T.id);
+      assert(
+        residual !== undefined && residual.slots.length === 2,
+        'Case 11A: residual carries the two un-split slots after first split',
+      );
+      const s2Idx = residual ? residual.slots.findIndex((s) => s.slotId === 's2') : -1;
+      const resA = eng.applyPlanOps({
+        splitOps: [
+          buildSplitOp(residual as Task, s2Idx, 'x11-b', 'x11-e', aS2, { groupLock: 'GROUP_X', sameGroupLinkId: T.id }),
+        ],
+      });
+      assert(resA.valid, 'Case 11A: re-split of same-group residual (GROUP_X) → valid');
+      const linked = sched.tasks.filter((t) => t.sameGroupLinkId === T.id);
+      assert(
+        linked.length === 5,
+        `Case 11A: all 5 fragments (residual + 4 halves) share sameGroupLinkId === occId (got ${linked.length})`,
+      );
+      const residual2 = sched.tasks.find((t) => t.id === T.id);
+      assert(
+        residual2 !== undefined &&
+          residual2.slots.length === 1 &&
+          residual2.slots[0].slotId === 's3' &&
+          residual2.sameGroupLinkId === T.id,
+        'Case 11A: second residual keeps only whole slot s3 and preserves the occurrence link id',
+      );
+    }
+
+    // Sub-case B (discriminator): cross-group re-split of the residual must be
+    // REJECTED. Same setup as A; only the s2 fillers' group differs (GROUP_Y).
+    {
+      const { T, sched, eng, aS2 } = mkOccSched();
+      const residual = sched.tasks.find((t) => t.id === T.id) as Task;
+      const tasksBefore = sched.tasks.length;
+      const s2Idx = residual.slots.findIndex((s) => s.slotId === 's2');
+      const resB = eng.applyPlanOps({
+        splitOps: [
+          buildSplitOp(residual, s2Idx, 'y11-a', 'y11-b', aS2, { groupLock: 'GROUP_Y', sameGroupLinkId: T.id }),
+        ],
+      });
+      assert(
+        !resB.valid,
+        'Case 11B: cross-group re-split of same-group residual → REJECTED (link-union enforced as one unit)',
+      );
+      assert(
+        sched.tasks.length === tasksBefore,
+        'Case 11B: rollback restored task set after rejected cross-group re-split',
+      );
+    }
+  }
 }
 
 // ─── Top-K structural deferral: multi-attempt selection + continuation + early-stop ──

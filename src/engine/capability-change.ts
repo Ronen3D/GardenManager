@@ -44,6 +44,7 @@ import { isSchedulerDiagOn } from './diagnostics';
 import {
   type AffectedAssignment,
   applyCompositionToState,
+  applyPlanOpsToState,
   type BatchRescuePlan,
   buildPerParticipantChanges,
   dfsCompose,
@@ -327,7 +328,30 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
   // Don't extend partial / HC-violating plans — they aren't applyable as-is.
   if (basePlan.isPartial || basePlan.violations.length > 0) return null;
 
-  const postPlanAssignments = applySwapsToAssignments(ctx.schedule, basePlan.swaps);
+  // Build the post-plan view split-aware. A base plan may carry `splitOps` that
+  // remove the focal's cert-lost assignment and add `#a`/`#b` halves; the
+  // swaps-only `applySwapsToAssignments` would leave the focal phantom-seated on
+  // the cert-lost slot (overcounting their hours so the gate misfires, and
+  // failing HC-2 at the final validation). `applyPlanOpsToState` mirrors what
+  // `engine.applyPlanOps` commits. Identity (byte-identical) when no splits, so
+  // the non-split path reuses the cheap swaps-only builder and `ctx.taskMap`.
+  const hasSplits = (basePlan.splitOps?.length ?? 0) > 0;
+  const { tasks: postPlanTasks, assignments: postPlanAssignments } = hasSplits
+    ? applyPlanOpsToState(ctx.schedule, basePlan.splitOps ?? [], basePlan.swaps)
+    : { tasks: ctx.schedule.tasks, assignments: applySwapsToAssignments(ctx.schedule, basePlan.swaps) };
+  const postPlanTaskMap = hasSplits ? new Map(postPlanTasks.map((t) => [t.id, t])) : ctx.taskMap;
+  // The split halves' synthetic ids (`${orig}#a`/`#b`). Excluded as extension
+  // targets below: they are cert-gated slots the base plan just filled, not
+  // "untouched" slots, so re-grabbing one would only risk an HC-16 sibling
+  // clash the final validation rejects anyway. Also reused for the `touched`
+  // accounting so `perParticipantChanges` counts the two split fillers.
+  const splitHalfIds = new Set<string>();
+  for (const op of basePlan.splitOps ?? []) {
+    if (op.originalAssignmentId) {
+      splitHalfIds.add(`${op.originalAssignmentId}#a`);
+      splitHalfIds.add(`${op.originalAssignmentId}#b`);
+    }
+  }
 
   // Gate check uses metrics computed against the post-plan view.
   const metrics = computeFocalWorkloadMetrics(
@@ -335,7 +359,7 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
     ctx.focalId,
     postPlanAssignments,
     ctx.capacities,
-    ctx.taskMap,
+    postPlanTaskMap,
   );
   // Floor: skip if focal is essentially at target — any further placement would
   // push them over and the per-iteration strict-improvement check would reject
@@ -375,7 +399,7 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
   // bits (capacities, notWithPairs, dayStartHour, phantomTaskIds).
   const postPlanScoreCtx: ScoreContext = {
     ...ctx.scoreCtx,
-    taskMap: ctx.taskMap,
+    taskMap: postPlanTaskMap,
     pMap: ctx.participantMap,
     assignmentsByParticipant: byParticipant,
     assignmentsByTask: byTask,
@@ -383,7 +407,7 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
   };
 
   const incScorer = IncrementalScorer.build(
-    ctx.schedule.tasks,
+    postPlanTasks,
     ctx.schedule.participants,
     postPlanAssignments,
     ctx.config,
@@ -408,13 +432,15 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
       if (extensionTouched.has(a.id)) continue;
       // Don't touch slots the base plan already rearranged.
       if (ctx.affectedIds.has(a.id)) continue;
+      // Don't target the base plan's split halves (cert-gated, just filled).
+      if (splitHalfIds.has(a.id)) continue;
       // Already focal → nothing to gain.
       if (a.participantId === ctx.focalId) continue;
 
-      const task = ctx.taskMap.get(a.taskId);
+      const task = postPlanTaskMap.get(a.taskId);
       if (!task) continue;
       if (!isFutureTask(task, ctx.anchor)) continue;
-      if (!isModifiableAssignment(a, ctx.taskMap, ctx.anchor)) continue;
+      if (!isModifiableAssignment(a, postPlanTaskMap, ctx.anchor)) continue;
 
       const slot = task.slots.find((s) => s.slotId === a.slotId);
       if (!slot) continue;
@@ -423,7 +449,7 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
       const taskAssigns = byTask.get(task.id) ?? [];
 
       if (
-        !isEligible(focal, task, slot, focalAssigns, ctx.taskMap, {
+        !isEligible(focal, task, slot, focalAssigns, postPlanTaskMap, {
           checkSameGroup: true,
           taskAssignments: taskAssigns.filter((ta) => ta.slotId !== slot.slotId),
           participantMap: ctx.participantMap,
@@ -509,7 +535,7 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
   // group-matching layer (HC-8) or pair-wise HC-12 across both new slots
   // catches. Reject the extension if anything fails.
   const validation = validateHardConstraints(
-    ctx.schedule.tasks,
+    postPlanTasks,
     ctx.schedule.participants,
     postPlanAssignments,
     ctx.disabledHC,
@@ -525,11 +551,11 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
   // compositeDelta calculation (incremental drift is small but we don't
   // want comparator noise).
   const finalScore = computeScheduleScore(
-    ctx.schedule.tasks,
+    postPlanTasks,
     ctx.schedule.participants,
     postPlanAssignments,
     ctx.config,
-    ctx.scoreCtx,
+    postPlanScoreCtx,
   );
   const compositeDelta = finalScore.compositeScore - ctx.baselineComposite;
 
@@ -540,10 +566,13 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
   const allSwaps = [...basePlan.swaps, ...extensionSwaps];
   const touched = new Set<string>();
   for (const s of allSwaps) touched.add(s.assignmentId);
+  // Count the base plan's split fillers too, so perParticipantChanges reflects
+  // the `#a`/`#b` half-assignments (mirrors composeAndScore's touched tracking).
+  for (const id of splitHalfIds) touched.add(id);
 
   let focalContinuityHoursAdded = 0;
   for (const sw of extensionSwaps) {
-    const t = ctx.taskMap.get(sw.taskId);
+    const t = postPlanTaskMap.get(sw.taskId);
     if (!t) continue;
     focalContinuityHoursAdded += computeTaskEffectiveHours(t);
   }
@@ -552,6 +581,10 @@ function tryFocalContinuityExtensions(basePlan: BatchRescuePlan, ctx: ExtensionC
     id: `${basePlan.id}-foc${extensionSwaps.length}`,
     rank: 0,
     swaps: allSwaps,
+    // Carry the base plan's splits through to the extended variant — otherwise
+    // apply (`app.ts` hasSplitOps gate) drops them and re-seats the focal on
+    // the cert-lost slot.
+    splitOps: basePlan.splitOps,
     compositeDelta,
     depthHistogram: { ...basePlan.depthHistogram },
     perParticipantChanges: buildPerParticipantChanges(ctx.schedule.assignments, postPlanAssignments, touched),
@@ -878,8 +911,15 @@ export function generateCapabilityChangePlans(
     // Smaller = focal closer to their proportional target post-plan.
     const focalDeltaCache = new Map<string, number>();
     const computeFocalDelta = (plan: BatchRescuePlan): number => {
-      const postPlanAssigns = applySwapsToAssignments(schedule, plan.swaps);
-      const m = computeFocalWorkloadMetrics(schedule, request.participantId, postPlanAssigns, capacities, taskMap);
+      // Split-aware post-plan view (identity when the plan has no splits): a
+      // split plan removes the focal's cert-lost assignment and adds halves, so
+      // a swaps-only view would overcount focal hours and mis-rank the plan.
+      const planHasSplits = (plan.splitOps?.length ?? 0) > 0;
+      const { tasks: planTasks, assignments: postPlanAssigns } = planHasSplits
+        ? applyPlanOpsToState(schedule, plan.splitOps ?? [], plan.swaps)
+        : { tasks: schedule.tasks, assignments: applySwapsToAssignments(schedule, plan.swaps) };
+      const planTaskMap = planHasSplits ? new Map(planTasks.map((t) => [t.id, t])) : taskMap;
+      const m = computeFocalWorkloadMetrics(schedule, request.participantId, postPlanAssigns, capacities, planTaskMap);
       return Math.abs(m.target - m.postPlanEffectiveHours);
     };
     for (const plan of scored) focalDeltaCache.set(plan.id, computeFocalDelta(plan));

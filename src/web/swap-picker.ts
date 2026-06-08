@@ -32,7 +32,7 @@ import { isTouchDevice } from './responsive';
 import { violationLabel } from './schedule-utils';
 import { escAttr, escHtml, fmt, stripDayPrefix } from './ui-helpers';
 import { showBottomSheet, showToast } from './ui-modal';
-import { computeWeeklyWorkloads, type WeeklyWorkload } from './workload-utils';
+import { computeWeeklyWorkloads, getCapacityWindow, type WeeklyWorkload } from './workload-utils';
 
 /** Optional record-as-future-unavailability entry built when the user kept
  *  the (default-on) "mark vacated participant unavailable for this slot's time"
@@ -202,8 +202,9 @@ function resolveContext(state: PickerState, deps: SwapPickerDeps): ResolvedConte
     scheduleContext,
   );
 
-  // Capacities + workloads (baseline — used for "before" numbers in preview)
-  const { start, end } = getScheduleWindow(schedule.tasks);
+  // Capacities + workloads (baseline — used for "before" numbers in preview).
+  // Full-period window so the preview's utilization % matches the popup/sidebar/profile.
+  const { start, end } = getCapacityWindow(schedule);
   const capacities = computeAllCapacities(schedule.participants, start, end, dayStartHour);
   const baselineWorkloads = computeWeeklyWorkloads(
     schedule.participants,
@@ -295,20 +296,6 @@ function computeTradeCandidates(
     });
   }
   return trades;
-}
-
-function getScheduleWindow(tasks: Task[]): { start: Date; end: Date } {
-  if (tasks.length === 0) {
-    const now = new Date();
-    return { start: now, end: now };
-  }
-  let start = tasks[0].timeBlock.start;
-  let end = tasks[0].timeBlock.end;
-  for (const t of tasks) {
-    if (t.timeBlock.start < start) start = t.timeBlock.start;
-    if (t.timeBlock.end > end) end = t.timeBlock.end;
-  }
-  return { start, end };
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

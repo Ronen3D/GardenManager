@@ -160,7 +160,7 @@ import {
   wireCustomSelect,
 } from './ui-modal';
 import { initWorkloadPopup, openWorkloadPopup } from './workload-popup';
-import { computeWeeklyWorkloads } from './workload-utils';
+import { computeWeeklyWorkloads, getCapacityWindow } from './workload-utils';
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
@@ -1222,13 +1222,10 @@ function renderParticipantSidebar(schedule: Schedule): string {
   // loadRatio. The sidebar bar then renders in utilization space (effective
   // hours / available hours), matching the participant-card and the new
   // SC-8 scoring semantics.
-  let schedStart = schedule.tasks[0]?.timeBlock.start ?? schedule.periodStart;
-  let schedEnd = schedule.tasks[0]?.timeBlock.end ?? schedule.periodStart;
-  for (const t of schedule.tasks) {
-    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
-    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
-  }
   const dsh = schedule.algorithmSettings.dayStartHour;
+  // Denominator window is the full operational period (not the min/max task span) so the
+  // sidebar's utilization % describes the whole period — see getCapacityWindow.
+  const { start: schedStart, end: schedEnd } = getCapacityWindow(schedule);
   const capacities = computeAllCapacities(schedule.participants, schedStart, schedEnd, dsh);
   const workloads = computeWeeklyWorkloads(schedule.participants, schedule.assignments, schedule.tasks, capacities);
 
@@ -4881,7 +4878,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.9.4</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.9.5</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>

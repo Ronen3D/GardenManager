@@ -1133,6 +1133,169 @@ console.log('\n── Test 9: focal-continuity extension fires on heavy cert-los
   }
 }
 
+// ─── Test 9b — focal-continuity extension is split-aware ────────────────────
+
+console.log('\n── Test 9b: focal-continuity extension fires on a SPLIT base plan ──');
+{
+  // Regression for the swaps-only post-plan view bug. The cert slot (6-14) can
+  // ONLY be filled by a split: Q covers just the first half (6-10) and S just
+  // the second half (10-14), so no whole cert-holder fits but two halves do.
+  // The base plan therefore carries splitOps and NO swap for the focal's
+  // vacated cert slot. Pre-fix, tryFocalContinuityExtensions rebuilt the
+  // post-plan view from swaps only → the focal looked still-seated on the cert
+  // slot (hours overcounted) → the gate never fired (pure-split case). Post-fix,
+  // applyPlanOpsToState removes the focal, the gate sees the true 0-hour
+  // deficit, the focal is re-loaded onto a non-cert slot, and the extended plan
+  // carries splitOps + the `#a`/`#b` fillers through to apply.
+  const tCert = createTimeBlockFromHours(base, 6, 14); // 8h, midpoint 10:00
+  const tOther1 = createTimeBlockFromHours(base, 14, 22);
+  const day2 = new Date(base.getTime() + 24 * 3600 * 1000);
+  const tOther2 = createTimeBlockFromHours(day2, 6, 14);
+  const firstHalf = createTimeBlockFromHours(base, 6, 10);
+  const secondHalf = createTimeBlockFromHours(base, 10, 14);
+
+  const taskCert: Task = {
+    id: 'fcs-tCert',
+    name: 'TCert',
+    timeBlock: tCert,
+    requiredCount: 1,
+    splittable: true,
+    slots: [{ slotId: 'fcs-sCert', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: ['X'] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const taskOther1: Task = {
+    id: 'fcs-tOther1',
+    name: 'TOther1',
+    timeBlock: tOther1,
+    requiredCount: 1,
+    slots: [{ slotId: 'fcs-sOther1', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const taskOther2: Task = {
+    id: 'fcs-tOther2',
+    name: 'TOther2',
+    timeBlock: tOther2,
+    requiredCount: 1,
+    slots: [{ slotId: 'fcs-sOther2', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+  };
+  const P: Participant = {
+    id: 'fcs-P',
+    name: 'P',
+    level: Level.L0,
+    certifications: ['X'],
+    group: 'G',
+    availability: wideAvail,
+    dateUnavailability: [],
+  };
+  // Q covers only the first half, S only the second half → the split is the
+  // ONLY feasible fill for the cert slot once P loses the cert.
+  const Q: Participant = {
+    id: 'fcs-Q',
+    name: 'Q',
+    level: Level.L0,
+    certifications: ['X'],
+    group: 'G',
+    availability: [{ start: firstHalf.start, end: firstHalf.end }],
+    dateUnavailability: [],
+  };
+  const S: Participant = {
+    id: 'fcs-S',
+    name: 'S',
+    level: Level.L0,
+    certifications: ['X'],
+    group: 'G',
+    availability: [{ start: secondHalf.start, end: secondHalf.end }],
+    dateUnavailability: [],
+  };
+  const R: Participant = {
+    id: 'fcs-R',
+    name: 'R',
+    level: Level.L0,
+    certifications: [],
+    group: 'G',
+    availability: wideAvail,
+    dateUnavailability: [],
+  };
+
+  const aCert: Assignment = {
+    id: 'fcs-aCert',
+    taskId: taskCert.id,
+    slotId: 'fcs-sCert',
+    participantId: P.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+  const aOther1: Assignment = {
+    id: 'fcs-aOther1',
+    taskId: taskOther1.id,
+    slotId: 'fcs-sOther1',
+    participantId: R.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+  const aOther2: Assignment = {
+    id: 'fcs-aOther2',
+    taskId: taskOther2.id,
+    slotId: 'fcs-sOther2',
+    participantId: R.id,
+    status: AssignmentStatus.Scheduled,
+    updatedAt: new Date(),
+  };
+
+  const sched = mkSchedule([taskCert, taskOther1, taskOther2], [P, Q, S, R], [aCert, aOther1, aOther2]);
+  sched.algorithmSettings.splittingMode = 'quality';
+  const window = { start: new Date(tCert.start.getTime() - 1_000), end: new Date(tCert.end.getTime() + 1_000) };
+
+  const result = generateCapabilityChangePlans(
+    sched,
+    { participantId: P.id, lostCertifications: ['X'], window },
+    earlyAnchor,
+    {
+      config: { ...DEFAULT_CONFIG },
+      scoreCtx: buildScoreCtx(sched.tasks, sched.participants),
+      maxPlans: 5,
+    },
+  );
+
+  assert(result.plans.length > 0, 'fc-split: at least one plan returned');
+  const splitPlans = result.plans.filter((p) => (p.splitOps?.length ?? 0) > 0);
+  assert(splitPlans.length > 0, 'fc-split: a base plan fills the cert slot via a split');
+
+  const splitExtended = result.plans.filter(
+    (p) => (p.splitOps?.length ?? 0) > 0 && p.focalContinuityExtended === true,
+  );
+  assert(splitExtended.length > 0, 'fc-split: extension fires on a split base plan (was inert pre-fix)');
+
+  if (splitExtended.length > 0) {
+    const ext = splitExtended[0];
+    assert(ext.violations.length === 0, 'fc-split: extended split plan passes full HC validation');
+    assert(
+      ext.swaps.some((sw) => sw.toParticipantId === P.id),
+      'fc-split: extended plan re-loads focal P onto a non-cert slot',
+    );
+    assert((ext.focalContinuityHoursAdded ?? 0) > 0, 'fc-split: focalContinuityHoursAdded > 0');
+    // touched fix: the `#a`/`#b` split fillers (Q, S) are reflected in changes.
+    const changedPids = new Set(ext.perParticipantChanges.map((c) => c.participantId));
+    assert(changedPids.has(Q.id) && changedPids.has(S.id), 'fc-split: perParticipantChanges counts both split fillers');
+
+    // PART D: the combined { splitOps + base/extension swaps } plan — whose op
+    // ids are mutually disjoint — applies cleanly via engine.applyPlanOps.
+    const applyClone = jsonDeserialize(jsonSerialize(sched)) as Schedule;
+    const applyEng = new SchedulingEngine({}, undefined, undefined, 5);
+    applyEng.addParticipants(applyClone.participants);
+    applyEng.importSchedule(applyClone);
+    const applyRes = applyEng.applyPlanOps({
+      swaps: ext.swaps.map((sw) => ({ assignmentId: sw.assignmentId, newParticipantId: sw.toParticipantId })),
+      splitOps: ext.splitOps,
+    });
+    assert(applyRes.valid, 'fc-split: extended split plan applies via engine.applyPlanOps (valid)');
+  }
+}
+
 // ─── Test 10 — light cert-loss does NOT trigger extension ───────────────────
 
 console.log('\n── Test 10: light cert-loss (1 hour) does NOT trigger extension ──');

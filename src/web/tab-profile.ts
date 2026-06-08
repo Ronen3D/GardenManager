@@ -16,7 +16,7 @@ import * as store from './config-store';
 import { renderPakalBadges } from './pakal-utils';
 import { formatWorkloadMultiplier } from './tab-participants';
 import { certBadge, escHtml, fmt, groupBadge, levelBadge, splitBadge, stripDayPrefix, taskBadge } from './ui-helpers';
-import { computeTaskBreakdown } from './workload-utils';
+import { computeTaskBreakdown, getCapacityWindow } from './workload-utils';
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
 
@@ -417,12 +417,7 @@ function renderMetrics(
   // Capacity-aware: render % as utilization of the participant's actual
   // available hours, not a flat numDays × 24 denominator. Falls back to the
   // flat denominator when the schedule has no tasks (capacity == 0).
-  let schedStart = schedule.tasks[0]?.timeBlock.start ?? schedule.periodStart;
-  let schedEnd = schedule.tasks[0]?.timeBlock.end ?? schedule.periodStart;
-  for (const t of schedule.tasks) {
-    if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
-    if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
-  }
+  const { start: schedStart, end: schedEnd } = getCapacityWindow(schedule);
   const cap = computeParticipantCapacity(p, schedStart, schedEnd, schedule.algorithmSettings.dayStartHour);
   const denom = cap.totalAvailableHours > 0 ? cap.totalAvailableHours : numDays * 24;
   const pctOfCapacity = denom > 0 ? (effectiveHeavyHours / denom) * 100 : 0;

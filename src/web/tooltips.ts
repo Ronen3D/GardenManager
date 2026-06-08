@@ -13,7 +13,7 @@ import { renderPakalBadges } from './pakal-utils';
 import { isTouchDevice } from './responsive';
 import { escHtml, fmt, getSplitDisplay, groupColor, LEVEL_COLORS, SVG_ICONS, splitInfoBlock } from './ui-helpers';
 import { showBottomSheet } from './ui-modal';
-import { computeTaskBreakdown } from './workload-utils';
+import { computeTaskBreakdown, getCapacityWindow } from './workload-utils';
 
 // ─── Callback injection ─────────────────────────────────────────────────────
 
@@ -125,12 +125,7 @@ export function buildParticipantTooltipContent(
   // the flat numDays × 24 denominator when no schedule context is available.
   let denom = numDays * 24;
   if (schedule && schedule.tasks.length > 0) {
-    let schedStart = schedule.tasks[0].timeBlock.start;
-    let schedEnd = schedule.tasks[0].timeBlock.end;
-    for (const t of schedule.tasks) {
-      if (t.timeBlock.start < schedStart) schedStart = t.timeBlock.start;
-      if (t.timeBlock.end > schedEnd) schedEnd = t.timeBlock.end;
-    }
+    const { start: schedStart, end: schedEnd } = getCapacityWindow(schedule);
     const cap = computeParticipantCapacity(p, schedStart, schedEnd, schedule.algorithmSettings.dayStartHour);
     if (cap.totalAvailableHours > 0) denom = cap.totalAvailableHours;
   }
