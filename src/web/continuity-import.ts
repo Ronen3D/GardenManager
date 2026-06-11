@@ -147,9 +147,75 @@ function validateAssignmentEntry(a: unknown, participantName: string, index: num
   if (typeof obj.blocksConsecutive !== 'boolean') {
     return `${participantName}, שיבוץ #${index + 1}: שדה "blocksConsecutive" חסר.`;
   }
-  // restRuleId is optional (string or absent); restRuleDurationHours is optional (number or absent)
+  // restRuleId is optional (string or absent)
   if (obj.restRuleId !== undefined && typeof obj.restRuleId !== 'string') {
     return `${participantName}, שיבוץ #${index + 1}: שדה "restRuleId" לא תקין.`;
+  }
+  // restRuleDurationHours is optional; if present it must be a finite number > 0.
+  // A non-numeric (NaN), zero, or negative value silently disables HC-14 across the
+  // schedule boundary (the phantom rest-rule duration becomes NaN / non-positive ms,
+  // so every `gap < durationMs` comparison in checkRestRules is false).
+  if (
+    obj.restRuleDurationHours !== undefined &&
+    (typeof obj.restRuleDurationHours !== 'number' ||
+      !Number.isFinite(obj.restRuleDurationHours) ||
+      obj.restRuleDurationHours <= 0)
+  ) {
+    return `${participantName}, שיבוץ #${index + 1}: שדה "restRuleDurationHours" לא תקין.`;
+  }
+  // loadWindows is optional; if present it must be an array of well-formed windows.
+  // A malformed window (e.g. a non-numeric startHour) silently makes HC-12's
+  // boundary-blocking check fail open across the schedule boundary.
+  if (obj.loadWindows !== undefined) {
+    if (!Array.isArray(obj.loadWindows)) {
+      return `${participantName}, שיבוץ #${index + 1}: שדה "loadWindows" חייב להיות מערך.`;
+    }
+    for (let w = 0; w < (obj.loadWindows as unknown[]).length; w++) {
+      const err = validateLoadWindowEntry((obj.loadWindows as unknown[])[w], participantName, index, w);
+      if (err) return err;
+    }
+  }
+  return null;
+}
+
+/**
+ * Validate a single load-window entry from a continuity assignment. Fields mirror
+ * `ContinuityLoadWindow`. Hours/minutes must be in-range integers; weight a finite
+ * number in [0, 1] (0 and 1 are both legitimate). Returns a Hebrew error string on
+ * the first violation, or null when the window is well-formed.
+ */
+function validateLoadWindowEntry(
+  w: unknown,
+  participantName: string,
+  asgnIndex: number,
+  windowIndex: number,
+): string | null {
+  const where = `${participantName}, שיבוץ #${asgnIndex + 1}, חלון #${windowIndex + 1}`;
+  if (typeof w !== 'object' || w === null || Array.isArray(w)) {
+    return `${where}: חייב להיות אובייקט.`;
+  }
+  const o = w as Record<string, unknown>;
+
+  if (typeof o.id !== 'string' || o.id.trim() === '') {
+    return `${where}: שדה "id" חסר או ריק.`;
+  }
+  if (!Number.isInteger(o.startHour) || (o.startHour as number) < 0 || (o.startHour as number) > 23) {
+    return `${where}: שדה "startHour" לא תקין.`;
+  }
+  if (!Number.isInteger(o.startMinute) || (o.startMinute as number) < 0 || (o.startMinute as number) > 59) {
+    return `${where}: שדה "startMinute" לא תקין.`;
+  }
+  if (!Number.isInteger(o.endHour) || (o.endHour as number) < 0 || (o.endHour as number) > 23) {
+    return `${where}: שדה "endHour" לא תקין.`;
+  }
+  if (!Number.isInteger(o.endMinute) || (o.endMinute as number) < 0 || (o.endMinute as number) > 59) {
+    return `${where}: שדה "endMinute" לא תקין.`;
+  }
+  if (typeof o.weight !== 'number' || !Number.isFinite(o.weight) || o.weight < 0 || o.weight > 1) {
+    return `${where}: שדה "weight" לא תקין.`;
+  }
+  if (o.blocksAtBoundary !== undefined && typeof o.blocksAtBoundary !== 'boolean') {
+    return `${where}: שדה "blocksAtBoundary" לא תקין.`;
   }
   return null;
 }

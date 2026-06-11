@@ -61,8 +61,18 @@ export function buildPhantomContext(snapshot: ContinuitySnapshot, participants: 
       phantomTasks.push(task);
       phantomTaskIds.add(taskId);
 
-      // Collect snapshotted rest rule durations for cross-schedule HC-14
-      if (ca.restRuleId && ca.restRuleDurationHours != null && !phantomRestRules.has(ca.restRuleId)) {
+      // Collect snapshotted rest rule durations for cross-schedule HC-14.
+      // Defense-in-depth: require a finite positive number (not just != null) so a
+      // malformed snapshot that slipped past validation degrades to a safe skip —
+      // the rule id is simply not added and HC-14 falls back to the live rule map —
+      // rather than seeding a NaN/non-positive duration that silently disables HC-14.
+      if (
+        ca.restRuleId &&
+        typeof ca.restRuleDurationHours === 'number' &&
+        Number.isFinite(ca.restRuleDurationHours) &&
+        ca.restRuleDurationHours > 0 &&
+        !phantomRestRules.has(ca.restRuleId)
+      ) {
         phantomRestRules.set(ca.restRuleId, ca.restRuleDurationHours * 3600000);
       }
 

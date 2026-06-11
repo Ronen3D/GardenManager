@@ -114,7 +114,7 @@ export function groupBadge(group: string, clickable = false): string {
 export function taskBadge(task: { color?: string; sourceName?: string; name?: string }): string {
   const color = task.color || '#7f8c8d';
   const label = task.sourceName || (task.name ? stripDayPrefix(task.name) : '');
-  return `<span class="badge" style="background:${color}">${label}</span>`;
+  return `<span class="badge" style="background:${color}">${escHtml(label)}</span>`;
 }
 
 /**

@@ -673,6 +673,85 @@ export async function runPersistenceExtraTests(assert: AssertFn): Promise<void> 
       'unparseable timeBlock date',
       'תאריכים',
     );
+    // restRuleDurationHours — must be a finite number > 0 (NaN / 0 / negative all
+    // silently disable HC-14 across the schedule boundary).
+    rejected(
+      (s) => {
+        (s.participants[0].assignments[0] as Record<string, unknown>).restRuleDurationHours = 'five';
+      },
+      'restRuleDurationHours non-numeric',
+      'restRuleDurationHours',
+    );
+    rejected(
+      (s) => {
+        (s.participants[0].assignments[0] as Record<string, unknown>).restRuleDurationHours = 0;
+      },
+      'restRuleDurationHours zero',
+      'restRuleDurationHours',
+    );
+    rejected(
+      (s) => {
+        (s.participants[0].assignments[0] as Record<string, unknown>).restRuleDurationHours = -3;
+      },
+      'restRuleDurationHours negative',
+      'restRuleDurationHours',
+    );
+    // loadWindows — must be an array of well-formed windows (a malformed startHour
+    // makes HC-12's boundary-blocking check fail open across the boundary).
+    rejected(
+      (s) => {
+        (s.participants[0].assignments[0] as Record<string, unknown>).loadWindows = 'nope';
+      },
+      'loadWindows not an array',
+      'loadWindows',
+    );
+    rejected(
+      (s) => {
+        (s.participants[0].assignments[0] as Record<string, unknown>).loadWindows = [
+          { id: 'w1', startHour: 'x', startMinute: 0, endHour: 6, endMinute: 0, weight: 1 },
+        ];
+      },
+      'loadWindow non-numeric startHour',
+      'startHour',
+    );
+    rejected(
+      (s) => {
+        (s.participants[0].assignments[0] as Record<string, unknown>).loadWindows = [
+          { id: 'w1', startHour: 30, startMinute: 0, endHour: 6, endMinute: 0, weight: 1 },
+        ];
+      },
+      'loadWindow out-of-range hour',
+      'startHour',
+    );
+    rejected(
+      (s) => {
+        (s.participants[0].assignments[0] as Record<string, unknown>).loadWindows = [
+          { startHour: 5, startMinute: 0, endHour: 6, endMinute: 0, weight: 1 },
+        ];
+      },
+      'loadWindow missing id',
+      'id',
+    );
+    rejected(
+      (s) => {
+        (s.participants[0].assignments[0] as Record<string, unknown>).loadWindows = [
+          { id: 'w1', startHour: 5, startMinute: 0, endHour: 6, endMinute: 0, weight: 2 },
+        ];
+      },
+      'loadWindow bad weight',
+      'weight',
+    );
+    // Positive case: valid restRuleDurationHours + a well-formed loadWindow still parses
+    // (proves the new checks are not over-eager — weight 0/1 and integer hours pass).
+    {
+      const s = validSnap();
+      (s.participants[0].assignments[0] as Record<string, unknown>).restRuleDurationHours = 5;
+      (s.participants[0].assignments[0] as Record<string, unknown>).loadWindows = [
+        { id: 'w1', startHour: 5, startMinute: 0, endHour: 6, endMinute: 30, weight: 0.5, blocksAtBoundary: true },
+      ];
+      const okWin = parseContinuitySnapshot(JSON.stringify(s));
+      assert(!('error' in okWin), 'C4.6: valid restRuleDurationHours + loadWindows still parses');
+    }
   }
 
   resetAll();
