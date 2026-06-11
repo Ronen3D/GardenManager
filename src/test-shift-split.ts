@@ -2681,6 +2681,53 @@ async function runTopKDeferral(assert: AssertFn): Promise<void> {
   assert(Number.isFinite(r3.score.compositeScore), 'top-K deferral: early-stop resolves with finite-score result');
 }
 
+/**
+ * Engine-level guard for the auto-tuner split-mode fix (`evaluate` in
+ * auto-tuner.ts): the `splittingMode` passed as the SchedulingEngine's 5th
+ * constructor arg MUST reach the QUALITY-SPLIT path. Holding the task's
+ * `splittable` flag constant (true), an engine built with 'quality' realizes a
+ * quality split while one built with 'off' does not. This mirrors the exact
+ * buggy combination the fix addresses: tasks stamped splittable=true (live
+ * quality mode at generation) fed to an engine the tuner — pre-fix — always
+ * constructed as 'off', so it never quality-split.
+ */
+function runEngineSplitMode(assert: AssertFn): void {
+  // Maximally split-favorable, RNG-independent fixture (mirrors runPhase2 (f)):
+  // one 12h splittable single-slot L0 task + 3 always-available L0 people, with
+  // splitPenalty=0 so spreading one person's 12h across two 6h halves strictly
+  // improves SC-3 fairness. The slot is fillable by ONE person ⇒ no Stage-4
+  // feasibility split ⇒ the only split path is QUALITY-SPLIT (quality mode only).
+  const cfg: SchedulerConfig = { ...DEFAULT_CONFIG, splitPenalty: 0, maxIterations: 1500, maxSolverTimeMs: 2000 };
+  const mkTask = (): Task => ({
+    id: 'Q',
+    name: 'Q',
+    sourceName: 'guard',
+    timeBlock: tb(0, 12),
+    requiredCount: 1,
+    slots: [{ slotId: 'Q-s0', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+    sameGroupRequired: false,
+    blocksConsecutive: false,
+    splittable: true,
+  });
+  const build = (mode: 'off' | 'quality'): Schedule => {
+    const eng = new SchedulingEngine(cfg, undefined, undefined, 5, mode);
+    eng.setPeriod(new Date(BASE), 1);
+    eng.addParticipants([part('p1', 0, 24), part('p2', 0, 24), part('p3', 0, 24)]);
+    eng.addTasks([mkTask()]);
+    return eng.generateSchedule();
+  };
+  const hasSplit = (s: Schedule): boolean => s.tasks.some((t) => t.splitGroupId !== undefined);
+
+  assert(
+    hasSplit(build('quality')),
+    'engine splittingMode=quality realizes a quality split (5th constructor arg reaches QUALITY-SPLIT)',
+  );
+  assert(
+    !hasSplit(build('off')),
+    'engine splittingMode=off produces NO split on the same splittable fixture (the exact bug the auto-tuner fix restores)',
+  );
+}
+
 export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   console.log('\n── Shift-Split: run-coalesce primitive ──');
   runCoalesce(assert);
@@ -2726,6 +2773,8 @@ export async function runShiftSplitTests(assert: AssertFn): Promise<void> {
   runManualSplitApply(assert);
   console.log('── Shift-Split: top-K structural deferral (multi-attempt + continuation + early-stop) ──');
   await runTopKDeferral(assert);
+  console.log('── Shift-Split: engine splittingMode reaches QUALITY-SPLIT (auto-tuner fix guard) ──');
+  runEngineSplitMode(assert);
 }
 
 if (require.main === module) {

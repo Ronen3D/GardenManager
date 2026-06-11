@@ -2347,6 +2347,23 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
       Math.abs(withCap - flatMean) > 1e-6,
       'P0-R3: capacity-proportional refScore differs from the flat-mean path on uneven availability',
     );
+
+    // freezeEnv must thread the live splittingMode onto the frozen env so the
+    // tuner's eval engine runs the SAME solver the user runs. Regression guard:
+    // the 5th SchedulingEngine arg was previously omitted in evaluate(), so the
+    // eval engine silently ran in 'off' mode (never quality-split).
+    assert(
+      freezeEnv(participants, tasks, 'quality').splittingMode === 'quality',
+      'P0-R3: freezeEnv threads splittingMode=quality',
+    );
+    assert(
+      freezeEnv(participants, tasks, 'feasibility').splittingMode === 'feasibility',
+      'P0-R3: freezeEnv threads splittingMode=feasibility',
+    );
+    assert(
+      freezeEnv(participants, tasks).splittingMode === 'quality',
+      'P0-R3: freezeEnv defaults splittingMode to quality (back-compat 2-arg call)',
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────

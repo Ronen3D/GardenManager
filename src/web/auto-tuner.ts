@@ -307,6 +307,14 @@ interface FrozenEnv {
   dayStart: number;
   disabledHC: ReturnType<typeof store.getDisabledHCSet>;
   restRuleMap: ReturnType<typeof store.buildRestRuleMap>;
+  /**
+   * Live shift-splitting mode, frozen once per run so every evaluation
+   * exercises the SAME solver the user actually runs. Omitting it (the pre-fix
+   * default) silently ran the eval engine in `'off'` mode, so the tuner never
+   * quality-split and `splitPenalty` was a no-op search dimension in quality
+   * mode. Stamped onto the engine via the 5th constructor arg in `evaluate`.
+   */
+  splittingMode: 'off' | 'feasibility' | 'quality';
   /** notWithPairs required for the reference-score SC-9 term. */
   notWithPairs: Map<string, Set<string>>;
   taskMap: Map<string, Task>;
@@ -321,7 +329,11 @@ interface FrozenEnv {
   capacities: ReturnType<typeof computeAllCapacities>;
 }
 
-export function freezeEnv(participants: Participant[], tasks: Task[]): FrozenEnv {
+export function freezeEnv(
+  participants: Participant[],
+  tasks: Task[],
+  splittingMode: 'off' | 'feasibility' | 'quality' = 'quality',
+): FrozenEnv {
   const notWithPairs = new Map<string, Set<string>>();
   for (const p of participants) {
     if (p.notWithIds && p.notWithIds.length > 0) {
@@ -341,6 +353,7 @@ export function freezeEnv(participants: Participant[], tasks: Task[]): FrozenEnv
     dayStart,
     disabledHC: store.getDisabledHCSet(),
     restRuleMap: store.buildRestRuleMap(),
+    splittingMode,
     notWithPairs,
     taskMap: new Map(tasks.map((t) => [t.id, t])),
     pMap: new Map(participants.map((p) => [p.id, p])),
@@ -350,7 +363,7 @@ export function freezeEnv(participants: Participant[], tasks: Task[]): FrozenEnv
 
 async function evaluate(params: EvalParams): Promise<EvalResult> {
   const start = performance.now();
-  const { dayStart, disabledHC, restRuleMap, notWithPairs } = params.frozen;
+  const { dayStart, disabledHC, restRuleMap, notWithPairs, splittingMode } = params.frozen;
 
   // Scale maxIterations/maxSolverTimeMs into the config copy so cheap stages
   // truly run cheaper. Scaling ratio is derived from the live baseline so it
@@ -362,7 +375,7 @@ async function evaluate(params: EvalParams): Promise<EvalResult> {
     maxSolverTimeMs: Math.max(1500, Math.round(params.config.maxSolverTimeMs * solverRatio)),
   };
 
-  const engine = new SchedulingEngine(scaledConfig, disabledHC, restRuleMap, dayStart);
+  const engine = new SchedulingEngine(scaledConfig, disabledHC, restRuleMap, dayStart, splittingMode);
   engine.addParticipants(params.participants);
   engine.addTasks(params.tasks);
 
@@ -790,7 +803,7 @@ async function runTournament(participants: Participant[], tasks: Task[]): Promis
   // Freeze engine inputs once so every evaluation in this run sees the same
   // world — participants/tasks were already captured in runAutoTune(), and
   // this extends the freeze to disabledHC/dayStart/restRuleMap.
-  const frozen = freezeEnv(participants, tasks);
+  const frozen = freezeEnv(participants, tasks, splittingMode);
 
   const baseAttempts = getBaselineAttempts();
   const baseIter = DEFAULT_CONFIG.maxIterations;
