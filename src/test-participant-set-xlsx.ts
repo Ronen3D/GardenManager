@@ -186,6 +186,20 @@ async function workbookToArrayBuffer(wb: ExcelJS.Workbook): Promise<ArrayBuffer>
   return copy;
 }
 
+/** Find a 1-based column index on a sheet by its exact header-row label. */
+function colByHeader(ws: ExcelJS.Worksheet, label: string): number {
+  const header = ws.getRow(1);
+  for (let c = 1; c <= header.cellCount; c++) {
+    if (String(header.getCell(c).value ?? '').trim() === label) return c;
+  }
+  return -1;
+}
+
+/** True if the cell carries a list-type data validation (dropdown). */
+function hasListValidation(ws: ExcelJS.Worksheet, row: number, col: number): boolean {
+  return ws.getCell(row, col).dataValidation?.type === 'list';
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 export async function runParticipantSetXlsxTests(assert: AssertFn): Promise<void> {
@@ -246,6 +260,39 @@ export async function runParticipantSetXlsxTests(assert: AssertFn): Promise<void
     if (result.ok) {
       assert((result.pset.pakalCatalog ?? []).length === 0, 'RT3: empty pakal catalog preserved');
     }
+  }
+
+  // ── Data validation: boolean dropdown scope ──────────────────────────
+  // The "כן" dropdown must decorate cert/pakal columns ONLY — never the
+  // trailing free-text/numeric columns (לא עם / משימה מועדפת / מקדם עומס).
+  // Guards against the off-by-one loop bound that leaked the dropdown onto
+  // the NOT_WITH column.
+  {
+    const pset = buildSamplePset();
+    const wb = await loadWorkbook(await generateParticipantSetXlsx(pset));
+    const ws = wb.getWorksheet(SHEET_PARTICIPANTS)!;
+    const certLabel = pset.certificationCatalog[0].label;
+    const certCol = colByHeader(ws, certLabel);
+    const notWithCol = colByHeader(ws, 'לא עם');
+    const prefCol = colByHeader(ws, 'משימה מועדפת');
+    const multCol = colByHeader(ws, 'מקדם עומס');
+    assert(certCol > 0 && notWithCol > 0 && prefCol > 0 && multCol > 0, 'DV1: header columns located');
+    assert(hasListValidation(ws, 2, certCol), 'DV1: cert column HAS boolean dropdown');
+    assert(!hasListValidation(ws, 2, notWithCol), 'DV1: לא עם column has NO dropdown');
+    assert(!hasListValidation(ws, 2, prefCol), 'DV1: משימה מועדפת column has NO dropdown');
+    assert(!hasListValidation(ws, 2, multCol), 'DV1: מקדם עומס column has NO dropdown');
+  }
+
+  // ── Data validation: zero cert/pakal edge case ───────────────────────
+  // With no boolean columns, headers.length === 7 and לא עם is the first
+  // column the old loop would have hit. Ensure it stays dropdown-free.
+  {
+    const pset = buildSamplePset({ certificationCatalog: [], pakalCatalog: [], participants: [] });
+    const wb = await loadWorkbook(await generateParticipantSetXlsx(pset));
+    const ws = wb.getWorksheet(SHEET_PARTICIPANTS)!;
+    const notWithCol = colByHeader(ws, 'לא עם');
+    assert(notWithCol > 0, 'DV2: לא עם column located (no certs/pakals)');
+    assert(!hasListValidation(ws, 2, notWithCol), 'DV2: לא עם has NO dropdown when no cert/pakal columns');
   }
 
   // ── Negative: missing meta sheet ─────────────────────────────────────

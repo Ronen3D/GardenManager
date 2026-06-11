@@ -470,6 +470,17 @@ function buildParticipantsSheet(
   for (const p of pakals) headers.push(buildPakalHeader(p));
   headers.push(HEADER_NOT_WITH, HEADER_PREFERRED, HEADER_LESS_PREFERRED, HEADER_WORKLOAD_MULT);
 
+  // 1-based column indices for the משתתפים sheet. Derived from the header
+  // layout above so the boolean-dropdown loop and the width block share one
+  // source of truth (prevents the trailing free-text columns from being
+  // decorated with the cert/pakal "כן" dropdown by an off-by-one).
+  const FIRST_BOOL_COL = 4; // first cert/pakal column (after NAME, GROUP, LEVEL)
+  const LAST_BOOL_COL = 3 + certs.length + pakals.length; // last cert/pakal column (0 of them ⇒ 3)
+  const NOT_WITH_COL = LAST_BOOL_COL + 1; // == headers.length - 3
+  const PREFERRED_COL = NOT_WITH_COL + 1;
+  const LESS_PREFERRED_COL = PREFERRED_COL + 1;
+  const WORKLOAD_MULT_COL = headers.length; // == LESS_PREFERRED_COL + 1
+
   ws.addRow(headers);
   applyHeaderRowStyle(ws.getRow(1));
 
@@ -479,10 +490,10 @@ function buildParticipantsSheet(
   ws.getColumn(3).width = 8;
   for (let i = 0; i < certs.length; i++) ws.getColumn(4 + i).width = 16;
   for (let i = 0; i < pakals.length; i++) ws.getColumn(4 + certs.length + i).width = 18;
-  ws.getColumn(headers.length - 3).width = 28; // לא עם
-  ws.getColumn(headers.length - 2).width = 18;
-  ws.getColumn(headers.length - 1).width = 18;
-  ws.getColumn(headers.length).width = 12; // מקדם עומס
+  ws.getColumn(NOT_WITH_COL).width = 28; // לא עם
+  ws.getColumn(PREFERRED_COL).width = 18;
+  ws.getColumn(LESS_PREFERRED_COL).width = 18;
+  ws.getColumn(WORKLOAD_MULT_COL).width = 12; // מקדם עומס
 
   // Name column is always text (defends against numeric auto-coerce).
   ws.getColumn(1).numFmt = '@';
@@ -523,9 +534,12 @@ function buildParticipantsSheet(
       error: 'רמה חייבת להיות L0, L2, L3 או L4',
     };
   }
-  // Boolean-cell dropdowns on cert/pakal columns.
+  // Boolean-cell dropdowns on cert/pakal columns only — the trailing
+  // free-text/numeric columns (NOT_WITH, PREFERRED, LESS_PREFERRED,
+  // WORKLOAD_MULT) must NOT get the "כן" dropdown. When there are no
+  // cert/pakal columns, LAST_BOOL_COL === 3 and the loop never runs.
   const boolListRef = `"כן,"`;
-  for (let col = 4; col < headers.length - 2; col++) {
+  for (let col = FIRST_BOOL_COL; col <= LAST_BOOL_COL; col++) {
     for (let r = 2; r <= Math.max(rows.length + 1, MAX_PARTICIPANT_ROWS + 1); r++) {
       ws.getCell(r, col).dataValidation = {
         type: 'list',
