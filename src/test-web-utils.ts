@@ -12,6 +12,11 @@
  *          occurrence op-day; non-split / non-boundary unchanged)
  *  - C7.11 computeDefaultLiveAnchor / anchorToPickerDefaults ("now" → op-day
  *          coordinates with before/after-window clamping)
+ *  - C7.12 liveAnchorFromPicker tail-hour offset + exportDaySnapshot base date
+ *  - C7.13 swimlane getParticipantTasksForDay raw-block membership (no
+ *          straddling-split "ghost" row; non-split cross-day unchanged)
+ *  - C7.14 computePerDayHours load-weighted per-day hours (weight 0 → 0, 0.2 →
+ *          ⅕, cross-day apportionment sums to effectiveHours; swimlane chip raw)
  *
  * Convention: export `runWebUtilsTests(assert)`, injected assert, no
  * module-level counters, standalone self-exec guarded by
@@ -117,11 +122,13 @@ import {
 import {
   anchorToPickerDefaults,
   computeDefaultLiveAnchor,
+  computePerDayHours,
   liveAnchorFromPicker,
   taskDayIndex,
   taskIntersectsDay,
   timestampToOpDayIndex,
 } from './web/schedule-utils';
+import { getParticipantTasksForDay, totalAssignedHoursForDay } from './web/swimlane-utils';
 import { enterTutorialDemoMode, exitTutorialDemoMode, TutorialPreflightError } from './web/tutorial-demo';
 import { DEMO_PARTICIPANTS } from './web/tutorial-demo-seed';
 import { escAttr, escHtml } from './web/ui-helpers';
@@ -1066,6 +1073,133 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
     assert(
       snapStale.dayWindow.start === new Date(2020, 0, 6, 5, 0).toISOString() && snapStale.participants.length === 0,
       'C7.12: exportDaySnapshot stale base (+1 day) shifts window and drops the assignment (why frozen base is required)',
+    );
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // C7.13 — Swimlane membership uses the RAW block (no straddling-split ghost).
+  // getParticipantTasksForDay is a per-person clock-time timeline, so a split
+  // half belongs to a day only where its real block overlaps — never as a 0h,
+  // zero-width "ghost" on the occurrence's other op-day (which intersection by
+  // occurrence-span would produce). Non-split cross-day tasks unchanged.
+  // ───────────────────────────────────────────────────────────────────────────
+  console.log('\n── C7.13: swimlane raw-block membership (no split ghost) ──');
+  {
+    const periodStart = new Date(2026, 5, 1, 0, 0, 0, 0); // June 1; dayStartHour 5
+    const dsh = 5;
+    const EIGHT_H = 8 * 3600000;
+    // Occurrence X 02:00–10:00 June 2 straddles op-day 1 ([Jun1 05:00, Jun2 05:00)).
+    // Split at the 06:00 midpoint: #a [02:00,06:00] (crosses the boundary),
+    // #b [06:00,10:00] (entirely op-day 2). #a→P1, #b→P2.
+    const xStart = new Date(2026, 5, 2, 2, 0);
+    const xEnd = new Date(2026, 5, 2, 10, 0);
+    const xMid = new Date(2026, 5, 2, 6, 0);
+    const Xa = {
+      id: 'X#a',
+      name: 'X (1/2)',
+      timeBlock: { start: xStart, end: xMid },
+      splitGroupId: 'X::s',
+      splitPart: 1,
+      splitOriginalMs: EIGHT_H,
+      splitOccurrenceId: 'X',
+    } as unknown as Task;
+    const Xb = {
+      id: 'X#b',
+      name: 'X (2/2)',
+      timeBlock: { start: xMid, end: xEnd },
+      splitGroupId: 'X::s',
+      splitPart: 2,
+      splitOriginalMs: EIGHT_H,
+      splitOccurrenceId: 'X',
+    } as unknown as Task;
+    // Non-split cross-day task assigned to P1 (regression: must show on both days).
+    const C = { id: 'C', name: 'C', timeBlock: { start: xStart, end: xEnd } } as unknown as Task;
+    const sched = {
+      periodStart,
+      periodDays: 2,
+      algorithmSettings: { dayStartHour: dsh },
+      tasks: [Xa, Xb, C],
+      assignments: [
+        { id: 'a1', participantId: 'P1', taskId: 'X#a' },
+        { id: 'a2', participantId: 'P2', taskId: 'X#b' },
+        { id: 'a3', participantId: 'P1', taskId: 'C' },
+      ],
+    } as unknown as Schedule;
+    const ids = (pid: string, day: number) => new Set(getParticipantTasksForDay(sched, pid, day).map((t) => t.id));
+    const p2d1 = ids('P2', 1);
+    assert(!p2d1.has('X#b'), 'C7.13: #b NOT a member of op-day 1 (raw block is entirely op-day 2 — ghost gone)');
+    assert(ids('P2', 2).has('X#b'), 'C7.13: #b IS a member of op-day 2 (where its real block lives)');
+    assert(
+      ids('P1', 1).has('X#a') && ids('P1', 2).has('X#a'),
+      'C7.13: straddling #a appears on BOTH op-days (its real block overlaps each)',
+    );
+    assert(
+      ids('P1', 1).has('C') && ids('P1', 2).has('C'),
+      'C7.13: non-split cross-day task still appears on both days (unchanged)',
+    );
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // C7.14 — computePerDayHours is LOAD-WEIGHTED: each task's clipped hours are
+  // scaled by its load weight (weight 0 → 0, 0.2 → ⅕, 1 → full). The per-day
+  // series decomposes the weekly effective load (sums to effectiveHours). The
+  // swimlane chip (totalAssignedHoursForDay) stays RAW — intentionally distinct.
+  // ───────────────────────────────────────────────────────────────────────────
+  console.log('\n── C7.14: load-weighted per-day hours ──');
+  {
+    const periodStart = new Date(2026, 5, 1, 0, 0, 0, 0);
+    const dsh = 5;
+    const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+    const mk = (id: string, pid: string, startH: number, durH: number, weight: number) => ({
+      task: {
+        id,
+        name: id,
+        timeBlock: { start: new Date(2026, 5, 1, startH, 0), end: new Date(2026, 5, 1, startH + durH, 0) },
+        baseLoadWeight: weight,
+      } as unknown as Task,
+      asg: { id: `a-${id}`, participantId: pid, taskId: id },
+    });
+    const rows = [
+      mk('w10', 'PW0', 8, 8, 1), // 8h × 1   = 8
+      mk('w05', 'PW1', 8, 8, 0.5), // 8h × 0.5 = 4
+      mk('w00', 'PW2', 8, 8, 0), // 8h × 0   = 0 (light task — was a binary skip before)
+      mk('w02', 'PW3', 8, 5, 0.2), // 5h × 0.2 = 1
+    ];
+    const sched = {
+      periodStart,
+      periodDays: 1,
+      algorithmSettings: { dayStartHour: dsh },
+      tasks: rows.map((r) => r.task),
+      assignments: rows.map((r) => r.asg),
+    } as unknown as Schedule;
+    assert(near(computePerDayHours('PW0', sched).get(1) || 0, 8), 'C7.14: weight 1.0 × 8h → 8 (full)');
+    assert(near(computePerDayHours('PW1', sched).get(1) || 0, 4), 'C7.14: weight 0.5 × 8h → 4 (half)');
+    assert(near(computePerDayHours('PW2', sched).get(1) || 0, 0), 'C7.14: weight 0 (light) → 0 (contributes nothing)');
+    assert(near(computePerDayHours('PW3', sched).get(1) || 0, 1), 'C7.14: weight 0.2 × 5h → 1 (one-fifth)');
+    // Two-lens: the swimlane chip stays RAW occupancy for the same weight-0.5 task.
+    assert(
+      near(totalAssignedHoursForDay(sched, 'PW1', 1), 8),
+      'C7.14: totalAssignedHoursForDay stays raw (8h) — occupancy lens, intentionally ≠ load',
+    );
+
+    // Cross-day weighted apportionment sums to the task's effective hours.
+    const cd = {
+      id: 'cd',
+      name: 'cd',
+      timeBlock: { start: new Date(2026, 5, 2, 2, 0), end: new Date(2026, 5, 2, 10, 0) },
+      baseLoadWeight: 0.5,
+    } as unknown as Task;
+    const schedCd = {
+      periodStart,
+      periodDays: 2,
+      algorithmSettings: { dayStartHour: dsh },
+      tasks: [cd],
+      assignments: [{ id: 'acd', participantId: 'PK', taskId: 'cd' }],
+    } as unknown as Schedule;
+    const m = computePerDayHours('PK', schedCd);
+    assert(
+      near(m.get(1) || 0, 1.5) && near(m.get(2) || 0, 2.5) && near((m.get(1) || 0) + (m.get(2) || 0), 4),
+      'C7.14: cross-day weight 0.5 (02:00–10:00) → day1 1.5h + day2 2.5h = 4h (= effectiveHours)',
     );
   }
 

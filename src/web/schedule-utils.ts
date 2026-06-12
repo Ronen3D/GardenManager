@@ -291,13 +291,20 @@ export function formatLiveClock(): string {
 // ─── Per-Day Hours ──────────────────────────────────────────────────────────
 
 /**
- * Compute per-day raw clock hours for a participant.
+ * Compute per-day LOAD-WEIGHTED effective hours for a participant.
  * Returns a Map<dayIndex, hours> for days 1..numDays.
  *
- * Intentionally uses raw (un-weighted) hours — this measures how many
- * hours of the day the participant is physically occupied, regardless
- * of load weighting. For weighted effort see computeTaskBreakdown()
- * and computeTaskEffectiveHours().
+ * Each task's clipped daily hours are scaled by its load weight
+ * (`computeTaskEffectiveHours / rawDuration` — equal to `baseLoadWeight` for
+ * uniform tasks, a blended ratio for windowed ones), so a light task
+ * (weight 0) contributes nothing and a 0.2-weight task contributes one-fifth
+ * of its hours. The per-day series therefore decomposes the participant's
+ * weekly effective load and sums to their `effectiveHours` headline.
+ *
+ * For RAW physical-occupancy hours (where a person is on shift regardless of
+ * load — the swimlane lane chip) see `totalAssignedHoursForDay` in
+ * swimlane-utils; that and this measure intentionally differ for tasks whose
+ * load weight is not 1.0.
  */
 export function computePerDayHours(
   participantId: string,
@@ -318,8 +325,13 @@ export function computePerDayHours(
     const task = tMap.get(a.taskId);
     if (!task) continue;
 
-    // Zero-effective-hours tasks contribute nothing to daily load
-    if (computeTaskEffectiveHours(task) === 0) continue;
+    // Per-day contribution is load-WEIGHTED: scale the clipped raw overlap by
+    // the task's effective/raw ratio. A zero-load (light) task contributes 0
+    // naturally — no special-case skip needed.
+    const rawDurationHrs = (task.timeBlock.end.getTime() - task.timeBlock.start.getTime()) / 3600000;
+    if (rawDurationHrs <= 0) continue;
+    const loadRatio = computeTaskEffectiveHours(task) / rawDurationHrs;
+    if (loadRatio <= 0) continue;
 
     for (let d = 1; d <= numDays; d++) {
       if (taskIntersectsDay(task, d, dsh, base)) {
@@ -328,7 +340,7 @@ export function computePerDayHours(
         const overlapStart = Math.max(task.timeBlock.start.getTime(), winStart.getTime());
         const overlapEnd = Math.min(task.timeBlock.end.getTime(), winEnd.getTime());
         const overlapHrs = Math.max(0, (overlapEnd - overlapStart) / 3600000);
-        result.set(d, (result.get(d) || 0) + overlapHrs);
+        result.set(d, (result.get(d) || 0) + overlapHrs * loadRatio);
       }
     }
   }

@@ -7,9 +7,9 @@
  * (frozen-snapshot semantics — no `store.*` reads, no engine reach-through).
  */
 
-import type { DateUnavailability, Participant, Schedule, Task } from '../models/types';
+import type { Participant, Schedule, Task } from '../models/types';
 import { hourInOpDay } from '../shared/utils/time-utils';
-import { getDayWindow, taskIntersectsDay } from './schedule-utils';
+import { getDayWindow } from './schedule-utils';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -55,10 +55,23 @@ export function clipBandToDay(startMs: number, endMs: number, win: DayWindow): B
 /**
  * All tasks the participant is assigned to that intersect the given day window.
  * Sorted by start time ascending — render order on the lane.
+ *
+ * Membership uses the **raw** `timeBlock` (not the occurrence-op-day span used
+ * by page surfaces like the day grid / exports). The swimlane is a per-person
+ * clock-time *timeline*, so a task belongs to a day exactly where its real
+ * block overlaps the window — keeping membership in lock-step with the lane's
+ * hours (`totalAssignedHoursForDay`, raw) and its visible blocks (`renderBlock`,
+ * raw). This deliberately differs from `taskIntersectsDay`: a split half whose
+ * occurrence straddles `dayStartHour` would otherwise be listed (as a 0h,
+ * zero-width "ghost") on the occurrence's other op-day. See CLAUDE.md
+ * "Day bucketing".
  */
 export function getParticipantTasksForDay(schedule: Schedule, participantId: string, dayIndex: number): Task[] {
   const dsh = schedule.algorithmSettings.dayStartHour;
   const base = schedule.periodStart;
+  const win = getDayWindow(dayIndex, dsh, base);
+  const winStart = win.start.getTime();
+  const winEnd = win.end.getTime();
 
   const taskIds = new Set<string>();
   for (const a of schedule.assignments) {
@@ -69,7 +82,7 @@ export function getParticipantTasksForDay(schedule: Schedule, participantId: str
   const out: Task[] = [];
   for (const t of schedule.tasks) {
     if (!taskIds.has(t.id)) continue;
-    if (taskIntersectsDay(t, dayIndex, dsh, base)) out.push(t);
+    if (t.timeBlock.start.getTime() < winEnd && t.timeBlock.end.getTime() > winStart) out.push(t);
   }
   out.sort((a, b) => a.timeBlock.start.getTime() - b.timeBlock.start.getTime());
   return out;

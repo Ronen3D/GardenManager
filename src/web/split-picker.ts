@@ -16,16 +16,9 @@
  */
 
 import { makeSplitHalf } from '../engine/optimizer';
+import type { SchedulingEngine } from '../engine/scheduler';
 import { isEligible } from '../engine/validator';
-import type {
-  Assignment,
-  Participant,
-  Schedule,
-  SchedulingEngine,
-  SlotRequirement,
-  SplitOp,
-  Task,
-} from '../models/types';
+import type { Assignment, Participant, Schedule, SlotRequirement, SplitOp, Task } from '../models/types';
 import { renderParticipantCard } from './participant-card';
 import { escAttr, escHtml, fmt, stripDayPrefix } from './ui-helpers';
 import { showBottomSheet } from './ui-modal';

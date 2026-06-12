@@ -1999,7 +1999,7 @@ async function handleManualSplitClick(): Promise<void> {
     taskId: _manualSelectedTaskId,
     slotId: _manualSelectedSlotId,
     disabledHC: engine.getDisabledHC() ?? new Set<string>(),
-    restRuleMap: engine.getRestRuleMap(),
+    restRuleMap: engine.getRestRuleMap() ?? new Map<string, number>(),
     pushUndo: () => pushUndo('manual', 'פיצול משבצת'),
     popUndo: () => {
       popUndoByKind('manual');
@@ -4878,7 +4878,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.10.0</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v3.10.2</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
