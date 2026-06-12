@@ -234,17 +234,15 @@ function coerceBoolean(raw: unknown): boolean {
 function coerceHour(raw: unknown): number | null {
   if (raw === null || raw === undefined || raw === '') return null;
   if (typeof raw === 'number') {
-    if (!Number.isFinite(raw)) return null;
-    const n = Math.trunc(raw);
-    return n >= 0 && n <= 23 ? n : null;
+    if (!Number.isInteger(raw)) return null;
+    return raw >= 0 && raw <= 23 ? raw : null;
   }
   if (typeof raw === 'string') {
     const s = raw.trim();
     if (!s) return null;
     const n = Number(s);
-    if (!Number.isFinite(n)) return null;
-    const t = Math.trunc(n);
-    return t >= 0 && t <= 23 ? t : null;
+    if (!Number.isInteger(n)) return null;
+    return n >= 0 && n <= 23 ? n : null;
   }
   return null;
 }
@@ -1341,6 +1339,13 @@ function parseParticipantsRows(
         const multNum = typeof multRaw === 'number' ? multRaw : parseFloat(String(multRaw));
         if (Number.isFinite(multNum) && multNum >= WORKLOAD_MULT_MIN && multNum <= WORKLOAD_MULT_MAX) {
           if (multNum !== WORKLOAD_MULT_DEFAULT) workloadMultiplier = multNum;
+        } else {
+          pushError(ctx, {
+            sheet: SHEET_PARTICIPANTS,
+            rowNumber: r,
+            message: `שורה ${r}: ${HEADER_WORKLOAD_MULT} לא תקין: '${String(multRaw)}'. חייב להיות מספר בין ${WORKLOAD_MULT_MIN} ל-${WORKLOAD_MULT_MAX}.`,
+          });
+          continue;
         }
       }
     }

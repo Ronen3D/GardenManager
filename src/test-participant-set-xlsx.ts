@@ -439,6 +439,99 @@ export async function runParticipantSetXlsxTests(assert: AssertFn): Promise<void
     assert(result.ok === true, 'ALL-DAY: populated hours with all-day=yes accepted');
   }
 
+  // ── Negative: fractional startHour rejected ──────────────────────────
+  // coerceHour must REJECT a non-integer hour, not silently truncate it
+  // (5.9 used to pass as hour 5, fabricating a window the user never set).
+  {
+    const blob = await generateParticipantSetXlsx(buildSamplePset());
+    const wb = await loadWorkbook(blob);
+    const ws = wb.getWorksheet(SHEET_UNAVAILABILITY)!;
+    for (let r = 2; r <= ws.actualRowCount; r++) {
+      if (ws.getCell(`D${r}`).value !== 'כן') {
+        ws.getCell(`E${r}`).value = 5.9;
+        break;
+      }
+    }
+    const result = await parseParticipantSetXlsx(await workbookToArrayBuffer(wb));
+    assert(
+      result.ok === false && result.errors.some((e) => e.message.includes('שעת')),
+      'NEG: fractional startHour rejected',
+    );
+  }
+
+  // ── Positive: whole-valued hour still accepted (no over-rejection) ───
+  {
+    const blob = await generateParticipantSetXlsx(buildSamplePset());
+    const wb = await loadWorkbook(blob);
+    const ws = wb.getWorksheet(SHEET_UNAVAILABILITY)!;
+    for (let r = 2; r <= ws.actualRowCount; r++) {
+      if (ws.getCell(`D${r}`).value !== 'כן') {
+        ws.getCell(`E${r}`).value = 13;
+        ws.getCell(`F${r}`).value = 17;
+        break;
+      }
+    }
+    const result = await parseParticipantSetXlsx(await workbookToArrayBuffer(wb));
+    assert(result.ok === true, 'POS: whole-valued hour accepted');
+  }
+
+  // ── Negative: out-of-range workload multiplier rejected ──────────────
+  // A finite multiplier outside [0.3, 5] must fail the import (consistent
+  // with hours/day/level), not silently drop to the neutral default.
+  {
+    const blob = await generateParticipantSetXlsx(buildSamplePset());
+    const wb = await loadWorkbook(blob);
+    const ws = wb.getWorksheet(SHEET_PARTICIPANTS)!;
+    const multCol = colByHeader(ws, 'מקדם עומס');
+    ws.getCell(2, multCol).value = 6;
+    const result = await parseParticipantSetXlsx(await workbookToArrayBuffer(wb));
+    assert(
+      result.ok === false && result.errors.some((e) => e.message.includes('מקדם עומס')),
+      'NEG: out-of-range workload multiplier rejected',
+    );
+  }
+
+  // ── Negative: garbage workload multiplier rejected ───────────────────
+  {
+    const blob = await generateParticipantSetXlsx(buildSamplePset());
+    const wb = await loadWorkbook(blob);
+    const ws = wb.getWorksheet(SHEET_PARTICIPANTS)!;
+    const multCol = colByHeader(ws, 'מקדם עומס');
+    ws.getCell(2, multCol).value = 'abc';
+    const result = await parseParticipantSetXlsx(await workbookToArrayBuffer(wb));
+    assert(
+      result.ok === false && result.errors.some((e) => e.message.includes('מקדם עומס')),
+      'NEG: garbage workload multiplier rejected',
+    );
+  }
+
+  // ── Positive: in-range workload multiplier round-trips ───────────────
+  {
+    const pset = buildSamplePset();
+    pset.participants[0].workloadMultiplier = 2.5;
+    const result = await roundTrip(pset);
+    assert(result.ok === true, 'POS: in-range multiplier round-trips');
+    if (result.ok) {
+      const p0 = result.pset.participants.find((p) => p.name === pset.participants[0].name);
+      assert(p0?.workloadMultiplier === 2.5, 'POS: multiplier 2.5 preserved');
+    }
+  }
+
+  // ── Positive: workload multiplier exactly 1.0 is non-error (→ undefined) ─
+  {
+    const pset = buildSamplePset();
+    const wb = await loadWorkbook(await generateParticipantSetXlsx(pset));
+    const ws = wb.getWorksheet(SHEET_PARTICIPANTS)!;
+    const multCol = colByHeader(ws, 'מקדם עומס');
+    ws.getCell(2, multCol).value = 1;
+    const result = await parseParticipantSetXlsx(await workbookToArrayBuffer(wb));
+    assert(result.ok === true, 'POS: multiplier exactly 1.0 is non-error');
+    if (result.ok) {
+      const p0 = result.pset.participants.find((p) => p.name === pset.participants[0].name);
+      assert(p0?.workloadMultiplier === undefined, 'POS: multiplier 1.0 stored as undefined');
+    }
+  }
+
   // ── Negative: notWith self-reference ─────────────────────────────────
   {
     const pset = buildSamplePset();
