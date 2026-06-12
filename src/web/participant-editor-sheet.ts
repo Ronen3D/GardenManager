@@ -914,18 +914,29 @@ function commitNotWithDiff(pid: string, desired: Set<string>): void {
  * id on persist), and rules whose values changed are updated in place (id and
  * list position preserved). Intended to run inside a `store.transaction(...)`.
  */
-function commitUnavailabilityDiff(pid: string, desired: DateUnavailability[]): void {
+/**
+ * Returns the number of draft rules the store rejected (returned null). The
+ * store normalizes/validates on write and `store.transaction(...)` has no partial
+ * rollback, so callers should surface a non-zero count rather than let a rejected
+ * edit vanish silently.
+ */
+function commitUnavailabilityDiff(pid: string, desired: DateUnavailability[]): number {
   // Copy the live array — removeDateUnavailability splices it as we iterate.
   const storeRules = [...store.getDateUnavailabilities(pid)];
   const storeById = new Map(storeRules.map((r) => [r.id, r]));
   const desiredIds = new Set(desired.map((r) => r.id));
+  let failures = 0;
   for (const r of storeRules) if (!desiredIds.has(r.id)) store.removeDateUnavailability(pid, r.id);
   for (const r of desired) {
     const { id, ...rule } = r;
     const existing = storeById.get(id);
-    if (!existing) store.addDateUnavailability(pid, rule);
-    else if (!singleRuleEqual(existing, r)) store.updateDateUnavailability(pid, id, rule);
+    if (!existing) {
+      if (!store.addDateUnavailability(pid, rule)) failures++;
+    } else if (!singleRuleEqual(existing, r)) {
+      if (!store.updateDateUnavailability(pid, id, rule)) failures++;
+    }
   }
+  return failures;
 }
 
 async function commitDraft(
@@ -971,6 +982,7 @@ async function commitDraft(
   // undo snapshot + a single notify() (one schedule reconciliation) for the
   // whole Save, instead of one per field. Validation above already ran, so the
   // body only mutates.
+  let unavailFailures = 0;
   const pid = store.transaction((): string => {
     let id: string;
     if (!participantId) {
@@ -998,10 +1010,11 @@ async function commitDraft(
     // safe for a brand-new participant (defaults already undefined).
     store.setTaskNamePreference(id, draft.preferredTaskName || undefined, draft.lessPreferredTaskName || undefined);
     commitNotWithDiff(id, draft.notWithIds);
-    commitUnavailabilityDiff(id, draft.dateUnavailability);
+    unavailFailures = commitUnavailabilityDiff(id, draft.dateUnavailability);
     return id;
   });
 
+  if (unavailFailures > 0) showToast('חלק מכללי החסימה לא נשמרו (ערכים לא תקינים).', { type: 'error' });
   if (!participantId) showToast(`${name} נוסף/ה`, { type: 'success' });
   return { participantId: pid };
 }
@@ -1094,10 +1107,12 @@ function runPairingsAvailability(participant: Participant): Promise<{ saved: boo
 
     // Commit both dimensions in one transaction (one undo step, one reconcile).
     const commit = () => {
+      let unavailFailures = 0;
       store.transaction(() => {
         commitNotWithDiff(pid, draft.notWithIds);
-        commitUnavailabilityDiff(pid, draft.dateUnavailability);
+        unavailFailures = commitUnavailabilityDiff(pid, draft.dateUnavailability);
       });
+      if (unavailFailures > 0) showToast('חלק מכללי החסימה לא נשמרו (ערכים לא תקינים).', { type: 'error' });
     };
 
     backdrop.querySelector('[data-pa-save]')?.addEventListener('click', () => {

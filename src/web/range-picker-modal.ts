@@ -162,6 +162,14 @@ export function showRangePicker(opts: RangePickerOptions): Promise<RangePickerRe
 
     const sh = backdrop.querySelector('#gm-rp-start-hour') as HTMLSelectElement;
     const eh = backdrop.querySelector('#gm-rp-end-hour') as HTMLSelectElement;
+    // Reconcile state to what the <select> actually shows. When a default hour
+    // isn't among opts.hours (e.g. an all-day rule's endHour:24 edited against a
+    // 0..23 option list), the browser falls back to the first option; without this
+    // the modal would silently confirm a value the user never saw, defeat the
+    // equal-hours validator, and disagree with the preview. No-op whenever the
+    // default is a valid option.
+    state.startHour = sh.value;
+    state.endHour = eh.value;
     const allDayCb = backdrop.querySelector('#gm-rp-allday') as HTMLInputElement | null;
     const startNote = backdrop.querySelector('#gm-rp-start-note') as HTMLElement;
     const endNote = backdrop.querySelector('#gm-rp-end-note') as HTMLElement;
