@@ -57,36 +57,81 @@ function slotSignature(s: SlotRequirement): string {
   return `${s.subTeamLabel || ''}|${lvls}|R:${req}|F:${fbd}`;
 }
 
-function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
-  return aStart < bEnd && bStart < aEnd;
+/**
+ * Clip a load window's daily occurrences to an absolute [rangeStart, rangeEnd)
+ * span, anchored around `anchorDate`'s calendar day. A `LoadWindow` is a
+ * daily-recurring absolute clock-time range, so an occurrence can land in the
+ * post-midnight tail of a night shift, and a window straddling the operational
+ * day start yields two disjoint sub-ranges within one lane — both are handled
+ * here. This is pure absolute-time overlap, so `dayStartHour` is intentionally
+ * irrelevant. Shared by the phone hot-badge (range = shift span) and the desktop
+ * hot-band (range = lane span) so the two surfaces never drift.
+ */
+export function windowOccurrencesInRange(
+  w: LoadWindow,
+  rangeStartMs: number,
+  rangeEndMs: number,
+  anchorDate: Date,
+): Array<{ startMs: number; endMs: number }> {
+  const out: Array<{ startMs: number; endMs: number }> = [];
+  const base = new Date(anchorDate);
+  base.setHours(0, 0, 0, 0);
+  const DAY = 86_400_000;
+  // Derive the offset range from the span so it stays complete even if a
+  // one-time task ever exceeds 24h (normally firstOff=-1, lastOff=+1). Build
+  // each candidate day with setDate/setHours (not ms arithmetic) so wall-clock
+  // anchoring matches the rest of the day-grid code across DST transitions.
+  const firstOff = Math.floor((rangeStartMs - base.getTime()) / DAY) - 1;
+  const lastOff = Math.floor((rangeEndMs - base.getTime()) / DAY) + 1;
+  for (let off = firstOff; off <= lastOff; off++) {
+    const ws = new Date(base);
+    ws.setDate(ws.getDate() + off);
+    ws.setHours(w.startHour, w.startMinute, 0, 0);
+    const we = new Date(ws);
+    we.setHours(w.endHour, w.endMinute, 0, 0);
+    if (we.getTime() <= ws.getTime()) we.setDate(we.getDate() + 1); // window self-crosses midnight
+    const s = Math.max(rangeStartMs, ws.getTime());
+    const e = Math.min(rangeEndMs, we.getTime());
+    if (s < e) out.push({ startMs: s, endMs: e });
+  }
+  return out;
+}
+
+/** Sort sub-ranges by start and merge any that touch or overlap. */
+function coalesceRanges(ranges: Array<{ startMs: number; endMs: number }>): Array<{ startMs: number; endMs: number }> {
+  if (ranges.length <= 1) return ranges;
+  const sorted = [...ranges].sort((a, b) => a.startMs - b.startMs);
+  const merged: Array<{ startMs: number; endMs: number }> = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const cur = sorted[i];
+    const last = merged[merged.length - 1];
+    if (cur.startMs <= last.endMs) {
+      last.endMs = Math.max(last.endMs, cur.endMs);
+    } else {
+      merged.push(cur);
+    }
+  }
+  return merged;
 }
 
 /**
  * Return the sub-ranges where this task's own load windows actually overlap
  * with its shift time. Each entry is clamped to the shift boundaries so the
  * caller can render the real hot sub-range (e.g. "08:00–09:30") instead of
- * implying the whole shift is under peak load.
+ * implying the whole shift is under peak load. Op-day correct: windows that fall
+ * in a midnight-crossing shift's post-midnight tail are surfaced, and split half
+ * `#b` is anchored to its occurrence's op-day (not its midpoint `timeBlock.start`).
  */
-function shiftHotOverlaps(task: Task): Array<{ start: Date; end: Date }> {
-  const out: Array<{ start: Date; end: Date }> = [];
-  if (!task.loadWindows || task.loadWindows.length === 0) return out;
+export function shiftHotOverlaps(task: Task): Array<{ start: Date; end: Date }> {
+  if (!task.loadWindows || task.loadWindows.length === 0) return [];
   const startMs = task.timeBlock.start.getTime();
   const endMs = task.timeBlock.end.getTime();
-  const day = new Date(task.timeBlock.start);
-  day.setHours(0, 0, 0, 0);
+  const anchor = taskOpDayStart(task); // occurrence start — correct for split #b
+  const ranges: Array<{ startMs: number; endMs: number }> = [];
   for (const w of task.loadWindows) {
-    const ws = new Date(day);
-    ws.setHours(w.startHour, w.startMinute, 0, 0);
-    const we = new Date(day);
-    we.setHours(w.endHour, w.endMinute, 0, 0);
-    if (we.getTime() <= ws.getTime()) we.setDate(we.getDate() + 1);
-    if (!rangesOverlap(startMs, endMs, ws.getTime(), we.getTime())) continue;
-    out.push({
-      start: new Date(Math.max(startMs, ws.getTime())),
-      end: new Date(Math.min(endMs, we.getTime())),
-    });
+    ranges.push(...windowOccurrencesInRange(w, startMs, endMs, anchor));
   }
-  return out;
+  return coalesceRanges(ranges).map((r) => ({ start: new Date(r.startMs), end: new Date(r.endMs) }));
 }
 
 // ─── Main Render ─────────────────────────────────────────────────────────────
@@ -300,16 +345,15 @@ function renderWeekTimeline(
 
     let laneContent = '';
 
-    // Hot-window bands: render each loadWindow as a tinted vertical band
+    // Hot-window bands: render each loadWindow occurrence that falls in this
+    // lane as a tinted vertical band. A window straddling the op-day start
+    // legitimately yields two bands (one at each lane edge).
     for (const w of loadWindows) {
-      const ws = windowStartInLane(w, dayDate, dayStartHour);
-      const we = windowEndInLane(w, dayDate, dayStartHour, ws);
-      const bs = Math.max(ws, laneStart);
-      const be = Math.min(we, laneEnd);
-      if (be <= bs) continue;
-      const leftPct = ((bs - laneStart) / dayMs) * 100;
-      const widthPct = ((be - bs) / dayMs) * 100;
-      laneContent += `<div class="tp-hot-band" style="inset-inline-start:${leftPct}%;width:${widthPct}%;" title="עומס מוגבר ${fmtWindow(w)}"></div>`;
+      for (const occ of windowOccurrencesInRange(w, laneStart, laneEnd, dayDate)) {
+        const leftPct = ((occ.startMs - laneStart) / dayMs) * 100;
+        const widthPct = ((occ.endMs - occ.startMs) / dayMs) * 100;
+        laneContent += `<div class="tp-hot-band" style="inset-inline-start:${leftPct}%;width:${widthPct}%;" title="עומס מוגבר ${fmtWindow(w)}"></div>`;
+      }
     }
 
     // Shifts anchored on this day
@@ -343,27 +387,6 @@ function laneStartMs(dayIndex: number, baseDate: Date, dayStartHour: number): nu
     dayStartHour,
     0,
   ).getTime();
-}
-
-function windowStartInLane(w: LoadWindow, dayDate: Date, dayStartHour: number): number {
-  // Windows are absolute clock times; if their start hour is BEFORE dayStartHour,
-  // they conceptually land on the next calendar day within the operational lane.
-  const d = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate());
-  d.setHours(w.startHour, w.startMinute, 0, 0);
-  if (w.startHour < dayStartHour) d.setDate(d.getDate() + 1);
-  return d.getTime();
-}
-
-function windowEndInLane(w: LoadWindow, dayDate: Date, dayStartHour: number, startMs: number): number {
-  const d = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate());
-  d.setHours(w.endHour, w.endMinute, 0, 0);
-  if (w.endHour < dayStartHour || (w.endHour === dayStartHour && w.endMinute === 0)) {
-    d.setDate(d.getDate() + 1);
-  }
-  let endMs = d.getTime();
-  // Ensure monotonic against startMs (windows that straddle midnight)
-  if (endMs <= startMs) endMs = startMs + 60_000;
-  return endMs;
 }
 
 function renderShiftBlock(

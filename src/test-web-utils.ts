@@ -17,6 +17,10 @@
  *          straddling-split "ghost" row; non-split cross-day unchanged)
  *  - C7.14 computePerDayHours load-weighted per-day hours (weight 0 → 0, 0.2 →
  *          ⅕, cross-day apportionment sums to effectiveHours; swimlane chip raw)
+ *  - C7.15 hot-window op-day overlap (shiftHotOverlaps / windowOccurrencesInRange):
+ *          post-midnight window on a midnight-crossing shift surfaces; self-crossing
+ *          + daytime unchanged; split #b occurrence-anchored; straddle window → two
+ *          desktop bands; coalesce; multi-occurrence long task
  *
  * Convention: export `runWebUtilsTests(assert)`, injected assert, no
  * module-level counters, standalone self-exec guarded by
@@ -129,6 +133,7 @@ import {
   timestampToOpDayIndex,
 } from './web/schedule-utils';
 import { getParticipantTasksForDay, totalAssignedHoursForDay } from './web/swimlane-utils';
+import { shiftHotOverlaps, windowOccurrencesInRange } from './web/tab-task-panel';
 import { enterTutorialDemoMode, exitTutorialDemoMode, TutorialPreflightError } from './web/tutorial-demo';
 import { DEMO_PARTICIPANTS } from './web/tutorial-demo-seed';
 import { escAttr, escHtml } from './web/ui-helpers';
@@ -1201,6 +1206,166 @@ export async function runWebUtilsTests(assert: AssertFn): Promise<void> {
       near(m.get(1) || 0, 1.5) && near(m.get(2) || 0, 2.5) && near((m.get(1) || 0) + (m.get(2) || 0), 4),
       'C7.14: cross-day weight 0.5 (02:00–10:00) → day1 1.5h + day2 2.5h = 4h (= effectiveHours)',
     );
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // C7.15 — Hot-window op-day overlap. shiftHotOverlaps (phone 🔥 badge) and
+  // windowOccurrencesInRange (shared by phone badge + desktop band) must clip a
+  // load window's DAILY occurrences to an absolute span: a window in a
+  // midnight-crossing shift's post-midnight tail surfaces; a window straddling
+  // the op-day start yields two bands; split #b is occurrence-anchored. Daytime
+  // / non-crossing cases stay identical to the old single-day code.
+  // ───────────────────────────────────────────────────────────────────────────
+  console.log('\n── C7.15: hot-window op-day overlap ──');
+  {
+    const D = (mo: number, d: number, h: number, mi: number) => new Date(2026, mo, d, h, mi);
+    const lw = (sh: number, sm: number, eh: number, em: number) => ({
+      id: `lw-${sh}-${sm}-${eh}-${em}`,
+      startHour: sh,
+      startMinute: sm,
+      endHour: eh,
+      endMinute: em,
+      weight: 1,
+    });
+    type LW = ReturnType<typeof lw>;
+    const mkTask = (start: Date, end: Date, windows: LW[], extra: Partial<Task> = {}): Task =>
+      ({
+        id: 't',
+        name: 't',
+        sourceName: 't',
+        requiredCount: 1,
+        sameGroupRequired: false,
+        blocksConsecutive: false,
+        timeBlock: { start, end },
+        slots: [],
+        loadWindows: windows,
+        ...extra,
+      }) as unknown as Task;
+    const tuples = (rs: Array<{ start: Date; end: Date }>): number[][] =>
+      rs.map((r) => [r.start.getTime(), r.end.getTime()]);
+    const tuplesMs = (rs: Array<{ startMs: number; endMs: number }>): number[][] => rs.map((r) => [r.startMs, r.endMs]);
+    const eq = (a: number[][], b: number[][]): boolean =>
+      a.length === b.length && a.every((p, i) => p[0] === b[i][0] && p[1] === b[i][1]);
+
+    // A — PRIMARY BUG: midnight-crossing shift (22:00→06:00) + purely-post-midnight
+    // window (02:00–04:00). Old code anchored to the start day and dropped it.
+    {
+      const t = mkTask(D(5, 1, 22, 0), D(5, 2, 6, 0), [lw(2, 0, 4, 0)]);
+      assert(
+        eq(tuples(shiftHotOverlaps(t)), [[D(5, 2, 2, 0).getTime(), D(5, 2, 4, 0).getTime()]]),
+        'C7.15-A: post-midnight window on a midnight-crossing shift surfaces (badge restored)',
+      );
+    }
+
+    // B — self-crossing window (22:00–06:00) on an overnight shift still works.
+    {
+      const t = mkTask(D(5, 1, 21, 0), D(5, 2, 7, 0), [lw(22, 0, 6, 0)]);
+      assert(
+        eq(tuples(shiftHotOverlaps(t)), [[D(5, 1, 22, 0).getTime(), D(5, 2, 6, 0).getTime()]]),
+        'C7.15-B: self-crossing window spans midnight, clipped to the shift',
+      );
+    }
+
+    // C — daytime control: non-crossing case must be byte-identical to before.
+    {
+      const t = mkTask(D(5, 1, 8, 0), D(5, 1, 16, 0), [lw(9, 0, 11, 0)]);
+      assert(
+        eq(tuples(shiftHotOverlaps(t)), [[D(5, 1, 9, 0).getTime(), D(5, 1, 11, 0).getTime()]]),
+        'C7.15-C: daytime non-crossing window unchanged (regression guard)',
+      );
+    }
+
+    // D — split #b anchored to the OCCURRENCE op-day, not its midpoint
+    // timeBlock.start (CLAUDE.md "Day bucketing"). Occurrence 20:00→04:00(+1d),
+    // midpoint 00:00; #b = [00:00, 04:00]; window 02:00–04:00 hits #b's block.
+    {
+      const EIGHT_H = 8 * 3600000;
+      const occStart = D(5, 1, 20, 0);
+      const occEnd = D(5, 2, 4, 0);
+      const mid = D(5, 2, 0, 0);
+      const b = mkTask(mid, occEnd, [lw(2, 0, 4, 0)], {
+        splitGroupId: 'g::s1',
+        splitPart: 2,
+        splitOriginalMs: EIGHT_H,
+        splitOccurrenceId: 'g',
+      });
+      assert(
+        taskOpDayStart(b).getTime() === occStart.getTime() &&
+          taskOpDayStart(b).getTime() !== b.timeBlock.start.getTime(),
+        'C7.15-D: split #b re-anchors to the occurrence op-day start (≠ midpoint)',
+      );
+      assert(
+        eq(tuples(shiftHotOverlaps(b)), [[D(5, 2, 2, 0).getTime(), D(5, 2, 4, 0).getTime()]]),
+        'C7.15-D: #b post-midnight overlap clipped to its own half-block',
+      );
+    }
+
+    // E — straddle window (03:00–07:00) on a morning shift renders the FULL
+    // overlap (06:00–07:00), not a degenerate ~1-minute sliver.
+    {
+      const t = mkTask(D(5, 1, 6, 0), D(5, 1, 12, 0), [lw(3, 0, 7, 0)]);
+      assert(
+        eq(tuples(shiftHotOverlaps(t)), [[D(5, 1, 6, 0).getTime(), D(5, 1, 7, 0).getTime()]]),
+        'C7.15-E: straddle window clipped to full overlap, not a sliver',
+      );
+    }
+
+    // F — long (30h) one-time task hit by the SAME daily window twice; the
+    // span-derived offset range catches both occurrences. Also asserts the
+    // clamping invariant (every range inside the shift).
+    {
+      const tStart = D(5, 1, 10, 0);
+      const tEnd = D(5, 2, 16, 0);
+      const t = mkTask(tStart, tEnd, [lw(14, 0, 16, 0)]);
+      const got = shiftHotOverlaps(t);
+      assert(
+        eq(tuples(got), [
+          [D(5, 1, 14, 0).getTime(), D(5, 1, 16, 0).getTime()],
+          [D(5, 2, 14, 0).getTime(), D(5, 2, 16, 0).getTime()],
+        ]),
+        'C7.15-F: long task — both daily occurrences of the window are caught',
+      );
+      assert(
+        got.every((r) => r.start.getTime() >= tStart.getTime() && r.end.getTime() <= tEnd.getTime()),
+        'C7.15-F: clamping invariant — every emitted range stays inside the shift',
+      );
+    }
+
+    // G — overlapping windows coalesce into one badge (no overlapping badges).
+    {
+      const t = mkTask(D(5, 1, 8, 0), D(5, 1, 18, 0), [lw(9, 0, 12, 0), lw(11, 0, 14, 0)]);
+      assert(
+        eq(tuples(shiftHotOverlaps(t)), [[D(5, 1, 9, 0).getTime(), D(5, 1, 14, 0).getTime()]]),
+        'C7.15-G: overlapping windows merge into a single range',
+      );
+    }
+
+    // H — DESKTOP straddle band: windowOccurrencesInRange clipped to a lane
+    // [Day1 05:00, Day2 05:00) (dayStartHour=5), anchored at the lane midnight.
+    // A 03:00–07:00 window yields TWO bands (one at each lane edge).
+    {
+      const laneStart = D(5, 1, 5, 0).getTime();
+      const laneEnd = laneStart + 86_400_000;
+      const got = windowOccurrencesInRange(lw(3, 0, 7, 0), laneStart, laneEnd, D(5, 1, 0, 0));
+      assert(
+        eq(tuplesMs(got), [
+          [D(5, 1, 5, 0).getTime(), D(5, 1, 7, 0).getTime()],
+          [D(5, 2, 3, 0).getTime(), D(5, 2, 5, 0).getTime()],
+        ]),
+        'C7.15-H: straddle window → two desktop bands (lane head + tail)',
+      );
+    }
+
+    // I — desktop normal band: a daytime window is one band, unchanged.
+    {
+      const laneStart = D(5, 1, 5, 0).getTime();
+      const laneEnd = laneStart + 86_400_000;
+      const got = windowOccurrencesInRange(lw(9, 0, 11, 0), laneStart, laneEnd, D(5, 1, 0, 0));
+      assert(
+        eq(tuplesMs(got), [[D(5, 1, 9, 0).getTime(), D(5, 1, 11, 0).getTime()]]),
+        'C7.15-I: daytime window → single desktop band (unchanged)',
+      );
+    }
   }
 
   console.log('\n── test-web-utils complete ──────────────');
