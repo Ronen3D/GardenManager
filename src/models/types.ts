@@ -213,6 +213,17 @@ export interface Task {
   /** Display color propagated from template (hex, e.g. '#4A90D9'). */
   color?: string;
   /**
+   * Frozen display ordering for the schedule board, propagated at generation
+   * from the originating template / one-time task (injected tasks fall back).
+   * Lower = earlier (rightmost in RTL). Frozen so re-ordering a live template
+   * after generation does NOT reshuffle an already-generated schedule's
+   * sections — the grid/PDF/Excel derive section order from this via
+   * `computeSectionMetrics`, never the live store. Optional for backward
+   * compatibility with pre-schema snapshots / CLI fixtures; layout-engine
+   * falls back to `CUSTOM_DISPLAY_ORDER` (100) when absent.
+   */
+  displayOrder?: number;
+  /**
    * True for tasks injected post-generation — not backed by a live
    * template or OneTimeTask. Snapshot-only unless the user also saved it to
    * the store. Excluded from orphan detection.

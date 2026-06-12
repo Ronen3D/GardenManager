@@ -715,6 +715,7 @@ function mkMetric(id: string, weight: number, displayOrder: number): SectionMetr
     maxSlotsPerCell: 1,
     weight,
     displayOrder,
+    color: '#888888',
   };
 }
 
@@ -754,6 +755,63 @@ function testC56_layoutEngine(assert: AssertFn): void {
   assert(
     m2.length === 1 && m2[0].rowCount === 2 && m2[0].totalSlots === 3 && Math.abs(m2[0].weight - 2.75) < 1e-9,
     'C5.6: computeSectionMetrics with 2 unique start times → rowCount 2, weight 2.75',
+  );
+
+  // ── Frozen section presentation: tint + order derive from the section's own
+  // tasks (lowest displayOrder, sourceName tie-break) — NEVER the live store. ──
+  const repBase = new Date(b.getFullYear(), b.getMonth(), b.getDate(), 8, 0).getTime();
+  const repHi = mkTask('rep-hi', repBase, repBase + HOUR, {
+    sectionKey: 'rep',
+    sourceName: 'Y',
+    color: '#bbbbbb',
+    displayOrder: 5,
+  });
+  const repLo = mkTask('rep-lo', repBase, repBase + HOUR, {
+    sectionKey: 'rep',
+    sourceName: 'X',
+    color: '#aaaaaa',
+    displayOrder: 1,
+  });
+  const repM = computeSectionMetrics([repHi, repLo]);
+  assert(
+    repM.length === 1 && repM[0].color === '#aaaaaa' && repM[0].displayOrder === 1,
+    'C5.6: section tint+order come from the lowest-displayOrder task (input-order independent)',
+  );
+
+  const tieM = computeSectionMetrics([
+    mkTask('tie-b', repBase, repBase + HOUR, {
+      sectionKey: 'tie',
+      sourceName: 'בית',
+      color: '#b2b2b2',
+      displayOrder: 2,
+    }),
+    mkTask('tie-a', repBase, repBase + HOUR, {
+      sectionKey: 'tie',
+      sourceName: 'אלף',
+      color: '#a1a1a1',
+      displayOrder: 2,
+    }),
+  ]);
+  assert(
+    tieM.length === 1 && tieM[0].color === '#a1a1a1',
+    'C5.6: displayOrder tie broken by sourceName (אלף before בית)',
+  );
+
+  const bareM = computeSectionMetrics([
+    mkTask('bare', repBase, repBase + HOUR, { sectionKey: 'bare', sourceName: 'Z' }),
+  ]);
+  assert(
+    bareM[0].color === '#7f8c8d' && bareM[0].displayOrder === 100,
+    'C5.6: section with no frozen color/order → gray + CUSTOM_DISPLAY_ORDER (100)',
+  );
+
+  const ordered = computeSectionMetrics([
+    mkTask('late1', repBase + 2 * HOUR, repBase + 3 * HOUR, { sectionKey: 'late', sourceName: 'L', displayOrder: 3 }),
+    mkTask('early1', repBase, repBase + HOUR, { sectionKey: 'early', sourceName: 'E', displayOrder: 1 }),
+  ]);
+  assert(
+    ordered.map((s) => s.id).join(',') === 'early,late',
+    'C5.6: sections sort by frozen displayOrder (early=1 before late=3), input-order independent',
   );
 
   // inferColumnStrategy — flat vs multi-source split.

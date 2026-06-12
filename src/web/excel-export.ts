@@ -19,7 +19,6 @@ import type { Fill, Worksheet } from 'exceljs';
 import { Workbook } from 'exceljs';
 import type { AssignmentStatus, Level, Participant, Schedule, SlotRequirement, Task } from '../models/types';
 import { fmtTime } from '../utils/date-utils';
-import { getCategoryColorMap } from './config-store';
 import { buildDay0Schedule } from './day0-adapter';
 import { foldedColumnNames, getDayWindow, getFoldedStartTimes, getTasksForDay, rgbToArgb, tint } from './export-utils';
 import { computeSectionMetrics, getTaskAssignments, inferColumnStrategy } from './layout-engine';
@@ -28,7 +27,6 @@ import { computeSectionMetrics, getTaskAssignments, inferColumnStrategy } from '
 
 const HEADER_FILL_ARGB = 'FF374151'; // dark slate, matches PDF `headStyles.fillColor`
 const HEADER_FONT_ARGB = 'FFFFFFFF';
-const DEFAULT_TASK_COLOR = '#7f8c8d';
 const THIN_BORDER = {
   top: { style: 'thin' as const, color: { argb: 'FFD2D2D2' } },
   bottom: { style: 'thin' as const, color: { argb: 'FFD2D2D2' } },
@@ -71,7 +69,6 @@ function buildDaySheet(ws: Worksheet, schedule: Schedule, dayIndex: number, dayS
 
   const { start: dayStart } = getDayWindow(schedule, dayIndex, dayStartHour);
   const dayTasks = getTasksForDay(schedule, dayIndex, dayStartHour);
-  const categoryColors = getCategoryColorMap();
 
   // Title row (merged later once we know the widest section).
   // Day 0 is the previous-schedule continuity context — clearly mark the
@@ -106,7 +103,7 @@ function buildDaySheet(ws: Worksheet, schedule: Schedule, dayIndex: number, dayS
     if (columns.length === 0) continue;
 
     const uniqueTimes = getFoldedStartTimes(section.tasks);
-    const sectionColor = categoryColors[section.id] || section.tasks[0]?.color || DEFAULT_TASK_COLOR;
+    const sectionColor = section.color;
     const tintedHeader = rgbToArgb(tint(sectionColor, 0.55));
     const tintedCell = rgbToArgb(tint(sectionColor));
 

@@ -29,7 +29,6 @@ export interface ManualBuildRenderCtx {
 }
 
 import { isFutureTask } from '../engine/temporal';
-import { getCategoryColorMap, getDisplayOrderMap } from './config-store';
 
 // ─── Shared Helpers (canonical definitions — re-exported by schedule-grid-view) ─
 
@@ -75,9 +74,23 @@ const FULL_WIDTH_THRESHOLD = 0.5;
 /** Display order for custom/unknown categories. */
 const CUSTOM_DISPLAY_ORDER = 100;
 
-/** Resolve display order for a category from config-store templates. */
-function resolveDisplayOrder(cat: string): number {
-  return getDisplayOrderMap()[cat] ?? CUSTOM_DISPLAY_ORDER;
+/**
+ * Derive a section's frozen tint + display order from its own tasks, mirroring
+ * the (removed) live `buildSectionMaps` representative pick — lowest
+ * `displayOrder`, then human-label tie-break — but reading only frozen per-task
+ * values so a generated schedule's section order/tint never shifts when a live
+ * template is re-ordered or re-coloured. `tasks` is always non-empty.
+ */
+export function deriveSectionVisual(tasks: Task[]): { color: string; displayOrder: number } {
+  const rep = [...tasks].sort(
+    (a, b) =>
+      (a.displayOrder ?? CUSTOM_DISPLAY_ORDER) - (b.displayOrder ?? CUSTOM_DISPLAY_ORDER) ||
+      (a.sourceName || a.name || '').localeCompare(b.sourceName || b.name || ''),
+  )[0];
+  return {
+    color: rep.color || '#7f8c8d',
+    displayOrder: rep.displayOrder ?? CUSTOM_DISPLAY_ORDER,
+  };
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -91,7 +104,8 @@ export interface SectionMetrics {
   totalSlots: number; // sum of all slot requirements
   maxSlotsPerCell: number;
   weight: number; // computed layout weight
-  displayOrder: number; // sort priority
+  displayOrder: number; // sort priority (frozen, derived from tasks)
+  color: string; // section tint (frozen, derived from tasks)
 }
 
 export interface ColumnDefinition {
@@ -322,6 +336,10 @@ export function computeSectionMetrics(dayTasks: Task[]): SectionMetrics[] {
     const sourceNames = [...new Set(tasks.map((t) => t.sourceName || t.name))];
     const title = sourceNames.filter(Boolean).join(' ו');
 
+    // Section tint + order are frozen per-task (see deriveSectionVisual) — never
+    // read from the live store, so a generated schedule's appearance is stable.
+    const visual = deriveSectionVisual(tasks);
+
     sections.push({
       id: cat,
       title,
@@ -331,7 +349,8 @@ export function computeSectionMetrics(dayTasks: Task[]): SectionMetrics[] {
       totalSlots,
       maxSlotsPerCell,
       weight,
-      displayOrder: resolveDisplayOrder(cat),
+      displayOrder: visual.displayOrder,
+      color: visual.color,
     });
   }
 
@@ -654,9 +673,9 @@ export function renderSectionTable(
 
   const headerCells = columns.map((c) => `<th>${escHtml(c.header)}</th>`).join('');
 
-  // Resolve section color for CSS variable tinting
-  const catColors = getCategoryColorMap();
-  const sectionColor = catColors[section.id] || '#999';
+  // Section color is frozen on the section (derived from its tasks' frozen
+  // colors in computeSectionMetrics) — never the live store.
+  const sectionColor = section.color;
 
   // Per-task-panel entry point: a trigger button at the inline-end of the title bar.
   // - 1 source → trigger navigates straight to its panel.

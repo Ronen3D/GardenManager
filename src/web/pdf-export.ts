@@ -346,9 +346,6 @@ interface DayLayout {
   cellPadding: number;
 }
 
-/** Neutral slate used when a section has no representative colour. */
-const LABEL_FALLBACK = '#374151';
-
 /**
  * Build the layout for a day: section grouping/order from the shared
  * layout-engine, then the pure 2-D packer decides position, reshaping and
@@ -379,7 +376,7 @@ function planDayLayoutForPdf(
       section,
       columns,
       uniqueTimes,
-      color: section.tasks[0]?.color || LABEL_FALLBACK,
+      color: section.color,
     });
     descriptors.push({
       id: section.id,

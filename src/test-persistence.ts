@@ -166,6 +166,7 @@ import { exportDaySnapshot } from './web/continuity-export';
 import { matchParticipants, parseContinuitySnapshot } from './web/continuity-import';
 import * as dataTransfer from './web/data-transfer';
 import { DEFAULT_PARTICIPANT_PLAN, DEFAULT_TASK_INSTANCES } from './web/default-continuity';
+import { computeSectionMetrics } from './web/layout-engine';
 import { BACKUP_KEY, restoreTutorialBackupIfPresent } from './web/tutorial-demo';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -387,6 +388,57 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
       threw = true;
     }
     assert(threw, 'U1.9: Invalid Date throws on jsonSerialize');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // U-FS. Frozen section presentation (order + tint) vs live template edits.
+  //   The schedule board (grid/PDF/Excel) derives each section's order + tint
+  //   from FROZEN per-task `displayOrder`/`color` via computeSectionMetrics —
+  //   never the live store. Re-ordering/re-coloring a template after generation
+  //   must NOT change an already-generated schedule's appearance. Regression for
+  //   the layout-engine frozen-snapshot violation.
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('\n── U-FS: frozen section order/tint ──────');
+  {
+    // (a) `Task.displayOrder` rides the generic serializer alongside `color`.
+    const rtVis = store.jsonDeserialize<{ color: string; displayOrder: number }>(
+      store.jsonSerialize({ color: '#abcdef', displayOrder: 7 }),
+    );
+    assert(
+      rtVis.color === '#abcdef' && rtVis.displayOrder === 7,
+      'U-FS.1: frozen color + displayOrder survive the json round-trip',
+    );
+
+    // (b) A live template recolor/reorder does not reach a frozen schedule.
+    const tpl = store.addTaskTemplate(makeTaskTemplateData('FS-Live', { color: '#aaaaaa', displayOrder: 2 }));
+    const secKey = `tpl:${tpl.durationHours}|${tpl.shiftsPerDay}|${tpl.startHour}`;
+    const baseMs = new Date(2026, 0, 4, 9, 0).getTime();
+    // A task frozen at generation: its OWN color/displayOrder, distinct from
+    // the values we are about to edit the live template to.
+    const frozenTask: Task = {
+      id: 'fs-task',
+      name: 'D1 FS',
+      sourceName: tpl.name,
+      sectionKey: secKey,
+      timeBlock: { start: new Date(baseMs), end: new Date(baseMs + 3_600_000) },
+      requiredCount: 1,
+      slots: [{ slotId: 'fs-s', acceptableLevels: [{ level: Level.L0 }], requiredCertifications: [] }],
+      sameGroupRequired: false,
+      blocksConsecutive: false,
+      color: '#0f0f0f',
+      displayOrder: 1,
+    };
+    const before = computeSectionMetrics([frozenTask]);
+    store.updateTaskTemplate(tpl.id, { color: '#ffffff', displayOrder: 999 });
+    const after = computeSectionMetrics([frozenTask]);
+    assert(
+      before[0].color === '#0f0f0f' && after[0].color === '#0f0f0f',
+      'U-FS.2: section tint stays frozen on task.color after a live template recolor',
+    );
+    assert(
+      before[0].displayOrder === 1 && after[0].displayOrder === 1,
+      'U-FS.3: section order stays frozen on task.displayOrder after a live template reorder',
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2432,32 +2484,70 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     const dupNested = _dupNestedIds(dup!);
     assert(srcNested.length === 5, 'DUP3: source nested-id count is 5 (2 top + sub-team + sub slot + window)');
     assert(srcNested.length === dupNested.length, 'DUP3: copy has the same nested-id count');
-    assert(dupNested.every((id) => !srcNested.includes(id)), 'DUP3: copy nested-id set is disjoint from the source');
+    assert(
+      dupNested.every((id) => !srcNested.includes(id)),
+      'DUP3: copy nested-id set is disjoint from the source',
+    );
     assert(new Set(dupNested).size === dupNested.length, 'DUP3: copy nested ids are internally unique');
 
     // DUP4 — value fidelity & preserved external references
-    assert(!!dup && dup.durationHours === source.durationHours && dup.shiftsPerDay === source.shiftsPerDay && dup.startHour === source.startHour, 'DUP4: numeric props copied');
-    assert(!!dup && dup.blocksConsecutive === source.blocksConsecutive && dup.sameGroupRequired === source.sameGroupRequired && dup.splittable === source.splittable, 'DUP4: behavior flags copied');
+    assert(
+      !!dup &&
+        dup.durationHours === source.durationHours &&
+        dup.shiftsPerDay === source.shiftsPerDay &&
+        dup.startHour === source.startHour,
+      'DUP4: numeric props copied',
+    );
+    assert(
+      !!dup &&
+        dup.blocksConsecutive === source.blocksConsecutive &&
+        dup.sameGroupRequired === source.sameGroupRequired &&
+        dup.splittable === source.splittable,
+      'DUP4: behavior flags copied',
+    );
     assert(!!dup && dup.restRuleId === restRuleId, 'DUP4: restRuleId preserved (shared reference)');
-    assert(!!dup && JSON.stringify(dup.slots.map((s) => [s.requiredCertifications, s.forbiddenCertifications])) === JSON.stringify(source.slots.map((s) => [s.requiredCertifications, s.forbiddenCertifications])), 'DUP4: slot cert arrays preserved by value');
-    assert(!!dup && JSON.stringify(dup.sleepRecovery) === JSON.stringify(source.sleepRecovery), 'DUP4: sleepRecovery copied');
-    assert(!!dup && dup.loadFormula?.components[0].refTemplateId === 'other-tpl', 'DUP4: load-formula external refTemplateId preserved');
+    assert(
+      !!dup &&
+        JSON.stringify(dup.slots.map((s) => [s.requiredCertifications, s.forbiddenCertifications])) ===
+          JSON.stringify(source.slots.map((s) => [s.requiredCertifications, s.forbiddenCertifications])),
+      'DUP4: slot cert arrays preserved by value',
+    );
+    assert(
+      !!dup && JSON.stringify(dup.sleepRecovery) === JSON.stringify(source.sleepRecovery),
+      'DUP4: sleepRecovery copied',
+    );
+    assert(
+      !!dup && dup.loadFormula?.components[0].refTemplateId === 'other-tpl',
+      'DUP4: load-formula external refTemplateId preserved',
+    );
     assert(!!dup && dup.subTeams[0].name === source.subTeams[0].name, 'DUP4: sub-team name copied');
 
     // DUP5 — deep independence: distinct array refs + mutating the copy leaves the source intact
-    assert(!!dup && dup.slots !== source.slots && dup.subTeams[0].slots !== source.subTeams[0].slots, 'DUP5: copy nested arrays are distinct references');
+    assert(
+      !!dup && dup.slots !== source.slots && dup.subTeams[0].slots !== source.subTeams[0].slots,
+      'DUP5: copy nested arrays are distinct references',
+    );
     const srcTopCountBefore = source.slots.length;
     store.removeSlotFromTemplate(dup!.id, dup!.slots[0].id);
-    assert(store.getTaskTemplate(srcId)!.slots.length === srcTopCountBefore, 'DUP5: deleting a copy slot does not affect the source');
+    assert(
+      store.getTaskTemplate(srcId)!.slots.length === srcTopCountBefore,
+      'DUP5: deleting a copy slot does not affect the source',
+    );
 
     // DUP10 — distinct order & fresh color
-    assert(!!dup && dup.displayOrder !== source.displayOrder, 'DUP10: copy has a different displayOrder (placed at end)');
+    assert(
+      !!dup && dup.displayOrder !== source.displayOrder,
+      'DUP10: copy has a different displayOrder (placed at end)',
+    );
     assert(!!dup && typeof dup.color === 'string' && dup.color.length > 0, 'DUP10: copy has a fresh color assigned');
 
     // DUP9 — missing source returns null without mutating
     const countBeforeMiss = store.getAllTaskTemplates().length;
     assert(store.duplicateTaskTemplate('does-not-exist') === null, 'DUP9: duplicating a missing template returns null');
-    assert(store.getAllTaskTemplates().length === countBeforeMiss, 'DUP9: missing-source duplicate leaves the count unchanged');
+    assert(
+      store.getAllTaskTemplates().length === countBeforeMiss,
+      'DUP9: missing-source duplicate leaves the count unchanged',
+    );
   }
 
   // Block 2 — DUP6: a single undo removes exactly the duplicate (duplicate is the last mutation).
@@ -2489,7 +2579,10 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     assert(!!reloaded, 'DUP7: duplicated template survives save + initStore');
     if (reloaded) {
       const reloadedSrc = store.getTaskTemplate(srcId)!;
-      assert(_dupNestedIds(reloaded).every((id) => !_dupNestedIds(reloadedSrc).includes(id)), 'DUP7: nested ids stay disjoint after round-trip');
+      assert(
+        _dupNestedIds(reloaded).every((id) => !_dupNestedIds(reloadedSrc).includes(id)),
+        'DUP7: nested ids stay disjoint after round-trip',
+      );
     }
   }
 
@@ -2511,7 +2604,10 @@ export async function runPersistenceTests(assert: AssertFn): Promise<void> {
     assert(!!otDup && otDup.name === 'DUP-OT (עותק)', 'DUP8: one-time copy is named "(עותק)"');
     assert(!!otDup && otDup.scheduledDate instanceof Date, 'DUP8: scheduledDate is still a Date (not stringified)');
     assert(!!otDup && otDup.scheduledDate.getTime() === otDate.getTime(), 'DUP8: scheduledDate value preserved');
-    assert(!!otDup && _dupNestedIds(otDup).every((id) => !_dupNestedIds(store.getOneTimeTask(ot.id)!).includes(id)), 'DUP8: one-time nested ids are disjoint from the source');
+    assert(
+      !!otDup && _dupNestedIds(otDup).every((id) => !_dupNestedIds(store.getOneTimeTask(ot.id)!).includes(id)),
+      'DUP8: one-time nested ids are disjoint from the source',
+    );
     assert(!!otDup && otDup.description === 'night', 'DUP8: one-time description copied');
   }
 

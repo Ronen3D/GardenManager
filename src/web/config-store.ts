@@ -39,7 +39,6 @@ import {
   type TaskSet,
   type TaskTemplate,
 } from '../models/types';
-import { computeTemplateSectionKey } from '../shared/layout-key';
 import { jsonDeserialize, jsonSerialize } from '../shared/utils/json-dates';
 import { buildFormula } from '../shared/utils/load-formula';
 import { hourInOpDay } from '../shared/utils/time-utils';
@@ -1445,9 +1444,9 @@ function cloneLoadFormula(f: TaskTemplate['loadFormula']): TaskTemplate['loadFor
  * (`?? 100`) fallback. Explicitly-provided values (e.g. the seeded defaults)
  * are preserved by the callers' `?? nextTaskDisplayOrder()` guard.
  *
- * Note: only template `displayOrder` currently feeds the section sort
- * (`buildSectionMaps`); a one-time task's `displayOrder` is stored but not yet
- * consumed by the layout (OTT sections resolve to `CUSTOM_DISPLAY_ORDER`).
+ * Note: both template and one-time `displayOrder` are frozen onto each
+ * generated task (`Task.displayOrder`) and feed the schedule board's section
+ * sort via `deriveSectionVisual` in `layout-engine.ts`.
  */
 function nextTaskDisplayOrder(): number {
   let max = -1;
@@ -1648,46 +1647,6 @@ function hslToHex(h: number, s: number, l: number): string {
       .padStart(2, '0');
   };
   return `#${f(0)}${f(8)}${f(4)}`;
-}
-
-/**
- * Build structural-key → {color, displayOrder} maps from current templates.
- *
- * Templates sharing a structural key (same durationHours / shiftsPerDay /
- * startHour — see `src/shared/layout-key.ts`) render in
- * one schedule section. The representative attributes come from the template
- * with the lowest `displayOrder` (tie-broken by name) — deterministic, stable
- * against insertion order.
- */
-function buildSectionMaps(): {
-  color: Record<string, string>;
-  displayOrder: Record<string, number>;
-} {
-  const byKey = new Map<string, TaskTemplate[]>();
-  for (const tpl of taskTemplates.values()) {
-    const k = computeTemplateSectionKey(tpl);
-    const bucket = byKey.get(k);
-    if (bucket) bucket.push(tpl);
-    else byKey.set(k, [tpl]);
-  }
-  const color: Record<string, string> = {};
-  const displayOrder: Record<string, number> = {};
-  let autoIdx = 0;
-  for (const [key, tpls] of byKey) {
-    tpls.sort((a, b) => (a.displayOrder ?? 100) - (b.displayOrder ?? 100) || a.name.localeCompare(b.name));
-    const rep = tpls[0];
-    color[key] = rep.color || AUTO_PALETTE[autoIdx++ % AUTO_PALETTE.length];
-    displayOrder[key] = rep.displayOrder ?? 100;
-  }
-  return { color, displayOrder };
-}
-
-export function getDisplayOrderMap(): Record<string, number> {
-  return buildSectionMaps().displayOrder;
-}
-
-export function getCategoryColorMap(): Record<string, string> {
-  return buildSectionMaps().color;
 }
 
 /**
