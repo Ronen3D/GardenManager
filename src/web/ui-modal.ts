@@ -1192,7 +1192,17 @@ export function showBottomSheet(content: string, opts?: BottomSheetOptions): { c
 
   const sheet = backdrop.querySelector('.gm-bottom-sheet') as HTMLElement;
 
+  // Idempotency guard: close() can be triggered by several independent paths
+  // (close button, backdrop tap, Escape, swipe-down) plus the returned handle.
+  // Without this, a second call before the 0.2s closing animation ends would
+  // register a duplicate `animationend` listener — both fire on the single
+  // event, double-decrementing the reference-counted scroll lock (leaking the
+  // lock under a stacked sheet) and firing onClose twice. Mirrors the
+  // `resolved` guard in showSaveConfirm / showContinuationModal.
+  let closing = false;
   const close = () => {
+    if (closing) return;
+    closing = true;
     sheet.classList.add('gm-bs-closing');
     sheet.addEventListener(
       'animationend',
