@@ -326,6 +326,23 @@ function renderSetsPanel(): string {
   return html;
 }
 
+// ─── Footer Quote ─────────────────────────────────────────────────────────────
+
+/** A compact editorial pull-quote at the very bottom of the participants list.
+ *  Thematic: this screen is about people, and so is the quote. A slim accent
+ *  bar on the inline-start (right, in RTL) edge marks it as a quote — small and
+ *  distinctive, never competing with the functional table above. Static — no
+ *  entrance animation — because the tab does a full structural rerender on every
+ *  sort/filter/add and an animation would replay and flicker. The text is a
+ *  hardcoded, developer-authored literal (not user input), so it is
+ *  intentionally not escaped. */
+function renderParticipantsQuote(): string {
+  return `<figure class="participants-quote" role="note" aria-label="ציטוט">
+    <blockquote class="participants-quote-text">תאהב אנשים, אתה כל היום מוקף אנשים, אל תשנא, אל תשנא בני־אדם גם כאלה שלא כל־כך מוצאים חן בעינייך.</blockquote>
+    <figcaption class="participants-quote-author">שמעון פרס</figcaption>
+  </figure>`;
+}
+
 // ─── Render ──────────────────────────────────────────────────────────────────
 
 export function renderParticipantsTab(): string {
@@ -438,6 +455,10 @@ export function renderParticipantsTab(): string {
   // (applySearchFilter) toggles `hidden` live; render handles the group-filter case.
   const groupFilterEmpty = sorted.length === 0 && filterGroup !== '';
   html += `<div class="participant-search-empty"${groupFilterEmpty ? '' : ' hidden'}>לא נמצאו משתתפים</div>`;
+
+  // ── Footer tribute quote — quiet closing note below all list content.
+  //    Placed before the sticky bulk-toolbar so it's never occluded by it. ──
+  html += renderParticipantsQuote();
 
   // ── Bulk Actions Toolbar ──
   // Always in the DOM (hidden when nothing is selected) so selection changes can

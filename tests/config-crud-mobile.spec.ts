@@ -148,10 +148,14 @@ test.describe('Mobile config CRUD + emergency flows (phone)', () => {
     });
     await expect(card).toHaveCount(1);
 
-    // Expand it and add a slot (defaults: all 4 levels acceptable, no certs).
-    // The task-rules tab re-renders + recomputes preflight over every template
-    // on each action, so allow generous time for the inline form to appear.
-    await card.locator('.template-header').click();
+    // Creation handoff (v3.8.7): the new card auto-expands with the
+    // "add first slot" CTA already visible — clicking .template-header here
+    // would COLLAPSE it (that exact click kept this test red from 3.8.7 on).
+    // Assert the handoff, then add a slot straight from the CTA (defaults:
+    // all 4 levels acceptable, no certs). The task-rules tab re-renders +
+    // recomputes preflight over every template on each action, so allow
+    // generous time for the inline form to appear.
+    await expect(card.locator('.template-body')).toBeVisible({ timeout: 10_000 });
     await card.locator('[data-action="add-slot"]').first().click();
     // `.add-slot-form` is also reused by the load-window add form
     // (`.lw-add-form.add-slot-form`); disambiguate by the confirm action.

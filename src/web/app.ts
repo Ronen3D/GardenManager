@@ -76,6 +76,7 @@ import {
 import { closeInjectTaskModal, initInjectTaskModal, openInjectTaskModal } from './inject-task-modal';
 import { getEffectivePakalDefinitions } from './pakal-utils';
 import { renderParticipantCard } from './participant-card';
+import { castPatronus } from './patronus';
 import { exportDailyDetail, exportDailyImage, exportWeeklyOverview } from './pdf-export';
 import { type PointInTimeContext, renderPointInTimeView, wirePointInTimeEvents } from './point-in-time-view';
 import { runPreflight } from './preflight';
@@ -1453,6 +1454,10 @@ function renderScheduleTab(preflight: ReturnType<typeof runPreflight>): string {
         <p>טרם נוצר שבצ"ק.</p>
         <p class="text-muted">הגדר משתתפים ומשימות, ואז לחץ על "צור שבצ"ק" או בנה ידנית.</p>
         <button class="btn-sm btn-outline" id="btn-create-manual-empty" title="צור שבצ"ק ריק לבנייה ידנית" style="margin-top:12px">✏️ התחל בנייה ידנית</button>
+        <figure class="empty-poem" aria-label="ציטוט מתוך השיר 'שחקי שחקי' מאת שאול טשרניחובסקי">
+          <div class="empty-poem-flourish" aria-hidden="true"><span>❦</span></div>
+          <blockquote class="empty-poem-verse">שחקי שחקי על החלומות,<br />זו אני החולם שח.<br />שחקי כי באדם אאמין,<br />כי עודני מאמין בך.</blockquote>
+        </figure>
       </div>`;
     }
     return html;
@@ -4880,7 +4885,7 @@ function renderAll(): void {
   let html = `
   <header>
     <div class="header-top">
-      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v4.0.6</span>
+      <h1 id="app-title" role="button" tabindex="0" aria-label="השבצקיסט — מעבר למסך הבית"><img class="app-logo-img" src="./logo-header.png" alt="" aria-hidden="true" draggable="false">השבצקיסט</h1><span class="beta-badge">v4.0.7</span>
       <div class="undo-redo-group">
         <button class="btn-sm btn-outline" id="btn-undo" ${!store.getUndoRedoState().canUndo ? 'disabled' : ''}
           title="ביטול">↪<span class="btn-label"> ביטול${store.getUndoRedoState().undoDepth ? ` (${store.getUndoRedoState().undoDepth})` : ''}</span></button>
@@ -4986,6 +4991,7 @@ function renderAll(): void {
   wireEasterEgg(app);
   // MUST stay after wireEasterEgg — see wireHomeTitle() doc comment.
   wireHomeTitle(app);
+  wirePatronusEgg(app);
   wireFactoryReset(app);
 
   const content = document.getElementById('tab-content')!;
@@ -5174,6 +5180,34 @@ function wireEasterEgg(container: HTMLElement): void {
         _easterEggTimer = null;
       }
       showEasterEgg();
+    }
+  });
+}
+
+// ─── Patronus Easter Egg (version badge) ────────────────────────────────────
+// 3 rapid taps on the version badge cast a Patronus — a silvery doe (the iconic
+// Expecto Patronum) leaps across the screen above the glowing spell. The
+// counters are module-global so they survive re-renders, same as the other eggs.
+
+let _patronusClicks = 0;
+let _patronusTimer: ReturnType<typeof setTimeout> | null = null;
+
+function wirePatronusEgg(container: HTMLElement): void {
+  const badge = container.querySelector('.beta-badge');
+  if (!badge) return;
+  badge.addEventListener('click', () => {
+    _patronusClicks++;
+    if (_patronusTimer) clearTimeout(_patronusTimer);
+    _patronusTimer = setTimeout(() => {
+      _patronusClicks = 0;
+    }, 1600);
+    if (_patronusClicks >= 3) {
+      _patronusClicks = 0;
+      if (_patronusTimer) {
+        clearTimeout(_patronusTimer);
+        _patronusTimer = null;
+      }
+      castPatronus();
     }
   });
 }

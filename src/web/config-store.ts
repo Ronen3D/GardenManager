@@ -760,7 +760,15 @@ function defaultScheduleDate(): Date {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilSunday);
 }
 let scheduleDate: Date = defaultScheduleDate();
-let scheduleDays: number = 7;
+/**
+ * Storage-level ceiling for the schedule length (and for any day-indexed config
+ * that must survive scheduleDays changes — DateUnavailability rules, one-time
+ * task days). The active `scheduleDays` clamps to this; day-indexed config is
+ * stored up to this ceiling so it stays valid when the period is shortened then
+ * re-extended.
+ */
+export const MAX_SCHEDULE_DAYS = 7;
+let scheduleDays: number = MAX_SCHEDULE_DAYS;
 
 export function getScheduleDate(): Date {
   return scheduleDate;
@@ -776,7 +784,7 @@ export function setScheduleDate(d: Date): void {
 }
 export function setScheduleDays(n: number): void {
   pushSnapshot();
-  scheduleDays = Math.max(1, Math.min(7, n));
+  scheduleDays = Math.max(1, Math.min(MAX_SCHEDULE_DAYS, n));
   recalcAllAvailability();
   notify();
 }

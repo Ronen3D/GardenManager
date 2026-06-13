@@ -392,7 +392,11 @@ test.describe('C6.6 rescue modal', () => {
     await expect(page.locator('#rescue-modal-backdrop')).toHaveCount(0);
     const toast = page.locator('.gm-toast-success').first();
     await expect(toast).toBeVisible();
-    await expect(toast).toContainText('החלפה');
+    // The committed plan's ops drive the toast labels: chain swaps render
+    // "החלפה: X ← Y" while a split-fill/terminal-split op renders
+    // "פיצול: A / B" (rescue-modal.ts buildPerOpLabels). A pure-split plan
+    // ranked #1 is a legitimate success — accept either label.
+    await expect(toast).toContainText(/החלפה|פיצול/);
 
     await expect(page.locator('.swimlane-view .swimlane-groups')).toBeVisible();
     const afterSig = (await page.locator('.swimlane-view .swimlane-groups').innerText()).trim();

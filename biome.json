@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["src/**", "electron/**", "tests/**", "*.config.ts", "*.json"]
+    "includes": ["src/**", "electron/**", "tests/**", "*.config.ts", "*.json", "!src/web/patronus-doe-sprite.ts"]
   },
   "formatter": {
     "enabled": true,

@@ -1429,7 +1429,13 @@ function renderSlotForm(
 // ─── One-Time Task Renderers ─────────────────────────────────────────────────
 
 function renderAddOneTimeForm(): string {
-  const numDays = store.getScheduleDays();
+  // A one-time task is stored independently of the active schedule length: its
+  // day is persisted as a scheduledDate offset (7 is the storage ceiling, same
+  // as DateUnavailability rules), and the active scheduleDays only governs
+  // whether the task falls inside the generation window. So the day picker is
+  // NOT clamped to the current scheduleDays — offering all 7 days lets the user
+  // define a task for a day the schedule will only later be extended to cover.
+  const numDays = store.MAX_SCHEDULE_DAYS;
 
   // Build day options: יום 1, יום 2, ... יום N
   const dayOptions = Array.from({ length: numDays }, (_, i) => `<option value="${i + 1}">יום ${i + 1}</option>`).join(
@@ -1525,10 +1531,11 @@ function renderOneTimeCard(ot: OneTimeTask, pf: PreflightResult): string {
   if (isExpanded) {
     html += `<div class="template-body">`;
 
-    // Day options bounded by the configured schedule length, matching the add
-    // form above. Hardcoding 7 here let the user pick days outside the actual
-    // schedule when the period was shortened.
-    const numDays = store.getScheduleDays();
+    // Day options span the full storage ceiling (not the active scheduleDays),
+    // matching the add form: a one-time task lives independently of the current
+    // schedule length, so the user can keep it on a day the schedule will only
+    // later be extended to cover. Math.max guards any legacy value > ceiling.
+    const numDays = Math.max(store.MAX_SCHEDULE_DAYS, dayNum);
     const dayOptions = Array.from({ length: numDays }, (_, i) => {
       const d = i + 1;
       return `<option value="${d}"${d === dayNum ? ' selected' : ''}>יום ${d}</option>`;
